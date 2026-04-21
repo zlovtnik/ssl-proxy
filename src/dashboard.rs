@@ -79,9 +79,14 @@ pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
     } else {
         "ok"
     };
+    let status_code = if publisher.configured && publisher.last_error.is_some() {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
 
     (
-        StatusCode::OK,
+        status_code,
         Json(ReadyReport {
             status,
             local: "ok",

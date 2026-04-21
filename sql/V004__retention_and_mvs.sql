@@ -154,9 +154,13 @@ END;
 -- ── 4. PURGE_OLD_EVENTS procedure ────────────────────────────────────────────
 -- Call from a DBMS_SCHEDULER job (or manually) to enforce retention policy.
 CREATE OR REPLACE PROCEDURE purge_old_events AS
-  v_sql    VARCHAR2(512);
+  v_sql    VARCHAR2(1024);
   v_rows   NUMBER;
+  v_batch_rows NUMBER;
   v_cutoff TIMESTAMP;
+  v_table_name VARCHAR2(128);
+  v_date_column VARCHAR2(128);
+  c_batch_size CONSTANT PLS_INTEGER := 1000;
 BEGIN
   FOR rec IN (
     SELECT table_name, retention_days, date_column
@@ -164,10 +168,22 @@ BEGIN
     WHERE enabled = 1
   ) LOOP
     v_cutoff := SYSTIMESTAMP - rec.retention_days;
-    v_sql := 'DELETE FROM ' || rec.table_name
-          || ' WHERE ' || rec.date_column || ' < :1';
-    EXECUTE IMMEDIATE v_sql USING v_cutoff;
-    v_rows := SQL%ROWCOUNT;
+    v_table_name := DBMS_ASSERT.SIMPLE_SQL_NAME(rec.table_name);
+    v_date_column := DBMS_ASSERT.SIMPLE_SQL_NAME(rec.date_column);
+    v_rows := 0;
+
+    LOOP
+      v_sql := 'DELETE FROM ' || v_table_name ||
+               ' WHERE ROWID IN (' ||
+               'SELECT ROWID FROM ' || v_table_name ||
+               ' WHERE ' || v_date_column || ' < :1 AND ROWNUM <= :2)';
+      EXECUTE IMMEDIATE v_sql USING v_cutoff, c_batch_size;
+      v_batch_rows := SQL%ROWCOUNT;
+      v_rows := v_rows + v_batch_rows;
+      COMMIT;
+      EXIT WHEN v_batch_rows = 0;
+    END LOOP;
+
     UPDATE data_retention_policy
     SET last_purge_at   = SYSTIMESTAMP,
         last_purge_rows = v_rows

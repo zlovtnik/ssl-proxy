@@ -20,7 +20,6 @@ BEGIN
         captured_at      TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
         byte_offset      NUMBER(10,0)      DEFAULT 0 NOT NULL,
         payload_bytes    RAW(8192),        -- first 4-8 KB, binary-safe
-        payload_b64      CLOB,             -- base64 of payload_bytes for JSON export
         content_type     VARCHAR2(128),
         http_method      VARCHAR2(16),
         http_status      NUMBER(5,0),
@@ -30,10 +29,16 @@ BEGIN
         peer_ip          VARCHAR2(45),
         notes            VARCHAR2(512)
       )
+      PARTITION BY RANGE (captured_at)
+      INTERVAL (NUMTOYMINTERVAL(1, ''MONTH''))
+      (
+        PARTITION pa_bootstrap VALUES LESS THAN (TIMESTAMP ''2026-01-01 00:00:00'')
+      )
     ';
     EXECUTE IMMEDIATE 'COMMENT ON TABLE payload_audit IS
       ''Partial payload capture (first N bytes) for compliance auditing.
-        Encrypted TLS tunnels store metadata only; is_encrypted=1.''';
+        Encrypted TLS tunnels store metadata only; is_encrypted=1.
+        Retention is enforced by purge_old_events (30-day policy).''';
   END IF;
 END;
 /
@@ -93,7 +98,7 @@ BEGIN
   IF v_count = 0 THEN
     EXECUTE IMMEDIATE '
       CREATE TABLE connection_sessions (
-        session_id       VARCHAR2(36)   DEFAULT SYS_GUID() PRIMARY KEY,
+        session_id       VARCHAR2(32)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
         correlation_id   VARCHAR2(36),
         host             VARCHAR2(255)  NOT NULL,
         peer_ip          VARCHAR2(45),

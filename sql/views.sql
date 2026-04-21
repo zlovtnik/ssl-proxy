@@ -273,7 +273,7 @@ SELECT
     pa.truncated,
     pa.peer_ip,
     pa.notes,
-    pa.payload_b64,
+    pa.payload_bytes,
     cs.device_id,
     cs.wg_pubkey,
     cs.identity_source,
@@ -290,6 +290,92 @@ SELECT
 FROM payload_audit pa
 LEFT JOIN connection_sessions cs
   ON cs.correlation_id = pa.correlation_id;
+
+CREATE OR REPLACE PACKAGE payload_audit_security AS
+  FUNCTION sensitive_view_predicate(
+    p_schema_name IN VARCHAR2,
+    p_object_name IN VARCHAR2
+  ) RETURN VARCHAR2;
+END payload_audit_security;
+/
+
+CREATE OR REPLACE PACKAGE BODY payload_audit_security AS
+  FUNCTION sensitive_view_predicate(
+    p_schema_name IN VARCHAR2,
+    p_object_name IN VARCHAR2
+  ) RETURN VARCHAR2 IS
+    v_allow VARCHAR2(1);
+    v_corr_id VARCHAR2(64);
+    v_device_id VARCHAR2(64);
+    v_predicate VARCHAR2(4000) := '1=0';
+  BEGIN
+    v_allow := NVL(SYS_CONTEXT('APP_CTX', 'ALLOW_SENSITIVE_AUDIT'), '0');
+    IF v_allow != '1' THEN
+      RETURN '1=0';
+    END IF;
+
+    v_corr_id := SYS_CONTEXT('APP_CTX', 'ALLOWED_CORRELATION_ID');
+    v_device_id := SYS_CONTEXT('APP_CTX', 'ALLOWED_DEVICE_ID');
+
+    IF v_corr_id IS NOT NULL THEN
+      v_predicate := 'correlation_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_corr_id);
+    END IF;
+    IF v_device_id IS NOT NULL THEN
+      IF v_predicate != '1=0' THEN
+        v_predicate := v_predicate || ' OR ';
+      END IF;
+      v_predicate := v_predicate || 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
+    END IF;
+    RETURN v_predicate;
+  END sensitive_view_predicate;
+END payload_audit_security;
+/
+
+BEGIN
+  BEGIN
+    DBMS_FGA.DROP_POLICY(
+      object_schema => USER,
+      object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+      policy_name => 'FGA_V_PAYLOAD_AUDIT_SENSITIVE'
+    );
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
+
+  DBMS_FGA.ADD_POLICY(
+    object_schema => USER,
+    object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+    policy_name => 'FGA_V_PAYLOAD_AUDIT_SENSITIVE',
+    audit_condition => '1=1',
+    statement_types => 'SELECT',
+    enable => TRUE
+  );
+END;
+/
+
+BEGIN
+  BEGIN
+    DBMS_RLS.DROP_POLICY(
+      object_schema => USER,
+      object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+      policy_name => 'RLS_V_PAYLOAD_AUDIT_SENSITIVE'
+    );
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
+
+  DBMS_RLS.ADD_POLICY(
+    object_schema => USER,
+    object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+    policy_name => 'RLS_V_PAYLOAD_AUDIT_SENSITIVE',
+    function_schema => USER,
+    policy_function => 'PAYLOAD_AUDIT_SECURITY.SENSITIVE_VIEW_PREDICATE',
+    statement_types => 'SELECT',
+    update_check => FALSE,
+    enable => TRUE
+  );
+END;
+/
 
 -- ---------------------------------------------------------------------------
 -- V_PAYLOAD_AUDIT_RECENT  — masked payload metadata limited to recent history

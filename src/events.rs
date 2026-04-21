@@ -29,16 +29,13 @@ pub struct EmitPayload {
 }
 
 #[derive(Serialize)]
-struct EventEnvelope<'a, T>
-where
-    T: Serialize,
-{
+struct EventEnvelope<'a> {
     #[serde(rename = "type")]
     event: &'a str,
     host: &'a str,
     time: String,
     #[serde(flatten)]
-    extra: T,
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Emit an event using the provided `EmitPayload`, serializing its fields into the event envelope.
@@ -137,19 +134,52 @@ pub(crate) fn emit_serializable<T>(
 ) where
     T: Serialize,
 {
-    let _ = (
-        &peer_ip,
-        &wg_pubkey,
-        &device_id,
-        &identity_source,
-        &peer_hostname,
-        &client_ua,
-        bytes_up,
-        bytes_down,
-        status_code,
-        blocked,
-        &obfuscation_profile,
-    );
+    let mut extra = match serde_json::to_value(extra) {
+        Ok(serde_json::Value::Object(map)) => map,
+        Ok(other) => {
+            let mut map = serde_json::Map::new();
+            map.insert("extra".to_string(), other);
+            map
+        }
+        Err(e) => {
+            error!(%e, event_name = event, %host, "failed to serialize event payload");
+            return;
+        }
+    };
+
+    if let Some(value) = peer_ip {
+        extra.insert("peer_ip".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = wg_pubkey {
+        extra.insert("wg_pubkey".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = device_id {
+        extra.insert("device_id".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = identity_source {
+        extra.insert(
+            "identity_source".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = peer_hostname {
+        extra.insert("peer_hostname".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = client_ua {
+        extra.insert("client_ua".to_string(), serde_json::Value::String(value));
+    }
+    extra.insert("bytes_up".to_string(), serde_json::Value::from(bytes_up));
+    extra.insert("bytes_down".to_string(), serde_json::Value::from(bytes_down));
+    if let Some(value) = status_code {
+        extra.insert("status_code".to_string(), serde_json::Value::from(value));
+    }
+    extra.insert("blocked".to_string(), serde_json::Value::Bool(blocked));
+    if let Some(value) = obfuscation_profile {
+        extra.insert(
+            "obfuscation_profile".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
 
     let raw = match serde_json::to_string(&EventEnvelope {
         event,

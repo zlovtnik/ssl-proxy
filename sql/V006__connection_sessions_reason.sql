@@ -63,7 +63,7 @@ SELECT
     pa.truncated,
     pa.peer_ip,
     pa.notes,
-    pa.payload_b64,
+    pa.payload_bytes,
     cs.tunnel_kind,
     cs.verdict,
     cs.category,

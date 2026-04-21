@@ -22,12 +22,11 @@ RUN apk add --no-cache ca-certificates curl xz \
 COPY services/zig-coordinator/ ./
 RUN zig build -Doptimize=ReleaseSafe
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
+FROM alpine:3.20
+RUN apk add --no-cache \
         ca-certificates \
         netcat-openbsd \
-        postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+        postgresql-client
 WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
 COPY services/zig-coordinator/schema ./schema

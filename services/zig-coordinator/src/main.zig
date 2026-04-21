@@ -44,9 +44,7 @@ pub fn main(init: std.process.Init) !void {
         .{ cfg.stream_name, cfg.stream_names_csv, cursor.cursor_value, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
     );
 
-    while (true) {
-        try std.Io.sleep(init.io, std.Io.Duration.fromSeconds(60), .awake);
-    }
+    try runCoordinatorLoop(init, &coordinator, cfg);
 }
 
 fn ensureCursors(coordinator: anytype, stream_names_csv: []const u8) !void {
@@ -83,9 +81,11 @@ fn applySchema(gpa: std.mem.Allocator, io: std.Io, database_url: []const u8, sch
 fn checkNats(gpa: std.mem.Allocator, io: std.Io, nats_url: []const u8) !void {
     const authority = try parseNatsAuthority(gpa, nats_url);
     defer gpa.free(authority);
-    const separator = std.mem.lastIndexOfScalar(u8, authority, ':') orelse return HealthcheckError.InvalidNatsUrl;
-    const host = authority[0..separator];
-    const port = authority[separator + 1 ..];
+    const host_start = if (std.mem.lastIndexOfScalar(u8, authority, '@')) |at| at + 1 else 0;
+    const host_and_port = authority[host_start..];
+    const separator = std.mem.lastIndexOfScalar(u8, host_and_port, ':') orelse return HealthcheckError.InvalidNatsUrl;
+    const host = host_and_port[0..separator];
+    const port = host_and_port[separator + 1 ..];
     if (host.len == 0 or port.len == 0) return HealthcheckError.InvalidNatsUrl;
 
     const argv = [_][]const u8{
@@ -103,9 +103,64 @@ fn parseNatsAuthority(gpa: std.mem.Allocator, nats_url: []const u8) ![]const u8 
     var iterator = std.mem.splitScalar(u8, no_scheme, '/');
     const authority = iterator.first();
     if (authority.len == 0) return HealthcheckError.InvalidNatsUrl;
-    if (std.mem.lastIndexOfScalar(u8, authority, ':') != null) return gpa.dupe(u8, authority);
+    const host_start = if (std.mem.lastIndexOfScalar(u8, authority, '@')) |at| at + 1 else 0;
+    const host_and_port = authority[host_start..];
+    if (std.mem.lastIndexOfScalar(u8, host_and_port, ':') != null) return gpa.dupe(u8, authority);
 
     return try std.fmt.allocPrint(gpa, "{s}:4222", .{authority});
+}
+
+fn runCoordinatorLoop(init: std.process.Init, coordinator: *scheduler.Coordinator, cfg: config.Config) !void {
+    while (true) {
+        const had_work = runCoordinatorIteration(coordinator, cfg) catch |err| {
+            std.log.err("coordinator loop iteration failed: {}", .{err});
+            try std.Io.sleep(init.io, std.Io.Duration.fromSeconds(5), .awake);
+            continue;
+        };
+        if (!had_work) {
+            try std.Io.sleep(init.io, std.Io.Duration.fromSeconds(1), .awake);
+        }
+    }
+}
+
+fn runCoordinatorIteration(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    var had_work = false;
+    had_work = (try handleCursor(coordinator, cfg)) or had_work;
+    had_work = (try processBatches(coordinator, cfg)) or had_work;
+    had_work = (try dedupeAndDispatch(coordinator, cfg)) or had_work;
+    had_work = (try updateJobState(coordinator, cfg)) or had_work;
+    had_work = (try handleResults(coordinator, cfg)) or had_work;
+    return had_work;
+}
+
+fn handleCursor(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = coordinator;
+    _ = cfg;
+    return false;
+}
+
+fn processBatches(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = coordinator;
+    _ = cfg;
+    return false;
+}
+
+fn dedupeAndDispatch(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = coordinator;
+    _ = cfg;
+    return false;
+}
+
+fn updateJobState(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = coordinator;
+    _ = cfg;
+    return false;
+}
+
+fn handleResults(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = coordinator;
+    _ = cfg;
+    return false;
 }
 
 fn runCommand(

@@ -2,11 +2,22 @@
 
 DECLARE
   v_default user_tab_columns.data_default%TYPE;
+  v_null_count INTEGER := 0;
 BEGIN
   SELECT data_default INTO v_default
   FROM user_tab_columns
   WHERE table_name = 'BANDWIDTH_SAMPLES'
     AND column_name = 'SAMPLED_AT';
+
+  SELECT COUNT(*) INTO v_null_count
+  FROM bandwidth_samples
+  WHERE sampled_at IS NULL;
+  IF v_null_count > 0 THEN
+    UPDATE bandwidth_samples
+    SET sampled_at = SYSTIMESTAMP
+    WHERE sampled_at IS NULL;
+    COMMIT;
+  END IF;
 
   IF v_default IS NULL OR UPPER(TRIM(v_default)) != 'SYSTIMESTAMP' THEN
     EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples MODIFY (sampled_at DEFAULT SYSTIMESTAMP NOT NULL)';
@@ -65,13 +76,15 @@ BEGIN
   WHERE table_name = 'PAYLOAD_AUDIT'
     AND constraint_name = 'PAYLOAD_AUDIT_PAYLOAD_PRESENT_CK';
 
-  IF v_count = 0 THEN
-    EXECUTE IMMEDIATE q'[
-      ALTER TABLE payload_audit
-      ADD CONSTRAINT payload_audit_payload_present_ck
-      CHECK (payload_bytes IS NOT NULL OR payload_b64 IS NOT NULL)
-    ]';
+  IF v_count > 0 THEN
+    EXECUTE IMMEDIATE 'ALTER TABLE payload_audit DROP CONSTRAINT payload_audit_payload_present_ck';
   END IF;
+  EXECUTE IMMEDIATE q'[
+    ALTER TABLE payload_audit
+    ADD CONSTRAINT payload_audit_payload_present_ck
+    CHECK (payload_bytes IS NOT NULL)
+    NOVALIDATE
+  ]';
 END;
 /
 
@@ -202,7 +215,7 @@ SELECT
     pa.truncated,
     pa.peer_ip,
     pa.notes,
-    pa.payload_b64,
+    pa.payload_bytes,
     cs.device_id,
     cs.wg_pubkey,
     cs.identity_source,
@@ -225,6 +238,93 @@ COMMENT ON VIEW v_payload_audit_sensitive IS
   'Owner-only payload audit view. Grant access only through DBA-managed least-privilege roles with database-native SELECT auditing enabled.'
 /
 
+CREATE OR REPLACE PACKAGE payload_audit_security AS
+  FUNCTION sensitive_view_predicate(
+    p_schema_name IN VARCHAR2,
+    p_object_name IN VARCHAR2
+  ) RETURN VARCHAR2;
+END payload_audit_security;
+/
+
+CREATE OR REPLACE PACKAGE BODY payload_audit_security AS
+  FUNCTION sensitive_view_predicate(
+    p_schema_name IN VARCHAR2,
+    p_object_name IN VARCHAR2
+  ) RETURN VARCHAR2 IS
+    v_allow VARCHAR2(1);
+    v_corr_id VARCHAR2(64);
+    v_device_id VARCHAR2(64);
+    v_predicate VARCHAR2(4000) := '1=0';
+  BEGIN
+    v_allow := NVL(SYS_CONTEXT('APP_CTX', 'ALLOW_SENSITIVE_AUDIT'), '0');
+    IF v_allow != '1' THEN
+      RETURN '1=0';
+    END IF;
+
+    v_corr_id := SYS_CONTEXT('APP_CTX', 'ALLOWED_CORRELATION_ID');
+    v_device_id := SYS_CONTEXT('APP_CTX', 'ALLOWED_DEVICE_ID');
+
+    IF v_corr_id IS NOT NULL THEN
+      v_predicate := 'correlation_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_corr_id);
+    END IF;
+    IF v_device_id IS NOT NULL THEN
+      IF v_predicate != '1=0' THEN
+        v_predicate := v_predicate || ' OR ';
+      END IF;
+      v_predicate := v_predicate || 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
+    END IF;
+
+    RETURN v_predicate;
+  END sensitive_view_predicate;
+END payload_audit_security;
+/
+
+BEGIN
+  BEGIN
+    DBMS_FGA.DROP_POLICY(
+      object_schema => USER,
+      object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+      policy_name => 'FGA_V_PAYLOAD_AUDIT_SENSITIVE'
+    );
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
+
+  DBMS_FGA.ADD_POLICY(
+    object_schema => USER,
+    object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+    policy_name => 'FGA_V_PAYLOAD_AUDIT_SENSITIVE',
+    audit_condition => '1=1',
+    statement_types => 'SELECT',
+    enable => TRUE
+  );
+END;
+/
+
+BEGIN
+  BEGIN
+    DBMS_RLS.DROP_POLICY(
+      object_schema => USER,
+      object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+      policy_name => 'RLS_V_PAYLOAD_AUDIT_SENSITIVE'
+    );
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
+
+  DBMS_RLS.ADD_POLICY(
+    object_schema => USER,
+    object_name => 'V_PAYLOAD_AUDIT_SENSITIVE',
+    policy_name => 'RLS_V_PAYLOAD_AUDIT_SENSITIVE',
+    function_schema => USER,
+    policy_function => 'PAYLOAD_AUDIT_SECURITY.SENSITIVE_VIEW_PREDICATE',
+    statement_types => 'SELECT',
+    update_check => FALSE,
+    enable => TRUE
+  );
+END;
+/
+
 CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   e_bulk_errors EXCEPTION;
   PRAGMA EXCEPTION_INIT(e_bulk_errors, -24381);
@@ -243,6 +343,18 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   EXCEPTION
     WHEN OTHERS THEN
       ROLLBACK;
+      BEGIN
+        SYS.DBMS_SYSTEM.KSDWRT(
+          2,
+          'pkg_proxy_bulk.log_dlq failed (proc=' || SUBSTR(p_procedure_name, 1, 64) ||
+          ', row=' || SUBSTR(p_row_data, 1, 256) ||
+          ', sqlcode=' || SQLCODE ||
+          ', sqlerrm=' || SUBSTR(SQLERRM, 1, 512) || ')'
+        );
+      EXCEPTION
+        WHEN OTHERS THEN NULL;
+      END;
+      RAISE;
   END log_dlq;
 
   FUNCTION escape_json_string(p_val IN VARCHAR2) RETURN VARCHAR2 IS
@@ -311,7 +423,6 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
     p_direction       IN t_varchar2_list,
     p_byte_offset     IN t_number_list,
     p_payload_bytes   IN t_raw_list,
-    p_payload_b64     IN t_clob_list,
     p_content_type    IN t_varchar2_list,
     p_http_method     IN t_varchar2_list,
     p_http_status     IN t_number_list,
@@ -324,13 +435,13 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   BEGIN
     FORALL i IN 1 .. p_correlation_id.COUNT SAVE EXCEPTIONS
       INSERT INTO payload_audit (
-        correlation_id, host, direction, byte_offset, payload_bytes, payload_b64,
+        correlation_id, host, direction, byte_offset, payload_bytes,
         content_type, http_method, http_status, http_path, is_encrypted, truncated,
         peer_ip, notes
       )
       VALUES (
         p_correlation_id(i), p_host(i), p_direction(i), NVL(p_byte_offset(i), 0),
-        p_payload_bytes(i), p_payload_b64(i), p_content_type(i), p_http_method(i),
+        p_payload_bytes(i), p_content_type(i), p_http_method(i),
         p_http_status(i), p_http_path(i), NVL(p_is_encrypted(i), 0), NVL(p_truncated(i), 0),
         p_peer_ip(i), p_notes(i)
       );
@@ -653,7 +764,6 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
     p_direction       IN VARCHAR2,
     p_byte_offset     IN NUMBER,
     p_payload_bytes   IN RAW,
-    p_payload_b64     IN CLOB,
     p_content_type    IN VARCHAR2,
     p_http_method     IN VARCHAR2,
     p_http_status     IN NUMBER,
@@ -666,7 +776,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   BEGIN
     insert_payload_audit_bulk(
       t_varchar2_list(p_correlation_id), t_varchar2_list(p_host), t_varchar2_list(p_direction),
-      t_number_list(p_byte_offset), t_raw_list(p_payload_bytes), t_clob_list(p_payload_b64),
+      t_number_list(p_byte_offset), t_raw_list(p_payload_bytes),
       t_varchar2_list(p_content_type), t_varchar2_list(p_http_method), t_number_list(p_http_status),
       t_varchar2_list(p_http_path), t_number_list(p_is_encrypted), t_number_list(p_truncated),
       t_varchar2_list(p_peer_ip), t_varchar2_list(p_notes)

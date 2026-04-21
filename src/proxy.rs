@@ -221,11 +221,17 @@ pub async fn handler(
     // Classify obfuscation profile after blocklist check
     let profile = obfuscation::classify_obfuscation(&hostname, &state.config.obfuscation);
 
-    // Capture original scheme before URI rewriting - this preserves the actual connection protocol
-    let is_https = req.uri().scheme_str() == Some("https");
+    let mut upstream_is_tls = false;
 
     // Rewrite absolute URI to origin form and forward to the correct host.
     if req.uri().scheme().is_some() {
+        let scheme = req.uri().scheme_str().unwrap_or_default();
+        if scheme.eq_ignore_ascii_case("https") {
+            // HTTPS proxying must use CONNECT; reject absolute-form https:// requests.
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        upstream_is_tls = scheme.eq_ignore_ascii_case("https");
+
         let host = req
             .uri()
             .authority()
@@ -374,8 +380,8 @@ pub async fn handler(
             );
             let mut res = res.map(Body::new);
 
-            // Add CDN-like standard security headers for HTTPS responses
-            if is_https {
+            // Add CDN-like standard security headers only when upstream transport is TLS.
+            if upstream_is_tls {
                 res.headers_mut().insert(
                     "Strict-Transport-Security",
                     "max-age=31536000; includeSubDomains"

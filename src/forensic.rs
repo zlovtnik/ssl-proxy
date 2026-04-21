@@ -280,6 +280,12 @@ impl ForensicState {
             debug!(%error, host = %finding.host, "forensic hardware queue unavailable");
         }
     }
+
+    pub fn evict_stale_flows(&self) {
+        let now = Instant::now();
+        self.flows
+            .retain(|_, flow| now.duration_since(flow.last_seen) < FLOW_WINDOW);
+    }
 }
 
 pub fn spawn_hardware_worker(state: SharedState) {
@@ -302,6 +308,7 @@ pub fn spawn_hardware_worker(state: SharedState) {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
+                    state.forensic.evict_stale_flows();
                     if let Err(error) = verify_monitor_interface(&interface) {
                         warn!(interface = %interface, %error, "forensic monitor interface verification failed");
                     }

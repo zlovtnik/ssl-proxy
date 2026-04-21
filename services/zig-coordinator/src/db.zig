@@ -22,23 +22,31 @@ pub const InMemoryDb = struct {
     }
 
     pub fn loadCursor(self: *InMemoryDb, stream_name: []const u8) ?state.Cursor {
-        const value = self.cursors.get(stream_name) orelse return null;
-        return .{ .stream_name = stream_name, .cursor_value = value };
+        const entry = self.cursors.getEntry(stream_name) orelse return null;
+        return .{ .stream_name = entry.key_ptr.*, .cursor_value = entry.value_ptr.* };
     }
 
     pub fn saveCursor(self: *InMemoryDb, stream_name: []const u8, cursor: []const u8) !void {
-        // First allocate new buffers - only modify state after successful allocation
         const owned_key = try self.allocator.dupe(u8, stream_name);
         errdefer self.allocator.free(owned_key);
         const owned_value = try self.allocator.dupe(u8, cursor);
         errdefer self.allocator.free(owned_value);
 
-        // Now it is safe to remove and free existing entry
-        if (self.cursors.fetchRemove(stream_name)) |removed| {
-            self.allocator.free(removed.key);
-            self.allocator.free(removed.value);
-        }
+        const maybe_old = self.cursors.fetchRemove(stream_name);
 
-        try self.cursors.put(owned_key, owned_value);
+        self.cursors.put(owned_key, owned_value) catch |err| {
+            if (maybe_old) |old| {
+                self.cursors.put(old.key, old.value) catch {
+                    self.allocator.free(old.key);
+                    self.allocator.free(old.value);
+                };
+            }
+            return err;
+        };
+
+        if (maybe_old) |old| {
+            self.allocator.free(old.key);
+            self.allocator.free(old.value);
+        }
     }
 };

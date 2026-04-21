@@ -8,6 +8,7 @@ const RetryState = struct {
     attempts: usize,
     backoff_ms: u64,
 };
+const MAX_RETRIES: usize = 10;
 
 pub const Coordinator = struct {
     allocator: std.mem.Allocator,
@@ -79,10 +80,19 @@ pub const Coordinator = struct {
             break :blk entry.value.attempts;
         } else 0;
 
+        const next_attempt = previous_attempts + 1;
+        if (next_attempt > MAX_RETRIES) {
+            std.log.err("batch {s} exceeded max retries ({d})", .{ result.batch_id, MAX_RETRIES });
+            return error.PermanentFailure;
+        }
+
         const owned_key = try self.allocator.dupe(u8, result.batch_id);
         errdefer self.allocator.free(owned_key);
-        const next_attempt = previous_attempts + 1;
-        const backoff_ms = @as(u64, 1000) << @intCast(@min(next_attempt - 1, @as(usize, 5)));
+        const base_backoff_ms = @as(u64, 1000) << @intCast(@min(next_attempt - 1, @as(usize, 5)));
+        const jitter_cap = @max(@as(u64, 1), base_backoff_ms / 4);
+        const entropy = std.hash.Wyhash.hash(@as(u64, @intCast(next_attempt)), result.batch_id);
+        const jitter = entropy % (jitter_cap + 1);
+        const backoff_ms = base_backoff_ms + jitter;
         try self.retry_state.put(owned_key, .{
             .attempts = next_attempt,
             .backoff_ms = backoff_ms,

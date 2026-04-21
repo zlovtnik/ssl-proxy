@@ -316,13 +316,7 @@ fn remove_session_if_current(
     client_addr: SocketAddr,
     session: &Arc<ShimSession>,
 ) {
-    let Some(existing) = sessions.get(&client_addr) else {
-        return;
-    };
-    if Arc::ptr_eq(existing.value(), session) {
-        drop(existing);
-        sessions.remove(&client_addr);
-    }
+    let _ = sessions.remove_if(&client_addr, |_, current| Arc::ptr_eq(current, session));
 }
 
 fn cleanup_interval(idle_timeout: Duration) -> Duration {

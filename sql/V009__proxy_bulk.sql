@@ -101,7 +101,6 @@ CREATE OR REPLACE PACKAGE pkg_proxy_bulk AS
     p_direction       IN t_varchar2_list,
     p_byte_offset     IN t_number_list,
     p_payload_bytes   IN t_raw_list,
-    p_payload_b64     IN t_clob_list,
     p_content_type    IN t_varchar2_list,
     p_http_method     IN t_varchar2_list,
     p_http_status     IN t_number_list,
@@ -225,7 +224,6 @@ CREATE OR REPLACE PACKAGE pkg_proxy_bulk AS
     p_direction       IN VARCHAR2,
     p_byte_offset     IN NUMBER,
     p_payload_bytes   IN RAW,
-    p_payload_b64     IN CLOB,
     p_content_type    IN VARCHAR2,
     p_http_method     IN VARCHAR2,
     p_http_status     IN NUMBER,
@@ -341,6 +339,18 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   EXCEPTION
     WHEN OTHERS THEN
       ROLLBACK;
+      BEGIN
+        SYS.DBMS_SYSTEM.KSDWRT(
+          2,
+          'pkg_proxy_bulk.log_dlq failed (proc=' || SUBSTR(p_procedure_name, 1, 64) ||
+          ', row=' || SUBSTR(p_row_data, 1, 256) ||
+          ', sqlcode=' || SQLCODE ||
+          ', sqlerrm=' || SUBSTR(SQLERRM, 1, 512) || ')'
+        );
+      EXCEPTION
+        WHEN OTHERS THEN NULL;
+      END;
+      RAISE;
   END log_dlq;
 
   FUNCTION escape_json_string(p_val IN VARCHAR2) RETURN VARCHAR2 IS
@@ -409,7 +419,6 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
     p_direction       IN t_varchar2_list,
     p_byte_offset     IN t_number_list,
     p_payload_bytes   IN t_raw_list,
-    p_payload_b64     IN t_clob_list,
     p_content_type    IN t_varchar2_list,
     p_http_method     IN t_varchar2_list,
     p_http_status     IN t_number_list,
@@ -422,13 +431,13 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   BEGIN
     FORALL i IN 1 .. p_correlation_id.COUNT SAVE EXCEPTIONS
       INSERT INTO payload_audit (
-        correlation_id, host, direction, byte_offset, payload_bytes, payload_b64,
+        correlation_id, host, direction, byte_offset, payload_bytes,
         content_type, http_method, http_status, http_path, is_encrypted, truncated,
         peer_ip, notes
       )
       VALUES (
         p_correlation_id(i), p_host(i), p_direction(i), NVL(p_byte_offset(i), 0),
-        p_payload_bytes(i), p_payload_b64(i), p_content_type(i), p_http_method(i),
+        p_payload_bytes(i), p_content_type(i), p_http_method(i),
         p_http_status(i), p_http_path(i), NVL(p_is_encrypted(i), 0), NVL(p_truncated(i), 0),
         p_peer_ip(i), p_notes(i)
       );
@@ -751,7 +760,6 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
     p_direction       IN VARCHAR2,
     p_byte_offset     IN NUMBER,
     p_payload_bytes   IN RAW,
-    p_payload_b64     IN CLOB,
     p_content_type    IN VARCHAR2,
     p_http_method     IN VARCHAR2,
     p_http_status     IN NUMBER,
@@ -764,7 +772,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_proxy_bulk AS
   BEGIN
     insert_payload_audit_bulk(
       t_varchar2_list(p_correlation_id), t_varchar2_list(p_host), t_varchar2_list(p_direction),
-      t_number_list(p_byte_offset), t_raw_list(p_payload_bytes), t_clob_list(p_payload_b64),
+      t_number_list(p_byte_offset), t_raw_list(p_payload_bytes),
       t_varchar2_list(p_content_type), t_varchar2_list(p_http_method), t_number_list(p_http_status),
       t_varchar2_list(p_http_path), t_number_list(p_is_encrypted), t_number_list(p_truncated),
       t_varchar2_list(p_peer_ip), t_varchar2_list(p_notes)

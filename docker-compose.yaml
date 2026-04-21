@@ -48,7 +48,7 @@ services:
       - WG_PORT=${WG_PORT:-443}
       - WG_INTERNAL_PORT=${WG_INTERNAL_PORT:-51820}
       - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-true}
-      - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}
+      - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY}
       - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
       - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
       - WG_MTU=1280
@@ -64,7 +64,7 @@ services:
       - WG_SUDO=1
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
-      - ADMIN_API_KEY=test
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
 
     ports:

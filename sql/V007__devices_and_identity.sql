@@ -98,9 +98,10 @@ BEGIN
   SELECT COUNT(*) INTO v_count
   FROM user_constraints
   WHERE constraint_name = 'CS_DEVICE_FK';
-  IF v_count = 0 THEN
-    EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions ADD CONSTRAINT cs_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)';
+  IF v_count > 0 THEN
+    EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions DROP CONSTRAINT cs_device_fk';
   END IF;
+  EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions ADD CONSTRAINT cs_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
 
   SELECT COUNT(*) INTO v_count
   FROM user_indexes
@@ -160,9 +161,10 @@ BEGIN
   SELECT COUNT(*) INTO v_count
   FROM user_constraints
   WHERE constraint_name = 'PE_DEVICE_FK';
-  IF v_count = 0 THEN
-    EXECUTE IMMEDIATE 'ALTER TABLE proxy_events ADD CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)';
+  IF v_count > 0 THEN
+    EXECUTE IMMEDIATE 'ALTER TABLE proxy_events DROP CONSTRAINT pe_device_fk';
   END IF;
+  EXECUTE IMMEDIATE 'ALTER TABLE proxy_events ADD CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
 
   SELECT COUNT(*) INTO v_count
   FROM user_indexes
@@ -279,7 +281,7 @@ SELECT
     pa.truncated,
     pa.peer_ip,
     pa.notes,
-    pa.payload_b64,
+    pa.payload_bytes,
     cs.device_id,
     cs.wg_pubkey,
     cs.identity_source,

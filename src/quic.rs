@@ -563,32 +563,63 @@ async fn handle_h3_request(
             return;
         }
 
-        // Pattern masking: replace sensitive regions with 0x2A (*)
-        // This is a lightweight first-pass defence; full pattern matching would be applied at sink
-        for i in 0..buf.len() {
-            // Mask obvious credit card, SSN, and auth token patterns
-            // We use conservative masking to avoid false negatives
-            if i + 6 <= buf.len() && &buf[i..i + 6] == b"Bearer" {
-                // Mask bearer tokens
-                let end = (i + 128).min(buf.len());
-                for j in i + 7..end {
-                    buf[j] = b'*';
-                }
+        fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
+            if needle.is_empty() || start >= haystack.len() || needle.len() > haystack.len() {
+                return None;
             }
-            if i + 13 <= buf.len() && &buf[i..i + 13] == b"Authorization" {
-                // Mask Authorization header values
-                let mut pos = i + 13;
-                while pos < buf.len() && buf[pos] != b':' {
-                    pos += 1;
+            haystack[start..]
+                .windows(needle.len())
+                .position(|window| window == needle)
+                .map(|index| start + index)
+        }
+
+        fn mask_range(buf: &mut [u8], start: usize, delimiters: &[u8]) {
+            let mut idx = start;
+            while idx < buf.len() && !delimiters.contains(&buf[idx]) {
+                buf[idx] = b'*';
+                idx += 1;
+            }
+        }
+
+        let lower: Vec<u8> = buf.iter().map(|byte| byte.to_ascii_lowercase()).collect();
+
+        // Header-style keys: "key: value"
+        for key in [
+            &b"authorization"[..],
+            &b"cookie"[..],
+            &b"set-cookie"[..],
+            &b"x-api-key"[..],
+        ] {
+            let mut search_from = 0usize;
+            while let Some(pos) = find_bytes(&lower, key, search_from) {
+                let mut sep = pos + key.len();
+                while sep < lower.len() && lower[sep] != b':' && lower[sep] != b'\r' && lower[sep] != b'\n' {
+                    sep += 1;
                 }
-                if pos >= buf.len() || buf[pos] != b':' {
-                    continue;
+                if sep < lower.len() && lower[sep] == b':' {
+                    let mut value_start = sep + 1;
+                    while value_start < buf.len() && (buf[value_start] == b' ' || buf[value_start] == b'\t') {
+                        value_start += 1;
+                    }
+                    mask_range(buf, value_start, b"\r\n;& \t");
                 }
-                pos += 1;
-                let end = (pos + 128).min(buf.len());
-                for j in pos..end {
-                    buf[j] = b'*';
-                }
+                search_from = pos + key.len();
+            }
+        }
+
+        // Bearer tokens in headers or body.
+        let mut search_from = 0usize;
+        while let Some(pos) = find_bytes(&lower, b"bearer ", search_from) {
+            mask_range(buf, pos + "bearer ".len(), b"\r\n;& \t");
+            search_from = pos + "bearer ".len();
+        }
+
+        // Form/body keys: "password=<value>" and "pass=<value>".
+        for key in [&b"password="[..], &b"pass="[..]] {
+            let mut form_search_from = 0usize;
+            while let Some(pos) = find_bytes(&lower, key, form_search_from) {
+                mask_range(buf, pos + key.len(), b"\r\n&; \t");
+                form_search_from = pos + key.len();
             }
         }
     }

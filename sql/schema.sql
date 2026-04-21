@@ -43,7 +43,7 @@ CREATE TABLE proxy_events (
     duration_ms          NUMBER(12,0),
     reason               VARCHAR2(64),
     raw_json             CLOB CHECK (raw_json IS JSON),
-    CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
 CREATE INDEX ix_pe_time ON proxy_events (event_time DESC);
@@ -162,7 +162,6 @@ CREATE TABLE payload_audit (
     captured_at      TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     byte_offset      NUMBER(10,0)      DEFAULT 0 NOT NULL,
     payload_bytes    RAW(8192),
-    payload_b64      CLOB,
     content_type     VARCHAR2(128),
     http_method      VARCHAR2(16),
     http_status      NUMBER(5,0),
@@ -172,7 +171,12 @@ CREATE TABLE payload_audit (
     peer_ip          VARCHAR2(45),
     notes            VARCHAR2(512),
     CONSTRAINT payload_audit_payload_present_ck
-      CHECK (payload_bytes IS NOT NULL OR payload_b64 IS NOT NULL)
+      CHECK (payload_bytes IS NOT NULL)
+)
+PARTITION BY RANGE (captured_at)
+INTERVAL (NUMTOYMINTERVAL(1, 'MONTH'))
+(
+    PARTITION pa_bootstrap VALUES LESS THAN (TIMESTAMP '2026-01-01 00:00:00')
 );
 
 CREATE INDEX pa_corr_idx ON payload_audit(correlation_id);
@@ -191,7 +195,7 @@ CREATE TABLE tls_fingerprints (
 );
 
 CREATE TABLE connection_sessions (
-    session_id       VARCHAR2(36)   PRIMARY KEY,
+    session_id       VARCHAR2(32)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
     correlation_id   VARCHAR2(36),
     host             VARCHAR2(253)  NOT NULL,
     peer_ip          VARCHAR2(45),
@@ -219,7 +223,7 @@ CREATE TABLE connection_sessions (
     asn_org          VARCHAR2(128),
     reason           VARCHAR2(64),
     created_at       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    CONSTRAINT cs_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    CONSTRAINT cs_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
 CREATE INDEX cs_host_idx ON connection_sessions(host, opened_at);

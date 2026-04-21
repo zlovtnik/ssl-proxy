@@ -5,6 +5,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::{
     audit::AuditWindow,
@@ -72,12 +73,32 @@ pub async fn reconcile_backlog(
 ) -> Result<(), PublishError> {
     let pending = backlog.list_pending().await?;
     for entry in pending {
-        let observed_at = extract_observed_at(&entry.payload)?;
-        if !audit_window.is_active_at(
-            chrono::DateTime::parse_from_rfc3339(&observed_at)
-                .map_err(|error| PublishError::Publish(error.to_string()))?
-                .with_timezone(&chrono::Utc),
-        ) {
+        let observed_at = match extract_observed_at(&entry.payload) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    %error,
+                    "skipping backlog entry with malformed observed_at"
+                );
+                continue;
+            }
+        };
+        let observed_at_dt = match chrono::DateTime::parse_from_rfc3339(&observed_at) {
+            Ok(value) => value.with_timezone(&chrono::Utc),
+            Err(error) => {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    observed_at = %observed_at,
+                    %error,
+                    "skipping backlog entry with invalid observed_at timestamp"
+                );
+                continue;
+            }
+        };
+        if !audit_window.is_active_at(observed_at_dt) {
             continue;
         }
 
@@ -114,11 +135,13 @@ async fn publish_payload(
 
 fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
     let parsed: serde_json::Value = serde_json::from_str(payload)?;
-    Ok(parsed
+    let observed_at = parsed
         .get("observed_at")
         .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_string())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| PublishError::Publish("missing observed_at".to_string()))?;
+    Ok(observed_at.to_string())
 }
 
 fn dedupe_key(payload: &str) -> String {

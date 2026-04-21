@@ -256,7 +256,7 @@ fn parse_get_response(response: &str) -> Result<RuntimeDevice, ControlError> {
                 device.private_key = Some(hex_key_to_base64(value)?);
             }
             "listen_port" => {
-                device.listen_port = value.parse::<u16>().ok();
+                device.listen_port = Some(parse_u16_config_field("uapi.listen_port", value)?);
             }
             "fwmark" => {
                 if value != "0" && !value.eq_ignore_ascii_case("off") {
@@ -310,7 +310,9 @@ fn parse_get_response(response: &str) -> Result<RuntimeDevice, ControlError> {
             }
             "persistent_keepalive_interval" => {
                 if let Some(peer) = current_peer.as_mut() {
-                    peer.persistent_keepalive = value.parse::<u16>().ok().filter(|v| *v > 0);
+                    let keepalive =
+                        parse_u16_config_field("uapi.persistent_keepalive_interval", value)?;
+                    peer.persistent_keepalive = (keepalive > 0).then_some(keepalive);
                 }
             }
             _ => {}
@@ -408,13 +410,16 @@ fn parse_config(path: &Path) -> Result<DeviceConfig, ControlError> {
         match section.as_str() {
             "interface" => match key {
                 "PrivateKey" => device.interface.private_key = value.to_string(),
-                "ListenPort" => device.interface.listen_port = value.parse::<u16>().ok(),
+                "ListenPort" => {
+                    device.interface.listen_port =
+                        Some(parse_u16_config_field("Interface.ListenPort", value)?)
+                }
                 "FwMark" => device.interface.fwmark = Some(value.to_string()),
                 "Address" => device
                     .interface
                     .addresses
                     .extend(split_csv(value).map(ToString::to_string)),
-                "MTU" => device.interface.mtu = value.parse::<u16>().ok(),
+                "MTU" => device.interface.mtu = Some(parse_u16_config_field("Interface.MTU", value)?),
                 _ => {}
             },
             "peer" => {
@@ -429,7 +434,10 @@ fn parse_config(path: &Path) -> Result<DeviceConfig, ControlError> {
                         peer.allowed_ips
                             .extend(split_csv(value).map(ToString::to_string));
                     }
-                    "PersistentKeepalive" => peer.persistent_keepalive = value.parse::<u16>().ok(),
+                    "PersistentKeepalive" => {
+                        peer.persistent_keepalive =
+                            Some(parse_u16_config_field("Peer.PersistentKeepalive", value)?)
+                    }
                     _ => {}
                 }
             }
@@ -455,6 +463,14 @@ fn parse_config(path: &Path) -> Result<DeviceConfig, ControlError> {
     }
 
     Ok(device)
+}
+
+fn parse_u16_config_field(field_name: &str, value: &str) -> Result<u16, ControlError> {
+    value.parse::<u16>().map_err(|error| {
+        ControlError::InvalidConfig(format!(
+            "invalid {field_name} value {value:?}: {error}"
+        ))
+    })
 }
 
 fn split_csv(value: &str) -> impl Iterator<Item = &str> {

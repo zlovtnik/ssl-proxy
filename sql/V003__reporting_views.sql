@@ -71,8 +71,8 @@ SELECT
      WHERE pe.correlation_id = cs.correlation_id) AS event_count,
     (SELECT MAX(pe.bytes_up) FROM proxy_events pe
      WHERE pe.correlation_id = cs.correlation_id) AS max_event_bytes_up,
-    -- Latest status code seen in this session
-    (SELECT MAX(pe.status_code) FROM proxy_events pe
+    -- Status code from the latest event_time in this session
+    (SELECT MAX(pe.status_code) KEEP (DENSE_RANK LAST ORDER BY pe.event_time) FROM proxy_events pe
      WHERE pe.correlation_id = cs.correlation_id
      AND pe.status_code IS NOT NULL) AS last_status_code
 FROM connection_sessions cs
@@ -96,7 +96,7 @@ SELECT
     pa.truncated,
     pa.peer_ip,
     pa.notes,
-    pa.payload_b64,
+    pa.payload_bytes,
     -- Session context
     cs.tunnel_kind,
     cs.verdict,
@@ -137,26 +137,45 @@ WHERE risk_rank <= 100
 -- ── 5. V_HOURLY_TRAFFIC ──────────────────────────────────────────────────────
 -- Hourly rollup of all proxy traffic. Used for capacity and anomaly detection.
 CREATE OR REPLACE VIEW v_hourly_traffic AS
+WITH hourly AS (
+    SELECT
+        TRUNC(event_time, 'HH') AS hour_bucket,
+        COUNT(*) AS total_events,
+        SUM(CASE WHEN blocked = 1 THEN 1 ELSE 0 END) AS blocked_count,
+        SUM(CASE WHEN blocked = 0 THEN 1 ELSE 0 END) AS allowed_count,
+        SUM(bytes_up) AS total_bytes_up,
+        SUM(bytes_down) AS total_bytes_down,
+        COUNT(DISTINCT host) AS distinct_hosts,
+        COUNT(DISTINCT peer_ip) AS distinct_clients
+    FROM proxy_events
+    GROUP BY TRUNC(event_time, 'HH')
+),
+ranked_categories AS (
+    SELECT
+        TRUNC(event_time, 'HH') AS hour_bucket,
+        category,
+        COUNT(*) AS cnt,
+        ROW_NUMBER() OVER (
+            PARTITION BY TRUNC(event_time, 'HH')
+            ORDER BY COUNT(*) DESC, category ASC
+        ) AS rn
+    FROM proxy_events
+    GROUP BY TRUNC(event_time, 'HH'), category
+)
 SELECT
-    TRUNC(event_time, 'HH') AS hour_bucket,
-    COUNT(*)                 AS total_events,
-    SUM(CASE WHEN blocked = 1 THEN 1 ELSE 0 END) AS blocked_count,
-    SUM(CASE WHEN blocked = 0 THEN 1 ELSE 0 END) AS allowed_count,
-    SUM(bytes_up)            AS total_bytes_up,
-    SUM(bytes_down)          AS total_bytes_down,
-    COUNT(DISTINCT host)     AS distinct_hosts,
-    COUNT(DISTINCT peer_ip)  AS distinct_clients,
-    -- Top category by count in this hour (scalar subquery approach)
-    (SELECT category FROM (
-        SELECT pe2.category, COUNT(*) cnt,
-               RANK() OVER (ORDER BY COUNT(*) DESC) rk
-        FROM proxy_events pe2
-        WHERE TRUNC(pe2.event_time, 'HH') = TRUNC(pe.event_time, 'HH')
-        GROUP BY pe2.category
-     ) WHERE rk = 1 AND ROWNUM = 1
-    ) AS top_category
-FROM proxy_events pe
-GROUP BY TRUNC(event_time, 'HH')
+    h.hour_bucket,
+    h.total_events,
+    h.blocked_count,
+    h.allowed_count,
+    h.total_bytes_up,
+    h.total_bytes_down,
+    h.distinct_hosts,
+    h.distinct_clients,
+    rc.category AS top_category
+FROM hourly h
+LEFT JOIN ranked_categories rc
+  ON rc.hour_bucket = h.hour_bucket
+ AND rc.rn = 1
 /
 
 -- ── 6. V_TLS_FINGERPRINT_STATS ───────────────────────────────────────────────

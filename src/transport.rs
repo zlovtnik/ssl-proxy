@@ -67,7 +67,7 @@ pub struct SyncPublisher {
     config: SyncPublisherConfig,
     published: Arc<Mutex<Vec<PublishedMessage>>>,
     health: Arc<Mutex<SyncPublisherHealth>>,
-    publish_tx: Option<mpsc::Sender<(String, String)>>,
+    publish_tx: Arc<Mutex<Option<mpsc::Sender<(String, String)>>>>,
     publish_task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
@@ -144,15 +144,20 @@ impl SyncPublisher {
             config: publisher_config,
             published: Arc::new(Mutex::new(Vec::new())),
             health,
-            publish_tx,
+            publish_tx: Arc::new(Mutex::new(publish_tx)),
             publish_task: Arc::new(Mutex::new(publish_task)),
         }
     }
 
     /// Shutdown the publisher gracefully, awaiting all in-flight publishes to complete
     pub async fn shutdown(&self) {
-        // Drop the sender to close the channel
-        drop(self.publish_tx.clone());
+        // Drop the active sender (if present) so the worker recv loop can exit.
+        let sender = self
+            .publish_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        drop(sender);
 
         // Take and await the publisher task
         if let Some(handle) = self
@@ -183,7 +188,12 @@ impl SyncPublisher {
 
         self.record_attempt();
 
-        let Some(publish_tx) = &self.publish_tx else {
+        let publish_tx = self
+            .publish_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let Some(publish_tx) = publish_tx else {
             let mut health = self
                 .health
                 .lock()

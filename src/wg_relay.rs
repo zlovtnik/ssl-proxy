@@ -317,18 +317,31 @@ async fn get_or_create_session(
     let upstream_socket = Arc::new(UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?);
     upstream_socket.connect(internal_addr).await?;
 
-    let session = Arc::new(RelaySession::new(upstream_socket.clone()));
-    sessions.insert(client_addr, session.clone());
+    let (session, is_new) = {
+        let entry = sessions.entry(client_addr);
+        match entry {
+            dashmap::mapref::entry::Entry::Occupied(existing) => (existing.get().clone(), false),
+            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                let session = Arc::new(RelaySession::new(upstream_socket));
+                vacant.insert(session.clone());
+                (session, true)
+            }
+        }
+    };
 
-    tokio::spawn(run_session_receiver(
-        client_addr,
-        session.clone(),
-        public_socket,
-        settings,
-        sessions,
-        shutdown,
-    ));
+    if is_new {
+        let sessions_for_task = sessions.clone();
+        tokio::spawn(run_session_receiver(
+            client_addr,
+            session.clone(),
+            public_socket,
+            settings,
+            sessions_for_task,
+            shutdown,
+        ));
+    }
 
+    session.touch();
     Ok(session)
 }
 
@@ -401,13 +414,7 @@ fn remove_session_if_current(
     client_addr: SocketAddr,
     session: &Arc<RelaySession>,
 ) {
-    let Some(existing) = sessions.get(&client_addr) else {
-        return;
-    };
-    if Arc::ptr_eq(existing.value(), session) {
-        drop(existing);
-        sessions.remove(&client_addr);
-    }
+    let _ = sessions.remove_if(&client_addr, |_, current| Arc::ptr_eq(current, session));
 }
 
 fn cleanup_interval(idle_timeout: Duration) -> Duration {
