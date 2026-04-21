@@ -16,6 +16,7 @@
     username: '',
     hostname: '',
     os_hint: '',
+    mac_hint: '',
     notes: ''
   });
 
@@ -44,6 +45,7 @@
         username: form.username || undefined,
         hostname: form.hostname || undefined,
         os_hint: form.os_hint || undefined,
+        mac_hint: form.mac_hint || undefined,
         notes: form.notes || undefined
       };
 
@@ -90,6 +92,10 @@
         <label>
           OS Hint
           <input bind:value={form.os_hint} />
+        </label>
+        <label>
+          MAC Hint
+          <input bind:value={form.mac_hint} />
         </label>
         <label>
           Notes
