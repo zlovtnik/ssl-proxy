@@ -115,7 +115,7 @@ impl AppConfig {
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "type mgt".to_string()),
+                .unwrap_or_else(|| "type mgt or type data".to_string()),
             snaplen: parse_i32("ATH_SENSOR_SNAPLEN", 4096).map_err(ConfigError::InvalidSnaplen)?,
             pcap_timeout_ms: parse_i32("ATH_SENSOR_PCAP_TIMEOUT_MS", 250)
                 .map_err(ConfigError::InvalidTimeout)?,

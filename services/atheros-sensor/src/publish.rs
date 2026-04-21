@@ -247,7 +247,7 @@ async fn flush_memory_backlog(backlog: &dyn BacklogStore) {
                 %backlog_err,
                 "failed to flush memory backlog entry to postgres"
             );
-            put_memory_backlog(key, stream, payload, err);
+            queue_in_memory_after_backlog_failure(key, payload, err, backlog_err);
             for (key, (stream, payload, err)) in memory_entries {
                 put_memory_backlog(key, stream, payload, err);
             }
@@ -809,6 +809,25 @@ mod tests {
 
         assert!(matches!(error, PublishError::Queued(_)));
         assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
+        clear_memory_state();
+    }
+
+    #[tokio::test]
+    async fn flush_memory_backlog_opens_circuit_breaker_when_save_pending_fails() {
+        let _guard = test_lock();
+        clear_memory_state();
+
+        put_memory_backlog(
+            "dedupe-1".to_string(),
+            "wireless.audit".to_string(),
+            "{\"event_type\":\"wifi_management_frame\"}".to_string(),
+            "nats unavailable".to_string(),
+        );
+
+        flush_memory_backlog(&FailingBacklog).await;
+
+        assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
+        assert!(CIRCUIT_BREAKER.lock().unwrap().is_some());
         clear_memory_state();
     }
 

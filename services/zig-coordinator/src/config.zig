@@ -12,6 +12,8 @@ pub const Config = struct {
     sync_schema_file: []const u8,
     audit_stream_name: []const u8,
     scan_consumer: []const u8,
+    scan_max_attempts: u32,
+    scan_retry_backoff_seconds: u32,
 };
 
 pub fn load() Config {
@@ -27,6 +29,8 @@ pub fn load() Config {
         .sync_schema_file = envOrDefault("SYNC_SCHEMA_FILE", "/app/schema/postgres.sql"),
         .audit_stream_name = envOrDefault("AUDIT_STREAM_NAME", "AUDIT_STREAM"),
         .scan_consumer = envOrDefault("SYNC_SCAN_CONSUMER", "zig-coordinator-scan"),
+        .scan_max_attempts = parsePositiveU32(envOrDefault("SYNC_SCAN_MAX_ATTEMPTS", "5"), 5),
+        .scan_retry_backoff_seconds = parsePositiveU32(envOrDefault("SYNC_SCAN_RETRY_BACKOFF_SECONDS", "30"), 30),
     };
 }
 
@@ -36,4 +40,9 @@ fn envOrDefault(comptime name: [:0]const u8, default_value: []const u8) []const 
 
 fn parseBatchSize(value: []const u8) usize {
     return std.fmt.parseInt(usize, value, 10) catch 100;
+}
+
+fn parsePositiveU32(value: []const u8, default_value: u32) u32 {
+    const parsed = std.fmt.parseInt(u32, value, 10) catch return default_value;
+    return if (parsed == 0) default_value else parsed;
 }

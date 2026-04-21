@@ -539,13 +539,24 @@ impl NatsPublishSession {
             .map_err(|_| "timed out flushing publish".to_string())?
             .map_err(|error| format!("flush publish: {error}"))?;
 
+        let mut ack_attempts = 0usize;
+        const MAX_ACK_ATTEMPTS: usize = 32;
         let ack = loop {
+            if ack_attempts >= MAX_ACK_ATTEMPTS {
+                return Err(format!(
+                    "too many non-MSG responses while waiting for JetStream ack ({MAX_ACK_ATTEMPTS})"
+                ));
+            }
+            ack_attempts += 1;
             let line = read_line(&mut self.stream, config.publish_timeout).await?;
             if line == "PING" {
                 timeout(config.publish_timeout, self.stream.write_all(b"PONG\r\n"))
                     .await
                     .map_err(|_| "timed out sending PONG".to_string())?
                     .map_err(|error| format!("send PONG: {error}"))?;
+                continue;
+            }
+            if line.starts_with("INFO") || line == "+OK" {
                 continue;
             }
             if line.starts_with("-ERR") {
@@ -581,8 +592,15 @@ impl NatsPublishSession {
                 return Err(format!("expected NATS MSG or PING, got: {line}"));
             }
         };
-        if ack.contains("\"error\"") {
-            return Err(format!("JetStream publish failed: {ack}"));
+        match serde_json::from_str::<serde_json::Value>(&ack) {
+            Ok(value) => {
+                if value.get("error").is_some_and(|error| !error.is_null()) {
+                    return Err(format!("JetStream publish failed: {ack}"));
+                }
+            }
+            Err(error) => {
+                debug!(%error, ack = %ack, "JetStream ack payload is not JSON");
+            }
         }
 
         Ok(())
@@ -911,6 +929,149 @@ mod tests {
                 .write_all(b"MSG _INBOX.test 1 2\r\n{}\r\n")
                 .await
                 .unwrap();
+        });
+
+        session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_fails_after_too_many_non_msg_responses() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            for _ in 0..40 {
+                server.write_all(b"+OK\r\n").await.unwrap();
+            }
+        });
+
+        let error = session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap_err();
+        assert!(error.contains("too many non-MSG responses"));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_rejects_json_error_ack() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            let ack = r#"{"error":{"code":500}}"#;
+            let frame = format!("MSG _INBOX.test 1 {}\r\n{}\r\n", ack.len(), ack);
+            server.write_all(frame.as_bytes()).await.unwrap();
+        });
+
+        let error = session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap_err();
+        assert!(error.contains("JetStream publish failed"));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_allows_non_json_ack_with_error_word() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            let ack = "error: transient";
+            let frame = format!("MSG _INBOX.test 1 {}\r\n{}\r\n", ack.len(), ack);
+            server.write_all(frame.as_bytes()).await.unwrap();
         });
 
         session

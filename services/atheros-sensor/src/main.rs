@@ -20,7 +20,7 @@ use crate::{
     config::AppConfig,
     device::{detect, read_mac_address},
     model::{AuditContext, EnrichedFrame},
-    parse::{attach_context, decode_frame, to_audit_entry},
+    parse::{attach_context, decode_frame, to_audit_entry, IdentityCache},
     publish::{publish_entry, reconcile_backlog, PublishError, SyncPublisherClient},
 };
 
@@ -179,6 +179,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut heartbeat = capture_heartbeat(config.log_idle_secs);
     let mut stats = CaptureStats::default();
+    let mut identity_cache = IdentityCache::default();
 
     loop {
         tokio::select! {
@@ -223,14 +224,20 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
+                    let resolved_identity = identity_cache.resolve(&wifi_frame);
                     let enriched: EnrichedFrame = attach_context(wifi_frame, &context);
-                    let entry = to_audit_entry(enriched);
+                    let mut entry = to_audit_entry(enriched);
+                    if let Some(identity) = resolved_identity {
+                        entry.username = Some(identity.username);
+                        entry.identity_source = identity.source;
+                    }
                     info!(
                         target: "wireless_audit",
+                        event_type = %entry.event_type,
                         frame_subtype = %entry.frame_subtype,
                         bssid = ?entry.bssid,
                         ssid = ?entry.ssid,
-                        "captured wifi management frame"
+                        "captured wifi frame"
                     );
                     match publish_entry(&*backlog, &*publish_client, entry).await {
                         Ok(()) | Err(PublishError::Queued(_)) => {}

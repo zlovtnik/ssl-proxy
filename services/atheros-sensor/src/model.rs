@@ -10,6 +10,7 @@ pub struct RawPacket {
 #[derive(Clone, Debug)]
 pub struct WifiFrame {
     pub observed_at: DateTime<Utc>,
+    pub event_type: String,
     pub bssid: Option<String>,
     pub source_mac: Option<String>,
     pub destination_mac: Option<String>,
@@ -19,6 +20,8 @@ pub struct WifiFrame {
     pub sequence_number: Option<u16>,
     pub raw_len: usize,
     pub tags: Vec<String>,
+    pub username_hint: Option<String>,
+    pub identity_source_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]

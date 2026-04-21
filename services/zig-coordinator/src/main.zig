@@ -199,7 +199,8 @@ fn handleCursor(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Con
 }
 
 fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
-    const sql =
+    const sql = try std.fmt.allocPrint(
+        std.heap.page_allocator,
         \\update sync_scan_ingest ingest
         \\   set status = 'batched',
         \\       updated_at = now()
@@ -217,6 +218,11 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\     select dedupe_key
         \\       from sync_scan_ingest
         \\      where status in ('pending', 'failed')
+        \\        and attempt_count < {d}
+        \\        and (
+        \\              status = 'pending'
+        \\              or observed_at <= now() - make_interval(secs => (attempt_count * {d}))
+        \\            )
         \\      order by observed_at asc
         \\      limit 1
         \\      for update skip locked
@@ -267,7 +273,9 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\ where status = 'processing'
         \\   and exists (select 1 from sync_batch batch where batch.dedupe_key = ingest.dedupe_key)
         \\returning dedupe_key;
-    ;
+    , .{ cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
+    defer std.heap.page_allocator.free(sql);
+
     const argv = [_][]const u8{
         "psql",
         cfg.database_url,

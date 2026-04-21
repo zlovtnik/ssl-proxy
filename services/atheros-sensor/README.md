@@ -1,7 +1,7 @@
 # Atheros Sensor
 
 `atheros-sensor` is a Linux host-side Wi-Fi monitor that captures AR9271 management
-frames, enriches them with sensor metadata, and publishes them into the existing
+and data frames, enriches them with sensor metadata and identity hints, and publishes them into the existing
 sync-plane used by this repository.
 
 ## Runtime Model
@@ -63,6 +63,9 @@ counters while capture is open. Set it to `0` to disable the heartbeat.
    - `SYNC_NATS_URL=nats://127.0.0.1:4222`
    - `DATABASE_URL=postgres://sync:sync@127.0.0.1:5432/sync`
 3. Start the service directly or install the provided `systemd` unit template.
+
+Default capture filter is `type mgt or type data`. Override `ATH_SENSOR_BPF` when
+you need a narrower packet profile.
 
 ## systemd
 
