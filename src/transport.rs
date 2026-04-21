@@ -467,7 +467,44 @@ where
         .flush()
         .await
         .map_err(|error| format!("flush publish: {error}"))?;
-    let ack = read_nats_message(&mut stream, config.connect_timeout).await?;
+    let ack = loop {
+        let line = read_line(&mut stream, config.connect_timeout).await?;
+        if line == "PING" {
+            stream
+                .write_all(b"PONG\r\n")
+                .await
+                .map_err(|error| format!("send PONG: {error}"))?;
+            continue;
+        }
+        if line.starts_with("-ERR") {
+            return Err(format!("NATS returned error: {line}"));
+        }
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        if parts.first().copied() == Some("MSG") {
+            let Some(size_token) = parts.last() else {
+                return Err(format!("missing NATS MSG size: {line}"));
+            };
+            let size = size_token
+                .parse::<usize>()
+                .map_err(|error| format!("invalid NATS MSG size {size_token}: {error}"))?;
+            let mut payload = vec![0u8; size];
+            timeout(config.connect_timeout, stream.read_exact(&mut payload))
+                .await
+                .map_err(|_| "timed out reading NATS MSG payload".to_string())?
+                .map_err(|error| format!("read NATS MSG payload: {error}"))?;
+            let mut terminator = [0u8; 2];
+            timeout(config.connect_timeout, stream.read_exact(&mut terminator))
+                .await
+                .map_err(|_| "timed out reading NATS MSG terminator".to_string())?
+                .map_err(|error| format!("read NATS MSG terminator: {error}"))?;
+            if terminator != *b"\r\n" {
+                return Err("invalid NATS MSG terminator".to_string());
+            }
+            break String::from_utf8(payload).map_err(|error| format!("NATS MSG payload UTF-8: {error}"))?;
+        } else {
+            return Err(format!("expected NATS MSG or PING, got: {line}"));
+        }
+    };
     if ack.contains("\"error\"") {
         return Err(format!("JetStream publish failed: {ack}"));
     }
@@ -475,39 +512,6 @@ where
     Ok(())
 }
 
-async fn read_nats_message<S>(stream: &mut S, connect_timeout: Duration) -> Result<String, String>
-where
-    S: AsyncRead + Unpin,
-{
-    let line = read_line(stream, connect_timeout).await?;
-    if line.starts_with("-ERR") {
-        return Err(format!("NATS returned error: {line}"));
-    }
-    let parts = line.split_whitespace().collect::<Vec<_>>();
-    if parts.first().copied() != Some("MSG") {
-        return Err(format!("expected NATS MSG response, got: {line}"));
-    }
-    let Some(size_token) = parts.last() else {
-        return Err(format!("missing NATS MSG size: {line}"));
-    };
-    let size = size_token
-        .parse::<usize>()
-        .map_err(|error| format!("invalid NATS MSG size {size_token}: {error}"))?;
-    let mut payload = vec![0u8; size];
-    timeout(connect_timeout, stream.read_exact(&mut payload))
-        .await
-        .map_err(|_| "timed out reading NATS MSG payload".to_string())?
-        .map_err(|error| format!("read NATS MSG payload: {error}"))?;
-    let mut terminator = [0u8; 2];
-    timeout(connect_timeout, stream.read_exact(&mut terminator))
-        .await
-        .map_err(|_| "timed out reading NATS MSG terminator".to_string())?
-        .map_err(|error| format!("read NATS MSG terminator: {error}"))?;
-    if terminator != *b"\r\n" {
-        return Err("invalid NATS MSG terminator".to_string());
-    }
-    String::from_utf8(payload).map_err(|error| format!("NATS MSG payload UTF-8: {error}"))
-}
 
 async fn connect_tls(
     config: &SyncPublisherConfig,
