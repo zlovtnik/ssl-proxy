@@ -535,10 +535,6 @@ mod tests {
 
     #[tokio::test]
     async fn reconciliation_retries_and_clears_backlog() {
-        let failing = MemoryPublisher {
-            fail: true,
-            published: Arc::new(Mutex::new(Vec::new())),
-        };
         let backlog = MemoryBacklog::default();
         let event = entry();
         let payload = serde_json::to_string(&event).unwrap();
@@ -548,20 +544,19 @@ mod tests {
             .await
             .unwrap();
 
-        let succeeding = MemoryPublisher {
+        let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
         };
         reconcile_backlog(
             &backlog,
-            &succeeding,
+            &publisher,
             &AuditWindow::from_parts(None, None, None, None),
         )
         .await
         .unwrap();
 
         assert!(backlog.rows.lock().unwrap().is_empty());
-        assert_eq!(succeeding.published.lock().unwrap().len(), 2);
-        assert!(failing.published.lock().unwrap().is_empty());
+        assert_eq!(publisher.published.lock().unwrap().len(), 2);
     }
 }
