@@ -46,6 +46,13 @@ pub enum BacklogError {
     InvalidDatabaseUrl(String),
     #[error("failed to build postgres connection pool: {0}")]
     PoolBuild(String),
+    #[error("invalid ingest payload for {operation} dedupe_key={dedupe_key}: {source}")]
+    InvalidIngestPayload {
+        operation: &'static str,
+        dedupe_key: String,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 #[async_trait]
@@ -157,6 +164,13 @@ impl BacklogStore for PostgresBacklog {
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
+        let payload: serde_json::Value =
+            serde_json::from_str(record.payload).map_err(|source| BacklogError::InvalidIngestPayload {
+                operation,
+                dedupe_key: record.dedupe_key.to_string(),
+                source,
+            })?;
+        let payload_json = tokio_postgres::types::Json(&payload);
         let rows_affected = match client
             .execute(
                 "insert into sync_scan_ingest
@@ -177,7 +191,7 @@ impl BacklogStore for PostgresBacklog {
                     &record.stream_name,
                     &record.observed_at,
                     &record.payload_ref,
-                    &record.payload,
+                    &payload_json,
                     &record.payload_sha256,
                     &record.producer,
                     &record.event_kind,
@@ -331,11 +345,17 @@ fn database_target(config: &PostgresConfig) -> String {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Utc};
-    use tokio_postgres::types::{ToSql, Type};
+    use tokio_postgres::types::{Json, ToSql, Type};
 
     #[test]
     fn chrono_utc_datetime_binds_to_postgres_timestamptz() {
         assert!(<DateTime<Utc> as ToSql>::accepts(&Type::TIMESTAMPTZ));
         assert!(!<&str as ToSql>::accepts(&Type::TIMESTAMPTZ));
+    }
+
+    #[test]
+    fn json_wrapper_binds_to_postgres_jsonb() {
+        assert!(<Json<serde_json::Value> as ToSql>::accepts(&Type::JSONB));
+        assert!(!<&str as ToSql>::accepts(&Type::JSONB));
     }
 }
