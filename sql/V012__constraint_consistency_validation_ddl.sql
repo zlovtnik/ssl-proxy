@@ -49,8 +49,19 @@ BEGIN
       AND constraint_name = 'BWS_DEVICE_FK';
 
     IF v_delete_rule != 'CASCADE' THEN
+      BEGIN
+        EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples DROP CONSTRAINT bws_device_fk_swap';
+      EXCEPTION
+        WHEN OTHERS THEN
+          IF SQLCODE != -2443 THEN
+            RAISE;
+          END IF;
+      END;
+
+      EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples ADD CONSTRAINT bws_device_fk_swap FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE DISABLE NOVALIDATE';
       EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples DROP CONSTRAINT bws_device_fk';
-      EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples ADD CONSTRAINT bws_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
+      EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples RENAME CONSTRAINT bws_device_fk_swap TO bws_device_fk';
+      EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples ENABLE VALIDATE CONSTRAINT bws_device_fk';
     END IF;
   EXCEPTION
     WHEN NO_DATA_FOUND THEN
@@ -159,4 +170,3 @@ EXCEPTION
     RAISE;
 END;
 /
-

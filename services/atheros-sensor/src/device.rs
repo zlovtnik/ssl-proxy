@@ -9,10 +9,10 @@ use thiserror::Error;
 pub enum DeviceError {
     #[error("failed to read sysfs device inventory: {0}")]
     Io(#[from] std::io::Error),
-    #[error("no ath9k_htc interface found under /sys/class/net")]
+    #[error("no wireless interface found under /sys/class/net (ath9k_htc preferred)")]
     NotFound,
-    #[error("configured interface {interface} exists but is not using ath9k_htc driver (driver: {driver})")]
-    WrongDriver { interface: String, driver: String },
+    #[error("configured interface {0} exists but is not a wireless interface")]
+    OverrideNotWireless(String),
     #[error("configured interface {0} was not found under /sys/class/net")]
     OverrideNotFound(String),
     #[error("missing interface MAC address for {0}")]
@@ -31,50 +31,44 @@ fn detect_interface_at(name: &str, root: &Path) -> Result<String, DeviceError> {
     if !path.exists() {
         return Err(DeviceError::OverrideNotFound(name.to_string()));
     }
-
-    let driver_path = path.join("device/driver");
-    match fs::canonicalize(&driver_path) {
-        Ok(canonical) => {
-            let driver = canonical
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| canonical.display().to_string());
-            if driver == "ath9k_htc" {
-                return Ok(name.to_string());
-            }
-            Err(DeviceError::WrongDriver {
-                interface: name.to_string(),
-                driver,
-            })
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(DeviceError::WrongDriver {
-                interface: name.to_string(),
-                driver: format!("missing {}/device/driver symlink", path.display()),
-            })
-        }
-        Err(error) => Err(DeviceError::Io(error)),
+    if !is_wireless_interface(&path) {
+        return Err(DeviceError::OverrideNotWireless(name.to_string()));
     }
+    Ok(name.to_string())
 }
 
 pub fn detect_in(root: &Path) -> Result<String, DeviceError> {
+    let mut fallback_wireless = None;
+
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let interface = entry.file_name().to_string_lossy().to_string();
-        let driver_path = entry.path().join("device/driver");
-        let canonical = match fs::canonicalize(&driver_path) {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-        if canonical
-            .file_name()
-            .map(|name| name.to_string_lossy() == "ath9k_htc")
-            .unwrap_or(false)
-        {
+        let interface_path = entry.path();
+        if !is_wireless_interface(&interface_path) {
+            continue;
+        }
+
+        if driver_name(&interface_path).as_deref() == Some("ath9k_htc") {
             return Ok(interface);
         }
+
+        if fallback_wireless.is_none() {
+            fallback_wireless = Some(interface);
+        }
     }
-    Err(DeviceError::NotFound)
+
+    fallback_wireless.ok_or(DeviceError::NotFound)
+}
+
+fn is_wireless_interface(interface_path: &Path) -> bool {
+    interface_path.join("wireless").exists() || interface_path.join("phy80211").exists()
+}
+
+fn driver_name(interface_path: &Path) -> Option<String> {
+    let canonical = fs::canonicalize(interface_path.join("device/driver")).ok()?;
+    canonical
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
 }
 
 pub fn read_mac_address(interface: &str) -> Result<String, DeviceError> {
@@ -104,6 +98,7 @@ mod tests {
         let wlan0 = dir.path().join("wlan0/device");
         let driver_dir = dir.path().join("drivers/ath9k_htc");
         fs::create_dir_all(&wlan0).unwrap();
+        fs::create_dir_all(dir.path().join("wlan0/wireless")).unwrap();
         fs::create_dir_all(&driver_dir).unwrap();
         std::os::unix::fs::symlink(&driver_dir, wlan0.join("driver")).unwrap();
 
@@ -112,15 +107,16 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn ignores_non_matching_driver() {
+    fn falls_back_to_non_ath_wireless_interface() {
         let dir = tempdir().unwrap();
         let wlan0 = dir.path().join("wlan0/device");
         let driver_dir = dir.path().join("drivers/iwlwifi");
         fs::create_dir_all(&wlan0).unwrap();
+        fs::create_dir_all(dir.path().join("wlan0/wireless")).unwrap();
         fs::create_dir_all(&driver_dir).unwrap();
         std::os::unix::fs::symlink(&driver_dir, wlan0.join("driver")).unwrap();
 
-        assert!(detect_in(Path::new(dir.path())).is_err());
+        assert_eq!(detect_in(Path::new(dir.path())).unwrap(), "wlan0");
     }
 
     #[test]
@@ -134,17 +130,35 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn configured_wrong_driver_reports_driver_name() {
+    fn configured_non_wireless_interface_reports_error() {
         let dir = tempdir().unwrap();
-        let wlan0 = dir.path().join("wlan0/device");
-        let driver_dir = dir.path().join("drivers/iwlwifi");
-        fs::create_dir_all(&wlan0).unwrap();
-        fs::create_dir_all(&driver_dir).unwrap();
-        std::os::unix::fs::symlink(&driver_dir, wlan0.join("driver")).unwrap();
+        fs::create_dir_all(dir.path().join("eth0/device")).unwrap();
 
-        let error = super::detect_interface_at("wlan0", dir.path()).unwrap_err();
+        let error = super::detect_interface_at("eth0", dir.path()).unwrap_err();
         assert!(
-            matches!(error, DeviceError::WrongDriver { interface, driver } if interface == "wlan0" && driver == "iwlwifi")
+            matches!(error, DeviceError::OverrideNotWireless(interface) if interface == "eth0")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prefers_ath9k_over_other_wireless_interfaces() {
+        let dir = tempdir().unwrap();
+
+        let wlan0 = dir.path().join("wlan0/device");
+        let wlan1 = dir.path().join("wlan1/device");
+        let iwl_driver = dir.path().join("drivers/iwlwifi");
+        let ath_driver = dir.path().join("drivers/ath9k_htc");
+
+        fs::create_dir_all(&wlan0).unwrap();
+        fs::create_dir_all(dir.path().join("wlan0/wireless")).unwrap();
+        fs::create_dir_all(&wlan1).unwrap();
+        fs::create_dir_all(dir.path().join("wlan1/wireless")).unwrap();
+        fs::create_dir_all(&iwl_driver).unwrap();
+        fs::create_dir_all(&ath_driver).unwrap();
+        std::os::unix::fs::symlink(&iwl_driver, wlan0.join("driver")).unwrap();
+        std::os::unix::fs::symlink(&ath_driver, wlan1.join("driver")).unwrap();
+
+        assert_eq!(detect_in(dir.path()).unwrap(), "wlan1");
     }
 }

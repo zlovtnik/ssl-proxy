@@ -255,9 +255,18 @@ pub struct DeviceUpsertRequest {
     pub regenerate_claim_token: Option<bool>,
 }
 
+/// Response payload returned by the device upsert endpoint.
+///
+/// `claim_token` is only generated for new devices or when
+/// `regenerate_claim_token=true` is requested. For metadata-only updates,
+/// `claim_token` is `None` and omitted from JSON.
 #[derive(Serialize)]
 pub struct DeviceUpsertResponse {
     pub device_id: String,
+    /// Plaintext claim token for bootstrap/rotation flows.
+    ///
+    /// This is `Some(...)` only when a new token is minted; otherwise it is
+    /// `None` and skipped during serialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_token: Option<String>,
     pub device: crate::state::DeviceInfo,

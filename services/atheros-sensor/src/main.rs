@@ -33,7 +33,7 @@ async fn run_healthcheck() -> Result<(), Box<dyn std::error::Error>> {
     // Verify device can be detected
     let device = step(
         format!(
-            "detect ath9k_htc interface{}",
+            "detect wireless capture interface{}",
             configured_device_suffix(config.device_override.as_deref())
         ),
         detect(config.device_override.as_deref()),
@@ -92,7 +92,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = step(
         format!(
-            "detect ath9k_htc interface{}",
+            "detect wireless capture interface{}",
             configured_device_suffix(config.device_override.as_deref())
         ),
         detect(config.device_override.as_deref()),

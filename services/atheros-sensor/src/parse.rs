@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
 use ieee80211::GenericFrame;
+use lru::LruCache;
 use thiserror::Error;
 
 use crate::model::{AuditContext, AuditEntry, EnrichedFrame, RawPacket, WifiFrame};
@@ -25,9 +26,18 @@ pub struct ResolvedIdentity {
     pub source: String,
 }
 
-#[derive(Default)]
 pub struct IdentityCache {
-    mac_to_username: HashMap<String, String>,
+    mac_to_username: LruCache<String, String>,
+}
+
+impl Default for IdentityCache {
+    fn default() -> Self {
+        Self {
+            mac_to_username: LruCache::new(
+                NonZeroUsize::new(4_096).expect("identity cache capacity must be non-zero"),
+            ),
+        }
+    }
 }
 
 impl IdentityCache {
@@ -35,7 +45,7 @@ impl IdentityCache {
         if let Some(username) = frame.username_hint.clone() {
             if let Some(mac) = frame.source_mac.as_ref() {
                 self.mac_to_username
-                    .insert(mac.to_ascii_lowercase(), username.clone());
+                    .put(mac.to_ascii_lowercase(), username.clone());
             }
             return Some(ResolvedIdentity {
                 username,

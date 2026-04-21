@@ -1,12 +1,12 @@
 # Atheros Sensor
 
-`atheros-sensor` is a Linux host-side Wi-Fi monitor that captures AR9271 management
-and data frames, enriches them with sensor metadata and identity hints, and publishes them into the existing
+`atheros-sensor` is a Linux host-side Wi-Fi monitor that captures monitor-mode
+management and data frames (AR9271/`ath9k_htc` preferred), enriches them with sensor metadata and identity hints, and publishes them into the existing
 sync-plane used by this repository.
 
 ## Runtime Model
 
-- Runs on a Linux host with direct access to the AR9271 interface.
+- Runs on a Linux host with direct access to a monitor-capable Wi-Fi interface (AR9271 preferred).
 - Reuses the repo's NATS and Postgres stack through `SYNC_NATS_URL` and `DATABASE_URL`.
 - Publishes the raw audit payload on subject `wireless.audit`.
 - Publishes a matching `sync.scan.request` message with `stream_name=wireless.audit`.
@@ -58,7 +58,7 @@ counters while capture is open. Set it to `0` to disable the heartbeat.
 
 ## Host Setup
 
-1. Put the AR9271 interface into monitor mode with [`scripts/prep_ath.sh`](/Users/rcs/git/ssl-proxy/scripts/prep_ath.sh).
+1. Put the capture interface into monitor mode with [`scripts/prep_ath.sh`](/Users/rcs/git/ssl-proxy/scripts/prep_ath.sh).
 2. Point the sensor at the compose stack:
    - `SYNC_NATS_URL=nats://127.0.0.1:4222`
    - `DATABASE_URL=postgres://sync:sync@127.0.0.1:5432/sync`

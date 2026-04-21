@@ -15,6 +15,7 @@ services:
       args:
         VCS_REF: ${VCS_REF:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
+    command: ["/usr/local/bin/start-proxy-wg"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3002/health && /app/ssl-proxy boringtun show wg0 >/dev/null"]

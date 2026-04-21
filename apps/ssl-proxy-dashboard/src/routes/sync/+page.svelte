@@ -31,6 +31,15 @@
   });
 </script>
 
+<svelte:head>
+  <title>Sync Plane | SSL Proxy Dashboard</title>
+  <meta
+    name="description"
+    content="Monitor NATS publisher status, local subject accounting, and retention posture."
+  />
+  <link rel="canonical" href="/sync" />
+</svelte:head>
+
 <section>
   <div class="heading">
     <div>

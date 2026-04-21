@@ -355,6 +355,14 @@ pub async fn reconcile_backlog(
                 %error,
                 "backlog entry publish retry enqueue failed after ingest ledger record"
             );
+            persist_publish_failure(
+                backlog,
+                &entry.dedupe_key,
+                entry.payload.clone(),
+                error,
+            )
+            .await?;
+            continue;
         }
         backlog.mark_synced(&entry.dedupe_key).await?;
         info!(
@@ -859,6 +867,39 @@ mod tests {
         assert!(backlog.rows.lock().unwrap().is_empty());
         assert_eq!(publisher.published.lock().unwrap().len(), 2);
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_enqueue_failure_keeps_backlog_entry_pending() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let backlog = MemoryBacklog::default();
+        let event = entry();
+        let payload = serde_json::to_string(&event).unwrap();
+        let key = dedupe_key(&payload);
+        backlog
+            .save_pending(&key, "wireless.audit", &payload, "nats unavailable")
+            .await
+            .unwrap();
+
+        let publisher = MemoryPublisher {
+            fail: true,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        reconcile_backlog(
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(None, None, None, None),
+        )
+        .await
+        .unwrap();
+
+        let rows = backlog.rows.lock().unwrap().clone();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().any(|row| row.dedupe_key == key));
+        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+        assert!(publisher.published.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
