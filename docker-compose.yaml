@@ -161,6 +161,7 @@ services:
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
       ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
       ATH_SENSOR_REG_DOMAIN: ${ATH_SENSOR_REG_DOMAIN:-US}
+      RUST_LOG: ${ATH_SENSOR_RUST_LOG:-warn,atheros_sensor=info,ssl_proxy=info}
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/atheros-sensor healthcheck"]
       interval: 30s

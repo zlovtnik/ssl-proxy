@@ -21,6 +21,7 @@ sync-plane used by this repository.
 - `ATH_SENSOR_BPF`
 - `ATH_SENSOR_SNAPLEN`
 - `ATH_SENSOR_PCAP_TIMEOUT_MS`
+- `ATH_SENSOR_LOG_IDLE_SECS`
 - `AUDIT_WINDOW_TZ`
 - `AUDIT_WINDOW_DAYS`
 - `AUDIT_WINDOW_START`
@@ -36,6 +37,24 @@ sync-plane used by this repository.
 - `SYNC_INLINE_PAYLOAD_MAX_BYTES`
 - `SYNC_OUTBOX_DIR`
 - `DATABASE_URL`
+- `RUST_LOG`
+
+## Logging
+
+The sensor writes JSON logs to stdout/stderr for Docker and systemd collection.
+If `RUST_LOG` is missing or invalid, it falls back to:
+
+```text
+warn,atheros_sensor=info,ssl_proxy=info
+```
+
+When running through Docker Compose, override the sensor log filter with
+`ATH_SENSOR_RUST_LOG`; compose maps it to the container's `RUST_LOG`. Direct
+binary and systemd runs should set `RUST_LOG` directly.
+
+`ATH_SENSOR_LOG_IDLE_SECS` controls the capture heartbeat interval. The default
+is `30`, which emits periodic logs with packet, decoded-frame, drop, and error
+counters while capture is open. Set it to `0` to disable the heartbeat.
 
 ## Host Setup
 

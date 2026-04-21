@@ -15,6 +15,7 @@ pub struct AppConfig {
     pub bpf: String,
     pub snaplen: i32,
     pub pcap_timeout_ms: i32,
+    pub log_idle_secs: u64,
     pub database_url: String,
     pub sync: SyncConfig,
     pub audit_window: AuditWindow,
@@ -30,6 +31,8 @@ pub enum ConfigError {
     InvalidSnaplen(String),
     #[error("invalid ATH_SENSOR_PCAP_TIMEOUT_MS: {0}")]
     InvalidTimeout(String),
+    #[error("invalid ATH_SENSOR_LOG_IDLE_SECS: {0}")]
+    InvalidLogIdleSecs(String),
     #[error("invalid AUDIT_WINDOW_START: {0}")]
     InvalidAuditWindowStart(String),
     #[error("invalid AUDIT_WINDOW_END: {0}")]
@@ -115,6 +118,8 @@ impl AppConfig {
             snaplen: parse_i32("ATH_SENSOR_SNAPLEN", 4096).map_err(ConfigError::InvalidSnaplen)?,
             pcap_timeout_ms: parse_i32("ATH_SENSOR_PCAP_TIMEOUT_MS", 250)
                 .map_err(ConfigError::InvalidTimeout)?,
+            log_idle_secs: parse_u64("ATH_SENSOR_LOG_IDLE_SECS", 30)
+                .map_err(ConfigError::InvalidLogIdleSecs)?,
             database_url,
             sync,
             audit_window: audit_window_from_env()?,
@@ -325,6 +330,7 @@ mod tests {
             "ATH_SENSOR_BPF",
             "ATH_SENSOR_SNAPLEN",
             "ATH_SENSOR_PCAP_TIMEOUT_MS",
+            "ATH_SENSOR_LOG_IDLE_SECS",
             "AUDIT_WINDOW_TZ",
             "AUDIT_WINDOW_DAYS",
             "AUDIT_WINDOW_START",
@@ -351,6 +357,55 @@ mod tests {
             config.database_url,
             "postgres://sync:sync@127.0.0.1:5432/sync"
         );
+    }
+
+    #[test]
+    fn log_idle_secs_defaults_to_30() {
+        let _env = test_env();
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync");
+
+        let config = AppConfig::from_env().unwrap();
+
+        assert_eq!(config.log_idle_secs, 30);
+    }
+
+    #[test]
+    fn log_idle_secs_accepts_override() {
+        let _env = test_env();
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync");
+        std::env::set_var("ATH_SENSOR_LOG_IDLE_SECS", "5");
+
+        let config = AppConfig::from_env().unwrap();
+
+        assert_eq!(config.log_idle_secs, 5);
+    }
+
+    #[test]
+    fn log_idle_secs_allows_zero_to_disable() {
+        let _env = test_env();
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync");
+        std::env::set_var("ATH_SENSOR_LOG_IDLE_SECS", "0");
+
+        let config = AppConfig::from_env().unwrap();
+
+        assert_eq!(config.log_idle_secs, 0);
+    }
+
+    #[test]
+    fn log_idle_secs_rejects_invalid_value() {
+        let _env = test_env();
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync");
+        std::env::set_var("ATH_SENSOR_LOG_IDLE_SECS", "soon");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected invalid idle log interval to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::InvalidLogIdleSecs(ref value) if value == "soon"
+        ));
     }
 
     #[test]

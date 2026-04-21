@@ -9,6 +9,7 @@ WorkingDirectory=/opt/ssl-proxy/services/atheros-sensor
 Environment=ATH_SENSOR_LOCATION_ID=North-Wing-Entry
 Environment=ATH_SENSOR_CHANNEL=6
 Environment=ATH_SENSOR_REG_DOMAIN=US
+Environment=RUST_LOG=warn,atheros_sensor=info,ssl_proxy=info
 Environment=SYNC_NATS_URL=nats://127.0.0.1:4222
 Environment=DATABASE_URL=postgres://sync:sync@127.0.0.1:5432/sync
 ExecStartPre=/opt/ssl-proxy/scripts/prep_ath.sh
