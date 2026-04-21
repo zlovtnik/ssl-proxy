@@ -17,7 +17,26 @@ pub enum DeviceError {
 
 pub fn detect(override_name: Option<&str>) -> Result<String, DeviceError> {
     if let Some(name) = override_name {
-        return Ok(name.to_string());
+        let path = Path::new("/sys/class/net").join(name);
+        if path.exists() {
+            // Verify it's actually the correct driver
+            let driver_path = path.join("device/driver");
+            if let Ok(canonical) = fs::canonicalize(&driver_path) {
+                if canonical
+                    .file_name()
+                    .map(|n| n.to_string_lossy() == "ath9k_htc")
+                    .unwrap_or(false)
+                {
+                    return Ok(name.to_string());
+                }
+            }
+        }
+
+        // Explicit device not found - fall back to auto-detect
+        let auto = detect_in(Path::new("/sys/class/net"));
+        if auto.is_ok() {
+            return auto;
+        }
     }
     detect_in(Path::new("/sys/class/net"))
 }
