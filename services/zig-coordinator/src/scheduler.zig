@@ -82,7 +82,10 @@ pub const Coordinator = struct {
 
         const next_attempt = previous_attempts + 1;
         if (next_attempt > MAX_RETRIES) {
-            std.log.err("batch {s} exceeded max retries ({d})", .{ result.batch_id, MAX_RETRIES });
+            std.log.err(
+                "event=retry_exhausted batch_id={s} max_retries={d} status=permanent_failure",
+                .{ result.batch_id, MAX_RETRIES },
+            );
             return error.PermanentFailure;
         }
 
@@ -98,7 +101,7 @@ pub const Coordinator = struct {
             .backoff_ms = backoff_ms,
         });
         try self.retry_queue.append(self.allocator, result);
-        std.log.info("queued retry for batch {s} attempt {d} backoff_ms={d}", .{
+        std.log.info("event=retry_queued batch_id={s} attempt={d} backoff_ms={d} status=retry_scheduled", .{
             result.batch_id,
             next_attempt,
             backoff_ms,

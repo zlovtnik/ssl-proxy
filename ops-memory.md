@@ -66,3 +66,5 @@ Retry policy: auto-fix allowed once (`--no-build` fallback).
 - 2026-04-20T15:49:32Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:52:10Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:58:59Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
+- 2026-04-21T21:40:23Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=qr_permission_denied | action=Read profile from /config bind mount inside container
+- 2026-04-21T21:40:50Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into oracle-worker only

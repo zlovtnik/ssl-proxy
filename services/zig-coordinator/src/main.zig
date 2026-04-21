@@ -2,7 +2,11 @@ const std = @import("std");
 const config = @import("config.zig");
 const scheduler = @import("scheduler.zig");
 
+const SERVICE_NAME = "zig-coordinator";
+const HEARTBEAT_INTERVAL_MS: u64 = 300 * 1000;
+
 var should_shutdown = std.atomic.Value(bool).init(false);
+var shutdown_signal = std.atomic.Value(i32).init(0);
 
 const HealthcheckError = error{
     MissingDatabaseUrl,
@@ -30,12 +34,19 @@ pub fn main(init: std.process.Init) !void {
     _ = args.next();
     const mode = if (args.next()) |value| value[0..value.len] else "run";
 
+    std.debug.print(
+        "service={s} event=process_start mode={s} stream_name={s} stream_names={s} scan_subject={s} load_subject={s} result_subject={s}\n",
+        .{ SERVICE_NAME, mode, cfg.stream_name, cfg.stream_names_csv, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
+    );
+
     if (std.mem.eql(u8, mode, "healthcheck")) {
         try healthcheck(gpa, init.io, cfg);
+        std.debug.print("service={s} event=process_exit mode=healthcheck status=ok\n", .{SERVICE_NAME});
         return;
     }
 
     if (!std.mem.eql(u8, mode, "run")) {
+        std.debug.print("service={s} event=process_start status=error mode={s} error=InvalidArgument\n", .{ SERVICE_NAME, mode });
         std.debug.print("usage: zig-coordinator <run|healthcheck>\n", .{});
         return error.InvalidArgument;
     }
@@ -45,8 +56,8 @@ pub fn main(init: std.process.Init) !void {
     const cursor = coordinator.loadCursor(cfg.stream_name) orelse return HealthcheckError.CursorNotFound;
 
     std.debug.print(
-        "zig coordinator ready primary_stream={s} configured_streams={s} cursor={s} subjects={s},{s},{s}\n",
-        .{ cfg.stream_name, cfg.stream_names_csv, cursor.cursor_value, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
+        "service={s} event=ready mode=run primary_stream={s} configured_streams={s} cursor={s} subjects={s},{s},{s}\n",
+        .{ SERVICE_NAME, cfg.stream_name, cfg.stream_names_csv, cursor.cursor_value, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
     );
 
     installSignalHandlers();
@@ -63,7 +74,8 @@ fn installSignalHandlers() void {
     std.posix.sigaction(.TERM, &action, null);
 }
 
-fn handleShutdownSignal(_: std.posix.SIG) callconv(.c) void {
+fn handleShutdownSignal(sig: std.posix.SIG) callconv(.c) void {
+    shutdown_signal.store(@intFromEnum(sig), .release);
     should_shutdown.store(true, .release);
 }
 
@@ -79,13 +91,95 @@ fn ensureCursors(coordinator: anytype, stream_names_csv: []const u8) !void {
 }
 
 fn healthcheck(gpa: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
-    if (cfg.database_url.len == 0) return HealthcheckError.MissingDatabaseUrl;
-    if (cfg.sync_nats_url.len == 0) return HealthcheckError.MissingNatsUrl;
+    const start_ms = nowMs();
+    std.debug.print("service={s} event=healthcheck status=start\n", .{SERVICE_NAME});
+    if (cfg.database_url.len == 0) {
+        std.debug.print(
+            "service={s} event=healthcheck status=error duration_ms={d} error=MissingDatabaseUrl\n",
+            .{ SERVICE_NAME, elapsedMs(start_ms) },
+        );
+        return HealthcheckError.MissingDatabaseUrl;
+    }
+    if (cfg.sync_nats_url.len == 0) {
+        std.debug.print(
+            "service={s} event=healthcheck status=error duration_ms={d} error=MissingNatsUrl\n",
+            .{ SERVICE_NAME, elapsedMs(start_ms) },
+        );
+        return HealthcheckError.MissingNatsUrl;
+    }
 
-    try applySchema(gpa, io, cfg.database_url, cfg.sync_schema_file);
-    try checkNats(gpa, io, cfg.sync_nats_url);
-    try checkNatsStream(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name);
-    try checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name, cfg.scan_consumer);
+    const apply_schema_started_ms = nowMs();
+    std.debug.print("service={s} event=healthcheck_step status=start step=apply_schema\n", .{SERVICE_NAME});
+    applySchema(gpa, io, cfg.database_url, cfg.sync_schema_file) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=apply_schema duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, elapsedMs(apply_schema_started_ms), err },
+        );
+        std.debug.print(
+            "service={s} event=healthcheck status=error duration_ms={d} failed_step=apply_schema\n",
+            .{ SERVICE_NAME, elapsedMs(start_ms) },
+        );
+        return err;
+    };
+    std.debug.print(
+        "service={s} event=healthcheck_step status=ok step=apply_schema duration_ms={d}\n",
+        .{ SERVICE_NAME, elapsedMs(apply_schema_started_ms) },
+    );
+
+    const check_nats_started_ms = nowMs();
+    std.debug.print("service={s} event=healthcheck_step status=start step=check_nats\n", .{SERVICE_NAME});
+    checkNats(gpa, io, cfg.sync_nats_url) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=check_nats duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, elapsedMs(check_nats_started_ms), err },
+        );
+        std.debug.print(
+            "service={s} event=healthcheck status=error duration_ms={d} failed_step=check_nats\n",
+            .{ SERVICE_NAME, elapsedMs(start_ms) },
+        );
+        return err;
+    };
+    std.debug.print(
+        "service={s} event=healthcheck_step status=ok step=check_nats duration_ms={d}\n",
+        .{ SERVICE_NAME, elapsedMs(check_nats_started_ms) },
+    );
+
+    const check_stream_started_ms = nowMs();
+    std.debug.print("service={s} event=healthcheck_step status=start step=check_nats_stream\n", .{SERVICE_NAME});
+    checkNatsStream(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=check_nats_stream duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, elapsedMs(check_stream_started_ms), err },
+        );
+        std.debug.print(
+            "service={s} event=healthcheck status=error duration_ms={d} failed_step=check_nats_stream\n",
+            .{ SERVICE_NAME, elapsedMs(start_ms) },
+        );
+        return err;
+    };
+    std.debug.print(
+        "service={s} event=healthcheck_step status=ok step=check_nats_stream duration_ms={d}\n",
+        .{ SERVICE_NAME, elapsedMs(check_stream_started_ms) },
+    );
+
+    const check_consumer_started_ms = nowMs();
+    std.debug.print("service={s} event=healthcheck_step status=start step=check_nats_consumer\n", .{SERVICE_NAME});
+    checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name, cfg.scan_consumer) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=check_nats_consumer duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, elapsedMs(check_consumer_started_ms), err },
+        );
+        std.debug.print(
+            "service={s} event=healthcheck status=error duration_ms={d} failed_step=check_nats_consumer\n",
+            .{ SERVICE_NAME, elapsedMs(start_ms) },
+        );
+        return err;
+    };
+    std.debug.print(
+        "service={s} event=healthcheck_step status=ok step=check_nats_consumer duration_ms={d}\n",
+        .{ SERVICE_NAME, elapsedMs(check_consumer_started_ms) },
+    );
+    std.debug.print("service={s} event=healthcheck status=ok duration_ms={d}\n", .{ SERVICE_NAME, elapsedMs(start_ms) });
 }
 
 fn applySchema(gpa: std.mem.Allocator, io: std.Io, database_url: []const u8, schema_file: []const u8) !void {
@@ -158,17 +252,31 @@ fn parseNatsAuthority(gpa: std.mem.Allocator, nats_url: []const u8) ![]const u8 
 }
 
 fn runCoordinatorLoop(init: std.process.Init, coordinator: *scheduler.Coordinator, cfg: config.Config, shutdown: *std.atomic.Value(bool)) !void {
+    const start_ms = nowMs();
+    var last_heartbeat_ms = start_ms;
     while (!shutdown.load(.acquire)) {
         const had_work = runCoordinatorIteration(init.io, coordinator, cfg) catch |err| {
-            std.log.err("coordinator loop iteration failed: {}", .{err});
+            std.debug.print("service={s} event=coordinator_iteration status=error error={}\n", .{ SERVICE_NAME, err });
             sleepUnlessShutdown(init.io, shutdown, 5000);
+            maybeLogHeartbeat(start_ms, &last_heartbeat_ms);
             continue;
         };
+        if (had_work) {
+            std.debug.print("service={s} event=coordinator_iteration status=ok work_detected=true\n", .{SERVICE_NAME});
+        }
         if (!had_work) {
             sleepUnlessShutdown(init.io, shutdown, 1000);
         }
+        maybeLogHeartbeat(start_ms, &last_heartbeat_ms);
     }
-    std.log.info("coordinator loop shutting down gracefully", .{});
+    const signal = shutdown_signal.load(.acquire);
+    if (signal != 0) {
+        std.debug.print("service={s} event=signal_received signal={d}\n", .{ SERVICE_NAME, signal });
+    }
+    std.debug.print(
+        "service={s} event=shutdown status=graceful uptime_s={d}\n",
+        .{ SERVICE_NAME, elapsedMs(start_ms) / 1000 },
+    );
 }
 
 fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: u64) void {
@@ -176,7 +284,7 @@ fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: 
     while (remaining_ms > 0 and !shutdown.load(.acquire)) {
         const step_ms = @min(remaining_ms, 100);
         std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(step_ms)), .awake) catch |sleep_err| {
-            std.log.warn("sleep failed: {}", .{sleep_err});
+            std.debug.print("service={s} event=sleep status=error error={}\n", .{ SERVICE_NAME, sleep_err });
             return;
         };
         remaining_ms -= step_ms;
@@ -322,13 +430,21 @@ fn runCommand(
     argv: []const []const u8,
     on_error: anyerror,
 ) !void {
+    const start_ms = nowMs();
+    std.debug.print(
+        "service={s} event=command_execution status=start command={s} arg_count={d}\n",
+        .{ SERVICE_NAME, argv[0], argv.len },
+    );
     const result = std.process.run(gpa, io, .{
         .argv = argv,
         .expand_arg0 = .expand,
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(64 * 1024),
     }) catch |err| {
-        std.debug.print("failed to spawn {s}: {}\n", .{ argv[0], err });
+        std.debug.print(
+            "service={s} event=command_execution status=error command={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, argv[0], elapsedMs(start_ms), err },
+        );
         return on_error;
     };
     defer {
@@ -339,12 +455,24 @@ fn runCommand(
     switch (result.term) {
         .exited => |code| {
             if (code != 0) {
-                std.debug.print("{s} failed: {s}\n", .{ argv[0], result.stderr });
+                var stderr_buffer: [256]u8 = undefined;
+                const stderr_snippet = sanitizeSnippet(&stderr_buffer, result.stderr);
+                std.debug.print(
+                    "service={s} event=command_execution status=error command={s} exit_code={d} duration_ms={d} stderr=\"{s}\"\n",
+                    .{ SERVICE_NAME, argv[0], code, elapsedMs(start_ms), stderr_snippet },
+                );
                 return on_error;
             }
+            std.debug.print(
+                "service={s} event=command_execution status=ok command={s} exit_code={d} duration_ms={d}\n",
+                .{ SERVICE_NAME, argv[0], code, elapsedMs(start_ms) },
+            );
         },
         else => {
-            std.debug.print("{s} terminated unexpectedly\n", .{argv[0]});
+            std.debug.print(
+                "service={s} event=command_execution status=error command={s} duration_ms={d} error=TerminatedUnexpectedly\n",
+                .{ SERVICE_NAME, argv[0], elapsedMs(start_ms) },
+            );
             return on_error;
         },
     }
@@ -356,13 +484,21 @@ fn runCommandForWork(
     argv: []const []const u8,
     on_error: anyerror,
 ) !bool {
+    const start_ms = nowMs();
+    std.debug.print(
+        "service={s} event=command_execution status=start command={s} arg_count={d}\n",
+        .{ SERVICE_NAME, argv[0], argv.len },
+    );
     const result = std.process.run(gpa, io, .{
         .argv = argv,
         .expand_arg0 = .expand,
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(64 * 1024),
     }) catch |err| {
-        std.debug.print("failed to spawn {s}: {}\n", .{ argv[0], err });
+        std.debug.print(
+            "service={s} event=command_execution status=error command={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, argv[0], elapsedMs(start_ms), err },
+        );
         return on_error;
     };
     defer {
@@ -373,15 +509,78 @@ fn runCommandForWork(
     switch (result.term) {
         .exited => |code| {
             if (code != 0) {
-                std.debug.print("{s} failed: {s}\n", .{ argv[0], result.stderr });
+                var stderr_buffer: [256]u8 = undefined;
+                const stderr_snippet = sanitizeSnippet(&stderr_buffer, result.stderr);
+                std.debug.print(
+                    "service={s} event=command_execution status=error command={s} exit_code={d} duration_ms={d} stderr=\"{s}\"\n",
+                    .{ SERVICE_NAME, argv[0], code, elapsedMs(start_ms), stderr_snippet },
+                );
                 return on_error;
             }
+            std.debug.print(
+                "service={s} event=command_execution status=ok command={s} exit_code={d} duration_ms={d}\n",
+                .{ SERVICE_NAME, argv[0], code, elapsedMs(start_ms) },
+            );
         },
         else => {
-            std.debug.print("{s} terminated unexpectedly\n", .{argv[0]});
+            std.debug.print(
+                "service={s} event=command_execution status=error command={s} duration_ms={d} error=TerminatedUnexpectedly\n",
+                .{ SERVICE_NAME, argv[0], elapsedMs(start_ms) },
+            );
             return on_error;
         },
     }
 
-    return std.mem.trim(u8, result.stdout, " \t\r\n").len > 0;
+    const work_detected = std.mem.trim(u8, result.stdout, " \t\r\n").len > 0;
+    std.debug.print(
+        "service={s} event=command_output command={s} work_detected={s}\n",
+        .{ SERVICE_NAME, argv[0], boolToString(work_detected) },
+    );
+    return work_detected;
+}
+
+fn nowMs() u64 {
+    const now = std.time.milliTimestamp();
+    if (now <= 0) return 0;
+    return @intCast(now);
+}
+
+fn elapsedMs(start_ms: u64) u64 {
+    const now = nowMs();
+    if (now <= start_ms) return 0;
+    return now - start_ms;
+}
+
+fn maybeLogHeartbeat(start_ms: u64, last_heartbeat_ms: *u64) void {
+    const now = nowMs();
+    if (now <= last_heartbeat_ms.*) return;
+    const elapsed = now - last_heartbeat_ms.*;
+    if (elapsed < HEARTBEAT_INTERVAL_MS) return;
+
+    std.debug.print(
+        "service={s} event=heartbeat uptime_s={d} interval_s=300\n",
+        .{ SERVICE_NAME, elapsedMs(start_ms) / 1000 },
+    );
+    last_heartbeat_ms.* = now;
+}
+
+fn boolToString(value: bool) []const u8 {
+    return if (value) "true" else "false";
+}
+
+fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
+    var in_index: usize = 0;
+    var out_index: usize = 0;
+
+    while (in_index < raw.len and out_index < buffer.len) : (in_index += 1) {
+        const byte = raw[in_index];
+        if (byte == '\n' or byte == '\r' or byte == '\t') {
+            buffer[out_index] = ' ';
+        } else {
+            buffer[out_index] = byte;
+        }
+        out_index += 1;
+    }
+
+    return std.mem.trim(u8, buffer[0..out_index], " ");
 }
