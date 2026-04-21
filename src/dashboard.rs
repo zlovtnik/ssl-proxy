@@ -592,7 +592,7 @@ pub async fn stats_live(State(state): State<SharedState>) -> Json<LiveStats> {
 
         *last_sample = Instant::now();
 
-        if elapsed < 0.001 || elapsed > 300.0 {
+        if !(0.001..=300.0).contains(&elapsed) {
             // First sample or stale, return 0, next poll will have valid rate
             (0, 0)
         } else {

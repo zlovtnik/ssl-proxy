@@ -67,8 +67,8 @@ pub struct SyncPublisher {
     config: SyncPublisherConfig,
     published: Arc<Mutex<Vec<PublishedMessage>>>,
     health: Arc<Mutex<SyncPublisherHealth>>,
-    publish_tx: Arc<Mutex<Option<mpsc::Sender<(String, String)>>>>,
-    publish_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    publish_tx: Arc<Mutex<Option<PublishQueueSender>>>,
+    publish_task: Arc<Mutex<Option<PublishTaskHandle>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +77,10 @@ struct NatsEndpoint {
     host: String,
     tls_enabled: bool,
 }
+
+type PublishQueueMessage = (String, String);
+type PublishQueueSender = mpsc::Sender<PublishQueueMessage>;
+type PublishTaskHandle = JoinHandle<()>;
 
 #[derive(Serialize)]
 struct ConnectOptions<'a> {
@@ -106,7 +110,7 @@ impl SyncPublisher {
 
         let health = Arc::new(Mutex::new(SyncPublisherHealth::default()));
         let (publish_tx, publish_task) = if tokio::runtime::Handle::try_current().is_ok() {
-            let (publish_tx, mut publish_rx) = mpsc::channel::<(String, String)>(64);
+            let (publish_tx, mut publish_rx) = mpsc::channel::<PublishQueueMessage>(64);
             let config_clone = publisher_config.clone();
             let health_clone = Arc::clone(&health);
 
@@ -160,12 +164,13 @@ impl SyncPublisher {
         drop(sender);
 
         // Take and await the publisher task
-        if let Some(handle) = self
-            .publish_task
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-        {
+        let handle = {
+            self.publish_task
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+        };
+        if let Some(handle) = handle {
             let _ = handle.await;
         }
     }
@@ -204,7 +209,7 @@ impl SyncPublisher {
         };
 
         let subject = SYNC_SCAN_REQUEST_SUBJECT.to_string();
-        if let Err(_) = publish_tx.try_send((subject, payload)) {
+        if publish_tx.try_send((subject, payload)).is_err() {
             warn!("publish queue full; dropping scan request");
         }
     }

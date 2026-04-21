@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use serde_json;
 use sha2::{Digest, Sha256};
 use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
 use thiserror::Error;
@@ -61,7 +60,7 @@ impl PublishClient for SyncPublisherClient {
 
 static CIRCUIT_BREAKER: Mutex<Option<Instant>> = Mutex::new(None);
 const CIRCUIT_BREAKER_TIMEOUT: Duration = Duration::from_secs(10);
-const MEMORY_BACKLOG_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
+const MEMORY_BACKLOG_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 
 lazy_static::lazy_static! {
     static ref MEMORY_BACKLOG: Mutex<LruCache<String, (String, String, String)>> = Mutex::new(LruCache::new(MEMORY_BACKLOG_SIZE));

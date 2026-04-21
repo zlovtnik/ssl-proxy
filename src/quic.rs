@@ -627,7 +627,7 @@ async fn handle_h3_request(
 }
 
 /// Redact known sensitive patterns from captured payload.
-fn redact_sensitive_data(buf: &mut Vec<u8>) {
+fn redact_sensitive_data(buf: &mut [u8]) {
     if buf.is_empty() {
         return;
     }

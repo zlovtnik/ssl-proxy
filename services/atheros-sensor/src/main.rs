@@ -231,5 +231,5 @@ where
 }
 
 fn boxed_error(message: String) -> Box<dyn Error> {
-    Box::new(std::io::Error::new(std::io::ErrorKind::Other, message))
+    Box::new(std::io::Error::other(message))
 }

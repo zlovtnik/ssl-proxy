@@ -328,7 +328,7 @@ impl AppState {
         config: crate::config::Config,
     ) -> SharedState {
         let seed = SEED.iter().map(|s| s.to_string()).collect();
-        let state = Arc::new(Self {
+        Arc::new(Self {
             client,
             resolver,
             stats_tx,
@@ -361,9 +361,7 @@ impl AppState {
             last_bytes_up: AtomicU64::new(0),
             last_bytes_down: AtomicU64::new(0),
             last_sample_instant: Mutex::new(Instant::now()),
-        });
-
-        state
+        })
     }
 
     #[allow(dead_code)]
