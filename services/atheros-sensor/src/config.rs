@@ -54,6 +54,7 @@ impl AppConfig {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
             connect_timeout_ms: parse_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000).unwrap_or(2_000),
+            publish_timeout_ms: parse_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000).unwrap_or(2_000),
             username: std::env::var("SYNC_NATS_USERNAME")
                 .ok()
                 .map(|value| value.trim().to_string())
@@ -313,6 +314,7 @@ mod tests {
             "DATABASE_URL",
             "SYNC_NATS_URL",
             "SYNC_NATS_CONNECT_TIMEOUT_MS",
+            "SYNC_NATS_PUBLISH_TIMEOUT_MS",
             "SYNC_NATS_USERNAME",
             "SYNC_NATS_PASSWORD",
             "SYNC_NATS_PASSWORD_FILE",
@@ -353,6 +355,7 @@ mod tests {
             config.sync.nats_url.as_deref(),
             Some("nats://127.0.0.1:4222")
         );
+        assert_eq!(config.sync.publish_timeout_ms, 2_000);
         assert_eq!(
             config.database_url,
             "postgres://sync:sync@127.0.0.1:5432/sync"
