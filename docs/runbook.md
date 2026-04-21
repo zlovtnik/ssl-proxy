@@ -70,6 +70,14 @@ docker compose restart ssl-proxy
 
 ---
 
+### 3.1 Compose Runtime Compatibility Mode for Peer Config Mounts
+
+- `ssl-proxy` is intentionally pinned to `user: "0:0"` in `docker-compose.yaml` for compatibility with host bind-mounted peer config files such as `config/peer1/peer1.conf` that are commonly `0600`.
+- This preserves legacy startup behavior where entrypoint key sync reads/writes `PublicKey` and `PresharedKey` data from `/config/peer1/*.conf`.
+- Security tradeoff: root-in-container plus `NET_ADMIN` increases impact if the container is compromised. Keep `--privileged` disabled and avoid broad writable host mounts.
+
+---
+
 ### 4. Verify Container Provenance for WireGuard Startup
 
 1. **Force a fresh build with explicit metadata:**

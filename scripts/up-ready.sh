@@ -65,6 +65,7 @@ schema_apply_failed::psql failed::Coordinator could not apply or validate the sy
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict (often 443 in local tests)::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
+peer_config_permission_denied::awk: cannot open /config/.*\\.conf \\(Permission denied\\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual
 SIGEOF
 }
 

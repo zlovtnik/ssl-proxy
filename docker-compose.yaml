@@ -15,6 +15,9 @@ services:
       args:
         VCS_REF: ${VCS_REF:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
+    # Compatibility mode: host-mounted peer config files are often 0600 on the host.
+    # Run as root so startup key sync/read logic can access /config/peer1/*.conf.
+    user: "0:0"
     command: ["/usr/local/bin/start-proxy-wg"]
     restart: unless-stopped
     healthcheck:
@@ -32,8 +35,8 @@ services:
           cpus: '0.5'
           memory: 512M
     # NET_ADMIN and /dev/net/tun are required for BoringTun to create tun interfaces
-    # and manage routes. Risk: container compromise grants network admin. Mitigations:
-    # non-root user (proxyuser), capabilities limited to NET_ADMIN only, no --privileged.
+    # and manage routes. Risk: container compromise grants network admin + root-in-container.
+    # Mitigations: capabilities limited to NET_ADMIN only, no --privileged.
     cap_add:
       - NET_ADMIN
     devices:
