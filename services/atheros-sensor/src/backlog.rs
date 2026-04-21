@@ -55,7 +55,10 @@ impl PostgresBacklog {
             },
         );
         let pool = Pool::builder(manager)
-            .max_size(16)
+            .max_size(2)
+            .wait_timeout(Some(std::time::Duration::from_millis(500)))
+            .create_timeout(Some(std::time::Duration::from_secs(2)))
+            .recycle_timeout(Some(std::time::Duration::from_secs(1)))
             .build()
             .map_err(|error| BacklogError::PoolBuild(error.to_string()))?;
         Ok(Self { pool })

@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
+use std::time::{Instant, Duration};
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json;
 use sha2::{Digest, Sha256};
 use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
 use thiserror::Error;
@@ -9,7 +12,7 @@ use tracing::warn;
 
 use crate::{
     audit::AuditWindow,
-    backlog::{BacklogEntry, BacklogError, BacklogStore},
+    backlog::{BacklogError, BacklogStore},
     model::AuditEntry,
 };
 
@@ -50,6 +53,14 @@ impl PublishClient for SyncPublisherClient {
     }
 }
 
+static CIRCUIT_BREAKER: Mutex<Option<Instant>> = Mutex::new(None);
+const CIRCUIT_BREAKER_TIMEOUT: Duration = Duration::from_secs(10);
+const MEMORY_BACKLOG_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
+
+lazy_static::lazy_static! {
+    static ref MEMORY_BACKLOG: Mutex<LruCache<String, (String, String, String)>> = Mutex::new(LruCache::new(MEMORY_BACKLOG_SIZE));
+}
+
 pub async fn publish_entry(
     backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
@@ -57,13 +68,59 @@ pub async fn publish_entry(
 ) -> Result<(), PublishError> {
     let payload = serde_json::to_string(&entry)?;
     let dedupe_key = dedupe_key(&payload);
-    if let Err(error) = publish_payload(publisher, &payload, &dedupe_key, &entry.observed_at).await {
-        backlog
-            .save_pending(&dedupe_key, "wireless.audit", &payload, &error)
-            .await?;
-        return Err(PublishError::Publish(error));
+    
+    // First attempt normal publish
+    match publish_payload(publisher, &payload, &dedupe_key, &entry.observed_at).await {
+        Ok(_) => {
+            // Try to flush any memory backlog entries now that we're healthy
+            let mut backlog_guard = MEMORY_BACKLOG.lock().unwrap();
+            while let Some((key, (stream, payload, err))) = backlog_guard.pop_lru() {
+                let _ = backlog.save_pending(&key, &stream, &payload, &err).await;
+            }
+            
+            // Close circuit breaker if it was open
+            let mut cb = CIRCUIT_BREAKER.lock().unwrap();
+            if cb.is_some() {
+                *cb = None;
+                tracing::info!("postgres circuit breaker closed, backlog resumed");
+            }
+            
+            Ok(())
+        }
+        Err(error) => {
+            // Check circuit breaker state
+            {
+                let mut cb = CIRCUIT_BREAKER.lock().unwrap();
+                if let Some(opened_at) = *cb {
+                    if opened_at.elapsed() < CIRCUIT_BREAKER_TIMEOUT {
+                        // Circuit is open - store in memory only, do not hit postgres
+                        let mut mb = MEMORY_BACKLOG.lock().unwrap();
+                        mb.put(dedupe_key, ("wireless.audit".to_string(), payload, error));
+                        return Ok(());
+                    } else {
+                        // Circuit timeout expired, reset it
+                        *cb = None;
+                    }
+                }
+            }
+            
+            // Attempt to persist to postgres backlog
+            if let Err(backlog_err) = backlog.save_pending(&dedupe_key, "wireless.audit", &payload, &error).await {
+                // Backlog failed - open circuit breaker
+                let mut cb = CIRCUIT_BREAKER.lock().unwrap();
+                if cb.is_none() {
+                    *cb = Some(Instant::now());
+                    tracing::error!(%backlog_err, "postgres backlog failed, opening circuit breaker for 10s");
+                }
+                
+                // Fallback to memory backlog
+                let mut mb = MEMORY_BACKLOG.lock().unwrap();
+                mb.put(dedupe_key, ("wireless.audit".to_string(), payload, error.clone()));
+            }
+            
+            Err(PublishError::Publish(error))
+        }
     }
-    Ok(())
 }
 
 pub async fn reconcile_backlog(
