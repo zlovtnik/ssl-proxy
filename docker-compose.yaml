@@ -137,6 +137,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      zig-coordinator:
+        condition: service_healthy
     build:
       context: .
       dockerfile: Dockerfile

@@ -15,7 +15,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     audit::AuditLayer,
-    backlog::PostgresBacklog,
+    backlog::{BacklogStore, PostgresBacklog},
     capture::stream_packets,
     config::AppConfig,
     device::{detect, read_mac_address},
@@ -35,7 +35,8 @@ async fn run_healthcheck() -> Result<(), Box<dyn std::error::Error>> {
     let _sensor_id = read_mac_address(&device)?;
 
     // Verify database connection works
-    let _backlog = PostgresBacklog::connect(&config.database_url).await?;
+    let backlog = PostgresBacklog::connect(&config.database_url).await?;
+    let _ = backlog.list_pending().await?;
 
     // Verify NATS publisher initializes
     let _publisher = ssl_proxy::transport::SyncPublisher::new(&config.sync);
