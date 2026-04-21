@@ -1433,9 +1433,9 @@ dependencies = [
 
 [[package]]
 name = "ieee80211"
-version = "0.5.9"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7418f9be3522922d6e87647eacd5275641f6c225cf4a444a64c31e366ac37559"
+checksum = "253f669bf72b334f7c6d6baf608d5b32e58b66a83884d5da71f3285375f1ba35"
 dependencies = [
  "aes-kw",
  "bitfield-struct",
