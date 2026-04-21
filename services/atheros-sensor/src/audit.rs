@@ -6,7 +6,7 @@ use serde_json::json;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuditWindow {
     timezone: Option<Tz>,
     days: Option<HashSet<Weekday>>,

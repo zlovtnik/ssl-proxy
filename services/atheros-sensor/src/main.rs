@@ -66,6 +66,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = detect(config.device_override.as_deref())?;
     let sensor_id = read_mac_address(&device)?;
+    info!(
+        sensor_id = %sensor_id,
+        location_id = %config.location_id,
+        interface = %device,
+        channel = config.channel,
+        reg_domain = %config.reg_domain,
+        bpf = %config.bpf,
+        snaplen = config.snaplen,
+        pcap_timeout_ms = config.pcap_timeout_ms,
+        nats_configured = config.sync.nats_url.is_some(),
+        nats_tls_enabled = config.sync.tls_enabled,
+        audit_window = ?audit_window,
+        "atheros sensor starting"
+    );
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     let backlog = Arc::new(PostgresBacklog::connect(&config.database_url).await?);
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
@@ -75,6 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reconcile_client = Arc::clone(&publish_client);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(15));
+        info!("backlog reconciliation task started");
         loop {
             interval.tick().await;
             if let Err(error) = reconcile_backlog(

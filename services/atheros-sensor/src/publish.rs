@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
@@ -8,7 +8,7 @@ use serde_json;
 use sha2::{Digest, Sha256};
 use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, error, info, warn};
 
 use crate::{
     audit::AuditWindow,
@@ -68,14 +68,37 @@ pub async fn publish_entry(
 ) -> Result<(), PublishError> {
     let payload = serde_json::to_string(&entry)?;
     let dedupe_key = dedupe_key(&payload);
+    debug!(
+        dedupe_key = %dedupe_key,
+        observed_at = %entry.observed_at,
+        sensor_id = %entry.sensor_id,
+        frame_subtype = %entry.frame_subtype,
+        payload_bytes = payload.len(),
+        "publishing wireless audit entry"
+    );
     
     // First attempt normal publish
     match publish_payload(publisher, &payload, &dedupe_key, &entry.observed_at).await {
         Ok(_) => {
             // Try to flush any memory backlog entries now that we're healthy
-            let mut backlog_guard = MEMORY_BACKLOG.lock().unwrap();
-            while let Some((key, (stream, payload, err))) = backlog_guard.pop_lru() {
-                let _ = backlog.save_pending(&key, &stream, &payload, &err).await;
+            let memory_entries = drain_memory_backlog();
+            if !memory_entries.is_empty() {
+                info!(
+                    memory_backlog_entries = memory_entries.len(),
+                    "flushing memory backlog to postgres"
+                );
+            }
+            for (key, (stream, payload, err)) in memory_entries {
+                if let Err(backlog_err) = backlog.save_pending(&key, &stream, &payload, &err).await {
+                    error!(
+                        dedupe_key = %key,
+                        stream_name = %stream,
+                        %backlog_err,
+                        "failed to flush memory backlog entry to postgres"
+                    );
+                    put_memory_backlog(key, stream, payload, err);
+                    break;
+                }
             }
             
             // Close circuit breaker if it was open
@@ -94,12 +117,23 @@ pub async fn publish_entry(
                 if let Some(opened_at) = *cb {
                     if opened_at.elapsed() < CIRCUIT_BREAKER_TIMEOUT {
                         // Circuit is open - store in memory only, do not hit postgres
-                        let mut mb = MEMORY_BACKLOG.lock().unwrap();
-                        mb.put(dedupe_key, ("wireless.audit".to_string(), payload, error));
+                        let memory_backlog_entries =
+                            put_memory_backlog(dedupe_key.clone(), "wireless.audit".to_string(), payload, error.clone());
+                        warn!(
+                            dedupe_key = %dedupe_key,
+                            publish_error = %error,
+                            memory_backlog_entries,
+                            circuit_open_for_ms = opened_at.elapsed().as_millis() as u64,
+                            "postgres backlog circuit breaker open; queued audit entry in memory"
+                        );
                         return Ok(());
                     } else {
                         // Circuit timeout expired, reset it
                         *cb = None;
+                        info!(
+                            dedupe_key = %dedupe_key,
+                            "postgres backlog circuit breaker probe starting"
+                        );
                     }
                 }
             }
@@ -110,12 +144,29 @@ pub async fn publish_entry(
                 let mut cb = CIRCUIT_BREAKER.lock().unwrap();
                 if cb.is_none() {
                     *cb = Some(Instant::now());
-                    tracing::error!(%backlog_err, "postgres backlog failed, opening circuit breaker for 10s");
+                    error!(
+                        dedupe_key = %dedupe_key,
+                        publish_error = %error,
+                        %backlog_err,
+                        circuit_breaker_timeout_ms = CIRCUIT_BREAKER_TIMEOUT.as_millis() as u64,
+                        "postgres backlog failed; opening circuit breaker"
+                    );
                 }
                 
                 // Fallback to memory backlog
-                let mut mb = MEMORY_BACKLOG.lock().unwrap();
-                mb.put(dedupe_key, ("wireless.audit".to_string(), payload, error.clone()));
+                let memory_backlog_entries =
+                    put_memory_backlog(dedupe_key.clone(), "wireless.audit".to_string(), payload, error.clone());
+                warn!(
+                    dedupe_key = %dedupe_key,
+                    memory_backlog_entries,
+                    "queued audit entry in memory backlog after postgres failure"
+                );
+            } else {
+                warn!(
+                    dedupe_key = %dedupe_key,
+                    publish_error = %error,
+                    "publish failed; audit entry persisted to postgres backlog"
+                );
             }
             
             Err(PublishError::Publish(error))
@@ -129,6 +180,10 @@ pub async fn reconcile_backlog(
     audit_window: &AuditWindow,
 ) -> Result<(), PublishError> {
     let pending = backlog.list_pending().await?;
+    debug!(
+        pending_count = pending.len(),
+        "starting backlog reconciliation"
+    );
     for entry in pending {
         let observed_at = match extract_observed_at(&entry.payload) {
             Ok(value) => value,
@@ -156,14 +211,36 @@ pub async fn reconcile_backlog(
             }
         };
         if !audit_window.is_active_at(observed_at_dt) {
+            debug!(
+                dedupe_key = %entry.dedupe_key,
+                stream_name = %entry.stream_name,
+                observed_at = %observed_at,
+                "skipping backlog entry outside audit window"
+            );
             continue;
         }
 
-        if publish_payload(publisher, &entry.payload, &entry.dedupe_key, &observed_at)
+        match publish_payload(publisher, &entry.payload, &entry.dedupe_key, &observed_at)
             .await
-            .is_ok()
         {
-            backlog.mark_synced(&entry.dedupe_key).await?;
+            Ok(()) => {
+                backlog.mark_synced(&entry.dedupe_key).await?;
+                info!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    "backlog entry reconciled"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    %error,
+                    "backlog entry publish retry failed"
+                );
+            }
         }
     }
     Ok(())
@@ -175,7 +252,20 @@ async fn publish_payload(
     dedupe_key: &str,
     observed_at: &str,
 ) -> Result<(), String> {
-    publisher.publish_message("wireless.audit", payload).await?;
+    publisher
+        .publish_message("wireless.audit", payload)
+        .await
+        .map_err(|error| {
+            format!(
+                "stage=publish_audit subject=wireless.audit dedupe_key={dedupe_key}: {error}"
+            )
+        })?;
+    debug!(
+        dedupe_key,
+        subject = "wireless.audit",
+        payload_bytes = payload.len(),
+        "published audit payload"
+    );
     let payload_ref = publisher.payload_ref_for_event(payload, observed_at)?;
     let request = ScanRequest {
         stream_name: "wireless.audit".to_string(),
@@ -188,6 +278,18 @@ async fn publish_payload(
     publisher
         .publish_message(SYNC_SCAN_REQUEST_SUBJECT, &request_payload)
         .await
+        .map_err(|error| {
+            format!(
+                "stage=publish_scan_request subject={SYNC_SCAN_REQUEST_SUBJECT} dedupe_key={dedupe_key}: {error}"
+            )
+        })?;
+    debug!(
+        dedupe_key,
+        subject = SYNC_SCAN_REQUEST_SUBJECT,
+        payload_bytes = request_payload.len(),
+        "published scan request"
+    );
+    Ok(())
 }
 
 fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
@@ -203,6 +305,26 @@ fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
 
 fn dedupe_key(payload: &str) -> String {
     format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
+fn drain_memory_backlog() -> Vec<(String, (String, String, String))> {
+    let mut backlog = MEMORY_BACKLOG.lock().unwrap();
+    let mut entries = Vec::with_capacity(backlog.len());
+    while let Some(entry) = backlog.pop_lru() {
+        entries.push(entry);
+    }
+    entries
+}
+
+fn put_memory_backlog(
+    dedupe_key: String,
+    stream_name: String,
+    payload: String,
+    error: String,
+) -> usize {
+    let mut backlog = MEMORY_BACKLOG.lock().unwrap();
+    backlog.put(dedupe_key, (stream_name, payload, error));
+    backlog.len()
 }
 
 #[cfg(test)]
