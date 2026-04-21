@@ -19,7 +19,7 @@ RUN apk add --no-cache ca-certificates curl xz \
  && ln -s "/opt/zig-${zig_arch}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
  && rm -f /tmp/zig.tar.xz
 
-COPY . .
+COPY services/zig-coordinator/ ./
 RUN zig build -Doptimize=ReleaseSafe
 
 FROM debian:bookworm-slim
