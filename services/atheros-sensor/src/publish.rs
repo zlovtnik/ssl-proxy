@@ -28,8 +28,10 @@ pub enum PublishError {
     Queued(String),
 }
 
+#[async_trait]
 pub trait PublishClient: Send + Sync {
     fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String>;
+    async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String>;
     fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str)
         -> Result<String, String>;
 }
@@ -44,9 +46,14 @@ impl SyncPublisherClient {
     }
 }
 
+#[async_trait]
 impl PublishClient for SyncPublisherClient {
     fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
         self.publisher.enqueue_message(subject, payload)
+    }
+
+    async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        self.publisher.publish_message(subject, payload).await
     }
 
     fn payload_ref_for_event(
@@ -124,7 +131,8 @@ pub async fn publish_entry(
     flush_memory_backlog(backlog).await;
     close_postgres_circuit_breaker();
 
-    if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared) {
+    if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
+    {
         persist_publish_failure(backlog, &dedupe_key, payload, error).await?;
     }
 
@@ -338,7 +346,7 @@ pub async fn reconcile_backlog(
             .await?;
 
         if let Err(error) =
-            enqueue_prepared_publish(publisher, &entry.payload, &entry.dedupe_key, &prepared)
+            enqueue_prepared_publish(publisher, &entry.payload, &entry.dedupe_key, &prepared).await
         {
             warn!(
                 dedupe_key = %entry.dedupe_key,
@@ -381,30 +389,34 @@ fn prepare_publish(
     })
 }
 
-fn enqueue_prepared_publish(
+async fn enqueue_prepared_publish(
     publisher: &dyn PublishClient,
     payload: &str,
     dedupe_key: &str,
     prepared: &PreparedPublish,
 ) -> Result<(), String> {
-    publisher
-        .enqueue_message("wireless.audit", payload)
-        .map_err(|error| {
-            format!("stage=publish_audit subject=wireless.audit dedupe_key={dedupe_key}: {error}")
-        })?;
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_audit",
+        "wireless.audit",
+        payload,
+        dedupe_key,
+    )
+    .await?;
     debug!(
         dedupe_key,
         subject = "wireless.audit",
         payload_bytes = payload.len(),
         "queued audit payload"
     );
-    publisher
-        .enqueue_message(SYNC_SCAN_REQUEST_SUBJECT, &prepared.request_payload)
-        .map_err(|error| {
-            format!(
-                "stage=publish_scan_request subject={SYNC_SCAN_REQUEST_SUBJECT} dedupe_key={dedupe_key}: {error}"
-            )
-        })?;
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_scan_request",
+        SYNC_SCAN_REQUEST_SUBJECT,
+        &prepared.request_payload,
+        dedupe_key,
+    )
+    .await?;
     debug!(
         dedupe_key,
         subject = SYNC_SCAN_REQUEST_SUBJECT,
@@ -412,6 +424,35 @@ fn enqueue_prepared_publish(
         "queued scan request"
     );
     Ok(())
+}
+
+async fn queue_publish_with_backpressure(
+    publisher: &dyn PublishClient,
+    stage: &str,
+    subject: &str,
+    payload: &str,
+    dedupe_key: &str,
+) -> Result<(), String> {
+    match publisher.enqueue_message(subject, payload) {
+        Ok(()) => Ok(()),
+        Err(error) if error == "sync publisher queue full" => {
+            debug!(
+                dedupe_key,
+                subject,
+                payload_bytes = payload.len(),
+                "sync publisher queue full; retrying with backpressure"
+            );
+            publisher
+                .publish_message(subject, payload)
+                .await
+                .map_err(|error| {
+                    format!("stage={stage} subject={subject} dedupe_key={dedupe_key}: {error}")
+                })
+        }
+        Err(error) => Err(format!(
+            "stage={stage} subject={subject} dedupe_key={dedupe_key}: {error}"
+        )),
+    }
 }
 
 fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
@@ -497,6 +538,7 @@ mod tests {
         published: Arc<Mutex<Vec<(String, String)>>>,
     }
 
+    #[async_trait]
     impl PublishClient for MemoryPublisher {
         fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
             if self.fail {
@@ -507,6 +549,10 @@ mod tests {
                 .unwrap()
                 .push((subject.to_string(), payload.to_string()));
             Ok(())
+        }
+
+        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+            self.enqueue_message(subject, payload)
         }
 
         fn payload_ref_for_event(
@@ -662,6 +708,65 @@ mod tests {
         publish_entry(&backlog, &publisher, entry()).await.unwrap();
         assert_eq!(backlog.rows.lock().unwrap().len(), 1);
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+    }
+
+    struct QueueFullOnEnqueuePublisher {
+        published: Arc<Mutex<Vec<(String, String)>>>,
+        queue_full_remaining: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl PublishClient for QueueFullOnEnqueuePublisher {
+        fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+            let mut queue_full_remaining = self.queue_full_remaining.lock().unwrap();
+            if *queue_full_remaining > 0 {
+                *queue_full_remaining -= 1;
+                return Err("sync publisher queue full".to_string());
+            }
+            self.published
+                .lock()
+                .unwrap()
+                .push((subject.to_string(), payload.to_string()));
+            Ok(())
+        }
+
+        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+            self.published
+                .lock()
+                .unwrap()
+                .push((subject.to_string(), payload.to_string()));
+            Ok(())
+        }
+
+        fn payload_ref_for_event(
+            &self,
+            raw_payload: &str,
+            _observed_at: &str,
+        ) -> Result<String, String> {
+            Ok(format!(
+                "inline://json/{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw_payload)
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn queue_full_is_retried_with_backpressure_before_backlog_fallback() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let publisher = QueueFullOnEnqueuePublisher {
+            published: Arc::new(Mutex::new(Vec::new())),
+            queue_full_remaining: Mutex::new(1),
+        };
+        let backlog = MemoryBacklog::default();
+
+        publish_entry(&backlog, &publisher, entry()).await.unwrap();
+
+        assert!(backlog.rows.lock().unwrap().is_empty());
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 2);
+        assert_eq!(published[0].0, "wireless.audit");
+        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_SUBJECT);
     }
 
     #[tokio::test]
