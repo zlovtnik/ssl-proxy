@@ -200,6 +200,13 @@ fn handleCursor(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Con
 
 fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
     const sql =
+        \\update sync_scan_ingest ingest
+        \\   set status = 'batched',
+        \\       updated_at = now()
+        \\ where status = 'processing'
+        \\   and exists (select 1 from sync_batch batch where batch.dedupe_key = ingest.dedupe_key)
+        \\returning dedupe_key;
+        \\
         \\with next_ingest as (
         \\  update sync_scan_ingest
         \\     set status = 'processing',
@@ -252,10 +259,13 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\  do update set cursor_value = excluded.cursor_value, updated_at = now()
         \\  returning stream_name
         \\)
-        \\update sync_scan_ingest
+        \\select dedupe_key from batch_upsert;
+        \\
+        \\update sync_scan_ingest ingest
         \\   set status = 'batched',
         \\       updated_at = now()
-        \\ where dedupe_key in (select dedupe_key from next_ingest)
+        \\ where status = 'processing'
+        \\   and exists (select 1 from sync_batch batch where batch.dedupe_key = ingest.dedupe_key)
         \\returning dedupe_key;
     ;
     const argv = [_][]const u8{

@@ -209,7 +209,8 @@ services:
       SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
     volumes:
       - ./docker/nats:/config:ro
-    command: ["sh", "/config/bootstrap.sh"]
+    entrypoint: ["sh"]
+    command: ["/config/bootstrap.sh"]
 
   postgres:
     image: postgres:16-bookworm

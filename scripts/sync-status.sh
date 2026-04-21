@@ -4,6 +4,9 @@ set -eu
 STREAM_NAME="${AUDIT_STREAM_NAME:-AUDIT_STREAM}"
 SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
 DATABASE_URL="${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}"
+NATS_URL="${SYNC_NATS_URL:-nats://nats:4222}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-ssl-proxy}"
+NATS_IMAGE="${NATS_BOX_IMAGE:-natsio/nats-box:0.16.0}"
 
 echo "== compose services =="
 docker compose ps nats postgres nats-bootstrap zig-coordinator atheros-sensor
@@ -14,11 +17,11 @@ docker compose exec -T nats wget -qO- http://127.0.0.1:8222/jsz || true
 
 echo
 echo "== nats stream =="
-docker compose run --rm nats-bootstrap nats --server "${SYNC_NATS_URL:-nats://nats:4222}" stream info "${STREAM_NAME}" || true
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint nats "${NATS_IMAGE}" --server "${NATS_URL}" stream info "${STREAM_NAME}" --no-select || true
 
 echo
 echo "== nats scan consumer =="
-docker compose run --rm nats-bootstrap nats --server "${SYNC_NATS_URL:-nats://nats:4222}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" || true
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint nats "${NATS_IMAGE}" --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" --no-select || true
 
 echo
 echo "== postgres sync counts =="
@@ -30,7 +33,7 @@ union all select 'sync_batch', count(*) from sync_batch
 union all select 'sync_error', count(*) from sync_error
 union all select 'audit_backlog', count(*) from audit_backlog
 order by table_name;
-"
+" || true
 
 echo
 echo "== recent ingest =="
@@ -39,4 +42,4 @@ select observed_at, stream_name, status, producer, event_kind, left(dedupe_key, 
 from sync_scan_ingest
 order by updated_at desc
 limit 10;
-"
+" || true
