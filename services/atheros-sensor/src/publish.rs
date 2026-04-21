@@ -1,7 +1,7 @@
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json;
@@ -29,7 +29,8 @@ pub enum PublishError {
 #[async_trait]
 pub trait PublishClient: Send + Sync {
     async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String>;
-    fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str) -> Result<String, String>;
+    fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str)
+        -> Result<String, String>;
 }
 
 pub struct SyncPublisherClient {
@@ -48,8 +49,13 @@ impl PublishClient for SyncPublisherClient {
         self.publisher.publish_message(subject, payload).await
     }
 
-    fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str) -> Result<String, String> {
-        self.publisher.payload_ref_for_event(raw_payload, observed_at)
+    fn payload_ref_for_event(
+        &self,
+        raw_payload: &str,
+        observed_at: &str,
+    ) -> Result<String, String> {
+        self.publisher
+            .payload_ref_for_event(raw_payload, observed_at)
     }
 }
 
@@ -76,7 +82,7 @@ pub async fn publish_entry(
         payload_bytes = payload.len(),
         "publishing wireless audit entry"
     );
-    
+
     // First attempt normal publish
     match publish_payload(publisher, &payload, &dedupe_key, &entry.observed_at).await {
         Ok(_) => {
@@ -89,7 +95,8 @@ pub async fn publish_entry(
                 );
             }
             for (key, (stream, payload, err)) in memory_entries {
-                if let Err(backlog_err) = backlog.save_pending(&key, &stream, &payload, &err).await {
+                if let Err(backlog_err) = backlog.save_pending(&key, &stream, &payload, &err).await
+                {
                     error!(
                         dedupe_key = %key,
                         stream_name = %stream,
@@ -100,14 +107,14 @@ pub async fn publish_entry(
                     break;
                 }
             }
-            
+
             // Close circuit breaker if it was open
             let mut cb = CIRCUIT_BREAKER.lock().unwrap();
             if cb.is_some() {
                 *cb = None;
                 tracing::info!("postgres circuit breaker closed, backlog resumed");
             }
-            
+
             Ok(())
         }
         Err(error) => {
@@ -117,8 +124,12 @@ pub async fn publish_entry(
                 if let Some(opened_at) = *cb {
                     if opened_at.elapsed() < CIRCUIT_BREAKER_TIMEOUT {
                         // Circuit is open - store in memory only, do not hit postgres
-                        let memory_backlog_entries =
-                            put_memory_backlog(dedupe_key.clone(), "wireless.audit".to_string(), payload, error.clone());
+                        let memory_backlog_entries = put_memory_backlog(
+                            dedupe_key.clone(),
+                            "wireless.audit".to_string(),
+                            payload,
+                            error.clone(),
+                        );
                         warn!(
                             dedupe_key = %dedupe_key,
                             publish_error = %error,
@@ -137,9 +148,12 @@ pub async fn publish_entry(
                     }
                 }
             }
-            
+
             // Attempt to persist to postgres backlog
-            if let Err(backlog_err) = backlog.save_pending(&dedupe_key, "wireless.audit", &payload, &error).await {
+            if let Err(backlog_err) = backlog
+                .save_pending(&dedupe_key, "wireless.audit", &payload, &error)
+                .await
+            {
                 // Backlog failed - open circuit breaker
                 let mut cb = CIRCUIT_BREAKER.lock().unwrap();
                 if cb.is_none() {
@@ -152,10 +166,14 @@ pub async fn publish_entry(
                         "postgres backlog failed; opening circuit breaker"
                     );
                 }
-                
+
                 // Fallback to memory backlog
-                let memory_backlog_entries =
-                    put_memory_backlog(dedupe_key.clone(), "wireless.audit".to_string(), payload, error.clone());
+                let memory_backlog_entries = put_memory_backlog(
+                    dedupe_key.clone(),
+                    "wireless.audit".to_string(),
+                    payload,
+                    error.clone(),
+                );
                 warn!(
                     dedupe_key = %dedupe_key,
                     memory_backlog_entries,
@@ -168,7 +186,7 @@ pub async fn publish_entry(
                     "publish failed; audit entry persisted to postgres backlog"
                 );
             }
-            
+
             Err(PublishError::Publish(error))
         }
     }
@@ -220,9 +238,7 @@ pub async fn reconcile_backlog(
             continue;
         }
 
-        match publish_payload(publisher, &entry.payload, &entry.dedupe_key, &observed_at)
-            .await
-        {
+        match publish_payload(publisher, &entry.payload, &entry.dedupe_key, &observed_at).await {
             Ok(()) => {
                 backlog.mark_synced(&entry.dedupe_key).await?;
                 info!(
@@ -256,9 +272,7 @@ async fn publish_payload(
         .publish_message("wireless.audit", payload)
         .await
         .map_err(|error| {
-            format!(
-                "stage=publish_audit subject=wireless.audit dedupe_key={dedupe_key}: {error}"
-            )
+            format!("stage=publish_audit subject=wireless.audit dedupe_key={dedupe_key}: {error}")
         })?;
     debug!(
         dedupe_key,
@@ -273,8 +287,8 @@ async fn publish_payload(
         payload_ref,
         observed_at: observed_at.to_string(),
     };
-    let request_payload =
-        serde_json::to_string(&request).map_err(|error| format!("serialize scan request: {error}"))?;
+    let request_payload = serde_json::to_string(&request)
+        .map_err(|error| format!("serialize scan request: {error}"))?;
     publisher
         .publish_message(SYNC_SCAN_REQUEST_SUBJECT, &request_payload)
         .await
@@ -357,7 +371,11 @@ mod tests {
             Ok(())
         }
 
-        fn payload_ref_for_event(&self, raw_payload: &str, _observed_at: &str) -> Result<String, String> {
+        fn payload_ref_for_event(
+            &self,
+            raw_payload: &str,
+            _observed_at: &str,
+        ) -> Result<String, String> {
             Ok(format!(
                 "inline://json/{}",
                 base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw_payload)

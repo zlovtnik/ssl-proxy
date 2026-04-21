@@ -30,7 +30,11 @@ impl AuditWindow {
     }
 
     pub fn is_active_at(&self, instant: DateTime<Utc>) -> bool {
-        if self.timezone.is_none() && self.days.is_none() && self.start.is_none() && self.end.is_none() {
+        if self.timezone.is_none()
+            && self.days.is_none()
+            && self.start.is_none()
+            && self.end.is_none()
+        {
             return true;
         }
 
@@ -99,8 +103,10 @@ struct EventVisitor {
 
 impl tracing::field::Visit for EventVisitor {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.fields
-            .insert(field.name().to_string(), serde_json::Value::String(value.to_string()));
+        self.fields.insert(
+            field.name().to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {

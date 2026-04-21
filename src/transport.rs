@@ -223,6 +223,11 @@ impl SyncPublisher {
             return Err(error);
         };
 
+        debug!(
+            %subject,
+            payload_bytes = payload.len(),
+            "sync publisher attempting NATS publish"
+        );
         match publish_nats_message(&self.config, nats_url, subject, payload).await {
             Ok(()) => {
                 let mut snapshot = self
@@ -231,6 +236,11 @@ impl SyncPublisher {
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
                 snapshot.last_error = None;
+                debug!(
+                    %subject,
+                    payload_bytes = payload.len(),
+                    "sync publisher NATS publish succeeded"
+                );
                 Ok(())
             }
             Err(error) => {
@@ -239,6 +249,12 @@ impl SyncPublisher {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 snapshot.last_error = Some(error.clone());
+                warn!(
+                    %subject,
+                    payload_bytes = payload.len(),
+                    %error,
+                    "sync publisher NATS publish failed"
+                );
                 Err(error)
             }
         }
@@ -369,6 +385,13 @@ async fn publish_nats_message(
     payload: &str,
 ) -> Result<(), String> {
     let endpoint = parse_nats_endpoint(nats_url)?;
+    debug!(
+        %subject,
+        nats_host = %endpoint.host,
+        tls_enabled = config.tls_enabled || endpoint.tls_enabled,
+        payload_bytes = payload.len(),
+        "opening NATS publish session"
+    );
     let tcp_stream = timeout(
         config.connect_timeout,
         TcpStream::connect(&endpoint.address),

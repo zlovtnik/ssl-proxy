@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
 use std::str::FromStr;
 use thiserror::Error;
-use tokio_postgres::{Config as PostgresConfig, NoTls, config::Host};
+use tokio_postgres::{config::Host, Config as PostgresConfig, NoTls};
 use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Debug)]
@@ -236,15 +236,11 @@ impl BacklogStore for PostgresBacklog {
             }
         };
         if rows_affected == 0 {
-            warn!(
-                dedupe_key,
-                "postgres backlog mark_synced matched no rows"
-            );
+            warn!(dedupe_key, "postgres backlog mark_synced matched no rows");
         } else {
             debug!(
                 dedupe_key,
-                rows_affected,
-                "postgres backlog row marked synced"
+                rows_affected, "postgres backlog row marked synced"
             );
         }
         Ok(())
