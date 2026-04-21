@@ -1,0 +1,50 @@
+PROMPT [ssl-proxy] verifying app-owned objects are gone
+
+COLUMN object_type FORMAT A24
+COLUMN object_name FORMAT A32
+
+SELECT object_type, object_name
+FROM user_objects
+WHERE object_name IN (
+  'BANDWIDTH_SAMPLES',
+  'WG_PEER_SAMPLES',
+  'PAYLOAD_AUDIT',
+  'CONNECTION_SESSIONS',
+  'PROXY_EVENTS',
+  'BLOCKED_EVENTS',
+  'WG_EVENTS',
+  'TLS_FINGERPRINTS',
+  'BLOCKLIST_AUDIT',
+  'DB_QUERY_LOG',
+  'SHIPPER_HEARTBEATS',
+  'DATA_RETENTION_POLICY',
+  'DEVICES',
+  'DLQ_ERRORS',
+  'PKG_PROXY_BULK',
+  'PURGE_OLD_EVENTS',
+  'MV_DAILY_BLOCKED',
+  'MV_PEER_IP_SUMMARY',
+  'MV_HOURLY_BANDWIDTH',
+  'MV_DAILY_PEER_STATS',
+  'V_HOST_THREAT_SCORE',
+  'V_MALICIOUS_ACTORS',
+  'V_BLOCKED_HOSTS_24H',
+  'V_TUNNEL_THROUGHPUT',
+  'V_WG_PEER_TIMELINE',
+  'V_CORRELATED_ACTIVITY',
+  'V_SLOW_QUERIES',
+  'V_PIPELINE_HEALTH',
+  'V_FOX_TRAFFIC',
+  'V_SESSION_TIMELINE',
+  'V_PAYLOAD_AUDIT_READABLE',
+  'V_PEER_IDENTITY',
+  'V_BANDWIDTH_TREND'
+)
+ORDER BY object_type, object_name;
+
+SELECT job_name
+FROM user_scheduler_jobs
+WHERE job_name IN ('JOB_REFRESH_MVS', 'JOB_PURGE_OLD_EVENTS')
+ORDER BY job_name;
+
+PROMPT [ssl-proxy] if both queries returned no rows, the schema is clean

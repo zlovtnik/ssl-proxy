@@ -1,0 +1,14 @@
+[Unit]
+Description=WireGuard obfuscation shim
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/wireguard/wg-obfs-shim.env
+ExecStart=/usr/local/bin/wg-obfs-shim
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

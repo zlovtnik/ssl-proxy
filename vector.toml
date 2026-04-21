@@ -1,0 +1,79 @@
+# vector.toml — ssl-proxy audit pipeline
+# Run: LOG_FORMAT=json ./ssl-proxy | vector --config vector.toml
+
+data_dir = "/tmp/vector"
+
+[sources.proxy_stdout]
+type = "stdin"
+decoding.codec = "json"
+
+# Drop everything that isn't an audit event — keeps warehouse clean
+[transforms.audit_only]
+type   = "filter"
+inputs = ["proxy_stdout"]
+condition = '.target == "audit"'
+
+# Remap tracing's "timestamp" string → proper DateTime for ClickHouse
+[transforms.normalize]
+type   = "remap"
+inputs = ["audit_only"]
+source = '''
+.timestamp = parse_timestamp(.timestamp, format: "%+") ?? now()
+.event       = to_string(.event)       ?? ""
+.kind        = to_string(.kind)        ?? ""
+.host        = to_string(.host)        ?? ""
+.method      = to_string(.method)      ?? ""
+.uri         = to_string(.uri)         ?? ""
+.status      = to_int(.status)      ?? 0
+.bytes_up    = to_int(.bytes_up)    ?? 0
+.bytes_down  = to_int(.bytes_down)  ?? 0
+.duration_ms = to_int(.duration_ms) ?? 0
+.orig_dst    = to_string(.orig_dst)    ?? ""
+.reason      = to_string(.reason)      ?? ""
+.error       = to_string(.error)       ?? ""
+.message     = to_string(.message)     ?? ""
+
+# Capture all unknown fields into extra_fields object
+known_fields = ["timestamp", "level", "target", "event", "kind", "host", "method", "uri", "status", "bytes_up", "bytes_down", "duration_ms", "orig_dst", "reason", "error", "message"]
+.extra_fields = {}
+
+event_keys = keys(.)
+for_each(event_keys) -> |_idx, key| {
+  if !contains(known_fields, key) {
+    val = get!(., [key])
+    .extra_fields = set!(.extra_fields, [key], val)
+    . = remove!(., [key])
+    increment_counter("vector_unknown_fields_detected", 1, { "field": key })
+  }
+}
+'''
+
+[sinks.clickhouse]
+type                = "clickhouse"
+inputs              = ["normalize"]
+endpoint            = "${CLICKHOUSE_URL}"   # e.g. http://localhost:8123
+database            = "ssl_proxy"
+table               = "proxy_events"
+skip_unknown_fields = false
+compression         = "gzip"
+
+  [sinks.clickhouse.auth]
+  strategy = "basic"
+  user     = "${CLICKHOUSE_USER}"
+  password = "${CLICKHOUSE_PASSWORD}"
+
+  # Batch inserts — ClickHouse performs best with bulk writes
+  [sinks.clickhouse.batch]
+  max_events   = 5000
+  timeout_secs = 5
+
+# Expose internal metrics for monitoring
+[sources.internal_metrics]
+type = "internal_metrics"
+scrape_interval_secs = 15
+
+[sinks.prometheus]
+type = "prometheus_exporter"
+inputs = ["internal_metrics"]
+address = "0.0.0.0:9598"
+default_namespace = "vector"

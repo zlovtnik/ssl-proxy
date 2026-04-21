@@ -1,0 +1,49 @@
+# Workspace OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local agent/workspace state
+.omx/
+/wallet/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Environment overrides
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Rust
+**/debug/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Node / SvelteKit
+**/node_modules/
+**/.svelte-kit/
+**/dist/
+**/coverage/
+**/.vite/
+**/vite.config.ts.timestamp-*
+**/tsconfig.tsbuildinfo
+
+# Zig
+**/.zig-cache/
+**/.zig-cache-local/
+**/.zig-global-cache/
+**/zig-out/
+**/build/
+**/build-*/
+**/docgen_tmp/
+/lib/
+/wallet/

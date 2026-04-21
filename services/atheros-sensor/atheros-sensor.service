@@ -1,0 +1,20 @@
+[Unit]
+Description=Atheros AR9271 wireless audit sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ssl-proxy/services/atheros-sensor
+Environment=ATH_SENSOR_LOCATION_ID=North-Wing-Entry
+Environment=ATH_SENSOR_CHANNEL=6
+Environment=ATH_SENSOR_REG_DOMAIN=US
+Environment=SYNC_NATS_URL=nats://127.0.0.1:4222
+Environment=DATABASE_URL=postgres://sync:sync@127.0.0.1:5432/sync
+ExecStartPre=/opt/ssl-proxy/scripts/prep_ath.sh
+ExecStart=/opt/ssl-proxy/services/atheros-sensor/target/release/atheros-sensor
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

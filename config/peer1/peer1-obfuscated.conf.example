@@ -1,0 +1,24 @@
+# Supported client path when UDP obfuscation is enabled on the server.
+# WireGuard points at a local UDP shim on this client machine, not directly at the remote server.
+# Keep DNS = 10.13.13.1 unless you also run a local custom DNS server next to the shim.
+# Configure the real remote server endpoint in config/client/wg-obfs-shim.env.example.
+[Interface]
+Address = 10.13.13.2/32
+PrivateKey = eHz8Gu9Uhp8Zqc+nEDp98kVxKlznPAouR4VLr5J6jGs=
+ListenPort = 443
+MTU = 1279
+DNS = 10.13.13.1
+
+[Peer]
+PublicKey = RMG56qSaFhNYkZVoizYm9g4pqSRZ+EQYkLhxGUtCeQw=
+PresharedKey = JiSXAaw54GnEjuwO9RUCbumIJI/Jb7oBCEibn3KTHo0=
+# Local shim endpoint on the client machine; the shim forwards to the real server endpoint with XOR obfuscation.
+Endpoint = 127.0.0.1:51821
+AllowedIPs = 0.0.0.0/0, ::/0
+
+# Local shim contract:
+# - listen for plaintext WireGuard on 127.0.0.1:51821
+# - forward to the real server endpoint configured in config/client/wg-obfs-shim.env.example
+# - apply the same WG_OBFUSCATION_KEY configured on the server
+# - prepend WG_OBFUSCATION_MAGIC_BYTE when the server requires one
+# - keep MTU at 1279 when a 1-byte magic marker is enabled

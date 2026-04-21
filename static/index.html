@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSL Proxy — Heuristic Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #0d1117;
+    --surface: #161b22;
+    --border:  #30363d;
+    --text:    #e6edf3;
+    --muted:   #8b949e;
+    --green:   #3fb950;
+    --yellow:  #d29922;
+    --red:     #f85149;
+    --blue:    #58a6ff;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: ui-monospace, monospace; font-size: 13px; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header h1 { font-size: 15px; font-weight: 600; }
+  #conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  #conn-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+    gap: 1px; background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .stat { background: var(--surface); padding: 14px 18px; }
+  .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+
+  .panels {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 1px; background: var(--border);
+    height: calc(100vh - 320px);
+  }
+
+  .telemetry {
+    display: grid;
+    grid-template-columns: 1.2fr .8fr;
+    gap: 1px;
+    background: var(--border);
+    min-height: 200px;
+  }
+  .card { background: var(--bg); display: flex; flex-direction: column; }
+  .card h2 { padding: 10px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface); }
+  .card-body { padding: 14px 16px; display: flex; flex: 1; gap: 16px; align-items: stretch; }
+  .canvas-wrap { position: relative; flex: 1; min-height: 140px; }
+  canvas { width: 100%; height: 100%; display: block; }
+  #peer-list { width: 100%; border-collapse: collapse; }
+  #peer-list td, #peer-list th { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+  #peer-list th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .muted { color: var(--muted); }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+    .panels { grid-template-columns: 1fr; height: auto; }
+    .telemetry { grid-template-columns: 1fr; }
+  }
+
+  /* ── Heat map ── */
+  #heatmap-panel { background: var(--bg); overflow: hidden; display: flex; flex-direction: column; }
+  #heatmap-panel h2 { padding: 10px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface); }
+  #heatmap { overflow-y: auto; flex: 1; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    position: sticky; top: 0; background: var(--surface);
+    padding: 7px 12px; text-align: left; font-size: 11px;
+    color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+  tbody tr:hover { background: var(--surface); }
+  tbody td { padding: 7px 12px; }
+
+  .verdict-badge {
+    display: inline-block; padding: 2px 7px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  }
+  .v-BLOCKED               { background: #21262d; color: var(--muted); }
+  .v-PERSISTENT_RECONNECT  { background: #2d2a1a; color: var(--yellow); }
+  .v-AGGRESSIVE_POLLING    { background: #2d1f1a; color: #f0883e; }
+  .v-HEURISTIC_FLAG_DATA_EXFIL { background: #2d1a1a; color: var(--red); }
+  .v-TARPIT                { background: #1a1a2d; color: var(--blue); }
+
+  .risk-bar-wrap { width: 80px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+  .risk-bar { height: 100%; border-radius: 3px; transition: width .4s; }
+
+  /* ── Event feed ── */
+  #feed-panel { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+  #feed-panel h2 { padding: 10px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface); }
+  #feed { overflow-y: auto; flex: 1; padding: 8px 0; }
+
+  .event {
+    padding: 5px 14px; border-left: 3px solid transparent;
+    line-height: 1.5;
+  }
+  .event.block  { border-color: var(--red); }
+  .event.allow  { border-color: var(--green); }
+  .event.open   { border-color: var(--blue); }
+  .event.close  { border-color: var(--border); }
+
+  .event .ev-host { color: var(--text); }
+  .event .ev-meta { color: var(--muted); font-size: 11px; }
+  .event .ev-verdict { color: var(--red); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="conn-dot"></div>
+  <h1>SSL Proxy — Heuristic Dashboard</h1>
+</header>
+
+<div class="grid">
+  <div class="stat"><div class="label">Active Tunnels</div><div class="value" id="s-active">—</div></div>
+  <div class="stat"><div class="label">Total Opened</div><div class="value" id="s-opened">—</div></div>
+  <div class="stat"><div class="label">Blocked</div><div class="value" id="s-blocked" style="color:var(--red)">—</div></div>
+  <div class="stat"><div class="label">Obfuscated</div><div class="value" id="s-obfuscated" style="color:var(--green)">—</div></div>
+  <div class="stat"><div class="label">Throughput ↑↓</div><div class="value" id="s-bw" style="color:var(--blue)">—</div></div>
+</div>
+
+<div class="panels">
+  <div id="heatmap-panel">
+    <h2>Host Velocity Heat Map — sorted by Risk Score</h2>
+    <div id="heatmap">
+      <table>
+        <thead>
+          <tr>
+            <th>Host</th>
+            <th>Attempts</th>
+            <th>Hz</th>
+            <th>Bytes Blocked</th>
+            <th>Risk Score</th>
+            <th>Verdict</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody id="heatmap-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="feed-panel">
+    <h2>Live Event Feed — block entries are denied flows</h2>
+    <div id="feed"></div>
+  </div>
+</div>
+
+<div class="telemetry">
+  <div class="card">
+    <h2>Per-Peer Throughput</h2>
+    <div class="card-body">
+      <div class="canvas-wrap"><canvas id="bandwidth-canvas" width="640" height="180"></canvas></div>
+      <div style="min-width: 340px; overflow:auto;">
+        <table id="peer-list">
+          <thead>
+            <tr><th>Peer</th><th>Device</th><th>Down</th><th>Blocked</th></tr>
+          </thead>
+          <tbody id="peer-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Blocked vs Allowed Bytes</h2>
+    <div class="card-body">
+      <div class="canvas-wrap"><canvas id="donut-canvas" width="280" height="180"></canvas></div>
+      <div id="donut-labels" class="muted" style="min-width:180px; line-height:1.8;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const dot = $('conn-dot');
+
+// ── Stats WebSocket ──────────────────────────────────────────────────────────
+let wsStats, wsStatsBackoff = 1000;
+
+let wsStatsReconnectScheduled = false;
+
+function scheduleStatsReconnect() {
+  if (wsStatsReconnectScheduled) return;
+  wsStatsReconnectScheduled = true;
+  dot.classList.remove('live');
+  setTimeout(() => { wsStatsReconnectScheduled = false; connectStatsWs(); }, wsStatsBackoff);
+  wsStatsBackoff = Math.min(wsStatsBackoff * 2, 30000);
+}
+
+function connectStatsWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  wsStats = new WebSocket(`${proto}//${location.host}/ws`);
+  wsStats.onopen = () => {
+    dot.classList.add('live');
+    wsStatsBackoff = 1000;
+  };
+  wsStats.onclose = scheduleStatsReconnect;
+  wsStats.onerror = scheduleStatsReconnect;
+  wsStats.onmessage = ({ data }) => {
+    let s;
+    try {
+      s = JSON.parse(data);
+    } catch {
+      console.warn('Invalid JSON in stats message:', data);
+      return;
+    }
+    $('s-active').textContent  = s.active_tunnels ?? '—';
+    $('s-opened').textContent  = s.tunnels_opened ?? '—';
+    $('s-blocked').textContent = s.blocked        ?? '—';
+    $('s-obfuscated').textContent = s.obfuscated  ?? '—';
+    $('s-bw').textContent      = `${s.up_kBps ?? 0} / ${s.down_kBps ?? 0} kB/s`;
+  };
+}
+connectStatsWs();
+
+// ── Event WebSocket ──────────────────────────────────────────────────────────
+const MAX_EVENTS = 200;
+const feed = $('feed');
+let wsEventsBackoff = 1000;
+
+let wsEventsReconnectScheduled = false;
+
+function scheduleEventsReconnect() {
+  if (wsEventsReconnectScheduled) return;
+  wsEventsReconnectScheduled = true;
+  setTimeout(() => { wsEventsReconnectScheduled = false; connectEventsWs(); }, wsEventsBackoff);
+  wsEventsBackoff = Math.min(wsEventsBackoff * 2, 30000);
+}
+
+function connectEventsWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsEvents = new WebSocket(`${proto}//${location.host}/events`);
+  wsEvents.onclose = scheduleEventsReconnect;
+  wsEvents.onerror = scheduleEventsReconnect;
+  wsEvents.onopen = () => { wsEventsBackoff = 1000; };
+  wsEvents.onmessage = ({ data }) => {
+    let ev;
+    try {
+      ev = JSON.parse(data);
+    } catch {
+      console.warn('Invalid JSON in event message:', data);
+      return;
+    }
+    prependEvent(ev);
+    while (feed.children.length > MAX_EVENTS) feed.removeChild(feed.lastChild);
+  };
+}
+connectEventsWs();
+
+function prependEvent(ev) {
+  const type = ev.type ?? '';
+  const cls  = type === 'block' ? 'block'
+             : type === 'tunnel_open'  ? 'open'
+             : type === 'tunnel_close' ? 'close'
+             : 'allow';
+
+  const div = document.createElement('div');
+  div.className = `event ${cls}`;
+
+  const host = document.createElement('span');
+  host.className = 'ev-host';
+  host.textContent = ev.host ?? '?';
+  div.appendChild(host);
+
+  const typeSpan = document.createElement('span');
+  typeSpan.className = 'ev-meta';
+  typeSpan.textContent = ` [${type}]`;
+  div.appendChild(typeSpan);
+
+  if (ev.metrics?.attempt_count != null) {
+    const attempts = document.createElement('span');
+    attempts.className = 'ev-meta';
+    attempts.textContent = ` · attempt #${ev.metrics.attempt_count} · ${ev.metrics.frequency_hz} Hz`;
+    div.appendChild(attempts);
+  }
+
+  if (ev.fingerprint?.tls_ver) {
+    const fp = document.createElement('span');
+    fp.className = 'ev-meta';
+    fp.textContent = ` · ${ev.fingerprint.tls_ver}/${ev.fingerprint.alpn ?? '?'}`;
+    div.appendChild(fp);
+  }
+
+  if (ev.verdict) {
+    const verdict = document.createElement('span');
+    verdict.className = 'ev-verdict';
+    verdict.textContent = ` ▸ ${ev.verdict}`;
+    div.appendChild(verdict);
+  }
+
+  if (ev.reason) {
+    const reason = document.createElement('span');
+    reason.className = 'ev-meta';
+    reason.textContent = ` · ${ev.reason}`;
+    div.appendChild(reason);
+  }
+
+  feed.prepend(div);
+}
+
+// ── Heat Map polling ─────────────────────────────────────────────────────────
+const MAX_RISK = 1_000_000; // cap for bar scaling
+
+function riskColor(verdict) {
+  switch (verdict) {
+    case 'HEURISTIC_FLAG_DATA_EXFIL': return 'var(--red)';
+    case 'AGGRESSIVE_POLLING':        return '#f0883e';
+    case 'PERSISTENT_RECONNECT':      return 'var(--yellow)';
+    default:                          return 'var(--muted)';
+  }
+}
+
+function fmtBytes(n) {
+  const value = Number(n);
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value >= 1_048_576) return (value / 1_048_576).toFixed(1) + ' MB';
+  if (value >= 1_024)     return (value / 1_024).toFixed(1) + ' KB';
+  return value + ' B';
+}
+
+function prepareCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width || canvas.clientWidth || canvas.width));
+  const height = Math.max(1, Math.floor(rect.height || canvas.clientHeight || canvas.height));
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.max(1, Math.floor(width * dpr));
+  const pixelHeight = Math.max(1, Math.floor(height * dpr));
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.scale(dpr, dpr);
+  return { ctx, width, height };
+}
+
+let isRefreshing = false;
+async function refreshHeatmap() {
+  if (isRefreshing) return;
+  isRefreshing = true;
+  let rows;
+  try {
+    const res = await fetch('/hosts', { headers: { 'x-api-key': window.ADMIN_API_KEY ?? '' } });
+    if (!res.ok) {
+      console.warn('Heat map fetch failed:', res.status);
+      return;
+    }
+    rows = await res.json();
+  } catch (e) {
+    console.warn('Heat map refresh error:', e);
+    return;
+  } finally { isRefreshing = false; }
+
+  const tbody = $('heatmap-body');
+  const existing = new Map([...tbody.querySelectorAll('tr')].map(r => [r.dataset.host, r]));
+
+  rows.forEach(h => {
+    const pct = Math.min(100, (h.risk_score / MAX_RISK) * 100).toFixed(1);
+    const color = riskColor(h.verdict);
+
+    let tr = existing.get(h.host);
+    if (!tr) {
+      tr = document.createElement('tr');
+      tr.dataset.host = h.host;
+      tr.innerHTML = `
+        <td class="ev-host"></td>
+        <td></td><td></td><td></td>
+        <td><div class="risk-bar-wrap"><div class="risk-bar"></div></div></td>
+        <td></td><td></td>`;
+    }
+    const cells = tr.querySelectorAll('td');
+    cells[0].textContent = h.host;
+    cells[1].textContent = h.blocked_attempts;
+    cells[2].textContent = h.frequency_hz.toFixed(2);
+    cells[3].textContent = fmtBytes(h.blocked_bytes_approx);
+    const bar = cells[4].querySelector('.risk-bar');
+    bar.style.width = pct + '%';
+    bar.style.background = color;
+    const badge = document.createElement('span');
+    badge.className = `verdict-badge v-${CSS.escape(h.verdict)}`;
+    badge.textContent = h.verdict;
+    cells[5].replaceChildren(badge);
+    cells[6].textContent = h.last_reason ?? '—';
+    // Re-insert (or move) the row to maintain sort order from the server.
+    tbody.appendChild(tr);
+
+    existing.delete(h.host);
+  });
+
+  // Remove rows for hosts no longer present
+  existing.forEach(tr => tr.remove());
+}
+
+refreshHeatmap();
+setInterval(refreshHeatmap, 2000);
+
+let isPeerRefreshing = false;
+let latestPeerTelemetry = { peers: [], points: [] };
+
+async function refreshPeerTelemetry() {
+  if (isPeerRefreshing) return;
+  isPeerRefreshing = true;
+  try {
+    const [peerRes, bandwidthRes] = await Promise.all([
+      fetch('/stats/peers', { headers: { 'x-api-key': window.ADMIN_API_KEY ?? '' } }),
+      fetch('/stats/bandwidth?window=1h', { headers: { 'x-api-key': window.ADMIN_API_KEY ?? '' } }),
+    ]);
+    if (!peerRes.ok || !bandwidthRes.ok) {
+      console.warn('Peer telemetry fetch failed:', peerRes.status, bandwidthRes.status);
+      return;
+    }
+
+    latestPeerTelemetry = {
+      peers: await peerRes.json(),
+      points: await bandwidthRes.json(),
+    };
+    redrawPeerTelemetry();
+  } catch (e) {
+    console.warn('Peer telemetry refresh failed:', e);
+  } finally {
+    isPeerRefreshing = false;
+  }
+}
+
+function redrawPeerTelemetry() {
+  renderPeerList(latestPeerTelemetry.peers);
+  renderBandwidth(latestPeerTelemetry.points);
+  renderDonut(latestPeerTelemetry.points);
+}
+
+function renderPeerList(peers) {
+  const tbody = $('peer-body');
+  tbody.replaceChildren();
+  peers.slice(0, 10).forEach(peer => {
+    const tr = document.createElement('tr');
+    const peerCell = document.createElement('td');
+    peerCell.textContent = peer.peer_hostname ?? (peer.wg_pubkey ? peer.wg_pubkey.slice(0, 12) : '—');
+
+    const deviceCell = document.createElement('td');
+    deviceCell.textContent = peer.display_name ?? peer.username ?? '—';
+
+    const downCell = document.createElement('td');
+    downCell.textContent = fmtBytes(peer.bytes_down);
+
+    const blockedCell = document.createElement('td');
+    blockedCell.textContent = fmtBytes(peer.blocked_bytes_approx);
+
+    tr.append(peerCell, deviceCell, downCell, blockedCell);
+    tbody.appendChild(tr);
+  });
+}
+
+function renderBandwidth(points) {
+  const canvas = $('bandwidth-canvas');
+  const { ctx, width, height } = prepareCanvas(canvas);
+
+  const totals = new Map();
+  points.forEach(point => {
+    const current = totals.get(point.bucket) ?? 0;
+    totals.set(point.bucket, current + (point.bytes_up_delta ?? 0) + (point.bytes_down_delta ?? 0));
+  });
+  const buckets = [...totals.entries()].slice(-30);
+  if (!buckets.length) return;
+  const max = Math.max(...buckets.map(([, v]) => v), 1);
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  buckets.forEach(([_, value], idx) => {
+    const x = (idx / Math.max(buckets.length - 1, 1)) * (width - 20) + 10;
+    const y = height - 10 - ((value / max) * (height - 30));
+    if (idx === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+function renderDonut(points) {
+  const canvas = $('donut-canvas');
+  const { ctx, width, height } = prepareCanvas(canvas);
+  const allowed = points.reduce((sum, point) => sum + (point.allowed_bytes_delta ?? 0), 0);
+  const blocked = points.reduce((sum, point) => sum + (point.blocked_bytes_delta ?? 0), 0);
+  const total = Math.max(allowed + blocked, 1);
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(width, height) / 2 - 16;
+  const blockedAngle = (blocked / total) * Math.PI * 2;
+
+  ctx.lineWidth = 24;
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, blockedAngle, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, blockedAngle);
+  ctx.stroke();
+
+  $('donut-labels').innerHTML = `
+    <div>Allowed bytes: ${fmtBytes(allowed)}</div>
+    <div>Blocked bytes: ${fmtBytes(blocked)}</div>
+    <div>Blocked ratio: ${((blocked / total) * 100).toFixed(1)}%</div>`;
+}
+
+refreshPeerTelemetry();
+setInterval(refreshPeerTelemetry, 10000);
+window.addEventListener('resize', redrawPeerTelemetry);
+</script>
+</body>
+</html>

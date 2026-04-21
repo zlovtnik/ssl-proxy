@@ -1,0 +1,11 @@
+[package]
+name = "oracle-worker"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+chrono = { version = "0.4", default-features = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

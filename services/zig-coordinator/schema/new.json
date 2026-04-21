@@ -1,0 +1,524 @@
+[
+  
+
+
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "Makefile",
+        "codegenInstructions": "In @Makefile around lines 18 - 20, Update the misleading comment above the Makefile target named \"docker\": change the comment \"Build the Docker image for ssl-proxy\" to accurately describe that the target builds multiple services (ssl-proxy, zig-coordinator, oracle-worker, nats, postgres) so the comment matches the docker compose build line in the \"docker\" target.",
+        "suggestions": [
+            "# Build Docker images for all services\ndocker:\n\tdocker compose build ssl-proxy zig-coordinator oracle-worker nats postgres"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "Makefile",
+        "codegenInstructions": "In @Makefile around lines 6 - 10, The leading comment above the Makefile target named \"build\" is misleading; update it to accurately describe what the target builds (the root project binary plus the services/oracle-worker and services/zig-coordinator components) so maintainers understand the scope; locate the comment immediately preceding the \"build:\" target and replace \"Build the ssl-proxy binary\" with a concise description such as \"Build project binaries: root, services/oracle-worker, and services/zig-coordinator\" or similar.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "config/peer1/peer1.conf",
+        "codegenInstructions": "In @config/peer1/peer1.conf at line 7, The ListenPort value set to 443 in peer1.conf is a privileged port and will require root or CAP_NET_BIND_SERVICE to bind; change the ListenPort setting to a non-privileged port (>=1024, e.g., 51820) or add a note in the peer1.conf/documentation that ListenPort=443 requires elevated privileges and instruct operators to run the WireGuard process as root or assign CAP_NET_BIND_SERVICE; update the ListenPort entry and any README/operational docs referencing peer1.conf accordingly.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "sql/V007__devices_and_identity.sql",
+        "codegenInstructions": "In @sql/V007__devices_and_identity.sql around lines 98 - 103, The foreign-key constraints cs_device_fk (on connection_sessions.device_id) and pe_device_fk lack an ON DELETE clause and therefore default to NO ACTION which blocks deleting devices with referencing sessions; update the ALTER TABLE statements that create cs_device_fk and pe_device_fk to include the desired behavior (for example add \"ON DELETE SET NULL\" to allow device rows to be removed while preserving session/pe history and nulling device_id), or if NO ACTION is intentional add a clear inline comment above the ALTER TABLE statements documenting the choice and rationale; ensure you reference the exact constraint names cs_device_fk and pe_device_fk when making the change so the ALTER statements are modified accordingly.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "sql/V007__devices_and_identity.sql",
+        "codegenInstructions": "In @sql/V007__devices_and_identity.sql around lines 101 - 103, Before adding the foreign key constraints cs_device_fk and the similar proxy_events FK, ensure there are no orphan device_id values: run an UPDATE to set device_id = NULL on connection_sessions and proxy_events where device_id IS NOT NULL and device_id NOT IN (SELECT device_id FROM devices), or alternatively raise an explicit error if orphans exist; place these cleanup/pre-check statements immediately before the EXECUTE IMMEDIATE that adds the FK constraints so ALTER TABLE ... ADD CONSTRAINT will not fail with ORA-02298.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "config/templates/peer.conf",
+        "codegenInstructions": "In @config/templates/peer.conf at line 6, The ListenPort = 443 line in config/templates/peer.conf is likely incorrect for a typical WireGuard client; confirm whether this peer is intended to act as a server/accept inbound connections or part of a peer-to-peer topology. If it is not intentionally listening, remove or comment out the ListenPort = 443 directive to avoid requiring elevated privileges or conflicting with local HTTPS services; if it is intentional, add a brief comment near ListenPort = 443 explaining the non-standard topology/rationale and any required privileges so reviewers understand why the client binds to port 443.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/build.zig",
+        "codegenInstructions": "In @services/zig-coordinator/build.zig around lines 33 - 38, The fallback addExecutable call that returns the executable (the b.addExecutable block creating \"zig-coordinator\" with .root_source_file, .target, .optimize) is missing .link_libc = true; update that executable spec to include .link_libc = true so the fallback build path matches the root_module behavior and prevents version-dependent libc linkage issues.",
+        "suggestions": [
+            "    return b.addExecutable(.{\n        .name = \"zig-coordinator\",\n        .root_source_file = b.path(\"src/main.zig\"),\n        .target = target,\n        .optimize = optimize,\n        .link_libc = true,\n    });"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "config/templates/peer.conf",
+        "codegenInstructions": "In @config/templates/peer.conf at line 5, The template uses the unvalidated variable ${PEER_ID} to build paths like \"privatekey-${PEER_ID}\" and \"presharedkey-${PEER_ID}\", which enables path traversal; fix by validating/sanitizing ${PEER_ID} at the code that renders this template: enforce a strict allowlist (e.g. regex ^[A-Za-z0-9]+$ or similar) and reject or fail render when the value contains '/', '\\', '..' or any non-allowed characters, or alternatively normalize to basename before use; ensure the validation logic is applied wherever ${PEER_ID} is set or passed into the templating system and return a clear error when validation fails.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "config/peer1/peer1.conf",
+        "codegenInstructions": "In @config/peer1/peer1.conf at line 13, The committed plaintext PresharedKey must be removed and rotated: revoke/regenerate the exposed PSK and replace the value in the repository entry for the PresharedKey setting with a placeholder string (e.g. PresharedKey = <YOUR_PSK_HERE>) in a template file; ensure the real PSK is stored out-of-repo (secrets manager or ops vault) or injected at deployment, and remove the committed secret from git history (or force-delete and replace with the template) so the literal \"PresharedKey = JiSXAaw54GnEjuwO9RUCbumIJI/Jb7oBCEibn3KTHo0=\" no longer exists in the repo.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "config/peer1/peer1.conf",
+        "codegenInstructions": "In @config/peer1/peer1.conf around lines 14 - 15, The config currently hardcodes the environment-specific IP in the Endpoint entry (\"Endpoint = 192.168.1.221:443\"); replace that hardcoded value with a portable placeholder (e.g. \"Endpoint = <SERVER_IP>:443\" or an env-variable placeholder like \"${SERVER_IP}:443\") in peer1.conf and update README/install docs to instruct users to set the actual server IP before use; ensure the placeholder is clearly documented so each deployment replaces it with their own host IP.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/build.zig",
+        "codegenInstructions": "In @services/zig-coordinator/build.zig around lines 58 - 62, The test fallback call to b.addTest (the block that sets .root_source_file = b.path(\"src/scheduler.zig\"), .target, .optimize) is missing .link_libc = true, causing inconsistent linking versus the root_module path; update that b.addTest invocation to include .link_libc = true so tests link libc the same way as the executable path.",
+        "suggestions": [
+            "    return b.addTest(.{\n        .root_source_file = b.path(\"src/scheduler.zig\"),\n        .target = target,\n        .optimize = optimize,\n        .link_libc = true,\n    });"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "config/client/wg-obfs-shim.service",
+        "codegenInstructions": "In @config/client/wg-obfs-shim.service at line 8, The unit's EnvironmentFile entry is mandatory as written and will cause systemd to fail if /etc/wireguard/wg-obfs-shim.env is absent; update the service unit's EnvironmentFile line to make the file optional by prefixing it with a hyphen (i.e., use an optional EnvironmentFile), or alternatively add/docs deployment steps that always create /etc/wireguard/wg-obfs-shim.env before enabling the service so the file exists at startup.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "ops-memory.md",
+        "codegenInstructions": "In @ops-memory.md around lines 61 - 65, The current document ordering places \"## Open Risks\" after \"## Incident Timeline\", causing memo-log.sh's current append-to-EOF behavior to place new entries after the risks section instead of inside the timeline; either move the \"## Open Risks\" heading above \"## Incident Timeline\" in ops-memory.md or update memo-log.sh to target insertion before the \"## Incident Timeline\" marker (e.g., search for the \"## Incident Timeline\" header and insert new entries just after it rather than appending to EOF) so new incident entries appear in the correct section.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "vector.toml",
+        "codegenInstructions": "In @vector.toml around lines 20 - 24, The VRL uses the non-existent string() function causing a syntax/runtime failure; replace string(.event), string(.kind), string(.host), string(.method), and string(.uri) with to_string(.event), to_string(.kind), to_string(.host), to_string(.method), and to_string(.uri) respectively so the fields are properly coerced to strings in the Vector pipeline.",
+        "suggestions": []
+    },
+
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "sql/V002__payload_audit.sql",
+        "codegenInstructions": "In @sql/V002__payload_audit.sql at line 97, payload_audit.correlation_id and connection_sessions.correlation_id have mismatched nullability; make them consistent by either adding NOT NULL to connection_sessions.correlation_id or relaxing payload_audit.correlation_id to allow NULL and updating the schema comments. Locate the correlation_id column definitions (symbols: payload_audit.correlation_id and connection_sessions.correlation_id) and apply the chosen change in the DDL so both columns share the same nullability, and if allowing NULL add a short schema comment describing when NULL is valid.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "services/zig-coordinator/src/jobs.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/jobs.zig at line 69, The call to batches.deinit(allocator) is incorrect because std.ArrayList.deinit takes no arguments; remove the allocator parameter and call batches.deinit() instead (locate the call to batches.deinit(allocator) in jobs.zig and update it to batches.deinit()). Ensure any allocator cleanup is handled where appropriate but do not pass the allocator into ArrayList.deinit.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "services/zig-coordinator/src/jobs.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/jobs.zig at line 42, The call to ArrayList.append is using an extra allocator argument, but std.ArrayList stores its allocator and its append signature is append(item: T); locate the batches.append(allocator, .{...}) call and remove the allocator parameter so it becomes batches.append(.{ ... }); also verify the batches ArrayList was initialized with initCapacity or init so its allocator is set before calling append.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "vector.toml",
+        "codegenInstructions": "In @vector.toml around lines 29 - 31, The VRL calls using string(...) are incorrect; replace them with to_string(...) for the three fields so the expressions .orig_dst = to_string(.orig_dst) ?? \"\", .error = to_string(.error) ?? \"\", and .message = to_string(.message) ?? \"\"; update the same pattern used earlier (lines with .orig_dst, .error, .message) to use to_string() so VRL casts work correctly.",
+        "suggestions": [
+            ".orig_dst    = to_string(.orig_dst)    ?? \"\"\n.error       = to_string(.error)       ?? \"\"\n.message     = to_string(.message)     ?? \"\""
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "vector.toml",
+        "codegenInstructions": "In @vector.toml at line 19, The current VRL line \".timestamp = parse_timestamp(.timestamp, format: \"%+\") ?? now()\" silently substitutes now() on parse failure; change the behavior in the timestamp assignment (the parse_timestamp call) to surface parse errors instead of defaulting to now() — either log the parsing failure (using the correct VRL function name to convert the error to string, e.g., to_string() or proper VRL error formatting) or assign a sentinel value (null or a specific flag) so malformed timestamps are detectable; update the expression around parse_timestamp and remove the unconditional now() fallback, adding a logging/telemetry call that includes the error text from parse_timestamp when it returns an error.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "config/peer1/peer1.conf",
+        "codegenInstructions": "In @config/peer1/peer1.conf at line 6, The file peer1.conf contains a plaintext PrivateKey that must be removed from version control immediately: delete or remove peer1.conf from the repo (and from history if already committed), revoke/regenerate the exposed PrivateKey and update any systems that used it, then create a template peer1.conf.example containing placeholder values (e.g., a dummy PrivateKey field) for onboarding. Finally update .gitignore to ignore actual config files (e.g., add *.conf) while allowing templates (e.g., !*.conf.example) to prevent future commits of real keys.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/bin/wg-obfs-shim.rs",
+        "codegenInstructions": "In @src/bin/wg-obfs-shim.rs around lines 221 - 226, The env var value is checked with value.trim().is_empty() but the original untrimmed string is passed to read_key_file, so leading/trailing whitespace can break file reads; capture and trim the environment value before returning (e.g. after the .filter(...) use the trimmed string or replace the closure with .filter_map(|v| { let t = v.trim(); if t.is_empty() { None } else { Some(t.to_string()) } }) and then call read_key_file(&trimmed_path) so read_key_file receives the trimmed path; target the code around std::env::var(...) and the call to read_key_file to implement this change.",
+        "suggestions": [
+            "    if let Some(path) = std::env::var(\"WG_OBFUSCATION_KEY_FILE\")\n        .ok()\n        .map(|value| value.trim().to_string())\n        .filter(|value| !value.is_empty())\n    {\n        return read_key_file(&path);\n    }"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "config/client/wg-obfs-shim.service",
+        "codegenInstructions": "In @config/client/wg-obfs-shim.service around lines 6 - 11, Add systemd hardening to the [Service] block that runs ExecStart=/usr/local/bin/wg-obfs-shim: run the process as an unprivileged account by adding either User= and Group= or DynamicUser=yes, enable NoNewPrivileges=yes and PrivateTmp=yes, restrict the filesystem with ProtectSystem=strict and ProtectHome=yes, and set a minimal CapabilityBoundingSet= with only the necessary capabilities (e.g., CAP_NET_ADMIN or CAP_NET_BIND_SERVICE) after verifying which ones wg-obfs-shim actually needs; keep Restart and RestartSec as-is and ensure EnvironmentFile= remains for configuration.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/tunnel/classify.rs",
+        "codegenInstructions": "In @src/tunnel/classify.rs around lines 158 - 162, The test named classify_named_service_real_host_and_rejects_false_positive is misleading because it asserts that classify(\"foo.whatsapp.evil\", 443, None) returns \"essential_api\" via the port-443 fallback rather than rejecting the false positive; update the test to reflect actual intent by either renaming the test to indicate acceptance via port fallback (e.g., classify_named_service_with_port_fallback) or change the second assertion to use a non-essential port (e.g., port 1234) so classify(\"foo.whatsapp.evil\", 1234, None) is asserted to reject (not return \"essential_api\"); locate the test function classify_named_service_real_host_and_rejects_false_positive and the call sites of classify(...) to apply the change.",
+        "suggestions": [
+            "    #[test]\n    fn classify_named_service_matches_subdomain_and_rejects_lookalike() {\n        assert_eq!(classify(\"web.whatsapp.com\", 443, None), \"essential_api\");\n        // Use non-fallback port to verify domain rejection\n        assert_eq!(classify(\"foo.whatsapp.evil\", 1234, None), \"unknown\");\n    }"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "static/index.html",
+        "codegenInstructions": "In @static/index.html around lines 204 - 212, The WebSocket constructors (connectStatsWs and any connectEventsWs) currently open /ws and /events without credentials; if those endpoints require authentication, update those functions to include the API key in the WebSocket URL (e.g., append ?api_key=ENCODED_KEY) or pass it via a subprotocol when creating new WebSocket(`${proto}//${location.host}/ws?api_key=${encodeURIComponent(apiKey)}`) or new WebSocket(url, apiKeySubprotocol); obtain the same apiKey value your fetch calls use (from the same source: config variable, meta tag, or cookie/localStorage), URL-encode it, and ensure you do not log the raw key. Ensure the server accepts the chosen mechanism and validates the key on the WebSocket upgrade.",
+        "suggestions": [
+            "function connectStatsWs() {\n  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';\n  const apiKey = window.ADMIN_API_KEY ?? '';\n  wsStats = new WebSocket(`${proto}//${location.host}/ws${apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : ''}`);\n  wsStats.onopen = () => {\n    dot.classList.add('live');\n    wsStatsBackoff = 1000;\n  };\n  wsStats.onclose = scheduleStatsReconnect;\n  wsStats.onerror = scheduleStatsReconnect;"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "scripts/memo-log.sh",
+        "codegenInstructions": "In @scripts/memo-log.sh around lines 35 - 41, The current logic verifies the \"## Incident Timeline\" header in MEMORY_FILE but then appends the new entry with printf to the file end (using TS and the printf line), which places entries after sections like \"## Open Risks\"; change the write strategy to insert the formatted entry immediately after the \"## Incident Timeline\" header (or before the next \"## \" section) instead of appending to EOF—locate the check that uses grep -q '^## Incident Timeline' and replace the printf >> \"$MEMORY_FILE\" step with an insertion that finds the line number of '^## Incident Timeline' and inserts the new entry just before the next section header.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "config/templates/server.conf",
+        "codegenInstructions": "In @config/templates/server.conf at line 15, The PostUp line currently enables net.ipv6.conf.all.forwarding=1 but all firewall manipulations use iptables (IPv4), so IPv6 traffic can bypass rules; either add equivalent ip6tables rules in the PostUp sequence for the TCP redirect and UDP 443 drop (mirror the iptables rules but using ip6tables) or remove/stop setting net.ipv6.conf.all.forwarding in PostUp so IPv6 forwarding is not enabled; target the PostUp command and the net.ipv6.conf.all.forwarding setting and ensure the iptables -> ip6tables parity for TCP redirect and UDP 443 drop is implemented if enabling IPv6.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docs/threat-model.md",
+        "codegenInstructions": "In @docs/threat-model.md at line 92, Replace the misspelled word \"alertging\" with \"alerting\" in the table row containing \"Impact | Compliance failure, forensic blind spots, outage | Health/readiness endpoints, planned observability/alertging improvements | **Partial**\" so the cell reads \"...planned observability/alerting improvements...\".",
+        "suggestions": [
+            "| Impact | Compliance failure, forensic blind spots, outage | Health/readiness endpoints, planned observability/alerting improvements | **Partial** |"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/src/jobs.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/jobs.zig around lines 41 - 53, The loop that appends to batches can leak allocated batch_id strings if generateOwnedId fails mid-loop; update the code around the while loop that calls generateOwnedId and batches.append to use errdefer-style cleanup: on any error after one or more successful appends, iterate the already-appended entries in batches and free each entry's batch_id via the appropriate deallocation function (the same allocator/free used by generateOwnedId), then free/clear the appended entries before propagating the error; ensure this cleanup runs before returning from the function so no batch_id allocations remain leaked.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "services/zig-coordinator/src/scheduler.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/scheduler.zig at line 25, The ArrayList usage is using an older API; update the retry_queue usages to match modern Zig (0.11+) by removing explicit allocator arguments: keep creation as .retry_queue = try std.ArrayList(model.WorkerResult).initCapacity(allocator, 1), change any .deinit(self.allocator) calls (e.g., in Scheduler deinit/cleanup) to .deinit() with no arguments, and change any .append(self.allocator, result) calls (e.g., where retry_queue.append is called) to .append(result) only so the ArrayList uses its internally stored allocator.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/src/config.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/config.zig at line 17, The config currently sets .batch_size = parseBatchSize(envOrDefault(\"SYNC_BATCH_SIZE\", \"100\")) but parseBatchSize can return 0 which will break batching; update the code that assigns batch_size (and the similar assignments at the other occurrence around lines 31-33) to validate the parsed value > 0 and fail fast (e.g., return an error or panic) when it is 0 or negative; specifically, after calling parseBatchSize(...) check the result and produce a clear error (or use a helper that wraps parseBatchSize to enforce >0) so batch_size is guaranteed > 0 at runtime.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "config/templates/server.conf",
+        "codegenInstructions": "In @config/templates/server.conf around lines 14 - 15, The sleep expression uses sleep 0.$((delay_ms)) which misinterprets milliseconds (e.g., 50 -> 0.50s); update the PostUp commands (the blocks that reference WG_RUNTIME_SYSCTLS, tries/max/delay_ms) to convert milliseconds correctly by padding delay_ms to three digits and using that fractional seconds form, e.g. compute delay_ms_padded=$(printf '%03d' \"$delay_ms\") and call sleep 0.$delay_ms_padded; apply the same fix to the IPv6 PostUp block and the other similar occurrences mentioned (lines 18-20) so delays represent milliseconds accurately.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/schema/postgres.sql",
+        "codegenInstructions": "In @services/zig-coordinator/schema/postgres.sql around lines 7 - 15, Alter the sync_job table to add a foreign key constraint from sync_job.stream_name to sync_cursor(stream_name) (e.g., name it fk_sync_job_stream_name), add a CHECK constraint on sync_job.status to restrict values to ('pending','running','completed','failed') (e.g., chk_sync_job_status), and create an index on sync_job.stream_name (e.g., idx_sync_job_stream_name) to speed lookups; apply these changes via ALTER TABLE / CREATE INDEX statements against the sync_job table and use the given constraint names to make them easy to find and manage.",
+        "suggestions": []
+    },
+
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/schema/postgres.sql",
+        "codegenInstructions": "In @services/zig-coordinator/schema/postgres.sql around lines 17 - 30, The sync_batch table lacks integrity and performance features: add a foreign key on sync_batch.job_id that references sync_job(job_id), add a CHECK constraint on the status column limiting values to ('pending','processing','completed','failed'), add a created_at timestamp (default now()) to record batch creation vs retries, and create indexes to improve queries—a composite index on (job_id, batch_no) for ordered job-batch lookups and a single-column index on status for fast status filtering; update the table definition for sync_batch and apply the constraints/indexes accordingly.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/schema/postgres.sql",
+        "codegenInstructions": "In @services/zig-coordinator/schema/postgres.sql around lines 32 - 39, The sync_error table is missing foreign key constraints and indexes for job_id and batch_id; add FK constraints on sync_error.job_id -> job(id) and sync_error.batch_id -> batch(id) (or the actual parent table names if different) allowing NULLs, and create B-tree indexes on sync_error(job_id) and sync_error(batch_id) to speed lookups; you can add these either inline in the CREATE TABLE for sync_error or via ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY (...) REFERENCES ... and CREATE INDEX statements for the two columns.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "scripts/up-ready.sh",
+        "codegenInstructions": "In @scripts/up-ready.sh around lines 157 - 166, The parameter expansion in to_container_config_path uses a quoted pattern ${host_path#\"$ROOT_DIR\"/config/} which is not compatible with bash 3.x; change the pattern to use an unquoted inner expansion like ${host_path#${ROOT_DIR}/config/} (keep the outer expansions quoted where used) so the prefix removal works on bash 3, and verify printf still receives a properly quoted value; update the occurrence inside to_container_config_path referencing host_path and ROOT_DIR accordingly.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/src/scheduler.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/scheduler.zig around lines 84 - 89, The retry loop currently increments previous_attempts indefinitely (calculating next_attempt and backoff_ms then calling self.retry_state.put); add a maximum retry threshold (e.g., const max_retries = 5 or read from config) and if next_attempt > max_retries return or escalate with error.PermanentFailure instead of scheduling another retry; update the logic around next_attempt/backoff_ms/retry_state.put to either remove/mark the key as permanently failed or avoid calling self.retry_state.put when the limit is reached so retries stop and the caller receives error.PermanentFailure.",
+        "suggestions": [
+            "        const next_attempt = previous_attempts + 1;\n        const max_retries: usize = 5;\n        if (next_attempt > max_retries) {\n            return error.PermanentFailure;\n        }\n\n        const backoff_ms = @as(u64, 1000) << @intCast(@min(next_attempt - 1, @as(usize, 5)));\n        try self.retry_state.put(owned_key, .{\n            .attempts = next_attempt,\n            .backoff_ms = backoff_ms,\n        });"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "services/zig-coordinator/src/scheduler.zig",
+        "codegenInstructions": "In @services/zig-coordinator/src/scheduler.zig around lines 67 - 96, handleWorkerResult currently appends the incoming model.WorkerResult (borrowed slices) into retry_queue which risks dangling pointers when the caller frees its buffers; duplicate the slice fields into owned memory before storing: use self.allocator.dupe to allocate copies of result.batch_id (you already do for retry_state key), result.job_id and result.status, build a new owned WorkerResult-like struct or mutate a local copy that holds those owned slices, ensure errdefer frees allocated owned copies on early returns/failure paths, then append the owned record to retry_queue so the queue stores owned data rather than borrowed references.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "src/events.rs",
+        "codegenInstructions": "In @src/events.rs around lines 140 - 152, The code currently discards all typed fields from EmitPayload (peer_ip, wg_pubkey, device_id, identity_source, peer_hostname, client_ua, bytes_up, bytes_down, status_code, blocked, obfuscation_profile) via the `let _ = (...)` tuple so only `extra` ends up serialized; either remove these unused parameters from the `EmitPayload`/function signature if they are placeholder, or add them into the event envelope serialization where `extra` is serialized (update the serialization path that builds the event envelope to include these fields with the appropriate keys and types), locating the logic around the function that accepts `EmitPayload` and the code that constructs/serializes the event envelope to add each variable instead of discarding them.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docker-compose.yaml",
+        "codegenInstructions": "In @docker-compose.yaml at line 63, The docker-compose service is exposing a hardcoded ADMIN_API_KEY=test which is insecure; replace the literal with a reference to an external/CI-provided secret (e.g., use an environment variable placeholder like ${ADMIN_API_KEY}) so deployments must supply the real key, update any .env.example to not contain a real secret, and ensure CI/CD or secret manager injects ADMIN_API_KEY at deploy time; locate the ADMIN_API_KEY entry in the docker-compose.yaml and switch to the env placeholder and update deployment/docs accordingly.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/state.rs",
+        "codegenInstructions": "In @src/state.rs around lines 278 - 283, The weighted_ema function can overflow when computing previous * (weight - 1); update weighted_ema to perform the intermediate math safely (either by using u64::saturating_mul and saturating_add or by promoting operands to u128 for the multiply/add, performing the division, then clamping/casting back to u64). Locate the weighted_ema function and replace the direct u64 multiply/add with one of these safe patterns so intermediate results cannot overflow and the final result is converted back to u64.",
+        "suggestions": [
+            "fn weighted_ema(previous: u64, current: u64, weight: u64) -> u64 {\n    if weight <= 1 {\n        return current;\n    }\n    previous\n        .saturating_mul(weight - 1)\n        .saturating_add(current)\n        / weight\n}"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/tunnel/tarpit.rs",
+        "codegenInstructions": "In @src/tunnel/tarpit.rs around lines 40 - 62, The current logic runs two separate tokio::time::timeout calls (one wrapping upgrade_fut and one wrapping tokio::io::copy) each using MAX_TARPIT_MS, allowing their durations to sum; change to a single shared deadline so total tarpit time <= MAX_TARPIT_MS: capture a deadline before starting the upgrade (e.g. let deadline = Instant::now() + Duration::from_millis(MAX_TARPIT_MS)) then use timeout_at/remaining duration for the upgrade (wrapping upgrade_fut) and, if upgrade succeeds, compute the remaining time (deadline - Instant::now()) and use that as the timeout for tokio::io::copy on TokioIo::new(upgraded) (and bail out if remaining <= 0); reference MAX_TARPIT_MS, upgrade_fut, tokio::time::timeout/timeout_at, Instant::now, TokioIo::new and tokio::io::copy to find the spots to modify.",
+        "suggestions": []
+    },
+
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "Cargo.toml",
+        "codegenInstructions": "In @Cargo.toml around lines 17 - 19, The Cargo.toml currently mixes hyper = \"1\" with hyper-proxy = \"0.9.1\" (and hyper-util) which are incompatible; update the dependency set so hyper-proxy matches hyper 1.x (or remove/replace it). Concretely, in Cargo.toml adjust or replace the hyper-proxy dependency (the \"hyper-proxy\" crate entry) with a version that explicitly supports hyper 1.0 or remove it and use an alternative proxy solution, ensure hyper-util features still align with hyper 1, then run cargo build to verify and fix any API changes in code referencing hyper-proxy types/functions.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/events.rs",
+        "codegenInstructions": "In @src/events.rs around lines 154 - 177, The code calls chrono::Utc::now() twice (for EventEnvelope.time in the serde_json::to_string call and again for observed_at) which can produce different timestamps and break dedupe_key generation; fix by capturing a single timestamp string (e.g., let observed_at = chrono::Utc::now().to_rfc3339()) before creating EventEnvelope, use that observed_at for the EventEnvelope.time field and later when computing dedupe_key (with Sha256::digest) so the same timestamp is used consistently, keeping the existing checks like crate::sync::should_publish_scan_request(event) and the state.events_tx.send(raw.clone()) logic intact.",
+        "suggestions": [
+            "    let now = chrono::Utc::now().to_rfc3339();\n    let raw = match serde_json::to_string(&EventEnvelope {\n        event,\n        host,\n        time: now.clone(),\n        extra,\n    }) {\n        Ok(raw) => raw,\n        Err(e) => {\n            error!(%e, event_name = event, %host, \"failed to serialize event envelope\");\n            return;\n        }\n    };\n\n    let _ = state.events_tx.send(raw.clone());\n\n    if !crate::sync::should_publish_scan_request(event) {\n        return;\n    }\n\n    let observed_at = now;\n    let dedupe_key = format!(\n        \"{:x}\",\n        Sha256::digest(format!(\"{event}:{host}:{observed_at}:{raw}\").as_bytes())\n    );"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/dashboard.rs",
+        "codegenInstructions": "In @src/dashboard.rs around lines 470 - 474, The stats_bandwidth handler currently accepts but ignores BandwidthQuery::window (bound to _window) so either implement window-aware aggregation or remove the parameter to avoid misleading clients: update stats_bandwidth to read query.window and apply it when computing or aggregating the returned Vec<BandwidthPoint> (e.g., filter/summarize snapshot deltas by the requested window) ensuring any helper functions that produce points accept the window, or, if windowed results are not supported, remove the window field from BandwidthQuery and drop the _window binding from stats_bandwidth and related callers so the API signature accurately reflects supported behavior.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "services/oracle-worker/Cargo.toml",
+        "codegenInstructions": "In @services/oracle-worker/Cargo.toml around lines 1 - 11, The Docker build is failing because the Dockerfile expects a Cargo.lock that is not present; either add and commit a Cargo.lock next to Cargo.toml (generate it by running cargo generate-lockfile or cargo build) or modify the Dockerfile COPY step to stop copying Cargo.lock and only copy Cargo.toml (adjust the COPY instruction that references Cargo.toml and Cargo.lock to only reference Cargo.toml and ensure subsequent build steps still work). Ensure you update the repository accordingly so the build context matches the Dockerfile's COPY references.",
+        "suggestions": []
+    },
+
+
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "src/tunnel/transparent.rs",
+        "codegenInstructions": "In @src/tunnel/transparent.rs around lines 247 - 259, The code adds a direct Oracle DB call (crate::db::upsert_tls_fingerprint_event) under #[cfg(feature = \"oracle-db\")] inside transparent.rs (the tls.ja3_lite branch using state.db), which violates the rule that Oracle integration must live in services/oracle-worker; remove the direct DB call and any #[cfg(feature = \"oracle-db\")] blocks here and instead emit a neutral internal event or call a proxy-compatible helper (e.g., an enqueuing function like enqueue_tls_fingerprint_event or emit_tls_fingerprint) that only packages ja3_lite, tls_ver, alpn, cipher_count and verdict_hint for downstream processing; ensure the helper lives in a non-Oracle-specialized module (or behind a single small adapter in services/oracle-worker) so transparent.rs no longer references crate::db, state.db, or other oracle-specific APIs (apply same refactor to the other affected region around the 568-608 code that uses db_session_open/close, insert_payload_audit_event, etc.).",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md at line 210, Task 4.2.1 is redundant with Sprint 1 baseline; remove the epic entry that instructs \"Remove `enable_dns_lookups` guard from the DNS cache write path in `dial_upstream_with_resolver()`\" and any mention of promoting DNS cache to always-on, since `AppState.dns_cache` and positive/negative caching are already baseline behavior; update the backlog to delete the Task 4.2.1 row and ensure no follow-up work references `enable_dns_lookups`, `dial_upstream_with_resolver()`, or `AppState.dns_cache` as pending scope.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md at line 181, The current Task 3.3.1 rule flags a user as SCRAPING_SUSPECT when HostStats entry (requests_per_minute) for a (user_id, domain) exceeds 60, which will produce false positives for legitimate high-frequency clients; change the detection to either raise the hard threshold (e.g., to 300 req/min) or make it configurable per-domain by adding a domain-level allowlist and configurable threshold lookup used by the HostStats check and SCRAPING_SUSPECT decision logic; update the routine that reads HostStats.requests_per_minute and the scorer/flagger that sets SCRAPING_SUSPECT to consult the new config (per-domain threshold and allowlist) before flagging.",
+        "suggestions": []
+    },
+
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "src/dashboard.rs",
+        "codegenInstructions": "In @src/dashboard.rs around lines 74 - 92, The ready handler currently always returns StatusCode::OK even when the computed status is \"degraded\"; change the response status code based on the computed status in the ready(State(state): State<SharedState>) function by computing a StatusCode (e.g., let status_code = if status == \"degraded\" { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }) and use that status_code instead of the hard-coded StatusCode::OK when constructing the response that includes ReadyReport and ReadySyncStatus { publisher }.",
+        "suggestions": [
+            "/// GET /ready — readiness probe for the local process surfaces.\npub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {\n    let publisher = state.publisher.health_snapshot();\n    let (status, code) = if publisher.configured && publisher.last_error.is_some() {\n        (\"degraded\", StatusCode::SERVICE_UNAVAILABLE)\n    } else {\n        (\"ok\", StatusCode::OK)\n    };\n\n    (\n        code,\n        Json(ReadyReport {\n            status,\n            local: \"ok\",\n            sync: ReadySyncStatus { publisher },\n        }),\n    )\n        .into_response()\n}"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md around lines 59 - 278, The doc contains an architectural inconsistency between \"Epics 1-5\" / ADR (Oracle-centric, writer pipeline, EventSender/Oracle tables) and the \"Sprint 1\" section (NATS/publish/outbox model); resolve by either (A) updating Epics 1-5 and any Oracle-specific tasks (e.g., DB writer tuning, sql/V00* artifacts, EventSender references, compliance_events, blocklist_domains) to describe the NATS/outbox-based event publishing and how outbox->NATS maps to downstream storage, or (B) explicitly state a dual-persistence strategy (NATS for real-time pipeline + Oracle as eventual sink), add clear scope separation for every task referencing Oracle (mark as \"Oracle sink\" or \"deferred\"), and remove the stale \"cutover/backlog drift\" TODOs and any references to removed Oracle writer paths so the document consistently reflects the live architecture.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md at line 93, The plaintext HTTP method sniffing described in run_transparent() (when orig_dst.port() == 80) that checks up_buf first bytes and sets session.transaction_signal raises privacy/compliance concerns; update the implementation and docs so capture_plaintext_payloads defaults to off and only enables when explicitly opted-in with documented legal approval: change configuration to require explicit opt-in for capture_plaintext_payloads, gate the up_buf inspection (POST/PUT/PATCH) behind that opt-in check in run_transparent(), add a note in the threat model and compliance sections stating plaintext inspection is disabled by default and requires documented legal sign-off, and ensure session.transaction_signal behavior is only triggered when the explicit opt-in is present.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md around lines 341 - 361, Sprint 1 introduces undefined concepts (sync.scan.request, outbox://..., NATS publisher, sync-publish) that must be documented before the sprint; add a new epic or architecture section that (1) defines the event type sync.scan.request and its schema and producer/consumer roles, (2) explains the outbox:// payload-reference pattern and how it maps to Epic 3.2 MinIO/other shared storage and to the coordinator/worker resolution flow, (3) documents the NATS event bus role (publisher auth/TLS, readiness semantics) and how it integrates or replaces the Oracle-centric design, and (4) clarifies the term \"sync-publish\" and where its implementation lives; reference these symbols (sync.scan.request, outbox://..., NATS, sync-publish) in the new section and update Sprint 1 checklist to link to the epic.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "scripts/up-ready.sh",
+        "codegenInstructions": "In @scripts/up-ready.sh around lines 178 - 179, The two compose exec usages that run sh -lc with an embedded single-quoted $container_cfg are vulnerable to paths containing single quotes; update the checks to avoid shell interpolation by calling the commands directly via compose exec -T \"$SERVICE_NAME\" test -r \"$container_cfg\" and compose exec -T \"$SERVICE_NAME\" cat \"$container_cfg\" | qrencode -t \"$QR_TYPE\" -m \"$QR_MARGIN\" (i.e., remove the sh -lc wrapper and pass \"$container_cfg\" as a separate argument), ensuring container_cfg remains quoted to preserve spaces and special chars.",
+        "suggestions": [
+            "    if [ -n \"$container_cfg\" ] && compose exec -T \"$SERVICE_NAME\" sh -lc \"test -r '$container_cfg'\"; then\n        compose exec -T \"$SERVICE_NAME\" cat \"$container_cfg\" | qrencode -t \"$QR_TYPE\" -m \"$QR_MARGIN\""
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md at line 169, Task 3.2.1 is ambiguous about which S3 client to use; update the item to commit to a single choice by removing \"aws-sdk-s3\" and keeping \"opendal = { version = \\\"0.48\\\", features = [\\\"services-s3\\\"] }\" gated by the \"payload-store\" feature, or alternatively replace the line with a short decision rule referencing when to use aws-sdk-s3 vs opendal; target the text for \"Task 3.2.1\", the symbols \"opendal\", \"aws-sdk-s3\", and the feature gate \"payload-store\" when making the change.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "scripts/up-ready.sh",
+        "codegenInstructions": "In @scripts/up-ready.sh around lines 300 - 308, The temp file created with body_file=\"$(mktemp)\" can leak if the function returns early; add a cleanup trap immediately after creating body_file (e.g. trap 'rm -f \"$body_file\"' EXIT or RETURN depending on shell) so the file is removed on all exit paths, or alternatively move the mktemp/use/remove sequence into a subshell to avoid early-return leaks; ensure the trap is installed before any early-return logic around ready_code and the compose exec curl handling so rm -f \"$body_file\" always runs even when the function exits early.",
+        "suggestions": []
+    },
+
+
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md at line 198, Task 4.1.1 duplicates existing baseline because `copy_bidirectional` is already the non-capture fast path; update the doc entry for the epic by removing Task 4.1.1 or rephrasing it to only cover the capture-mode fallback (i.e., state that `run_transparent()` uses `tokio::io::copy_bidirectional` for non-capture connections and that the manual split-and-loop remains as the fallback when `capture_payloads == true`), and remove the conflicting backlog label so the sprint baseline and epic are consistent.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "src/quic.rs",
+        "codegenInstructions": "In @src/quic.rs at line 515, Fix the typo in the inline comment that currently reads \"Encode captured payloads as base64 for audit log2\" by changing it to \"Encode captured payloads as base64 for audit log\"; locate the exact comment string \"Encode captured payloads as base64 for audit log2\" in src/quic.rs and update the text only (no code changes).",
+        "suggestions": [
+            "    // Encode captured payloads as base64 for audit log"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docs/ssl-proxy-compliance-audit-enhancement-workmap.md",
+        "codegenInstructions": "In @docs/ssl-proxy-compliance-audit-enhancement-workmap.md around lines 300 - 312, The migration list includes sql/V016__compliance_events.sql but Epic 5.2 lacks a corresponding migration task; add an explicit task entry under Epic 5.2 (for example \"5.2.4 — Migration V016\") that references V016 and the compliance_events table so the docs’ ordered migration list (the SQL list block containing V007..V017) matches the epic breakdown and Epic 5.2.1’s description of the compliance_events schema.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "tests/smoke.sh",
+        "codegenInstructions": "In @tests/smoke.sh at line 100, The command substitution that sets the count variable can return a non-zero exit when grep finds zero matches, which can abort the script under set -e; update the assignment that uses grep -c (the line setting count=\"$(docker compose exec -T ssl-proxy sh -lc \"grep -c '^Address = 10.13.13.1/24$' /run/wireguard/wg0.conf\")\") to ensure a zero exit status—e.g. append \"|| true\" to the grep invocation or replace it with \"grep -c ... || echo 0\" inside the sh -lc so the command substitution always succeeds and yields \"0\" when there are no matches.",
+        "suggestions": [
+            "    count=\"$(docker compose exec -T ssl-proxy sh -lc \"grep -c '^Address = 10.13.13.1/24$' /run/wireguard/wg0.conf\" || true)\""
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "src/dashboard.rs",
+        "codegenInstructions": "In @src/dashboard.rs around lines 305 - 340, The upsert_device currently mints and stores a new claim_token/claim_token_hash on every call (lines around mint_device_token/hash and where DeviceInfo.claim_token_hash is set), which invalidates existing tokens; change upsert_device so it first checks state.get_device(&device_id) to detect whether the device already exists and only call crate::identity::mint_device_token() and set claim_token_hash when the device is new OR when the incoming DeviceUpsertRequest includes an explicit flag (e.g., regenerate_claim_token: Option<bool>) set true; preserve the existing claim_token_hash from the existing DeviceInfo for ordinary metadata updates, and update DeviceUpsertResponse (and returned claim_token) to be optional so you only return a newly minted claim_token when one was generated.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docker/entrypoint.sh",
+        "codegenInstructions": "In @docker/entrypoint.sh around lines 708 - 749, The shutdown function and its dedicated TERM trap duplicate cleanup's work and should be removed: delete the shutdown() function and the line `trap shutdown TERM`, leaving only the existing `trap cleanup EXIT INT TERM`; ensure `cleanup` (which already references PROXY_PID, COREDNS_PID, BORINGTUN_PID, WG_UP, and run_hooks PostDown) remains responsible for all termination logic so TERM signals are handled only once and no handlers are overwritten.",
+        "suggestions": [
+            "cleanup() {\n\tset +e\n\n\t# Signal processes first (in correct order)\n\tif [ -n \"${PROXY_PID:-}\" ]; then\n\t\tkill -TERM \"$PROXY_PID\" 2>/dev/null || true\n\tfi\n\tif [ -n \"${COREDNS_PID:-}\" ]; then\n\t\tkill -TERM \"$COREDNS_PID\" 2>/dev/null || true\n\tfi\n\tif [ -n \"${WG_UP:-}\" ]; then\n\t\trun_hooks PostDown || true\n\tfi\n\tif [ -n \"${BORINGTUN_PID:-}\" ]; then\n\t\tkill -TERM \"$BORINGTUN_PID\" 2>/dev/null || true\n\t\twait \"$BORINGTUN_PID\" 2>/dev/null || true\n\tfi\n\tif [ -n \"${WG_UP:-}\" ]; then\n\t\tWG_UP=\"\"\n\tfi\n}\n\ntrap cleanup EXIT INT TERM\n\nif [ ! -f \"$COREDNS_CONFIG\" ]; then\n\techo \"missing CoreDNS config: $COREDNS_CONFIG\" >&2\n\texit 1\nfi\n\nensure_wireguard_server_keys"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "sql/views.sql",
+        "codegenInstructions": "In @sql/views.sql around lines 181 - 224, The view v_session_timeline currently joins an unbounded connection_sessions (cs) to a 7-day proxy_events aggregate (pe_agg), causing a full table scan; restrict cs to the same recent window by adding a time filter on the session timestamp(s) (e.g. cs.opened_at >= SYSTIMESTAMP - INTERVAL '7' DAY or an appropriate opened_at/closed_at overlap condition) so the FROM/WHERE that references connection_sessions limits rows to the 7-day range and aligns with pe_agg.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "src/wg_shim.rs",
+        "codegenInstructions": "In @src/wg_shim.rs around lines 212 - 234, The DashMap write lock is held across await points in the sessions.entry(...) Entry::Vacant branch where UdpSocket::bind and connect are awaited; refactor to a double-checked pattern: first try sessions.get(&client_addr) and return the cloned session if present, otherwise create the UdpSocket (UdpSocket::bind and connect) and ShimSession::new outside any DashMap entry/guard, then re-open sessions.entry(client_addr) and insert the prebuilt Arc<ShimSession> only if still vacant (or fetch the existing value if another task beat us) and finally spawn run_session_receiver with the inserted/found session; this removes awaits while holding the DashMap lock and preserves the existing behavior.",
+        "suggestions": [
+            "async fn get_or_create_session(\n    client_addr: SocketAddr,\n    listen_socket: Arc<UdpSocket>,\n    server_addr: SocketAddr,\n    obfuscation: WgPacketObfuscation,\n    idle_timeout: Duration,\n    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,\n    shutdown: CancellationToken,\n) -> io::Result<Arc<ShimSession>> {\n    // Fast path: session already exists\n    if let Some(existing) = sessions.get(&client_addr) {\n        return Ok(existing.clone());\n    }\n\n    // Create socket outside of lock\n    let upstream_socket =\n        Arc::new(UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?);\n    upstream_socket.connect(server_addr).await?;\n    let new_session = Arc::new(ShimSession::new(upstream_socket));\n\n    // Re-check and insert atomically\n    let session = match sessions.entry(client_addr) {\n        Entry::Occupied(existing) => {\n            // Another task won the race; discard our socket and use theirs\n            existing.get().clone()\n        }\n        Entry::Vacant(vacant) => {\n            let session = vacant.insert(new_session).clone();\n            tokio::spawn(run_session_receiver(\n                client_addr,\n                session.clone(),\n                listen_socket,\n                obfuscation,\n                idle_timeout,\n                sessions.clone(),\n                shutdown,\n            ));\n            session\n        }\n    };\n    Ok(session)\n}"
+        ]
+    },
+
+    {
+        "type": "finding",
+        "severity": "critical",
+        "fileName": "src/lib.rs",
+        "codegenInstructions": "In @src/lib.rs around lines 79 - 83, The current header slicing (header[..6] / header[6..]) can panic on UTF-8 boundaries; change to operate on bytes instead: check the prefix with header.as_bytes().starts_with(b\"Basic \") (or equivalent byte-slice comparison) and then use header.as_bytes()[6..] (or header.as_bytes().get(6..) with handling) to obtain the encoded bytes safely before further processing; update any variables using encoded (e.g., encoded) to accept a byte slice and ensure decoding/validation uses the byte slice rather than UTF-8 index slicing.",
+        "suggestions": [
+            "    let encoded = if header.len() >= 6 && header.as_bytes()[..6].eq_ignore_ascii_case(b\"basic \") {\n        // Safe: if the first 6 bytes match \"basic \" (ASCII), byte 6 is at a char boundary\n        &header[6..]\n    } else {\n        return false;\n    };"
+        ]
+    },
+    {
+        "type": "finding",
+        "severity": "minor",
+        "fileName": "docker/entrypoint.sh",
+        "codegenInstructions": "In @docker/entrypoint.sh around lines 809 - 830, The monitoring loop restarts ssl-proxy unconditionally which can cause a tight crash loop; modify the loop around PROXY_PID/PROXY_BIN to implement a restart backoff and/or a retry limit for ssl-proxy: add a counter (e.g., proxy_restart_count) and a backoff delay (e.g., proxy_backoff_secs increasing exponentially up to a cap) before re-spawning PROXY_BIN, reset the counter on successful long-lived run, and if the retry limit is exceeded exit with a clear error message; reference BORINGTUN_PID, COREDNS_PID, PROXY_PID and PROXY_BIN when locating the restart logic to update.",
+        "suggestions": [
+            "PROXY_RESTART_COUNT=0\nPROXY_RESTART_BACKOFF=1\n\n# Monitor critical child processes\nwhile true; do\n\t# Wait for any child to exit\n\twait -n\n\texit_code=$?\n\n\tif ! kill -0 \"$BORINGTUN_PID\" 2>/dev/null; then\n\t\techo \"boringtun-cli exited unexpectedly, restarting container\"\n\t\texit 1\n\tfi\n\n\tif ! kill -0 \"$COREDNS_PID\" 2>/dev/null; then\n\t\techo \"coredns exited unexpectedly, restarting container\"\n\t\texit 1\n\tfi\n\n\t# If ssl-proxy died, restart it\n\tif ! kill -0 \"$PROXY_PID\" 2>/dev/null; then\n\t\tPROXY_RESTART_COUNT=$((PROXY_RESTART_COUNT + 1))\n\t\tif [ \"$PROXY_RESTART_COUNT\" -gt 5 ]; then\n\t\t\techo \"ssl-proxy crashed too many times, exiting\"\n\t\t\texit 1\n\t\tfi\n\t\techo \"ssl-proxy exited (restart $PROXY_RESTART_COUNT), restarting in ${PROXY_RESTART_BACKOFF}s...\"\n\t\tsleep \"$PROXY_RESTART_BACKOFF\"\n\t\tPROXY_RESTART_BACKOFF=$((PROXY_RESTART_BACKOFF * 2))\n\t\t\"$PROXY_BIN\" &\n\t\tPROXY_PID=$!\n\tfi\ndone"
+        ]
+    },
+
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "src/wg_shim.rs",
+        "codegenInstructions": "In @src/wg_shim.rs around lines 314 - 326, The check-then-remove in remove_session_if_current is racy: after obtaining sessions.get(&client_addr) and dropping it you might remove a newly-inserted session; update remove_session_if_current to perform an atomic conditional removal using DashMap's remove_if (or equivalent) so the entry is removed only if the stored Arc<ShimSession> still matches the provided session (use Arc::ptr_eq for the pointer comparison inside the remove_if predicate). Locate remove_session_if_current, the sessions DashMap, and the ShimSession/Arc usage to implement the atomic remove_if-based check-and-delete.",
+        "suggestions": []
+    },
+    {
+        "type": "finding",
+        "severity": "major",
+        "fileName": "docker/entrypoint.sh",
+        "codegenInstructions": "In @docker/entrypoint.sh around lines 300 - 333, The configure_network_segmentation function only creates IPv4 iptables rules (chain SSL_PROXY_SEGMENT using ADMIN_PORT, WG_INTERFACE_NAME, PROXY_PORT, TPROXY_PORT, ADMIN_BIND_ADDR) so IPv6 traffic can bypass controls; add equivalent ip6tables rules (create/flush an SSL_PROXY_SEGMENT chain in ip6tables, mirror the ESTABLISHED/RELATED, lo, admin-port allow/deny, WireGuard-interface-only accept for data-plane ports and final RETURN) or alternatively document/validate that IPv6 is disabled and fail early; ensure you check for ip6tables availability similar to iptables and keep the same idempotency behavior as the existing iptables block.",
+        "suggestions": [
+            "configure_network_segmentation() {\n\tif ! is_truthy \"$ENABLE_NETWORK_SEGMENTATION\"; then\n\t\techo \"[#] Network segmentation disabled (ENABLE_NETWORK_SEGMENTATION=$ENABLE_NETWORK_SEGMENTATION)\"\n\t\treturn 0\n\tfi\n\n\tif ! command -v iptables >/dev/null 2>&1; then\n\t\techo \"[!] iptables not available; cannot enforce network segmentation\" >&2\n\t\treturn 1\n\tfi\n\n\techo \"[#] Applying network segmentation policy\"\n\t# Idempotent chain setup.\n\tiptables -N SSL_PROXY_SEGMENT 2>/dev/null || true\n\tiptables -F SSL_PROXY_SEGMENT\n\tiptables -D INPUT -j SSL_PROXY_SEGMENT 2>/dev/null || true\n\tiptables -I INPUT 1 -j SSL_PROXY_SEGMENT\n\n\t# IPv6 equivalent chain setup.\n\tif command -v ip6tables >/dev/null 2>&1; then\n\t\tip6tables -N SSL_PROXY_SEGMENT 2>/dev/null || true\n\t\tip6tables -F SSL_PROXY_SEGMENT\n\t\tip6tables -D INPUT -j SSL_PROXY_SEGMENT 2>/dev/null || true\n\t\tip6tables -I INPUT 1 -j SSL_PROXY_SEGMENT\n\t\t\n\t\tip6tables -A SSL_PROXY_SEGMENT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n\t\tip6tables -A SSL_PROXY_SEGMENT -i lo -j ACCEPT\n\t\tip6tables -A SSL_PROXY_SEGMENT -p tcp --dport \"$ADMIN_PORT\" -s ::1/128 -j ACCEPT\n\t\tip6tables -A SSL_PROXY_SEGMENT -p tcp --dport \"$ADMIN_PORT\" -j REJECT\n\t\tip6tables -A SSL_PROXY_SEGMENT -i \"$WG_INTERFACE_NAME\" -p tcp -m multiport --dports \"$PROXY_PORT\",\"$TPROXY_PORT\" -j ACCEPT\n\t\tip6tables -A SSL_PROXY_SEGMENT -p tcp -m multiport --dports \"$PROXY_PORT\",\"$TPROXY_PORT\" -j REJECT\n\t\tip6tables -A SSL_PROXY_SEGMENT -j RETURN\n\tfi\n\n\t# Baseline allows.\n\tiptables -A SSL_PROXY_SEGMENT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n\tiptables -A SSL_PROXY_SEGMENT -i lo -j ACCEPT\n\n\t# Admin/control-plane must remain host-local only.\n\tiptables -A SSL_PROXY_SEGMENT -p tcp --dport \"$ADMIN_PORT\" -s 127.0.0.1/32 -j ACCEPT\n\tiptables -A SSL_PROXY_SEGMENT -p tcp --dport \"$ADMIN_PORT\" -j REJECT\n\n\t# Data-plane ports must arrive through WireGuard interface only.\n\tiptables -A SSL_PROXY_SEGMENT -i \"$WG_INTERFACE_NAME\" -p tcp -m multiport --dports \"$PROXY_PORT\",\"$TPROXY_PORT\" -j ACCEPT\n\tiptables -A SSL_PROXY_SEGMENT -p tcp -m multiport --dports \"$PROXY_PORT\",\"$TPROXY_PORT\" -j REJECT\n\n\t# Leave all other traffic untouched for explicit deployment policy control.\n\tiptables -A SSL_PROXY_SEGMENT -j RETURN\n\techo \"[#] Network segmentation policy active (admin_bind=${ADMIN_BIND_ADDR}:${ADMIN_PORT})\"\n}"
+        ]
+    }
+]

@@ -1,0 +1,181 @@
+x-ath-sensor-env: &ath_sensor_env
+  SYNC_NATS_URL: nats://127.0.0.1:4222
+  DATABASE_URL: postgres://sync:sync@127.0.0.1:5432/sync
+
+services:
+  ssl-proxy:
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3002/health && /app/ssl-proxy boringtun show wg0 >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # NET_ADMIN and /dev/net/tun are required for BoringTun to create tun interfaces
+    # and manage routes. Risk: container compromise grants network admin. Mitigations:
+    # non-root user (proxyuser), capabilities limited to NET_ADMIN only, no --privileged.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./config:/config
+    environment:
+      - WG_INTERFACE_NAME=wg0
+      - WG_TEMPLATE_PATH=/config/templates/server.conf
+      - WG_CONFIG_PATH=/run/wireguard/wg0.conf
+      - WG_UAPI_SOCKET_DIR=/var/run/wireguard
+      - WG_SERVER_ADDRESS=${WG_SERVER_ADDRESS:-10.13.13.1/24}
+      - WG_PORT=${WG_PORT:-443}
+      - WG_INTERNAL_PORT=${WG_INTERNAL_PORT:-51820}
+      - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-true}
+      - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}
+      - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
+      - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
+      - WG_MTU=1280
+      - WG_WAN_INTERFACE=auto
+      - WG_SYSCTL_RETRIES=3
+      - WG_SYSCTL_RETRY_DELAY_MS=200
+      - WG_RUNTIME_SYSCTLS=0
+      - WG_SERVER_PRIVATE_KEY_FILE=/config/server/privatekey-server
+      - WG_PEER_CONFIG_PATH=/config/peer1/peer1.conf
+      - WG_OBFUSCATED_PEER_CONFIG_PATH=/config/peer1/peer1-obfuscated.conf.example
+      - WG_PEER_PUBLIC_KEY_FILE=/config/peer1/publickey-peer1
+      - WG_PEER_ALLOWED_IPS=10.13.13.2/32
+      - WG_SUDO=1
+      - RUST_LOG=ssl_proxy=info
+      - EXPLICIT_PROXY_ENABLED=false
+      - ADMIN_API_KEY=test
+      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+
+    ports:
+      # Publish the obfuscated BoringTun-backed UDP relay on the Docker host.
+      - "443:443/udp"
+      # Keep policy-enforcement and admin surfaces local to the host.
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:3002:3002"
+    # The image also contains /usr/local/bin/wg-obfs-shim plus sample client
+    # assets under /app/client-config/ for operators who need to hand out a
+    # matching shim setup from the deployed server environment.
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv4.conf.all.rp_filter=0
+      - net.ipv4.conf.default.rp_filter=0
+
+  zig-coordinator:
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/zig-coordinator/Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_SCHEMA_FILE=/app/schema/postgres.sql
+      - SYNC_STREAM_NAME=proxy.events
+      - SYNC_STREAM_NAMES=proxy.events,wireless.audit
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  oracle-worker:
+    depends_on:
+      nats:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/oracle-worker/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./lib:/app/lib:ro
+      - ./wallet:/app/wallet:ro
+      - ./secrets:/run/secrets:ro
+    environment:
+      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - TNS_ADMIN=/app/wallet
+      - LD_LIBRARY_PATH=/app/lib
+      - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
+      - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
+      - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/oracle-worker", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8222/varz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - nats-data:/data
+
+  nats-bootstrap:
+    image: natsio/nats-box:0.16.0
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      <<: *ath_sensor_env
+      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
+    volumes:
+      - ./docker/nats:/config:ro
+    command: ["sh", "/config/bootstrap.sh"]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sync
+      POSTGRES_USER: sync
+      POSTGRES_PASSWORD: sync
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sync -d sync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  nats-data:
+  postgres-data:
