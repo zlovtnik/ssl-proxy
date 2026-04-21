@@ -2,6 +2,8 @@ const std = @import("std");
 const config = @import("config.zig");
 const scheduler = @import("scheduler.zig");
 
+var should_shutdown = std.atomic.Value(bool).init(false);
+
 const HealthcheckError = error{
     MissingDatabaseUrl,
     MissingNatsUrl,
@@ -44,7 +46,22 @@ pub fn main(init: std.process.Init) !void {
         .{ cfg.stream_name, cfg.stream_names_csv, cursor.cursor_value, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
     );
 
-    try runCoordinatorLoop(init, &coordinator, cfg);
+    installSignalHandlers();
+    try runCoordinatorLoop(init, &coordinator, cfg, &should_shutdown);
+}
+
+fn installSignalHandlers() void {
+    const action: std.posix.Sigaction = .{
+        .handler = .{ .handler = handleShutdownSignal },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    std.posix.sigaction(.INT, &action, null);
+    std.posix.sigaction(.TERM, &action, null);
+}
+
+fn handleShutdownSignal(_: std.posix.SIG) callconv(.c) void {
+    should_shutdown.store(true, .release);
 }
 
 fn ensureCursors(coordinator: anytype, stream_names_csv: []const u8) !void {
@@ -110,16 +127,29 @@ fn parseNatsAuthority(gpa: std.mem.Allocator, nats_url: []const u8) ![]const u8 
     return try std.fmt.allocPrint(gpa, "{s}:4222", .{authority});
 }
 
-fn runCoordinatorLoop(init: std.process.Init, coordinator: *scheduler.Coordinator, cfg: config.Config) !void {
-    while (true) {
+fn runCoordinatorLoop(init: std.process.Init, coordinator: *scheduler.Coordinator, cfg: config.Config, shutdown: *std.atomic.Value(bool)) !void {
+    while (!shutdown.load(.acquire)) {
         const had_work = runCoordinatorIteration(coordinator, cfg) catch |err| {
             std.log.err("coordinator loop iteration failed: {}", .{err});
-            try std.Io.sleep(init.io, std.Io.Duration.fromSeconds(5), .awake);
+            sleepUnlessShutdown(init.io, shutdown, 5000);
             continue;
         };
         if (!had_work) {
-            try std.Io.sleep(init.io, std.Io.Duration.fromSeconds(1), .awake);
+            sleepUnlessShutdown(init.io, shutdown, 1000);
         }
+    }
+    std.log.info("coordinator loop shutting down gracefully", .{});
+}
+
+fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: u64) void {
+    var remaining_ms = total_ms;
+    while (remaining_ms > 0 and !shutdown.load(.acquire)) {
+        const step_ms = @min(remaining_ms, 100);
+        std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(step_ms)), .awake) catch |sleep_err| {
+            std.log.warn("sleep failed: {}", .{sleep_err});
+            return;
+        };
+        remaining_ms -= step_ms;
     }
 }
 

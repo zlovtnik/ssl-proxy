@@ -321,10 +321,12 @@ CREATE OR REPLACE PACKAGE BODY payload_audit_security AS
       v_predicate := 'correlation_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_corr_id);
     END IF;
     IF v_device_id IS NOT NULL THEN
-      IF v_predicate != '1=0' THEN
+      IF v_predicate = '1=0' THEN
+        v_predicate := 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
+      ELSE
         v_predicate := v_predicate || ' OR ';
+        v_predicate := v_predicate || 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
       END IF;
-      v_predicate := v_predicate || 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
     END IF;
     RETURN v_predicate;
   END sensitive_view_predicate;

@@ -221,8 +221,6 @@ pub async fn handler(
     // Classify obfuscation profile after blocklist check
     let profile = obfuscation::classify_obfuscation(&hostname, &state.config.obfuscation);
 
-    let mut upstream_is_tls = false;
-
     // Rewrite absolute URI to origin form and forward to the correct host.
     if req.uri().scheme().is_some() {
         let scheme = req.uri().scheme_str().unwrap_or_default();
@@ -230,7 +228,6 @@ pub async fn handler(
             // HTTPS proxying must use CONNECT; reject absolute-form https:// requests.
             return Err(StatusCode::BAD_REQUEST);
         }
-        upstream_is_tls = scheme.eq_ignore_ascii_case("https");
 
         let host = req
             .uri()
@@ -379,22 +376,6 @@ pub async fn handler(
                 },
             );
             let mut res = res.map(Body::new);
-
-            // Add CDN-like standard security headers only when upstream transport is TLS.
-            if upstream_is_tls {
-                res.headers_mut().insert(
-                    "Strict-Transport-Security",
-                    "max-age=31536000; includeSubDomains"
-                        .parse()
-                        .expect("static HSTS header must parse"),
-                );
-                res.headers_mut().insert(
-                    "Alt-Svc",
-                    "h3=\":443\"; ma=86400, h3-29=\":443\"; ma=86400"
-                        .parse()
-                        .expect("static Alt-Svc header must parse"),
-                );
-            }
 
             // Collect any header names listed in the Connection header value.
             let conn_headers: Vec<String> = res

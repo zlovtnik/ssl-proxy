@@ -70,7 +70,72 @@ END;
 
 DECLARE
   v_count INTEGER;
+  v_payload_b64_count INTEGER := 0;
+  v_payload_b64_type VARCHAR2(128);
+  v_remaining_null_count INTEGER := 0;
 BEGIN
+  SELECT COUNT(*) INTO v_payload_b64_count
+  FROM user_tab_columns
+  WHERE table_name = 'PAYLOAD_AUDIT'
+    AND column_name = 'PAYLOAD_B64';
+
+  IF v_payload_b64_count > 0 THEN
+    SELECT data_type INTO v_payload_b64_type
+    FROM user_tab_columns
+    WHERE table_name = 'PAYLOAD_AUDIT'
+      AND column_name = 'PAYLOAD_B64';
+
+    BEGIN
+      IF v_payload_b64_type = 'CLOB' THEN
+        EXECUTE IMMEDIATE q'[
+          UPDATE payload_audit
+          SET payload_bytes = UTL_ENCODE.BASE64_DECODE(
+            UTL_RAW.CAST_TO_RAW(DBMS_LOB.SUBSTR(payload_b64, 32767, 1))
+          )
+          WHERE payload_bytes IS NULL
+            AND payload_b64 IS NOT NULL
+        ]';
+      ELSE
+        EXECUTE IMMEDIATE q'[
+          UPDATE payload_audit
+          SET payload_bytes = UTL_ENCODE.BASE64_DECODE(
+            UTL_RAW.CAST_TO_RAW(payload_b64)
+          )
+          WHERE payload_bytes IS NULL
+            AND payload_b64 IS NOT NULL
+        ]';
+      END IF;
+      COMMIT;
+    EXCEPTION
+      WHEN OTHERS THEN
+        ROLLBACK;
+        log_migration_audit(
+          p_migration_name => 'V010__hardening_follow_up.sql',
+          p_sqlcode => SQLCODE,
+          p_sqlerrm => SQLERRM,
+          p_context => 'payload_audit payload_b64 backfill failed'
+        );
+        RAISE;
+    END;
+  END IF;
+
+  SELECT COUNT(*) INTO v_remaining_null_count
+  FROM payload_audit
+  WHERE payload_bytes IS NULL;
+  IF v_remaining_null_count > 0 THEN
+    log_migration_audit(
+      p_migration_name => 'V010__hardening_follow_up.sql',
+      p_sqlcode => -20010,
+      p_sqlerrm => 'payload_audit has rows without payload_bytes',
+      p_context => 'payload_audit_payload_present_ck validation blocked'
+    );
+    RAISE_APPLICATION_ERROR(
+      -20010,
+      'Cannot add payload_audit_payload_present_ck: ' ||
+      TO_CHAR(v_remaining_null_count) || ' rows have NULL payload_bytes'
+    );
+  END IF;
+
   SELECT COUNT(*) INTO v_count
   FROM user_constraints
   WHERE table_name = 'PAYLOAD_AUDIT'
@@ -83,7 +148,7 @@ BEGIN
     ALTER TABLE payload_audit
     ADD CONSTRAINT payload_audit_payload_present_ck
     CHECK (payload_bytes IS NOT NULL)
-    NOVALIDATE
+    ENABLE VALIDATE
   ]';
 END;
 /
@@ -268,10 +333,12 @@ CREATE OR REPLACE PACKAGE BODY payload_audit_security AS
       v_predicate := 'correlation_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_corr_id);
     END IF;
     IF v_device_id IS NOT NULL THEN
-      IF v_predicate != '1=0' THEN
+      IF v_predicate = '1=0' THEN
+        v_predicate := 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
+      ELSE
         v_predicate := v_predicate || ' OR ';
+        v_predicate := v_predicate || 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
       END IF;
-      v_predicate := v_predicate || 'device_id = ' || DBMS_ASSERT.ENQUOTE_LITERAL(v_device_id);
     END IF;
 
     RETURN v_predicate;

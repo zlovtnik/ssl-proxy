@@ -39,7 +39,7 @@ BEGIN
   FROM user_constraints
   WHERE constraint_name = 'WGPS_DEVICE_FK';
   IF v_count = 0 THEN
-    EXECUTE IMMEDIATE 'ALTER TABLE wg_peer_samples ADD CONSTRAINT wgps_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)';
+    EXECUTE IMMEDIATE 'ALTER TABLE wg_peer_samples ADD CONSTRAINT wgps_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
   END IF;
 
   SELECT COUNT(*) INTO v_count FROM user_indexes WHERE index_name = 'WGPS_TIME_IDX';
@@ -96,7 +96,7 @@ BEGIN
   FROM user_constraints
   WHERE constraint_name = 'BWS_DEVICE_FK';
   IF v_count = 0 THEN
-    EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples ADD CONSTRAINT bws_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)';
+    EXECUTE IMMEDIATE 'ALTER TABLE bandwidth_samples ADD CONSTRAINT bws_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
   END IF;
 
   SELECT COUNT(*) INTO v_count FROM user_indexes WHERE index_name = 'BWS_TIME_IDX';

@@ -419,7 +419,9 @@ fn parse_config(path: &Path) -> Result<DeviceConfig, ControlError> {
                     .interface
                     .addresses
                     .extend(split_csv(value).map(ToString::to_string)),
-                "MTU" => device.interface.mtu = Some(parse_u16_config_field("Interface.MTU", value)?),
+                "MTU" => {
+                    device.interface.mtu = Some(parse_u16_config_field("Interface.MTU", value)?)
+                }
                 _ => {}
             },
             "peer" => {
@@ -467,9 +469,7 @@ fn parse_config(path: &Path) -> Result<DeviceConfig, ControlError> {
 
 fn parse_u16_config_field(field_name: &str, value: &str) -> Result<u16, ControlError> {
     value.parse::<u16>().map_err(|error| {
-        ControlError::InvalidConfig(format!(
-            "invalid {field_name} value {value:?}: {error}"
-        ))
+        ControlError::InvalidConfig(format!("invalid {field_name} value {value:?}: {error}"))
     })
 }
 

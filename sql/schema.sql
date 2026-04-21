@@ -84,7 +84,7 @@ CREATE TABLE wg_peer_samples (
     tx_bytes_delta    NUMBER(20,0)   DEFAULT 0 NOT NULL,
     sessions_active   NUMBER(10,0)   DEFAULT 0 NOT NULL,
     created_at        TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    CONSTRAINT wgps_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    CONSTRAINT wgps_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
 CREATE INDEX wgps_time_idx ON wg_peer_samples (sampled_at DESC);
@@ -105,7 +105,7 @@ CREATE TABLE bandwidth_samples (
     allowed_count_delta     NUMBER(20,0)   DEFAULT 0 NOT NULL,
     blocked_bytes_is_approx NUMBER(1,0)    DEFAULT 1 NOT NULL,
     created_at              TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    CONSTRAINT bws_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id)
+    CONSTRAINT bws_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
 CREATE INDEX bws_time_idx ON bandwidth_samples (sampled_at DESC);
@@ -195,7 +195,7 @@ CREATE TABLE tls_fingerprints (
 );
 
 CREATE TABLE connection_sessions (
-    session_id       VARCHAR2(32)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
+    session_id       VARCHAR2(36)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
     correlation_id   VARCHAR2(36),
     host             VARCHAR2(253)  NOT NULL,
     peer_ip          VARCHAR2(45),

@@ -170,15 +170,25 @@ BEGIN
     v_cutoff := SYSTIMESTAMP - rec.retention_days;
     v_table_name := DBMS_ASSERT.SIMPLE_SQL_NAME(rec.table_name);
     v_date_column := DBMS_ASSERT.SIMPLE_SQL_NAME(rec.date_column);
+    v_sql := 'DELETE FROM ' || v_table_name ||
+             ' WHERE ' || v_date_column || ' < :1 AND ROWNUM <= :2';
     v_rows := 0;
 
     LOOP
-      v_sql := 'DELETE FROM ' || v_table_name ||
-               ' WHERE ROWID IN (' ||
-               'SELECT ROWID FROM ' || v_table_name ||
-               ' WHERE ' || v_date_column || ' < :1 AND ROWNUM <= :2)';
-      EXECUTE IMMEDIATE v_sql USING v_cutoff, c_batch_size;
-      v_batch_rows := SQL%ROWCOUNT;
+      BEGIN
+        EXECUTE IMMEDIATE v_sql USING v_cutoff, c_batch_size;
+        v_batch_rows := SQL%ROWCOUNT;
+      EXCEPTION
+        WHEN OTHERS THEN
+          log_migration_audit(
+            p_migration_name => 'V004__retention_and_mvs.sql',
+            p_sqlcode => SQLCODE,
+            p_sqlerrm => SQLERRM,
+            p_context => 'Delete failed for: ' || v_table_name
+          );
+          v_batch_rows := 0;
+          EXIT;
+      END;
       v_rows := v_rows + v_batch_rows;
       COMMIT;
       EXIT WHEN v_batch_rows = 0;
