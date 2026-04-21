@@ -131,6 +131,46 @@ services:
       retries: 5
       start_period: 20s
 
+  atheros-sensor:
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: atheros-sensor
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      <<: *ath_sensor_env
+      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
+      DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
+      ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-wlan0}
+      ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
+      ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
+      ATH_SENSOR_REG_DOMAIN: ${ATH_SENSOR_REG_DOMAIN:-US}
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/local/bin/atheros-sensor healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
   nats:
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
