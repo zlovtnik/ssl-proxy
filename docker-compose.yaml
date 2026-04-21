@@ -152,8 +152,8 @@ services:
       - /sys/class/net:/sys/class/net:ro
     environment:
       <<: *ath_sensor_env
-      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
-      DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
+      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
+      DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-wlan0}
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
       ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
