@@ -514,8 +514,9 @@ impl NatsPublishSession {
         .map_err(|_| "timed out sending JetStream ack SUB".to_string())?
         .map_err(|error| format!("send JetStream ack SUB: {error}"))?;
 
-        let publish_subject = format!("$JS.API.PUB.{subject}");
-        let publish_command = format!("PUB {publish_subject} {inbox} {}\r\n", payload.len());
+        // Publish directly to the stream-bound subject with a reply inbox.
+        // JetStream returns a PubAck on the reply subject for request-style publishes.
+        let publish_command = format!("PUB {subject} {inbox} {}\r\n", payload.len());
         timeout(
             config.publish_timeout,
             self.stream.write_all(publish_command.as_bytes()),
@@ -924,7 +925,7 @@ mod tests {
             let text = String::from_utf8(received).unwrap();
             assert!(text.contains("SUB _INBOX."));
             assert!(text.contains("UNSUB "));
-            assert!(text.contains("PUB $JS.API.PUB.wireless.audit _INBOX."));
+            assert!(text.contains("PUB wireless.audit _INBOX."));
             server
                 .write_all(b"MSG _INBOX.test 1 2\r\n{}\r\n")
                 .await
