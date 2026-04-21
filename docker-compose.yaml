@@ -148,6 +148,8 @@ services:
       - NET_RAW
     devices:
       - /dev/net/tun:/dev/net/tun
+    volumes:
+      - /sys/class/net:/sys/class/net:ro
     environment:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
