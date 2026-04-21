@@ -10,6 +10,8 @@ pub const Config = struct {
     database_url: []const u8,
     sync_nats_url: []const u8,
     sync_schema_file: []const u8,
+    audit_stream_name: []const u8,
+    scan_consumer: []const u8,
 };
 
 pub fn load() Config {
@@ -23,6 +25,8 @@ pub fn load() Config {
         .database_url = envOrDefault("DATABASE_URL", ""),
         .sync_nats_url = envOrDefault("SYNC_NATS_URL", ""),
         .sync_schema_file = envOrDefault("SYNC_SCHEMA_FILE", "/app/schema/postgres.sql"),
+        .audit_stream_name = envOrDefault("AUDIT_STREAM_NAME", "AUDIT_STREAM"),
+        .scan_consumer = envOrDefault("SYNC_SCAN_CONSUMER", "zig-coordinator-scan"),
     };
 }
 

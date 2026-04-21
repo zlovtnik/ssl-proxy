@@ -9,6 +9,9 @@ const HealthcheckError = error{
     MissingNatsUrl,
     SchemaApplyFailed,
     NatsCheckFailed,
+    NatsStreamMissing,
+    NatsConsumerMissing,
+    IngestProcessFailed,
     InvalidNatsUrl,
     CursorNotFound,
 };
@@ -81,6 +84,8 @@ fn healthcheck(gpa: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
 
     try applySchema(gpa, io, cfg.database_url, cfg.sync_schema_file);
     try checkNats(gpa, io, cfg.sync_nats_url);
+    try checkNatsStream(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name);
+    try checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name, cfg.scan_consumer);
 }
 
 fn applySchema(gpa: std.mem.Allocator, io: std.Io, database_url: []const u8, schema_file: []const u8) !void {
@@ -114,6 +119,31 @@ fn checkNats(gpa: std.mem.Allocator, io: std.Io, nats_url: []const u8) !void {
     try runCommand(gpa, io, &argv, HealthcheckError.NatsCheckFailed);
 }
 
+fn checkNatsStream(gpa: std.mem.Allocator, io: std.Io, nats_url: []const u8, stream_name: []const u8) !void {
+    const argv = [_][]const u8{
+        "nats",
+        "--server",
+        nats_url,
+        "stream",
+        "info",
+        stream_name,
+    };
+    try runCommand(gpa, io, &argv, HealthcheckError.NatsStreamMissing);
+}
+
+fn checkNatsConsumer(gpa: std.mem.Allocator, io: std.Io, nats_url: []const u8, stream_name: []const u8, consumer_name: []const u8) !void {
+    const argv = [_][]const u8{
+        "nats",
+        "--server",
+        nats_url,
+        "consumer",
+        "info",
+        stream_name,
+        consumer_name,
+    };
+    try runCommand(gpa, io, &argv, HealthcheckError.NatsConsumerMissing);
+}
+
 fn parseNatsAuthority(gpa: std.mem.Allocator, nats_url: []const u8) ![]const u8 {
     const trimmed = std.mem.trim(u8, nats_url, " \t\r\n");
     const no_scheme = if (std.mem.startsWith(u8, trimmed, "nats://")) trimmed["nats://".len..] else trimmed;
@@ -129,7 +159,7 @@ fn parseNatsAuthority(gpa: std.mem.Allocator, nats_url: []const u8) ![]const u8 
 
 fn runCoordinatorLoop(init: std.process.Init, coordinator: *scheduler.Coordinator, cfg: config.Config, shutdown: *std.atomic.Value(bool)) !void {
     while (!shutdown.load(.acquire)) {
-        const had_work = runCoordinatorIteration(coordinator, cfg) catch |err| {
+        const had_work = runCoordinatorIteration(init.io, coordinator, cfg) catch |err| {
             std.log.err("coordinator loop iteration failed: {}", .{err});
             sleepUnlessShutdown(init.io, shutdown, 5000);
             continue;
@@ -153,41 +183,116 @@ fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: 
     }
 }
 
-fn runCoordinatorIteration(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+fn runCoordinatorIteration(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
     var had_work = false;
-    had_work = (try handleCursor(coordinator, cfg)) or had_work;
-    had_work = (try processBatches(coordinator, cfg)) or had_work;
-    had_work = (try dedupeAndDispatch(coordinator, cfg)) or had_work;
-    had_work = (try updateJobState(coordinator, cfg)) or had_work;
-    had_work = (try handleResults(coordinator, cfg)) or had_work;
+    had_work = (try handleCursor(io, coordinator, cfg)) or had_work;
+    had_work = (try processBatches(io, coordinator, cfg)) or had_work;
+    had_work = (try dedupeAndDispatch(io, coordinator, cfg)) or had_work;
+    had_work = (try updateJobState(io, coordinator, cfg)) or had_work;
+    had_work = (try handleResults(io, coordinator, cfg)) or had_work;
     return had_work;
 }
 
-fn handleCursor(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+fn handleCursor(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = coordinator;
+    return processIngestLedger(io, cfg);
+}
+
+fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
+    const sql =
+        \\with next_ingest as (
+        \\  update sync_scan_ingest
+        \\     set status = 'processing',
+        \\         attempt_count = attempt_count + 1,
+        \\         updated_at = now(),
+        \\         last_error = null
+        \\   where dedupe_key = (
+        \\     select dedupe_key
+        \\       from sync_scan_ingest
+        \\      where status in ('pending', 'failed')
+        \\      order by observed_at asc
+        \\      limit 1
+        \\      for update skip locked
+        \\   )
+        \\  returning *
+        \\),
+        \\job_upsert as (
+        \\  insert into sync_job (job_id, stream_name, status, attempt_count, created_at, started_at)
+        \\  select sync_stable_uuid(dedupe_key || ':job'), stream_name, 'pending', 0, now(), now()
+        \\    from next_ingest
+        \\  on conflict (job_id) do nothing
+        \\  returning job_id
+        \\),
+        \\batch_upsert as (
+        \\  insert into sync_batch (
+        \\    batch_id, job_id, batch_no, payload_ref, status, row_count, checksum,
+        \\    attempt_count, last_error, dedupe_key, cursor_start, cursor_end
+        \\  )
+        \\  select sync_stable_uuid(dedupe_key || ':batch'),
+        \\         sync_stable_uuid(dedupe_key || ':job'),
+        \\         0,
+        \\         payload_ref,
+        \\         'pending',
+        \\         1,
+        \\         payload_sha256,
+        \\         0,
+        \\         null,
+        \\         dedupe_key,
+        \\         coalesce((select cursor_value from sync_cursor where stream_name = next_ingest.stream_name), '0'),
+        \\         extract(epoch from observed_at)::bigint::text
+        \\    from next_ingest
+        \\  on conflict (dedupe_key) do nothing
+        \\  returning dedupe_key
+        \\),
+        \\cursor_upsert as (
+        \\  insert into sync_cursor (stream_name, cursor_value, updated_at)
+        \\  select stream_name, extract(epoch from observed_at)::bigint::text, now()
+        \\    from next_ingest
+        \\  on conflict (stream_name)
+        \\  do update set cursor_value = excluded.cursor_value, updated_at = now()
+        \\  returning stream_name
+        \\)
+        \\update sync_scan_ingest
+        \\   set status = 'batched',
+        \\       updated_at = now()
+        \\ where dedupe_key in (select dedupe_key from next_ingest)
+        \\returning dedupe_key;
+    ;
+    const argv = [_][]const u8{
+        "psql",
+        cfg.database_url,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-qAt",
+        "-c",
+        sql,
+    };
+    return runCommandForWork(std.heap.page_allocator, io, &argv, HealthcheckError.IngestProcessFailed);
+}
+
+fn processBatches(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = io;
     _ = coordinator;
     _ = cfg;
     return false;
 }
 
-fn processBatches(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+fn dedupeAndDispatch(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = io;
     _ = coordinator;
     _ = cfg;
     return false;
 }
 
-fn dedupeAndDispatch(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+fn updateJobState(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = io;
     _ = coordinator;
     _ = cfg;
     return false;
 }
 
-fn updateJobState(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
-    _ = coordinator;
-    _ = cfg;
-    return false;
-}
-
-fn handleResults(coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+fn handleResults(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+    _ = io;
     _ = coordinator;
     _ = cfg;
     return false;
@@ -225,4 +330,40 @@ fn runCommand(
             return on_error;
         },
     }
+}
+
+fn runCommandForWork(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    argv: []const []const u8,
+    on_error: anyerror,
+) !bool {
+    const result = std.process.run(gpa, io, .{
+        .argv = argv,
+        .expand_arg0 = .expand,
+        .stdout_limit = .limited(64 * 1024),
+        .stderr_limit = .limited(64 * 1024),
+    }) catch |err| {
+        std.debug.print("failed to spawn {s}: {}\n", .{ argv[0], err });
+        return on_error;
+    };
+    defer {
+        gpa.free(result.stdout);
+        gpa.free(result.stderr);
+    }
+
+    switch (result.term) {
+        .exited => |code| {
+            if (code != 0) {
+                std.debug.print("{s} failed: {s}\n", .{ argv[0], result.stderr });
+                return on_error;
+            }
+        },
+        else => {
+            std.debug.print("{s} terminated unexpectedly\n", .{argv[0]});
+            return on_error;
+        },
+    }
+
+    return std.mem.trim(u8, result.stdout, " \t\r\n").len > 0;
 }
