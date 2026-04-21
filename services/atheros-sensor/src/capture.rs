@@ -29,10 +29,19 @@ pub fn stream_packets(
     let mut capture = match builder.open() {
         Ok(cap) => cap,
         Err(e) => {
-            if e.to_string().contains("monitor mode") || e.to_string().contains("rfmon") || e.to_string().contains("not supported") {
-                eprintln!("ERROR: Interface {} does not have monitor mode enabled.", device);
+            if e.to_string().contains("monitor mode")
+                || e.to_string().contains("rfmon")
+                || e.to_string().contains("not supported")
+            {
+                eprintln!(
+                    "ERROR: Interface {} does not have monitor mode enabled.",
+                    device
+                );
                 eprintln!("       This is required for 802.11 frame capture.");
-                eprintln!("       Run on the HOST first: sudo ./scripts/prep_ath.sh {}", device);
+                eprintln!(
+                    "       Run on the HOST first: sudo ./scripts/prep_ath.sh {}",
+                    device
+                );
                 eprintln!("       The container cannot configure monitor mode from inside.");
             }
             return Err(CaptureError::Pcap(e));

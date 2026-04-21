@@ -264,7 +264,10 @@ pub mod tests {
             observed_at: Utc::now(),
             data: bytes,
         };
-        assert!(matches!(decode_frame(&packet), Err(ParseError::NonManagementFrame)));
+        assert!(matches!(
+            decode_frame(&packet),
+            Err(ParseError::NonManagementFrame)
+        ));
     }
 
     #[test]
@@ -273,7 +276,10 @@ pub mod tests {
             observed_at: Utc::now(),
             data: vec![0, 0, 32, 0],
         };
-        assert!(matches!(decode_frame(&packet), Err(ParseError::MissingRadiotap)));
+        assert!(matches!(
+            decode_frame(&packet),
+            Err(ParseError::MissingRadiotap)
+        ));
     }
 
     #[test]
@@ -291,7 +297,10 @@ pub mod tests {
         };
         let entry = to_audit_entry(attach_context(decode_frame(&packet).unwrap(), &context));
         let value = serde_json::to_value(entry).unwrap();
-        assert_eq!(value["event_type"], Value::String("wifi_management_frame".to_string()));
+        assert_eq!(
+            value["event_type"],
+            Value::String("wifi_management_frame".to_string())
+        );
         assert_eq!(value["channel"], Value::Number(6u64.into()));
     }
 
@@ -309,9 +318,40 @@ pub mod tests {
 
     fn build_frame(frame_control_first: u8, body: Vec<u8>) -> Vec<u8> {
         let mut bytes = vec![
-            0x00, 0x00, 0x0a, 0x00, 0x20, 0x00, 0x00, 0x00, 0xd6, 0x00, frame_control_first, 0x00, 0x00, 0x00,
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x10, 0x20, 0x30, 0x40,
-            0x50, 0x60, 0x10, 0x00,
+            0x00,
+            0x00,
+            0x0a,
+            0x00,
+            0x20,
+            0x00,
+            0x00,
+            0x00,
+            0xd6,
+            0x00,
+            frame_control_first,
+            0x00,
+            0x00,
+            0x00,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0x10,
+            0x20,
+            0x30,
+            0x40,
+            0x50,
+            0x60,
+            0x10,
+            0x20,
+            0x30,
+            0x40,
+            0x50,
+            0x60,
+            0x10,
+            0x00,
         ];
         bytes.extend_from_slice(&body);
         bytes
