@@ -28,7 +28,7 @@ RUN apk add --no-cache \
         netcat-openbsd \
         postgresql-client
 WORKDIR /app
-COPY --from=builder /app/services/zig-coordinator/zig-out/*/bin/zig-coordinator /usr/local/bin/zig-coordinator
+COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
 COPY services/zig-coordinator/schema ./schema
 ENV SYNC_SCHEMA_FILE=/app/schema/postgres.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]
