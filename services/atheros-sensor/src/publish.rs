@@ -210,7 +210,12 @@ mod tests {
     use base64::Engine;
 
     use super::*;
-    use crate::{audit::AuditWindow, backlog::BacklogError};
+    use serde_json::json;
+
+    use crate::{
+        audit::AuditWindow,
+        backlog::{BacklogEntry, BacklogError},
+    };
 
     struct MemoryPublisher {
         fail: bool,

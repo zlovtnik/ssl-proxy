@@ -1,6 +1,8 @@
 use chrono::NaiveTime;
 use ssl_proxy::config::SyncConfig;
+use std::str::FromStr;
 use thiserror::Error;
+use tokio_postgres::{config::Host, Config as PostgresConfig};
 
 use crate::audit::AuditWindow;
 
@@ -32,6 +34,13 @@ pub enum ConfigError {
     InvalidAuditWindowStart(String),
     #[error("invalid AUDIT_WINDOW_END: {0}")]
     InvalidAuditWindowEnd(String),
+    #[error("invalid DATABASE_URL: {0}")]
+    InvalidDatabaseUrl(String),
+    #[error("{variable} points at Docker service host `{host}`, but ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true requires host-reachable endpoints for host network mode; use 127.0.0.1 or another host-reachable address")]
+    HostNetworkEndpoint {
+        variable: &'static str,
+        host: String,
+    },
 }
 
 impl AppConfig {
@@ -72,6 +81,15 @@ impl AppConfig {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox".to_string()),
         };
+        let database_url = std::env::var("DATABASE_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or(ConfigError::MissingDatabaseUrl)?;
+
+        if read_bool("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", false) {
+            validate_host_network_endpoints(sync.nats_url.as_deref(), &database_url)?;
+        }
 
         Ok(Self {
             device_override: std::env::var("ATH_SENSOR_DEVICE")
@@ -97,14 +115,71 @@ impl AppConfig {
             snaplen: parse_i32("ATH_SENSOR_SNAPLEN", 4096).map_err(ConfigError::InvalidSnaplen)?,
             pcap_timeout_ms: parse_i32("ATH_SENSOR_PCAP_TIMEOUT_MS", 250)
                 .map_err(ConfigError::InvalidTimeout)?,
-            database_url: std::env::var("DATABASE_URL")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .ok_or(ConfigError::MissingDatabaseUrl)?,
+            database_url,
             sync,
             audit_window: audit_window_from_env()?,
         })
+    }
+}
+
+fn validate_host_network_endpoints(
+    nats_url: Option<&str>,
+    database_url: &str,
+) -> Result<(), ConfigError> {
+    if let Some(host) = nats_url.and_then(nats_host) {
+        reject_docker_service_host("SYNC_NATS_URL", &host)?;
+    }
+
+    let postgres_config = PostgresConfig::from_str(database_url)
+        .map_err(|error| ConfigError::InvalidDatabaseUrl(error.to_string()))?;
+    for host in postgres_config.get_hosts() {
+        if let Host::Tcp(host) = host {
+            reject_docker_service_host("DATABASE_URL", host)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn reject_docker_service_host(variable: &'static str, host: &str) -> Result<(), ConfigError> {
+    if matches!(host.to_ascii_lowercase().as_str(), "nats" | "postgres") {
+        return Err(ConfigError::HostNetworkEndpoint {
+            variable,
+            host: host.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn nats_host(nats_url: &str) -> Option<String> {
+    let trimmed = nats_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_scheme = trimmed
+        .strip_prefix("tls://")
+        .or_else(|| trimmed.strip_prefix("nats://"))
+        .unwrap_or(trimmed);
+    let authority = without_scheme.split('/').next()?.trim();
+    if authority.is_empty() {
+        return None;
+    }
+    let host = if authority.starts_with('[') {
+        authority
+            .split_once(']')
+            .map(|(host, _)| host.trim_start_matches('['))
+            .unwrap_or(authority)
+    } else {
+        authority
+            .rsplit_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(authority)
+    };
+    let host = host.trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
     }
 }
 
@@ -166,16 +241,17 @@ fn parse_u64(name: &str, default: u64) -> Result<u64, String> {
 
 fn parse_usize(name: &str, default: usize) -> Result<usize, String> {
     match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => {
-            value.trim().parse::<usize>().map_err(|_| value)
-        }
+        Ok(value) if !value.trim().is_empty() => value.trim().parse::<usize>().map_err(|_| value),
         _ => Ok(default),
     }
 }
 
 fn read_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
-        Ok(value) => matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
         Err(_) => default,
     }
 }
@@ -194,5 +270,122 @@ fn read_secret(value_var: &str, file_var: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct TestEnv {
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            clear_env();
+        }
+    }
+
+    fn test_env() -> TestEnv {
+        let guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        clear_env();
+        TestEnv { _guard: guard }
+    }
+
+    fn clear_env() {
+        for name in [
+            "ATH_SENSOR_REQUIRE_HOST_ENDPOINTS",
+            "DATABASE_URL",
+            "SYNC_NATS_URL",
+            "SYNC_NATS_CONNECT_TIMEOUT_MS",
+            "SYNC_NATS_USERNAME",
+            "SYNC_NATS_PASSWORD",
+            "SYNC_NATS_PASSWORD_FILE",
+            "SYNC_NATS_TLS_ENABLED",
+            "SYNC_NATS_TLS_SERVER_NAME",
+            "SYNC_NATS_TLS_CA_CERT_PATH",
+            "SYNC_NATS_TLS_CLIENT_CERT_PATH",
+            "SYNC_NATS_TLS_CLIENT_KEY_PATH",
+            "SYNC_INLINE_PAYLOAD_MAX_BYTES",
+            "SYNC_OUTBOX_DIR",
+            "ATH_SENSOR_DEVICE",
+            "ATH_SENSOR_LOCATION_ID",
+            "ATH_SENSOR_CHANNEL",
+            "ATH_SENSOR_REG_DOMAIN",
+            "ATH_SENSOR_BPF",
+            "ATH_SENSOR_SNAPLEN",
+            "ATH_SENSOR_PCAP_TIMEOUT_MS",
+            "AUDIT_WINDOW_TZ",
+            "AUDIT_WINDOW_DAYS",
+            "AUDIT_WINDOW_START",
+            "AUDIT_WINDOW_END",
+        ] {
+            std::env::remove_var(name);
+        }
+    }
+
+    #[test]
+    fn host_endpoint_validation_accepts_loopback_endpoints() {
+        let _env = test_env();
+        std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
+        std::env::set_var("SYNC_NATS_URL", "nats://127.0.0.1:4222");
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync");
+
+        let config = AppConfig::from_env().unwrap();
+
+        assert_eq!(
+            config.sync.nats_url.as_deref(),
+            Some("nats://127.0.0.1:4222")
+        );
+        assert_eq!(
+            config.database_url,
+            "postgres://sync:sync@127.0.0.1:5432/sync"
+        );
+    }
+
+    #[test]
+    fn host_endpoint_validation_rejects_nats_service_host() {
+        let _env = test_env();
+        std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
+        std::env::set_var("SYNC_NATS_URL", "nats://nats:4222");
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected host-network endpoint validation to reject NATS host"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::HostNetworkEndpoint {
+                variable: "SYNC_NATS_URL",
+                ref host
+            } if host == "nats"
+        ));
+    }
+
+    #[test]
+    fn host_endpoint_validation_rejects_postgres_service_host() {
+        let _env = test_env();
+        std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
+        std::env::set_var("SYNC_NATS_URL", "nats://127.0.0.1:4222");
+        std::env::set_var("DATABASE_URL", "postgres://sync:sync@postgres:5432/sync");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected host-network endpoint validation to reject Postgres host"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::HostNetworkEndpoint {
+                variable: "DATABASE_URL",
+                ref host
+            } if host == "postgres"
+        ));
     }
 }
