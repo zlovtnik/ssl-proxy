@@ -22,7 +22,6 @@ pub fn stream_packets(
 ) -> Result<ReceiverStream<Result<RawPacket, CaptureError>>, CaptureError> {
     let builder = Capture::from_device(device)?
         .immediate_mode(true)
-        .rfmon(true)
         .promisc(true)
         .snaplen(snaplen)
         .timeout(timeout_ms);
