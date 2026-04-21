@@ -689,7 +689,12 @@ fn redact_sensitive_data(buf: &mut Vec<u8>) {
                 while value_start < buf.len() && matches!(buf[value_start], b' ' | b'\t') {
                     value_start += 1;
                 }
-                mask_range(buf, value_start, b"\r\n;&\t");
+                // Cookie and Set-Cookie headers mask entire line to preserve all values
+                if key == b"cookie" || key == b"set-cookie" {
+                    mask_range(buf, value_start, b"\r\n");
+                } else {
+                    mask_range(buf, value_start, b"\r\n;&\t");
+                }
             }
             search_from = line_end.max(pos + 1);
         }
@@ -782,5 +787,29 @@ password=formpassword&token=formtoken&secret=formsecret&api_key=formapikey&apike
         ] {
             assert!(!redacted.contains(secret));
         }
+    }
+
+    #[test]
+    fn redacts_cookie_multi_pairs() {
+        let mut payload = b"Cookie: a=1; b=2; c=three\r\nOther-Header: value\r\n".to_vec();
+        redact_sensitive_data(&mut payload);
+        let redacted = String::from_utf8(payload).unwrap();
+
+        // Verify all cookie values are redacted
+        assert!(!redacted.contains("a=1"));
+        assert!(!redacted.contains("b=2"));
+        assert!(!redacted.contains("c=three"));
+
+        // Verify cookie key remains
+        assert!(redacted.contains("Cookie:"));
+
+        // Verify other header is untouched
+        assert!(redacted.contains("Other-Header: value"));
+
+        // All values are completely masked - no structure information remains
+        assert!(!redacted.contains('='));
+        assert!(!redacted.contains("1"));
+        assert!(!redacted.contains("2"));
+        assert!(!redacted.contains("three"));
     }
 }

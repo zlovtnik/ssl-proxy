@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "services/atheros-sensor"]
 exclude = ["services/oracle-worker"]
 
 [package]

@@ -24,8 +24,37 @@ use crate::{
     publish::{publish_entry, reconcile_backlog, SyncPublisherClient},
 };
 
+async fn run_healthcheck() -> Result<(), Box<dyn std::error::Error>> {
+    // Verify config loads correctly
+    let config = AppConfig::from_env()?;
+
+    // Verify device can be detected
+    let device = detect(config.device_override.as_deref())?;
+
+    // Verify we can read MAC address
+    let _sensor_id = read_mac_address(&device)?;
+
+    // Verify database connection works
+    let _backlog = PostgresBacklog::connect(&config.database_url).await?;
+
+    // Verify NATS publisher initializes
+    let _publisher = ssl_proxy::transport::SyncPublisher::new(&config.sync);
+
+    println!("Healthcheck OK: configuration valid, device accessible, database connected, publisher initialized");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Check for healthcheck subcommand
+    if std::env::args().any(|arg| arg == "healthcheck") {
+        if let Err(e) = run_healthcheck().await {
+            eprintln!("Healthcheck FAILED: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
     let config = AppConfig::from_env()?;
     let audit_window = config.audit_window.clone();
 
