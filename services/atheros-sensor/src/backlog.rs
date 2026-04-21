@@ -15,6 +15,18 @@ pub struct BacklogEntry {
     pub attempt_count: i32,
 }
 
+#[derive(Clone, Debug)]
+pub struct IngestRecord<'a> {
+    pub dedupe_key: &'a str,
+    pub stream_name: &'a str,
+    pub observed_at: &'a str,
+    pub payload_ref: &'a str,
+    pub payload: &'a str,
+    pub payload_sha256: &'a str,
+    pub producer: &'a str,
+    pub event_kind: Option<&'a str>,
+}
+
 #[derive(Debug, Error)]
 pub enum BacklogError {
     #[error("postgres {operation} failed: {source}")]
@@ -37,6 +49,7 @@ pub enum BacklogError {
 
 #[async_trait]
 pub trait BacklogStore: Send + Sync {
+    async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError>;
     async fn save_pending(
         &self,
         dedupe_key: &str,
@@ -140,6 +153,53 @@ impl PostgresBacklog {
 
 #[async_trait]
 impl BacklogStore for PostgresBacklog {
+    async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
+        let operation = "record_ingest";
+        let client = self.client(operation).await?;
+        let rows_affected = match client
+            .execute(
+                "insert into sync_scan_ingest
+                   (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256,
+                    status, attempt_count, producer, event_kind, created_at, updated_at)
+                 values ($1, $2, $3::timestamptz, $4, $5::jsonb, $6,
+                    'pending', 0, $7, $8, now(), now())
+                 on conflict (dedupe_key)
+                 do update set
+                    payload_ref = excluded.payload_ref,
+                    payload = excluded.payload,
+                    payload_sha256 = excluded.payload_sha256,
+                    producer = excluded.producer,
+                    event_kind = excluded.event_kind,
+                    updated_at = now()",
+                &[
+                    &record.dedupe_key,
+                    &record.stream_name,
+                    &record.observed_at,
+                    &record.payload_ref,
+                    &record.payload,
+                    &record.payload_sha256,
+                    &record.producer,
+                    &record.event_kind,
+                ],
+            )
+            .await
+        {
+            Ok(rows_affected) => rows_affected,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        debug!(
+            dedupe_key = record.dedupe_key,
+            stream_name = record.stream_name,
+            payload_bytes = record.payload.len(),
+            rows_affected,
+            "sync scan ingest row recorded"
+        );
+        Ok(())
+    }
+
     async fn save_pending(
         &self,
         dedupe_key: &str,

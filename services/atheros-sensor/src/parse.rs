@@ -82,6 +82,9 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         sequence_number: enriched.frame.sequence_number,
         raw_len: enriched.frame.raw_len,
         tags,
+        device_id: None,
+        username: None,
+        identity_source: "unknown".to_string(),
     }
 }
 

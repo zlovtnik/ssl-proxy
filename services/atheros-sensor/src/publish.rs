@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     audit::AuditWindow,
-    backlog::{BacklogError, BacklogStore},
+    backlog::{BacklogError, BacklogStore, IngestRecord},
     model::AuditEntry,
 };
 
@@ -90,7 +90,21 @@ pub async fn publish_entry(
 
     // First attempt normal publish
     match publish_payload(publisher, &payload, &dedupe_key, &entry.observed_at).await {
-        Ok(_) => {
+        Ok(payload_ref) => {
+            let payload_sha256 = sha256_hex(&payload);
+            backlog
+                .record_ingest(IngestRecord {
+                    dedupe_key: &dedupe_key,
+                    stream_name: "wireless.audit",
+                    observed_at: &entry.observed_at,
+                    payload_ref: &payload_ref,
+                    payload: &payload,
+                    payload_sha256: &payload_sha256,
+                    producer: "atheros-sensor",
+                    event_kind: Some(&entry.event_type),
+                })
+                .await?;
+
             // Try to flush any memory backlog entries now that we're healthy
             let memory_entries = drain_memory_backlog();
             if !memory_entries.is_empty() {
@@ -249,7 +263,7 @@ pub async fn reconcile_backlog(
         }
 
         match publish_payload(publisher, &entry.payload, &entry.dedupe_key, &observed_at).await {
-            Ok(()) => {
+            Ok(_) => {
                 backlog.mark_synced(&entry.dedupe_key).await?;
                 info!(
                     dedupe_key = %entry.dedupe_key,
@@ -277,7 +291,7 @@ async fn publish_payload(
     payload: &str,
     dedupe_key: &str,
     observed_at: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     publisher
         .publish_message("wireless.audit", payload)
         .await
@@ -294,7 +308,7 @@ async fn publish_payload(
     let request = ScanRequest {
         stream_name: "wireless.audit".to_string(),
         dedupe_key: dedupe_key.to_string(),
-        payload_ref,
+        payload_ref: payload_ref.clone(),
         observed_at: observed_at.to_string(),
     };
     let request_payload = serde_json::to_string(&request)
@@ -313,7 +327,7 @@ async fn publish_payload(
         payload_bytes = request_payload.len(),
         "published scan request"
     );
-    Ok(())
+    Ok(payload_ref)
 }
 
 fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
@@ -328,6 +342,10 @@ fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
 }
 
 fn dedupe_key(payload: &str) -> String {
+    sha256_hex(payload)
+}
+
+fn sha256_hex(payload: &str) -> String {
     format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
@@ -405,10 +423,19 @@ mod tests {
     #[derive(Default)]
     struct MemoryBacklog {
         rows: Mutex<Vec<BacklogEntry>>,
+        ingest_rows: Mutex<Vec<String>>,
     }
 
     #[async_trait]
     impl BacklogStore for MemoryBacklog {
+        async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            self.ingest_rows
+                .lock()
+                .unwrap()
+                .push(record.dedupe_key.to_string());
+            Ok(())
+        }
+
         async fn save_pending(
             &self,
             dedupe_key: &str,
@@ -442,6 +469,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogStore for FailingBacklog {
+        async fn record_ingest(&self, _record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            Err(BacklogError::InvalidDatabaseUrl("unavailable".to_string()))
+        }
+
         async fn save_pending(
             &self,
             _dedupe_key: &str,
@@ -482,7 +513,10 @@ mod tests {
             "signal_dbm": -42,
             "sequence_number": 1,
             "raw_len": 44,
-            "tags": ["wifi", "management"]
+            "tags": ["wifi", "management"],
+            "device_id": null,
+            "username": null,
+            "identity_source": "unknown"
         }))
         .unwrap()
     }
@@ -502,6 +536,7 @@ mod tests {
         assert_eq!(published[0].0, "wireless.audit");
         assert_eq!(published[1].0, SYNC_SCAN_REQUEST_SUBJECT);
         assert!(backlog.rows.lock().unwrap().is_empty());
+        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

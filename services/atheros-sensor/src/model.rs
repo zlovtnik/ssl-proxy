@@ -57,4 +57,7 @@ pub struct AuditEntry {
     pub sequence_number: Option<u16>,
     pub raw_len: usize,
     pub tags: Vec<String>,
+    pub device_id: Option<String>,
+    pub username: Option<String>,
+    pub identity_source: String,
 }
