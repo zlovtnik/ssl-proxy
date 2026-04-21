@@ -86,6 +86,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      nats-bootstrap:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     build:
@@ -98,6 +100,8 @@ services:
       - SYNC_SCHEMA_FILE=/app/schema/postgres.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
+      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -157,7 +161,7 @@ services:
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
       DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
       ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
-      ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-wlan0}
+      ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
       ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
       ATH_SENSOR_REG_DOMAIN: ${ATH_SENSOR_REG_DOMAIN:-US}
@@ -201,6 +205,8 @@ services:
     environment:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
+      AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
     volumes:
       - ./docker/nats:/config:ro
     command: ["sh", "/config/bootstrap.sh"]

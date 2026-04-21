@@ -66,6 +66,20 @@ pub struct ReadyReport {
     pub sync: ReadySyncStatus,
 }
 
+#[derive(Serialize)]
+pub struct SyncSubjectCount {
+    pub subject: String,
+    pub count: usize,
+}
+
+#[derive(Serialize)]
+pub struct SyncStatusReport {
+    pub status: &'static str,
+    pub publisher: crate::transport::SyncPublisherHealthSnapshot,
+    pub published_subjects: Vec<SyncSubjectCount>,
+    pub last_error: Option<String>,
+}
+
 /// GET /health — liveness probe for the admin surface.
 pub async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok").into_response()
@@ -94,6 +108,29 @@ pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
         }),
     )
         .into_response()
+}
+
+/// GET /sync/status — local sync-plane publisher and subject accounting.
+pub async fn sync_status(State(state): State<SharedState>) -> Json<SyncStatusReport> {
+    let publisher = state.publisher.health_snapshot();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for message in state.publisher.published_messages() {
+        *counts.entry(message.subject).or_default() += 1;
+    }
+    let status = if publisher.configured && publisher.last_error.is_some() {
+        "degraded"
+    } else {
+        "ok"
+    };
+    Json(SyncStatusReport {
+        status,
+        last_error: publisher.last_error.clone(),
+        publisher,
+        published_subjects: counts
+            .into_iter()
+            .map(|(subject, count)| SyncSubjectCount { subject, count })
+            .collect(),
+    })
 }
 
 /// GET /security/patch-cadence — exposes the latest patch SLA posture report.
@@ -214,12 +251,15 @@ pub struct DeviceUpsertRequest {
     pub mac_hint: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default)]
+    pub regenerate_claim_token: Option<bool>,
 }
 
 #[derive(Serialize)]
 pub struct DeviceUpsertResponse {
     pub device_id: String,
-    pub claim_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_token: Option<String>,
     pub device: crate::state::DeviceInfo,
 }
 
@@ -312,28 +352,59 @@ pub async fn upsert_device(
     Json(body): Json<DeviceUpsertRequest>,
 ) -> Result<Json<DeviceUpsertResponse>, StatusCode> {
     let now = chrono::Utc::now().to_rfc3339();
-    let claim_token = crate::identity::mint_device_token();
-    let claim_token_hash = crate::identity::hash_device_token(&claim_token);
     let device_id = body
         .device_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let first_seen = state
-        .get_device(&device_id)
-        .map(|device| device.first_seen)
+    let existing = state.get_device(&device_id);
+    let regenerate_claim_token = existing.is_none() || body.regenerate_claim_token.unwrap_or(false);
+    let claim_token = if regenerate_claim_token {
+        Some(crate::identity::mint_device_token())
+    } else {
+        None
+    };
+    let claim_token_hash = claim_token
+        .as_deref()
+        .map(crate::identity::hash_device_token)
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|device| device.claim_token_hash.clone())
+        });
+    let first_seen = existing
+        .as_ref()
+        .map(|device| device.first_seen.clone())
         .unwrap_or_else(|| now.clone());
     let device = crate::state::DeviceInfo {
         device_id: device_id.clone(),
-        wg_pubkey: body.wg_pubkey,
-        claim_token_hash: Some(claim_token_hash),
-        display_name: body.display_name,
-        username: body.username,
-        hostname: body.hostname,
-        os_hint: body.os_hint,
-        mac_hint: body.mac_hint,
+        wg_pubkey: body.wg_pubkey.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|device| device.wg_pubkey.clone())
+        }),
+        claim_token_hash,
+        display_name: body.display_name.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|device| device.display_name.clone())
+        }),
+        username: body
+            .username
+            .or_else(|| existing.as_ref().and_then(|device| device.username.clone())),
+        hostname: body
+            .hostname
+            .or_else(|| existing.as_ref().and_then(|device| device.hostname.clone())),
+        os_hint: body
+            .os_hint
+            .or_else(|| existing.as_ref().and_then(|device| device.os_hint.clone())),
+        mac_hint: body
+            .mac_hint
+            .or_else(|| existing.as_ref().and_then(|device| device.mac_hint.clone())),
         first_seen,
         last_seen: now,
-        notes: body.notes,
+        notes: body
+            .notes
+            .or_else(|| existing.as_ref().and_then(|device| device.notes.clone())),
     };
     state.upsert_device(device.clone());
 

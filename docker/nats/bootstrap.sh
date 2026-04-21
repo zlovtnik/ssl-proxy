@@ -3,6 +3,8 @@ set -eu
 
 NATS_URL="${SYNC_NATS_URL:-nats://nats:4222}"
 STREAM_NAME="${AUDIT_STREAM_NAME:-AUDIT_STREAM}"
+SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
+SCAN_SUBJECT="${SYNC_SCAN_SUBJECT:-sync.scan.request}"
 SUBJECTS="sync.scan.request,sync.oracle.load,sync.oracle.result,wireless.audit"
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
@@ -33,4 +35,22 @@ else
     --max-msg-size=-1 \
     --dupe-window=2m \
     --replicas 1
+fi
+
+if nats --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" >/dev/null 2>&1; then
+  nats --server "${NATS_URL}" consumer edit "${STREAM_NAME}" "${SCAN_CONSUMER}" \
+    --filter "${SCAN_SUBJECT}" \
+    --ack explicit \
+    --deliver all \
+    --replay instant \
+    --pull \
+    --defaults
+else
+  nats --server "${NATS_URL}" consumer add "${STREAM_NAME}" "${SCAN_CONSUMER}" \
+    --filter "${SCAN_SUBJECT}" \
+    --ack explicit \
+    --deliver all \
+    --replay instant \
+    --pull \
+    --defaults
 fi

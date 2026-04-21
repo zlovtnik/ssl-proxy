@@ -253,6 +253,7 @@ async fn main() {
         )
         .route("/devices/:device_id", get(dashboard::get_device))
         .route("/stats/summary", get(dashboard::stats_summary))
+        .route("/sync/status", get(dashboard::sync_status))
         .route(
             "/security/patch-cadence",
             get(dashboard::patch_cadence_report),

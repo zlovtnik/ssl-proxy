@@ -164,6 +164,25 @@ All views are optimized for ADB columnar storage.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - NATS is part of the compose stack and runs JetStream for sync subjects. The JetStream banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs nats`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
+- `nats-bootstrap` must complete successfully before `zig-coordinator` is healthy. It creates `AUDIT_STREAM` for `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`, plus the `zig-coordinator-scan` durable consumer.
+- `atheros-sensor` auto-detects an `ath9k_htc` interface when `ATH_SENSOR_DEVICE` is empty. Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact interface only when auto-detection is not desired.
+
+Quick sync-plane inspection:
+
+```sh
+scripts/sync-status.sh
+```
+
+Manual checks:
+
+```sh
+docker compose run --rm nats-bootstrap nats --server nats://nats:4222 stream info AUDIT_STREAM
+docker compose run --rm nats-bootstrap nats --server nats://nats:4222 consumer info AUDIT_STREAM zig-coordinator-scan
+docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_scan_ingest group by status"
+docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_job; select count(*) from sync_batch;"
+```
+
+For attribution, usernames come from the device registry. Passive wireless-only observations should remain `identity_source='unknown'` until a registered device record provides a reliable correlation such as `wg_pubkey`, claim token, hostname, or MAC hint.
 
 ---
 
