@@ -21,7 +21,7 @@ use crate::{
     device::{detect, read_mac_address},
     model::{AuditContext, EnrichedFrame},
     parse::{attach_context, decode_frame, to_audit_entry},
-    publish::{publish_entry, reconcile_backlog, SyncPublisherClient},
+    publish::{publish_entry, reconcile_backlog, PublishError, SyncPublisherClient},
 };
 
 async fn run_healthcheck() -> Result<(), Box<dyn std::error::Error>> {
@@ -193,7 +193,10 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                 ssid = ?entry.ssid,
                 "captured wifi management frame"
             );
-            publish_entry(&*backlog, &*publish_client, entry).await?;
+            match publish_entry(&*backlog, &*publish_client, entry).await {
+                Ok(()) | Err(PublishError::Queued(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
             Ok(())
         }
         .instrument(span)

@@ -738,7 +738,19 @@ fn redact_sensitive_data(buf: &mut [u8]) {
                     value_start += 1;
                 }
                 if value_start < buf.len() && buf[value_start] == b'"' {
-                    mask_range(buf, value_start + 1, b"\"");
+                    let mut idx = value_start + 1;
+                    while idx < buf.len() {
+                        if buf[idx] == b'\\' && idx + 1 < buf.len() {
+                            buf[idx] = b'*';
+                            buf[idx + 1] = b'*';
+                            idx += 2;
+                        } else if buf[idx] == b'"' {
+                            break;
+                        } else {
+                            buf[idx] = b'*';
+                            idx += 1;
+                        }
+                    }
                 } else {
                     mask_range(buf, value_start, b"\r\n,} \t");
                 }
@@ -787,6 +799,18 @@ password=formpassword&token=formtoken&secret=formsecret&api_key=formapikey&apike
         ] {
             assert!(!redacted.contains(secret));
         }
+    }
+
+    #[test]
+    fn redacts_json_string_values_with_escaped_quotes() {
+        let mut payload = br#"{"token":"alpha \"quoted\" omega","safe":"keep"}"#.to_vec();
+        redact_sensitive_data(&mut payload);
+        let redacted = String::from_utf8(payload).unwrap();
+
+        assert!(!redacted.contains("alpha"));
+        assert!(!redacted.contains("quoted"));
+        assert!(!redacted.contains("omega"));
+        assert!(redacted.contains(r#""safe":"keep""#));
     }
 
     #[test]

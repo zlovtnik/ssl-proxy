@@ -23,6 +23,8 @@ pub enum PublishError {
     Backlog(#[from] BacklogError),
     #[error("publish failed: {0}")]
     Publish(String),
+    #[error("publish failed and audit entry queued in memory: {0}")]
+    Queued(String),
 }
 
 #[async_trait]
@@ -66,6 +68,10 @@ lazy_static::lazy_static! {
     static ref MEMORY_BACKLOG: Mutex<LruCache<String, (String, String, String)>> = Mutex::new(LruCache::new(MEMORY_BACKLOG_SIZE));
 }
 
+/// Publishes an audit entry and persists failed publishes to durable backlog.
+///
+/// Returns [`PublishError::Queued`] when the publish failed and the entry could
+/// only be retained in the in-memory backlog.
 pub async fn publish_entry(
     backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
@@ -93,7 +99,8 @@ pub async fn publish_entry(
                     "flushing memory backlog to postgres"
                 );
             }
-            for (key, (stream, payload, err)) in memory_entries {
+            let mut memory_entries = memory_entries.into_iter();
+            while let Some((key, (stream, payload, err))) = memory_entries.next() {
                 if let Err(backlog_err) = backlog.save_pending(&key, &stream, &payload, &err).await
                 {
                     error!(
@@ -103,6 +110,9 @@ pub async fn publish_entry(
                         "failed to flush memory backlog entry to postgres"
                     );
                     put_memory_backlog(key, stream, payload, err);
+                    for (key, (stream, payload, err)) in memory_entries {
+                        put_memory_backlog(key, stream, payload, err);
+                    }
                     break;
                 }
             }
@@ -136,7 +146,7 @@ pub async fn publish_entry(
                             circuit_open_for_ms = opened_at.elapsed().as_millis() as u64,
                             "postgres backlog circuit breaker open; queued audit entry in memory"
                         );
-                        return Ok(());
+                        return Err(PublishError::Queued(error));
                     } else {
                         // Circuit timeout expired, reset it
                         *cb = None;
@@ -178,6 +188,7 @@ pub async fn publish_entry(
                     memory_backlog_entries,
                     "queued audit entry in memory backlog after postgres failure"
                 );
+                return Err(PublishError::Queued(error));
             } else {
                 warn!(
                     dedupe_key = %dedupe_key,
@@ -336,7 +347,16 @@ fn put_memory_backlog(
     error: String,
 ) -> usize {
     let mut backlog = MEMORY_BACKLOG.lock().unwrap();
-    backlog.put(dedupe_key, (stream_name, payload, error));
+    if let Some((evicted_key, (evicted_stream, _, _))) =
+        backlog.push(dedupe_key, (stream_name, payload, error))
+    {
+        warn!(
+            evicted_dedupe_key = %evicted_key,
+            evicted_stream_name = %evicted_stream,
+            memory_backlog_size = MEMORY_BACKLOG_SIZE.get(),
+            "memory backlog full; evicted oldest entry"
+        );
+    }
     backlog.len()
 }
 
@@ -418,6 +438,34 @@ mod tests {
         }
     }
 
+    struct FailingBacklog;
+
+    #[async_trait]
+    impl BacklogStore for FailingBacklog {
+        async fn save_pending(
+            &self,
+            _dedupe_key: &str,
+            _stream_name: &str,
+            _payload: &str,
+            _error: &str,
+        ) -> Result<(), BacklogError> {
+            Err(BacklogError::InvalidDatabaseUrl("unavailable".to_string()))
+        }
+
+        async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
+            Ok(Vec::new())
+        }
+
+        async fn mark_synced(&self, _dedupe_key: &str) -> Result<(), BacklogError> {
+            Ok(())
+        }
+    }
+
+    fn clear_memory_state() {
+        MEMORY_BACKLOG.lock().unwrap().clear();
+        *CIRCUIT_BREAKER.lock().unwrap() = None;
+    }
+
     fn entry() -> AuditEntry {
         serde_json::from_value(json!({
             "event_type": "wifi_management_frame",
@@ -466,6 +514,23 @@ mod tests {
 
         assert!(publish_entry(&backlog, &publisher, entry()).await.is_err());
         assert_eq!(backlog.rows.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_publish_queued_in_memory_returns_queued() {
+        clear_memory_state();
+        let publisher = MemoryPublisher {
+            fail: true,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let error = publish_entry(&FailingBacklog, &publisher, entry())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, PublishError::Queued(_)));
+        assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
+        clear_memory_state();
     }
 
     #[tokio::test]

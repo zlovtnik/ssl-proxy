@@ -160,9 +160,10 @@ All views are optimized for ADB columnar storage.
 
 ### 7. Compose Startup Log Notes
 
-The compose stack applies the sync schema from `zig-coordinator` with `psql -f /app/schema/postgres.sql`; Postgres init scripts are intentionally unused. A Postgres startup line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts.
-
-NATS startup logs that print the JetStream banner, storage directory, monitor address, and `Server is ready` are normal readiness output.
+- `zig-coordinator` is the sync control-plane service. On startup it applies the Postgres sync schema with `psql -f /app/schema/postgres.sql`; confirm this line appears with `docker compose logs zig-coordinator`.
+- Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
+- NATS is part of the compose stack and runs JetStream for sync subjects. The JetStream banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs nats`.
+- If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
 
 ---
 

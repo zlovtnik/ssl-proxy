@@ -67,12 +67,19 @@ BEGIN
   IF v_data_length < 36 THEN
     EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions MODIFY (session_id VARCHAR2(36))';
   END IF;
+EXCEPTION
+  WHEN NO_DATA_FOUND THEN
+    RAISE_APPLICATION_ERROR(
+      -20014,
+      'Cannot validate constraint consistency: CONNECTION_SESSIONS.SESSION_ID was not found'
+    );
 END;
 /
 
 DECLARE
   v_payload_b64_count INTEGER := 0;
   v_payload_b64_type VARCHAR2(128);
+  v_oversized_b64_count INTEGER := 0;
   v_remaining_null_count INTEGER := 0;
 BEGIN
   SELECT COUNT(*) INTO v_payload_b64_count
@@ -89,9 +96,30 @@ BEGIN
     BEGIN
       IF v_payload_b64_type = 'CLOB' THEN
         EXECUTE IMMEDIATE q'[
+          SELECT COUNT(*)
+          FROM payload_audit
+          WHERE payload_bytes IS NULL
+            AND payload_b64 IS NOT NULL
+            AND DBMS_LOB.GETLENGTH(payload_b64) > 10924
+        ]' INTO v_oversized_b64_count;
+        IF v_oversized_b64_count > 0 THEN
+          log_migration_audit(
+            p_migration_name => 'V011__constraint_consistency_validation.sql',
+            p_sqlcode => -20015,
+            p_sqlerrm => 'payload_audit payload_b64 exceeds RAW(8192) backfill limit',
+            p_context => 'payload_audit payload_b64 backfill blocked'
+          );
+          RAISE_APPLICATION_ERROR(
+            -20015,
+            'Cannot backfill payload_audit.payload_bytes: ' ||
+            TO_CHAR(v_oversized_b64_count) ||
+            ' payload_b64 CLOB rows exceed RAW(8192) capacity'
+          );
+        END IF;
+        EXECUTE IMMEDIATE q'[
           UPDATE payload_audit
           SET payload_bytes = UTL_ENCODE.BASE64_DECODE(
-            UTL_RAW.CAST_TO_RAW(DBMS_LOB.SUBSTR(payload_b64, 32767, 1))
+            UTL_RAW.CAST_TO_RAW(DBMS_LOB.SUBSTR(payload_b64, 10924, 1))
           )
           WHERE payload_bytes IS NULL
             AND payload_b64 IS NOT NULL
@@ -106,7 +134,6 @@ BEGIN
             AND payload_b64 IS NOT NULL
         ]';
       END IF;
-      COMMIT;
     EXCEPTION
       WHEN OTHERS THEN
         ROLLBACK;

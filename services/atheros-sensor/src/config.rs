@@ -160,7 +160,13 @@ fn nats_host(nats_url: &str) -> Option<String> {
         .strip_prefix("tls://")
         .or_else(|| trimmed.strip_prefix("nats://"))
         .unwrap_or(trimmed);
-    let authority = without_scheme.split('/').next()?.trim();
+    let authority = without_scheme
+        .split('/')
+        .next()?
+        .trim()
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
     if authority.is_empty() {
         return None;
     }
@@ -366,6 +372,14 @@ mod tests {
                 ref host
             } if host == "nats"
         ));
+    }
+
+    #[test]
+    fn nats_host_extracts_host_with_userinfo() {
+        assert_eq!(
+            nats_host("nats://user:pass@nats:4222").as_deref(),
+            Some("nats")
+        );
     }
 
     #[test]

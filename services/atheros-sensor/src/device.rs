@@ -50,7 +50,7 @@ fn detect_interface_at(name: &str, root: &Path) -> Result<String, DeviceError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Err(DeviceError::WrongDriver {
                 interface: name.to_string(),
-                driver: "missing /sys/class/net/<interface>/device/driver symlink".to_string(),
+                driver: format!("missing {}/device/driver symlink", path.display()),
             })
         }
         Err(error) => Err(DeviceError::Io(error)),
@@ -97,6 +97,7 @@ mod tests {
 
     use super::{detect_in, DeviceError};
 
+    #[cfg(unix)]
     #[test]
     fn detects_ath9k_htc_interface() {
         let dir = tempdir().unwrap();
@@ -104,12 +105,12 @@ mod tests {
         let driver_dir = dir.path().join("drivers/ath9k_htc");
         fs::create_dir_all(&wlan0).unwrap();
         fs::create_dir_all(&driver_dir).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&driver_dir, wlan0.join("driver")).unwrap();
 
         assert_eq!(detect_in(dir.path()).unwrap(), "wlan0");
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_non_matching_driver() {
         let dir = tempdir().unwrap();
@@ -117,7 +118,6 @@ mod tests {
         let driver_dir = dir.path().join("drivers/iwlwifi");
         fs::create_dir_all(&wlan0).unwrap();
         fs::create_dir_all(&driver_dir).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&driver_dir, wlan0.join("driver")).unwrap();
 
         assert!(detect_in(Path::new(dir.path())).is_err());
@@ -132,6 +132,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn configured_wrong_driver_reports_driver_name() {
         let dir = tempdir().unwrap();
@@ -139,7 +140,6 @@ mod tests {
         let driver_dir = dir.path().join("drivers/iwlwifi");
         fs::create_dir_all(&wlan0).unwrap();
         fs::create_dir_all(&driver_dir).unwrap();
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&driver_dir, wlan0.join("driver")).unwrap();
 
         let error = super::detect_interface_at("wlan0", dir.path()).unwrap_err();
