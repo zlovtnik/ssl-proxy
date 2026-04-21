@@ -158,7 +158,15 @@ All views are optimized for ADB columnar storage.
 
 ---
 
-### 7. Security Hardening Controls (Threat-Model Gap Closure)
+### 7. Compose Startup Log Notes
+
+The compose stack applies the sync schema from `zig-coordinator` with `psql -f /app/schema/postgres.sql`; Postgres init scripts are intentionally unused. A Postgres startup line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts.
+
+NATS startup logs that print the JetStream banner, storage directory, monitor address, and `Server is ready` are normal readiness output.
+
+---
+
+### 8. Security Hardening Controls (Threat-Model Gap Closure)
 
 Set these environment variables for hardened control-plane behavior:
 
