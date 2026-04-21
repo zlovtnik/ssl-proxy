@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
 use thiserror::Error;
@@ -92,6 +93,8 @@ pub async fn publish_entry(
         "publishing wireless audit entry"
     );
 
+    let observed_at_dt = parse_observed_at_timestamp(&entry.observed_at)?;
+
     let prepared = match prepare_publish(publisher, &payload, &dedupe_key, &entry.observed_at) {
         Ok(prepared) => prepared,
         Err(error) => {
@@ -104,7 +107,7 @@ pub async fn publish_entry(
         .record_ingest(IngestRecord {
             dedupe_key: &dedupe_key,
             stream_name: "wireless.audit",
-            observed_at: &entry.observed_at,
+            observed_at: observed_at_dt,
             payload_ref: &prepared.payload_ref,
             payload: &payload,
             payload_sha256: &prepared.payload_sha256,
@@ -276,8 +279,8 @@ pub async fn reconcile_backlog(
                 continue;
             }
         };
-        let observed_at_dt = match chrono::DateTime::parse_from_rfc3339(&observed_at) {
-            Ok(value) => value.with_timezone(&chrono::Utc),
+        let observed_at_dt = match parse_observed_at_timestamp(&observed_at) {
+            Ok(value) => value,
             Err(error) => {
                 warn!(
                     dedupe_key = %entry.dedupe_key,
@@ -325,7 +328,7 @@ pub async fn reconcile_backlog(
             .record_ingest(IngestRecord {
                 dedupe_key: &entry.dedupe_key,
                 stream_name: &entry.stream_name,
-                observed_at: &observed_at,
+                observed_at: observed_at_dt,
                 payload_ref: &prepared.payload_ref,
                 payload: &entry.payload,
                 payload_sha256: &prepared.payload_sha256,
@@ -422,6 +425,16 @@ fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
     Ok(observed_at.to_string())
 }
 
+fn parse_observed_at_timestamp(observed_at: &str) -> Result<DateTime<Utc>, PublishError> {
+    DateTime::parse_from_rfc3339(observed_at)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|error| {
+            PublishError::Publish(format!(
+                "invalid observed_at timestamp {observed_at:?}: {error}"
+            ))
+        })
+}
+
 fn dedupe_key(payload: &str) -> String {
     sha256_hex(payload)
 }
@@ -511,7 +524,7 @@ mod tests {
     #[derive(Default)]
     struct MemoryBacklog {
         rows: Mutex<Vec<BacklogEntry>>,
-        ingest_rows: Mutex<Vec<String>>,
+        ingest_rows: Mutex<Vec<(String, DateTime<Utc>)>>,
     }
 
     #[async_trait]
@@ -520,7 +533,7 @@ mod tests {
             self.ingest_rows
                 .lock()
                 .unwrap()
-                .push(record.dedupe_key.to_string());
+                .push((record.dedupe_key.to_string(), record.observed_at));
             Ok(())
         }
 
@@ -626,7 +639,14 @@ mod tests {
         assert_eq!(published[0].0, "wireless.audit");
         assert_eq!(published[1].0, SYNC_SCAN_REQUEST_SUBJECT);
         assert!(backlog.rows.lock().unwrap().is_empty());
-        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+        let ingest_rows = backlog.ingest_rows.lock().unwrap();
+        assert_eq!(ingest_rows.len(), 1);
+        assert_eq!(
+            ingest_rows[0].1,
+            DateTime::parse_from_rfc3339("2026-04-20T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[tokio::test]
@@ -642,6 +662,31 @@ mod tests {
         publish_entry(&backlog, &publisher, entry()).await.unwrap();
         assert_eq!(backlog.rows.lock().unwrap().len(), 1);
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn invalid_observed_at_is_rejected_before_side_effects() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let backlog = MemoryBacklog::default();
+        let mut event = entry();
+        event.observed_at = "not-a-timestamp".to_string();
+
+        let error = publish_entry(&backlog, &publisher, event)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, PublishError::Publish(message) if message.contains("invalid observed_at timestamp"))
+        );
+        assert!(publisher.published.lock().unwrap().is_empty());
+        assert!(backlog.rows.lock().unwrap().is_empty());
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
+        assert!(MEMORY_BACKLOG.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

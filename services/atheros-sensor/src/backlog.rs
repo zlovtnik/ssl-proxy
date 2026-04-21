@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
 use std::str::FromStr;
 use thiserror::Error;
@@ -19,7 +20,7 @@ pub struct BacklogEntry {
 pub struct IngestRecord<'a> {
     pub dedupe_key: &'a str,
     pub stream_name: &'a str,
-    pub observed_at: &'a str,
+    pub observed_at: DateTime<Utc>,
     pub payload_ref: &'a str,
     pub payload: &'a str,
     pub payload_sha256: &'a str,
@@ -161,7 +162,7 @@ impl BacklogStore for PostgresBacklog {
                 "insert into sync_scan_ingest
                    (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256,
                     status, attempt_count, producer, event_kind, created_at, updated_at)
-                 values ($1, $2, $3::timestamptz, $4, $5::jsonb, $6,
+                 values ($1, $2, $3, $4, $5::jsonb, $6,
                     'pending', 0, $7, $8, now(), now())
                  on conflict (dedupe_key)
                  do update set
@@ -325,4 +326,16 @@ fn database_target(config: &PostgresConfig) -> String {
     let dbname = config.get_dbname().unwrap_or("<default>");
     let user = config.get_user().unwrap_or("<default>");
     format!("host={host}; dbname={dbname}; user={user}")
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, Utc};
+    use tokio_postgres::types::{ToSql, Type};
+
+    #[test]
+    fn chrono_utc_datetime_binds_to_postgres_timestamptz() {
+        assert!(<DateTime<Utc> as ToSql>::accepts(&Type::TIMESTAMPTZ));
+        assert!(!<&str as ToSql>::accepts(&Type::TIMESTAMPTZ));
+    }
 }
