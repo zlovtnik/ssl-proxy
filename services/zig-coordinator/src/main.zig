@@ -485,10 +485,6 @@ fn runCommandForWork(
     on_error: anyerror,
 ) !bool {
     const start_ts = std.Io.Timestamp.now(io, .awake);
-    std.debug.print(
-        "service={s} event=command_execution status=start command={s} arg_count={d}\n",
-        .{ SERVICE_NAME, argv[0], argv.len },
-    );
     const result = std.process.run(gpa, io, .{
         .argv = argv,
         .expand_arg0 = .expand,
@@ -517,10 +513,6 @@ fn runCommandForWork(
                 );
                 return on_error;
             }
-            std.debug.print(
-                "service={s} event=command_execution status=ok command={s} exit_code={d} duration_ms={d}\n",
-                .{ SERVICE_NAME, argv[0], code, elapsedMs(start_ts, io) },
-            );
         },
         else => {
             std.debug.print(
@@ -532,10 +524,12 @@ fn runCommandForWork(
     }
 
     const work_detected = std.mem.trim(u8, result.stdout, " \t\r\n").len > 0;
-    std.debug.print(
-        "service={s} event=command_output command={s} work_detected={s}\n",
-        .{ SERVICE_NAME, argv[0], boolToString(work_detected) },
-    );
+    if (work_detected) {
+        std.debug.print(
+            "service={s} event=command_output status=ok command={s} work_detected=true duration_ms={d}\n",
+            .{ SERVICE_NAME, argv[0], elapsedMs(start_ts, io) },
+        );
+    }
     return work_detected;
 }
 
@@ -556,10 +550,6 @@ fn maybeLogHeartbeat(start_ts: std.Io.Timestamp, last_heartbeat_ts: *std.Io.Time
         .{ SERVICE_NAME, elapsedMs(start_ts, io) / 1000 },
     );
     last_heartbeat_ts.* = now;
-}
-
-fn boolToString(value: bool) []const u8 {
-    return if (value) "true" else "false";
 }
 
 fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
