@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libclang-dev \
     pkg-config \
     libssl-dev \
+    libpcap-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src ./src
@@ -32,6 +33,7 @@ RUN apt-get update && apt-get install -y \
         iptables \
         openssl \
         procps \
+        libpcap0.8 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=coredns /coredns /usr/local/bin/coredns
