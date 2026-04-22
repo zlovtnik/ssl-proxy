@@ -1,6 +1,15 @@
 class AuditWindowsController < ApplicationController
+  SORTS = {
+    "location_id" => :location_id,
+    "timezone" => :timezone,
+    "days" => :days,
+    "start_time" => :start_time,
+    "end_time" => :end_time,
+    "enabled" => :enabled
+  }.freeze
+
   def index
-    @audit_windows = AuditWindow.order(:location_id)
+    @audit_windows = apply_sort(AuditWindow.all, SORTS, default_sort: :location_id, default_direction: :asc)
   end
 
   def new

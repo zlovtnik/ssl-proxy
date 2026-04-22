@@ -4,6 +4,7 @@ class AlertsController < ApplicationController
     "sensor_id" => :sensor_id,
     "alert_type" => :alert_type,
     "severity" => :severity,
+    "message" => :message,
     "resolved_at" => :resolved_at
   }.freeze
 

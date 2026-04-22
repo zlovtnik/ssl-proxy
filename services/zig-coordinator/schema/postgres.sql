@@ -36,8 +36,8 @@ create table if not exists sync_scan_ingest (
 
 create table if not exists sync_job (
   job_id uuid primary key,
-  stream_name text not null references sync_cursor(stream_name) deferrable initially deferred,
-  status text not null check (status in ('pending','running','completed','failed')),
+  stream_name text not null,
+  status text not null,
   attempt_count integer not null default 0,
   created_at timestamptz not null default now(),
   started_at timestamptz,
@@ -46,10 +46,10 @@ create table if not exists sync_job (
 
 create table if not exists sync_batch (
   batch_id uuid primary key,
-  job_id uuid not null references sync_job(job_id),
+  job_id uuid not null,
   batch_no integer not null,
   payload_ref text not null,
-  status text not null check (status in ('pending','processing','dispatched','completed','failed')),
+  status text not null,
   row_count integer,
   checksum text,
   attempt_count integer not null default 0,
@@ -63,8 +63,8 @@ create table if not exists sync_batch (
 
 create table if not exists sync_error (
   id bigserial primary key,
-  job_id uuid references sync_job(job_id),
-  batch_id uuid references sync_batch(batch_id),
+  job_id uuid,
+  batch_id uuid,
   error_class text not null,
   error_text text not null,
   created_at timestamptz not null default now()
@@ -109,7 +109,7 @@ create table if not exists audit_backlog (
   dedupe_key text primary key,
   stream_name text not null,
   payload text not null,
-  status text not null default 'pending' check (status in ('pending','synced','sync_failed','failed')),
+  status text not null default 'pending',
   attempt_count integer not null default 0,
   last_error text,
   created_at timestamptz not null default now(),

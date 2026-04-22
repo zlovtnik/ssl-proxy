@@ -316,6 +316,9 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
     };
     var had_work = runCommandForWork(std.heap.page_allocator, io, &mark_argv, HealthcheckError.IngestProcessFailed) catch false;
 
+    const quoted_stream_names = try sqlQuoteLiteral(std.heap.page_allocator, cfg.stream_names_csv);
+    defer std.heap.page_allocator.free(quoted_stream_names);
+
     const ingest_sql = try std.fmt.allocPrint(std.heap.page_allocator,
         \\with next_ingest as (
         \\  update sync_scan_ingest
@@ -327,7 +330,7 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\     select dedupe_key
         \\       from sync_scan_ingest
         \\      where status in ('pending', 'failed')
-        \\        and stream_name = any(string_to_array(:'sync_stream_names', ','))
+        \\        and stream_name = any(string_to_array({s}, ','))
         \\        and attempt_count < {d}
         \\        and (
         \\              status = 'pending'
@@ -384,25 +387,45 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\  returning ingest.dedupe_key
         \\)
         \\select dedupe_key from mark_batched;
-    , .{ cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
+    , .{ quoted_stream_names, cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
     defer std.heap.page_allocator.free(ingest_sql);
-
-    const stream_names_var = try std.fmt.allocPrint(std.heap.page_allocator, "sync_stream_names={s}", .{cfg.stream_names_csv});
-    defer std.heap.page_allocator.free(stream_names_var);
 
     const ingest_argv = [_][]const u8{
         "psql",
         cfg.database_url,
         "-v",
         "ON_ERROR_STOP=1",
-        "-v",
-        stream_names_var,
         "-qAt",
         "-c",
         ingest_sql,
     };
     had_work = (try runCommandForWork(std.heap.page_allocator, io, &ingest_argv, HealthcheckError.IngestProcessFailed)) or had_work;
     return had_work;
+}
+
+fn sqlQuoteLiteral(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
+    var length: usize = 2;
+    for (value) |byte| {
+        length += 1;
+        if (byte == 39) length += 1;
+    }
+
+    const quoted = try allocator.alloc(u8, length);
+    var index: usize = 0;
+    quoted[index] = 39;
+    index += 1;
+
+    for (value) |byte| {
+        quoted[index] = byte;
+        index += 1;
+        if (byte == 39) {
+            quoted[index] = 39;
+            index += 1;
+        }
+    }
+
+    quoted[index] = 39;
+    return quoted;
 }
 
 fn processBatches(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {

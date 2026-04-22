@@ -9,7 +9,9 @@ module Paginatable
     requested_per_page = params[:per_page].to_i
     @per_page = requested_per_page.positive? ? [requested_per_page, MAX_PER_PAGE].min : per_page
 
-    count_result = scope.count
+    count_scope = scope.except(:order)
+    count_scope = count_scope.except(:select) if count_scope.group_values.any?
+    count_result = count_scope.count
     @total_count = count_result.is_a?(Hash) ? count_result.length : count_result
     @total_pages = [(@total_count.to_f / @per_page).ceil, 1].max
     @current_page = params[:page].to_i

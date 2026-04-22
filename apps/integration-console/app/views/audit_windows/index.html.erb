@@ -5,7 +5,17 @@
 
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Location</th><th>Timezone</th><th>Days</th><th>Start</th><th>End</th><th>Enabled</th><th></th></tr></thead>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Location", :location_id %></th>
+        <th><%= sort_link_to "Timezone", :timezone %></th>
+        <th><%= sort_link_to "Days", :days %></th>
+        <th><%= sort_link_to "Start", :start_time %></th>
+        <th><%= sort_link_to "End", :end_time %></th>
+        <th><%= sort_link_to "Enabled", :enabled %></th>
+        <th></th>
+      </tr>
+    </thead>
     <tbody>
       <% if @audit_windows.any? %>
         <% @audit_windows.each do |window| %>
