@@ -1,4 +1,4 @@
-FROM rust:1.86-slim AS builder
+FROM rust:1.88-slim AS builder
 WORKDIR /app/services/oracle-worker
 COPY services/oracle-worker/Cargo.toml services/oracle-worker/Cargo.lock ./
 COPY services/oracle-worker/src ./src

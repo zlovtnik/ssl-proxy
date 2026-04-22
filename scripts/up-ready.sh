@@ -61,6 +61,7 @@ worker_unhealthy::oracle-worker unhealthy::Worker failed Oracle or NATS prefligh
 postgres_unavailable::postgres unhealthy|Postgres unavailable::Postgres dependency unavailable::Ensure postgres is healthy and DATABASE_URL points to postgres:5432::manual
 nats_unavailable::nats unhealthy|NATS unavailable::NATS dependency unavailable::Ensure nats is healthy and SYNC_NATS_URL points to nats:4222::manual
 worker_wallet_missing::missing Oracle wallet artifact|wallet directory missing|no libclntsh|missing Oracle password file::Worker Oracle assets are missing::Mount wallet lib and secrets into oracle-worker only::manual
+rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages::Builder Rust toolchain too old for locked dependencies::Bump the builder Rust image (or pin compatible crate versions) and rebuild::manual
 schema_apply_failed::psql failed::Coordinator could not apply or validate the sync schema::Check DATABASE_URL and Postgres readiness::manual
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict (often 443 in local tests)::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
