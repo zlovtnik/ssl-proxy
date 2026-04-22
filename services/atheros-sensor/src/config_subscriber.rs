@@ -6,12 +6,14 @@ use ssl_proxy::config::SyncConfig;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
+    time::timeout,
 };
 use tracing::{error, info, warn};
 
 use crate::audit::{AuditWindow, SharedAuditWindow};
 
 pub const AUDIT_CONFIG_SUBJECT: &str = "wireless.audit.config";
+const NATS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
 struct AuditWindowUpdate {
@@ -60,8 +62,14 @@ async fn run_subscriber_once(
         return Err("audit config subscriber supports plain nats:// endpoints only".to_string());
     }
     let endpoint = parse_nats_endpoint(nats_url)?;
-    let stream = TcpStream::connect(&endpoint.address)
+    let stream = timeout(NATS_CONNECT_TIMEOUT, TcpStream::connect(&endpoint.address))
         .await
+        .map_err(|_| {
+            format!(
+                "connect to NATS {} timed out after {:?}",
+                endpoint.address, NATS_CONNECT_TIMEOUT
+            )
+        })?
         .map_err(|error| format!("connect to NATS {}: {error}", endpoint.address))?;
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
