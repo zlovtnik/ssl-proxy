@@ -1,3 +1,5 @@
+<% content_for :title, "Audit Windows" %>
+
 <h1>Audit Windows</h1>
 <p><%= link_to "New audit window", new_audit_window_path %></p>
 
@@ -5,15 +7,21 @@
   <table>
     <thead><tr><th>Location</th><th>Timezone</th><th>Days</th><th>Start</th><th>End</th><th>Enabled</th><th></th></tr></thead>
     <tbody>
-      <% @audit_windows.each do |window| %>
+      <% if @audit_windows.any? %>
+        <% @audit_windows.each do |window| %>
+          <tr>
+            <td><%= window.location_id %></td>
+            <td><%= window.timezone %></td>
+            <td><%= window.days %></td>
+            <td><%= window.start_time %></td>
+            <td><%= window.end_time %></td>
+            <td><%= window.enabled %></td>
+            <td><%= link_to "Edit", edit_audit_window_path(window) %></td>
+          </tr>
+        <% end %>
+      <% else %>
         <tr>
-          <td><%= window.location_id %></td>
-          <td><%= window.timezone %></td>
-          <td><%= window.days %></td>
-          <td><%= window.start_time %></td>
-          <td><%= window.end_time %></td>
-          <td><%= window.enabled %></td>
-          <td><%= link_to "Edit", edit_audit_window_path(window) %></td>
+          <td colspan="7" class="empty-state">No audit windows found.</td>
         </tr>
       <% end %>
     </tbody>

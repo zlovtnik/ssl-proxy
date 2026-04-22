@@ -427,7 +427,8 @@ fn dedupeAndDispatch(io: std.Io, coordinator: *scheduler.Coordinator, cfg: confi
         \\  update sync_batch batch
         \\     set status = 'dispatched',
         \\         attempt_count = batch.attempt_count + 1,
-        \\         last_error = null
+        \\         last_error = null,
+        \\         updated_at = now()
         \\    from picked
         \\   where batch.batch_id = picked.batch_id
         \\  returning batch.batch_id, batch.job_id, batch.batch_no, batch.payload_ref,
@@ -507,7 +508,8 @@ fn handleResults(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Co
         \\                  end,
         \\         row_count = coalesce((result.payload->>'row_count')::integer, row_count),
         \\         checksum = nullif(result.payload->>'checksum', ''),
-        \\         last_error = nullif(result.payload->>'error_text', '')
+        \\         last_error = nullif(result.payload->>'error_text', ''),
+        \\         updated_at = now()
         \\    from result
         \\   where batch.batch_id = (result.payload->>'batch_id')::uuid
         \\  returning batch.job_id, batch.batch_id, batch.status, batch.last_error

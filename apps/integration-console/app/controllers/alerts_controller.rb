@@ -1,5 +1,15 @@
 class AlertsController < ApplicationController
+  SORTS = {
+    "created_at" => :created_at,
+    "sensor_id" => :sensor_id,
+    "alert_type" => :alert_type,
+    "severity" => :severity,
+    "resolved_at" => :resolved_at
+  }.freeze
+
   def index
-    @alerts = SensorAlert.order(created_at: :desc).limit(200)
+    @alerts = SensorAlert.all
+    @alerts = apply_sort(@alerts, SORTS, default_sort: :created_at)
+    @alerts = paginate(@alerts)
   end
 end

@@ -1,3 +1,6 @@
+<% content_for :title, "Health" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
 <h1>Integration Console</h1>
 
 <section class="grid grid-3">
@@ -28,17 +31,32 @@
 <section class="table-wrap" style="margin-top: 16px;">
   <h2>Sensors</h2>
   <table>
-    <thead><tr><th>Sensor</th><th>Location</th><th>Last Seen</th><th>Signal</th><th>Status</th></tr></thead>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Sensor", :sensor_id %></th>
+        <th><%= sort_link_to "Location", :location_id %></th>
+        <th><%= sort_link_to "Last Seen", :last_seen_at %></th>
+        <th><%= sort_link_to "Signal", :last_signal_dbm %></th>
+        <th><%= sort_link_to "Status", :status %></th>
+      </tr>
+    </thead>
     <tbody>
-      <% (@sensors || []).each do |sensor| %>
+      <% if (@sensors || []).any? %>
+        <% @sensors.each do |sensor| %>
+          <tr>
+            <td><%= sensor.sensor_id %></td>
+            <td><%= sensor.location_id %></td>
+            <td><%= sensor.last_seen_at %></td>
+            <td><%= sensor.last_signal_dbm %></td>
+            <td class="<%= status_class(sensor.status) %>"><%= sensor.status %></td>
+          </tr>
+        <% end %>
+      <% else %>
         <tr>
-          <td><%= sensor.sensor_id %></td>
-          <td><%= sensor.location_id %></td>
-          <td><%= sensor.last_seen_at %></td>
-          <td><%= sensor.last_signal_dbm %></td>
-          <td class="<%= status_class(sensor.status) %>"><%= sensor.status %></td>
+          <td colspan="5" class="empty-state">No sensors found.</td>
         </tr>
       <% end %>
     </tbody>
   </table>
+  <%= render "shared/pagination" %>
 </section>

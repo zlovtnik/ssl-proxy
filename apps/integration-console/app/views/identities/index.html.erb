@@ -1,3 +1,6 @@
+<% content_for :title, "Identities" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
 <h1>Identity Viewer</h1>
 
 <%= form_with url: identities_path, method: :get do |form| %>
@@ -7,19 +10,36 @@
 
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Observed</th><th>Source MAC</th><th>BSSID</th><th>SSID</th><th>Username</th><th>Registered</th><th>Device</th></tr></thead>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Observed", :observed_at %></th>
+        <th><%= sort_link_to "Source MAC", :source_mac %></th>
+        <th><%= sort_link_to "BSSID", :bssid %></th>
+        <th><%= sort_link_to "SSID", :ssid %></th>
+        <th><%= sort_link_to "Username", :username %></th>
+        <th><%= sort_link_to "Registered", :registered_username %></th>
+        <th><%= sort_link_to "Device", :display_name %></th>
+      </tr>
+    </thead>
     <tbody>
-      <% @identities.each do |identity| %>
+      <% if @identities.any? %>
+        <% @identities.each do |identity| %>
+          <tr>
+            <td><%= identity.observed_at %></td>
+            <td><%= identity.source_mac %></td>
+            <td><%= identity.bssid %></td>
+            <td><%= identity.ssid %></td>
+            <td><%= identity.username %></td>
+            <td><%= identity.registered_username %></td>
+            <td><%= identity.display_name || identity.device_id %></td>
+          </tr>
+        <% end %>
+      <% else %>
         <tr>
-          <td><%= identity.observed_at %></td>
-          <td><%= identity.source_mac %></td>
-          <td><%= identity.bssid %></td>
-          <td><%= identity.ssid %></td>
-          <td><%= identity.username %></td>
-          <td><%= identity.registered_username %></td>
-          <td><%= identity.display_name || identity.device_id %></td>
+          <td colspan="7" class="empty-state">No identities found.</td>
         </tr>
       <% end %>
     </tbody>
   </table>
+  <%= render "shared/pagination" %>
 </div>

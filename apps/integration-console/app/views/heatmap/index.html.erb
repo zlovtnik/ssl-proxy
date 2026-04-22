@@ -1,16 +1,32 @@
+<% content_for :title, "Heatmap" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
 <h1>Logical Heatmap</h1>
 
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Location</th><th>Events</th><th>Average Signal dBm</th></tr></thead>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Location", :location_id %></th>
+        <th><%= sort_link_to "Events", :event_count %></th>
+        <th><%= sort_link_to "Average Signal dBm", :avg_signal_dbm %></th>
+      </tr>
+    </thead>
     <tbody>
-      <% @locations.each do |location| %>
+      <% if @locations.any? %>
+        <% @locations.each do |location| %>
+          <tr>
+            <td><%= location.location_id %></td>
+            <td><%= location.event_count %></td>
+            <td><%= number_with_precision(location.avg_signal_dbm, precision: 1) %></td>
+          </tr>
+        <% end %>
+      <% else %>
         <tr>
-          <td><%= location.location_id %></td>
-          <td><%= location.event_count %></td>
-          <td><%= number_with_precision(location.avg_signal_dbm, precision: 1) %></td>
+          <td colspan="3" class="empty-state">No heatmap data found.</td>
         </tr>
       <% end %>
     </tbody>
   </table>
+  <%= render "shared/pagination" %>
 </div>

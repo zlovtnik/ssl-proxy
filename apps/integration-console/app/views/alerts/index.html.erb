@@ -1,19 +1,38 @@
+<% content_for :title, "Alerts" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
 <h1>Alerts</h1>
 
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Created</th><th>Sensor</th><th>Type</th><th>Severity</th><th>Message</th><th>Resolved</th></tr></thead>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Created", :created_at %></th>
+        <th><%= sort_link_to "Sensor", :sensor_id %></th>
+        <th><%= sort_link_to "Type", :alert_type %></th>
+        <th><%= sort_link_to "Severity", :severity %></th>
+        <th>Message</th>
+        <th><%= sort_link_to "Resolved", :resolved_at %></th>
+      </tr>
+    </thead>
     <tbody>
-      <% @alerts.each do |alert| %>
+      <% if @alerts.any? %>
+        <% @alerts.each do |alert| %>
+          <tr>
+            <td><%= alert.created_at %></td>
+            <td><%= alert.sensor_id %></td>
+            <td><%= alert.alert_type %></td>
+            <td class="<%= status_class(alert.severity) %>"><%= alert.severity %></td>
+            <td><%= alert.message %></td>
+            <td><%= alert.resolved_at %></td>
+          </tr>
+        <% end %>
+      <% else %>
         <tr>
-          <td><%= alert.created_at %></td>
-          <td><%= alert.sensor_id %></td>
-          <td><%= alert.alert_type %></td>
-          <td class="<%= status_class(alert.severity) %>"><%= alert.severity %></td>
-          <td><%= alert.message %></td>
-          <td><%= alert.resolved_at %></td>
+          <td colspan="6" class="empty-state">No alerts found.</td>
         </tr>
       <% end %>
     </tbody>
   </table>
+  <%= render "shared/pagination" %>
 </div>

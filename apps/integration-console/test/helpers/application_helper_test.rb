@@ -13,4 +13,14 @@ class ApplicationHelperTest < ActionView::TestCase
   ensure
     ENV["INTEGRATION_CONSOLE_FULL_MACS"] = previous
   end
+
+  test "sort link toggles direction and clears page" do
+    @request.query_parameters.merge!("sort" => "created_at", "direction" => "asc", "page" => "3")
+
+    html = sort_link_to("Created", :created_at)
+
+    assert_includes html, "direction=desc"
+    assert_no_match(/page=3/, html)
+    assert_includes html, "sort-link active"
+  end
 end

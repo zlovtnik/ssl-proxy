@@ -36,8 +36,8 @@ create table if not exists sync_scan_ingest (
 
 create table if not exists sync_job (
   job_id uuid primary key,
-  stream_name text not null,
-  status text not null,
+  stream_name text not null references sync_cursor(stream_name) deferrable initially deferred,
+  status text not null check (status in ('pending','running','completed','failed')),
   attempt_count integer not null default 0,
   created_at timestamptz not null default now(),
   started_at timestamptz,
@@ -46,29 +46,62 @@ create table if not exists sync_job (
 
 create table if not exists sync_batch (
   batch_id uuid primary key,
-  job_id uuid not null,
+  job_id uuid not null references sync_job(job_id),
   batch_no integer not null,
   payload_ref text not null,
-  status text not null,
+  status text not null check (status in ('pending','processing','dispatched','completed','failed')),
   row_count integer,
   checksum text,
   attempt_count integer not null default 0,
   last_error text,
   dedupe_key text not null,
   cursor_start text not null,
-  cursor_end text not null
+  cursor_end text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists sync_error (
   id bigserial primary key,
-  job_id uuid,
-  batch_id uuid,
+  job_id uuid references sync_job(job_id),
+  batch_id uuid references sync_batch(batch_id),
   error_class text not null,
   error_text text not null,
   created_at timestamptz not null default now()
 );
 
+alter table sync_batch add column if not exists created_at timestamptz not null default now();
+alter table sync_batch add column if not exists updated_at timestamptz not null default now();
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_sync_job_status') then
+    alter table sync_job add constraint chk_sync_job_status check (status in ('pending','running','completed','failed'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_sync_batch_status') then
+    alter table sync_batch add constraint chk_sync_batch_status check (status in ('pending','processing','dispatched','completed','failed'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_sync_job_stream_name') then
+    alter table sync_job add constraint fk_sync_job_stream_name foreign key (stream_name) references sync_cursor(stream_name) deferrable initially deferred;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_sync_batch_job_id') then
+    alter table sync_batch add constraint fk_sync_batch_job_id foreign key (job_id) references sync_job(job_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_sync_error_job_id') then
+    alter table sync_error add constraint fk_sync_error_job_id foreign key (job_id) references sync_job(job_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_sync_error_batch_id') then
+    alter table sync_error add constraint fk_sync_error_batch_id foreign key (batch_id) references sync_batch(batch_id);
+  end if;
+end $$;
+
 create unique index if not exists sync_batch_dedupe_idx on sync_batch (dedupe_key);
+create index if not exists idx_sync_job_stream_name on sync_job (stream_name);
+create index if not exists idx_sync_job_status_created_at on sync_job (status, created_at);
+create index if not exists idx_sync_batch_job_batch_no on sync_batch (job_id, batch_no);
+create index if not exists idx_sync_batch_status on sync_batch (status);
+create index if not exists idx_sync_error_job_id on sync_error (job_id);
+create index if not exists idx_sync_error_batch_id on sync_error (batch_id);
 create index if not exists sync_scan_ingest_status_idx on sync_scan_ingest (status, observed_at);
 create index if not exists sync_scan_ingest_stream_idx on sync_scan_ingest (stream_name, observed_at);
 
@@ -76,12 +109,19 @@ create table if not exists audit_backlog (
   dedupe_key text primary key,
   stream_name text not null,
   payload text not null,
-  status text not null default 'pending',
+  status text not null default 'pending' check (status in ('pending','synced','sync_failed','failed')),
   attempt_count integer not null default 0,
   last_error text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_audit_backlog_status') then
+    alter table audit_backlog add constraint chk_audit_backlog_status check (status in ('pending','synced','sync_failed','failed'));
+  end if;
+end $$;
 
 create index if not exists audit_backlog_status_idx on audit_backlog (status, updated_at);
 
