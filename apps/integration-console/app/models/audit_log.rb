@@ -20,9 +20,21 @@ class AuditLog < SyncRecord
   def signal_dbm = payload_value("signal_dbm")
   def username = payload_value("username")
 
+  # For aggregate query results
+  def event_count
+    read_attribute(:event_count)
+  end
+
+  def avg_signal_dbm
+    read_attribute(:avg_signal_dbm)
+  end
+
   private
 
   def payload_value(key)
+    # First check if we already have this attribute loaded directly from SELECT
+    return read_attribute(key) if has_attribute?(key)
+    # Otherwise fall back to extracting from payload jsonb
     payload.is_a?(Hash) ? payload[key] : nil
   end
 end
