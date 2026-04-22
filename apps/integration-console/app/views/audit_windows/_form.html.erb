@@ -1,0 +1,12 @@
+<%= form_with model: audit_window do |form| %>
+  <% if audit_window.errors.any? %>
+    <div class="status-alert"><%= audit_window.errors.full_messages.to_sentence %></div>
+  <% end %>
+  <p><%= form.label :location_id %><br><%= form.text_field :location_id %></p>
+  <p><%= form.label :timezone %><br><%= form.text_field :timezone, placeholder: "America/New_York" %></p>
+  <p><%= form.label :days %><br><%= form.text_field :days, placeholder: "mon,tue,wed,thu,fri" %></p>
+  <p><%= form.label :start_time %><br><%= form.time_field :start_time %></p>
+  <p><%= form.label :end_time %><br><%= form.time_field :end_time %></p>
+  <p><%= form.label :enabled %> <%= form.check_box :enabled %></p>
+  <p><%= form.submit %></p>
+<% end %>

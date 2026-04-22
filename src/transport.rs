@@ -28,6 +28,8 @@ use crate::{
     },
 };
 
+pub const QUEUE_FULL_ERROR: &str = "sync publisher queue full";
+
 #[derive(Clone, Debug)]
 struct SyncPublisherConfig {
     nats_url: Option<String>,
@@ -201,7 +203,7 @@ impl SyncPublisher {
             })
             .map_err(|error| {
                 let message = match error {
-                    mpsc::error::TrySendError::Full(_) => "sync publisher queue full".to_string(),
+                    mpsc::error::TrySendError::Full(_) => QUEUE_FULL_ERROR.to_string(),
                     mpsc::error::TrySendError::Closed(_) => {
                         "sync publisher queue closed".to_string()
                     }
@@ -773,7 +775,10 @@ mod tests {
 
     use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 
-    use super::{parse_nats_endpoint, NatsPublishSession, SyncPublisher, SyncPublisherConfig};
+    use super::{
+        parse_nats_endpoint, NatsPublishSession, SyncPublisher, SyncPublisherConfig,
+        QUEUE_FULL_ERROR,
+    };
     use crate::{
         config::Config,
         sync::{
@@ -842,7 +847,7 @@ mod tests {
             .enqueue_message("wireless.audit", "{}")
             .unwrap_err();
 
-        assert_eq!(error, "sync publisher queue full");
+        assert_eq!(error, QUEUE_FULL_ERROR);
         publisher.shutdown().await;
     }
 

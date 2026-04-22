@@ -1,0 +1,16 @@
+<h1>Logical Heatmap</h1>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Location</th><th>Events</th><th>Average Signal dBm</th></tr></thead>
+    <tbody>
+      <% @locations.each do |location| %>
+        <tr>
+          <td><%= location.location_id %></td>
+          <td><%= location.event_count %></td>
+          <td><%= number_with_precision(location.avg_signal_dbm, precision: 1) %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

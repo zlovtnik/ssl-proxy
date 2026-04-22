@@ -1,4 +1,7 @@
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+};
 
 use chrono::{DateTime, Datelike, NaiveTime, Utc, Weekday};
 use chrono_tz::Tz;
@@ -13,6 +16,8 @@ pub struct AuditWindow {
     start: Option<NaiveTime>,
     end: Option<NaiveTime>,
 }
+
+pub type SharedAuditWindow = Arc<RwLock<AuditWindow>>;
 
 impl AuditWindow {
     pub fn from_parts(
@@ -63,11 +68,11 @@ impl AuditWindow {
 }
 
 pub struct AuditLayer {
-    window: AuditWindow,
+    window: SharedAuditWindow,
 }
 
 impl AuditLayer {
-    pub fn new(window: AuditWindow) -> Self {
+    pub fn new(window: SharedAuditWindow) -> Self {
         Self { window }
     }
 }
@@ -78,7 +83,12 @@ where
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let now = Utc::now();
-        if !self.window.is_active_at(now) {
+        let active = self
+            .window
+            .read()
+            .map(|window| window.is_active_at(now))
+            .unwrap_or(true);
+        if !active {
             return;
         }
         let mut visitor = EventVisitor::default();

@@ -1,0 +1,24 @@
+<h1>Backlog Manager</h1>
+
+<%= form_with url: backlog_index_path, method: :get do |form| %>
+  <%= form.select :status, [["All", ""], ["Pending", "pending"], ["Failed", "sync_failed"]], selected: @status %>
+  <%= form.submit "Filter" %>
+<% end %>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Dedupe Key</th><th>Subject</th><th>Status</th><th>Attempts</th><th>Updated</th><th>Action</th></tr></thead>
+    <tbody>
+      <% @entries.each do |entry| %>
+        <tr>
+          <td><%= entry.dedupe_key %></td>
+          <td><%= entry.stream_name %></td>
+          <td class="<%= status_class(entry.status) %>"><%= entry.status %></td>
+          <td><%= entry.attempt_count %></td>
+          <td><%= entry.updated_at %></td>
+          <td><%= button_to "Retry", retry_backlog_path(entry.dedupe_key), method: :post %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

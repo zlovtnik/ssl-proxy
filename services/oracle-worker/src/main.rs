@@ -139,7 +139,9 @@ async fn run_loop(config: RunConfig, started: Instant) -> Result<(), String> {
                     last_heartbeat.elapsed().as_secs(),
                 );
                 last_heartbeat = Instant::now();
-                healthcheck("run")?;
+                tokio::task::spawn_blocking(|| healthcheck("run"))
+                    .await
+                    .map_err(|error| format!("healthcheck task panicked: {error}"))??;
             }
             next_message = messages.next() => {
                 match next_message {
@@ -474,8 +476,9 @@ mod tests {
 
     #[test]
     fn env_or_default_uses_fallback_for_blank_values() {
-        std::env::set_var("OW_TEST_FALLBACK", "");
-        assert_eq!(env_or_default("OW_TEST_FALLBACK", "fallback"), "fallback");
-        std::env::remove_var("OW_TEST_FALLBACK");
+        let key = format!("OW_TEST_FALLBACK_{}", std::process::id());
+        std::env::set_var(&key, "");
+        assert_eq!(env_or_default(&key, "fallback"), "fallback");
+        std::env::remove_var(&key);
     }
 }

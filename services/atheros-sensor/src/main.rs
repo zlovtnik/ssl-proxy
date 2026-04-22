@@ -2,12 +2,20 @@ mod audit;
 mod backlog;
 mod capture;
 mod config;
+mod config_subscriber;
 mod device;
 mod model;
 mod parse;
 mod publish;
 
-use std::{error::Error, fmt::Display, future, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    error::Error,
+    fmt::Display,
+    future,
+    num::NonZeroUsize,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use lru::LruCache;
 use tokio_stream::StreamExt;
@@ -15,7 +23,7 @@ use tracing::{debug, error, info, info_span, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::{
-    audit::AuditLayer,
+    audit::{AuditLayer, AuditWindow, SharedAuditWindow},
     backlog::{BacklogStore, PostgresBacklog},
     capture::stream_packets,
     config::AppConfig,
@@ -82,9 +90,9 @@ async fn main() {
 
 async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     let config = step("load configuration", AppConfig::from_env())?;
-    let audit_window = config.audit_window.clone();
+    let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
-    let log_filter = init_tracing(audit_window.clone());
+    let log_filter = init_tracing(Arc::clone(&audit_window));
     info!(
         rust_log = %log_filter,
         default_rust_log = DEFAULT_RUST_LOG,
@@ -119,7 +127,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
         log_idle_secs = config.log_idle_secs,
         nats_configured = config.sync.nats_url.is_some(),
         nats_tls_enabled = config.sync.tls_enabled,
-        audit_window = ?audit_window,
+        audit_window = ?audit_window_snapshot(&audit_window),
         "atheros sensor starting"
     );
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
@@ -137,7 +145,13 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     info!("atheros sensor postgres backlog connected");
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
 
-    let reconcile_window = audit_window.clone();
+    config_subscriber::spawn_audit_window_config_subscriber(
+        config.sync.clone(),
+        config.location_id.clone(),
+        Arc::clone(&audit_window),
+    );
+
+    let reconcile_window = Arc::clone(&audit_window);
     let reconcile_backlog_store = Arc::clone(&backlog);
     let reconcile_client = Arc::clone(&publish_client);
     tokio::spawn(async move {
@@ -145,12 +159,9 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
         info!("backlog reconciliation task started");
         loop {
             interval.tick().await;
-            if let Err(error) = reconcile_backlog(
-                &*reconcile_backlog_store,
-                &*reconcile_client,
-                &reconcile_window,
-            )
-            .await
+            let window = audit_window_snapshot(&reconcile_window);
+            if let Err(error) =
+                reconcile_backlog(&*reconcile_backlog_store, &*reconcile_client, &window).await
             {
                 error!(%error, "backlog reconciliation failed");
             }
@@ -203,7 +214,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                if !config.audit_window.is_active_at(packet.observed_at) {
+                if !audit_window_snapshot(&audit_window).is_active_at(packet.observed_at) {
                     stats.audit_window_drops += 1;
                     debug!("audit window inactive; dropping packet");
                     continue;
@@ -297,7 +308,14 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn init_tracing(audit_window: crate::audit::AuditWindow) -> String {
+fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
+    audit_window
+        .read()
+        .map(|window| window.clone())
+        .unwrap_or_else(|_| AuditWindow::from_parts(None, None, None, None))
+}
+
+fn init_tracing(audit_window: SharedAuditWindow) -> String {
     let (filter, filter_source) = match std::env::var("RUST_LOG") {
         Ok(value) if !value.trim().is_empty() => match EnvFilter::try_new(value.trim()) {
             Ok(filter) => (filter, value.trim().to_string()),

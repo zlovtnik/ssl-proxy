@@ -327,7 +327,7 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\     select dedupe_key
         \\       from sync_scan_ingest
         \\      where status in ('pending', 'failed')
-        \\        and stream_name = any(string_to_array($sync_stream_names${s}$sync_stream_names$, ','))
+        \\        and stream_name = any(string_to_array(:'sync_stream_names', ','))
         \\        and attempt_count < {d}
         \\        and (
         \\              status = 'pending'
@@ -384,14 +384,19 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\  returning ingest.dedupe_key
         \\)
         \\select dedupe_key from mark_batched;
-    , .{ cfg.stream_names_csv, cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
+    , .{ cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
     defer std.heap.page_allocator.free(ingest_sql);
+
+    const stream_names_var = try std.fmt.allocPrint(std.heap.page_allocator, "sync_stream_names={s}", .{cfg.stream_names_csv});
+    defer std.heap.page_allocator.free(stream_names_var);
 
     const ingest_argv = [_][]const u8{
         "psql",
         cfg.database_url,
         "-v",
         "ON_ERROR_STOP=1",
+        "-v",
+        stream_names_var,
         "-qAt",
         "-c",
         ingest_sql,

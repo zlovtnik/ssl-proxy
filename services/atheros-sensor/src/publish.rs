@@ -6,7 +6,10 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
+use ssl_proxy::{
+    sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT},
+    transport::QUEUE_FULL_ERROR,
+};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -475,7 +478,7 @@ async fn queue_publish_with_backpressure(
 ) -> Result<(), String> {
     match publisher.enqueue_message(subject, payload) {
         Ok(()) => Ok(()),
-        Err(error) if error == "sync publisher queue full" => {
+        Err(error) if error == QUEUE_FULL_ERROR => {
             debug!(
                 dedupe_key,
                 subject,
@@ -831,7 +834,7 @@ mod tests {
             let mut queue_full_remaining = self.queue_full_remaining.lock().unwrap();
             if *queue_full_remaining > 0 {
                 *queue_full_remaining -= 1;
-                return Err("sync publisher queue full".to_string());
+                return Err(QUEUE_FULL_ERROR.to_string());
             }
             self.published
                 .lock()

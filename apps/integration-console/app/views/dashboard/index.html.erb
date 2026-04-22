@@ -1,0 +1,44 @@
+<h1>Integration Console</h1>
+
+<section class="grid grid-3">
+  <div class="metric"><div>Active Sensors</div><div class="value"><%= @active_sensors %></div></div>
+  <div class="metric"><div>Stale Sensors</div><div class="value"><%= @stale_sensors %></div></div>
+  <div class="metric"><div>Backlog Pending / Failed</div><div class="value"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
+</section>
+
+<section class="grid grid-3" style="margin-top: 16px;">
+  <div class="panel" data-controller="live-feed">
+    <h2>Live Heads-up Stream</h2>
+    <ul data-live-feed-target="list"></ul>
+  </div>
+  <div class="panel">
+    <h2>NATS Throughput</h2>
+    <% @recent_samples.each do |subject, count| %>
+      <p><strong><%= subject %></strong>: <%= count %> events in 5 minutes</p>
+    <% end %>
+  </div>
+  <div class="panel">
+    <h2>Recent Alerts</h2>
+    <% @recent_alerts.each do |alert| %>
+      <p class="<%= status_class(alert.severity) %>"><%= alert.message %></p>
+    <% end %>
+  </div>
+</section>
+
+<section class="table-wrap" style="margin-top: 16px;">
+  <h2>Sensors</h2>
+  <table>
+    <thead><tr><th>Sensor</th><th>Location</th><th>Last Seen</th><th>Signal</th><th>Status</th></tr></thead>
+    <tbody>
+      <% @sensors.each do |sensor| %>
+        <tr>
+          <td><%= sensor.sensor_id %></td>
+          <td><%= sensor.location_id %></td>
+          <td><%= sensor.last_seen_at %></td>
+          <td><%= sensor.last_signal_dbm %></td>
+          <td class="<%= status_class(sensor.status) %>"><%= sensor.status %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</section>

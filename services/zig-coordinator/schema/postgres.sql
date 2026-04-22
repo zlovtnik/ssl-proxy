@@ -136,8 +136,25 @@ create index if not exists ssi_wireless_ssid_idx
   on sync_scan_ingest ((payload->>'ssid'), observed_at desc)
   where stream_name = 'wireless.audit';
 
+do $$
+begin
+  if exists (
+    select 1
+    from pg_indexes
+    where schemaname = current_schema()
+      and indexname = 'ssi_wireless_source_mac_idx'
+      and indexdef not ilike '%lower((payload ->> ''source_mac''::text))%'
+  ) then
+    drop index ssi_wireless_source_mac_idx;
+  end if;
+end $$;
+
 create index if not exists ssi_wireless_source_mac_idx
-  on sync_scan_ingest ((payload->>'source_mac'))
+  on sync_scan_ingest (lower(payload->>'source_mac'))
+  where stream_name = 'wireless.audit';
+
+create index if not exists ssi_wireless_bssid_idx
+  on sync_scan_ingest (lower(payload->>'bssid'))
   where stream_name = 'wireless.audit';
 
 create index if not exists ssi_wireless_threat_tags_idx

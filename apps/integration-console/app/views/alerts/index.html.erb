@@ -1,0 +1,19 @@
+<h1>Alerts</h1>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Created</th><th>Sensor</th><th>Type</th><th>Severity</th><th>Message</th><th>Resolved</th></tr></thead>
+    <tbody>
+      <% @alerts.each do |alert| %>
+        <tr>
+          <td><%= alert.created_at %></td>
+          <td><%= alert.sensor_id %></td>
+          <td><%= alert.alert_type %></td>
+          <td class="<%= status_class(alert.severity) %>"><%= alert.severity %></td>
+          <td><%= alert.message %></td>
+          <td><%= alert.resolved_at %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

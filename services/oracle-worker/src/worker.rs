@@ -1,11 +1,8 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    path::PathBuf,
-};
+use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
@@ -119,9 +116,21 @@ pub fn resolve_payload(payload_ref: &str) -> Result<String, String> {
     if let Some(path) = payload_ref.strip_prefix("outbox://") {
         let outbox_dir =
             std::env::var("SYNC_OUTBOX_DIR").unwrap_or_else(|_| "/sync-outbox".to_string());
-        let path = PathBuf::from(outbox_dir).join(path);
-        return std::fs::read_to_string(&path)
-            .map_err(|error| format!("read outbox {}: {error}", path.display()));
+        let outbox_base = PathBuf::from(&outbox_dir)
+            .canonicalize()
+            .map_err(|error| format!("canonicalize outbox dir: {error}"))?;
+        let resolved = outbox_base.join(path);
+        let resolved = resolved
+            .canonicalize()
+            .map_err(|error| format!("resolve outbox path {}: {error}", resolved.display()))?;
+        if !resolved.starts_with(&outbox_base) {
+            return Err(format!(
+                "invalid outbox path escapes base: {}",
+                resolved.display()
+            ));
+        }
+        return std::fs::read_to_string(&resolved)
+            .map_err(|error| format!("read outbox {}: {error}", resolved.display()));
     }
 
     Err(format!("unsupported payload_ref scheme: {payload_ref}"))
@@ -177,7 +186,7 @@ fn validate_payload(target: SinkTarget, payload: &str) -> Result<i32, String> {
             for row in &rows {
                 validate_payload_row(target, row.clone())?;
             }
-            Ok(rows.len() as i32)
+            i32::try_from(rows.len()).map_err(|_| "payload row count exceeds i32 limit".to_string())
         }
         other => {
             validate_payload_row(target, other)?;
@@ -211,10 +220,20 @@ fn validate_payload_row(target: SinkTarget, row: serde_json::Value) -> Result<()
 }
 
 fn checksum(target: SinkTarget, payload: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    format!("{target:?}").hash(&mut hasher);
-    payload.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
+    let mut hasher = Sha256::new();
+    hasher.update(target.checksum_tag().as_bytes());
+    hasher.update([0]);
+    hasher.update(payload.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+impl SinkTarget {
+    fn checksum_tag(self) -> &'static str {
+        match self {
+            SinkTarget::ProxyEvents => "proxy.events",
+            SinkTarget::WirelessAudit => "wireless.audit",
+        }
+    }
 }
 
 fn failure_result(
@@ -242,17 +261,31 @@ fn failure_result(
 #[cfg(test)]
 mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use std::{
+        sync::{Mutex, OnceLock},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::{
-        classify_oracle_error, handle_load, resolve_payload, sink_target, OracleErrorClass,
-        OracleLoad, SinkTarget,
+        checksum, classify_oracle_error, handle_load, resolve_payload, sink_target,
+        OracleErrorClass, OracleLoad, SinkTarget,
     };
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn inline_payload(payload: &str) -> String {
         format!(
             "inline://json/{}",
             URL_SAFE_NO_PAD.encode(payload.as_bytes())
         )
+    }
+
+    fn unique_test_name(prefix: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!("{prefix}-{}-{nanos}", std::process::id())
     }
 
     fn proxy_payload() -> String {
@@ -355,5 +388,33 @@ mod tests {
             resolve_payload(&inline_payload(r#"{"ok":true}"#)).unwrap(),
             r#"{"ok":true}"#
         );
+    }
+
+    #[test]
+    fn rejects_outbox_path_traversal() {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let root = std::env::temp_dir().join(unique_test_name("oracle-worker-outbox"));
+        let base = root.join("base");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(root.join("escape.json"), "{}").unwrap();
+        std::env::set_var("SYNC_OUTBOX_DIR", &base);
+
+        let error = resolve_payload("outbox://../escape.json").unwrap_err();
+
+        std::env::remove_var("SYNC_OUTBOX_DIR");
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(error.contains("invalid outbox path escapes base"));
+    }
+
+    #[test]
+    fn checksum_is_deterministic_and_target_sensitive() {
+        let payload = r#"{"ok":true}"#;
+        let first = checksum(SinkTarget::ProxyEvents, payload);
+        let second = checksum(SinkTarget::ProxyEvents, payload);
+        let other_target = checksum(SinkTarget::WirelessAudit, payload);
+
+        assert_eq!(first, second);
+        assert_ne!(first, other_target);
+        assert_eq!(first.len(), 64);
     }
 }

@@ -9,18 +9,43 @@ RESULT_CONSUMER="${SYNC_RESULT_CONSUMER:-zig-coordinator-result}"
 SCAN_SUBJECT="${SYNC_SCAN_SUBJECT:-sync.scan.request}"
 LOAD_SUBJECT="${SYNC_LOAD_SUBJECT:-sync.oracle.load}"
 RESULT_SUBJECT="${SYNC_RESULT_SUBJECT:-sync.oracle.result}"
-SUBJECTS="sync.scan.request,sync.oracle.load,sync.oracle.result,wireless.audit"
+SUBJECTS="sync.scan.request,sync.oracle.load,sync.oracle.result,wireless.audit,wireless.audit.config"
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
   sleep 1
 done
 
 if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
-  nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
+  set +e
+  edit_output=$(nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
     --subjects "${SUBJECTS}" \
     --max-age=720h \
-    --defaults >/dev/null 2>&1 || true
-  nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null
+    --defaults 2>&1)
+  edit_status=$?
+  set -e
+  if [ "${edit_status}" -ne 0 ]; then
+    echo "warning: stream edit failed for ${STREAM_NAME} exit_code=${edit_status}: ${edit_output}" >&2
+  fi
+
+  set +e
+  stream_info=$(nats --server "${NATS_URL}" str info "${STREAM_NAME}" --json 2>&1)
+  info_status=$?
+  set -e
+  if [ "${info_status}" -ne 0 ]; then
+    echo "warning: stream info failed for ${STREAM_NAME} exit_code=${info_status}: ${stream_info}" >&2
+  else
+    if ! printf '%s\n' "${stream_info}" | grep -q '"max_age"[[:space:]]*:[[:space:]]*2592000000000000'; then
+      echo "warning: stream ${STREAM_NAME} max_age differs from expected 720h" >&2
+    fi
+    old_ifs="${IFS}"
+    IFS=","
+    for subject in ${SUBJECTS}; do
+      if ! printf '%s\n' "${stream_info}" | grep -Fq "\"${subject}\""; then
+        echo "warning: stream ${STREAM_NAME} subjects missing ${subject}" >&2
+      fi
+    done
+    IFS="${old_ifs}"
+  fi
 else
   nats --server "${NATS_URL}" str add "${STREAM_NAME}" \
     --defaults \
