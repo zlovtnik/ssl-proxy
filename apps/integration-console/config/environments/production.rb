@@ -7,5 +7,6 @@ Rails.application.configure do
   config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
   config.log_formatter = Logger::Formatter.new
   config.active_record.dump_schema_after_migration = false
-  config.force_ssl = ENV.fetch("RAILS_FORCE_SSL", "false") == "true"
+  # Keep SSL enforced by default; disable only when a trusted upstream terminates TLS.
+  config.force_ssl = ENV.fetch("RAILS_FORCE_SSL", "true") == "true"
 end

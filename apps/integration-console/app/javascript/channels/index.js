@@ -14,6 +14,6 @@ consumer.subscriptions.create("SensorHealthChannel", {
 
 consumer.subscriptions.create("AlertChannel", {
   received(data) {
-    window.dispatchEvent(new CustomEvent("sensor-alert", { detail: data }))
+    window.dispatchEvent(new CustomEvent("alert", { detail: data }))
   }
 })

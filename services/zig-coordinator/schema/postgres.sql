@@ -128,15 +128,16 @@ select
   ssi.payload->>'identity_source' as identity_source,
   ssi.payload->>'username' as username,
   ssi.payload->'tags' as tags,
-  d.device_id,
-  d.display_name,
-  d.username as registered_username,
-  d.os_hint,
-  d.hostname
+  coalesce(d_src.device_id, d_bssid.device_id) as device_id,
+  coalesce(d_src.display_name, d_bssid.display_name) as display_name,
+  coalesce(d_src.username, d_bssid.username) as registered_username,
+  coalesce(d_src.os_hint, d_bssid.os_hint) as os_hint,
+  coalesce(d_src.hostname, d_bssid.hostname) as hostname
 from sync_scan_ingest ssi
-left join devices d
-  on lower(d.mac_hint) = lower(ssi.payload->>'source_mac')
-  or lower(d.mac_hint) = lower(ssi.payload->>'bssid')
+left join devices d_src
+  on lower(d_src.mac_hint) = lower(ssi.payload->>'source_mac')
+left join devices d_bssid
+  on lower(d_bssid.mac_hint) = lower(ssi.payload->>'bssid')
 where ssi.stream_name = 'wireless.audit';
 
 create index if not exists ssi_wireless_ssid_idx

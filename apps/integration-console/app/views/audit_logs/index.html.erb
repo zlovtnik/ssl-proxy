@@ -16,7 +16,7 @@
           <td><%= entry.location_id %></td>
           <td><%= entry.frame_subtype %></td>
           <td><%= entry.ssid %></td>
-          <td><%= entry.source_mac %></td>
+          <td><%= display_mac(entry.source_mac) %></td>
           <td><%= entry.signal_dbm %></td>
         </tr>
       <% end %>

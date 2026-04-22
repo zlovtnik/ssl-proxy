@@ -8,6 +8,8 @@ Rails management interface for the wireless sensor sync plane.
 - `SYNC_DATABASE_URL` reads existing sync-plane tables and views. Defaults to `DATABASE_URL`.
 - `SYNC_NATS_URL` points at NATS.
 - `INTEGRATION_CONSOLE_REDIS_URL` backs ActionCable broadcasts.
+- `INTEGRATION_CONSOLE_FULL_MACS=true` allows full MAC display in audit logs; otherwise MACs are masked.
+- Compose development stacks must set `ADMIN_API_KEY` explicitly before starting admin endpoints.
 
 ## Commands
 
@@ -22,4 +24,10 @@ Run the worker with:
 
 ```sh
 bin/rails runner 'Nats::Subscriber.new.run_forever'
+```
+
+Run the heartbeat monitor periodically with:
+
+```sh
+bin/rails runner 'SensorHeartbeatMonitor.new.call'
 ```

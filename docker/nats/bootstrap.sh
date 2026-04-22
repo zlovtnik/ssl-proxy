@@ -9,7 +9,7 @@ RESULT_CONSUMER="${SYNC_RESULT_CONSUMER:-zig-coordinator-result}"
 SCAN_SUBJECT="${SYNC_SCAN_SUBJECT:-sync.scan.request}"
 LOAD_SUBJECT="${SYNC_LOAD_SUBJECT:-sync.oracle.load}"
 RESULT_SUBJECT="${SYNC_RESULT_SUBJECT:-sync.oracle.result}"
-SUBJECTS="sync.scan.request,sync.oracle.load,sync.oracle.result,wireless.audit,wireless.audit.config"
+SUBJECTS="${SCAN_SUBJECT},${LOAD_SUBJECT},${RESULT_SUBJECT},wireless.audit,wireless.audit.config"
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
   sleep 1

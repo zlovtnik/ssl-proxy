@@ -4,6 +4,8 @@ class WirelessAuditIdentity < SyncRecord
 
   scope :recent, -> { order(observed_at: :desc) }
   scope :search, ->(query) {
+    next none if query.blank?
+
     where(
       "source_mac ILIKE :q OR bssid ILIKE :q OR ssid ILIKE :q OR username ILIKE :q OR registered_username ILIKE :q",
       q: "%#{sanitize_sql_like(query)}%"

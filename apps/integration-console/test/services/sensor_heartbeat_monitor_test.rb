@@ -9,5 +9,6 @@ class SensorHeartbeatMonitorTest < ActiveSupport::TestCase
     end
 
     assert_equal "stale", Sensor.find_by!(sensor_id: "sensor-1").status
+    assert_equal "Sensor sensor-1 has not reported for more than 5 minutes", SensorAlert.last.message
   end
 end

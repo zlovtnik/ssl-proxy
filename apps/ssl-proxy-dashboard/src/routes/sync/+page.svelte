@@ -57,7 +57,7 @@
     <Card title="Publisher" subtitle="/sync/status">
       <div class="status-row">
         <StatusDot
-          status={status?.status === 'ok' ? 'success' : 'danger'}
+          status={!status ? 'neutral' : status.status === 'ok' ? 'success' : 'danger'}
           label={status?.status ?? 'loading'}
           pulse={status?.status === 'ok'}
         />

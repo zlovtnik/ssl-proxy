@@ -9,12 +9,14 @@ class AuditWindowsController < ApplicationController
 
   def create
     @audit_window = AuditWindow.new(audit_window_params)
-    if @audit_window.save
-      AuditWindowPublisher.new(@audit_window).call
+    if save_and_publish(@audit_window)
       redirect_to audit_windows_path, notice: "Audit window saved and published"
     else
       render :new, status: :unprocessable_entity
     end
+  rescue StandardError => error
+    handle_publish_failure(error)
+    render :new, status: :unprocessable_entity
   end
 
   def edit
@@ -23,12 +25,17 @@ class AuditWindowsController < ApplicationController
 
   def update
     @audit_window = AuditWindow.find(params[:id])
-    if @audit_window.update(audit_window_params)
-      AuditWindowPublisher.new(@audit_window).call
+    @audit_window.assign_attributes(audit_window_params)
+    if save_and_publish(@audit_window)
       redirect_to audit_windows_path, notice: "Audit window updated and published"
     else
       render :edit, status: :unprocessable_entity
     end
+  rescue ActiveRecord::RecordNotFound
+    raise
+  rescue StandardError => error
+    handle_publish_failure(error)
+    render :edit, status: :unprocessable_entity
   end
 
   def destroy
@@ -40,5 +47,20 @@ class AuditWindowsController < ApplicationController
 
   def audit_window_params
     params.require(:audit_window).permit(:location_id, :timezone, :days, :start_time, :end_time, :enabled)
+  end
+
+  def save_and_publish(audit_window)
+    return false unless audit_window.valid?
+
+    ActiveRecord::Base.transaction do
+      audit_window.save!
+      AuditWindowPublisher.new(audit_window).call
+    end
+    true
+  end
+
+  def handle_publish_failure(error)
+    Rails.logger.error("Audit window publish failed: #{error.class} - #{error.message}")
+    @audit_window.errors.add(:base, "could not be published")
   end
 end

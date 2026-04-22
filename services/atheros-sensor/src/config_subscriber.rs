@@ -230,8 +230,11 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
         None => (None, authority),
     };
     let (user, password) = match userinfo.and_then(|value| value.split_once(':')) {
-        Some((user, password)) => (Some(user.to_string()), Some(password.to_string())),
-        None => (userinfo.map(str::to_string), None),
+        Some((user, password)) => (
+            Some(percent_decode_userinfo(user)?),
+            Some(percent_decode_userinfo(password)?),
+        ),
+        None => (userinfo.map(percent_decode_userinfo).transpose()?, None),
     };
     let address = if host_port.contains(':') {
         host_port.to_string()
@@ -243,6 +246,43 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
         user,
         password,
     })
+}
+
+fn percent_decode_userinfo(value: &str) -> Result<String, String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes
+                .get(index + 1)
+                .copied()
+                .and_then(hex_value)
+                .ok_or_else(|| "invalid percent-encoded NATS userinfo".to_string())?;
+            let low = bytes
+                .get(index + 2)
+                .copied()
+                .and_then(hex_value)
+                .ok_or_else(|| "invalid percent-encoded NATS userinfo".to_string())?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8(decoded).map_err(|_| "invalid UTF-8 in NATS userinfo".to_string())
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -287,5 +327,23 @@ mod tests {
                 password: Some("pass".to_string())
             }
         );
+    }
+
+    #[test]
+    fn parses_nats_endpoint_with_percent_encoded_userinfo() {
+        assert_eq!(
+            parse_nats_endpoint("nats://user%40example:p%40ss%3Aword@127.0.0.1:4222")
+                .unwrap(),
+            NatsEndpoint {
+                address: "127.0.0.1:4222".to_string(),
+                user: Some("user@example".to_string()),
+                password: Some("p@ss:word".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_percent_encoded_userinfo() {
+        assert!(parse_nats_endpoint("nats://user:%zz@127.0.0.1:4222").is_err());
     }
 }

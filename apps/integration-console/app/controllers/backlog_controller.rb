@@ -11,6 +11,7 @@ class BacklogController < ApplicationController
   rescue ActiveRecord::RecordNotFound
     redirect_to backlog_index_path, alert: "Backlog row was not found"
   rescue StandardError => error
-    redirect_to backlog_index_path, alert: "Retry failed: #{error.message}"
+    Rails.logger.error("Backlog retry failed: #{error.class} - #{error.message}")
+    redirect_to backlog_index_path, alert: "Retry failed. Please try again or contact support."
   end
 end

@@ -45,9 +45,13 @@ module Nats
       sensor_id = payload["sensor_id"].presence
       return unless sensor_id
 
-      sensor = Sensor.find_or_initialize_by(sensor_id: sensor_id)
-      sensor.location_id ||= payload["location_id"].presence || "unknown"
-      sensor.mark_seen!(payload)
+      sensor = Sensor.find_or_create_by!(sensor_id: sensor_id) do |record|
+        record.location_id = payload["location_id"].presence || "unknown"
+      end
+      sensor.with_lock do
+        sensor.location_id ||= payload["location_id"].presence || "unknown"
+        sensor.mark_seen!(payload)
+      end
       ActionCable.server.broadcast(
         "sensor_health",
         {

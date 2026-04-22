@@ -13,13 +13,13 @@
   </div>
   <div class="panel">
     <h2>NATS Throughput</h2>
-    <% @recent_samples.each do |subject, count| %>
+    <% (@recent_samples || []).each do |subject, count| %>
       <p><strong><%= subject %></strong>: <%= count %> events in 5 minutes</p>
     <% end %>
   </div>
   <div class="panel">
     <h2>Recent Alerts</h2>
-    <% @recent_alerts.each do |alert| %>
+    <% (@recent_alerts || []).each do |alert| %>
       <p class="<%= status_class(alert.severity) %>"><%= alert.message %></p>
     <% end %>
   </div>
@@ -30,7 +30,7 @@
   <table>
     <thead><tr><th>Sensor</th><th>Location</th><th>Last Seen</th><th>Signal</th><th>Status</th></tr></thead>
     <tbody>
-      <% @sensors.each do |sensor| %>
+      <% (@sensors || []).each do |sensor| %>
         <tr>
           <td><%= sensor.sensor_id %></td>
           <td><%= sensor.location_id %></td>

@@ -69,7 +69,8 @@ services:
       - WG_SUDO=1
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
-      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
+      - ADMIN_API_KEY=${ADMIN_API_KEY:?ADMIN_API_KEY must be set for admin endpoints}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - SYNC_OUTBOX_DIR=/sync-outbox
 
@@ -188,7 +189,24 @@ services:
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+
+  integration-console-heartbeat:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-lc", "while true; do bin/rails runner 'SensorHeartbeatMonitor.new.call'; sleep \"$${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}\"; done"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+      - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
 
   atheros-sensor:
     depends_on:
