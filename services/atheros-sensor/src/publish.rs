@@ -1,15 +1,18 @@
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use serde_json::json;
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, error, info, warn};
 
 use crate::{
     audit::AuditWindow,
-    backlog::{BacklogEntry, BacklogError, BacklogStore},
+    backlog::{BacklogError, BacklogStore, IngestRecord},
     model::AuditEntry,
 };
 
@@ -21,12 +24,16 @@ pub enum PublishError {
     Backlog(#[from] BacklogError),
     #[error("publish failed: {0}")]
     Publish(String),
+    #[error("publish failed and audit entry queued in memory: {0}")]
+    Queued(String),
 }
 
 #[async_trait]
 pub trait PublishClient: Send + Sync {
+    fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String>;
     async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String>;
-    fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str) -> Result<String, String>;
+    fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str)
+        -> Result<String, String>;
 }
 
 pub struct SyncPublisherClient {
@@ -41,15 +48,42 @@ impl SyncPublisherClient {
 
 #[async_trait]
 impl PublishClient for SyncPublisherClient {
+    fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        self.publisher.enqueue_message(subject, payload)
+    }
+
     async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
         self.publisher.publish_message(subject, payload).await
     }
 
-    fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str) -> Result<String, String> {
-        self.publisher.payload_ref_for_event(raw_payload, observed_at)
+    fn payload_ref_for_event(
+        &self,
+        raw_payload: &str,
+        observed_at: &str,
+    ) -> Result<String, String> {
+        self.publisher
+            .payload_ref_for_event(raw_payload, observed_at)
     }
 }
 
+static CIRCUIT_BREAKER: Mutex<Option<Instant>> = Mutex::new(None);
+const CIRCUIT_BREAKER_TIMEOUT: Duration = Duration::from_secs(10);
+const MEMORY_BACKLOG_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
+
+lazy_static::lazy_static! {
+    static ref MEMORY_BACKLOG: Mutex<LruCache<String, (String, String, String)>> = Mutex::new(LruCache::new(MEMORY_BACKLOG_SIZE));
+}
+
+struct PreparedPublish {
+    payload_ref: String,
+    request_payload: String,
+    payload_sha256: String,
+}
+
+/// Publishes an audit entry and persists failed publishes to durable backlog.
+///
+/// Returns [`PublishError::Queued`] when the publish failed and the entry could
+/// only be retained in the in-memory backlog.
 pub async fn publish_entry(
     backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
@@ -57,13 +91,177 @@ pub async fn publish_entry(
 ) -> Result<(), PublishError> {
     let payload = serde_json::to_string(&entry)?;
     let dedupe_key = dedupe_key(&payload);
-    if let Err(error) = publish_payload(publisher, &payload, &dedupe_key, &entry.observed_at).await {
-        backlog
-            .save_pending(&dedupe_key, "wireless.audit", &payload, &error)
-            .await?;
-        return Err(PublishError::Publish(error));
+    debug!(
+        dedupe_key = %dedupe_key,
+        observed_at = %entry.observed_at,
+        sensor_id = %entry.sensor_id,
+        frame_subtype = %entry.frame_subtype,
+        payload_bytes = payload.len(),
+        "publishing wireless audit entry"
+    );
+
+    let observed_at_dt = parse_observed_at_timestamp(&entry.observed_at)?;
+
+    let prepared = match prepare_publish(publisher, &payload, &dedupe_key, &entry.observed_at) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            persist_publish_failure(backlog, &dedupe_key, payload, error).await?;
+            return Ok(());
+        }
+    };
+
+    if let Err(backlog_err) = backlog
+        .record_ingest(IngestRecord {
+            dedupe_key: &dedupe_key,
+            stream_name: "wireless.audit",
+            observed_at: observed_at_dt,
+            payload_ref: &prepared.payload_ref,
+            payload: &payload,
+            payload_sha256: &prepared.payload_sha256,
+            producer: "atheros-sensor",
+            event_kind: Some(&entry.event_type),
+        })
+        .await
+    {
+        let error = format!("record sync ingest ledger: {backlog_err}");
+        queue_in_memory_after_backlog_failure(dedupe_key, payload, error.clone(), backlog_err);
+        return Err(PublishError::Queued(error));
     }
+
+    flush_memory_backlog(backlog).await;
+    close_postgres_circuit_breaker();
+
+    if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
+    {
+        persist_publish_failure(backlog, &dedupe_key, payload, error).await?;
+    }
+
     Ok(())
+}
+
+async fn persist_publish_failure(
+    backlog: &dyn BacklogStore,
+    dedupe_key: &str,
+    payload: String,
+    error: String,
+) -> Result<(), PublishError> {
+    if circuit_breaker_is_open(dedupe_key, &payload, &error) {
+        return Err(PublishError::Queued(error));
+    }
+
+    if let Err(backlog_err) = backlog
+        .save_pending(dedupe_key, "wireless.audit", &payload, &error)
+        .await
+    {
+        queue_in_memory_after_backlog_failure(
+            dedupe_key.to_string(),
+            payload,
+            error.clone(),
+            backlog_err,
+        );
+        return Err(PublishError::Queued(error));
+    }
+
+    warn!(
+        dedupe_key,
+        publish_error = %error,
+        "publish enqueue failed; audit entry persisted to postgres backlog"
+    );
+    Ok(())
+}
+
+fn circuit_breaker_is_open(dedupe_key: &str, payload: &str, error: &str) -> bool {
+    let mut cb = CIRCUIT_BREAKER.lock().unwrap();
+    if let Some(opened_at) = *cb {
+        if opened_at.elapsed() < CIRCUIT_BREAKER_TIMEOUT {
+            let memory_backlog_entries = put_memory_backlog(
+                dedupe_key.to_string(),
+                "wireless.audit".to_string(),
+                payload.to_string(),
+                error.to_string(),
+            );
+            warn!(
+                dedupe_key,
+                publish_error = %error,
+                memory_backlog_entries,
+                circuit_open_for_ms = opened_at.elapsed().as_millis() as u64,
+                "postgres backlog circuit breaker open; queued audit entry in memory"
+            );
+            return true;
+        }
+
+        *cb = None;
+        info!(
+            dedupe_key,
+            "postgres backlog circuit breaker probe starting"
+        );
+    }
+    false
+}
+
+fn queue_in_memory_after_backlog_failure(
+    dedupe_key: String,
+    payload: String,
+    error: String,
+    backlog_err: BacklogError,
+) {
+    let mut cb = CIRCUIT_BREAKER.lock().unwrap();
+    if cb.is_none() {
+        *cb = Some(Instant::now());
+        error!(
+            dedupe_key = %dedupe_key,
+            publish_error = %error,
+            %backlog_err,
+            circuit_breaker_timeout_ms = CIRCUIT_BREAKER_TIMEOUT.as_millis() as u64,
+            "postgres backlog failed; opening circuit breaker"
+        );
+    }
+
+    let memory_backlog_entries = put_memory_backlog(
+        dedupe_key.clone(),
+        "wireless.audit".to_string(),
+        payload,
+        error,
+    );
+    warn!(
+        dedupe_key = %dedupe_key,
+        memory_backlog_entries,
+        "queued audit entry in memory backlog after postgres failure"
+    );
+}
+
+async fn flush_memory_backlog(backlog: &dyn BacklogStore) {
+    let memory_entries = drain_memory_backlog();
+    if !memory_entries.is_empty() {
+        info!(
+            memory_backlog_entries = memory_entries.len(),
+            "flushing memory backlog to postgres"
+        );
+    }
+    let mut memory_entries = memory_entries.into_iter();
+    while let Some((key, (stream, payload, err))) = memory_entries.next() {
+        if let Err(backlog_err) = backlog.save_pending(&key, &stream, &payload, &err).await {
+            error!(
+                dedupe_key = %key,
+                stream_name = %stream,
+                %backlog_err,
+                "failed to flush memory backlog entry to postgres"
+            );
+            queue_in_memory_after_backlog_failure(key, payload, err, backlog_err);
+            for (key, (stream, payload, err)) in memory_entries {
+                put_memory_backlog(key, stream, payload, err);
+            }
+            break;
+        }
+    }
+}
+
+fn close_postgres_circuit_breaker() {
+    let mut cb = CIRCUIT_BREAKER.lock().unwrap();
+    if cb.is_some() {
+        *cb = None;
+        tracing::info!("postgres circuit breaker closed, backlog resumed");
+    }
 }
 
 pub async fn reconcile_backlog(
@@ -72,6 +270,10 @@ pub async fn reconcile_backlog(
     audit_window: &AuditWindow,
 ) -> Result<(), PublishError> {
     let pending = backlog.list_pending().await?;
+    debug!(
+        pending_count = pending.len(),
+        "starting backlog reconciliation"
+    );
     for entry in pending {
         let observed_at = match extract_observed_at(&entry.payload) {
             Ok(value) => value,
@@ -85,8 +287,8 @@ pub async fn reconcile_backlog(
                 continue;
             }
         };
-        let observed_at_dt = match chrono::DateTime::parse_from_rfc3339(&observed_at) {
-            Ok(value) => value.with_timezone(&chrono::Utc),
+        let observed_at_dt = match parse_observed_at_timestamp(&observed_at) {
+            Ok(value) => value,
             Err(error) => {
                 warn!(
                     dedupe_key = %entry.dedupe_key,
@@ -99,38 +301,198 @@ pub async fn reconcile_backlog(
             }
         };
         if !audit_window.is_active_at(observed_at_dt) {
+            debug!(
+                dedupe_key = %entry.dedupe_key,
+                stream_name = %entry.stream_name,
+                observed_at = %observed_at,
+                "skipping backlog entry outside audit window"
+            );
             continue;
         }
 
-        if publish_payload(publisher, &entry.payload, &entry.dedupe_key, &observed_at)
+        let prepared =
+            match prepare_publish(publisher, &entry.payload, &entry.dedupe_key, &observed_at) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    warn!(
+                        dedupe_key = %entry.dedupe_key,
+                        stream_name = %entry.stream_name,
+                        attempt_count = entry.attempt_count,
+                        %error,
+                        "backlog entry publish preparation failed"
+                    );
+                    continue;
+                }
+            };
+        let event_kind = serde_json::from_str::<serde_json::Value>(&entry.payload)
+            .ok()
+            .and_then(|payload| {
+                payload
+                    .get("event_type")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            });
+        if let Err(backlog_err) = backlog
+            .record_ingest(IngestRecord {
+                dedupe_key: &entry.dedupe_key,
+                stream_name: &entry.stream_name,
+                observed_at: observed_at_dt,
+                payload_ref: &prepared.payload_ref,
+                payload: &entry.payload,
+                payload_sha256: &prepared.payload_sha256,
+                producer: "atheros-sensor",
+                event_kind: event_kind.as_deref(),
+            })
             .await
-            .is_ok()
         {
-            backlog.mark_synced(&entry.dedupe_key).await?;
+            let error = format!("record sync ingest ledger: {backlog_err}");
+            warn!(
+                dedupe_key = %entry.dedupe_key,
+                stream_name = %entry.stream_name,
+                attempt_count = entry.attempt_count,
+                backlog_error = %backlog_err,
+                "backlog entry ingest ledger record failed"
+            );
+            if let Err(persist_err) =
+                persist_publish_failure(backlog, &entry.dedupe_key, entry.payload.clone(), error)
+                    .await
+            {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    persist_error = %persist_err,
+                    "failed to persist backlog entry after ingest ledger failure"
+                );
+            }
+            continue;
         }
+
+        if let Err(error) =
+            enqueue_prepared_publish(publisher, &entry.payload, &entry.dedupe_key, &prepared).await
+        {
+            warn!(
+                dedupe_key = %entry.dedupe_key,
+                stream_name = %entry.stream_name,
+                attempt_count = entry.attempt_count,
+                %error,
+                "backlog entry publish retry enqueue failed after ingest ledger record"
+            );
+            if let Err(persist_err) = persist_publish_failure(
+                backlog,
+                &entry.dedupe_key,
+                entry.payload.clone(),
+                error,
+            )
+            .await
+            {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    persist_error = %persist_err,
+                    "failed to persist backlog entry after publish retry enqueue failure"
+                );
+            }
+            continue;
+        }
+        backlog.mark_synced(&entry.dedupe_key).await?;
+        info!(
+            dedupe_key = %entry.dedupe_key,
+            stream_name = %entry.stream_name,
+            attempt_count = entry.attempt_count,
+            "backlog entry reconciled"
+        );
     }
     Ok(())
 }
 
-async fn publish_payload(
+fn prepare_publish(
     publisher: &dyn PublishClient,
     payload: &str,
     dedupe_key: &str,
     observed_at: &str,
-) -> Result<(), String> {
-    publisher.publish_message("wireless.audit", payload).await?;
+) -> Result<PreparedPublish, String> {
     let payload_ref = publisher.payload_ref_for_event(payload, observed_at)?;
     let request = ScanRequest {
         stream_name: "wireless.audit".to_string(),
         dedupe_key: dedupe_key.to_string(),
-        payload_ref,
+        payload_ref: payload_ref.clone(),
         observed_at: observed_at.to_string(),
     };
-    let request_payload =
-        serde_json::to_string(&request).map_err(|error| format!("serialize scan request: {error}"))?;
-    publisher
-        .publish_message(SYNC_SCAN_REQUEST_SUBJECT, &request_payload)
-        .await
+    let request_payload = serde_json::to_string(&request)
+        .map_err(|error| format!("serialize scan request: {error}"))?;
+    Ok(PreparedPublish {
+        payload_ref,
+        request_payload,
+        payload_sha256: sha256_hex(payload),
+    })
+}
+
+async fn enqueue_prepared_publish(
+    publisher: &dyn PublishClient,
+    payload: &str,
+    dedupe_key: &str,
+    prepared: &PreparedPublish,
+) -> Result<(), String> {
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_scan_request",
+        SYNC_SCAN_REQUEST_SUBJECT,
+        &prepared.request_payload,
+        dedupe_key,
+    )
+    .await?;
+    debug!(
+        dedupe_key,
+        subject = SYNC_SCAN_REQUEST_SUBJECT,
+        payload_bytes = prepared.request_payload.len(),
+        "queued scan request"
+    );
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_audit",
+        "wireless.audit",
+        payload,
+        dedupe_key,
+    )
+    .await?;
+    debug!(
+        dedupe_key,
+        subject = "wireless.audit",
+        payload_bytes = payload.len(),
+        "queued audit payload"
+    );
+    Ok(())
+}
+
+async fn queue_publish_with_backpressure(
+    publisher: &dyn PublishClient,
+    stage: &str,
+    subject: &str,
+    payload: &str,
+    dedupe_key: &str,
+) -> Result<(), String> {
+    match publisher.enqueue_message(subject, payload) {
+        Ok(()) => Ok(()),
+        Err(error) if error == "sync publisher queue full" => {
+            debug!(
+                dedupe_key,
+                subject,
+                payload_bytes = payload.len(),
+                "sync publisher queue full; retrying with backpressure"
+            );
+            publisher
+                .publish_message(subject, payload)
+                .await
+                .map_err(|error| {
+                    format!("stage={stage} subject={subject} dedupe_key={dedupe_key}: {error}")
+                })
+        }
+        Err(error) => Err(format!(
+            "stage={stage} subject={subject} dedupe_key={dedupe_key}: {error}"
+        )),
+    }
 }
 
 fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
@@ -144,16 +506,73 @@ fn extract_observed_at(payload: &str) -> Result<String, PublishError> {
     Ok(observed_at.to_string())
 }
 
+fn parse_observed_at_timestamp(observed_at: &str) -> Result<DateTime<Utc>, PublishError> {
+    DateTime::parse_from_rfc3339(observed_at)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|error| {
+            PublishError::Publish(format!(
+                "invalid observed_at timestamp {observed_at:?}: {error}"
+            ))
+        })
+}
+
 fn dedupe_key(payload: &str) -> String {
+    sha256_hex(payload)
+}
+
+fn sha256_hex(payload: &str) -> String {
     format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
+fn drain_memory_backlog() -> Vec<(String, (String, String, String))> {
+    let mut backlog = MEMORY_BACKLOG.lock().unwrap();
+    let mut entries = Vec::with_capacity(backlog.len());
+    while let Some(entry) = backlog.pop_lru() {
+        entries.push(entry);
+    }
+    entries
+}
+
+fn put_memory_backlog(
+    dedupe_key: String,
+    stream_name: String,
+    payload: String,
+    error: String,
+) -> usize {
+    let mut backlog = MEMORY_BACKLOG.lock().unwrap();
+    if let Some((evicted_key, (evicted_stream, _, _))) =
+        backlog.push(dedupe_key, (stream_name, payload, error))
+    {
+        warn!(
+            evicted_dedupe_key = %evicted_key,
+            evicted_stream_name = %evicted_stream,
+            memory_backlog_size = MEMORY_BACKLOG_SIZE.get(),
+            "memory backlog full; evicted oldest entry"
+        );
+    }
+    backlog.len()
 }
 
 #[cfg(test)]
 mod tests {
     use base64::Engine;
+    use chrono::NaiveTime;
+    use std::collections::HashSet;
+    use std::sync::{MutexGuard, OnceLock};
 
     use super::*;
-    use crate::{audit::AuditWindow, backlog::BacklogError};
+    use serde_json::json;
+
+    use crate::{
+        audit::AuditWindow,
+        backlog::{BacklogEntry, BacklogError},
+    };
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     struct MemoryPublisher {
         fail: bool,
@@ -162,7 +581,7 @@ mod tests {
 
     #[async_trait]
     impl PublishClient for MemoryPublisher {
-        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
             if self.fail {
                 return Err("nats unavailable".to_string());
             }
@@ -173,7 +592,15 @@ mod tests {
             Ok(())
         }
 
-        fn payload_ref_for_event(&self, raw_payload: &str, _observed_at: &str) -> Result<String, String> {
+        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+            self.enqueue_message(subject, payload)
+        }
+
+        fn payload_ref_for_event(
+            &self,
+            raw_payload: &str,
+            _observed_at: &str,
+        ) -> Result<String, String> {
             Ok(format!(
                 "inline://json/{}",
                 base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw_payload)
@@ -184,10 +611,19 @@ mod tests {
     #[derive(Default)]
     struct MemoryBacklog {
         rows: Mutex<Vec<BacklogEntry>>,
+        ingest_rows: Mutex<Vec<(String, DateTime<Utc>)>>,
     }
 
     #[async_trait]
     impl BacklogStore for MemoryBacklog {
+        async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            self.ingest_rows
+                .lock()
+                .unwrap()
+                .push((record.dedupe_key.to_string(), record.observed_at));
+            Ok(())
+        }
+
         async fn save_pending(
             &self,
             dedupe_key: &str,
@@ -217,6 +653,107 @@ mod tests {
         }
     }
 
+    struct FailingBacklog;
+
+    #[async_trait]
+    impl BacklogStore for FailingBacklog {
+        async fn record_ingest(&self, _record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            Err(BacklogError::InvalidDatabaseUrl("unavailable".to_string()))
+        }
+
+        async fn save_pending(
+            &self,
+            _dedupe_key: &str,
+            _stream_name: &str,
+            _payload: &str,
+            _error: &str,
+        ) -> Result<(), BacklogError> {
+            Err(BacklogError::InvalidDatabaseUrl("unavailable".to_string()))
+        }
+
+        async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
+            Ok(Vec::new())
+        }
+
+        async fn mark_synced(&self, _dedupe_key: &str) -> Result<(), BacklogError> {
+            Ok(())
+        }
+    }
+
+    struct SelectiveIngestFailBacklog {
+        rows: Mutex<Vec<BacklogEntry>>,
+        ingest_rows: Mutex<Vec<String>>,
+        failing_keys: HashSet<String>,
+    }
+
+    impl SelectiveIngestFailBacklog {
+        fn new(failing_keys: impl IntoIterator<Item = String>) -> Self {
+            Self {
+                rows: Mutex::new(Vec::new()),
+                ingest_rows: Mutex::new(Vec::new()),
+                failing_keys: failing_keys.into_iter().collect(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BacklogStore for SelectiveIngestFailBacklog {
+        async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            if self.failing_keys.contains(record.dedupe_key) {
+                return Err(BacklogError::InvalidDatabaseUrl(
+                    "ingest ledger unavailable".to_string(),
+                ));
+            }
+
+            self.ingest_rows
+                .lock()
+                .unwrap()
+                .push(record.dedupe_key.to_string());
+            Ok(())
+        }
+
+        async fn save_pending(
+            &self,
+            dedupe_key: &str,
+            stream_name: &str,
+            payload: &str,
+            _error: &str,
+        ) -> Result<(), BacklogError> {
+            let mut rows = self.rows.lock().unwrap();
+            if let Some(existing) = rows.iter_mut().find(|row| row.dedupe_key == dedupe_key) {
+                existing.stream_name = stream_name.to_string();
+                existing.payload = payload.to_string();
+                existing.attempt_count += 1;
+                return Ok(());
+            }
+
+            rows.push(BacklogEntry {
+                dedupe_key: dedupe_key.to_string(),
+                stream_name: stream_name.to_string(),
+                payload: payload.to_string(),
+                attempt_count: 1,
+            });
+            Ok(())
+        }
+
+        async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
+            Ok(self.rows.lock().unwrap().clone())
+        }
+
+        async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError> {
+            self.rows
+                .lock()
+                .unwrap()
+                .retain(|entry| entry.dedupe_key != dedupe_key);
+            Ok(())
+        }
+    }
+
+    fn clear_memory_state() {
+        MEMORY_BACKLOG.lock().unwrap().clear();
+        *CIRCUIT_BREAKER.lock().unwrap() = None;
+    }
+
     fn entry() -> AuditEntry {
         serde_json::from_value(json!({
             "event_type": "wifi_management_frame",
@@ -233,13 +770,18 @@ mod tests {
             "signal_dbm": -42,
             "sequence_number": 1,
             "raw_len": 44,
-            "tags": ["wifi", "management"]
+            "tags": ["wifi", "management"],
+            "device_id": null,
+            "username": null,
+            "identity_source": "unknown"
         }))
         .unwrap()
     }
 
     #[tokio::test]
     async fn successful_publish_emits_both_subjects() {
+        let _guard = test_lock();
+        clear_memory_state();
         let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
@@ -250,29 +792,159 @@ mod tests {
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 2);
-        assert_eq!(published[0].0, "wireless.audit");
-        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[1].0, "wireless.audit");
         assert!(backlog.rows.lock().unwrap().is_empty());
+        let ingest_rows = backlog.ingest_rows.lock().unwrap();
+        assert_eq!(ingest_rows.len(), 1);
+        assert_eq!(
+            ingest_rows[0].1,
+            DateTime::parse_from_rfc3339("2026-04-20T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[tokio::test]
-    async fn failed_publish_is_saved_to_backlog() {
+    async fn failed_publish_is_saved_to_backlog_without_pipeline_error() {
+        let _guard = test_lock();
+        clear_memory_state();
         let publisher = MemoryPublisher {
             fail: true,
             published: Arc::new(Mutex::new(Vec::new())),
         };
         let backlog = MemoryBacklog::default();
 
-        assert!(publish_entry(&backlog, &publisher, entry()).await.is_err());
+        publish_entry(&backlog, &publisher, entry()).await.unwrap();
         assert_eq!(backlog.rows.lock().unwrap().len(), 1);
+        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+    }
+
+    struct QueueFullOnEnqueuePublisher {
+        published: Arc<Mutex<Vec<(String, String)>>>,
+        queue_full_remaining: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl PublishClient for QueueFullOnEnqueuePublisher {
+        fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+            let mut queue_full_remaining = self.queue_full_remaining.lock().unwrap();
+            if *queue_full_remaining > 0 {
+                *queue_full_remaining -= 1;
+                return Err("sync publisher queue full".to_string());
+            }
+            self.published
+                .lock()
+                .unwrap()
+                .push((subject.to_string(), payload.to_string()));
+            Ok(())
+        }
+
+        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+            self.published
+                .lock()
+                .unwrap()
+                .push((subject.to_string(), payload.to_string()));
+            Ok(())
+        }
+
+        fn payload_ref_for_event(
+            &self,
+            raw_payload: &str,
+            _observed_at: &str,
+        ) -> Result<String, String> {
+            Ok(format!(
+                "inline://json/{}",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw_payload)
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn queue_full_is_retried_with_backpressure_before_backlog_fallback() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let publisher = QueueFullOnEnqueuePublisher {
+            published: Arc::new(Mutex::new(Vec::new())),
+            queue_full_remaining: Mutex::new(1),
+        };
+        let backlog = MemoryBacklog::default();
+
+        publish_entry(&backlog, &publisher, entry()).await.unwrap();
+
+        assert!(backlog.rows.lock().unwrap().is_empty());
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 2);
+        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[1].0, "wireless.audit");
+    }
+
+    #[tokio::test]
+    async fn invalid_observed_at_is_rejected_before_side_effects() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let backlog = MemoryBacklog::default();
+        let mut event = entry();
+        event.observed_at = "not-a-timestamp".to_string();
+
+        let error = publish_entry(&backlog, &publisher, event)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, PublishError::Publish(message) if message.contains("invalid observed_at timestamp"))
+        );
+        assert!(publisher.published.lock().unwrap().is_empty());
+        assert!(backlog.rows.lock().unwrap().is_empty());
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
+        assert!(MEMORY_BACKLOG.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_publish_queued_in_memory_returns_queued() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let publisher = MemoryPublisher {
+            fail: true,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        let error = publish_entry(&FailingBacklog, &publisher, entry())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, PublishError::Queued(_)));
+        assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
+        clear_memory_state();
+    }
+
+    #[tokio::test]
+    async fn flush_memory_backlog_opens_circuit_breaker_when_save_pending_fails() {
+        let _guard = test_lock();
+        clear_memory_state();
+
+        put_memory_backlog(
+            "dedupe-1".to_string(),
+            "wireless.audit".to_string(),
+            "{\"event_type\":\"wifi_management_frame\"}".to_string(),
+            "nats unavailable".to_string(),
+        );
+
+        flush_memory_backlog(&FailingBacklog).await;
+
+        assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
+        assert!(CIRCUIT_BREAKER.lock().unwrap().is_some());
+        clear_memory_state();
     }
 
     #[tokio::test]
     async fn reconciliation_retries_and_clears_backlog() {
-        let failing = MemoryPublisher {
-            fail: true,
-            published: Arc::new(Mutex::new(Vec::new())),
-        };
+        let _guard = test_lock();
+        clear_memory_state();
         let backlog = MemoryBacklog::default();
         let event = entry();
         let payload = serde_json::to_string(&event).unwrap();
@@ -282,20 +954,169 @@ mod tests {
             .await
             .unwrap();
 
-        let succeeding = MemoryPublisher {
+        let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
         };
         reconcile_backlog(
             &backlog,
-            &succeeding,
+            &publisher,
             &AuditWindow::from_parts(None, None, None, None),
         )
         .await
         .unwrap();
 
         assert!(backlog.rows.lock().unwrap().is_empty());
-        assert_eq!(succeeding.published.lock().unwrap().len(), 2);
-        assert!(failing.published.lock().unwrap().is_empty());
+        assert_eq!(publisher.published.lock().unwrap().len(), 2);
+        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_enqueue_failure_keeps_backlog_entry_pending() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let backlog = MemoryBacklog::default();
+        let event = entry();
+        let payload = serde_json::to_string(&event).unwrap();
+        let key = dedupe_key(&payload);
+        backlog
+            .save_pending(&key, "wireless.audit", &payload, "nats unavailable")
+            .await
+            .unwrap();
+
+        let publisher = MemoryPublisher {
+            fail: true,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        reconcile_backlog(
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(None, None, None, None),
+        )
+        .await
+        .unwrap();
+
+        let rows = backlog.rows.lock().unwrap().clone();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().any(|row| row.dedupe_key == key));
+        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+        assert!(publisher.published.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_ingest_failure_is_persisted_and_processing_continues() {
+        let _guard = test_lock();
+        clear_memory_state();
+
+        let mut first = entry();
+        first.sequence_number = Some(1);
+        let first_payload = serde_json::to_string(&first).unwrap();
+        let first_key = dedupe_key(&first_payload);
+
+        let mut second = entry();
+        second.sequence_number = Some(2);
+        let second_payload = serde_json::to_string(&second).unwrap();
+        let second_key = dedupe_key(&second_payload);
+
+        let backlog = SelectiveIngestFailBacklog::new([first_key.clone()]);
+        backlog
+            .save_pending(&first_key, "wireless.audit", &first_payload, "nats unavailable")
+            .await
+            .unwrap();
+        backlog
+            .save_pending(
+                &second_key,
+                "wireless.audit",
+                &second_payload,
+                "nats unavailable",
+            )
+            .await
+            .unwrap();
+
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        reconcile_backlog(
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(None, None, None, None),
+        )
+        .await
+        .unwrap();
+
+        let pending = backlog.rows.lock().unwrap().clone();
+        assert!(pending.iter().any(|row| row.dedupe_key == first_key));
+        assert!(!pending.iter().any(|row| row.dedupe_key == second_key));
+
+        let ingested = backlog.ingest_rows.lock().unwrap().clone();
+        assert_eq!(ingested, vec![second_key]);
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_skips_malformed_backlog_payload() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let backlog = MemoryBacklog::default();
+        backlog
+            .save_pending("bad", "wireless.audit", "{}", "nats unavailable")
+            .await
+            .unwrap();
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        reconcile_backlog(
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(None, None, None, None),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(backlog.rows.lock().unwrap().len(), 1);
+        assert!(publisher.published.lock().unwrap().is_empty());
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_skips_entries_outside_audit_window() {
+        let _guard = test_lock();
+        clear_memory_state();
+        let backlog = MemoryBacklog::default();
+        let event = entry();
+        let payload = serde_json::to_string(&event).unwrap();
+        let key = dedupe_key(&payload);
+        backlog
+            .save_pending(&key, "wireless.audit", &payload, "nats unavailable")
+            .await
+            .unwrap();
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        reconcile_backlog(
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(
+                None,
+                None,
+                Some(NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
+                Some(NaiveTime::from_hms_opt(0, 1, 0).unwrap()),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(backlog.rows.lock().unwrap().len(), 1);
+        assert!(publisher.published.lock().unwrap().is_empty());
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
     }
 }

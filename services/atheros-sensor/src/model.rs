@@ -10,6 +10,7 @@ pub struct RawPacket {
 #[derive(Clone, Debug)]
 pub struct WifiFrame {
     pub observed_at: DateTime<Utc>,
+    pub event_type: String,
     pub bssid: Option<String>,
     pub source_mac: Option<String>,
     pub destination_mac: Option<String>,
@@ -19,6 +20,8 @@ pub struct WifiFrame {
     pub sequence_number: Option<u16>,
     pub raw_len: usize,
     pub tags: Vec<String>,
+    pub username_hint: Option<String>,
+    pub identity_source_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,4 +60,45 @@ pub struct AuditEntry {
     pub sequence_number: Option<u16>,
     pub raw_len: usize,
     pub tags: Vec<String>,
+    pub device_id: Option<String>,
+    pub username: Option<String>,
+    #[serde(default = "default_identity_source")]
+    pub identity_source: String,
+}
+
+fn default_identity_source() -> String {
+    "unknown".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::AuditEntry;
+
+    #[test]
+    fn audit_entry_defaults_identity_source_when_missing() {
+        let parsed: AuditEntry = serde_json::from_value(json!({
+            "event_type": "wifi_management_frame",
+            "observed_at": "2026-04-20T12:00:00Z",
+            "sensor_id": "00:11:22:33:44:55",
+            "location_id": "North-Wing-Entry",
+            "interface": "wlan0",
+            "channel": 6,
+            "bssid": "10:20:30:40:50:60",
+            "source_mac": "10:20:30:40:50:60",
+            "destination_mac": "ff:ff:ff:ff:ff:ff",
+            "ssid": "CorpWiFi",
+            "frame_subtype": "beacon",
+            "signal_dbm": -42,
+            "sequence_number": 1,
+            "raw_len": 44,
+            "tags": ["wifi", "management"],
+            "device_id": null,
+            "username": null
+        }))
+        .unwrap();
+
+        assert_eq!(parsed.identity_source, "unknown");
+    }
 }

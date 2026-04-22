@@ -7,7 +7,8 @@
     { href: '/', label: 'Dashboard' },
     { href: '/hosts', label: 'Hosts' },
     { href: '/peers', label: 'Peers' },
-    { href: '/devices', label: 'Devices' }
+    { href: '/devices', label: 'Devices' },
+    { href: '/sync', label: 'Sync' }
   ];
 
   const isActive = (href: string): boolean =>

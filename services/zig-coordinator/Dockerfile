@@ -1,3 +1,5 @@
+FROM natsio/nats-box:0.16.0 AS natsbox
+
 FROM alpine:3.20 AS builder
 ARG ZIG_VERSION=0.16.0
 ARG TARGETARCH
@@ -29,6 +31,7 @@ RUN apk add --no-cache \
         postgresql-client
 WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
+COPY --from=natsbox /usr/local/bin/nats /usr/local/bin/nats
 COPY services/zig-coordinator/schema ./schema
 ENV SYNC_SCHEMA_FILE=/app/schema/postgres.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]

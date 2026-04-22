@@ -20,14 +20,35 @@ pub fn stream_packets(
     timeout_ms: i32,
     filter: &str,
 ) -> Result<ReceiverStream<Result<RawPacket, CaptureError>>, CaptureError> {
-    let mut capture = Capture::from_device(device)?
+    let builder = Capture::from_device(device)?
         .immediate_mode(true)
-        .rfmon(true)
         .promisc(true)
         .snaplen(snaplen)
-        .timeout(timeout_ms)
-        .open()?
-        .setnonblock()?;
+        .timeout(timeout_ms);
+
+    let mut capture = match builder.open() {
+        Ok(cap) => cap,
+        Err(e) => {
+            if e.to_string().contains("monitor mode")
+                || e.to_string().contains("rfmon")
+                || e.to_string().contains("not supported")
+            {
+                eprintln!(
+                    "ERROR: Interface {} does not have monitor mode enabled.",
+                    device
+                );
+                eprintln!("       This is required for 802.11 frame capture.");
+                eprintln!(
+                    "       Run on the HOST first: sudo ./scripts/prep_ath.sh {}",
+                    device
+                );
+                eprintln!("       The container cannot configure monitor mode from inside.");
+            }
+            return Err(CaptureError::Pcap(e));
+        }
+    }
+    .setnonblock()?;
+
     capture.filter(filter, true)?;
 
     let (tx, rx) = mpsc::channel(64);

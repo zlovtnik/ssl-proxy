@@ -15,6 +15,10 @@ services:
       args:
         VCS_REF: ${VCS_REF:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
+    # Compatibility mode: host-mounted peer config files are often 0600 on the host.
+    # Run as root so startup key sync/read logic can access /config/peer1/*.conf.
+    user: "0:0"
+    command: ["/usr/local/bin/start-proxy-wg"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3002/health && /app/ssl-proxy boringtun show wg0 >/dev/null"]
@@ -31,8 +35,8 @@ services:
           cpus: '0.5'
           memory: 512M
     # NET_ADMIN and /dev/net/tun are required for BoringTun to create tun interfaces
-    # and manage routes. Risk: container compromise grants network admin. Mitigations:
-    # non-root user (proxyuser), capabilities limited to NET_ADMIN only, no --privileged.
+    # and manage routes. Risk: container compromise grants network admin + root-in-container.
+    # Mitigations: capabilities limited to NET_ADMIN only, no --privileged.
     cap_add:
       - NET_ADMIN
     devices:
@@ -48,7 +52,7 @@ services:
       - WG_PORT=${WG_PORT:-443}
       - WG_INTERNAL_PORT=${WG_INTERNAL_PORT:-51820}
       - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-true}
-      - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY}
+      - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY:-}
       - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
       - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
       - WG_MTU=1280
@@ -64,7 +68,7 @@ services:
       - WG_SUDO=1
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
-      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
 
     ports:
@@ -86,6 +90,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      nats-bootstrap:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     build:
@@ -98,6 +104,8 @@ services:
       - SYNC_SCHEMA_FILE=/app/schema/postgres.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
+      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -119,6 +127,10 @@ services:
       - ./secrets:/run/secrets:ro
     environment:
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+      - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
+      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - TNS_ADMIN=/app/wallet
       - LD_LIBRARY_PATH=/app/lib
       - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
@@ -130,6 +142,52 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
+
+  atheros-sensor:
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      zig-coordinator:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: atheros-sensor
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - /sys/class/net:/sys/class/net:ro
+    environment:
+      <<: *ath_sensor_env
+      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
+      DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
+      ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
+      ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
+      ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
+      ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
+      ATH_SENSOR_REG_DOMAIN: ${ATH_SENSOR_REG_DOMAIN:-US}
+      RUST_LOG: ${ATH_SENSOR_RUST_LOG:-warn,atheros_sensor=info,ssl_proxy=info}
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/local/bin/atheros-sensor healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
   nats:
     image: nats:2.10-alpine
@@ -155,12 +213,17 @@ services:
     environment:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
+      AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      SYNC_LOAD_SUBJECT: ${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+      SYNC_LOAD_CONSUMER: ${SYNC_LOAD_CONSUMER:-oracle-worker-load}
     volumes:
       - ./docker/nats:/config:ro
-    command: ["sh", "/config/bootstrap.sh"]
+    entrypoint: ["sh"]
+    command: ["/config/bootstrap.sh"]
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-bookworm
     restart: unless-stopped
     environment:
       POSTGRES_DB: sync
@@ -174,6 +237,8 @@ services:
       timeout: 5s
       retries: 5
     volumes:
+      # /docker-entrypoint-initdb.d is intentionally unused; zig-coordinator
+      # applies services/zig-coordinator/schema/postgres.sql with psql.
       - postgres-data:/var/lib/postgresql/data
 
 volumes:

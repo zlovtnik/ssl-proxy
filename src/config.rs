@@ -68,6 +68,7 @@ pub struct AdminConfig {
 pub struct SyncConfig {
     pub nats_url: Option<String>,
     pub connect_timeout_ms: u64,
+    pub publish_timeout_ms: u64,
     pub username: Option<String>,
     pub password: Option<String>,
     pub tls_enabled: bool,
@@ -277,6 +278,7 @@ impl std::fmt::Debug for SyncConfig {
         f.debug_struct("SyncConfig")
             .field("nats_url", &redact_url_userinfo(self.nats_url.as_deref()))
             .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .field("publish_timeout_ms", &self.publish_timeout_ms)
             .field("username", &self.username)
             .field(
                 "password",
@@ -486,6 +488,7 @@ impl Default for Config {
             sync: SyncConfig {
                 nats_url: None,
                 connect_timeout_ms: 2_000,
+                publish_timeout_ms: 2_000,
                 username: None,
                 password: None,
                 tls_enabled: false,
@@ -713,6 +716,7 @@ impl SyncConfig {
         Ok(Self {
             nats_url,
             connect_timeout_ms: read_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000),
+            publish_timeout_ms: read_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000),
             username,
             password,
             tls_enabled,
@@ -1143,6 +1147,7 @@ mod tests {
             "WG_OBFUSCATION_SESSION_IDLE_SECS",
             "SYNC_NATS_URL",
             "SYNC_NATS_CONNECT_TIMEOUT_MS",
+            "SYNC_NATS_PUBLISH_TIMEOUT_MS",
             "SYNC_NATS_USERNAME",
             "SYNC_NATS_PASSWORD",
             "SYNC_NATS_PASSWORD_FILE",
@@ -1430,6 +1435,7 @@ mod tests {
 
         let result = Config::from_env().unwrap();
         assert_eq!(result.sync.connect_timeout_ms, 2_000);
+        assert_eq!(result.sync.publish_timeout_ms, 2_000);
         assert_eq!(result.sync.inline_payload_max_bytes, 2_048);
         assert_eq!(result.sync.outbox_dir, "/tmp/ssl-proxy-sync-outbox");
         assert!(result.sync.nats_url.is_none());

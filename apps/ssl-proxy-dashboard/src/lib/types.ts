@@ -100,11 +100,12 @@ export interface DeviceUpsertRequest {
   os_hint?: string;
   mac_hint?: string;
   notes?: string;
+  regenerate_claim_token?: boolean;
 }
 
 export interface DeviceUpsertResponse {
   device_id: string;
-  claim_token: string;
+  claim_token?: string;
   device: DeviceInfo;
 }
 
@@ -119,6 +120,29 @@ export interface ClaimResponse {
 export interface HealthStatus {
   status: string;
   [key: string]: unknown;
+}
+
+export interface SyncPublisherHealth {
+  configured: boolean;
+  auth_enabled: boolean;
+  tls_enabled: boolean;
+  inline_payload_max_bytes: number;
+  outbox_dir: string;
+  last_attempt_at?: string;
+  last_publish_at?: string;
+  last_error?: string;
+}
+
+export interface SyncSubjectCount {
+  subject: string;
+  count: number;
+}
+
+export interface SyncStatusReport {
+  status: string;
+  publisher: SyncPublisherHealth;
+  published_subjects: SyncSubjectCount[];
+  last_error?: string;
 }
 
 export interface DashboardEvent {

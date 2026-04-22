@@ -98,7 +98,7 @@ BEGIN
   IF v_count = 0 THEN
     EXECUTE IMMEDIATE '
       CREATE TABLE connection_sessions (
-        session_id       VARCHAR2(32)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
+        session_id       VARCHAR2(36)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
         correlation_id   VARCHAR2(36),
         host             VARCHAR2(255)  NOT NULL,
         peer_ip          VARCHAR2(45),

@@ -37,6 +37,12 @@ Cause: Host DNS resolver outage/path failure.
 Fix: Recover host DNS; if image exists locally, use `docker compose up -d --no-build --force-recreate`.
 Retry policy: auto-fix allowed once (`--no-build` fallback).
 
+- `worker_wallet_missing`
+Cause: `oracle-worker` started without mounted Oracle wallet artifacts (`wallet/`), shared libraries (`lib/`), or secret file (`ORACLE_PASS_FILE`).
+Fix: Mount wallet lib and secrets into oracle-worker only.
+Retry policy: manual; remediate mounts, then re-run readiness verification (`docker compose ps`, `docker compose logs oracle-worker`, and `docker compose exec -T oracle-worker /usr/local/bin/oracle-worker healthcheck`). If the signature recurs after one clean retry, apply backoff and escalate to the platform on-call + release owner for deployment pipeline correction.
+Operational note: recurrence means the mount change was not made durable. The release owner must keep compose/env templates and deployment checklists updated so these mounts persist across future deploys.
+
 ## Last Known Good
 - iPhone direct mode prerequisites:
   - `PROFILE_MODE=iphone`
@@ -66,3 +72,5 @@ Retry policy: auto-fix allowed once (`--no-build` fallback).
 - 2026-04-20T15:49:32Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:52:10Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:58:59Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
+- 2026-04-21T21:40:23Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=qr_permission_denied | action=Read profile from /config bind mount inside container
+- 2026-04-21T21:40:50Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into oracle-worker only

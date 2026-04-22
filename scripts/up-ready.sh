@@ -53,7 +53,7 @@ signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
 profile_obfuscation_mismatch::wg_obfuscation_enabled=true::iPhone/linux-direct mode cannot use obfuscated ingress::Use WG_OBFUSCATION_ENABLED=false and recreate::auto
-docker_registry_dns_timeout::lookup registry-1\\.docker\\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
+docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Treat in-container health as authoritative::auto
 coordinator_unhealthy::zig-coordinator unhealthy::Coordinator failed health or dependency checks::Inspect zig-coordinator logs and DATABASE_URL/SYNC_NATS_URL/schema access::manual
@@ -61,10 +61,12 @@ worker_unhealthy::oracle-worker unhealthy::Worker failed Oracle or NATS prefligh
 postgres_unavailable::postgres unhealthy|Postgres unavailable::Postgres dependency unavailable::Ensure postgres is healthy and DATABASE_URL points to postgres:5432::manual
 nats_unavailable::nats unhealthy|NATS unavailable::NATS dependency unavailable::Ensure nats is healthy and SYNC_NATS_URL points to nats:4222::manual
 worker_wallet_missing::missing Oracle wallet artifact|wallet directory missing|no libclntsh|missing Oracle password file::Worker Oracle assets are missing::Mount wallet lib and secrets into oracle-worker only::manual
+rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages::Builder Rust toolchain too old for locked dependencies::Bump the builder Rust image (or pin compatible crate versions) and rebuild::manual
 schema_apply_failed::psql failed::Coordinator could not apply or validate the sync schema::Check DATABASE_URL and Postgres readiness::manual
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict (often 443 in local tests)::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
+peer_config_permission_denied::awk: cannot open /config/.*\.conf \(Permission denied\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual
 SIGEOF
 }
 

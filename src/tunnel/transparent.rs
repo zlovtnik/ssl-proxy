@@ -18,7 +18,7 @@ use tracing::{debug, error, info};
 use crate::{
     blocklist,
     events::{self, EmitPayload},
-    forensic::PacketDirection,
+    forensic::{PacketDirection, PeerIdentity},
     obfuscation,
     state::SharedState,
 };
@@ -43,10 +43,12 @@ fn observe_forensic_chunk(
     tls: &TlsInfo,
 ) {
     let finding = state.forensic.observe_chunk(
+        &PeerIdentity {
+            peer_ip: identity.peer_ip.clone(),
+            wg_pubkey: identity.wg_pubkey.clone(),
+        },
         host,
         category,
-        identity.peer_ip.as_deref(),
-        identity.wg_pubkey.as_deref(),
         direction,
         bytes,
         tls.ja3_lite.as_deref(),

@@ -6,7 +6,8 @@
   const items = [
     { href: '/hosts', title: 'Host Intel', description: 'Risk velocity and verdict shifts' },
     { href: '/peers', title: 'Peer Telemetry', description: 'Traffic and active sessions' },
-    { href: '/devices', title: 'Device Registry', description: 'Claims and identity metadata' }
+    { href: '/devices', title: 'Device Registry', description: 'Claims and identity metadata' },
+    { href: '/sync', title: 'Sync Plane', description: 'Publisher and ledger health' }
   ];
 
   const isActive = (href: string): boolean => $page.url.pathname.startsWith(href);

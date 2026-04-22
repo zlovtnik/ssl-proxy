@@ -23,6 +23,12 @@ const MONITOR_INTERFACE_TYPE: u32 = 803;
 
 pub type SharedForensicState = Arc<ForensicState>;
 
+#[derive(Clone, Debug, Default)]
+pub struct PeerIdentity {
+    pub peer_ip: Option<String>,
+    pub wg_pubkey: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PacketDirection {
     Upstream,
@@ -239,10 +245,9 @@ impl ForensicState {
 
     pub fn observe_chunk(
         &self,
+        peer: &PeerIdentity,
         host: &str,
         category: &'static str,
-        peer_ip: Option<&str>,
-        wg_pubkey: Option<&str>,
         direction: PacketDirection,
         bytes: usize,
         ja3_lite: Option<&str>,
@@ -251,7 +256,7 @@ impl ForensicState {
             return None;
         }
 
-        let peer_hash = fingerprint_identity(peer_ip, wg_pubkey);
+        let peer_hash = fingerprint_identity(peer.peer_ip.as_deref(), peer.wg_pubkey.as_deref());
         let flow_key = format!("{peer_hash}|{host}");
 
         let mut state = self
@@ -390,20 +395,23 @@ fn weighted_ema(previous: u64, current: u64, weight: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{fingerprint_identity, ForensicState, PacketDirection};
+    use super::{fingerprint_identity, ForensicState, PacketDirection, PeerIdentity};
     use std::time::{Duration, Instant};
 
     #[test]
     fn flow_alerts_only_after_sustained_low_jitter_upload() {
         let state = ForensicState::new(true);
         let peer_hash = fingerprint_identity(Some("10.0.0.2"), None);
+        let peer = PeerIdentity {
+            peer_ip: Some("10.0.0.2".to_string()),
+            wg_pubkey: None,
+        };
 
         assert!(state
             .observe_chunk(
+                &peer,
                 "example.com",
                 "analytics",
-                Some("10.0.0.2"),
-                None,
                 PacketDirection::Upstream,
                 4096,
                 Some("771,1-2,0,29,0"),
@@ -423,10 +431,9 @@ mod tests {
         }
 
         let finding = state.observe_chunk(
+            &peer,
             "example.com",
             "analytics",
-            Some("10.0.0.2"),
-            None,
             PacketDirection::Upstream,
             4096,
             Some("771,1-2,0,29,0"),
@@ -441,12 +448,15 @@ mod tests {
     #[test]
     fn disabled_state_never_alerts() {
         let state = ForensicState::new(false);
+        let peer = PeerIdentity {
+            peer_ip: Some("10.0.0.2".to_string()),
+            wg_pubkey: None,
+        };
         assert!(state
             .observe_chunk(
+                &peer,
                 "example.com",
                 "analytics",
-                Some("10.0.0.2"),
-                None,
                 PacketDirection::Upstream,
                 4096,
                 None,

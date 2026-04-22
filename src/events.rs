@@ -163,13 +163,19 @@ pub(crate) fn emit_serializable<T>(
         );
     }
     if let Some(value) = peer_hostname {
-        extra.insert("peer_hostname".to_string(), serde_json::Value::String(value));
+        extra.insert(
+            "peer_hostname".to_string(),
+            serde_json::Value::String(value),
+        );
     }
     if let Some(value) = client_ua {
         extra.insert("client_ua".to_string(), serde_json::Value::String(value));
     }
     extra.insert("bytes_up".to_string(), serde_json::Value::from(bytes_up));
-    extra.insert("bytes_down".to_string(), serde_json::Value::from(bytes_down));
+    extra.insert(
+        "bytes_down".to_string(),
+        serde_json::Value::from(bytes_down),
+    );
     if let Some(value) = status_code {
         extra.insert("status_code".to_string(), serde_json::Value::from(value));
     }

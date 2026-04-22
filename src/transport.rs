@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
-    sync::mpsc,
+    sync::{mpsc, oneshot},
     task::JoinHandle,
     time::timeout,
 };
@@ -32,6 +32,7 @@ use crate::{
 struct SyncPublisherConfig {
     nats_url: Option<String>,
     connect_timeout: Duration,
+    publish_timeout: Duration,
     username: Option<String>,
     password: Option<String>,
     tls_enabled: bool,
@@ -67,8 +68,8 @@ pub struct SyncPublisher {
     config: SyncPublisherConfig,
     published: Arc<Mutex<Vec<PublishedMessage>>>,
     health: Arc<Mutex<SyncPublisherHealth>>,
-    publish_tx: Arc<Mutex<Option<mpsc::Sender<(String, String)>>>>,
-    publish_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    publish_tx: Arc<Mutex<Option<PublishQueueSender>>>,
+    publish_task: Arc<Mutex<Option<PublishTaskHandle>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,6 +77,22 @@ struct NatsEndpoint {
     address: String,
     host: String,
     tls_enabled: bool,
+}
+
+struct PublishQueueMessage {
+    subject: String,
+    payload: String,
+    response_tx: Option<oneshot::Sender<Result<(), String>>>,
+}
+type PublishQueueSender = mpsc::Sender<PublishQueueMessage>;
+type PublishTaskHandle = JoinHandle<()>;
+
+trait NatsStream: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<T> NatsStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+
+struct NatsPublishSession {
+    stream: Box<dyn NatsStream>,
 }
 
 #[derive(Serialize)]
@@ -93,6 +110,7 @@ impl SyncPublisher {
         let publisher_config = SyncPublisherConfig {
             nats_url: config.nats_url.clone(),
             connect_timeout: Duration::from_millis(config.connect_timeout_ms),
+            publish_timeout: Duration::from_millis(config.publish_timeout_ms),
             username: config.username.clone(),
             password: config.password.clone(),
             tls_enabled: config.tls_enabled,
@@ -106,33 +124,12 @@ impl SyncPublisher {
 
         let health = Arc::new(Mutex::new(SyncPublisherHealth::default()));
         let (publish_tx, publish_task) = if tokio::runtime::Handle::try_current().is_ok() {
-            let (publish_tx, mut publish_rx) = mpsc::channel::<(String, String)>(64);
+            let (publish_tx, mut publish_rx) = mpsc::channel::<PublishQueueMessage>(64);
             let config_clone = publisher_config.clone();
             let health_clone = Arc::clone(&health);
 
             let publish_task = tokio::spawn(async move {
-                while let Some((subject, payload)) = publish_rx.recv().await {
-                    if let Some(nats_url) = &config_clone.nats_url {
-                        match publish_nats_message(&config_clone, nats_url, &subject, &payload)
-                            .await
-                        {
-                            Ok(()) => {
-                                let mut snapshot = health_clone
-                                    .lock()
-                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
-                                snapshot.last_error = None;
-                            }
-                            Err(error) => {
-                                warn!(%error, %subject, "failed to publish scan request to NATS");
-                                let mut snapshot = health_clone
-                                    .lock()
-                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                                snapshot.last_error = Some(error);
-                            }
-                        }
-                    }
-                }
+                run_publish_worker(config_clone, health_clone, &mut publish_rx).await;
             });
 
             (Some(publish_tx), Some(publish_task))
@@ -160,12 +157,13 @@ impl SyncPublisher {
         drop(sender);
 
         // Take and await the publisher task
-        if let Some(handle) = self
-            .publish_task
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-        {
+        let handle = {
+            self.publish_task
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+        };
+        if let Some(handle) = handle {
             let _ = handle.await;
         }
     }
@@ -179,69 +177,75 @@ impl SyncPublisher {
             }
         };
 
-        self.record(SYNC_SCAN_REQUEST_SUBJECT, &payload);
-
-        if self.config.nats_url.is_none() {
-            debug!("sync publisher disabled; recorded scan request locally");
-            return;
+        if let Err(error) = self.enqueue_message(SYNC_SCAN_REQUEST_SUBJECT, &payload) {
+            warn!(%error, "dropping scan request");
         }
+    }
 
+    pub fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        self.record(subject, payload);
         self.record_attempt();
 
-        let publish_tx = self
-            .publish_tx
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let Some(publish_tx) = publish_tx else {
-            let mut health = self
-                .health
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            health.last_error = Some("sync publisher requires a Tokio runtime".to_string());
-            warn!("sync publisher runtime unavailable; dropping scan request");
-            return;
-        };
-
-        let subject = SYNC_SCAN_REQUEST_SUBJECT.to_string();
-        if let Err(_) = publish_tx.try_send((subject, payload)) {
-            warn!("publish queue full; dropping scan request");
+        if self.config.nats_url.is_none() {
+            let error = "sync publisher disabled".to_string();
+            self.record_error(error.clone());
+            return Err(error);
         }
+
+        let publish_tx = self.queue_sender()?;
+        publish_tx
+            .try_send(PublishQueueMessage {
+                subject: subject.to_string(),
+                payload: payload.to_string(),
+                response_tx: None,
+            })
+            .map_err(|error| {
+                let message = match error {
+                    mpsc::error::TrySendError::Full(_) => "sync publisher queue full".to_string(),
+                    mpsc::error::TrySendError::Closed(_) => {
+                        "sync publisher queue closed".to_string()
+                    }
+                };
+                self.record_error(message.clone());
+                message
+            })
     }
 
     pub async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
         self.record(subject, payload);
         self.record_attempt();
 
-        let Some(nats_url) = &self.config.nats_url else {
+        if self.config.nats_url.is_none() {
             let error = "sync publisher disabled".to_string();
-            let mut health = self
-                .health
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            health.last_error = Some(error.clone());
+            self.record_error(error.clone());
             return Err(error);
-        };
-
-        match publish_nats_message(&self.config, nats_url, subject, payload).await {
-            Ok(()) => {
-                let mut snapshot = self
-                    .health
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
-                snapshot.last_error = None;
-                Ok(())
-            }
-            Err(error) => {
-                let mut snapshot = self
-                    .health
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                snapshot.last_error = Some(error.clone());
-                Err(error)
-            }
         }
+
+        debug!(
+            %subject,
+            payload_bytes = payload.len(),
+            "sync publisher queueing acknowledged NATS publish"
+        );
+        let publish_tx = self.queue_sender()?;
+        let (response_tx, response_rx) = oneshot::channel();
+        publish_tx
+            .send(PublishQueueMessage {
+                subject: subject.to_string(),
+                payload: payload.to_string(),
+                response_tx: Some(response_tx),
+            })
+            .await
+            .map_err(|_| {
+                let error = "sync publisher queue closed".to_string();
+                self.record_error(error.clone());
+                error
+            })?;
+
+        response_rx.await.map_err(|_| {
+            let error = "sync publisher response channel closed".to_string();
+            self.record_error(error.clone());
+            error
+        })?
     }
 
     pub fn payload_ref_for_event(
@@ -360,15 +364,99 @@ impl SyncPublisher {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         health.last_attempt_at = Some(chrono::Utc::now().to_rfc3339());
     }
+
+    fn queue_sender(&self) -> Result<PublishQueueSender, String> {
+        self.publish_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or_else(|| {
+                let error = "sync publisher requires a Tokio runtime".to_string();
+                self.record_error(error.clone());
+                error
+            })
+    }
+
+    fn record_error(&self, error: String) {
+        let mut health = self
+            .health
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        health.last_error = Some(error);
+    }
 }
 
-async fn publish_nats_message(
+async fn run_publish_worker(
+    config: SyncPublisherConfig,
+    health: Arc<Mutex<SyncPublisherHealth>>,
+    publish_rx: &mut mpsc::Receiver<PublishQueueMessage>,
+) {
+    let mut session = None;
+
+    while let Some(message) = publish_rx.recv().await {
+        let result = async {
+            if session.is_none() {
+                let Some(nats_url) = &config.nats_url else {
+                    return Err("sync publisher disabled".to_string());
+                };
+                session = Some(open_nats_publish_session(&config, nats_url).await?);
+            }
+
+            let publish_result = session
+                .as_mut()
+                .expect("session is initialized above")
+                .publish(&config, &message.subject, &message.payload)
+                .await;
+            if publish_result.is_err() {
+                session = None;
+            }
+            publish_result
+        }
+        .await;
+
+        match &result {
+            Ok(()) => {
+                let mut snapshot = health
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
+                snapshot.last_error = None;
+                debug!(
+                    subject = %message.subject,
+                    payload_bytes = message.payload.len(),
+                    "sync publisher NATS publish succeeded"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    %error,
+                    subject = %message.subject,
+                    payload_bytes = message.payload.len(),
+                    "sync publisher NATS publish failed"
+                );
+                let mut snapshot = health
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                snapshot.last_error = Some(error.clone());
+            }
+        }
+
+        if let Some(response_tx) = message.response_tx {
+            let _ = response_tx.send(result);
+        }
+    }
+}
+
+async fn open_nats_publish_session(
     config: &SyncPublisherConfig,
     nats_url: &str,
-    subject: &str,
-    payload: &str,
-) -> Result<(), String> {
+) -> Result<NatsPublishSession, String> {
     let endpoint = parse_nats_endpoint(nats_url)?;
+    debug!(
+        nats_host = %endpoint.host,
+        tls_enabled = config.tls_enabled || endpoint.tls_enabled,
+        "opening persistent NATS publish session"
+    );
     let tcp_stream = timeout(
         config.connect_timeout,
         TcpStream::connect(&endpoint.address),
@@ -377,24 +465,15 @@ async fn publish_nats_message(
     .map_err(|_| format!("timed out connecting to {}", endpoint.address))?
     .map_err(|error| format!("connect {}: {error}", endpoint.address))?;
 
-    if config.tls_enabled || endpoint.tls_enabled {
+    let stream: Box<dyn NatsStream> = if config.tls_enabled || endpoint.tls_enabled {
         let stream = connect_tls(config, endpoint.host.as_str(), tcp_stream).await?;
-        drive_nats_session(stream, config, subject, payload).await
+        Box::new(stream)
     } else {
-        drive_nats_session(tcp_stream, config, subject, payload).await
-    }
-}
+        Box::new(tcp_stream)
+    };
 
-async fn drive_nats_session<S>(
-    mut stream: S,
-    config: &SyncPublisherConfig,
-    subject: &str,
-    payload: &str,
-) -> Result<(), String>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let server_info = read_line(&mut stream, config.connect_timeout).await?;
+    let mut session = NatsPublishSession { stream };
+    let server_info = read_line(&mut session.stream, config.connect_timeout).await?;
     if !server_info.starts_with("INFO ") {
         return Err(format!("expected NATS INFO banner, got: {server_info}"));
     }
@@ -407,34 +486,127 @@ where
     })
     .map_err(|error| format!("serialize NATS CONNECT options: {error}"))?;
     let connect_command = format!("CONNECT {connect_options}\r\n");
-    stream
+    session
+        .stream
         .write_all(connect_command.as_bytes())
         .await
         .map_err(|error| format!("send CONNECT: {error}"))?;
-    check_server_error(&mut stream, config.connect_timeout, "CONNECT").await?;
+    check_server_error(&mut session.stream, config.connect_timeout, "CONNECT").await?;
 
-    let publish_command = format!("PUB {subject} {}\r\n", payload.len());
-    stream
-        .write_all(publish_command.as_bytes())
-        .await
-        .map_err(|error| format!("send PUB header: {error}"))?;
-    stream
-        .write_all(payload.as_bytes())
-        .await
-        .map_err(|error| format!("send payload: {error}"))?;
-    stream
-        .write_all(b"\r\n")
-        .await
-        .map_err(|error| format!("finish payload: {error}"))?;
-    stream
-        .flush()
-        .await
-        .map_err(|error| format!("flush publish: {error}"))?;
-    check_server_error(&mut stream, config.connect_timeout, "PUB").await?;
-
-    Ok(())
+    Ok(session)
 }
 
+impl NatsPublishSession {
+    async fn publish(
+        &mut self,
+        config: &SyncPublisherConfig,
+        subject: &str,
+        payload: &str,
+    ) -> Result<(), String> {
+        let inbox = format!("_INBOX.{}", uuid::Uuid::new_v4().simple());
+        let sid = uuid::Uuid::new_v4().simple().to_string();
+        let subscribe_command = format!("SUB {inbox} {sid}\r\nUNSUB {sid} 1\r\n");
+        timeout(
+            config.publish_timeout,
+            self.stream.write_all(subscribe_command.as_bytes()),
+        )
+        .await
+        .map_err(|_| "timed out sending JetStream ack SUB".to_string())?
+        .map_err(|error| format!("send JetStream ack SUB: {error}"))?;
+
+        // Publish directly to the stream-bound subject with a reply inbox.
+        // JetStream returns a PubAck on the reply subject for request-style publishes.
+        let publish_command = format!("PUB {subject} {inbox} {}\r\n", payload.len());
+        timeout(
+            config.publish_timeout,
+            self.stream.write_all(publish_command.as_bytes()),
+        )
+        .await
+        .map_err(|_| "timed out sending PUB header".to_string())?
+        .map_err(|error| format!("send PUB header: {error}"))?;
+        timeout(
+            config.publish_timeout,
+            self.stream.write_all(payload.as_bytes()),
+        )
+        .await
+        .map_err(|_| "timed out sending payload".to_string())?
+        .map_err(|error| format!("send payload: {error}"))?;
+        timeout(config.publish_timeout, self.stream.write_all(b"\r\n"))
+            .await
+            .map_err(|_| "timed out finishing payload".to_string())?
+            .map_err(|error| format!("finish payload: {error}"))?;
+        timeout(config.publish_timeout, self.stream.flush())
+            .await
+            .map_err(|_| "timed out flushing publish".to_string())?
+            .map_err(|error| format!("flush publish: {error}"))?;
+
+        let mut ack_attempts = 0usize;
+        const MAX_ACK_ATTEMPTS: usize = 32;
+        let ack = loop {
+            if ack_attempts >= MAX_ACK_ATTEMPTS {
+                return Err(format!(
+                    "too many non-MSG responses while waiting for JetStream ack ({MAX_ACK_ATTEMPTS})"
+                ));
+            }
+            ack_attempts += 1;
+            let line = read_line(&mut self.stream, config.publish_timeout).await?;
+            if line == "PING" {
+                timeout(config.publish_timeout, self.stream.write_all(b"PONG\r\n"))
+                    .await
+                    .map_err(|_| "timed out sending PONG".to_string())?
+                    .map_err(|error| format!("send PONG: {error}"))?;
+                continue;
+            }
+            if line.starts_with("INFO") || line == "+OK" {
+                continue;
+            }
+            if line.starts_with("-ERR") {
+                return Err(format!("NATS returned error: {line}"));
+            }
+            let parts = line.split_whitespace().collect::<Vec<_>>();
+            if parts.first().copied() == Some("MSG") {
+                let Some(size_token) = parts.last() else {
+                    return Err(format!("missing NATS MSG size: {line}"));
+                };
+                let size = size_token
+                    .parse::<usize>()
+                    .map_err(|error| format!("invalid NATS MSG size {size_token}: {error}"))?;
+                let mut payload = vec![0u8; size];
+                timeout(config.publish_timeout, self.stream.read_exact(&mut payload))
+                    .await
+                    .map_err(|_| "timed out reading NATS MSG payload".to_string())?
+                    .map_err(|error| format!("read NATS MSG payload: {error}"))?;
+                let mut terminator = [0u8; 2];
+                timeout(
+                    config.publish_timeout,
+                    self.stream.read_exact(&mut terminator),
+                )
+                .await
+                .map_err(|_| "timed out reading NATS MSG terminator".to_string())?
+                .map_err(|error| format!("read NATS MSG terminator: {error}"))?;
+                if terminator != *b"\r\n" {
+                    return Err("invalid NATS MSG terminator".to_string());
+                }
+                break String::from_utf8(payload)
+                    .map_err(|error| format!("NATS MSG payload UTF-8: {error}"))?;
+            } else {
+                return Err(format!("expected NATS MSG or PING, got: {line}"));
+            }
+        };
+        match serde_json::from_str::<serde_json::Value>(&ack) {
+            Ok(value) => {
+                if value.get("error").is_some_and(|error| !error.is_null()) {
+                    return Err(format!("JetStream publish failed: {ack}"));
+                }
+            }
+            Err(error) => {
+                debug!(%error, ack = %ack, "JetStream ack payload is not JSON");
+            }
+        }
+
+        Ok(())
+    }
+}
 async fn connect_tls(
     config: &SyncPublisherConfig,
     host: &str,
@@ -597,9 +769,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{path::Path, time::Duration};
 
-    use super::{parse_nats_endpoint, SyncPublisher};
+    use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+
+    use super::{parse_nats_endpoint, NatsPublishSession, SyncPublisher, SyncPublisherConfig};
     use crate::{
         config::Config,
         sync::{
@@ -642,6 +816,37 @@ mod tests {
     }
 
     #[test]
+    fn enqueue_message_records_disabled_publisher_without_network() {
+        let publisher = SyncPublisher::new(&Config::default().sync);
+
+        let error = publisher
+            .enqueue_message("wireless.audit", "{}")
+            .unwrap_err();
+
+        assert_eq!(error, "sync publisher disabled");
+        let messages = publisher.published_messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].subject, "wireless.audit");
+    }
+
+    #[tokio::test]
+    async fn enqueue_message_reports_queue_full() {
+        let mut config = Config::default();
+        config.sync.nats_url = Some("nats://127.0.0.1:4222".to_string());
+        let publisher = SyncPublisher::new(&config.sync);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        *publisher.publish_tx.lock().unwrap() = Some(tx);
+
+        publisher.enqueue_message("wireless.audit", "{}").unwrap();
+        let error = publisher
+            .enqueue_message("wireless.audit", "{}")
+            .unwrap_err();
+
+        assert_eq!(error, "sync publisher queue full");
+        publisher.shutdown().await;
+    }
+
+    #[test]
     fn publisher_uses_inline_payload_ref_below_limit() {
         let publisher = SyncPublisher::new(&Config::default().sync);
         let payload_ref = publisher
@@ -680,5 +885,200 @@ mod tests {
             let _ = std::fs::remove_file(path);
         }
         let _ = std::fs::remove_dir_all(&config.sync.outbox_dir);
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_uses_ack_inbox_and_unsub() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            let text = String::from_utf8(received).unwrap();
+            assert!(text.contains("SUB _INBOX."));
+            assert!(text.contains("UNSUB "));
+            assert!(text.contains("PUB wireless.audit _INBOX."));
+            server
+                .write_all(b"MSG _INBOX.test 1 2\r\n{}\r\n")
+                .await
+                .unwrap();
+        });
+
+        session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_fails_after_too_many_non_msg_responses() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            for _ in 0..40 {
+                server.write_all(b"+OK\r\n").await.unwrap();
+            }
+        });
+
+        let error = session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap_err();
+        assert!(error.contains("too many non-MSG responses"));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_rejects_json_error_ack() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            let ack = r#"{"error":{"code":500}}"#;
+            let frame = format!("MSG _INBOX.test 1 {}\r\n{}\r\n", ack.len(), ack);
+            server.write_all(frame.as_bytes()).await.unwrap();
+        });
+
+        let error = session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap_err();
+        assert!(error.contains("JetStream publish failed"));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_session_publish_allows_non_json_ack_with_error_word() {
+        let (client, mut server) = duplex(4096);
+        let mut session = NatsPublishSession {
+            stream: Box::new(client),
+        };
+        let config = SyncPublisherConfig {
+            nats_url: Some("nats://127.0.0.1:4222".to_string()),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+        };
+
+        let server_task = tokio::spawn(async move {
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = server.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"\r\nhello\r\n".len())
+                    .any(|window| window == b"\r\nhello\r\n")
+                {
+                    break;
+                }
+            }
+            let ack = "error: transient";
+            let frame = format!("MSG _INBOX.test 1 {}\r\n{}\r\n", ack.len(), ack);
+            server.write_all(frame.as_bytes()).await.unwrap();
+        });
+
+        session
+            .publish(&config, "wireless.audit", "hello")
+            .await
+            .unwrap();
+        server_task.await.unwrap();
     }
 }

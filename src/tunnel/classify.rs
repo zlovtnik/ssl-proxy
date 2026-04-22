@@ -13,7 +13,6 @@
 // Timing-aware flow classification is intentionally deferred. The current
 // cutover keeps hostname/port/ALPN classification simple and cheap while the
 // sync-plane contract is hardened.
-
 pub(crate) fn classify(host: &str, port: u16, alpn: Option<&str>) -> &'static str {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
     let h = h.as_str();
