@@ -31,7 +31,7 @@ class AuditLog < SyncRecord
   def raw_len = payload_value("raw_len").presence.to_i
   def frame_control_flags = payload_value("frame_control_flags").presence.to_i
   def more_data = ActiveModel::Type::Boolean.new.cast(payload_value("more_data"))
-  def retry = ActiveModel::Type::Boolean.new.cast(payload_value("retry"))
+  def retry_flag = ActiveModel::Type::Boolean.new.cast(payload_value("retry"))
   def power_save = ActiveModel::Type::Boolean.new.cast(payload_value("power_save"))
   def protected = ActiveModel::Type::Boolean.new.cast(payload_value("protected"))
   def security_flags = payload_value("security_flags").presence.to_i
@@ -59,7 +59,7 @@ class AuditLog < SyncRecord
   def frame_flags_label
     labels = []
     labels << "more data" if more_data
-    labels << "retry" if retry
+    labels << "retry" if retry_flag
     labels << "power save" if power_save
     labels << "protected" if protected
     labels.presence&.join(", ")

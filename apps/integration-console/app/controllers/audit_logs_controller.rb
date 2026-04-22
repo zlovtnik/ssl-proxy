@@ -69,7 +69,7 @@ class AuditLogsController < ApplicationController
       frame_control_flags: entry.frame_control_flags,
       frame_flags_label: entry.frame_flags_label,
       more_data: entry.more_data,
-      retry: entry.retry,
+      retry: entry.retry_flag,
       power_save: entry.power_save,
       protected: entry.protected,
       security_flags: entry.security_flags,
