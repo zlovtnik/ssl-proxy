@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_22_000700) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -35,6 +35,19 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["location_id"], name: "index_audit_windows_on_location_id", unique: true
+  end
+
+  create_table "authorized_wireless_networks", force: :cascade do |t|
+    t.text "ssid"
+    t.text "bssid"
+    t.text "location_id"
+    t.text "label"
+    t.boolean "enabled", default: true, null: false
+    t.text "notes"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index "COALESCE(lower(ssid), ''::text), COALESCE(lower(bssid), ''::text), COALESCE(location_id, ''::text)", name: "authorized_wireless_networks_match_idx", unique: true
+    t.index ["enabled", "location_id"], name: "authorized_wireless_networks_enabled_idx"
   end
 
   create_table "devices", primary_key: "device_id", id: :text, force: :cascade do |t|
@@ -76,6 +89,25 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
     t.index ["sensor_id", "alert_type"], name: "idx_sensor_alerts_open_unique", unique: true, where: "(resolved_at IS NULL)"
     t.index ["sensor_id", "alert_type", "resolved_at"], name: "idx_sensor_alerts_sensor_type_open"
     t.index ["severity", "resolved_at"], name: "idx_sensor_alerts_severity_resolved_at"
+  end
+
+  create_table "shadow_it_alerts", primary_key: "alert_id", force: :cascade do |t|
+    t.text "dedupe_key", null: false
+    t.timestamptz "observed_at", null: false
+    t.text "source_mac", null: false
+    t.text "destination_bssid"
+    t.text "ssid"
+    t.text "sensor_id"
+    t.text "location_id"
+    t.integer "signal_dbm"
+    t.text "reason", null: false
+    t.jsonb "evidence", default: {}, null: false
+    t.timestamptz "resolved_at"
+    t.timestamptz "created_at", default: -> { "now()" }, null: false
+    t.timestamptz "updated_at", default: -> { "now()" }, null: false
+    t.index ["dedupe_key"], name: "index_shadow_it_alerts_on_dedupe_key", unique: true
+    t.index "lower(source_mac), observed_at DESC", name: "shadow_it_alerts_source_idx"
+    t.index ["observed_at"], name: "shadow_it_alerts_open_idx", order: :desc, where: "(resolved_at IS NULL)"
   end
 
   create_table "sensors", force: :cascade do |t|
@@ -149,6 +181,17 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
     t.text "last_error"
     t.text "producer", default: "unknown", null: false
     t.text "event_kind"
+    t.text "source_mac"
+    t.text "bssid"
+    t.text "destination_bssid"
+    t.text "ssid"
+    t.integer "signal_dbm"
+    t.integer "raw_len", default: 0, null: false
+    t.integer "frame_control_flags", default: 0, null: false
+    t.boolean "more_data", default: false, null: false
+    t.boolean "retry", default: false, null: false
+    t.boolean "power_save", default: false, null: false
+    t.boolean "protected", default: false, null: false
     t.integer "security_flags", default: 0, null: false
     t.text "wps_device_name"
     t.text "wps_manufacturer"
@@ -158,8 +201,11 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
     t.timestamptz "created_at", default: -> { "now()" }, null: false
     t.timestamptz "updated_at", default: -> { "now()" }, null: false
     t.index "((payload -> 'tags'::text))", name: "ssi_wireless_threat_tags_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
-    t.index "((payload ->> 'source_mac'::text))", name: "ssi_wireless_source_mac_idx", where: "(stream_name = 'wireless.audit'::text)"
-    t.index "((payload ->> 'ssid'::text)), observed_at DESC", name: "ssi_wireless_ssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(bssid)", name: "ssi_wireless_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(destination_bssid)", name: "ssi_wireless_destination_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(source_mac)", name: "ssi_wireless_source_mac_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "signal_dbm, observed_at DESC", name: "ssi_wireless_signal_idx", where: "((stream_name = 'wireless.audit'::text) AND (signal_dbm IS NOT NULL))"
+    t.index "ssid, observed_at DESC", name: "ssi_wireless_ssid_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index "device_fingerprint, observed_at DESC", name: "ssi_wireless_device_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))"
     t.index "observed_at DESC", name: "ssi_wireless_handshake_captured_idx", where: "((stream_name = 'wireless.audit'::text) AND handshake_captured)"
     t.index "security_flags, observed_at DESC", name: "ssi_wireless_security_flags_idx", where: "((stream_name = 'wireless.audit'::text) AND (security_flags <> 0))"
@@ -169,6 +215,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
   end
 
   add_check_constraint "audit_backlog", "status = ANY (ARRAY['pending'::text, 'synced'::text, 'sync_failed'::text, 'failed'::text])", name: "chk_audit_backlog_status"
+  add_check_constraint "authorized_wireless_networks", "NULLIF(TRIM(BOTH FROM COALESCE(ssid, ''::text)), ''::text) IS NOT NULL OR NULLIF(TRIM(BOTH FROM COALESCE(bssid, ''::text)), ''::text) IS NOT NULL", name: "authorized_wireless_network_identity_chk"
   add_check_constraint "sync_batch", "status = ANY (ARRAY['pending'::text, 'processing'::text, 'dispatched'::text, 'completed'::text, 'failed'::text])", name: "chk_sync_batch_status"
   add_check_constraint "sync_job", "status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text])", name: "chk_sync_job_status"
   add_foreign_key "sync_batch", "sync_job", column: "job_id", primary_key: "job_id", name: "fk_sync_batch_job_id"

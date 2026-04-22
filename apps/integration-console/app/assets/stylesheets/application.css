@@ -173,10 +173,24 @@ td {
 
 input,
 select,
+textarea,
 button {
   border: 1px solid #aab5c2;
   border-radius: 6px;
   padding: 8px 10px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
 }
 
 button,

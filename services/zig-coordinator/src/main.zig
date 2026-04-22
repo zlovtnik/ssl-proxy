@@ -244,8 +244,9 @@ fn parseNatsAuthority(gpa: std.mem.Allocator, nats_url: []const u8) ![]const u8 
 fn runCoordinatorLoop(init: std.process.Init, coordinator: *scheduler.Coordinator, cfg: config.Config, shutdown: *std.atomic.Value(bool)) !void {
     const start_ts = std.Io.Timestamp.now(init.io, .awake);
     var last_heartbeat_ts = start_ts;
+    var last_shadow_audit_ts: ?std.Io.Timestamp = null;
     while (!shutdown.load(.acquire)) {
-        const had_work = runCoordinatorIteration(init.io, coordinator, cfg) catch |err| {
+        const had_work = runCoordinatorIteration(init.io, coordinator, cfg, &last_shadow_audit_ts) catch |err| {
             std.debug.print("service={s} event=coordinator_iteration status=error error={}\n", .{ SERVICE_NAME, err });
             sleepUnlessShutdown(init.io, shutdown, 5000);
             maybeLogHeartbeat(start_ts, &last_heartbeat_ts, init.io);
@@ -281,13 +282,14 @@ fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: 
     }
 }
 
-fn runCoordinatorIteration(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
+fn runCoordinatorIteration(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config, last_shadow_audit_ts: *?std.Io.Timestamp) !bool {
     var had_work = false;
     had_work = (try handleCursor(io, coordinator, cfg)) or had_work;
     had_work = (try processBatches(io, coordinator, cfg)) or had_work;
     had_work = (try dedupeAndDispatch(io, coordinator, cfg)) or had_work;
     had_work = (try updateJobState(io, coordinator, cfg)) or had_work;
     had_work = (try handleResults(io, coordinator, cfg)) or had_work;
+    had_work = (try runShadowAudit(io, cfg, last_shadow_audit_ts)) or had_work;
     return had_work;
 }
 
@@ -507,6 +509,124 @@ fn updateJobState(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.C
     _ = coordinator;
     _ = cfg;
     return false;
+}
+
+fn runShadowAudit(io: std.Io, cfg: config.Config, last_shadow_audit_ts: *?std.Io.Timestamp) !bool {
+    const now = std.Io.Timestamp.now(io, .awake);
+    if (last_shadow_audit_ts.*) |last_run| {
+        if (last_run.durationTo(now).toMilliseconds() < 10_000) {
+            return false;
+        }
+    }
+    last_shadow_audit_ts.* = now;
+
+    const script =
+        \\set -eu
+        \\tmp="$(mktemp)"
+        \\psql "$2" -v ON_ERROR_STOP=1 -qAt -c "
+        \\with wireless as (
+        \\  select
+        \\    observed_at,
+        \\    lower(source_mac) as source_mac,
+        \\    lower(coalesce(destination_bssid, bssid)) as destination_bssid,
+        \\    ssid,
+        \\    signal_dbm,
+        \\    payload->>'sensor_id' as sensor_id,
+        \\    payload->>'location_id' as location_id
+        \\  from sync_scan_ingest
+        \\  where stream_name = 'wireless.audit'
+        \\    and observed_at >= now() - interval '60 seconds'
+        \\    and source_mac is not null
+        \\    and signal_dbm >= -50
+        \\),
+        \\candidates as (
+        \\  select distinct on (source_mac, destination_bssid, coalesce(location_id, ''))
+        \\    md5(source_mac || '|' || coalesce(destination_bssid, '') || '|' || coalesce(location_id, '') || '|' || date_trunc('minute', observed_at)::text) as dedupe_key,
+        \\    observed_at,
+        \\    source_mac,
+        \\    destination_bssid,
+        \\    ssid,
+        \\    sensor_id,
+        \\    location_id,
+        \\    signal_dbm,
+        \\    'strong_wireless_without_proxy_presence'::text as reason,
+        \\    jsonb_build_object(
+        \\      'window_seconds', 60,
+        \\      'signal_threshold_dbm', -50,
+        \\      'presence_window_seconds', 300
+        \\    ) as evidence
+        \\  from wireless w
+        \\  where not exists (
+        \\    select 1
+        \\    from authorized_wireless_networks awn
+        \\    where awn.enabled
+        \\      and (awn.location_id is null or awn.location_id = w.location_id)
+        \\      and (awn.ssid is null or (w.ssid is not null and lower(awn.ssid) = lower(w.ssid)))
+        \\      and (awn.bssid is null or (w.destination_bssid is not null and lower(awn.bssid) = w.destination_bssid))
+        \\      and (awn.ssid is not null or awn.bssid is not null)
+        \\  )
+        \\    and not exists (
+        \\      select 1
+        \\      from devices d
+        \\      where d.mac_hint is not null
+        \\        and lower(d.mac_hint) = w.source_mac
+        \\        and d.last_seen >= now() - interval '5 minutes'
+        \\    )
+        \\    and not exists (
+        \\      select 1
+        \\      from sync_scan_ingest proxy
+        \\      join devices d on d.device_id = proxy.payload->>'device_id'
+        \\      where proxy.stream_name = 'proxy.events'
+        \\        and proxy.observed_at >= now() - interval '5 minutes'
+        \\        and d.mac_hint is not null
+        \\        and lower(d.mac_hint) = w.source_mac
+        \\    )
+        \\  order by source_mac, destination_bssid, coalesce(location_id, ''), observed_at desc
+        \\),
+        \\inserted as (
+        \\  insert into shadow_it_alerts (
+        \\    dedupe_key, observed_at, source_mac, destination_bssid, ssid, sensor_id,
+        \\    location_id, signal_dbm, reason, evidence, created_at, updated_at
+        \\  )
+        \\  select
+        \\    dedupe_key, observed_at, source_mac, destination_bssid, ssid, sensor_id,
+        \\    location_id, signal_dbm, reason, evidence, now(), now()
+        \\  from candidates
+        \\  on conflict (dedupe_key) do nothing
+        \\  returning *
+        \\)
+        \\select json_build_object(
+        \\  'event_type', 'shadow_device',
+        \\  'observed_at', observed_at,
+        \\  'source_mac', source_mac,
+        \\  'destination_bssid', destination_bssid,
+        \\  'ssid', ssid,
+        \\  'sensor_id', sensor_id,
+        \\  'location_id', location_id,
+        \\  'signal_dbm', signal_dbm,
+        \\  'reason', reason,
+        \\  'evidence', evidence
+        \\)::text
+        \\from inserted;
+        \\" > "$tmp"
+        \\if [ -s "$tmp" ]; then
+        \\  while IFS= read -r line; do
+        \\    [ -n "$line" ] || continue
+        \\    nats --server "$1" pub audit.threat.shadow_device "$line" >/dev/null
+        \\  done < "$tmp"
+        \\  echo work
+        \\fi
+        \\rm -f "$tmp"
+    ;
+    const argv = [_][]const u8{
+        "sh",
+        "-c",
+        script,
+        "zig-coordinator-shadow-audit",
+        cfg.sync_nats_url,
+        cfg.database_url,
+    };
+    return runCommandForWork(std.heap.page_allocator, io, &argv, HealthcheckError.IngestProcessFailed);
 }
 
 fn handleResults(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {

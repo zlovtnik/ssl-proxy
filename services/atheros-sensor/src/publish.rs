@@ -14,7 +14,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    audit::AuditWindow,
+    audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_SUBJECT},
     backlog::{BacklogError, BacklogStore, IngestRecord},
     model::{AuditEntry, HandshakeAlert},
 };
@@ -164,6 +164,30 @@ pub async fn publish_handshake_alert(
         subject = HANDSHAKE_ALERT_SUBJECT,
         payload_bytes = payload.len(),
         "queued handshake alert"
+    );
+    Ok(())
+}
+
+pub async fn publish_bandwidth_event(
+    publisher: &dyn PublishClient,
+    event: &WirelessBandwidthEvent,
+) -> Result<(), PublishError> {
+    let payload = serde_json::to_string(event)?;
+    let key = sha256_hex(&payload);
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_bandwidth_event",
+        BANDWIDTH_SUBJECT,
+        &payload,
+        &key,
+    )
+    .await
+    .map_err(PublishError::Publish)?;
+    debug!(
+        dedupe_key = %key,
+        subject = BANDWIDTH_SUBJECT,
+        payload_bytes = payload.len(),
+        "queued wireless bandwidth event"
     );
     Ok(())
 }
@@ -854,6 +878,43 @@ mod tests {
         assert!(published[0]
             .1
             .contains("\"client_mac\":\"aa:bb:cc:dd:ee:01\""));
+    }
+
+    #[tokio::test]
+    async fn publishes_bandwidth_event_subject() {
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let event = WirelessBandwidthEvent {
+            event_type: "wireless_bandwidth_window".to_string(),
+            window_start: "2026-04-20T12:00:00Z".to_string(),
+            window_end: "2026-04-20T12:01:00Z".to_string(),
+            sensor_id: "sensor-1".to_string(),
+            location_id: "lab".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            source_mac: "aa:bb:cc:dd:ee:01".to_string(),
+            destination_bssid: "10:20:30:40:50:60".to_string(),
+            ssid: Some("CorpWiFi".to_string()),
+            bytes: 1024,
+            frame_count: 2,
+            retry_count: 1,
+            more_data_count: 1,
+            power_save_count: 0,
+            strongest_signal_dbm: Some(-42),
+            external_bssid: true,
+            threshold_exceeded: false,
+        };
+
+        publish_bandwidth_event(&publisher, &event).await.unwrap();
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].0, BANDWIDTH_SUBJECT);
+        assert!(published[0]
+            .1
+            .contains("\"event_type\":\"wireless_bandwidth_window\""));
     }
 
     #[tokio::test]

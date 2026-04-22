@@ -18,6 +18,7 @@ class AuditLog < SyncRecord
   def frame_subtype = payload_value("frame_subtype")
   def source_mac = payload_value("source_mac")
   def bssid = payload_value("bssid")
+  def destination_bssid = payload_value("destination_bssid") || bssid
   def ssid = payload_value("ssid")
   def tsft = payload_value("tsft")
   def signal_dbm = payload_value("signal_dbm")
@@ -27,6 +28,12 @@ class AuditLog < SyncRecord
   def antenna_id = payload_value("antenna_id")
   def username = payload_value("username")
   def raw_frame = payload_value("raw_frame")
+  def raw_len = payload_value("raw_len").presence.to_i
+  def frame_control_flags = payload_value("frame_control_flags").presence.to_i
+  def more_data = ActiveModel::Type::Boolean.new.cast(payload_value("more_data"))
+  def retry = ActiveModel::Type::Boolean.new.cast(payload_value("retry"))
+  def power_save = ActiveModel::Type::Boolean.new.cast(payload_value("power_save"))
+  def protected = ActiveModel::Type::Boolean.new.cast(payload_value("protected"))
   def security_flags = payload_value("security_flags").presence.to_i
   def wps_device_name = payload_value("wps_device_name")
   def wps_manufacturer = payload_value("wps_manufacturer")
@@ -47,6 +54,15 @@ class AuditLog < SyncRecord
 
   def compact_security_label
     security_labels.presence&.join(", ")
+  end
+
+  def frame_flags_label
+    labels = []
+    labels << "more data" if more_data
+    labels << "retry" if retry
+    labels << "power save" if power_save
+    labels << "protected" if protected
+    labels.presence&.join(", ")
   end
 
   def raw_frame_bytes
@@ -82,7 +98,10 @@ class AuditLog < SyncRecord
 
   def payload_value(key)
     # First check if we already have this attribute loaded directly from SELECT
-    return read_attribute(key) if has_attribute?(key)
+    if has_attribute?(key)
+      value = read_attribute(key)
+      return value unless value.nil?
+    end
     # Otherwise fall back to extracting from payload jsonb
     payload.is_a?(Hash) ? payload[key] : nil
   end

@@ -175,6 +175,66 @@ impl PostgresBacklog {
         Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1))))
     }
 
+    pub async fn is_authorized_wireless_network(
+        &self,
+        ssid: Option<&str>,
+        bssid: Option<&str>,
+        location_id: &str,
+    ) -> Result<bool, BacklogError> {
+        let operation = "is_authorized_wireless_network";
+        let client = self.client(operation).await?;
+        let table_exists = match client
+            .query_one(
+                "select to_regclass('public.authorized_wireless_networks') is not null",
+                &[],
+            )
+            .await
+        {
+            Ok(row) => row.get::<_, bool>(0),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        if !table_exists {
+            return Ok(false);
+        }
+
+        let normalized_ssid = ssid
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let normalized_bssid = bssid
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_ascii_lowercase());
+        let normalized_location = location_id.trim();
+        let row = match client
+            .query_one(
+                "select exists (
+                   select 1
+                     from authorized_wireless_networks
+                    where enabled
+                      and (location_id is null or location_id = $3)
+                      and (ssid is null or ($1::text is not null and lower(ssid) = lower($1)))
+                      and (bssid is null or ($2::text is not null and lower(bssid) = lower($2)))
+                      and (ssid is not null or bssid is not null)
+                    limit 1
+                 )",
+                &[&normalized_ssid, &normalized_bssid, &normalized_location],
+            )
+            .await
+        {
+            Ok(row) => row,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+
+        Ok(row.get::<_, bool>(0))
+    }
+
     fn log_postgres_error(&self, operation: &'static str, source: &tokio_postgres::Error) {
         let status = self.pool.status();
         let db_error = source.as_db_error();
@@ -220,11 +280,14 @@ impl BacklogStore for PostgresBacklog {
             .execute(
                 "insert into sync_scan_ingest
                    (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256,
-                    status, attempt_count, producer, event_kind, security_flags, wps_device_name,
+                    status, attempt_count, producer, event_kind, source_mac, bssid,
+                    destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data,
+                    retry, power_save, protected, security_flags, wps_device_name,
                     wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured,
                     created_at, updated_at)
                  values ($1, $2, $3, $4, $5::jsonb, $6,
-                    'pending', 0, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
+                    'pending', 0, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                    $17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now())
                  on conflict (dedupe_key)
                  do update set
                     payload_ref = excluded.payload_ref,
@@ -232,6 +295,17 @@ impl BacklogStore for PostgresBacklog {
                     payload_sha256 = excluded.payload_sha256,
                     producer = excluded.producer,
                     event_kind = excluded.event_kind,
+                    source_mac = excluded.source_mac,
+                    bssid = excluded.bssid,
+                    destination_bssid = excluded.destination_bssid,
+                    ssid = excluded.ssid,
+                    signal_dbm = excluded.signal_dbm,
+                    raw_len = excluded.raw_len,
+                    frame_control_flags = excluded.frame_control_flags,
+                    more_data = excluded.more_data,
+                    retry = excluded.retry,
+                    power_save = excluded.power_save,
+                    protected = excluded.protected,
                     security_flags = excluded.security_flags,
                     wps_device_name = excluded.wps_device_name,
                     wps_manufacturer = excluded.wps_manufacturer,
@@ -248,6 +322,17 @@ impl BacklogStore for PostgresBacklog {
                     &record.payload_sha256,
                     &record.producer,
                     &record.event_kind,
+                    &wireless.source_mac,
+                    &wireless.bssid,
+                    &wireless.destination_bssid,
+                    &wireless.ssid,
+                    &wireless.signal_dbm,
+                    &wireless.raw_len,
+                    &wireless.frame_control_flags,
+                    &wireless.more_data,
+                    &wireless.retry,
+                    &wireless.power_save,
+                    &wireless.protected,
                     &wireless.security_flags,
                     &wireless.wps_device_name,
                     &wireless.wps_manufacturer,
@@ -383,6 +468,17 @@ impl BacklogStore for PostgresBacklog {
 
 #[derive(Clone, Debug, Default)]
 struct WirelessIngestColumns {
+    source_mac: Option<String>,
+    bssid: Option<String>,
+    destination_bssid: Option<String>,
+    ssid: Option<String>,
+    signal_dbm: Option<i32>,
+    raw_len: i32,
+    frame_control_flags: i32,
+    more_data: bool,
+    retry: bool,
+    power_save: bool,
+    protected: bool,
     security_flags: i32,
     wps_device_name: Option<String>,
     wps_manufacturer: Option<String>,
@@ -398,6 +494,18 @@ impl WirelessIngestColumns {
         }
 
         Self {
+            source_mac: payload_string(payload, "source_mac"),
+            bssid: payload_string(payload, "bssid"),
+            destination_bssid: payload_string(payload, "destination_bssid")
+                .or_else(|| payload_string(payload, "bssid")),
+            ssid: payload_string(payload, "ssid"),
+            signal_dbm: payload_i32(payload, "signal_dbm"),
+            raw_len: payload_i32(payload, "raw_len").unwrap_or(0),
+            frame_control_flags: payload_i32(payload, "frame_control_flags").unwrap_or(0),
+            more_data: payload_bool(payload, "more_data"),
+            retry: payload_bool(payload, "retry"),
+            power_save: payload_bool(payload, "power_save"),
+            protected: payload_bool(payload, "protected"),
             security_flags: payload
                 .get("security_flags")
                 .and_then(|value| value.as_u64())
@@ -413,6 +521,28 @@ impl WirelessIngestColumns {
                 .unwrap_or(false),
         }
     }
+}
+
+fn payload_i32(payload: &serde_json::Value, key: &str) -> Option<i32> {
+    payload
+        .get(key)
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
+        })
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn payload_bool(payload: &serde_json::Value, key: &str) -> bool {
+    payload
+        .get(key)
+        .and_then(|value| {
+            value
+                .as_bool()
+                .or_else(|| value.as_str().and_then(|raw| raw.parse::<bool>().ok()))
+        })
+        .unwrap_or(false)
 }
 
 fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
@@ -466,6 +596,17 @@ mod tests {
     #[test]
     fn extracts_wireless_ingest_columns_from_payload() {
         let payload = serde_json::json!({
+            "source_mac": "aa:bb:cc:dd:ee:01",
+            "bssid": "10:20:30:40:50:60",
+            "destination_bssid": "10:20:30:40:50:60",
+            "ssid": "CorpWiFi",
+            "signal_dbm": -42,
+            "raw_len": 1440,
+            "frame_control_flags": 30984,
+            "more_data": true,
+            "retry": true,
+            "power_save": true,
+            "protected": true,
             "security_flags": 26,
             "wps_device_name": "Lobby AP",
             "wps_manufacturer": "Acme",
@@ -476,6 +617,20 @@ mod tests {
 
         let columns = WirelessIngestColumns::from_payload("wireless.audit", &payload);
 
+        assert_eq!(columns.source_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
+        assert_eq!(columns.bssid.as_deref(), Some("10:20:30:40:50:60"));
+        assert_eq!(
+            columns.destination_bssid.as_deref(),
+            Some("10:20:30:40:50:60")
+        );
+        assert_eq!(columns.ssid.as_deref(), Some("CorpWiFi"));
+        assert_eq!(columns.signal_dbm, Some(-42));
+        assert_eq!(columns.raw_len, 1440);
+        assert_eq!(columns.frame_control_flags, 30984);
+        assert!(columns.more_data);
+        assert!(columns.retry);
+        assert!(columns.power_save);
+        assert!(columns.protected);
         assert_eq!(columns.security_flags, 26);
         assert_eq!(columns.wps_device_name.as_deref(), Some("Lobby AP"));
         assert_eq!(columns.wps_manufacturer.as_deref(), Some("Acme"));

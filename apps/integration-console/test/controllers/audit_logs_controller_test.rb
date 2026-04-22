@@ -43,6 +43,8 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, audit_log_path("audit-link")
+    assert_includes response.body, "Dest BSSID"
+    assert_includes response.body, "Flags"
     assert_includes response.body, "Security"
     assert_includes response.body, "Fingerprint"
   end
@@ -141,6 +143,11 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
       payload: {
         "sensor_id" => "sensor-new",
         "source_mac" => "00:11:22:33:44:66",
+        "destination_bssid" => "10:20:30:40:50:60",
+        "raw_len" => 1440,
+        "more_data" => true,
+        "retry" => true,
+        "protected" => true,
         "antenna_id" => 3,
         "security_flags" => 10,
         "device_fingerprint" => "0123456789abcdef",
@@ -155,6 +162,9 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal ["audit-new"], rows.map { |row| row["dedupe_key"] }
     assert_equal "sensor-new", rows.first["sensor_id"]
     assert_equal "XX:XX:XX:XX:44:66", rows.first["source_mac_display"]
+    assert_equal "XX:XX:XX:XX:50:60", rows.first["destination_bssid_display"]
+    assert_equal 1440, rows.first["raw_len"]
+    assert_equal "more data, retry, protected", rows.first["frame_flags_label"]
     assert_equal 3, rows.first["antenna_id"]
     assert_equal 10, rows.first["security_flags"]
     assert_equal "RSN/WPA2, WPS", rows.first["security_label"]

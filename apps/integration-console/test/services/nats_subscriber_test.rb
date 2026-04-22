@@ -54,4 +54,20 @@ class NatsSubscriberTest < ActiveSupport::TestCase
     assert_equal "critical", alert.severity
     assert_includes alert.message, "10:20:30:40:50:60"
   end
+
+  test "bandwidth event increments nats sample without creating sensor" do
+    payload = {
+      sensor_id: "sensor-1",
+      source_mac: "aa:bb:cc:dd:ee:01",
+      destination_bssid: "10:20:30:40:50:60",
+      bytes: 1024
+    }.to_json
+
+    assert_no_difference -> { Sensor.count } do
+      Nats::Subscriber.new.handle("audit.wireless.bandwidth", payload)
+    end
+
+    sample = NatsTrafficSample.find_by!(subject: "audit.wireless.bandwidth", sensor_id: "sensor-1")
+    assert_equal 1, sample.event_count
+  end
 end

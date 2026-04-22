@@ -78,6 +78,46 @@ class AuditLogTest < ActiveSupport::TestCase
     assert entry.handshake_captured
   end
 
+  test "wireless frame columns prefer physical columns and expose flag labels" do
+    insert_sync_ingest(
+      dedupe_key: "audit-frame",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "source_mac" => "payload-source",
+        "destination_bssid" => "payload-bssid",
+        "raw_len" => 1,
+        "more_data" => false,
+        "retry" => false
+      }
+    )
+    sync_connection.execute(<<~SQL.squish)
+      UPDATE sync_scan_ingest
+      SET source_mac = 'aa:bb:cc:dd:ee:01',
+          bssid = '10:20:30:40:50:60',
+          destination_bssid = '10:20:30:40:50:60',
+          ssid = 'CorpWiFi',
+          signal_dbm = -42,
+          raw_len = 1440,
+          frame_control_flags = 30984,
+          more_data = TRUE,
+          retry = TRUE,
+          power_save = FALSE,
+          protected = TRUE
+      WHERE dedupe_key = 'audit-frame'
+    SQL
+
+    entry = AuditLog.find("audit-frame")
+
+    assert_equal "aa:bb:cc:dd:ee:01", entry.source_mac
+    assert_equal "10:20:30:40:50:60", entry.destination_bssid
+    assert_equal "CorpWiFi", entry.ssid
+    assert_equal(-42, entry.signal_dbm)
+    assert_equal 1440, entry.raw_len
+    assert_equal 30984, entry.frame_control_flags
+    assert_equal "more data, retry, protected", entry.frame_flags_label
+  end
+
   test "raw_frame_hex_dump renders decoded bytes" do
     raw_frame = Base64.strict_encode64([0x00, 0x01, 0x41, 0xff].pack("C*"))
     insert_sync_ingest(

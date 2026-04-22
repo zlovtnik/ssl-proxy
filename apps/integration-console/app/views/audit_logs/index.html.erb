@@ -23,7 +23,10 @@
         <th><%= sort_link_to "Subtype", :frame_subtype %></th>
         <th><%= sort_link_to "SSID", :ssid %></th>
         <th><%= sort_link_to "Source", :source_mac %></th>
+        <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
         <th><%= sort_link_to "Signal", :signal_dbm %></th>
+        <th><%= sort_link_to "Bytes", :raw_len %></th>
+        <th><%= sort_link_to "Flags", :frame_control_flags %></th>
         <th><%= sort_link_to "Security", :security_flags %></th>
         <th><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
         <th><%= sort_link_to "Handshake", :handshake_captured %></th>
@@ -36,7 +39,7 @@
         <% end %>
       <% else %>
         <tr data-audit-log-target="empty">
-          <td colspan="10" class="empty-state">No audit logs found.</td>
+          <td colspan="13" class="empty-state">No audit logs found.</td>
         </tr>
       <% end %>
     </tbody>

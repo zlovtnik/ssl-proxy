@@ -3,7 +3,7 @@ require "nats/client"
 
 module Nats
   class Subscriber
-    SUBJECTS = ["wireless.audit", "wifi.alert.handshake", "sync.scan.request"].freeze
+    SUBJECTS = ["wireless.audit", "wifi.alert.handshake", "audit.wireless.bandwidth", "audit.threat.shadow_device", "sync.scan.request"].freeze
 
     def initialize(url: ENV.fetch("SYNC_NATS_URL", "nats://127.0.0.1:4222"), client: nil)
       @url = url
@@ -30,6 +30,8 @@ module Nats
         ActionCable.server.broadcast("live_audit", payload)
       elsif subject == "wifi.alert.handshake"
         record_handshake_alert(payload)
+      elsif subject == "audit.threat.shadow_device"
+        ActionCable.server.broadcast("sensor_alerts", { alert_type: "shadow_device", payload: payload })
       else
         ActionCable.server.broadcast("sensor_health", { subject: subject, payload: payload })
       end

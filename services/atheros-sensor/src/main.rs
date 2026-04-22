@@ -23,7 +23,10 @@ use tracing::{debug, error, info, info_span, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::{
-    audit::{AuditLayer, AuditWindow, SharedAuditWindow},
+    audit::{
+        AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
+        DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
+    },
     backlog::{BacklogStore, PostgresBacklog},
     capture::stream_packets,
     config::AppConfig,
@@ -31,8 +34,8 @@ use crate::{
     model::{AuditContext, EnrichedFrame},
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
-        publish_entry, publish_handshake_alert, reconcile_backlog, PublishError,
-        SyncPublisherClient,
+        publish_bandwidth_event, publish_entry, publish_handshake_alert, reconcile_backlog,
+        PublishClient, PublishError, SyncPublisherClient,
     },
 };
 
@@ -196,6 +199,8 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     let mut stats = CaptureStats::default();
     let mut identity_cache = IdentityCache::default();
     let mut handshake_monitor = HandshakeMonitor::default();
+    let mut traffic_bucket = TrafficBucket::new(DEFAULT_BANDWIDTH_WINDOW_SECS);
+    let mut bandwidth_flush = bandwidth_flush_interval();
     let mut mac_device_cache: LruCache<String, Option<(String, Option<String>)>> =
         LruCache::new(NonZeroUsize::new(config.mac_device_cache_size).unwrap());
 
@@ -283,6 +288,14 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    let bandwidth_events = match traffic_bucket.observe(&entry) {
+                        Ok(events) => events,
+                        Err(error) => {
+                            warn!(%error, "wireless bandwidth bucket update failed; continuing audit publish");
+                            Vec::new()
+                        }
+                    };
+                    publish_bandwidth_events(&backlog, &*publish_client, bandwidth_events).await;
                     info!(
                         target: "wireless_audit",
                         event_type = %entry.event_type,
@@ -312,10 +325,69 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
             _ = tick_capture_heartbeat(&mut heartbeat) => {
                 stats.log(&device, &config);
             }
+            _ = bandwidth_flush.tick() => {
+                let bandwidth_events = traffic_bucket.flush_current();
+                publish_bandwidth_events(&backlog, &*publish_client, bandwidth_events).await;
+            }
         }
     }
 
     Ok(())
+}
+
+fn bandwidth_flush_interval() -> tokio::time::Interval {
+    let interval = Duration::from_secs(DEFAULT_BANDWIDTH_WINDOW_SECS as u64);
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval
+}
+
+async fn publish_bandwidth_events(
+    backlog: &PostgresBacklog,
+    publisher: &dyn PublishClient,
+    events: Vec<WirelessBandwidthEvent>,
+) {
+    for mut event in events {
+        let authorized = match backlog
+            .is_authorized_wireless_network(
+                event.ssid.as_deref(),
+                Some(event.destination_bssid.as_str()),
+                &event.location_id,
+            )
+            .await
+        {
+            Ok(authorized) => authorized,
+            Err(error) => {
+                warn!(
+                    %error,
+                    destination_bssid = %event.destination_bssid,
+                    ssid = ?event.ssid,
+                    "authorized wireless network lookup failed; treating BSSID as external"
+                );
+                false
+            }
+        };
+        event.external_bssid = !authorized;
+        event.threshold_exceeded =
+            event.external_bssid && event.bytes > EXTERNAL_BANDWIDTH_THRESHOLD_BYTES;
+        if event.threshold_exceeded {
+            warn!(
+                source_mac = %event.source_mac,
+                destination_bssid = %event.destination_bssid,
+                bytes = event.bytes,
+                threshold_bytes = EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
+                "wireless bandwidth threshold exceeded for external BSSID"
+            );
+        }
+        if let Err(error) = publish_bandwidth_event(publisher, &event).await {
+            warn!(
+                %error,
+                source_mac = %event.source_mac,
+                destination_bssid = %event.destination_bssid,
+                "wireless bandwidth event publish failed"
+            );
+        }
+    }
 }
 
 fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {

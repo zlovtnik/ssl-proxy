@@ -15,7 +15,9 @@
         <th><%= sort_link_to "Observed", :observed_at %></th>
         <th><%= sort_link_to "Source MAC", :source_mac %></th>
         <th><%= sort_link_to "BSSID", :bssid %></th>
+        <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
         <th><%= sort_link_to "SSID", :ssid %></th>
+        <th><%= sort_link_to "Signal", :signal_dbm %></th>
         <th><%= sort_link_to "Username", :username %></th>
         <th><%= sort_link_to "Registered", :registered_username %></th>
         <th><%= sort_link_to "Device", :display_name %></th>
@@ -30,7 +32,9 @@
             <td><%= identity.observed_at %></td>
             <td><%= identity.source_mac %></td>
             <td><%= identity.bssid %></td>
+            <td><%= identity.destination_bssid %></td>
             <td><%= identity.ssid %></td>
+            <td><%= identity.signal_dbm %></td>
             <td><%= identity.username %></td>
             <td><%= identity.registered_username %></td>
             <td><%= identity.display_name || identity.device_id %></td>
@@ -40,7 +44,7 @@
         <% end %>
       <% else %>
         <tr>
-          <td colspan="9" class="empty-state">No identities found.</td>
+          <td colspan="11" class="empty-state">No identities found.</td>
         </tr>
       <% end %>
     </tbody>

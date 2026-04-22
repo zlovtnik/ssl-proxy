@@ -1,0 +1,49 @@
+<% content_for :title, "Shadow IT Alerts" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<h1>Shadow IT Alerts</h1>
+
+<%= form_with url: shadow_it_alerts_path, method: :get do |form| %>
+  <%= form.search_field :q, value: @query, placeholder: "Search MAC, BSSID, SSID, sensor, location, reason" %>
+  <%= form.submit "Search" %>
+<% end %>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Observed", :observed_at %></th>
+        <th><%= sort_link_to "Source MAC", :source_mac %></th>
+        <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
+        <th><%= sort_link_to "SSID", :ssid %></th>
+        <th><%= sort_link_to "Sensor", :sensor_id %></th>
+        <th><%= sort_link_to "Location", :location_id %></th>
+        <th><%= sort_link_to "Signal", :signal_dbm %></th>
+        <th><%= sort_link_to "Reason", :reason %></th>
+        <th><%= sort_link_to "Resolved", :resolved_at %></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if @shadow_it_alerts.any? %>
+        <% @shadow_it_alerts.each do |alert| %>
+          <tr>
+            <td><%= alert.observed_at %></td>
+            <td><%= display_mac(alert.source_mac) %></td>
+            <td><%= display_mac(alert.destination_bssid) %></td>
+            <td><%= alert.ssid %></td>
+            <td><%= alert.sensor_id %></td>
+            <td><%= alert.location_id %></td>
+            <td><%= alert.signal_dbm %></td>
+            <td><%= alert.reason %></td>
+            <td><%= alert.resolved_at %></td>
+          </tr>
+        <% end %>
+      <% else %>
+        <tr>
+          <td colspan="9" class="empty-state">No shadow IT alerts found.</td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <%= render "shared/pagination" %>
+</div>

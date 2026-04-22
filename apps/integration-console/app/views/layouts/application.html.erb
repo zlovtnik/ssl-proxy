@@ -21,9 +21,11 @@
           <%= nav_link_to "Audit Logs", audit_logs_path, icon: :audit %>
           <%= nav_link_to "Backlog", backlog_index_path, icon: :backlog %>
           <%= nav_link_to "Audit Windows", audit_windows_path, icon: :windows %>
+          <%= nav_link_to "Authorized Wireless", authorized_wireless_networks_path, icon: :wireless %>
           <%= nav_link_to "Identities", identities_path, icon: :identities %>
           <%= nav_link_to "Heatmap", heatmap_index_path, icon: :heatmap %>
           <%= nav_link_to "Alerts", alerts_path, icon: :alerts %>
+          <%= nav_link_to "Shadow IT", shadow_it_alerts_path, icon: :alerts %>
         </nav>
       </aside>
       <div class="sidebar-overlay" data-sidebar-target="overlay" data-action="click->sidebar#close"></div>

@@ -316,10 +316,12 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes);
     let identity_source_hint = username_hint.as_ref().map(|_| "eap_identity".to_string());
     let retry = frame_control & (1 << 11) != 0;
+    let more_data = frame_control & (1 << 13) != 0;
     let power_save = frame_control & (1 << 12) != 0;
     let protected = frame_control & (1 << 14) != 0;
     let to_ds = frame_control & (1 << 8) != 0;
     let from_ds = frame_control & (1 << 9) != 0;
+    let destination_bssid = addresses.bssid.clone();
 
     let mut tags = vec![
         "wifi".to_string(),
@@ -331,6 +333,9 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     }
     if retry {
         tags.push("retry".to_string());
+    }
+    if more_data {
+        tags.push("more_data".to_string());
     }
     if power_save {
         tags.push("power_save".to_string());
@@ -367,6 +372,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
             _ => "wifi_frame".to_string(),
         },
         bssid: addresses.bssid,
+        destination_bssid,
         source_mac: addresses.source_mac,
         destination_mac: addresses.destination_mac,
         transmitter_mac: addresses.transmitter_mac,
@@ -382,6 +388,8 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         antenna_id: radiotap.antenna_id,
         sequence_number,
         duration_id,
+        frame_control_flags: frame_control,
+        more_data,
         retry,
         power_save,
         protected,
@@ -467,6 +475,7 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         interface: enriched.interface,
         channel: enriched.channel,
         bssid: frame.bssid,
+        destination_bssid: frame.destination_bssid,
         source_mac: frame.source_mac,
         destination_mac: frame.destination_mac,
         transmitter_mac: frame.transmitter_mac,
@@ -482,6 +491,8 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         antenna_id: frame.antenna_id,
         sequence_number: frame.sequence_number,
         duration_id: Some(frame.duration_id),
+        frame_control_flags: Some(frame.frame_control_flags),
+        more_data: Some(frame.more_data),
         retry: Some(frame.retry),
         power_save: Some(frame.power_save),
         protected: Some(frame.protected),
@@ -1134,6 +1145,10 @@ pub mod tests {
         assert_eq!(frame.source_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
         assert_eq!(frame.destination_mac.as_deref(), Some("22:33:44:55:66:77"));
         assert_eq!(frame.bssid.as_deref(), Some("10:20:30:40:50:60"));
+        assert_eq!(
+            frame.destination_bssid.as_deref(),
+            Some("10:20:30:40:50:60")
+        );
         assert_eq!(frame.transmitter_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
         assert_eq!(frame.receiver_mac.as_deref(), Some("10:20:30:40:50:60"));
         assert!(frame.to_ds);
@@ -1187,16 +1202,19 @@ pub mod tests {
     fn parses_frame_control_flags() {
         let packet = RawPacket {
             observed_at: Utc::now(),
-            data: build_frame(0x08, 0x59, AP, CLIENT, DISTRIBUTION_DST, None, vec![0xaa]),
+            data: build_frame(0x08, 0x79, AP, CLIENT, DISTRIBUTION_DST, None, vec![0xaa]),
         };
         let frame = decode_frame(&packet).unwrap();
         assert!(frame.to_ds);
         assert!(!frame.from_ds);
         assert!(frame.retry);
+        assert!(frame.more_data);
         assert!(frame.power_save);
         assert!(frame.protected);
+        assert_eq!(frame.frame_control_flags, 0x7908);
         assert_eq!(frame.duration_id, 0);
         assert!(frame.tags.contains(&"retry".to_string()));
+        assert!(frame.tags.contains(&"more_data".to_string()));
         assert!(frame.tags.contains(&"power_save".to_string()));
         assert!(frame.tags.contains(&"protected".to_string()));
     }
@@ -1376,6 +1394,11 @@ pub mod tests {
         assert_eq!(value["tsft"], Value::Null);
         assert_eq!(value["antenna_id"], Value::Null);
         assert_eq!(value["duration_id"], Value::Number(0u64.into()));
+        assert_eq!(
+            value["frame_control_flags"],
+            Value::Number(0x0080u64.into())
+        );
+        assert_eq!(value["more_data"], Value::Bool(false));
         assert_eq!(value["retry"], Value::Bool(false));
         assert_eq!(value["power_save"], Value::Bool(false));
         assert_eq!(value["protected"], Value::Bool(false));

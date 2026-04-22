@@ -30,6 +30,17 @@ create table if not exists sync_scan_ingest (
   last_error text,
   producer text not null default 'unknown',
   event_kind text,
+  source_mac text,
+  bssid text,
+  destination_bssid text,
+  ssid text,
+  signal_dbm integer,
+  raw_len integer not null default 0,
+  frame_control_flags integer not null default 0,
+  more_data boolean not null default false,
+  retry boolean not null default false,
+  power_save boolean not null default false,
+  protected boolean not null default false,
   security_flags integer not null default 0,
   wps_device_name text,
   wps_manufacturer text,
@@ -78,6 +89,17 @@ create table if not exists sync_error (
 
 alter table sync_batch add column if not exists created_at timestamptz not null default now();
 alter table sync_batch add column if not exists updated_at timestamptz not null default now();
+alter table sync_scan_ingest add column if not exists source_mac text;
+alter table sync_scan_ingest add column if not exists bssid text;
+alter table sync_scan_ingest add column if not exists destination_bssid text;
+alter table sync_scan_ingest add column if not exists ssid text;
+alter table sync_scan_ingest add column if not exists signal_dbm integer;
+alter table sync_scan_ingest add column if not exists raw_len integer not null default 0;
+alter table sync_scan_ingest add column if not exists frame_control_flags integer not null default 0;
+alter table sync_scan_ingest add column if not exists more_data boolean not null default false;
+alter table sync_scan_ingest add column if not exists retry boolean not null default false;
+alter table sync_scan_ingest add column if not exists power_save boolean not null default false;
+alter table sync_scan_ingest add column if not exists protected boolean not null default false;
 alter table sync_scan_ingest add column if not exists security_flags integer not null default 0;
 alter table sync_scan_ingest add column if not exists wps_device_name text;
 alter table sync_scan_ingest add column if not exists wps_manufacturer text;
@@ -137,6 +159,56 @@ end $$;
 
 create index if not exists audit_backlog_status_idx on audit_backlog (status, updated_at);
 
+create table if not exists authorized_wireless_networks (
+  id bigserial primary key,
+  ssid text,
+  bssid text,
+  location_id text,
+  label text,
+  enabled boolean not null default true,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint authorized_wireless_network_identity_chk check (
+    nullif(trim(coalesce(ssid, '')), '') is not null
+    or nullif(trim(coalesce(bssid, '')), '') is not null
+  )
+);
+
+create unique index if not exists authorized_wireless_networks_match_idx
+  on authorized_wireless_networks (
+    coalesce(lower(ssid), ''),
+    coalesce(lower(bssid), ''),
+    coalesce(location_id, '')
+  );
+
+create index if not exists authorized_wireless_networks_enabled_idx
+  on authorized_wireless_networks (enabled, location_id);
+
+create table if not exists shadow_it_alerts (
+  alert_id bigserial primary key,
+  dedupe_key text not null unique,
+  observed_at timestamptz not null,
+  source_mac text not null,
+  destination_bssid text,
+  ssid text,
+  sensor_id text,
+  location_id text,
+  signal_dbm integer,
+  reason text not null,
+  evidence jsonb not null default '{}'::jsonb,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists shadow_it_alerts_open_idx
+  on shadow_it_alerts (observed_at desc)
+  where resolved_at is null;
+
+create index if not exists shadow_it_alerts_source_idx
+  on shadow_it_alerts (lower(source_mac), observed_at desc);
+
 create table if not exists devices (
   device_id text primary key,
   wg_pubkey text,
@@ -163,18 +235,23 @@ select
   ssi.status,
   ssi.producer,
   ssi.event_kind,
-  ssi.payload->>'source_mac' as source_mac,
+  coalesce(ssi.source_mac, ssi.payload->>'source_mac') as source_mac,
   ssi.payload->>'transmitter_mac' as transmitter_mac,
   ssi.payload->>'receiver_mac' as receiver_mac,
-  ssi.payload->>'bssid' as bssid,
-  ssi.payload->>'ssid' as ssid,
+  coalesce(ssi.bssid, ssi.payload->>'bssid') as bssid,
+  coalesce(ssi.destination_bssid, ssi.payload->>'destination_bssid', ssi.payload->>'bssid') as destination_bssid,
+  coalesce(ssi.ssid, ssi.payload->>'ssid') as ssid,
   ssi.payload->>'frame_subtype' as frame_subtype,
-  ssi.payload->>'signal_dbm' as signal_dbm,
+  coalesce(ssi.signal_dbm::text, ssi.payload->>'signal_dbm') as signal_dbm,
   ssi.payload->>'noise_dbm' as noise_dbm,
   ssi.payload->>'frequency_mhz' as frequency_mhz,
   ssi.payload->>'data_rate_kbps' as data_rate_kbps,
-  ssi.payload->>'retry' as retry,
-  ssi.payload->>'protected' as protected,
+  coalesce(ssi.raw_len::text, ssi.payload->>'raw_len') as raw_len,
+  coalesce(ssi.frame_control_flags::text, ssi.payload->>'frame_control_flags') as frame_control_flags,
+  coalesce(ssi.more_data::text, ssi.payload->>'more_data') as more_data,
+  coalesce(ssi.retry::text, ssi.payload->>'retry') as retry,
+  coalesce(ssi.power_save::text, ssi.payload->>'power_save') as power_save,
+  coalesce(ssi.protected::text, ssi.payload->>'protected') as protected,
   ssi.payload->>'location_id' as location_id,
   ssi.payload->>'sensor_id' as sensor_id,
   ssi.payload->>'identity_source' as identity_source,
@@ -193,14 +270,23 @@ select
   coalesce(d_src.hostname, d_bssid.hostname) as hostname
 from sync_scan_ingest ssi
 left join devices d_src
-  on lower(d_src.mac_hint) = lower(ssi.payload->>'source_mac')
+  on lower(d_src.mac_hint) = lower(coalesce(ssi.source_mac, ssi.payload->>'source_mac'))
 left join devices d_bssid
-  on lower(d_bssid.mac_hint) = lower(ssi.payload->>'bssid')
+  on lower(d_bssid.mac_hint) = lower(coalesce(ssi.bssid, ssi.payload->>'bssid'))
 where ssi.stream_name = 'wireless.audit';
 
-create index if not exists ssi_wireless_ssid_idx
-  on sync_scan_ingest ((payload->>'ssid'), observed_at desc)
-  where stream_name = 'wireless.audit';
+do $$
+begin
+  if exists (
+    select 1
+    from pg_indexes
+    where schemaname = current_schema()
+      and indexname = 'ssi_wireless_ssid_idx'
+      and indexdef not ilike '%(ssid,%'
+  ) then
+    drop index ssi_wireless_ssid_idx;
+  end if;
+end $$;
 
 do $$
 begin
@@ -209,19 +295,44 @@ begin
     from pg_indexes
     where schemaname = current_schema()
       and indexname = 'ssi_wireless_source_mac_idx'
-      and indexdef not ilike '%lower((payload ->> ''source_mac''::text))%'
+      and indexdef not ilike '%lower(source_mac)%'
   ) then
     drop index ssi_wireless_source_mac_idx;
   end if;
 end $$;
 
+do $$
+begin
+  if exists (
+    select 1
+    from pg_indexes
+    where schemaname = current_schema()
+      and indexname = 'ssi_wireless_bssid_idx'
+      and indexdef not ilike '%lower(bssid)%'
+  ) then
+    drop index ssi_wireless_bssid_idx;
+  end if;
+end $$;
+
+create index if not exists ssi_wireless_ssid_idx
+  on sync_scan_ingest (ssid, observed_at desc)
+  where stream_name = 'wireless.audit';
+
 create index if not exists ssi_wireless_source_mac_idx
-  on sync_scan_ingest (lower(payload->>'source_mac'))
+  on sync_scan_ingest (lower(source_mac))
   where stream_name = 'wireless.audit';
 
 create index if not exists ssi_wireless_bssid_idx
-  on sync_scan_ingest (lower(payload->>'bssid'))
+  on sync_scan_ingest (lower(bssid))
   where stream_name = 'wireless.audit';
+
+create index if not exists ssi_wireless_destination_bssid_idx
+  on sync_scan_ingest (lower(destination_bssid))
+  where stream_name = 'wireless.audit';
+
+create index if not exists ssi_wireless_signal_idx
+  on sync_scan_ingest (signal_dbm, observed_at desc)
+  where stream_name = 'wireless.audit' and signal_dbm is not null;
 
 create index if not exists ssi_wireless_threat_tags_idx
   on sync_scan_ingest using gin ((payload->'tags'))
@@ -246,18 +357,23 @@ create index if not exists ssi_pending_observed_idx
 create or replace view v_wireless_threats as
 select
   observed_at,
-  payload->>'ssid' as ssid,
-  payload->>'bssid' as bssid,
-  payload->>'source_mac' as source_mac,
+  coalesce(ssid, payload->>'ssid') as ssid,
+  coalesce(bssid, payload->>'bssid') as bssid,
+  coalesce(destination_bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
+  coalesce(source_mac, payload->>'source_mac') as source_mac,
   payload->>'transmitter_mac' as transmitter_mac,
   payload->>'receiver_mac' as receiver_mac,
   payload->>'frame_subtype' as frame_subtype,
-  payload->>'signal_dbm' as signal_dbm,
+  coalesce(signal_dbm::text, payload->>'signal_dbm') as signal_dbm,
   payload->>'noise_dbm' as noise_dbm,
   payload->>'frequency_mhz' as frequency_mhz,
   payload->>'data_rate_kbps' as data_rate_kbps,
-  payload->>'retry' as retry,
-  payload->>'protected' as protected,
+  coalesce(raw_len::text, payload->>'raw_len') as raw_len,
+  coalesce(frame_control_flags::text, payload->>'frame_control_flags') as frame_control_flags,
+  coalesce(more_data::text, payload->>'more_data') as more_data,
+  coalesce(retry::text, payload->>'retry') as retry,
+  coalesce(power_save::text, payload->>'power_save') as power_save,
+  coalesce(protected::text, payload->>'protected') as protected,
   payload->>'location_id' as location_id,
   payload->>'identity_source' as identity_source,
   payload->>'username' as username,
@@ -277,4 +393,23 @@ where stream_name = 'wireless.audit'
     or payload->'tags' ? 'threat:deauth_frame'
     or handshake_captured
   )
+order by observed_at desc;
+
+create or replace view v_shadow_it_alerts as
+select
+  alert_id,
+  dedupe_key,
+  observed_at,
+  source_mac,
+  destination_bssid,
+  ssid,
+  sensor_id,
+  location_id,
+  signal_dbm,
+  reason,
+  evidence,
+  resolved_at,
+  created_at,
+  updated_at
+from shadow_it_alerts
 order by observed_at desc;

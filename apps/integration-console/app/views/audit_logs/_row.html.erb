@@ -5,7 +5,10 @@
   <td><%= entry.frame_subtype %></td>
   <td><%= entry.ssid %></td>
   <td><%= display_mac(entry.source_mac) %></td>
+  <td><%= display_mac(entry.destination_bssid) %></td>
   <td><%= entry.signal_dbm %></td>
+  <td><%= entry.raw_len %></td>
+  <td><%= entry.frame_flags_label %></td>
   <td><%= entry.compact_security_label || "open/unknown" %></td>
   <td><%= entry.device_fingerprint&.first(12) %></td>
   <td><%= entry.handshake_captured ? "captured" : "" %></td>

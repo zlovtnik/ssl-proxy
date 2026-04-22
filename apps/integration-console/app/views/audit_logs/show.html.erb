@@ -19,9 +19,12 @@
       <tr><th>Location</th><td><%= @audit_log.location_id %></td></tr>
       <tr><th>SSID</th><td><%= @audit_log.ssid %></td></tr>
       <tr><th>BSSID</th><td><%= display_mac(@audit_log.bssid) %></td></tr>
+      <tr><th>Destination BSSID</th><td><%= display_mac(@audit_log.destination_bssid) %></td></tr>
       <tr><th>Source MAC</th><td><%= display_mac(@audit_log.source_mac) %></td></tr>
       <tr><th>Signal</th><td><%= @audit_log.signal_dbm %></td></tr>
       <tr><th>Username</th><td><%= @audit_log.username %></td></tr>
+      <tr><th>Frame control</th><td><%= @audit_log.frame_control_flags %></td></tr>
+      <tr><th>Frame flags</th><td><%= @audit_log.frame_flags_label %></td></tr>
       <tr><th>Security</th><td><%= @audit_log.compact_security_label || "open/unknown" %> (<%= @audit_log.security_flags %>)</td></tr>
       <tr><th>Handshake</th><td><%= @audit_log.handshake_captured ? "captured" : "not captured" %></td></tr>
       <tr><th>Fingerprint</th><td><%= @audit_log.device_fingerprint %></td></tr>
@@ -51,6 +54,7 @@
 
 <% rf_metadata = [
   ["Signal", @audit_log.signal_dbm],
+  ["Raw length", @audit_log.raw_len],
   ["Frequency MHz", @audit_log.frequency_mhz],
   ["Channel flags", @audit_log.channel_flags],
   ["Data rate kbps", @audit_log.data_rate_kbps],
