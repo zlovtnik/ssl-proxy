@@ -187,10 +187,11 @@ pub(crate) fn emit_serializable<T>(
         );
     }
 
+    let observed_at = chrono::Utc::now().to_rfc3339();
     let raw = match serde_json::to_string(&EventEnvelope {
         event,
         host,
-        time: chrono::Utc::now().to_rfc3339(),
+        time: observed_at.clone(),
         extra,
     }) {
         Ok(raw) => raw,
@@ -206,7 +207,6 @@ pub(crate) fn emit_serializable<T>(
         return;
     }
 
-    let observed_at = chrono::Utc::now().to_rfc3339();
     let dedupe_key = format!(
         "{:x}",
         Sha256::digest(format!("{event}:{host}:{observed_at}:{raw}").as_bytes())
@@ -397,5 +397,54 @@ mod tests {
         assert!(published[0]
             .payload
             .contains("\"payload_ref\":\"inline://json/"));
+    }
+
+    #[tokio::test]
+    async fn emit_serializable_uses_one_timestamp_and_top_level_identity_fields() {
+        let state = create_test_state().await;
+        let mut events = state.events_tx.subscribe();
+
+        emit_serializable(
+            &state,
+            "tunnel_open",
+            "example.com",
+            Some("10.13.13.2".to_string()),
+            Some("wg-pubkey".to_string()),
+            Some("device-1".to_string()),
+            Some("registered".to_string()),
+            Some("phone.local".to_string()),
+            Some("ExampleUA/1.0".to_string()),
+            12,
+            34,
+            Some(200),
+            false,
+            Some("default".to_string()),
+            serde_json::json!({ "kind": "connect" }),
+        );
+
+        let raw = events.try_recv().expect("event should be broadcast");
+        let envelope: serde_json::Value =
+            serde_json::from_str(&raw).expect("event should be valid json");
+        assert_eq!(envelope["wg_pubkey"], "wg-pubkey");
+        assert_eq!(envelope["device_id"], "device-1");
+        assert_eq!(envelope["identity_source"], "registered");
+        assert_eq!(envelope["peer_hostname"], "phone.local");
+        assert_eq!(envelope["client_ua"], "ExampleUA/1.0");
+
+        let published = state.publisher.published_messages();
+        assert_eq!(published.len(), 1);
+        let request: crate::sync::ScanRequest =
+            serde_json::from_str(&published[0].payload).expect("scan request should decode");
+        assert_eq!(
+            envelope["time"].as_str(),
+            Some(request.observed_at.as_str())
+        );
+        assert_eq!(
+            state
+                .publisher
+                .resolve_payload_ref_contents(&request.payload_ref)
+                .expect("inline payload should resolve"),
+            raw
+        );
     }
 }

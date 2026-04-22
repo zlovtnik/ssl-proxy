@@ -148,14 +148,9 @@ fn healthcheck(gpa: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
     std.debug.print("service={s} event=healthcheck_step status=start step=check_nats_stream\n", .{SERVICE_NAME});
     checkNatsStream(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name) catch |err| {
         std.debug.print(
-            "service={s} event=healthcheck_step status=error step=check_nats_stream duration_ms={d} error={}\n",
-            .{ SERVICE_NAME, elapsedMs(check_stream_started_ts, io), err },
+            "service={s} event=healthcheck_step status=warn step=check_nats_stream stream={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, cfg.audit_stream_name, elapsedMs(check_stream_started_ts, io), err },
         );
-        std.debug.print(
-            "service={s} event=healthcheck status=error duration_ms={d} failed_step=check_nats_stream\n",
-            .{ SERVICE_NAME, elapsedMs(start_ts, io) },
-        );
-        return err;
     };
     std.debug.print(
         "service={s} event=healthcheck_step status=ok step=check_nats_stream duration_ms={d}\n",
@@ -166,14 +161,9 @@ fn healthcheck(gpa: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
     std.debug.print("service={s} event=healthcheck_step status=start step=check_nats_consumer\n", .{SERVICE_NAME});
     checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name, cfg.scan_consumer) catch |err| {
         std.debug.print(
-            "service={s} event=healthcheck_step status=error step=check_nats_consumer duration_ms={d} error={}\n",
-            .{ SERVICE_NAME, elapsedMs(check_consumer_started_ts, io), err },
+            "service={s} event=healthcheck_step status=warn step=check_nats_consumer stream={s} consumer={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, cfg.audit_stream_name, cfg.scan_consumer, elapsedMs(check_consumer_started_ts, io), err },
         );
-        std.debug.print(
-            "service={s} event=healthcheck status=error duration_ms={d} failed_step=check_nats_consumer\n",
-            .{ SERVICE_NAME, elapsedMs(start_ts, io) },
-        );
-        return err;
     };
     std.debug.print(
         "service={s} event=healthcheck_step status=ok step=check_nats_consumer duration_ms={d}\n",
@@ -307,15 +297,26 @@ fn handleCursor(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Con
 }
 
 fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
-    const sql = try std.fmt.allocPrint(
-        std.heap.page_allocator,
+    const mark_sql =
         \\update sync_scan_ingest ingest
         \\   set status = 'batched',
         \\       updated_at = now()
         \\ where status = 'processing'
         \\   and exists (select 1 from sync_batch batch where batch.dedupe_key = ingest.dedupe_key)
         \\returning dedupe_key;
-        \\
+    ;
+    const mark_argv = [_][]const u8{
+        "psql",
+        cfg.database_url,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-qAt",
+        "-c",
+        mark_sql,
+    };
+    var had_work = runCommandForWork(std.heap.page_allocator, io, &mark_argv, HealthcheckError.IngestProcessFailed) catch false;
+
+    const ingest_sql = try std.fmt.allocPrint(std.heap.page_allocator,
         \\with next_ingest as (
         \\  update sync_scan_ingest
         \\     set status = 'processing',
@@ -326,10 +327,11 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\     select dedupe_key
         \\       from sync_scan_ingest
         \\      where status in ('pending', 'failed')
+        \\        and stream_name = any(string_to_array($sync_stream_names${s}$sync_stream_names$, ','))
         \\        and attempt_count < {d}
         \\        and (
         \\              status = 'pending'
-        \\              or observed_at <= now() - make_interval(secs => (attempt_count * {d}))
+        \\              or observed_at <= now() - make_interval(secs => (greatest(attempt_count, 1) * {d}))
         \\            )
         \\      order by observed_at asc
         \\      limit 1
@@ -372,28 +374,30 @@ fn processIngestLedger(io: std.Io, cfg: config.Config) !bool {
         \\  on conflict (stream_name)
         \\  do update set cursor_value = excluded.cursor_value, updated_at = now()
         \\  returning stream_name
+        \\),
+        \\mark_batched as (
+        \\  update sync_scan_ingest ingest
+        \\     set status = 'batched',
+        \\         updated_at = now()
+        \\    from batch_upsert
+        \\   where ingest.dedupe_key = batch_upsert.dedupe_key
+        \\  returning ingest.dedupe_key
         \\)
-        \\select dedupe_key from batch_upsert;
-        \\
-        \\update sync_scan_ingest ingest
-        \\   set status = 'batched',
-        \\       updated_at = now()
-        \\ where status = 'processing'
-        \\   and exists (select 1 from sync_batch batch where batch.dedupe_key = ingest.dedupe_key)
-        \\returning dedupe_key;
-    , .{ cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
-    defer std.heap.page_allocator.free(sql);
+        \\select dedupe_key from mark_batched;
+    , .{ cfg.stream_names_csv, cfg.scan_max_attempts, cfg.scan_retry_backoff_seconds });
+    defer std.heap.page_allocator.free(ingest_sql);
 
-    const argv = [_][]const u8{
+    const ingest_argv = [_][]const u8{
         "psql",
         cfg.database_url,
         "-v",
         "ON_ERROR_STOP=1",
         "-qAt",
         "-c",
-        sql,
+        ingest_sql,
     };
-    return runCommandForWork(std.heap.page_allocator, io, &argv, HealthcheckError.IngestProcessFailed);
+    had_work = (try runCommandForWork(std.heap.page_allocator, io, &ingest_argv, HealthcheckError.IngestProcessFailed)) or had_work;
+    return had_work;
 }
 
 fn processBatches(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
@@ -404,10 +408,69 @@ fn processBatches(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.C
 }
 
 fn dedupeAndDispatch(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
-    _ = io;
     _ = coordinator;
-    _ = cfg;
-    return false;
+    const sql =
+        \\with picked as (
+        \\  select batch.batch_id
+        \\    from sync_batch batch
+        \\   where batch.status = 'pending'
+        \\   order by batch.batch_id
+        \\   limit 1
+        \\   for update skip locked
+        \\),
+        \\updated as (
+        \\  update sync_batch batch
+        \\     set status = 'dispatched',
+        \\         attempt_count = batch.attempt_count + 1,
+        \\         last_error = null
+        \\    from picked
+        \\   where batch.batch_id = picked.batch_id
+        \\  returning batch.batch_id, batch.job_id, batch.batch_no, batch.payload_ref,
+        \\            batch.cursor_start, batch.cursor_end, batch.attempt_count
+        \\),
+        \\job_mark as (
+        \\  update sync_job job
+        \\     set status = 'running',
+        \\         started_at = coalesce(job.started_at, now())
+        \\    from updated
+        \\   where job.job_id = updated.job_id
+        \\  returning job.job_id, job.stream_name
+        \\)
+        \\select json_build_object(
+        \\  'job_id', updated.job_id::text,
+        \\  'batch_id', updated.batch_id::text,
+        \\  'batch_no', updated.batch_no,
+        \\  'stream_name', job_mark.stream_name,
+        \\  'payload_ref', updated.payload_ref,
+        \\  'cursor_start', updated.cursor_start,
+        \\  'cursor_end', updated.cursor_end,
+        \\  'attempt', updated.attempt_count
+        \\)::text
+        \\from updated
+        \\join job_mark on job_mark.job_id = updated.job_id;
+    ;
+    const query_argv = [_][]const u8{
+        "psql",
+        cfg.database_url,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-qAt",
+        "-c",
+        sql,
+    };
+    const payload = (try runCommandOutput(std.heap.page_allocator, io, &query_argv, HealthcheckError.IngestProcessFailed)) orelse return false;
+    defer std.heap.page_allocator.free(payload);
+
+    const pub_argv = [_][]const u8{
+        "nats",
+        "--server",
+        cfg.sync_nats_url,
+        "pub",
+        cfg.load_subject,
+        payload,
+    };
+    try runCommand(std.heap.page_allocator, io, &pub_argv, HealthcheckError.IngestProcessFailed);
+    return true;
 }
 
 fn updateJobState(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
@@ -418,10 +481,74 @@ fn updateJobState(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.C
 }
 
 fn handleResults(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Config) !bool {
-    _ = io;
     _ = coordinator;
-    _ = cfg;
-    return false;
+    const script =
+        \\set -eu
+        \\tmp="$(mktemp)"
+        \\had=0
+        \\if nats --server "$1" consumer next "$2" "$3" --batch 50 --expires 250ms --raw > "$tmp" 2>/dev/null; then
+        \\  while IFS= read -r line; do
+        \\    [ -n "$line" ] || continue
+        \\    psql "$4" -v ON_ERROR_STOP=1 -v result="$line" -qAt -c "
+        \\with result as (
+        \\  select :'result'::jsonb as payload
+        \\),
+        \\batch_update as (
+        \\  update sync_batch batch
+        \\     set status = case result.payload->>'status'
+        \\                    when 'success' then 'completed'
+        \\                    when 'completed' then 'completed'
+        \\                    else 'failed'
+        \\                  end,
+        \\         row_count = coalesce((result.payload->>'row_count')::integer, row_count),
+        \\         checksum = nullif(result.payload->>'checksum', ''),
+        \\         last_error = nullif(result.payload->>'error_text', '')
+        \\    from result
+        \\   where batch.batch_id = (result.payload->>'batch_id')::uuid
+        \\  returning batch.job_id, batch.batch_id, batch.status, batch.last_error
+        \\),
+        \\error_insert as (
+        \\  insert into sync_error (job_id, batch_id, error_class, error_text)
+        \\  select job_id, batch_id, coalesce(nullif((select payload->>'error_class' from result), ''), 'unknown'),
+        \\         coalesce(last_error, 'oracle load failed')
+        \\    from batch_update
+        \\   where status = 'failed'
+        \\  returning id
+        \\),
+        \\job_done as (
+        \\  update sync_job job
+        \\     set status = case
+        \\                    when exists (select 1 from sync_batch b where b.job_id = job.job_id and b.status = 'failed') then 'failed'
+        \\                    else 'completed'
+        \\                  end,
+        \\         finished_at = now()
+        \\   where job.job_id in (select job_id from batch_update)
+        \\     and not exists (
+        \\       select 1 from sync_batch b
+        \\        where b.job_id = job.job_id
+        \\          and b.status not in ('completed', 'failed')
+        \\     )
+        \\  returning job_id
+        \\)
+        \\select coalesce((select batch_id::text from batch_update limit 1), '');
+        \\"
+        \\    had=1
+        \\  done < "$tmp"
+        \\fi
+        \\rm -f "$tmp"
+        \\if [ "$had" = "1" ]; then echo work; fi
+    ;
+    const argv = [_][]const u8{
+        "sh",
+        "-c",
+        script,
+        "zig-coordinator-results",
+        cfg.sync_nats_url,
+        cfg.audit_stream_name,
+        cfg.result_consumer,
+        cfg.database_url,
+    };
+    return runCommandForWork(std.heap.page_allocator, io, &argv, HealthcheckError.IngestProcessFailed);
 }
 
 fn runCommand(
@@ -531,6 +658,56 @@ fn runCommandForWork(
         );
     }
     return work_detected;
+}
+
+fn runCommandOutput(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    argv: []const []const u8,
+    on_error: anyerror,
+) !?[]u8 {
+    const start_ts = std.Io.Timestamp.now(io, .awake);
+    const result = std.process.run(gpa, io, .{
+        .argv = argv,
+        .expand_arg0 = .expand,
+        .stdout_limit = .limited(64 * 1024),
+        .stderr_limit = .limited(64 * 1024),
+    }) catch |err| {
+        std.debug.print(
+            "service={s} event=command_execution status=error command={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, argv[0], elapsedMs(start_ts, io), err },
+        );
+        return on_error;
+    };
+    defer {
+        gpa.free(result.stdout);
+        gpa.free(result.stderr);
+    }
+
+    switch (result.term) {
+        .exited => |code| {
+            if (code != 0) {
+                var stderr_buffer: [256]u8 = undefined;
+                const stderr_snippet = sanitizeSnippet(&stderr_buffer, result.stderr);
+                std.debug.print(
+                    "service={s} event=command_execution status=error command={s} exit_code={d} duration_ms={d} stderr=\"{s}\"\n",
+                    .{ SERVICE_NAME, argv[0], code, elapsedMs(start_ts, io), stderr_snippet },
+                );
+                return on_error;
+            }
+        },
+        else => {
+            std.debug.print(
+                "service={s} event=command_execution status=error command={s} duration_ms={d} error=TerminatedUnexpectedly\n",
+                .{ SERVICE_NAME, argv[0], elapsedMs(start_ts, io) },
+            );
+            return on_error;
+        },
+    }
+
+    const output = std.mem.trim(u8, result.stdout, " \t\r\n");
+    if (output.len == 0) return null;
+    return try gpa.dupe(u8, output);
 }
 
 fn elapsedMs(start_ts: std.Io.Timestamp, io: std.Io) u64 {

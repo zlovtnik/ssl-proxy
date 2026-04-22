@@ -1,4 +1,7 @@
-use std::num::NonZeroUsize;
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
 
 use ieee80211::GenericFrame;
 use lru::LruCache;
@@ -24,10 +27,13 @@ pub enum ParseError {
 pub struct ResolvedIdentity {
     pub username: String,
     pub source: String,
+    pub tags: Vec<String>,
 }
 
 pub struct IdentityCache {
     mac_to_username: LruCache<String, String>,
+    ssid_to_bssids: LruCache<String, Vec<String>>,
+    deauth_counts: LruCache<String, (u32, Instant)>,
 }
 
 impl Default for IdentityCache {
@@ -36,12 +42,72 @@ impl Default for IdentityCache {
             mac_to_username: LruCache::new(
                 NonZeroUsize::new(4_096).expect("identity cache capacity must be non-zero"),
             ),
+            ssid_to_bssids: LruCache::new(
+                NonZeroUsize::new(4_096).expect("ssid cache capacity must be non-zero"),
+            ),
+            deauth_counts: LruCache::new(
+                NonZeroUsize::new(4_096).expect("deauth cache capacity must be non-zero"),
+            ),
         }
     }
 }
 
 impl IdentityCache {
     pub fn resolve(&mut self, frame: &WifiFrame) -> Option<ResolvedIdentity> {
+        let mut threat_tags = Vec::new();
+        let mut detection_identity = None;
+
+        if matches!(frame.frame_subtype.as_str(), "beacon" | "probe_response") {
+            if let (Some(ssid), Some(bssid)) = (frame.ssid.as_ref(), frame.bssid.as_ref()) {
+                let known_key = ssid.to_ascii_lowercase();
+                let bssid_key = bssid.to_ascii_lowercase();
+                if let Some(known) = self.ssid_to_bssids.get_mut(&known_key) {
+                    let already_seen = known
+                        .iter()
+                        .any(|known_bssid| known_bssid.eq_ignore_ascii_case(&bssid_key));
+                    if !already_seen && !known.is_empty() {
+                        push_tag(&mut threat_tags, "threat:potential_evil_twin");
+                        detection_identity = Some(ResolvedIdentity {
+                            username: format!("SUSPECT_EVIL_TWIN:{bssid}"),
+                            source: "evil_twin_detection".to_string(),
+                            tags: threat_tags.clone(),
+                        });
+                    }
+                    if !already_seen {
+                        known.push(bssid_key);
+                    }
+                } else {
+                    self.ssid_to_bssids.put(known_key, vec![bssid_key]);
+                }
+            }
+        }
+
+        if matches!(
+            frame.frame_subtype.as_str(),
+            "deauthentication" | "disassociation"
+        ) {
+            if let Some(bssid) = frame.bssid.as_ref() {
+                let bssid_key = bssid.to_ascii_lowercase();
+                if let Some(entry) = self.deauth_counts.get_mut(&bssid_key) {
+                    if entry.1.elapsed() > Duration::from_secs(10) {
+                        *entry = (1, Instant::now());
+                    } else {
+                        entry.0 += 1;
+                        if entry.0 > 5 {
+                            push_tag(&mut threat_tags, "threat:deauth_flood");
+                            detection_identity = Some(ResolvedIdentity {
+                                username: format!("SUSPECT_DEAUTH_FLOOD:{bssid}"),
+                                source: "deauth_flood_detection".to_string(),
+                                tags: threat_tags.clone(),
+                            });
+                        }
+                    }
+                } else {
+                    self.deauth_counts.put(bssid_key, (1, Instant::now()));
+                }
+            }
+        }
+
         if let Some(username) = frame.username_hint.clone() {
             if let Some(mac) = frame.source_mac.as_ref() {
                 self.mac_to_username
@@ -53,6 +119,7 @@ impl IdentityCache {
                     .identity_source_hint
                     .clone()
                     .unwrap_or_else(|| "observed_identity".to_string()),
+                tags: threat_tags,
             });
         }
 
@@ -65,11 +132,12 @@ impl IdentityCache {
                 return Some(ResolvedIdentity {
                     username: username.clone(),
                     source: "eap_identity_cache".to_string(),
+                    tags: threat_tags,
                 });
             }
         }
 
-        None
+        detection_identity
     }
 }
 
@@ -92,13 +160,12 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
 
     let subtype = ((frame_control >> 4) & 0x0f) as u8;
     let frame_subtype = frame_subtype_name(frame_type, subtype).to_string();
-    let (bssid, source_mac, destination_mac) = parse_addresses(frame_type, frame_control, frame_bytes)?;
+    let (bssid, source_mac, destination_mac) =
+        parse_addresses(frame_type, frame_control, frame_bytes)?;
     let sequence_number = Some(u16::from_le_bytes([frame_bytes[22], frame_bytes[23]]) >> 4);
     let ssid = extract_ssid(frame_type, subtype, frame_bytes);
     let username_hint = extract_eap_identity(frame_type, frame_control, subtype, frame_bytes);
-    let identity_source_hint = username_hint
-        .as_ref()
-        .map(|_| "eap_identity".to_string());
+    let identity_source_hint = username_hint.as_ref().map(|_| "eap_identity".to_string());
 
     let mut tags = vec![
         "wifi".to_string(),
@@ -120,6 +187,14 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     if username_hint.is_some() {
         tags.push("eapol".to_string());
         tags.push("identity:eap_response".to_string());
+    }
+    if frame_subtype == "probe_response" {
+        if let Some(dst) = destination_mac.as_deref() {
+            if is_locally_administered_mac(dst) {
+                push_tag(&mut tags, "threat:karma_probe_response");
+                push_tag(&mut tags, "identity:randomized_mac");
+            }
+        }
     }
 
     Ok(WifiFrame {
@@ -163,8 +238,42 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     let identity_source = match (username.as_ref(), frame.identity_source_hint) {
         (Some(_), Some(source)) => source,
         (Some(_), None) => "observed_identity".to_string(),
+        (None, _) if frame.source_mac.is_some() || frame.bssid.is_some() => {
+            "mac_observed".to_string()
+        }
         (None, _) => "unknown".to_string(),
     };
+    if let Some(ssid) = frame.ssid.as_deref() {
+        let ssid_lower = ssid.to_ascii_lowercase();
+        if ssid_lower.contains("setup")
+            || ssid_lower.contains("wifi")
+            || ssid_lower.starts_with("spectrumsetup")
+        {
+            push_tag(&mut tags, "threat:potential_evil_twin");
+        }
+    }
+    if frame.frame_subtype == "probe_response" {
+        if let Some(dst) = frame.destination_mac.as_deref() {
+            if is_locally_administered_mac(dst) {
+                push_tag(&mut tags, "identity:randomized_mac_target");
+            }
+        }
+    }
+    if matches!(
+        frame.frame_subtype.as_str(),
+        "deauthentication" | "disassociation"
+    ) {
+        push_tag(&mut tags, "threat:deauth_frame");
+    }
+    if let Some(dbm) = frame.signal_dbm {
+        let tier = match dbm {
+            -50..=0 => "signal:strong",
+            -70..=-51 => "signal:medium",
+            -85..=-71 => "signal:weak",
+            _ => "signal:very_weak",
+        };
+        push_tag(&mut tags, tier);
+    }
 
     AuditEntry {
         event_type: frame.event_type,
@@ -186,6 +295,19 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         username,
         identity_source,
     }
+}
+
+fn push_tag(tags: &mut Vec<String>, tag: &str) {
+    if !tags.iter().any(|existing| existing == tag) {
+        tags.push(tag.to_string());
+    }
+}
+
+fn is_locally_administered_mac(mac: &str) -> bool {
+    mac.get(..2)
+        .and_then(|octet| u8::from_str_radix(octet, 16).ok())
+        .map(|octet| octet & 0x02 != 0)
+        .unwrap_or(false)
 }
 
 pub fn strip_radiotap(bytes: &[u8]) -> Result<(Option<i8>, &[u8]), ParseError> {
@@ -457,6 +579,7 @@ pub mod tests {
 
     const BROADCAST: [u8; 6] = [0xff; 6];
     const AP: [u8; 6] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60];
+    const AP2: [u8; 6] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x61];
     const CLIENT: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01];
     const DISTRIBUTION_DST: [u8; 6] = [0x22, 0x33, 0x44, 0x55, 0x66, 0x77];
 
@@ -500,6 +623,10 @@ pub mod tests {
         let frame = decode_frame(&packet).unwrap();
         assert_eq!(frame.frame_subtype, "probe_response");
         assert_eq!(frame.ssid.as_deref(), Some("CorpWiFi"));
+        assert!(frame
+            .tags
+            .contains(&"threat:karma_probe_response".to_string()));
+        assert!(frame.tags.contains(&"identity:randomized_mac".to_string()));
     }
 
     #[test]
@@ -592,6 +719,36 @@ pub mod tests {
         );
         assert_eq!(value["channel"], Value::Number(6u64.into()));
         assert_eq!(value["username"], Value::Null);
+        assert_eq!(
+            value["identity_source"],
+            Value::String("mac_observed".to_string())
+        );
+        assert!(value["device_id"].is_null());
+        let tags = value["tags"].as_array().unwrap();
+        assert!(tags.contains(&Value::String("signal:strong".to_string())));
+        assert!(tags.contains(&Value::String("threat:potential_evil_twin".to_string())));
+    }
+
+    #[test]
+    fn detects_new_bssid_for_known_ssid() {
+        let mut cache = IdentityCache::default();
+        let first = decode_frame(&RawPacket {
+            observed_at: Utc::now(),
+            data: beacon_radiotap_frame(),
+        })
+        .unwrap();
+        assert!(cache.resolve(&first).is_none());
+
+        let second = decode_frame(&RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP2, AP2, None, beacon_body()),
+        })
+        .unwrap();
+        let resolved = cache.resolve(&second).unwrap();
+        assert_eq!(resolved.source, "evil_twin_detection");
+        assert!(resolved
+            .tags
+            .contains(&"threat:potential_evil_twin".to_string()));
     }
 
     pub fn beacon_radiotap_frame() -> Vec<u8> {

@@ -7,10 +7,11 @@ mod model;
 mod parse;
 mod publish;
 
-use std::{error::Error, fmt::Display, future, sync::Arc, time::Duration};
+use std::{error::Error, fmt::Display, future, num::NonZeroUsize, sync::Arc, time::Duration};
 
+use lru::LruCache;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{debug, error, info, info_span, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::{
@@ -180,6 +181,8 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     let mut heartbeat = capture_heartbeat(config.log_idle_secs);
     let mut stats = CaptureStats::default();
     let mut identity_cache = IdentityCache::default();
+    let mut mac_device_cache: LruCache<String, Option<(String, Option<String>)>> =
+        LruCache::new(NonZeroUsize::new(config.mac_device_cache_size).unwrap());
 
     loop {
         tokio::select! {
@@ -230,6 +233,34 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(identity) = resolved_identity {
                         entry.username = Some(identity.username);
                         entry.identity_source = identity.source;
+                        entry.tags.extend(identity.tags);
+                    }
+                    if config.mac_device_lookup_enabled {
+                        if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
+                            let cache_key = mac.to_ascii_lowercase();
+                            let lookup = if let Some(cached) = mac_device_cache.get(&cache_key) {
+                                cached.clone()
+                            } else {
+                                let lookup = match backlog.lookup_device_by_mac(&cache_key).await {
+                                    Ok(lookup) => lookup,
+                                    Err(error) => {
+                                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
+                                        None
+                                    }
+                                };
+                                mac_device_cache.put(cache_key.clone(), lookup.clone());
+                                lookup
+                            };
+                            if let Some((device_id, username)) = lookup {
+                                entry.device_id = Some(device_id);
+                                if entry.username.is_none() {
+                                    entry.username = username;
+                                }
+                                if matches!(entry.identity_source.as_str(), "unknown" | "mac_observed") {
+                                    entry.identity_source = "device_registry".to_string();
+                                }
+                            }
+                        }
                     }
                     info!(
                         target: "wireless_audit",

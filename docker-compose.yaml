@@ -43,6 +43,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - ./config:/config
+      - sync-outbox:/sync-outbox
     environment:
       - WG_INTERFACE_NAME=wg0
       - WG_TEMPLATE_PATH=/config/templates/server.conf
@@ -70,6 +71,7 @@ services:
       - EXPLICIT_PROXY_ENABLED=false
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_OUTBOX_DIR=/sync-outbox
 
     ports:
       # Publish the obfuscated BoringTun-backed UDP relay on the Docker host.
@@ -106,6 +108,7 @@ services:
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -125,12 +128,14 @@ services:
       - ./lib:/app/lib:ro
       - ./wallet:/app/wallet:ro
       - ./secrets:/run/secrets:ro
+      - sync-outbox:/sync-outbox
     environment:
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
       - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      - SYNC_OUTBOX_DIR=/sync-outbox
       - TNS_ADMIN=/app/wallet
       - LD_LIBRARY_PATH=/app/lib
       - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
@@ -147,6 +152,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      nats-bootstrap:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       zig-coordinator:
@@ -164,6 +171,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - /sys/class/net:/sys/class/net:ro
+      - sync-outbox:/sync-outbox
     environment:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
@@ -173,6 +181,8 @@ services:
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
       ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
       ATH_SENSOR_REG_DOMAIN: ${ATH_SENSOR_REG_DOMAIN:-US}
+      ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED: ${ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED:-true}
+      SYNC_OUTBOX_DIR: /sync-outbox
       RUST_LOG: ${ATH_SENSOR_RUST_LOG:-warn,atheros_sensor=info,ssl_proxy=info}
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/atheros-sensor healthcheck"]
@@ -217,6 +227,7 @@ services:
       SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
       SYNC_LOAD_SUBJECT: ${SYNC_LOAD_SUBJECT:-sync.oracle.load}
       SYNC_LOAD_CONSUMER: ${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      SYNC_RESULT_CONSUMER: ${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
     volumes:
       - ./docker/nats:/config:ro
     entrypoint: ["sh"]
@@ -244,3 +255,4 @@ services:
 volumes:
   nats-data:
   postgres-data:
+  sync-outbox:

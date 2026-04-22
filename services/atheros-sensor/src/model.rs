@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Clone, Debug)]
 pub struct RawPacket {
@@ -60,6 +60,7 @@ pub struct AuditEntry {
     pub sequence_number: Option<u16>,
     pub raw_len: usize,
     pub tags: Vec<String>,
+    #[serde(serialize_with = "serialize_option_as_null")]
     pub device_id: Option<String>,
     pub username: Option<String>,
     #[serde(default = "default_identity_source")]
@@ -68,6 +69,13 @@ pub struct AuditEntry {
 
 fn default_identity_source() -> String {
     "unknown".to_string()
+}
+
+fn serialize_option_as_null<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    value.serialize(serializer)
 }
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub database_url: String,
     pub sync: SyncConfig,
     pub audit_window: AuditWindow,
+    pub mac_device_lookup_enabled: bool,
+    pub mac_device_cache_size: usize,
 }
 
 #[derive(Debug, Error)]
@@ -124,6 +126,10 @@ impl AppConfig {
             database_url,
             sync,
             audit_window: audit_window_from_env()?,
+            mac_device_lookup_enabled: read_bool("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", true),
+            mac_device_cache_size: parse_usize("ATH_SENSOR_MAC_DEVICE_CACHE_SIZE", 4_096)
+                .unwrap_or(4_096)
+                .max(1),
         })
     }
 }
@@ -333,6 +339,8 @@ mod tests {
             "ATH_SENSOR_SNAPLEN",
             "ATH_SENSOR_PCAP_TIMEOUT_MS",
             "ATH_SENSOR_LOG_IDLE_SECS",
+            "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
+            "ATH_SENSOR_MAC_DEVICE_CACHE_SIZE",
             "AUDIT_WINDOW_TZ",
             "AUDIT_WINDOW_DAYS",
             "AUDIT_WINDOW_START",
@@ -370,6 +378,8 @@ mod tests {
         let config = AppConfig::from_env().unwrap();
 
         assert_eq!(config.log_idle_secs, 30);
+        assert!(config.mac_device_lookup_enabled);
+        assert_eq!(config.mac_device_cache_size, 4_096);
     }
 
     #[test]

@@ -133,6 +133,48 @@ impl PostgresBacklog {
         }
     }
 
+    pub async fn lookup_device_by_mac(
+        &self,
+        mac: &str,
+    ) -> Result<Option<(String, Option<String>)>, BacklogError> {
+        let operation = "lookup_device_by_mac";
+        let client = self.client(operation).await?;
+        let table_exists = match client
+            .query_one("select to_regclass('public.devices') is not null", &[])
+            .await
+        {
+            Ok(row) => row.get::<_, bool>(0),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        if !table_exists {
+            debug!("postgres devices table is absent; skipping MAC device lookup");
+            return Ok(None);
+        }
+
+        let normalized_mac = mac.trim().to_ascii_lowercase();
+        let row = match client
+            .query_opt(
+                "select device_id, username
+                   from devices
+                  where lower(mac_hint) = $1
+                  limit 1",
+                &[&normalized_mac],
+            )
+            .await
+        {
+            Ok(row) => row,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+
+        Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1))))
+    }
+
     fn log_postgres_error(&self, operation: &'static str, source: &tokio_postgres::Error) {
         let status = self.pool.status();
         let db_error = source.as_db_error();
@@ -165,10 +207,12 @@ impl BacklogStore for PostgresBacklog {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
         let payload: serde_json::Value =
-            serde_json::from_str(record.payload).map_err(|source| BacklogError::InvalidIngestPayload {
-                operation,
-                dedupe_key: record.dedupe_key.to_string(),
-                source,
+            serde_json::from_str(record.payload).map_err(|source| {
+                BacklogError::InvalidIngestPayload {
+                    operation,
+                    dedupe_key: record.dedupe_key.to_string(),
+                    source,
+                }
             })?;
         let payload_json = tokio_postgres::types::Json(&payload);
         let rows_affected = match client

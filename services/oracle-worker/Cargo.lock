@@ -660,6 +660,7 @@ name = "oracle-worker"
 version = "0.1.0"
 dependencies = [
  "async-nats",
+ "base64",
  "chrono",
  "futures",
  "serde",
