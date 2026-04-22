@@ -34,11 +34,13 @@ pub struct ResolvedIdentity {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RadiotapMetadata {
+    pub tsft: Option<u64>,
     pub signal_dbm: Option<i8>,
     pub noise_dbm: Option<i8>,
     pub frequency_mhz: Option<u16>,
     pub channel_flags: Option<u16>,
     pub data_rate_kbps: Option<u32>,
+    pub antenna_id: Option<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -242,11 +244,13 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         receiver_mac: addresses.receiver_mac,
         ssid,
         frame_subtype,
+        tsft: radiotap.tsft,
         signal_dbm: radiotap.signal_dbm,
         noise_dbm: radiotap.noise_dbm,
         frequency_mhz: radiotap.frequency_mhz,
         channel_flags: radiotap.channel_flags,
         data_rate_kbps: radiotap.data_rate_kbps,
+        antenna_id: radiotap.antenna_id,
         sequence_number,
         duration_id,
         retry,
@@ -333,11 +337,13 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         receiver_mac: frame.receiver_mac,
         ssid: frame.ssid,
         frame_subtype: frame.frame_subtype,
+        tsft: frame.tsft,
         signal_dbm: frame.signal_dbm,
         noise_dbm: frame.noise_dbm,
         frequency_mhz: frame.frequency_mhz,
         channel_flags: frame.channel_flags,
         data_rate_kbps: frame.data_rate_kbps,
+        antenna_id: frame.antenna_id,
         sequence_number: frame.sequence_number,
         duration_id: Some(frame.duration_id),
         retry: Some(frame.retry),
@@ -377,48 +383,71 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseEr
         return Err(ParseError::MissingRadiotap);
     }
 
-    let mut offset = 4usize;
-    let mut present_words = Vec::new();
+    let mut present_offset = 4usize;
     loop {
-        if offset + 4 > length {
+        if present_offset + 4 > length {
             return Err(ParseError::MissingRadiotap);
         }
-        let word = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-        present_words.push(word);
-        offset += 4;
+        let word = read_present_word(bytes, present_offset);
+        present_offset += 4;
         if word & (1 << 31) == 0 {
             break;
         }
     }
 
-    let mut cursor = offset;
+    let mut cursor = present_offset;
     let mut metadata = RadiotapMetadata::default();
-    let present = present_words.first().copied().unwrap_or_default();
-    for bit in 0..15 {
-        if present & (1 << bit) == 0 {
-            continue;
+    let mut word_offset = 4usize;
+    let mut word_index = 0usize;
+    loop {
+        let word = read_present_word(bytes, word_offset);
+        for bit in 0..31 {
+            if word & (1 << bit) == 0 {
+                continue;
+            }
+            let global_bit = word_index * 32 + bit;
+            let Some((align, size)) = radiotap_field_layout(global_bit) else {
+                continue;
+            };
+            cursor = align_offset(cursor, align);
+            if cursor + size > length {
+                return Err(ParseError::MissingRadiotap);
+            }
+            match global_bit {
+                0 => {
+                    metadata.tsft = Some(u64::from_le_bytes(
+                        bytes[cursor..cursor + 8].try_into().unwrap(),
+                    ));
+                }
+                2 => metadata.data_rate_kbps = Some(u32::from(bytes[cursor]) * 500),
+                3 => {
+                    metadata.frequency_mhz =
+                        Some(u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]));
+                    metadata.channel_flags =
+                        Some(u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]));
+                }
+                5 => metadata.signal_dbm = Some(bytes[cursor] as i8),
+                6 => metadata.noise_dbm = Some(bytes[cursor] as i8),
+                11 => metadata.antenna_id = Some(bytes[cursor]),
+                _ => {}
+            }
+            cursor += size;
         }
-        let (align, size) = radiotap_field_layout(bit);
-        cursor = align_offset(cursor, align);
-        if cursor + size > length {
+        if word & (1 << 31) == 0 {
+            break;
+        }
+        word_offset += 4;
+        word_index += 1;
+        if word_offset + 4 > present_offset {
             return Err(ParseError::MissingRadiotap);
         }
-        match bit {
-            2 => metadata.data_rate_kbps = Some(u32::from(bytes[cursor]) * 500),
-            3 => {
-                metadata.frequency_mhz =
-                    Some(u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]));
-                metadata.channel_flags =
-                    Some(u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]));
-            }
-            5 => metadata.signal_dbm = Some(bytes[cursor] as i8),
-            6 => metadata.noise_dbm = Some(bytes[cursor] as i8),
-            _ => {}
-        }
-        cursor += size;
     }
 
     Ok((metadata, &bytes[length..]))
+}
+
+fn read_present_word(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
 fn parse_addresses(
@@ -481,24 +510,24 @@ fn parse_addresses(
     }
 }
 
-fn radiotap_field_layout(bit: usize) -> (usize, usize) {
+fn radiotap_field_layout(bit: usize) -> Option<(usize, usize)> {
     match bit {
-        0 => (8, 8),
-        1 => (1, 1),
-        2 => (1, 1),
-        3 => (2, 4),
-        4 => (2, 2),
-        5 => (1, 1),
-        6 => (1, 1),
-        7 => (2, 2),
-        8 => (2, 2),
-        9 => (2, 2),
-        10 => (1, 1),
-        11 => (1, 1),
-        12 => (1, 1),
-        13 => (1, 1),
-        14 => (2, 2),
-        _ => (1, 0),
+        0 => Some((8, 8)),
+        1 => Some((1, 1)),
+        2 => Some((1, 1)),
+        3 => Some((2, 4)),
+        4 => Some((2, 2)),
+        5 => Some((1, 1)),
+        6 => Some((1, 1)),
+        7 => Some((2, 2)),
+        8 => Some((2, 2)),
+        9 => Some((2, 2)),
+        10 => Some((1, 1)),
+        11 => Some((1, 1)),
+        12 => Some((1, 1)),
+        13 => Some((1, 1)),
+        14 => Some((2, 2)),
+        _ => None,
     }
 }
 
@@ -697,11 +726,35 @@ pub mod tests {
     fn strips_radiotap_and_extracts_rf_metadata() {
         let frame = detailed_radiotap_beacon_frame();
         let (metadata, payload) = strip_radiotap(&frame).unwrap();
+        assert_eq!(metadata.tsft, None);
         assert_eq!(metadata.signal_dbm, Some(-42));
         assert_eq!(metadata.noise_dbm, Some(-95));
         assert_eq!(metadata.frequency_mhz, Some(2437));
         assert_eq!(metadata.channel_flags, Some(0x00a0));
         assert_eq!(metadata.data_rate_kbps, Some(6_000));
+        assert_eq!(metadata.antenna_id, None);
+        assert!(payload.len() > 24);
+    }
+
+    #[test]
+    fn strips_radiotap_and_extracts_tsft_and_antenna() {
+        let frame = tsft_antenna_radiotap_beacon_frame();
+        let (metadata, payload) = strip_radiotap(&frame).unwrap();
+        assert_eq!(metadata.tsft, Some(0x0102_0304_0506_0708));
+        assert_eq!(metadata.signal_dbm, Some(-42));
+        assert_eq!(metadata.noise_dbm, Some(-95));
+        assert_eq!(metadata.frequency_mhz, Some(2437));
+        assert_eq!(metadata.channel_flags, Some(0x00a0));
+        assert_eq!(metadata.data_rate_kbps, Some(6_000));
+        assert_eq!(metadata.antenna_id, Some(3));
+        assert!(payload.len() > 24);
+    }
+
+    #[test]
+    fn strips_radiotap_with_extended_present_mask() {
+        let frame = extended_mask_radiotap_beacon_frame();
+        let (metadata, payload) = strip_radiotap(&frame).unwrap();
+        assert_eq!(metadata.signal_dbm, Some(-42));
         assert!(payload.len() > 24);
     }
 
@@ -726,7 +779,23 @@ pub mod tests {
         assert_eq!(frame.channel_flags, Some(0x00a0));
         assert_eq!(frame.data_rate_kbps, Some(6_000));
         assert_eq!(frame.raw_len, payload.len());
-        assert_eq!(frame.raw_frame.as_deref(), Some(expected_raw_frame.as_str()));
+        assert_eq!(
+            frame.raw_frame.as_deref(),
+            Some(expected_raw_frame.as_str())
+        );
+    }
+
+    #[test]
+    fn parses_tsft_and_antenna_into_wifi_frame() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: tsft_antenna_radiotap_beacon_frame(),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.tsft, Some(0x0102_0304_0506_0708));
+        assert_eq!(frame.antenna_id, Some(3));
     }
 
     #[test]
@@ -928,6 +997,8 @@ pub mod tests {
             Value::String("ff:ff:ff:ff:ff:ff".to_string())
         );
         assert_eq!(value["signal_dbm"], Value::Number((-42).into()));
+        assert_eq!(value["tsft"], Value::Null);
+        assert_eq!(value["antenna_id"], Value::Null);
         assert_eq!(value["duration_id"], Value::Number(0u64.into()));
         assert_eq!(value["retry"], Value::Bool(false));
         assert_eq!(value["power_save"], Value::Bool(false));
@@ -944,6 +1015,29 @@ pub mod tests {
         let tags = value["tags"].as_array().unwrap();
         assert!(tags.contains(&Value::String("signal:strong".to_string())));
         assert!(tags.contains(&Value::String("threat:potential_evil_twin".to_string())));
+    }
+
+    #[test]
+    fn serializes_tsft_and_antenna_in_audit_entry() {
+        let context = AuditContext {
+            sensor_id: "00:11:22:33:44:55".to_string(),
+            location_id: "North-Wing-Entry".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: tsft_antenna_radiotap_beacon_frame(),
+        };
+        let entry = to_audit_entry(attach_context(decode_frame(&packet).unwrap(), &context));
+        let value = serde_json::to_value(entry).unwrap();
+
+        assert_eq!(
+            value["tsft"],
+            Value::Number(0x0102_0304_0506_0708u64.into())
+        );
+        assert_eq!(value["antenna_id"], Value::Number(3u64.into()));
     }
 
     #[test]
@@ -975,6 +1069,20 @@ pub mod tests {
     fn detailed_radiotap_beacon_frame() -> Vec<u8> {
         let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
         let mut bytes = detailed_radiotap_header();
+        bytes.extend_from_slice(&frame[10..]);
+        bytes
+    }
+
+    fn tsft_antenna_radiotap_beacon_frame() -> Vec<u8> {
+        let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+        let mut bytes = tsft_antenna_radiotap_header();
+        bytes.extend_from_slice(&frame[10..]);
+        bytes
+    }
+
+    fn extended_mask_radiotap_beacon_frame() -> Vec<u8> {
+        let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+        let mut bytes = extended_mask_radiotap_header();
         bytes.extend_from_slice(&frame[10..]);
         bytes
     }
@@ -1035,6 +1143,19 @@ pub mod tests {
         vec![
             0x00, 0x00, 0x10, 0x00, 0x6c, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x85, 0x09, 0xa0, 0x00,
             0xd6, 0xa1,
+        ]
+    }
+
+    fn tsft_antenna_radiotap_header() -> Vec<u8> {
+        vec![
+            0x00, 0x00, 0x19, 0x00, 0x6d, 0x08, 0x00, 0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03,
+            0x02, 0x01, 0x0c, 0x00, 0x85, 0x09, 0xa0, 0x00, 0xd6, 0xa1, 0x03,
+        ]
+    }
+
+    fn extended_mask_radiotap_header() -> Vec<u8> {
+        vec![
+            0x00, 0x00, 0x0d, 0x00, 0x20, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0xd6,
         ]
     }
 

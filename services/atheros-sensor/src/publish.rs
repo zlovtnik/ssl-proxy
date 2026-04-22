@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use ssl_proxy::{
     sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT},
-    transport::QUEUE_FULL_ERROR,
+    transport::ENQUEUE_TIMEOUT_ERROR,
 };
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
@@ -381,13 +381,9 @@ pub async fn reconcile_backlog(
                 %error,
                 "backlog entry publish retry enqueue failed after ingest ledger record"
             );
-            if let Err(persist_err) = persist_publish_failure(
-                backlog,
-                &entry.dedupe_key,
-                entry.payload.clone(),
-                error,
-            )
-            .await
+            if let Err(persist_err) =
+                persist_publish_failure(backlog, &entry.dedupe_key, entry.payload.clone(), error)
+                    .await
             {
                 warn!(
                     dedupe_key = %entry.dedupe_key,
@@ -478,7 +474,7 @@ async fn queue_publish_with_backpressure(
 ) -> Result<(), String> {
     match publisher.enqueue_message(subject, payload) {
         Ok(()) => Ok(()),
-        Err(error) if error == QUEUE_FULL_ERROR => {
+        Err(error) if error == ENQUEUE_TIMEOUT_ERROR => {
             debug!(
                 dedupe_key,
                 subject,
@@ -834,7 +830,7 @@ mod tests {
             let mut queue_full_remaining = self.queue_full_remaining.lock().unwrap();
             if *queue_full_remaining > 0 {
                 *queue_full_remaining -= 1;
-                return Err(QUEUE_FULL_ERROR.to_string());
+                return Err(ENQUEUE_TIMEOUT_ERROR.to_string());
             }
             self.published
                 .lock()
@@ -1024,7 +1020,12 @@ mod tests {
 
         let backlog = SelectiveIngestFailBacklog::new([first_key.clone()]);
         backlog
-            .save_pending(&first_key, "wireless.audit", &first_payload, "nats unavailable")
+            .save_pending(
+                &first_key,
+                "wireless.audit",
+                &first_payload,
+                "nats unavailable",
+            )
             .await
             .unwrap();
         backlog

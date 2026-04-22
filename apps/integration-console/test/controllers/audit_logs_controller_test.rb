@@ -43,6 +43,36 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, audit_log_path("audit-link")
+    assert_includes response.body, "Antenna"
+  end
+
+  test "show renders rf metadata when present" do
+    insert_sync_ingest(
+      dedupe_key: "audit-rf",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "location_id" => "lab",
+        "frame_subtype" => "beacon",
+        "tsft" => 72_623_859_790_382_856,
+        "signal_dbm" => -42,
+        "frequency_mhz" => 2437,
+        "channel_flags" => 160,
+        "data_rate_kbps" => 6000,
+        "antenna_id" => 3
+      }
+    )
+
+    get audit_log_url("audit-rf")
+
+    assert_response :success
+    assert_includes response.body, "RF Metadata"
+    assert_includes response.body, "Frequency MHz"
+    assert_includes response.body, "2437"
+    assert_includes response.body, "Antenna ID"
+    assert_includes response.body, "3"
+    assert_includes response.body, "TSFT"
+    assert_includes response.body, "72623859790382856"
   end
 
   test "show renders raw frame base64 and hex dump" do
@@ -107,7 +137,7 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     insert_sync_ingest(
       dedupe_key: "audit-new",
       observed_at: newer,
-      payload: { "sensor_id" => "sensor-new", "source_mac" => "00:11:22:33:44:66" }
+      payload: { "sensor_id" => "sensor-new", "source_mac" => "00:11:22:33:44:66", "antenna_id" => 3 }
     )
 
     get recent_audit_logs_url(after: older.iso8601)
@@ -117,6 +147,7 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal ["audit-new"], rows.map { |row| row["dedupe_key"] }
     assert_equal "sensor-new", rows.first["sensor_id"]
     assert_equal "XX:XX:XX:XX:44:66", rows.first["source_mac_display"]
+    assert_equal 3, rows.first["antenna_id"]
     assert_equal audit_log_path("audit-new"), rows.first["show_url"]
   end
 end

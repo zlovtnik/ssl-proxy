@@ -19,7 +19,12 @@ class AuditLog < SyncRecord
   def source_mac = payload_value("source_mac")
   def bssid = payload_value("bssid")
   def ssid = payload_value("ssid")
+  def tsft = payload_value("tsft")
   def signal_dbm = payload_value("signal_dbm")
+  def frequency_mhz = payload_value("frequency_mhz")
+  def channel_flags = payload_value("channel_flags")
+  def data_rate_kbps = payload_value("data_rate_kbps")
+  def antenna_id = payload_value("antenna_id")
   def username = payload_value("username")
   def raw_frame = payload_value("raw_frame")
 

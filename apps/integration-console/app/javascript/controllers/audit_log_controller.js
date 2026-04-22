@@ -58,6 +58,7 @@ export default class extends Controller {
     this.appendCell(row, data.ssid || "")
     this.appendCell(row, data.source_mac_display || this.maskMac(data.source_mac) || "")
     this.appendCell(row, data.signal_dbm ?? "")
+    this.appendCell(row, data.antenna_id ?? "")
 
     if (this.hasEmptyTarget) this.emptyTarget.remove()
     this.bodyTarget.prepend(row)

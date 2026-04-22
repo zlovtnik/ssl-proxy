@@ -19,6 +19,31 @@ class AuditLogTest < ActiveSupport::TestCase
     assert_equal raw_frame, entry.raw_frame
   end
 
+  test "rf metadata accessors return payload values" do
+    insert_sync_ingest(
+      dedupe_key: "audit-rf",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "tsft" => 72_623_859_790_382_856,
+        "signal_dbm" => -42,
+        "frequency_mhz" => 2437,
+        "channel_flags" => 160,
+        "data_rate_kbps" => 6000,
+        "antenna_id" => 3
+      }
+    )
+
+    entry = AuditLog.find("audit-rf")
+
+    assert_equal 72_623_859_790_382_856, entry.tsft
+    assert_equal(-42, entry.signal_dbm)
+    assert_equal 2437, entry.frequency_mhz
+    assert_equal 160, entry.channel_flags
+    assert_equal 6000, entry.data_rate_kbps
+    assert_equal 3, entry.antenna_id
+  end
+
   test "raw_frame_hex_dump renders decoded bytes" do
     raw_frame = Base64.strict_encode64([0x00, 0x01, 0x41, 0xff].pack("C*"))
     insert_sync_ingest(

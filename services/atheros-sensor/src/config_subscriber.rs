@@ -340,8 +340,7 @@ mod tests {
     #[test]
     fn parses_nats_endpoint_with_percent_encoded_userinfo() {
         assert_eq!(
-            parse_nats_endpoint("nats://user%40example:p%40ss%3Aword@127.0.0.1:4222")
-                .unwrap(),
+            parse_nats_endpoint("nats://user%40example:p%40ss%3Aword@127.0.0.1:4222").unwrap(),
             NatsEndpoint {
                 address: "127.0.0.1:4222".to_string(),
                 user: Some("user@example".to_string()),

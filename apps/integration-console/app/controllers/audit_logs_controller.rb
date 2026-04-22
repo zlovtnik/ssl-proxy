@@ -52,7 +52,8 @@ class AuditLogsController < ApplicationController
       ssid: entry.ssid,
       source_mac: entry.source_mac,
       source_mac_display: helpers.display_mac(entry.source_mac),
-      signal_dbm: entry.signal_dbm
+      signal_dbm: entry.signal_dbm,
+      antenna_id: entry.antenna_id
     }
   end
 end

@@ -26,6 +26,29 @@
   </table>
 </section>
 
+<% rf_metadata = [
+  ["Signal", @audit_log.signal_dbm],
+  ["Frequency MHz", @audit_log.frequency_mhz],
+  ["Channel flags", @audit_log.channel_flags],
+  ["Data rate kbps", @audit_log.data_rate_kbps],
+  ["Antenna ID", @audit_log.antenna_id],
+  ["TSFT", @audit_log.tsft]
+] %>
+<% if rf_metadata.any? { |_label, value| value.present? } %>
+  <section class="table-wrap" style="margin-top: 16px;">
+    <h2>RF Metadata</h2>
+    <table>
+      <tbody>
+        <% rf_metadata.each do |label, value| %>
+          <% if value.present? %>
+            <tr><th><%= label %></th><td><%= value %></td></tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
 <section class="panel raw-frame-panel" style="margin-top: 16px;">
   <h2>Raw Frame</h2>
   <% if @audit_log.raw_frame.blank? %>

@@ -57,6 +57,10 @@ impl AppConfig {
                 .filter(|value| !value.is_empty()),
             connect_timeout_ms: parse_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000).unwrap_or(2_000),
             publish_timeout_ms: parse_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000).unwrap_or(2_000),
+            publish_queue_capacity: parse_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192)
+                .unwrap_or(8_192),
+            publish_enqueue_timeout_ms: parse_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25)
+                .unwrap_or(25),
             username: std::env::var("SYNC_NATS_USERNAME")
                 .ok()
                 .map(|value| value.trim().to_string())
@@ -86,6 +90,11 @@ impl AppConfig {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox".to_string()),
+            publish_spool_dir: std::env::var("SYNC_PUBLISH_SPOOL_DIR")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox/publish-spool".to_string()),
         };
         let database_url = std::env::var("DATABASE_URL")
             .ok()

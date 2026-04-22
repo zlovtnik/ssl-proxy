@@ -24,6 +24,7 @@
         <th><%= sort_link_to "SSID", :ssid %></th>
         <th><%= sort_link_to "Source", :source_mac %></th>
         <th><%= sort_link_to "Signal", :signal_dbm %></th>
+        <th>Antenna</th>
       </tr>
     </thead>
     <tbody data-audit-log-target="body">
@@ -33,7 +34,7 @@
         <% end %>
       <% else %>
         <tr data-audit-log-target="empty">
-          <td colspan="7" class="empty-state">No audit logs found.</td>
+          <td colspan="8" class="empty-state">No audit logs found.</td>
         </tr>
       <% end %>
     </tbody>
