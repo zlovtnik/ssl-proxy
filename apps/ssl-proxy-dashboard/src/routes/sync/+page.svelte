@@ -76,6 +76,34 @@
           <dd>{status?.publisher.auth_enabled ? 'enabled' : 'disabled'}</dd>
         </div>
         <div>
+          <dt>Queue depth</dt>
+          <dd>
+            {status
+              ? `${status.publisher.queue_depth} / ${status.publisher.queue_capacity}`
+              : 'loading'}
+          </dd>
+        </div>
+        <div>
+          <dt>Queue available</dt>
+          <dd>{status ? status.publisher.queue_available : 'loading'}</dd>
+        </div>
+        <div>
+          <dt>Spool pending</dt>
+          <dd>{status ? status.publisher.spool_pending : 'loading'}</dd>
+        </div>
+        <div>
+          <dt>Total spooled</dt>
+          <dd>{status ? status.publisher.spooled_total : 'loading'}</dd>
+        </div>
+        <div>
+          <dt>Enqueue timeouts</dt>
+          <dd>{status ? status.publisher.enqueue_timeouts_total : 'loading'}</dd>
+        </div>
+        <div>
+          <dt>Spool dir</dt>
+          <dd class="mono">{status?.publisher.spool_dir ?? 'loading'}</dd>
+        </div>
+        <div>
           <dt>Last attempt</dt>
           <dd>{lastAttempt ? formatRelativeTime(lastAttempt) : 'none'}</dd>
         </div>
@@ -184,6 +212,7 @@
     margin: 0;
     color: var(--text-primary);
     text-align: right;
+    overflow-wrap: anywhere;
   }
 
   .table-wrap {

@@ -33,8 +33,8 @@ export default class extends Controller {
     if (this.lastObservedAt) url.searchParams.set("after", this.lastObservedAt)
     url.searchParams.set("limit", "25")
 
-    const response = await fetch(url, { headers: { accept: "application/json" } })
-    if (!response.ok) return
+    const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null)
+    if (!response?.ok) return
 
     const rows = await response.json()
     rows.reverse().forEach((row) => this.prepend(row))

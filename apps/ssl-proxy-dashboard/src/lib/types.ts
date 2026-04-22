@@ -128,6 +128,13 @@ export interface SyncPublisherHealth {
   tls_enabled: boolean;
   inline_payload_max_bytes: number;
   outbox_dir: string;
+  queue_capacity: number;
+  queue_depth: number;
+  queue_available: number;
+  spool_dir: string;
+  spool_pending: number;
+  spooled_total: number;
+  enqueue_timeouts_total: number;
   last_attempt_at?: string;
   last_publish_at?: string;
   last_error?: string;

@@ -69,6 +69,8 @@ pub struct SyncConfig {
     pub nats_url: Option<String>,
     pub connect_timeout_ms: u64,
     pub publish_timeout_ms: u64,
+    pub publish_queue_capacity: usize,
+    pub publish_enqueue_timeout_ms: u64,
     pub username: Option<String>,
     pub password: Option<String>,
     pub tls_enabled: bool,
@@ -78,6 +80,7 @@ pub struct SyncConfig {
     pub tls_client_key_path: Option<String>,
     pub inline_payload_max_bytes: usize,
     pub outbox_dir: String,
+    pub publish_spool_dir: String,
 }
 
 /// Traffic obfuscation settings and prebuilt domain map.
@@ -279,6 +282,11 @@ impl std::fmt::Debug for SyncConfig {
             .field("nats_url", &redact_url_userinfo(self.nats_url.as_deref()))
             .field("connect_timeout_ms", &self.connect_timeout_ms)
             .field("publish_timeout_ms", &self.publish_timeout_ms)
+            .field("publish_queue_capacity", &self.publish_queue_capacity)
+            .field(
+                "publish_enqueue_timeout_ms",
+                &self.publish_enqueue_timeout_ms,
+            )
             .field("username", &self.username)
             .field(
                 "password",
@@ -291,6 +299,7 @@ impl std::fmt::Debug for SyncConfig {
             .field("tls_client_key_path", &self.tls_client_key_path)
             .field("inline_payload_max_bytes", &self.inline_payload_max_bytes)
             .field("outbox_dir", &self.outbox_dir)
+            .field("publish_spool_dir", &self.publish_spool_dir)
             .finish()
     }
 }
@@ -498,6 +507,9 @@ impl Default for Config {
                 tls_client_key_path: None,
                 inline_payload_max_bytes: 2_048,
                 outbox_dir: "/tmp/ssl-proxy-sync-outbox".to_string(),
+                publish_queue_capacity: 8_192,
+                publish_enqueue_timeout_ms: 25,
+                publish_spool_dir: "/tmp/ssl-proxy-sync-outbox/publish-spool".to_string(),
             },
             obfuscation: ObfuscationConfig {
                 enabled: true,
@@ -713,10 +725,28 @@ impl SyncConfig {
             return Err(ConfigError::MissingSyncNatsTlsCaCertPath);
         }
 
+        let outbox_dir = std::env::var("SYNC_OUTBOX_DIR")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "/tmp/ssl-proxy-sync-outbox".to_string());
+        let publish_spool_dir = std::env::var("SYNC_PUBLISH_SPOOL_DIR")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                std::path::Path::new(&outbox_dir)
+                    .join("publish-spool")
+                    .display()
+                    .to_string()
+            });
+
         Ok(Self {
             nats_url,
             connect_timeout_ms: read_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000),
             publish_timeout_ms: read_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000),
+            publish_queue_capacity: read_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192),
+            publish_enqueue_timeout_ms: read_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25),
             username,
             password,
             tls_enabled,
@@ -728,11 +758,8 @@ impl SyncConfig {
             tls_client_cert_path,
             tls_client_key_path,
             inline_payload_max_bytes: read_usize("SYNC_INLINE_PAYLOAD_MAX_BYTES", 2_048),
-            outbox_dir: std::env::var("SYNC_OUTBOX_DIR")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "/tmp/ssl-proxy-sync-outbox".to_string()),
+            outbox_dir,
+            publish_spool_dir,
         })
     }
 }
@@ -1158,6 +1185,9 @@ mod tests {
             "SYNC_NATS_TLS_CLIENT_KEY_PATH",
             "SYNC_INLINE_PAYLOAD_MAX_BYTES",
             "SYNC_OUTBOX_DIR",
+            "SYNC_PUBLISH_QUEUE_CAPACITY",
+            "SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS",
+            "SYNC_PUBLISH_SPOOL_DIR",
         ] {
             std::env::remove_var(key);
         }
@@ -1438,6 +1468,12 @@ mod tests {
         assert_eq!(result.sync.publish_timeout_ms, 2_000);
         assert_eq!(result.sync.inline_payload_max_bytes, 2_048);
         assert_eq!(result.sync.outbox_dir, "/tmp/ssl-proxy-sync-outbox");
+        assert_eq!(result.sync.publish_queue_capacity, 8_192);
+        assert_eq!(result.sync.publish_enqueue_timeout_ms, 25);
+        assert_eq!(
+            result.sync.publish_spool_dir,
+            "/tmp/ssl-proxy-sync-outbox/publish-spool"
+        );
         assert!(result.sync.nats_url.is_none());
 
         std::env::set_var("SYNC_NATS_USERNAME", "proxy-user");
@@ -1448,6 +1484,30 @@ mod tests {
         let result = Config::from_env().unwrap();
         assert_eq!(result.sync.username.as_deref(), Some("proxy-user"));
         assert_eq!(result.sync.password.as_deref(), Some("proxy-pass"));
+    }
+
+    #[test]
+    fn sync_publish_backpressure_config_parses_env() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("SYNC_OUTBOX_DIR", "/tmp/custom-sync-outbox");
+        std::env::set_var("SYNC_PUBLISH_QUEUE_CAPACITY", "4096");
+        std::env::set_var("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", "50");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(result.sync.publish_queue_capacity, 4_096);
+        assert_eq!(result.sync.publish_enqueue_timeout_ms, 50);
+        assert_eq!(
+            result.sync.publish_spool_dir,
+            "/tmp/custom-sync-outbox/publish-spool"
+        );
+
+        std::env::set_var("SYNC_PUBLISH_SPOOL_DIR", "/tmp/custom-spool");
+        let result = Config::from_env().unwrap();
+        assert_eq!(result.sync.publish_spool_dir, "/tmp/custom-spool");
     }
 
     #[test]
