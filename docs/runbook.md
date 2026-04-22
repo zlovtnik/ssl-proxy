@@ -173,7 +173,7 @@ All views are optimized for ADB columnar storage.
 - NATS is part of the compose stack and runs JetStream for sync subjects. The JetStream banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs nats`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
 - `nats-bootstrap` must complete successfully before `zig-coordinator` is healthy. It creates `AUDIT_STREAM` for `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`, plus the `zig-coordinator-scan` durable consumer.
-- `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
+- `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
 Quick sync-plane inspection:
 
@@ -186,6 +186,7 @@ Manual checks:
 ```sh
 docker compose run --rm nats-bootstrap nats --server nats://nats:4222 stream info AUDIT_STREAM
 docker compose run --rm nats-bootstrap nats --server nats://nats:4222 consumer info AUDIT_STREAM zig-coordinator-scan
+docker compose run --rm nats-bootstrap nats --server nats://nats:4222 consumer info AUDIT_STREAM oracle-worker-load
 docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_scan_ingest group by status"
 docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_job; select count(*) from sync_batch;"
 ```

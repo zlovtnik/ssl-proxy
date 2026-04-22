@@ -37,6 +37,12 @@ Cause: Host DNS resolver outage/path failure.
 Fix: Recover host DNS; if image exists locally, use `docker compose up -d --no-build --force-recreate`.
 Retry policy: auto-fix allowed once (`--no-build` fallback).
 
+- `worker_wallet_missing`
+Cause: `oracle-worker` started without mounted Oracle wallet artifacts (`wallet/`), shared libraries (`lib/`), or secret file (`ORACLE_PASS_FILE`).
+Fix: Mount wallet lib and secrets into oracle-worker only.
+Retry policy: manual; remediate mounts, then re-run readiness verification (`docker compose ps`, `docker compose logs oracle-worker`, and `docker compose exec -T oracle-worker /usr/local/bin/oracle-worker healthcheck`). If the signature recurs after one clean retry, apply backoff and escalate to the platform on-call + release owner for deployment pipeline correction.
+Operational note: recurrence means the mount change was not made durable. The release owner must keep compose/env templates and deployment checklists updated so these mounts persist across future deploys.
+
 ## Last Known Good
 - iPhone direct mode prerequisites:
   - `PROFILE_MODE=iphone`

@@ -127,6 +127,10 @@ services:
       - ./secrets:/run/secrets:ro
     environment:
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+      - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
+      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - TNS_ADMIN=/app/wallet
       - LD_LIBRARY_PATH=/app/lib
       - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
@@ -211,6 +215,8 @@ services:
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
       AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      SYNC_LOAD_SUBJECT: ${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+      SYNC_LOAD_CONSUMER: ${SYNC_LOAD_CONSUMER:-oracle-worker-load}
     volumes:
       - ./docker/nats:/config:ro
     entrypoint: ["sh"]

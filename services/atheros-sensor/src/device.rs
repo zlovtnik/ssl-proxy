@@ -38,7 +38,7 @@ fn detect_interface_at(name: &str, root: &Path) -> Result<String, DeviceError> {
 }
 
 pub fn detect_in(root: &Path) -> Result<String, DeviceError> {
-    let mut fallback_wireless = None;
+    let mut wireless_interfaces = Vec::new();
 
     for entry in fs::read_dir(root)? {
         let entry = entry?;
@@ -48,16 +48,22 @@ pub fn detect_in(root: &Path) -> Result<String, DeviceError> {
             continue;
         }
 
-        if driver_name(&interface_path).as_deref() == Some("ath9k_htc") {
-            return Ok(interface);
-        }
+        wireless_interfaces.push((interface, interface_path));
+    }
 
-        if fallback_wireless.is_none() {
-            fallback_wireless = Some(interface);
+    if wireless_interfaces.is_empty() {
+        return Err(DeviceError::NotFound);
+    }
+
+    wireless_interfaces.sort_by(|left, right| left.0.cmp(&right.0));
+
+    for (interface, interface_path) in &wireless_interfaces {
+        if driver_name(interface_path).as_deref() == Some("ath9k_htc") {
+            return Ok(interface.clone());
         }
     }
 
-    fallback_wireless.ok_or(DeviceError::NotFound)
+    Ok(wireless_interfaces[0].0.clone())
 }
 
 fn is_wireless_interface(interface_path: &Path) -> bool {
@@ -160,5 +166,27 @@ mod tests {
         std::os::unix::fs::symlink(&ath_driver, wlan1.join("driver")).unwrap();
 
         assert_eq!(detect_in(dir.path()).unwrap(), "wlan1");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deterministic_fallback_uses_sorted_wireless_interface_name() {
+        let dir = tempdir().unwrap();
+
+        let wlan2 = dir.path().join("wlan2/device");
+        let wlan0 = dir.path().join("wlan0/device");
+        let iwl_driver = dir.path().join("drivers/iwlwifi");
+        let rtl_driver = dir.path().join("drivers/rtl8xxxu");
+
+        fs::create_dir_all(&wlan2).unwrap();
+        fs::create_dir_all(dir.path().join("wlan2/wireless")).unwrap();
+        fs::create_dir_all(&wlan0).unwrap();
+        fs::create_dir_all(dir.path().join("wlan0/wireless")).unwrap();
+        fs::create_dir_all(&iwl_driver).unwrap();
+        fs::create_dir_all(&rtl_driver).unwrap();
+        std::os::unix::fs::symlink(&iwl_driver, wlan2.join("driver")).unwrap();
+        std::os::unix::fs::symlink(&rtl_driver, wlan0.join("driver")).unwrap();
+
+        assert_eq!(detect_in(dir.path()).unwrap(), "wlan0");
     }
 }

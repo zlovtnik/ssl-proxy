@@ -145,28 +145,30 @@ BEGIN
   END IF;
 
   BEGIN
-    EXECUTE IMMEDIATE 'ALTER TABLE payload_audit DROP CONSTRAINT payload_audit_payload_present_ck';
+    BEGIN
+      EXECUTE IMMEDIATE 'ALTER TABLE payload_audit DROP CONSTRAINT payload_audit_payload_present_ck';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLCODE != -2443 THEN
+          RAISE;
+        END IF;
+    END;
+
+    EXECUTE IMMEDIATE q'[
+      ALTER TABLE payload_audit
+      ADD CONSTRAINT payload_audit_payload_present_ck
+      CHECK (payload_bytes IS NOT NULL)
+      ENABLE VALIDATE
+    ]';
   EXCEPTION
     WHEN OTHERS THEN
-      IF SQLCODE != -2443 THEN
-        RAISE;
-      END IF;
+      log_migration_audit(
+        p_migration_name => 'V012__constraint_consistency_validation_ddl.sql',
+        p_sqlcode => SQLCODE,
+        p_sqlerrm => SQLERRM,
+        p_context => 'payload_audit_payload_present_ck DDL failed'
+      );
+      RAISE;
   END;
-
-  EXECUTE IMMEDIATE q'[
-    ALTER TABLE payload_audit
-    ADD CONSTRAINT payload_audit_payload_present_ck
-    CHECK (payload_bytes IS NOT NULL)
-    ENABLE VALIDATE
-  ]';
-EXCEPTION
-  WHEN OTHERS THEN
-    log_migration_audit(
-      p_migration_name => 'V012__constraint_consistency_validation_ddl.sql',
-      p_sqlcode => SQLCODE,
-      p_sqlerrm => SQLERRM,
-      p_context => 'payload_audit_payload_present_ck DDL failed'
-    );
-    RAISE;
 END;
 /

@@ -332,7 +332,7 @@ pub async fn reconcile_backlog(
                     .and_then(|value| value.as_str())
                     .map(str::to_string)
             });
-        backlog
+        if let Err(backlog_err) = backlog
             .record_ingest(IngestRecord {
                 dedupe_key: &entry.dedupe_key,
                 stream_name: &entry.stream_name,
@@ -343,7 +343,30 @@ pub async fn reconcile_backlog(
                 producer: "atheros-sensor",
                 event_kind: event_kind.as_deref(),
             })
-            .await?;
+            .await
+        {
+            let error = format!("record sync ingest ledger: {backlog_err}");
+            warn!(
+                dedupe_key = %entry.dedupe_key,
+                stream_name = %entry.stream_name,
+                attempt_count = entry.attempt_count,
+                backlog_error = %backlog_err,
+                "backlog entry ingest ledger record failed"
+            );
+            if let Err(persist_err) =
+                persist_publish_failure(backlog, &entry.dedupe_key, entry.payload.clone(), error)
+                    .await
+            {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    persist_error = %persist_err,
+                    "failed to persist backlog entry after ingest ledger failure"
+                );
+            }
+            continue;
+        }
 
         if let Err(error) =
             enqueue_prepared_publish(publisher, &entry.payload, &entry.dedupe_key, &prepared).await
@@ -355,13 +378,22 @@ pub async fn reconcile_backlog(
                 %error,
                 "backlog entry publish retry enqueue failed after ingest ledger record"
             );
-            persist_publish_failure(
+            if let Err(persist_err) = persist_publish_failure(
                 backlog,
                 &entry.dedupe_key,
                 entry.payload.clone(),
                 error,
             )
-            .await?;
+            .await
+            {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    persist_error = %persist_err,
+                    "failed to persist backlog entry after publish retry enqueue failure"
+                );
+            }
             continue;
         }
         backlog.mark_synced(&entry.dedupe_key).await?;
@@ -405,20 +437,6 @@ async fn enqueue_prepared_publish(
 ) -> Result<(), String> {
     queue_publish_with_backpressure(
         publisher,
-        "publish_audit",
-        "wireless.audit",
-        payload,
-        dedupe_key,
-    )
-    .await?;
-    debug!(
-        dedupe_key,
-        subject = "wireless.audit",
-        payload_bytes = payload.len(),
-        "queued audit payload"
-    );
-    queue_publish_with_backpressure(
-        publisher,
         "publish_scan_request",
         SYNC_SCAN_REQUEST_SUBJECT,
         &prepared.request_payload,
@@ -430,6 +448,20 @@ async fn enqueue_prepared_publish(
         subject = SYNC_SCAN_REQUEST_SUBJECT,
         payload_bytes = prepared.request_payload.len(),
         "queued scan request"
+    );
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_audit",
+        "wireless.audit",
+        payload,
+        dedupe_key,
+    )
+    .await?;
+    debug!(
+        dedupe_key,
+        subject = "wireless.audit",
+        payload_bytes = payload.len(),
+        "queued audit payload"
     );
     Ok(())
 }
@@ -525,6 +557,7 @@ fn put_memory_backlog(
 mod tests {
     use base64::Engine;
     use chrono::NaiveTime;
+    use std::collections::HashSet;
     use std::sync::{MutexGuard, OnceLock};
 
     use super::*;
@@ -647,6 +680,75 @@ mod tests {
         }
     }
 
+    struct SelectiveIngestFailBacklog {
+        rows: Mutex<Vec<BacklogEntry>>,
+        ingest_rows: Mutex<Vec<String>>,
+        failing_keys: HashSet<String>,
+    }
+
+    impl SelectiveIngestFailBacklog {
+        fn new(failing_keys: impl IntoIterator<Item = String>) -> Self {
+            Self {
+                rows: Mutex::new(Vec::new()),
+                ingest_rows: Mutex::new(Vec::new()),
+                failing_keys: failing_keys.into_iter().collect(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BacklogStore for SelectiveIngestFailBacklog {
+        async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            if self.failing_keys.contains(record.dedupe_key) {
+                return Err(BacklogError::InvalidDatabaseUrl(
+                    "ingest ledger unavailable".to_string(),
+                ));
+            }
+
+            self.ingest_rows
+                .lock()
+                .unwrap()
+                .push(record.dedupe_key.to_string());
+            Ok(())
+        }
+
+        async fn save_pending(
+            &self,
+            dedupe_key: &str,
+            stream_name: &str,
+            payload: &str,
+            _error: &str,
+        ) -> Result<(), BacklogError> {
+            let mut rows = self.rows.lock().unwrap();
+            if let Some(existing) = rows.iter_mut().find(|row| row.dedupe_key == dedupe_key) {
+                existing.stream_name = stream_name.to_string();
+                existing.payload = payload.to_string();
+                existing.attempt_count += 1;
+                return Ok(());
+            }
+
+            rows.push(BacklogEntry {
+                dedupe_key: dedupe_key.to_string(),
+                stream_name: stream_name.to_string(),
+                payload: payload.to_string(),
+                attempt_count: 1,
+            });
+            Ok(())
+        }
+
+        async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
+            Ok(self.rows.lock().unwrap().clone())
+        }
+
+        async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError> {
+            self.rows
+                .lock()
+                .unwrap()
+                .retain(|entry| entry.dedupe_key != dedupe_key);
+            Ok(())
+        }
+    }
+
     fn clear_memory_state() {
         MEMORY_BACKLOG.lock().unwrap().clear();
         *CIRCUIT_BREAKER.lock().unwrap() = None;
@@ -690,8 +792,8 @@ mod tests {
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 2);
-        assert_eq!(published[0].0, "wireless.audit");
-        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[1].0, "wireless.audit");
         assert!(backlog.rows.lock().unwrap().is_empty());
         let ingest_rows = backlog.ingest_rows.lock().unwrap();
         assert_eq!(ingest_rows.len(), 1);
@@ -773,8 +875,8 @@ mod tests {
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 2);
-        assert_eq!(published[0].0, "wireless.audit");
-        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[1].0, "wireless.audit");
     }
 
     #[tokio::test]
@@ -900,6 +1002,60 @@ mod tests {
         assert!(rows.iter().any(|row| row.dedupe_key == key));
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
         assert!(publisher.published.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_ingest_failure_is_persisted_and_processing_continues() {
+        let _guard = test_lock();
+        clear_memory_state();
+
+        let mut first = entry();
+        first.sequence_number = Some(1);
+        let first_payload = serde_json::to_string(&first).unwrap();
+        let first_key = dedupe_key(&first_payload);
+
+        let mut second = entry();
+        second.sequence_number = Some(2);
+        let second_payload = serde_json::to_string(&second).unwrap();
+        let second_key = dedupe_key(&second_payload);
+
+        let backlog = SelectiveIngestFailBacklog::new([first_key.clone()]);
+        backlog
+            .save_pending(&first_key, "wireless.audit", &first_payload, "nats unavailable")
+            .await
+            .unwrap();
+        backlog
+            .save_pending(
+                &second_key,
+                "wireless.audit",
+                &second_payload,
+                "nats unavailable",
+            )
+            .await
+            .unwrap();
+
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+
+        reconcile_backlog(
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(None, None, None, None),
+        )
+        .await
+        .unwrap();
+
+        let pending = backlog.rows.lock().unwrap().clone();
+        assert!(pending.iter().any(|row| row.dedupe_key == first_key));
+        assert!(!pending.iter().any(|row| row.dedupe_key == second_key));
+
+        let ingested = backlog.ingest_rows.lock().unwrap().clone();
+        assert_eq!(ingested, vec![second_key]);
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 2);
     }
 
     #[tokio::test]
