@@ -1,3 +1,5 @@
+require "base64"
+
 class AuditLog < SyncRecord
   self.table_name = "sync_scan_ingest"
   self.primary_key = "dedupe_key"
@@ -19,6 +21,27 @@ class AuditLog < SyncRecord
   def ssid = payload_value("ssid")
   def signal_dbm = payload_value("signal_dbm")
   def username = payload_value("username")
+  def raw_frame = payload_value("raw_frame")
+
+  def raw_frame_bytes
+    return if raw_frame.blank?
+
+    Base64.strict_decode64(raw_frame)
+  rescue ArgumentError
+    nil
+  end
+
+  def raw_frame_hex_dump
+    bytes = raw_frame_bytes
+    return unless bytes
+
+    bytes.bytes.each_slice(16).with_index.map do |slice, index|
+      offset = index * 16
+      hex = slice.map { |byte| format("%02x", byte) }.join(" ")
+      ascii = slice.map { |byte| byte.between?(32, 126) ? byte.chr : "." }.join
+      format("%04x  %-47s  |%s|", offset, hex, ascii)
+    end.join("\n")
+  end
 
   # For aggregate query results
   def event_count

@@ -1,0 +1,44 @@
+<% content_for :title, "Audit Log #{@audit_log.dedupe_key}" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<p><%= link_to "Back to audit logs", audit_logs_path %></p>
+
+<h1>Audit Log</h1>
+
+<section class="grid grid-3">
+  <div class="metric"><div>Observed</div><div><%= @audit_log.observed_at %></div></div>
+  <div class="metric"><div>Sensor</div><div><%= @audit_log.sensor_id || "unknown" %></div></div>
+  <div class="metric"><div>Subtype</div><div><%= @audit_log.frame_subtype || @audit_log.event_type || "event" %></div></div>
+</section>
+
+<section class="table-wrap" style="margin-top: 16px;">
+  <h2>Metadata</h2>
+  <table>
+    <tbody>
+      <tr><th>Dedupe key</th><td><%= @audit_log.dedupe_key %></td></tr>
+      <tr><th>Location</th><td><%= @audit_log.location_id %></td></tr>
+      <tr><th>SSID</th><td><%= @audit_log.ssid %></td></tr>
+      <tr><th>BSSID</th><td><%= display_mac(@audit_log.bssid) %></td></tr>
+      <tr><th>Source MAC</th><td><%= display_mac(@audit_log.source_mac) %></td></tr>
+      <tr><th>Signal</th><td><%= @audit_log.signal_dbm %></td></tr>
+      <tr><th>Username</th><td><%= @audit_log.username %></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel raw-frame-panel" style="margin-top: 16px;">
+  <h2>Raw Frame</h2>
+  <% if @audit_log.raw_frame.blank? %>
+    <p class="empty-state">Raw frame not available for this audit log.</p>
+  <% else %>
+    <h3>Base64</h3>
+    <pre class="raw-block"><%= @audit_log.raw_frame %></pre>
+
+    <% if (hex_dump = @audit_log.raw_frame_hex_dump).present? %>
+      <h3>Hex dump</h3>
+      <pre class="raw-block"><%= hex_dump %></pre>
+    <% else %>
+      <p class="status-alert">Raw frame could not be decoded as base64.</p>
+    <% end %>
+  <% end %>
+</section>

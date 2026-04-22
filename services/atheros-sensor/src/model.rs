@@ -31,6 +31,7 @@ pub struct WifiFrame {
     pub to_ds: bool,
     pub from_ds: bool,
     pub raw_len: usize,
+    pub raw_frame: Option<String>,
     pub tags: Vec<String>,
     pub username_hint: Option<String>,
     pub identity_source_hint: Option<String>,
@@ -83,6 +84,7 @@ pub struct AuditEntry {
     pub to_ds: Option<bool>,
     pub from_ds: Option<bool>,
     pub raw_len: usize,
+    pub raw_frame: Option<String>,
     pub tags: Vec<String>,
     #[serde(serialize_with = "serialize_option_as_null")]
     pub device_id: Option<String>,

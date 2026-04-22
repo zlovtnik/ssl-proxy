@@ -8,7 +8,12 @@
   <%= form.submit "Search" %>
 <% end %>
 
-<div class="table-wrap">
+<div
+  class="table-wrap"
+  data-controller="audit-log"
+  data-audit-log-active-value="<%= @live_updates %>"
+  data-audit-log-recent-url-value="<%= recent_audit_logs_path %>"
+>
   <table>
     <thead>
       <tr>
@@ -21,21 +26,13 @@
         <th><%= sort_link_to "Signal", :signal_dbm %></th>
       </tr>
     </thead>
-    <tbody>
+    <tbody data-audit-log-target="body">
       <% if @audit_logs.any? %>
         <% @audit_logs.each do |entry| %>
-          <tr>
-            <td><%= entry.observed_at %></td>
-            <td><%= entry.sensor_id %></td>
-            <td><%= entry.location_id %></td>
-            <td><%= entry.frame_subtype %></td>
-            <td><%= entry.ssid %></td>
-            <td><%= display_mac(entry.source_mac) %></td>
-            <td><%= entry.signal_dbm %></td>
-          </tr>
+          <%= render "row", entry: entry %>
         <% end %>
       <% else %>
-        <tr>
+        <tr data-audit-log-target="empty">
           <td colspan="7" class="empty-state">No audit logs found.</td>
         </tr>
       <% end %>

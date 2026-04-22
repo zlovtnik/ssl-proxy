@@ -7,6 +7,8 @@ use ieee80211::GenericFrame;
 use lru::LruCache;
 use thiserror::Error;
 
+use base64::{engine::general_purpose::STANDARD, Engine};
+
 use crate::model::{AuditContext, AuditEntry, EnrichedFrame, RawPacket, WifiFrame};
 
 const LLC_SNAP_EAPOL_PREFIX: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e];
@@ -253,6 +255,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         to_ds,
         from_ds,
         raw_len: frame_bytes.len(),
+        raw_frame: Some(STANDARD.encode(frame_bytes)),
         tags,
         username_hint,
         identity_source_hint,
@@ -343,6 +346,7 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         to_ds: Some(frame.to_ds),
         from_ds: Some(frame.from_ds),
         raw_len: frame.raw_len,
+        raw_frame: frame.raw_frame,
         tags,
         device_id: None,
         username,
@@ -707,6 +711,8 @@ pub mod tests {
             observed_at: Utc::now(),
             data: detailed_radiotap_beacon_frame(),
         };
+        let (_, payload) = strip_radiotap(&packet.data).unwrap();
+        let expected_raw_frame = STANDARD.encode(payload);
         let frame = decode_frame(&packet).unwrap();
         assert_eq!(frame.frame_subtype, "beacon");
         assert_eq!(frame.ssid.as_deref(), Some("CorpWiFi"));
@@ -719,6 +725,8 @@ pub mod tests {
         assert_eq!(frame.frequency_mhz, Some(2437));
         assert_eq!(frame.channel_flags, Some(0x00a0));
         assert_eq!(frame.data_rate_kbps, Some(6_000));
+        assert_eq!(frame.raw_len, payload.len());
+        assert_eq!(frame.raw_frame.as_deref(), Some(expected_raw_frame.as_str()));
     }
 
     #[test]
@@ -902,6 +910,8 @@ pub mod tests {
             observed_at: Utc::now(),
             data: beacon_radiotap_frame(),
         };
+        let (_, payload) = strip_radiotap(&packet.data).unwrap();
+        let expected_raw_frame = STANDARD.encode(payload);
         let entry = to_audit_entry(attach_context(decode_frame(&packet).unwrap(), &context));
         let value = serde_json::to_value(entry).unwrap();
         assert_eq!(
@@ -924,6 +934,7 @@ pub mod tests {
         assert_eq!(value["protected"], Value::Bool(false));
         assert_eq!(value["to_ds"], Value::Bool(false));
         assert_eq!(value["from_ds"], Value::Bool(false));
+        assert_eq!(value["raw_frame"], Value::String(expected_raw_frame));
         assert_eq!(value["username"], Value::Null);
         assert_eq!(
             value["identity_source"],

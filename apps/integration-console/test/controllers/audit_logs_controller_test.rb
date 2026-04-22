@@ -1,4 +1,6 @@
 require "test_helper"
+require "base64"
+require "json"
 
 class AuditLogsControllerTest < ActionDispatch::IntegrationTest
   setup do
@@ -25,5 +27,96 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "sensor-50"
     assert_no_match(/sensor-04/, response.body)
     assert_includes response.body, "Page 2 of 2"
+  end
+
+  test "index links rows to audit log detail" do
+    insert_sync_ingest(
+      dedupe_key: "audit-link",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "frame_subtype" => "beacon"
+      }
+    )
+
+    get audit_logs_url
+
+    assert_response :success
+    assert_includes response.body, audit_log_path("audit-link")
+  end
+
+  test "show renders raw frame base64 and hex dump" do
+    raw_frame = Base64.strict_encode64([0x00, 0x01, 0x41, 0xff].pack("C*"))
+    insert_sync_ingest(
+      dedupe_key: "audit-raw",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "location_id" => "lab",
+        "frame_subtype" => "beacon",
+        "raw_frame" => raw_frame
+      }
+    )
+
+    get audit_log_url("audit-raw")
+
+    assert_response :success
+    assert_includes response.body, "Raw Frame"
+    assert_includes response.body, raw_frame
+    assert_includes response.body, "0000"
+    assert_includes response.body, "00 01 41 ff"
+  end
+
+  test "show handles legacy audit logs without raw frame" do
+    insert_sync_ingest(
+      dedupe_key: "audit-legacy",
+      observed_at: Time.current,
+      payload: { "sensor_id" => "sensor-1" }
+    )
+
+    get audit_log_url("audit-legacy")
+
+    assert_response :success
+    assert_includes response.body, "Raw frame not available"
+  end
+
+  test "show handles invalid raw frame payloads" do
+    insert_sync_ingest(
+      dedupe_key: "audit-invalid",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "raw_frame" => "not base64"
+      }
+    )
+
+    get audit_log_url("audit-invalid")
+
+    assert_response :success
+    assert_includes response.body, "Raw frame could not be decoded"
+  end
+
+  test "recent returns newest persisted audit rows after cursor" do
+    older = 2.minutes.ago
+    newer = 1.minute.ago
+    insert_sync_ingest(
+      dedupe_key: "audit-old",
+      observed_at: older,
+      payload: { "sensor_id" => "sensor-old", "source_mac" => "00:11:22:33:44:55" }
+    )
+    insert_sync_ingest(
+      dedupe_key: "audit-new",
+      observed_at: newer,
+      payload: { "sensor_id" => "sensor-new", "source_mac" => "00:11:22:33:44:66" }
+    )
+
+    get recent_audit_logs_url(after: older.iso8601)
+
+    assert_response :success
+    rows = JSON.parse(response.body)
+    assert_equal ["audit-new"], rows.map { |row| row["dedupe_key"] }
+    assert_equal "sensor-new", rows.first["sensor_id"]
+    assert_equal "XX:XX:XX:XX:44:66", rows.first["source_mac_display"]
+    assert_equal audit_log_path("audit-new"), rows.first["show_url"]
   end
 end
