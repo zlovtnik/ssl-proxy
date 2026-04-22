@@ -30,6 +30,24 @@ pub struct ResolvedIdentity {
     pub tags: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RadiotapMetadata {
+    pub signal_dbm: Option<i8>,
+    pub noise_dbm: Option<i8>,
+    pub frequency_mhz: Option<u16>,
+    pub channel_flags: Option<u16>,
+    pub data_rate_kbps: Option<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MacAddresses {
+    bssid: Option<String>,
+    source_mac: Option<String>,
+    destination_mac: Option<String>,
+    transmitter_mac: Option<String>,
+    receiver_mac: Option<String>,
+}
+
 pub struct IdentityCache {
     mac_to_username: LruCache<String, String>,
     ssid_to_bssids: LruCache<String, Vec<String>>,
@@ -142,12 +160,13 @@ impl IdentityCache {
 }
 
 pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
-    let (signal_dbm, frame_bytes) = strip_radiotap(&packet.data)?;
+    let (radiotap, frame_bytes) = strip_radiotap(&packet.data)?;
     if frame_bytes.len() < 24 {
         return Err(ParseError::MissingFrameHeader);
     }
 
     let frame_control = u16::from_le_bytes([frame_bytes[0], frame_bytes[1]]);
+    let duration_id = u16::from_le_bytes([frame_bytes[2], frame_bytes[3]]);
     let frame_type = ((frame_control >> 2) & 0x3) as u8;
     if frame_type == 1 {
         return Err(ParseError::UnsupportedControlFrame);
@@ -160,12 +179,16 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
 
     let subtype = ((frame_control >> 4) & 0x0f) as u8;
     let frame_subtype = frame_subtype_name(frame_type, subtype).to_string();
-    let (bssid, source_mac, destination_mac) =
-        parse_addresses(frame_type, frame_control, frame_bytes)?;
+    let addresses = parse_addresses(frame_type, frame_control, frame_bytes)?;
     let sequence_number = Some(u16::from_le_bytes([frame_bytes[22], frame_bytes[23]]) >> 4);
     let ssid = extract_ssid(frame_type, subtype, frame_bytes);
     let username_hint = extract_eap_identity(frame_type, frame_control, subtype, frame_bytes);
     let identity_source_hint = username_hint.as_ref().map(|_| "eap_identity".to_string());
+    let retry = frame_control & (1 << 11) != 0;
+    let power_save = frame_control & (1 << 12) != 0;
+    let protected = frame_control & (1 << 14) != 0;
+    let to_ds = frame_control & (1 << 8) != 0;
+    let from_ds = frame_control & (1 << 9) != 0;
 
     let mut tags = vec![
         "wifi".to_string(),
@@ -175,13 +198,19 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     if frame_type == 2 {
         tags.push(data_direction_tag(frame_control).to_string());
     }
-    if frame_control & (1 << 11) != 0 {
+    if retry {
         tags.push("retry".to_string());
     }
-    if frame_control & (1 << 14) != 0 {
+    if power_save {
+        tags.push("power_save".to_string());
+    }
+    if protected {
         tags.push("protected".to_string());
     }
-    if let (Some(src), Some(dst)) = (source_mac.as_ref(), destination_mac.as_ref()) {
+    if let (Some(src), Some(dst)) = (
+        addresses.source_mac.as_ref(),
+        addresses.destination_mac.as_ref(),
+    ) {
         tags.push(format!("flow:{src}>{dst}"));
     }
     if username_hint.is_some() {
@@ -189,7 +218,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         tags.push("identity:eap_response".to_string());
     }
     if frame_subtype == "probe_response" {
-        if let Some(dst) = destination_mac.as_deref() {
+        if let Some(dst) = addresses.destination_mac.as_deref() {
             if is_locally_administered_mac(dst) {
                 push_tag(&mut tags, "threat:karma_probe_response");
                 push_tag(&mut tags, "identity:randomized_mac");
@@ -204,13 +233,25 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
             2 => "wifi_data_frame".to_string(),
             _ => "wifi_frame".to_string(),
         },
-        bssid,
-        source_mac,
-        destination_mac,
+        bssid: addresses.bssid,
+        source_mac: addresses.source_mac,
+        destination_mac: addresses.destination_mac,
+        transmitter_mac: addresses.transmitter_mac,
+        receiver_mac: addresses.receiver_mac,
         ssid,
         frame_subtype,
-        signal_dbm,
+        signal_dbm: radiotap.signal_dbm,
+        noise_dbm: radiotap.noise_dbm,
+        frequency_mhz: radiotap.frequency_mhz,
+        channel_flags: radiotap.channel_flags,
+        data_rate_kbps: radiotap.data_rate_kbps,
         sequence_number,
+        duration_id,
+        retry,
+        power_save,
+        protected,
+        to_ds,
+        from_ds,
         raw_len: frame_bytes.len(),
         tags,
         username_hint,
@@ -285,10 +326,22 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         bssid: frame.bssid,
         source_mac: frame.source_mac,
         destination_mac: frame.destination_mac,
+        transmitter_mac: frame.transmitter_mac,
+        receiver_mac: frame.receiver_mac,
         ssid: frame.ssid,
         frame_subtype: frame.frame_subtype,
         signal_dbm: frame.signal_dbm,
+        noise_dbm: frame.noise_dbm,
+        frequency_mhz: frame.frequency_mhz,
+        channel_flags: frame.channel_flags,
+        data_rate_kbps: frame.data_rate_kbps,
         sequence_number: frame.sequence_number,
+        duration_id: Some(frame.duration_id),
+        retry: Some(frame.retry),
+        power_save: Some(frame.power_save),
+        protected: Some(frame.protected),
+        to_ds: Some(frame.to_ds),
+        from_ds: Some(frame.from_ds),
         raw_len: frame.raw_len,
         tags,
         device_id: None,
@@ -310,7 +363,7 @@ fn is_locally_administered_mac(mac: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn strip_radiotap(bytes: &[u8]) -> Result<(Option<i8>, &[u8]), ParseError> {
+pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseError> {
     if bytes.len() < 8 {
         return Err(ParseError::MissingRadiotap);
     }
@@ -323,7 +376,7 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(Option<i8>, &[u8]), ParseError> {
     let mut offset = 4usize;
     let mut present_words = Vec::new();
     loop {
-        if offset + 4 > bytes.len() {
+        if offset + 4 > length {
             return Err(ParseError::MissingRadiotap);
         }
         let word = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
@@ -335,7 +388,7 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(Option<i8>, &[u8]), ParseError> {
     }
 
     let mut cursor = offset;
-    let mut signal_dbm = None;
+    let mut metadata = RadiotapMetadata::default();
     let present = present_words.first().copied().unwrap_or_default();
     for bit in 0..15 {
         if present & (1 << bit) == 0 {
@@ -344,41 +397,82 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(Option<i8>, &[u8]), ParseError> {
         let (align, size) = radiotap_field_layout(bit);
         cursor = align_offset(cursor, align);
         if cursor + size > length {
-            break;
+            return Err(ParseError::MissingRadiotap);
         }
-        if bit == 5 {
-            signal_dbm = Some(bytes[cursor] as i8);
+        match bit {
+            2 => metadata.data_rate_kbps = Some(u32::from(bytes[cursor]) * 500),
+            3 => {
+                metadata.frequency_mhz =
+                    Some(u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]));
+                metadata.channel_flags =
+                    Some(u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]));
+            }
+            5 => metadata.signal_dbm = Some(bytes[cursor] as i8),
+            6 => metadata.noise_dbm = Some(bytes[cursor] as i8),
+            _ => {}
         }
         cursor += size;
     }
 
-    Ok((signal_dbm, &bytes[length..]))
+    Ok((metadata, &bytes[length..]))
 }
 
 fn parse_addresses(
     frame_type: u8,
     frame_control: u16,
     frame_bytes: &[u8],
-) -> Result<(Option<String>, Option<String>, Option<String>), ParseError> {
+) -> Result<MacAddresses, ParseError> {
     let addr1 = format_mac(&frame_bytes[4..10]);
     let addr2 = format_mac(&frame_bytes[10..16]);
     let addr3 = format_mac(&frame_bytes[16..22]);
+    let receiver_mac = Some(addr1.clone());
+    let transmitter_mac = Some(addr2.clone());
     if frame_type == 0 {
-        return Ok((Some(addr3), Some(addr2), Some(addr1)));
+        return Ok(MacAddresses {
+            bssid: Some(addr3),
+            source_mac: Some(addr2),
+            destination_mac: Some(addr1),
+            transmitter_mac,
+            receiver_mac,
+        });
     }
 
     let to_ds = frame_control & (1 << 8) != 0;
     let from_ds = frame_control & (1 << 9) != 0;
     match (to_ds, from_ds) {
-        (false, false) => Ok((Some(addr3), Some(addr2), Some(addr1))),
-        (true, false) => Ok((Some(addr1), Some(addr2), Some(addr3))),
-        (false, true) => Ok((Some(addr2), Some(addr3), Some(addr1))),
+        (false, false) => Ok(MacAddresses {
+            bssid: Some(addr3),
+            source_mac: Some(addr2),
+            destination_mac: Some(addr1),
+            transmitter_mac,
+            receiver_mac,
+        }),
+        (true, false) => Ok(MacAddresses {
+            bssid: Some(addr1),
+            source_mac: Some(addr2),
+            destination_mac: Some(addr3),
+            transmitter_mac,
+            receiver_mac,
+        }),
+        (false, true) => Ok(MacAddresses {
+            bssid: Some(addr2),
+            source_mac: Some(addr3),
+            destination_mac: Some(addr1),
+            transmitter_mac,
+            receiver_mac,
+        }),
         (true, true) => {
             if frame_bytes.len() < 30 {
                 return Err(ParseError::MissingFrameHeader);
             }
             let addr4 = format_mac(&frame_bytes[24..30]);
-            Ok((None, Some(addr4), Some(addr3)))
+            Ok(MacAddresses {
+                bssid: None,
+                source_mac: Some(addr4),
+                destination_mac: Some(addr3),
+                transmitter_mac,
+                receiver_mac,
+            })
         }
     }
 }
@@ -586,8 +680,24 @@ pub mod tests {
     #[test]
     fn strips_radiotap_and_extracts_signal() {
         let frame = beacon_radiotap_frame();
-        let (signal, payload) = strip_radiotap(&frame).unwrap();
-        assert_eq!(signal, Some(-42));
+        let (metadata, payload) = strip_radiotap(&frame).unwrap();
+        assert_eq!(metadata.signal_dbm, Some(-42));
+        assert_eq!(metadata.noise_dbm, None);
+        assert_eq!(metadata.frequency_mhz, None);
+        assert_eq!(metadata.channel_flags, None);
+        assert_eq!(metadata.data_rate_kbps, None);
+        assert!(payload.len() > 24);
+    }
+
+    #[test]
+    fn strips_radiotap_and_extracts_rf_metadata() {
+        let frame = detailed_radiotap_beacon_frame();
+        let (metadata, payload) = strip_radiotap(&frame).unwrap();
+        assert_eq!(metadata.signal_dbm, Some(-42));
+        assert_eq!(metadata.noise_dbm, Some(-95));
+        assert_eq!(metadata.frequency_mhz, Some(2437));
+        assert_eq!(metadata.channel_flags, Some(0x00a0));
+        assert_eq!(metadata.data_rate_kbps, Some(6_000));
         assert!(payload.len() > 24);
     }
 
@@ -595,12 +705,20 @@ pub mod tests {
     fn parses_beacon_frame() {
         let packet = RawPacket {
             observed_at: Utc::now(),
-            data: beacon_radiotap_frame(),
+            data: detailed_radiotap_beacon_frame(),
         };
         let frame = decode_frame(&packet).unwrap();
         assert_eq!(frame.frame_subtype, "beacon");
         assert_eq!(frame.ssid.as_deref(), Some("CorpWiFi"));
+        assert_eq!(frame.source_mac.as_deref(), Some("10:20:30:40:50:60"));
         assert_eq!(frame.destination_mac.as_deref(), Some("ff:ff:ff:ff:ff:ff"));
+        assert_eq!(frame.transmitter_mac.as_deref(), Some("10:20:30:40:50:60"));
+        assert_eq!(frame.receiver_mac.as_deref(), Some("ff:ff:ff:ff:ff:ff"));
+        assert_eq!(frame.signal_dbm, Some(-42));
+        assert_eq!(frame.noise_dbm, Some(-95));
+        assert_eq!(frame.frequency_mhz, Some(2437));
+        assert_eq!(frame.channel_flags, Some(0x00a0));
+        assert_eq!(frame.data_rate_kbps, Some(6_000));
     }
 
     #[test]
@@ -641,7 +759,71 @@ pub mod tests {
         assert_eq!(frame.source_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
         assert_eq!(frame.destination_mac.as_deref(), Some("22:33:44:55:66:77"));
         assert_eq!(frame.bssid.as_deref(), Some("10:20:30:40:50:60"));
+        assert_eq!(frame.transmitter_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
+        assert_eq!(frame.receiver_mac.as_deref(), Some("10:20:30:40:50:60"));
+        assert!(frame.to_ds);
+        assert!(!frame.from_ds);
         assert!(frame.tags.contains(&"direction:to_ds".to_string()));
+    }
+
+    #[test]
+    fn parses_data_frame_from_distribution_system() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: data_from_distribution_radiotap_frame(vec![0xaa, 0xbb]),
+        };
+        let frame = decode_frame(&packet).unwrap();
+        assert_eq!(frame.source_mac.as_deref(), Some("22:33:44:55:66:77"));
+        assert_eq!(frame.destination_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
+        assert_eq!(frame.bssid.as_deref(), Some("10:20:30:40:50:60"));
+        assert_eq!(frame.transmitter_mac.as_deref(), Some("10:20:30:40:50:60"));
+        assert_eq!(frame.receiver_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
+        assert!(!frame.to_ds);
+        assert!(frame.from_ds);
+        assert!(frame.tags.contains(&"direction:from_ds".to_string()));
+    }
+
+    #[test]
+    fn parses_wds_address_roles() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(
+                0x08,
+                0x03,
+                AP,
+                CLIENT,
+                DISTRIBUTION_DST,
+                Some([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
+                vec![0xaa, 0xbb],
+            ),
+        };
+        let frame = decode_frame(&packet).unwrap();
+        assert_eq!(frame.bssid, None);
+        assert_eq!(frame.source_mac.as_deref(), Some("de:ad:be:ef:00:01"));
+        assert_eq!(frame.destination_mac.as_deref(), Some("22:33:44:55:66:77"));
+        assert_eq!(frame.transmitter_mac.as_deref(), Some("aa:bb:cc:dd:ee:01"));
+        assert_eq!(frame.receiver_mac.as_deref(), Some("10:20:30:40:50:60"));
+        assert!(frame.to_ds);
+        assert!(frame.from_ds);
+        assert!(frame.tags.contains(&"direction:wds".to_string()));
+    }
+
+    #[test]
+    fn parses_frame_control_flags() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x08, 0x59, AP, CLIENT, DISTRIBUTION_DST, None, vec![0xaa]),
+        };
+        let frame = decode_frame(&packet).unwrap();
+        assert!(frame.to_ds);
+        assert!(!frame.from_ds);
+        assert!(frame.retry);
+        assert!(frame.power_save);
+        assert!(frame.protected);
+        assert_eq!(frame.duration_id, 0);
+        assert!(frame.tags.contains(&"retry".to_string()));
+        assert!(frame.tags.contains(&"power_save".to_string()));
+        assert!(frame.tags.contains(&"protected".to_string()));
     }
 
     #[test]
@@ -696,6 +878,15 @@ pub mod tests {
             decode_frame(&packet),
             Err(ParseError::MissingRadiotap)
         ));
+
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: vec![0, 0, 8, 0, 0x20, 0, 0, 0],
+        };
+        assert!(matches!(
+            decode_frame(&packet),
+            Err(ParseError::MissingRadiotap)
+        ));
     }
 
     #[test]
@@ -718,6 +909,21 @@ pub mod tests {
             Value::String("wifi_management_frame".to_string())
         );
         assert_eq!(value["channel"], Value::Number(6u64.into()));
+        assert_eq!(
+            value["transmitter_mac"],
+            Value::String("10:20:30:40:50:60".to_string())
+        );
+        assert_eq!(
+            value["receiver_mac"],
+            Value::String("ff:ff:ff:ff:ff:ff".to_string())
+        );
+        assert_eq!(value["signal_dbm"], Value::Number((-42).into()));
+        assert_eq!(value["duration_id"], Value::Number(0u64.into()));
+        assert_eq!(value["retry"], Value::Bool(false));
+        assert_eq!(value["power_save"], Value::Bool(false));
+        assert_eq!(value["protected"], Value::Bool(false));
+        assert_eq!(value["to_ds"], Value::Bool(false));
+        assert_eq!(value["from_ds"], Value::Bool(false));
         assert_eq!(value["username"], Value::Null);
         assert_eq!(
             value["identity_source"],
@@ -755,6 +961,13 @@ pub mod tests {
         build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body())
     }
 
+    fn detailed_radiotap_beacon_frame() -> Vec<u8> {
+        let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+        let mut bytes = detailed_radiotap_header();
+        bytes.extend_from_slice(&frame[10..]);
+        bytes
+    }
+
     pub fn probe_request_radiotap_frame() -> Vec<u8> {
         build_frame(0x40, 0x00, BROADCAST, CLIENT, BROADCAST, None, ssid_ie())
     }
@@ -765,6 +978,10 @@ pub mod tests {
 
     fn data_to_distribution_radiotap_frame(payload: Vec<u8>) -> Vec<u8> {
         build_frame(0x08, 0x01, AP, CLIENT, DISTRIBUTION_DST, None, payload)
+    }
+
+    fn data_from_distribution_radiotap_frame(payload: Vec<u8>) -> Vec<u8> {
+        build_frame(0x08, 0x02, CLIENT, AP, DISTRIBUTION_DST, None, payload)
     }
 
     fn build_frame(
@@ -801,6 +1018,13 @@ pub mod tests {
         }
         bytes.extend_from_slice(&body);
         bytes
+    }
+
+    fn detailed_radiotap_header() -> Vec<u8> {
+        vec![
+            0x00, 0x00, 0x10, 0x00, 0x6c, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x85, 0x09, 0xa0, 0x00,
+            0xd6, 0xa1,
+        ]
     }
 
     fn beacon_body() -> Vec<u8> {
