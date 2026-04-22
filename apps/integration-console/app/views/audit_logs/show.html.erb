@@ -22,9 +22,32 @@
       <tr><th>Source MAC</th><td><%= display_mac(@audit_log.source_mac) %></td></tr>
       <tr><th>Signal</th><td><%= @audit_log.signal_dbm %></td></tr>
       <tr><th>Username</th><td><%= @audit_log.username %></td></tr>
+      <tr><th>Security</th><td><%= @audit_log.compact_security_label || "open/unknown" %> (<%= @audit_log.security_flags %>)</td></tr>
+      <tr><th>Handshake</th><td><%= @audit_log.handshake_captured ? "captured" : "not captured" %></td></tr>
+      <tr><th>Fingerprint</th><td><%= @audit_log.device_fingerprint %></td></tr>
     </tbody>
   </table>
 </section>
+
+<% wps_metadata = [
+  ["Device name", @audit_log.wps_device_name],
+  ["Manufacturer", @audit_log.wps_manufacturer],
+  ["Model name", @audit_log.wps_model_name]
+] %>
+<% if wps_metadata.any? { |_label, value| value.present? } %>
+  <section class="table-wrap" style="margin-top: 16px;">
+    <h2>WPS Metadata</h2>
+    <table>
+      <tbody>
+        <% wps_metadata.each do |label, value| %>
+          <% if value.present? %>
+            <tr><th><%= label %></th><td><%= value %></td></tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
 
 <% rf_metadata = [
   ["Signal", @audit_log.signal_dbm],

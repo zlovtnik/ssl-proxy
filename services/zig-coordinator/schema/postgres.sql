@@ -30,6 +30,12 @@ create table if not exists sync_scan_ingest (
   last_error text,
   producer text not null default 'unknown',
   event_kind text,
+  security_flags integer not null default 0,
+  wps_device_name text,
+  wps_manufacturer text,
+  wps_model_name text,
+  device_fingerprint text,
+  handshake_captured boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -72,6 +78,12 @@ create table if not exists sync_error (
 
 alter table sync_batch add column if not exists created_at timestamptz not null default now();
 alter table sync_batch add column if not exists updated_at timestamptz not null default now();
+alter table sync_scan_ingest add column if not exists security_flags integer not null default 0;
+alter table sync_scan_ingest add column if not exists wps_device_name text;
+alter table sync_scan_ingest add column if not exists wps_manufacturer text;
+alter table sync_scan_ingest add column if not exists wps_model_name text;
+alter table sync_scan_ingest add column if not exists device_fingerprint text;
+alter table sync_scan_ingest add column if not exists handshake_captured boolean not null default false;
 
 do $$
 begin
@@ -168,6 +180,12 @@ select
   ssi.payload->>'identity_source' as identity_source,
   ssi.payload->>'username' as username,
   ssi.payload->'tags' as tags,
+  ssi.security_flags,
+  ssi.wps_device_name,
+  ssi.wps_manufacturer,
+  ssi.wps_model_name,
+  ssi.device_fingerprint,
+  ssi.handshake_captured,
   coalesce(d_src.device_id, d_bssid.device_id) as device_id,
   coalesce(d_src.display_name, d_bssid.display_name) as display_name,
   coalesce(d_src.username, d_bssid.username) as registered_username,
@@ -209,6 +227,18 @@ create index if not exists ssi_wireless_threat_tags_idx
   on sync_scan_ingest using gin ((payload->'tags'))
   where stream_name = 'wireless.audit';
 
+create index if not exists ssi_wireless_device_fingerprint_idx
+  on sync_scan_ingest (device_fingerprint, observed_at desc)
+  where stream_name = 'wireless.audit' and device_fingerprint is not null;
+
+create index if not exists ssi_wireless_security_flags_idx
+  on sync_scan_ingest (security_flags, observed_at desc)
+  where stream_name = 'wireless.audit' and security_flags <> 0;
+
+create index if not exists ssi_wireless_handshake_captured_idx
+  on sync_scan_ingest (observed_at desc)
+  where stream_name = 'wireless.audit' and handshake_captured;
+
 create index if not exists ssi_pending_observed_idx
   on sync_scan_ingest (observed_at asc)
   where status in ('pending', 'failed');
@@ -231,7 +261,13 @@ select
   payload->>'location_id' as location_id,
   payload->>'identity_source' as identity_source,
   payload->>'username' as username,
-  payload->'tags' as tags
+  payload->'tags' as tags,
+  security_flags,
+  wps_device_name,
+  wps_manufacturer,
+  wps_model_name,
+  device_fingerprint,
+  handshake_captured
 from sync_scan_ingest
 where stream_name = 'wireless.audit'
   and (
@@ -239,5 +275,6 @@ where stream_name = 'wireless.audit'
     or payload->'tags' ? 'threat:karma_probe_response'
     or payload->'tags' ? 'threat:deauth_flood'
     or payload->'tags' ? 'threat:deauth_frame'
+    or handshake_captured
   )
 order by observed_at desc;

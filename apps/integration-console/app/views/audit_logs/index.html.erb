@@ -4,7 +4,7 @@
 <h1>Audit Logs</h1>
 
 <%= form_with url: audit_logs_path, method: :get do |form| %>
-  <%= form.search_field :q, value: @query, placeholder: "Search sensor, MAC, SSID, username" %>
+  <%= form.search_field :q, value: @query, placeholder: "Search sensor, MAC, SSID, username, fingerprint, WPS" %>
   <%= form.submit "Search" %>
 <% end %>
 
@@ -24,7 +24,9 @@
         <th><%= sort_link_to "SSID", :ssid %></th>
         <th><%= sort_link_to "Source", :source_mac %></th>
         <th><%= sort_link_to "Signal", :signal_dbm %></th>
-        <th>Antenna</th>
+        <th><%= sort_link_to "Security", :security_flags %></th>
+        <th><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
+        <th><%= sort_link_to "Handshake", :handshake_captured %></th>
       </tr>
     </thead>
     <tbody data-audit-log-target="body">
@@ -34,7 +36,7 @@
         <% end %>
       <% else %>
         <tr data-audit-log-target="empty">
-          <td colspan="8" class="empty-state">No audit logs found.</td>
+          <td colspan="10" class="empty-state">No audit logs found.</td>
         </tr>
       <% end %>
     </tbody>

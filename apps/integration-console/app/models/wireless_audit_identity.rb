@@ -7,7 +7,7 @@ class WirelessAuditIdentity < SyncRecord
     next none if query.blank?
 
     where(
-      "source_mac ILIKE :q OR bssid ILIKE :q OR ssid ILIKE :q OR username ILIKE :q OR registered_username ILIKE :q",
+      "source_mac ILIKE :q OR bssid ILIKE :q OR ssid ILIKE :q OR username ILIKE :q OR registered_username ILIKE :q OR device_fingerprint ILIKE :q OR wps_device_name ILIKE :q OR wps_manufacturer ILIKE :q OR wps_model_name ILIKE :q",
       q: "%#{sanitize_sql_like(query)}%"
     )
   }

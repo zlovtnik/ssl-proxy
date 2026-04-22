@@ -29,8 +29,11 @@ use crate::{
     config::AppConfig,
     device::{detect, read_mac_address},
     model::{AuditContext, EnrichedFrame},
-    parse::{attach_context, decode_frame, to_audit_entry, IdentityCache},
-    publish::{publish_entry, reconcile_backlog, PublishError, SyncPublisherClient},
+    parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
+    publish::{
+        publish_entry, publish_handshake_alert, reconcile_backlog, PublishError,
+        SyncPublisherClient,
+    },
 };
 
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
@@ -192,6 +195,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     let mut heartbeat = capture_heartbeat(config.log_idle_secs);
     let mut stats = CaptureStats::default();
     let mut identity_cache = IdentityCache::default();
+    let mut handshake_monitor = HandshakeMonitor::default();
     let mut mac_device_cache: LruCache<String, Option<(String, Option<String>)>> =
         LruCache::new(NonZeroUsize::new(config.mac_device_cache_size).unwrap());
 
@@ -228,7 +232,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                 );
 
                 let result = async {
-                    let wifi_frame = match decode_frame(&packet) {
+                    let mut wifi_frame = match decode_frame(&packet) {
                         Ok(frame) => frame,
                         Err(error) => {
                             debug!(%error, "ignoring unsupported frame");
@@ -238,9 +242,15 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
+                    let handshake_alert = handshake_monitor.observe(&mut wifi_frame, &context);
                     let resolved_identity = identity_cache.resolve(&wifi_frame);
                     let enriched: EnrichedFrame = attach_context(wifi_frame, &context);
                     let mut entry = to_audit_entry(enriched);
+                    if let Some(alert) = handshake_alert.as_ref() {
+                        if let Err(error) = publish_handshake_alert(&*publish_client, alert).await {
+                            warn!(%error, "handshake alert publish failed; continuing audit publish");
+                        }
+                    }
                     if let Some(identity) = resolved_identity {
                         entry.username = Some(identity.username);
                         entry.identity_source = identity.source;

@@ -16,8 +16,10 @@ use tracing::{debug, error, info, warn};
 use crate::{
     audit::AuditWindow,
     backlog::{BacklogError, BacklogStore, IngestRecord},
-    model::AuditEntry,
+    model::{AuditEntry, HandshakeAlert},
 };
+
+pub const HANDSHAKE_ALERT_SUBJECT: &str = "wifi.alert.handshake";
 
 #[derive(Debug, Error)]
 pub enum PublishError {
@@ -139,6 +141,30 @@ pub async fn publish_entry(
         persist_publish_failure(backlog, &dedupe_key, payload, error).await?;
     }
 
+    Ok(())
+}
+
+pub async fn publish_handshake_alert(
+    publisher: &dyn PublishClient,
+    alert: &HandshakeAlert,
+) -> Result<(), PublishError> {
+    let payload = serde_json::to_string(alert)?;
+    let key = sha256_hex(&payload);
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_handshake_alert",
+        HANDSHAKE_ALERT_SUBJECT,
+        &payload,
+        &key,
+    )
+    .await
+    .map_err(PublishError::Publish)?;
+    debug!(
+        dedupe_key = %key,
+        subject = HANDSHAKE_ALERT_SUBJECT,
+        payload_bytes = payload.len(),
+        "queued handshake alert"
+    );
     Ok(())
 }
 
@@ -802,6 +828,32 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc)
         );
+    }
+
+    #[tokio::test]
+    async fn publishes_handshake_alert_subject() {
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let alert = HandshakeAlert {
+            observed_at: "2026-04-20T12:00:00Z".to_string(),
+            sensor_id: "sensor-1".to_string(),
+            location_id: "lab".to_string(),
+            interface: "wlan0".to_string(),
+            bssid: "10:20:30:40:50:60".to_string(),
+            client_mac: "aa:bb:cc:dd:ee:01".to_string(),
+            signal_dbm: Some(-42),
+        };
+
+        publish_handshake_alert(&publisher, &alert).await.unwrap();
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].0, HANDSHAKE_ALERT_SUBJECT);
+        assert!(published[0]
+            .1
+            .contains("\"client_mac\":\"aa:bb:cc:dd:ee:01\""));
     }
 
     #[tokio::test]

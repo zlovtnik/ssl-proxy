@@ -6,7 +6,10 @@ class AuditLogsController < ApplicationController
     "frame_subtype" => "payload->>'frame_subtype'",
     "ssid" => "payload->>'ssid'",
     "source_mac" => "payload->>'source_mac'",
-    "signal_dbm" => "CASE WHEN payload->>'signal_dbm' ~ '^-?[0-9]+$' THEN (payload->>'signal_dbm')::integer END"
+    "signal_dbm" => "CASE WHEN payload->>'signal_dbm' ~ '^-?[0-9]+$' THEN (payload->>'signal_dbm')::integer END",
+    "security_flags" => "security_flags",
+    "device_fingerprint" => "device_fingerprint",
+    "handshake_captured" => "handshake_captured"
   }.freeze
 
   def index
@@ -53,7 +56,12 @@ class AuditLogsController < ApplicationController
       source_mac: entry.source_mac,
       source_mac_display: helpers.display_mac(entry.source_mac),
       signal_dbm: entry.signal_dbm,
-      antenna_id: entry.antenna_id
+      antenna_id: entry.antenna_id,
+      security_flags: entry.security_flags,
+      security_label: entry.compact_security_label,
+      device_fingerprint: entry.device_fingerprint,
+      wps_device_name: entry.wps_device_name,
+      handshake_captured: entry.handshake_captured
     }
   end
 end

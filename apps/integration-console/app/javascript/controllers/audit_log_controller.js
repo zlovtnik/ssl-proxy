@@ -58,7 +58,9 @@ export default class extends Controller {
     this.appendCell(row, data.ssid || "")
     this.appendCell(row, data.source_mac_display || this.maskMac(data.source_mac) || "")
     this.appendCell(row, data.signal_dbm ?? "")
-    this.appendCell(row, data.antenna_id ?? "")
+    this.appendCell(row, data.security_label || "open/unknown")
+    this.appendCell(row, this.shortFingerprint(data.device_fingerprint))
+    this.appendCell(row, data.handshake_captured ? "captured" : "")
 
     if (this.hasEmptyTarget) this.emptyTarget.remove()
     this.bodyTarget.prepend(row)
@@ -108,5 +110,10 @@ export default class extends Controller {
     const parts = String(mac).split(":")
     if (parts.length !== 6) return "masked"
     return `XX:XX:XX:XX:${parts[4]}:${parts[5]}`
+  }
+
+  shortFingerprint(value) {
+    if (!value) return ""
+    return String(value).slice(0, 12)
   }
 }

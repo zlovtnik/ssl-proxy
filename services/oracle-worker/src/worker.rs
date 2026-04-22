@@ -91,6 +91,14 @@ pub struct WirelessAuditRow {
     pub from_ds: Option<bool>,
     pub raw_len: usize,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub security_flags: u32,
+    pub wps_device_name: Option<String>,
+    pub wps_manufacturer: Option<String>,
+    pub wps_model_name: Option<String>,
+    pub device_fingerprint: Option<String>,
+    #[serde(default)]
+    pub handshake_captured: bool,
     pub device_id: Option<String>,
     pub username: Option<String>,
     pub identity_source: String,
@@ -308,7 +316,7 @@ mod tests {
 
     fn wireless_payload() -> String {
         inline_payload(
-            r#"{"event_type":"wifi_management_frame","observed_at":"2026-04-21T00:00:00Z","sensor_id":"sensor-1","location_id":"lab","interface":"wlan0","channel":11,"bssid":"10:20:30:40:50:60","source_mac":"10:20:30:40:50:60","destination_mac":"ff:ff:ff:ff:ff:ff","ssid":"CorpWiFi","frame_subtype":"beacon","signal_dbm":-42,"sequence_number":1,"raw_len":44,"tags":["wifi"],"device_id":null,"username":null,"identity_source":"mac_observed"}"#,
+            r#"{"event_type":"wifi_management_frame","observed_at":"2026-04-21T00:00:00Z","sensor_id":"sensor-1","location_id":"lab","interface":"wlan0","channel":11,"bssid":"10:20:30:40:50:60","source_mac":"10:20:30:40:50:60","destination_mac":"ff:ff:ff:ff:ff:ff","ssid":"CorpWiFi","frame_subtype":"beacon","signal_dbm":-42,"sequence_number":1,"raw_len":44,"tags":["wifi"],"security_flags":10,"wps_device_name":"AP","wps_manufacturer":"Acme","wps_model_name":"Model 1","device_fingerprint":"0123456789abcdef","handshake_captured":false,"device_id":null,"username":null,"identity_source":"mac_observed"}"#,
         )
     }
 

@@ -3,7 +3,7 @@ require "nats/client"
 
 module Nats
   class Subscriber
-    SUBJECTS = ["wireless.audit", "sync.scan.request"].freeze
+    SUBJECTS = ["wireless.audit", "wifi.alert.handshake", "sync.scan.request"].freeze
 
     def initialize(url: ENV.fetch("SYNC_NATS_URL", "nats://127.0.0.1:4222"), client: nil)
       @url = url
@@ -28,6 +28,8 @@ module Nats
       if subject == "wireless.audit"
         update_sensor(payload)
         ActionCable.server.broadcast("live_audit", payload)
+      elsif subject == "wifi.alert.handshake"
+        record_handshake_alert(payload)
       else
         ActionCable.server.broadcast("sensor_health", { subject: subject, payload: payload })
       end
@@ -61,6 +63,20 @@ module Nats
           status: sensor.status
         }
       )
+    end
+
+    def record_handshake_alert(payload)
+      sensor_id = payload["sensor_id"].presence || "unknown"
+      bssid = payload["bssid"].presence || "unknown"
+      client_mac = payload["client_mac"].presence || "unknown"
+      alert = SensorAlert.open.find_or_initialize_by(
+        sensor_id: sensor_id,
+        alert_type: "handshake_captured"
+      )
+      alert.severity = "critical"
+      alert.message = "4-way handshake captured for BSSID #{bssid} client #{client_mac}"
+      alert.save!
+      ActionCable.server.broadcast("sensor_alerts", alert.as_json.merge(payload: payload))
     end
   end
 end

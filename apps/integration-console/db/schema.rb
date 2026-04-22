@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_22_000500) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_22_000600) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -149,11 +149,20 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000500) do
     t.text "last_error"
     t.text "producer", default: "unknown", null: false
     t.text "event_kind"
+    t.integer "security_flags", default: 0, null: false
+    t.text "wps_device_name"
+    t.text "wps_manufacturer"
+    t.text "wps_model_name"
+    t.text "device_fingerprint"
+    t.boolean "handshake_captured", default: false, null: false
     t.timestamptz "created_at", default: -> { "now()" }, null: false
     t.timestamptz "updated_at", default: -> { "now()" }, null: false
     t.index "((payload -> 'tags'::text))", name: "ssi_wireless_threat_tags_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
     t.index "((payload ->> 'source_mac'::text))", name: "ssi_wireless_source_mac_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index "((payload ->> 'ssid'::text)), observed_at DESC", name: "ssi_wireless_ssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "device_fingerprint, observed_at DESC", name: "ssi_wireless_device_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))"
+    t.index "observed_at DESC", name: "ssi_wireless_handshake_captured_idx", where: "((stream_name = 'wireless.audit'::text) AND handshake_captured)"
+    t.index "security_flags, observed_at DESC", name: "ssi_wireless_security_flags_idx", where: "((stream_name = 'wireless.audit'::text) AND (security_flags <> 0))"
     t.index ["observed_at"], name: "ssi_pending_observed_idx", where: "(status = ANY (ARRAY['pending'::text, 'failed'::text]))"
     t.index ["status", "observed_at"], name: "sync_scan_ingest_status_idx"
     t.index ["stream_name", "observed_at"], name: "sync_scan_ingest_stream_idx"

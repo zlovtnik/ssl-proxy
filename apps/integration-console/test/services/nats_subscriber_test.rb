@@ -32,4 +32,26 @@ class NatsSubscriberTest < ActiveSupport::TestCase
 
     assert_equal "lab", Sensor.find_by!(sensor_id: "sensor-1").location_id
   end
+
+  test "handshake alert creates sensor alert" do
+    payload = {
+      sensor_id: "sensor-1",
+      location_id: "lab",
+      interface: "wlan0",
+      bssid: "10:20:30:40:50:60",
+      client_mac: "aa:bb:cc:dd:ee:01",
+      signal_dbm: -42,
+      observed_at: Time.current.iso8601
+    }.to_json
+
+    assert_difference -> { SensorAlert.count }, 1 do
+      Nats::Subscriber.new.handle("wifi.alert.handshake", payload)
+    end
+
+    alert = SensorAlert.last
+    assert_equal "sensor-1", alert.sensor_id
+    assert_equal "handshake_captured", alert.alert_type
+    assert_equal "critical", alert.severity
+    assert_includes alert.message, "10:20:30:40:50:60"
+  end
 end

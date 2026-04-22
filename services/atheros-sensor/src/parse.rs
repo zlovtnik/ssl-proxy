@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     num::NonZeroUsize,
     time::{Duration, Instant},
 };
@@ -9,9 +10,20 @@ use thiserror::Error;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 
-use crate::model::{AuditContext, AuditEntry, EnrichedFrame, RawPacket, WifiFrame};
+use crate::model::{AuditContext, AuditEntry, EnrichedFrame, HandshakeAlert, RawPacket, WifiFrame};
 
 const LLC_SNAP_EAPOL_PREFIX: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e];
+pub const SECURITY_WPA: u32 = 0x01;
+pub const SECURITY_RSN_WPA2: u32 = 0x02;
+pub const SECURITY_WPA3: u32 = 0x04;
+pub const SECURITY_WPS: u32 = 0x08;
+pub const SECURITY_PMF_REQUIRED: u32 = 0x10;
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const WPS_ATTR_DEVICE_NAME: u16 = 0x1011;
+const WPS_ATTR_MANUFACTURER: u16 = 0x1021;
+const WPS_ATTR_MODEL_NAME: u16 = 0x1023;
+const HANDSHAKE_DUP_WINDOW: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]
 pub enum ParseError {
@@ -50,6 +62,118 @@ struct MacAddresses {
     destination_mac: Option<String>,
     transmitter_mac: Option<String>,
     receiver_mac: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InformationElement<'a> {
+    pub id: u8,
+    pub len: usize,
+    pub data: &'a [u8],
+}
+
+#[derive(Clone, Debug)]
+pub struct IEIterator<'a> {
+    frame: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> IEIterator<'a> {
+    pub fn new(frame: &'a [u8], ie_start: usize) -> Self {
+        Self {
+            frame,
+            offset: ie_start.min(frame.len()),
+        }
+    }
+}
+
+impl<'a> Iterator for IEIterator<'a> {
+    type Item = InformationElement<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.offset + 2 <= self.frame.len() {
+            let id = self.frame[self.offset];
+            let len = self.frame[self.offset + 1] as usize;
+            self.offset += 2;
+            if self.offset + len > self.frame.len() {
+                self.offset = self.frame.len();
+                break;
+            }
+
+            let data = &self.frame[self.offset..self.offset + len];
+            self.offset += len;
+            return Some(InformationElement { id, len, data });
+        }
+        None
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct IEMetadata {
+    security_flags: u32,
+    wps_device_name: Option<String>,
+    wps_manufacturer: Option<String>,
+    wps_model_name: Option<String>,
+    device_fingerprint: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EapolKeyObservation {
+    message: u8,
+    bssid: String,
+    client_mac: String,
+}
+
+#[derive(Default)]
+pub struct HandshakeMonitor {
+    states: HashMap<String, HandshakeState>,
+    last_alerts: HashMap<String, Instant>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct HandshakeState {
+    messages: u8,
+}
+
+impl HandshakeMonitor {
+    pub fn observe(
+        &mut self,
+        frame: &mut WifiFrame,
+        context: &AuditContext,
+    ) -> Option<HandshakeAlert> {
+        let observation = eapol_key_observation(frame)?;
+        let key = format!(
+            "{}|{}",
+            observation.bssid.to_ascii_lowercase(),
+            observation.client_mac.to_ascii_lowercase()
+        );
+        let state = self.states.entry(key.clone()).or_default();
+        state.messages |= 1 << (observation.message - 1);
+        if state.messages & 0x0f != 0x0f {
+            return None;
+        }
+
+        let now = Instant::now();
+        if self
+            .last_alerts
+            .get(&key)
+            .is_some_and(|last| now.duration_since(*last) < HANDSHAKE_DUP_WINDOW)
+        {
+            return None;
+        }
+
+        self.last_alerts.insert(key, now);
+        frame.handshake_captured = true;
+        push_tag(&mut frame.tags, "handshake_captured");
+        Some(HandshakeAlert {
+            observed_at: frame.observed_at.to_rfc3339(),
+            sensor_id: context.sensor_id.clone(),
+            location_id: context.location_id.clone(),
+            interface: context.interface.clone(),
+            bssid: observation.bssid,
+            client_mac: observation.client_mac,
+            signal_dbm: frame.signal_dbm,
+        })
+    }
 }
 
 pub struct IdentityCache {
@@ -186,7 +310,10 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let addresses = parse_addresses(frame_type, frame_control, frame_bytes)?;
     let sequence_number = Some(u16::from_le_bytes([frame_bytes[22], frame_bytes[23]]) >> 4);
     let ssid = extract_ssid(frame_type, subtype, frame_bytes);
+    let ie_metadata = extract_ie_metadata(frame_type, subtype, frame_bytes);
     let username_hint = extract_eap_identity(frame_type, frame_control, subtype, frame_bytes);
+    let eapol_key_message =
+        extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes);
     let identity_source_hint = username_hint.as_ref().map(|_| "eap_identity".to_string());
     let retry = frame_control & (1 << 11) != 0;
     let power_save = frame_control & (1 << 12) != 0;
@@ -217,8 +344,10 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     ) {
         tags.push(format!("flow:{src}>{dst}"));
     }
-    if username_hint.is_some() {
+    if username_hint.is_some() || eapol_key_message.is_some() {
         tags.push("eapol".to_string());
+    }
+    if username_hint.is_some() {
         tags.push("identity:eap_response".to_string());
     }
     if frame_subtype == "probe_response" {
@@ -261,6 +390,13 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         raw_len: frame_bytes.len(),
         raw_frame: Some(STANDARD.encode(frame_bytes)),
         tags,
+        security_flags: ie_metadata.security_flags,
+        wps_device_name: ie_metadata.wps_device_name,
+        wps_manufacturer: ie_metadata.wps_manufacturer,
+        wps_model_name: ie_metadata.wps_model_name,
+        device_fingerprint: ie_metadata.device_fingerprint,
+        handshake_captured: false,
+        eapol_key_message,
         username_hint,
         identity_source_hint,
     })
@@ -354,6 +490,12 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         raw_len: frame.raw_len,
         raw_frame: frame.raw_frame,
         tags,
+        security_flags: frame.security_flags,
+        wps_device_name: frame.wps_device_name,
+        wps_manufacturer: frame.wps_manufacturer,
+        wps_model_name: frame.wps_model_name,
+        device_fingerprint: frame.device_fingerprint,
+        handshake_captured: frame.handshake_captured,
         device_id: None,
         username,
         identity_source,
@@ -583,34 +725,132 @@ fn data_direction_tag(frame_control: u16) -> &'static str {
     }
 }
 
-fn extract_ssid(frame_type: u8, subtype: u8, frame_bytes: &[u8]) -> Option<String> {
+fn ie_start_offset(frame_type: u8, subtype: u8) -> Option<usize> {
     if frame_type != 0 {
         return None;
     }
 
     let body_offset = 24usize;
-    let ie_offset = match subtype {
-        8 | 5 => body_offset + 12,
-        4 => body_offset,
-        _ => return None,
+    match subtype {
+        0 => Some(body_offset + 4),
+        4 => Some(body_offset),
+        5 | 8 => Some(body_offset + 12),
+        _ => None,
+    }
+}
+
+fn extract_ssid(frame_type: u8, subtype: u8, frame_bytes: &[u8]) -> Option<String> {
+    let ie_offset = ie_start_offset(frame_type, subtype)?;
+    IEIterator::new(frame_bytes, ie_offset)
+        .find(|element| element.id == 0)
+        .and_then(|element| String::from_utf8(element.data.to_vec()).ok())
+}
+
+fn extract_ie_metadata(frame_type: u8, subtype: u8, frame_bytes: &[u8]) -> IEMetadata {
+    let Some(ie_offset) = ie_start_offset(frame_type, subtype) else {
+        return IEMetadata::default();
     };
-    if frame_bytes.len() <= ie_offset + 2 {
-        return None;
-    }
-    let mut offset = ie_offset;
-    while offset + 2 <= frame_bytes.len() {
-        let element_id = frame_bytes[offset];
-        let length = frame_bytes[offset + 1] as usize;
-        offset += 2;
-        if offset + length > frame_bytes.len() {
-            return None;
+
+    let mut metadata = IEMetadata::default();
+    let mut fingerprint = FNV_OFFSET_BASIS;
+    let mut saw_ie = false;
+    for element in IEIterator::new(frame_bytes, ie_offset) {
+        saw_ie = true;
+        fingerprint ^= u64::from(element.id);
+        fingerprint = fingerprint.wrapping_mul(FNV_PRIME);
+
+        match element.id {
+            48 => parse_rsn(element.data, &mut metadata),
+            221 => parse_vendor_ie(element.data, &mut metadata),
+            _ => {}
         }
-        if element_id == 0 {
-            return String::from_utf8(frame_bytes[offset..offset + length].to_vec()).ok();
-        }
-        offset += length;
     }
-    None
+
+    if saw_ie {
+        metadata.device_fingerprint = Some(format!("{fingerprint:016x}"));
+    }
+    metadata
+}
+
+fn parse_rsn(data: &[u8], metadata: &mut IEMetadata) {
+    metadata.security_flags |= SECURITY_RSN_WPA2;
+    if data.len() < 8 {
+        return;
+    }
+
+    let mut offset = 2usize;
+    offset += 4;
+    if offset + 2 > data.len() {
+        return;
+    }
+    let pairwise_count = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+    offset += 2 + pairwise_count.saturating_mul(4);
+    if offset + 2 > data.len() {
+        return;
+    }
+    let akm_count = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+    offset += 2;
+    for _ in 0..akm_count {
+        if offset + 4 > data.len() {
+            return;
+        }
+        if data[offset..offset + 3] == [0x00, 0x0f, 0xac] && matches!(data[offset + 3], 8 | 9) {
+            metadata.security_flags |= SECURITY_WPA3;
+        }
+        offset += 4;
+    }
+    if offset + 2 <= data.len() {
+        let capabilities = u16::from_le_bytes([data[offset], data[offset + 1]]);
+        if capabilities & 0x0040 != 0 {
+            metadata.security_flags |= SECURITY_PMF_REQUIRED;
+        }
+    }
+}
+
+fn parse_vendor_ie(data: &[u8], metadata: &mut IEMetadata) {
+    if data.len() < 4 || data[..3] != [0x00, 0x50, 0xf2] {
+        return;
+    }
+
+    match data[3] {
+        1 => metadata.security_flags |= SECURITY_WPA,
+        4 => {
+            metadata.security_flags |= SECURITY_WPS;
+            parse_wps_attributes(&data[4..], metadata);
+        }
+        _ => {}
+    }
+}
+
+fn parse_wps_attributes(mut data: &[u8], metadata: &mut IEMetadata) {
+    while data.len() >= 4 {
+        let attr = u16::from_be_bytes([data[0], data[1]]);
+        let len = u16::from_be_bytes([data[2], data[3]]) as usize;
+        data = &data[4..];
+        if len > data.len() {
+            break;
+        }
+        let value = &data[..len];
+        match attr {
+            WPS_ATTR_DEVICE_NAME => metadata.wps_device_name = parse_wps_string(value),
+            WPS_ATTR_MANUFACTURER => metadata.wps_manufacturer = parse_wps_string(value),
+            WPS_ATTR_MODEL_NAME => metadata.wps_model_name = parse_wps_string(value),
+            _ => {}
+        }
+        data = &data[len..];
+    }
+}
+
+fn parse_wps_string(value: &[u8]) -> Option<String> {
+    let value = std::str::from_utf8(value)
+        .ok()?
+        .trim_matches(char::from(0))
+        .trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 fn extract_eap_identity(
@@ -653,6 +893,64 @@ fn extract_eap_identity(
     }
 
     normalize_identity(&eap[5..eap_packet_len])
+}
+
+fn extract_eapol_key_message(
+    frame_type: u8,
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<u8> {
+    if frame_type != 2 {
+        return None;
+    }
+    let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
+    let llc_prefix = frame_bytes.get(payload_offset..payload_offset + 8)?;
+    if llc_prefix != LLC_SNAP_EAPOL_PREFIX {
+        return None;
+    }
+
+    let eapol = frame_bytes.get(payload_offset + 8..)?;
+    if eapol.len() < 7 || eapol[1] != 3 {
+        return None;
+    }
+    let eapol_len = u16::from_be_bytes([eapol[2], eapol[3]]) as usize;
+    if eapol_len < 3 || eapol.len() < 4 + eapol_len {
+        return None;
+    }
+
+    let key_info = u16::from_be_bytes([eapol[5], eapol[6]]);
+    let ack = key_info & 0x0080 != 0;
+    let mic = key_info & 0x0100 != 0;
+    let install = key_info & 0x0040 != 0;
+    let secure = key_info & 0x0200 != 0;
+    match (ack, mic, install, secure) {
+        (true, false, _, _) => Some(1),
+        (false, true, false, false) => Some(2),
+        (true, true, true, _) => Some(3),
+        (false, true, false, true) => Some(4),
+        _ => None,
+    }
+}
+
+fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObservation> {
+    let message = frame.eapol_key_message?;
+    let bssid = frame.bssid.clone()?;
+    let client_mac = if frame.to_ds && !frame.from_ds {
+        frame.source_mac.clone()
+    } else if frame.from_ds && !frame.to_ds {
+        frame.destination_mac.clone()
+    } else {
+        frame
+            .source_mac
+            .clone()
+            .or_else(|| frame.destination_mac.clone())
+    }?;
+    Some(EapolKeyObservation {
+        message,
+        bssid,
+        client_mac,
+    })
 }
 
 fn data_payload_offset(frame_control: u16, subtype: u8, frame_bytes: &[u8]) -> Option<usize> {
@@ -932,6 +1230,84 @@ pub mod tests {
     }
 
     #[test]
+    fn iterates_information_elements_and_stops_on_truncation() {
+        let bytes = [1, 2, 0xaa, 0xbb, 2, 3, 0xcc];
+        let elements: Vec<_> = IEIterator::new(&bytes, 0).collect();
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0].id, 1);
+        assert_eq!(elements[0].len, 2);
+        assert_eq!(elements[0].data, &[0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn parses_security_wps_and_fingerprint_metadata() {
+        let mut body = beacon_body();
+        body.extend_from_slice(&rsn_ie(true, true));
+        body.extend_from_slice(&wpa_vendor_ie());
+        body.extend_from_slice(&wps_vendor_ie());
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(
+            frame.security_flags,
+            SECURITY_WPA | SECURITY_RSN_WPA2 | SECURITY_WPA3 | SECURITY_WPS | SECURITY_PMF_REQUIRED
+        );
+        assert_eq!(frame.wps_device_name.as_deref(), Some("Lobby AP"));
+        assert_eq!(frame.wps_manufacturer.as_deref(), Some("Acme"));
+        assert_eq!(frame.wps_model_name.as_deref(), Some("Model 7"));
+        assert_eq!(
+            frame.device_fingerprint.as_deref(),
+            Some("d9e7757fee253fc7")
+        );
+    }
+
+    #[test]
+    fn detects_handshake_once_per_duplicate_window() {
+        let context = AuditContext {
+            sensor_id: "sensor-1".to_string(),
+            location_id: "lab".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+        let mut monitor = HandshakeMonitor::default();
+        let mut alerts = Vec::new();
+
+        for (from_ds, message) in [(true, 1), (false, 2), (true, 3), (false, 4)] {
+            let data = if from_ds {
+                data_from_distribution_radiotap_frame(eapol_key_payload(message))
+            } else {
+                data_to_distribution_radiotap_frame(eapol_key_payload(message))
+            };
+            let mut frame = decode_frame(&RawPacket {
+                observed_at: Utc::now(),
+                data,
+            })
+            .unwrap();
+            if let Some(alert) = monitor.observe(&mut frame, &context) {
+                assert!(frame.handshake_captured);
+                assert!(frame.tags.contains(&"handshake_captured".to_string()));
+                alerts.push(alert);
+            }
+        }
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].bssid, "10:20:30:40:50:60");
+        assert_eq!(alerts[0].client_mac, "aa:bb:cc:dd:ee:01");
+
+        let mut duplicate = decode_frame(&RawPacket {
+            observed_at: Utc::now(),
+            data: data_to_distribution_radiotap_frame(eapol_key_payload(4)),
+        })
+        .unwrap();
+        assert!(monitor.observe(&mut duplicate, &context).is_none());
+    }
+
+    #[test]
     fn rejects_control_frames() {
         let mut bytes = beacon_radiotap_frame();
         bytes[10] = 0x84;
@@ -1173,6 +1549,37 @@ pub mod tests {
         ie
     }
 
+    fn rsn_ie(wpa3: bool, pmf_required: bool) -> Vec<u8> {
+        let akm = if wpa3 { 8 } else { 2 };
+        let capabilities = if pmf_required { 0x0040u16 } else { 0 };
+        let mut rsn = vec![
+            0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
+            0x01, 0x00, 0x00, 0x0f, 0xac, akm,
+        ];
+        rsn.extend_from_slice(&capabilities.to_le_bytes());
+        rsn
+    }
+
+    fn wpa_vendor_ie() -> Vec<u8> {
+        vec![0xdd, 0x04, 0x00, 0x50, 0xf2, 0x01]
+    }
+
+    fn wps_vendor_ie() -> Vec<u8> {
+        let mut body = vec![0x00, 0x50, 0xf2, 0x04];
+        append_wps_attr(&mut body, WPS_ATTR_DEVICE_NAME, b"Lobby AP");
+        append_wps_attr(&mut body, WPS_ATTR_MANUFACTURER, b"Acme");
+        append_wps_attr(&mut body, WPS_ATTR_MODEL_NAME, b"Model 7");
+        let mut ie = vec![0xdd, body.len() as u8];
+        ie.extend_from_slice(&body);
+        ie
+    }
+
+    fn append_wps_attr(body: &mut Vec<u8>, attr: u16, value: &[u8]) {
+        body.extend_from_slice(&attr.to_be_bytes());
+        body.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        body.extend_from_slice(value);
+    }
+
     fn eap_identity_payload(identity: &str) -> Vec<u8> {
         let identity_bytes = identity.as_bytes();
         let eap_len = 5 + identity_bytes.len();
@@ -1186,6 +1593,23 @@ pub mod tests {
         payload.push(0x00);
         payload.extend_from_slice(&(eap.len() as u16).to_be_bytes());
         payload.extend_from_slice(&eap);
+        payload
+    }
+
+    fn eapol_key_payload(message: u8) -> Vec<u8> {
+        let key_info = match message {
+            1 => 0x0080u16,
+            2 => 0x0100u16,
+            3 => 0x01c0u16,
+            4 => 0x0300u16,
+            _ => 0,
+        };
+        let mut payload = LLC_SNAP_EAPOL_PREFIX.to_vec();
+        payload.push(0x02);
+        payload.push(0x03);
+        payload.extend_from_slice(&3u16.to_be_bytes());
+        payload.push(0x02);
+        payload.extend_from_slice(&key_info.to_be_bytes());
         payload
     }
 }

@@ -43,7 +43,8 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, audit_log_path("audit-link")
-    assert_includes response.body, "Antenna"
+    assert_includes response.body, "Security"
+    assert_includes response.body, "Fingerprint"
   end
 
   test "show renders rf metadata when present" do
@@ -137,7 +138,14 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     insert_sync_ingest(
       dedupe_key: "audit-new",
       observed_at: newer,
-      payload: { "sensor_id" => "sensor-new", "source_mac" => "00:11:22:33:44:66", "antenna_id" => 3 }
+      payload: {
+        "sensor_id" => "sensor-new",
+        "source_mac" => "00:11:22:33:44:66",
+        "antenna_id" => 3,
+        "security_flags" => 10,
+        "device_fingerprint" => "0123456789abcdef",
+        "handshake_captured" => true
+      }
     )
 
     get recent_audit_logs_url(after: older.iso8601)
@@ -148,6 +156,10 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "sensor-new", rows.first["sensor_id"]
     assert_equal "XX:XX:XX:XX:44:66", rows.first["source_mac_display"]
     assert_equal 3, rows.first["antenna_id"]
+    assert_equal 10, rows.first["security_flags"]
+    assert_equal "RSN/WPA2, WPS", rows.first["security_label"]
+    assert_equal "0123456789abcdef", rows.first["device_fingerprint"]
+    assert_equal true, rows.first["handshake_captured"]
     assert_equal audit_log_path("audit-new"), rows.first["show_url"]
   end
 end

@@ -4,7 +4,7 @@
 <h1>Identity Viewer</h1>
 
 <%= form_with url: identities_path, method: :get do |form| %>
-  <%= form.search_field :q, value: @query, placeholder: "Search MAC, username, SSID" %>
+  <%= form.search_field :q, value: @query, placeholder: "Search MAC, username, SSID, fingerprint, WPS" %>
   <%= form.submit "Search" %>
 <% end %>
 
@@ -19,6 +19,8 @@
         <th><%= sort_link_to "Username", :username %></th>
         <th><%= sort_link_to "Registered", :registered_username %></th>
         <th><%= sort_link_to "Device", :display_name %></th>
+        <th><%= sort_link_to "WPS", :wps_device_name %></th>
+        <th><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
       </tr>
     </thead>
     <tbody>
@@ -32,11 +34,13 @@
             <td><%= identity.username %></td>
             <td><%= identity.registered_username %></td>
             <td><%= identity.display_name || identity.device_id %></td>
+            <td><%= identity.wps_device_name || identity.wps_model_name %></td>
+            <td><%= identity.device_fingerprint&.first(12) %></td>
           </tr>
         <% end %>
       <% else %>
         <tr>
-          <td colspan="7" class="empty-state">No identities found.</td>
+          <td colspan="9" class="empty-state">No identities found.</td>
         </tr>
       <% end %>
     </tbody>

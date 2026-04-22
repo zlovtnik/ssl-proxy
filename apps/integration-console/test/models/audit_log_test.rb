@@ -44,6 +44,40 @@ class AuditLogTest < ActiveSupport::TestCase
     assert_equal 3, entry.antenna_id
   end
 
+  test "wireless security fields prefer physical columns" do
+    insert_sync_ingest(
+      dedupe_key: "audit-security",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "security_flags" => 0,
+        "wps_device_name" => "payload name",
+        "device_fingerprint" => "payload-fp",
+        "handshake_captured" => false
+      }
+    )
+    sync_connection.execute(<<~SQL.squish)
+      UPDATE sync_scan_ingest
+      SET security_flags = 26,
+          wps_device_name = 'Lobby AP',
+          wps_manufacturer = 'Acme',
+          wps_model_name = 'Model 7',
+          device_fingerprint = '0123456789abcdef',
+          handshake_captured = TRUE
+      WHERE dedupe_key = 'audit-security'
+    SQL
+
+    entry = AuditLog.find("audit-security")
+
+    assert_equal 26, entry.security_flags
+    assert_equal ["RSN/WPA2", "WPS", "PMF required"], entry.security_labels
+    assert_equal "Lobby AP", entry.wps_device_name
+    assert_equal "Acme", entry.wps_manufacturer
+    assert_equal "Model 7", entry.wps_model_name
+    assert_equal "0123456789abcdef", entry.device_fingerprint
+    assert entry.handshake_captured
+  end
+
   test "raw_frame_hex_dump renders decoded bytes" do
     raw_frame = Base64.strict_encode64([0x00, 0x01, 0x41, 0xff].pack("C*"))
     insert_sync_ingest(

@@ -7,7 +7,7 @@ class AuditLog < SyncRecord
   scope :recent, -> { where(stream_name: "wireless.audit").order(observed_at: :desc) }
   scope :search, ->(query) {
     where(
-      "payload->>'sensor_id' ILIKE :q OR payload->>'source_mac' ILIKE :q OR payload->>'bssid' ILIKE :q OR payload->>'ssid' ILIKE :q OR payload->>'username' ILIKE :q",
+      "payload->>'sensor_id' ILIKE :q OR payload->>'source_mac' ILIKE :q OR payload->>'bssid' ILIKE :q OR payload->>'ssid' ILIKE :q OR payload->>'username' ILIKE :q OR device_fingerprint ILIKE :q OR wps_device_name ILIKE :q OR wps_manufacturer ILIKE :q OR wps_model_name ILIKE :q",
       q: "%#{sanitize_sql_like(query)}%"
     )
   }
@@ -27,6 +27,27 @@ class AuditLog < SyncRecord
   def antenna_id = payload_value("antenna_id")
   def username = payload_value("username")
   def raw_frame = payload_value("raw_frame")
+  def security_flags = payload_value("security_flags").presence.to_i
+  def wps_device_name = payload_value("wps_device_name")
+  def wps_manufacturer = payload_value("wps_manufacturer")
+  def wps_model_name = payload_value("wps_model_name")
+  def device_fingerprint = payload_value("device_fingerprint")
+  def handshake_captured = ActiveModel::Type::Boolean.new.cast(payload_value("handshake_captured"))
+
+  def security_labels
+    flags = security_flags
+    labels = []
+    labels << "WPA" if flags & 0x01 != 0
+    labels << "RSN/WPA2" if flags & 0x02 != 0
+    labels << "WPA3" if flags & 0x04 != 0
+    labels << "WPS" if flags & 0x08 != 0
+    labels << "PMF required" if flags & 0x10 != 0
+    labels
+  end
+
+  def compact_security_label
+    security_labels.presence&.join(", ")
+  end
 
   def raw_frame_bytes
     return if raw_frame.blank?

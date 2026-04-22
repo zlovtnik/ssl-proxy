@@ -215,13 +215,16 @@ impl BacklogStore for PostgresBacklog {
                 }
             })?;
         let payload_json = tokio_postgres::types::Json(&payload);
+        let wireless = WirelessIngestColumns::from_payload(record.stream_name, &payload);
         let rows_affected = match client
             .execute(
                 "insert into sync_scan_ingest
                    (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256,
-                    status, attempt_count, producer, event_kind, created_at, updated_at)
+                    status, attempt_count, producer, event_kind, security_flags, wps_device_name,
+                    wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured,
+                    created_at, updated_at)
                  values ($1, $2, $3, $4, $5::jsonb, $6,
-                    'pending', 0, $7, $8, now(), now())
+                    'pending', 0, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
                  on conflict (dedupe_key)
                  do update set
                     payload_ref = excluded.payload_ref,
@@ -229,6 +232,12 @@ impl BacklogStore for PostgresBacklog {
                     payload_sha256 = excluded.payload_sha256,
                     producer = excluded.producer,
                     event_kind = excluded.event_kind,
+                    security_flags = excluded.security_flags,
+                    wps_device_name = excluded.wps_device_name,
+                    wps_manufacturer = excluded.wps_manufacturer,
+                    wps_model_name = excluded.wps_model_name,
+                    device_fingerprint = excluded.device_fingerprint,
+                    handshake_captured = excluded.handshake_captured,
                     updated_at = now()",
                 &[
                     &record.dedupe_key,
@@ -239,6 +248,12 @@ impl BacklogStore for PostgresBacklog {
                     &record.payload_sha256,
                     &record.producer,
                     &record.event_kind,
+                    &wireless.security_flags,
+                    &wireless.wps_device_name,
+                    &wireless.wps_manufacturer,
+                    &wireless.wps_model_name,
+                    &wireless.device_fingerprint,
+                    &wireless.handshake_captured,
                 ],
             )
             .await
@@ -366,6 +381,49 @@ impl BacklogStore for PostgresBacklog {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct WirelessIngestColumns {
+    security_flags: i32,
+    wps_device_name: Option<String>,
+    wps_manufacturer: Option<String>,
+    wps_model_name: Option<String>,
+    device_fingerprint: Option<String>,
+    handshake_captured: bool,
+}
+
+impl WirelessIngestColumns {
+    fn from_payload(stream_name: &str, payload: &serde_json::Value) -> Self {
+        if stream_name != "wireless.audit" {
+            return Self::default();
+        }
+
+        Self {
+            security_flags: payload
+                .get("security_flags")
+                .and_then(|value| value.as_u64())
+                .and_then(|value| i32::try_from(value).ok())
+                .unwrap_or(0),
+            wps_device_name: payload_string(payload, "wps_device_name"),
+            wps_manufacturer: payload_string(payload, "wps_manufacturer"),
+            wps_model_name: payload_string(payload, "wps_model_name"),
+            device_fingerprint: payload_string(payload, "device_fingerprint"),
+            handshake_captured: payload
+                .get("handshake_captured")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+        }
+    }
+}
+
+fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn database_target(config: &PostgresConfig) -> String {
     let hosts = config.get_hosts();
     let ports = config.get_ports();
@@ -388,6 +446,8 @@ fn database_target(config: &PostgresConfig) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::WirelessIngestColumns;
+
     use chrono::{DateTime, Utc};
     use tokio_postgres::types::{Json, ToSql, Type};
 
@@ -401,5 +461,29 @@ mod tests {
     fn json_wrapper_binds_to_postgres_jsonb() {
         assert!(<Json<serde_json::Value> as ToSql>::accepts(&Type::JSONB));
         assert!(!<&str as ToSql>::accepts(&Type::JSONB));
+    }
+
+    #[test]
+    fn extracts_wireless_ingest_columns_from_payload() {
+        let payload = serde_json::json!({
+            "security_flags": 26,
+            "wps_device_name": "Lobby AP",
+            "wps_manufacturer": "Acme",
+            "wps_model_name": "Model 7",
+            "device_fingerprint": "0123456789abcdef",
+            "handshake_captured": true
+        });
+
+        let columns = WirelessIngestColumns::from_payload("wireless.audit", &payload);
+
+        assert_eq!(columns.security_flags, 26);
+        assert_eq!(columns.wps_device_name.as_deref(), Some("Lobby AP"));
+        assert_eq!(columns.wps_manufacturer.as_deref(), Some("Acme"));
+        assert_eq!(columns.wps_model_name.as_deref(), Some("Model 7"));
+        assert_eq!(
+            columns.device_fingerprint.as_deref(),
+            Some("0123456789abcdef")
+        );
+        assert!(columns.handshake_captured);
     }
 }

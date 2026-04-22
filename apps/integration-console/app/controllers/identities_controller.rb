@@ -6,7 +6,9 @@ class IdentitiesController < ApplicationController
     "ssid" => :ssid,
     "username" => :username,
     "registered_username" => :registered_username,
-    "display_name" => :display_name
+    "display_name" => :display_name,
+    "device_fingerprint" => :device_fingerprint,
+    "wps_device_name" => :wps_device_name
   }.freeze
 
   def index
