@@ -12,9 +12,14 @@
 
 <div
   class="table-wrap"
-  data-controller="audit-log"
+  data-controller="audit-log mac-link"
   data-audit-log-active-value="<%= @live_updates %>"
   data-audit-log-recent-url-value="<%= recent_audit_logs_path %>"
+  data-mac-link-inventory-url-value="<%= inventory_identities_path(format: :json) %>"
+  data-mac-link-recent-audit-logs-url-value="<%= recent_audit_logs_path %>"
+  data-mac-link-audit-logs-url-value="<%= audit_logs_path %>"
+  data-mac-link-identities-url-value="<%= identities_path %>"
+  data-mac-link-shadow-it-url-value="<%= shadow_it_alerts_path %>"
 >
   <table>
     <thead>

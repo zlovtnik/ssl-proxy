@@ -259,6 +259,163 @@ input[type="submit"] {
   background: #ffffff;
 }
 
+.mac-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #85b7eb;
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: #e6f1fb;
+  color: #0c447c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 120ms ease;
+}
+
+.mac-chip:hover,
+.mac-chip:focus-visible {
+  background: #b5d4f4;
+  outline: none;
+}
+
+.mac-chip-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #378add;
+}
+
+.mac-hover-card {
+  width: 288px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #ffffff;
+  color: #172033;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  pointer-events: auto;
+}
+
+.mhc-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+}
+
+.mhc-mac {
+  flex: 1;
+  color: #172033;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mhc-badge {
+  max-width: 100px;
+  overflow: hidden;
+  border: 1px solid #5dcaa5;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #e1f5ee;
+  color: #085041;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mhc-stats {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mhc-stat {
+  flex: 1;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: #f7f9fb;
+}
+
+.mhc-val {
+  display: block;
+  overflow: hidden;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mhc-lbl {
+  display: block;
+  margin-top: 1px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.mhc-detail {
+  overflow: hidden;
+  margin-bottom: 4px;
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mhc-times {
+  margin-bottom: 9px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.mhc-loading {
+  margin-bottom: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.mhc-error {
+  color: #a32d2d;
+}
+
+.mhc-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  padding-top: 8px;
+}
+
+.mhc-link {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  padding: 3px 8px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 11px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 100ms ease;
+}
+
+.mhc-link:hover,
+.mhc-link:focus-visible {
+  background: #f7f9fb;
+  outline: none;
+}
+
 .pagination-link.disabled {
   color: #64748b;
   background: #edf1f5;

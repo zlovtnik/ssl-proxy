@@ -69,6 +69,7 @@ export default class extends Controller {
     this.bodyTarget.prepend(row)
     this.lastObservedAt = this.latestObservedAt()
     this.trimRows()
+    this.element.dispatchEvent(new CustomEvent("mac-link:enhance"))
   }
 
   appendCell(row, value, href = null) {

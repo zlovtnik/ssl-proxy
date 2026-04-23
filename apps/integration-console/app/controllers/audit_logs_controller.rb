@@ -40,6 +40,9 @@ class AuditLogsController < ApplicationController
 
   def recent
     scope = AuditLog.recent
+    query = params[:q].to_s.strip
+    scope = scope.search(query) if query.present?
+
     if params[:after].present?
       after = Time.zone.parse(params[:after].to_s)
       scope = scope.where("observed_at > ?", after) if after
