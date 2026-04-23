@@ -53,10 +53,16 @@ pub const Client = struct {
     }
 
     pub fn ensureCursor(self: *Client, stream_name: []const u8) Error![]u8 {
-        const stream_arg = try std.fmt.allocPrint(self.allocator, "stream_name={s}", .{stream_name});
-        defer self.allocator.free(stream_arg);
+        const stream_literal = try self.sqlLiteral(stream_name);
+        defer self.allocator.free(stream_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.ensure_cursor({s})::text;",
+            .{stream_literal},
+        );
+        defer self.allocator.free(query);
 
-        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 10);
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
         defer argv.deinit(self.allocator);
         try argv.appendSlice(self.allocator, &.{
             "psql",
@@ -64,10 +70,8 @@ pub const Client = struct {
             "-v",
             "ON_ERROR_STOP=1",
             "-qAt",
-            "-v",
-            stream_arg,
             "-c",
-            "select coordinator.ensure_cursor(:'stream_name')::text;",
+            query,
         });
 
         var result = command.exec(self.allocator, self.io, argv.items) catch {
@@ -91,14 +95,16 @@ pub const Client = struct {
         max_attempts: u32,
         backoff_secs: u32,
     ) Error!bool {
-        const stream_names_arg = try std.fmt.allocPrint(self.allocator, "stream_names_csv={s}", .{stream_names_csv});
-        defer self.allocator.free(stream_names_arg);
-        const attempts_arg = try std.fmt.allocPrint(self.allocator, "max_attempts={d}", .{max_attempts});
-        defer self.allocator.free(attempts_arg);
-        const backoff_arg = try std.fmt.allocPrint(self.allocator, "backoff_secs={d}", .{backoff_secs});
-        defer self.allocator.free(backoff_arg);
+        const stream_names_literal = try self.sqlLiteral(stream_names_csv);
+        defer self.allocator.free(stream_names_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.process_ingest_ledger(string_to_array({s}, ','), {d}::integer, {d}::integer)::text;",
+            .{ stream_names_literal, max_attempts, backoff_secs },
+        );
+        defer self.allocator.free(query);
 
-        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 14);
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
         defer argv.deinit(self.allocator);
         try argv.appendSlice(self.allocator, &.{
             "psql",
@@ -106,14 +112,8 @@ pub const Client = struct {
             "-v",
             "ON_ERROR_STOP=1",
             "-qAt",
-            "-v",
-            stream_names_arg,
-            "-v",
-            attempts_arg,
-            "-v",
-            backoff_arg,
             "-c",
-            "select coordinator.process_ingest_ledger(string_to_array(:'stream_names_csv', ','), :'max_attempts'::integer, :'backoff_secs'::integer)::text;",
+            query,
         });
 
         const output = self.runScalar(argv.items, "psql", error.IngestProcessFailed) catch |err| return err;
@@ -153,10 +153,16 @@ pub const Client = struct {
     }
 
     pub fn processBatchResult(self: *Client, result_json: []const u8) Error!void {
-        const result_arg = try std.fmt.allocPrint(self.allocator, "result_json={s}", .{result_json});
-        defer self.allocator.free(result_arg);
+        const result_literal = try self.sqlLiteral(result_json);
+        defer self.allocator.free(result_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.process_batch_result({s}::jsonb)::text;",
+            .{result_literal},
+        );
+        defer self.allocator.free(query);
 
-        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 10);
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
         defer argv.deinit(self.allocator);
         try argv.appendSlice(self.allocator, &.{
             "psql",
@@ -164,10 +170,8 @@ pub const Client = struct {
             "-v",
             "ON_ERROR_STOP=1",
             "-qAt",
-            "-v",
-            result_arg,
             "-c",
-            "select coordinator.process_batch_result(:'result_json'::jsonb)::text;",
+            query,
         });
 
         var exec_result = command.exec(self.allocator, self.io, argv.items) catch {
@@ -203,5 +207,22 @@ pub const Client = struct {
         const output = command.trimmedOutput(result.stdout);
         if (output.len == 0) return null;
         return self.allocator.dupe(u8, output) catch on_error;
+    }
+
+    fn sqlLiteral(self: *Client, value: []const u8) Error![]u8 {
+        var literal = try std.ArrayList(u8).initCapacity(self.allocator, value.len + 2);
+        defer literal.deinit(self.allocator);
+
+        try literal.append(self.allocator, '\'');
+        for (value) |byte| {
+            if (byte == '\'') {
+                try literal.appendSlice(self.allocator, "''");
+            } else {
+                try literal.append(self.allocator, byte);
+            }
+        }
+        try literal.append(self.allocator, '\'');
+
+        return literal.toOwnedSlice(self.allocator);
     }
 };
