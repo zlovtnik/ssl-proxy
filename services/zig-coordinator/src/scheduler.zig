@@ -270,7 +270,7 @@ pub const Service = struct {
             "next",
             self.cfg.result_stream_name,
             self.cfg.result_consumer,
-            "--batch",
+            "--count",
             "50",
             "--expires",
             "250ms",
