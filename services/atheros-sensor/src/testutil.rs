@@ -34,6 +34,13 @@ pub(crate) fn extended_mask_radiotap_beacon_frame() -> Vec<u8> {
     bytes
 }
 
+pub(crate) fn namespace_radiotap_beacon_frame() -> Vec<u8> {
+    let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+    let mut bytes = namespace_radiotap_header();
+    bytes.extend_from_slice(&frame[10..]);
+    bytes
+}
+
 pub(crate) fn probe_request_radiotap_frame() -> Vec<u8> {
     build_frame(0x40, 0x00, BROADCAST, CLIENT, BROADCAST, None, ssid_ie())
 }
@@ -104,6 +111,10 @@ pub(crate) fn extended_mask_radiotap_header() -> Vec<u8> {
     vec![
         0x00, 0x00, 0x0d, 0x00, 0x20, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0xd6,
     ]
+}
+
+pub(crate) fn namespace_radiotap_header() -> Vec<u8> {
+    vec![0x00, 0x00, 0x09, 0x00, 0x20, 0x00, 0x00, 0x20, 0xd6]
 }
 
 pub(crate) fn beacon_body() -> Vec<u8> {

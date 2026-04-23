@@ -564,6 +564,22 @@ mod tests {
     }
 
     #[test]
+    fn strips_radiotap_with_namespace_marker() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: namespace_radiotap_beacon_frame(),
+        };
+
+        let (metadata, payload) = strip_radiotap(&packet.data).unwrap();
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(metadata.signal_dbm, Some(-42));
+        assert!(payload.len() > 24);
+        assert_eq!(frame.frame_subtype, "beacon");
+        assert_eq!(frame.signal_dbm, Some(-42));
+    }
+
+    #[test]
     fn parses_beacon_frame() {
         let packet = RawPacket {
             observed_at: Utc::now(),
