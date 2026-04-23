@@ -339,13 +339,20 @@ async fn process_packet(
     publish_state: &SharedPublishState,
     pipeline: &mut PipelineState,
 ) -> Result<PipelineOutcome, SensorError> {
+    // Always count raw bytes first, before any parsing attempts
+    let packet_len = packet.data.len() as u64;
+
     let mut wifi_frame = match decode_frame(&packet) {
         Ok(frame) => frame,
         Err(error) => {
-            debug!(%error, "ignoring unsupported frame");
+            debug!(%error, len = packet_len, "counted raw bytes for unsupported frame");
+            pipeline.traffic_bucket.observe_raw(packet_len, packet.observed_at);
             return Ok(PipelineOutcome::UnsupportedFrame);
         }
     };
+
+    // For successfully decoded frames we will get proper classification
+    // via the existing traffic_bucket.observe() call below
 
     let handshake_alert = pipeline.handshake_monitor.observe(&mut wifi_frame, context);
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);

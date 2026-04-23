@@ -44,8 +44,20 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseEr
                 continue;
             }
             let global_bit = word_index * 32 + bit;
-            let (align, size) = field_layout(global_bit)
-                .ok_or(ParseError::UnsupportedRadiotapField { bit: global_bit })?;
+            let (align, size) = match field_layout(global_bit) {
+                Some(layout) => layout,
+                None => {
+                    // Resilient parsing for modern unknown fields:
+                    //   29 -> VHT: 12 bytes, 4 align
+                    //   30 -> HE:  14 bytes, 2 align
+                    //   All others: assume minimal alignment, advance safely
+                    match global_bit {
+                        29 => (4, 12),
+                        30 => (2, 14),
+                        _ => (1, 0),
+                    }
+                }
+            };
             cursor = align_offset(cursor, align);
             if cursor + size > length {
                 return Err(ParseError::MissingRadiotap);
