@@ -158,20 +158,25 @@ pub const Service = struct {
     }
 
     fn handleResults(self: *Service) Error!bool {
-        const output = try self.pullResultMessages();
-        defer if (output) |value| self.allocator.free(value);
-
-        if (output == null) return false;
-
         var had_work = false;
-        var iterator = std.mem.splitScalar(u8, output.?, '\n');
-        while (iterator.next()) |raw_line| {
-            const line = std.mem.trim(u8, raw_line, " \t\r\n");
-            if (line.len == 0) continue;
+        var pulls: usize = 0;
+        while (pulls < 50) : (pulls += 1) {
+            if (!(try self.resultConsumerHasBacklog())) break;
 
-            try self.database.processBatchResult(line);
-            had_work = true;
+            const output = try self.pullResultMessage();
+            defer if (output) |value| self.allocator.free(value);
+            if (output == null) break;
+
+            var iterator = std.mem.splitScalar(u8, output.?, '\n');
+            while (iterator.next()) |raw_line| {
+                const line = std.mem.trim(u8, raw_line, " \t\r\n");
+                if (line.len == 0) continue;
+
+                try self.database.processBatchResult(line);
+                had_work = true;
+            }
         }
+
         return had_work;
     }
 
@@ -261,7 +266,31 @@ pub const Service = struct {
         try self.runRequiredCommand(&argv, "nats", error.NatsConsumerMissing);
     }
 
-    fn pullResultMessages(self: *Service) Error!?[]u8 {
+    fn resultConsumerHasBacklog(self: *Service) Error!bool {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "info",
+            self.cfg.result_stream_name,
+            self.cfg.result_consumer,
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.ResultFetchFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return error.ResultFetchFailed;
+        }
+
+        return consumerInfoHasBacklog(result.stdout);
+    }
+
+    fn pullResultMessage(self: *Service) Error!?[]u8 {
         const argv = [_][]const u8{
             "nats",
             "--server",
@@ -271,9 +300,7 @@ pub const Service = struct {
             self.cfg.result_stream_name,
             self.cfg.result_consumer,
             "--count",
-            "50",
-            "--expires",
-            "250ms",
+            "1",
             "--raw",
         };
 
@@ -404,6 +431,42 @@ fn looksLikeNoMessage(stderr: []const u8) bool {
     return containsAsciiCaseInsensitive(stderr, "timeout") or
         containsAsciiCaseInsensitive(stderr, "timed out") or
         containsAsciiCaseInsensitive(stderr, "no messages");
+}
+
+fn consumerInfoHasBacklog(stdout: []const u8) bool {
+    return labeledCountIsPositive(stdout, "Pending Messages:") or
+        labeledCountIsPositive(stdout, "Unprocessed Messages:");
+}
+
+fn labeledCountIsPositive(stdout: []const u8, label: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, stdout, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (!std.mem.startsWith(u8, line, label)) continue;
+
+        var digits_buffer: [32]u8 = undefined;
+        var digits_len: usize = 0;
+        var index: usize = label.len;
+        while (index < line.len and std.ascii.isWhitespace(line[index])) : (index += 1) {}
+        while (index < line.len) : (index += 1) {
+            const byte = line[index];
+            if (std.ascii.isDigit(byte)) {
+                if (digits_len < digits_buffer.len) {
+                    digits_buffer[digits_len] = byte;
+                    digits_len += 1;
+                }
+                continue;
+            }
+            if (byte == ',') continue;
+            break;
+        }
+
+        if (digits_len == 0) return false;
+        const count = std.fmt.parseInt(u64, digits_buffer[0..digits_len], 10) catch return false;
+        return count > 0;
+    }
+
+    return false;
 }
 
 fn containsAsciiCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
