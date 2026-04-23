@@ -14,6 +14,8 @@ export default class extends Controller {
   connect() {
     this.card = null
     this.hideTimer = null
+    this.showTimer = null
+    this.fetchCache = new Map()
     this.enhancedCells = new WeakSet()
     this.enhanceHandler = () => this.enhance()
     this.element.addEventListener("mac-link:enhance", this.enhanceHandler)
@@ -23,6 +25,7 @@ export default class extends Controller {
   disconnect() {
     this.element.removeEventListener("mac-link:enhance", this.enhanceHandler)
     window.clearTimeout(this.hideTimer)
+    window.clearTimeout(this.showTimer)
     this.removeCard()
   }
 
@@ -58,7 +61,14 @@ export default class extends Controller {
     })
   }
 
-  async show(mac, anchor) {
+  show(mac, anchor) {
+    window.clearTimeout(this.hideTimer)
+    window.clearTimeout(this.showTimer)
+
+    this.showTimer = window.setTimeout(() => this._show(mac, anchor), 120)
+  }
+
+  async _show(mac, anchor) {
     window.clearTimeout(this.hideTimer)
 
     if (this.card && this.card.dataset.mac === mac) return
@@ -78,10 +88,20 @@ export default class extends Controller {
     this.positionCard(card, anchor)
 
     try {
-      const [devices, auditLogs] = await Promise.all([
-        this.fetchJson(this.inventoryUrlValue, mac),
-        this.fetchJson(this.recentAuditLogsUrlValue, mac)
-      ])
+      let devices, auditLogs
+      if (this.fetchCache.has(mac)) {
+        ;({ devices, auditLogs } = this.fetchCache.get(mac))
+      } else {
+        ;[devices, auditLogs] = await Promise.all([
+          this.fetchJson(this.inventoryUrlValue, mac),
+          this.fetchJson(this.recentAuditLogsUrlValue, mac)
+        ])
+        this.fetchCache.set(mac, { devices, auditLogs })
+        if (this.fetchCache.size > 50) {
+          this.fetchCache.delete(this.fetchCache.keys().next().value)
+        }
+      }
+
       const device = this.findDevice(devices, mac)
       const summary = this.auditSummary(auditLogs)
 
@@ -136,6 +156,7 @@ export default class extends Controller {
   }
 
   scheduleHide() {
+    window.clearTimeout(this.showTimer)
     this.hideTimer = window.setTimeout(() => this.removeCard(), 200)
   }
 

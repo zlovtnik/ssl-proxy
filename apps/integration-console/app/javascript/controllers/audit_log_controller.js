@@ -51,19 +51,19 @@ export default class extends Controller {
     if (data.dedupe_key) row.dataset.auditLogId = data.dedupe_key
     if (data.observed_at) row.dataset.auditLogObservedAt = data.observed_at
 
-    this.appendCell(row, data.observed_at || "", data.show_url)
-    this.appendCell(row, data.sensor_id || "")
-    this.appendCell(row, data.location_id || "")
-    this.appendCell(row, data.frame_subtype || data.event_type || "event")
-    this.appendCell(row, data.ssid || "")
-    this.appendCell(row, data.source_mac_display || this.maskMac(data.source_mac) || "")
-    this.appendCell(row, data.destination_bssid_display || this.maskMac(data.destination_bssid) || "")
-    this.appendCell(row, data.signal_dbm ?? "")
-    this.appendCell(row, data.raw_len ?? "")
-    this.appendCell(row, data.frame_flags_label || "")
-    this.appendCell(row, data.security_label || "open/unknown")
-    this.appendCell(row, this.shortFingerprint(data.device_fingerprint))
-    this.appendCell(row, data.handshake_captured ? "captured" : "")
+    this.appendCell(row, data.observed_at || "", data.show_url, "col-observed")
+    this.appendCell(row, data.sensor_id || "", null, "col-sensor")
+    this.appendCell(row, data.location_id || "", null, "col-location")
+    this.appendCell(row, data.frame_subtype || data.event_type || "event", null, "col-subtype")
+    this.appendCell(row, data.ssid || "", null, "col-ssid")
+    this.appendCell(row, data.source_mac_display || this.maskMac(data.source_mac) || "", null, "col-source")
+    this.appendCell(row, data.destination_bssid_display || this.maskMac(data.destination_bssid) || "", null, "col-dest")
+    this.appendCell(row, data.signal_dbm ?? "", null, "col-signal")
+    this.appendCell(row, data.raw_len ?? "", null, "col-bytes")
+    this.appendCell(row, data.frame_flags_label || "", null, "col-flags")
+    this.appendCell(row, data.security_label || "open/unknown", null, "col-security")
+    this.appendCell(row, this.shortFingerprint(data.device_fingerprint), null, "col-fp")
+    this.appendCell(row, data.handshake_captured ? "captured" : "", null, "col-hs")
 
     if (this.hasEmptyTarget) this.emptyTarget.remove()
     this.bodyTarget.prepend(row)
@@ -72,8 +72,9 @@ export default class extends Controller {
     this.element.dispatchEvent(new CustomEvent("mac-link:enhance"))
   }
 
-  appendCell(row, value, href = null) {
+  appendCell(row, value, href = null, cssClass = null) {
     const cell = document.createElement("td")
+    if (cssClass) cell.className = cssClass
     if (href) {
       const link = document.createElement("a")
       link.href = href
