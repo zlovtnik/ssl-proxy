@@ -44,6 +44,7 @@ Thumbs.db
 **/.zig-cache/
 **/.zig-cache-local/
 **/.zig-global-cache/
+**/zig-pkg/
 **/zig-out/
 **/build/
 **/build-*/

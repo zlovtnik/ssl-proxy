@@ -29,7 +29,7 @@ pub fn load() Config {
         .result_subject = envOrDefault("SYNC_RESULT_SUBJECT", "sync.oracle.result"),
         .database_url = envOrDefault("DATABASE_URL", ""),
         .sync_nats_url = envOrDefault("SYNC_NATS_URL", ""),
-        .sync_schema_file = envOrDefault("SYNC_SCHEMA_FILE", "/app/schema/postgres.sql"),
+        .sync_schema_file = envOrDefault("SYNC_SCHEMA_FILE", "/app/src/postgres/schema.sql"),
         .audit_stream_name = envOrDefault("AUDIT_STREAM_NAME", "AUDIT_STREAM"),
         .result_stream_name = envOrDefault("SYNC_RESULT_STREAM_NAME", "ORACLE_RESULT_STREAM"),
         .scan_consumer = envOrDefault("SYNC_SCAN_CONSUMER", "zig-coordinator-scan"),
@@ -45,8 +45,12 @@ fn envOrDefault(comptime name: [:0]const u8, default_value: []const u8) []const 
 }
 
 fn parseBatchSize(value: []const u8) usize {
-    const parsed = std.fmt.parseInt(usize, value, 10) catch 100;
-    if (parsed == 0) @panic("SYNC_BATCH_SIZE must be > 0");
+    const parsed = std.fmt.parseInt(usize, value, 10) catch {
+        std.debug.panic("SYNC_BATCH_SIZE must be a valid positive integer: {s}", .{value});
+    };
+    if (parsed == 0) {
+        std.debug.panic("SYNC_BATCH_SIZE must be > 0: {s}", .{value});
+    }
     return parsed;
 }
 

@@ -195,6 +195,9 @@ alter table sync_scan_ingest add column if not exists handshake_captured boolean
 
 do $$
 begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_sync_scan_ingest_status') then
+    alter table sync_scan_ingest add constraint chk_sync_scan_ingest_status check (status in ('pending','processing','batched','failed'));
+  end if;
   if not exists (select 1 from pg_constraint where conname = 'chk_sync_job_status') then
     alter table sync_job add constraint chk_sync_job_status check (status in ('pending','running','completed','failed'));
   end if;
@@ -429,8 +432,16 @@ create index if not exists ssi_wireless_source_mac_idx
   on sync_scan_ingest (lower(source_mac))
   where stream_name = 'wireless.audit';
 
+create index if not exists ssi_wireless_source_mac_payload_idx
+  on sync_scan_ingest (lower(coalesce(source_mac, payload->>'source_mac')))
+  where stream_name = 'wireless.audit';
+
 create index if not exists ssi_wireless_bssid_idx
   on sync_scan_ingest (lower(bssid))
+  where stream_name = 'wireless.audit';
+
+create index if not exists ssi_wireless_bssid_payload_idx
+  on sync_scan_ingest (lower(coalesce(bssid, payload->>'bssid')))
   where stream_name = 'wireless.audit';
 
 create index if not exists ssi_wireless_destination_bssid_idx

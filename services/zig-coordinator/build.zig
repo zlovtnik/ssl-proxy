@@ -17,6 +17,10 @@ fn addCoordinatorExecutable(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
+    const logz_dep = b.dependency("logz", .{
+        .target = target,
+        .optimize = optimize,
+    });
     if (@hasField(std.Build.ExecutableOptions, "root_module")) {
         const root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
@@ -24,19 +28,22 @@ fn addCoordinatorExecutable(
             .optimize = optimize,
             .link_libc = true,
         });
+        root_module.addImport("logz", logz_dep.module("logz"));
         return b.addExecutable(.{
             .name = "zig-coordinator",
             .root_module = root_module,
         });
     }
 
-    return b.addExecutable(.{
+    const exe = b.addExecutable(.{
         .name = "zig-coordinator",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
+    exe.root_module.addImport("logz", logz_dep.module("logz"));
+    return exe;
 }
 
 fn addCoordinatorTests(
@@ -44,6 +51,10 @@ fn addCoordinatorTests(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
+    const logz_dep = b.dependency("logz", .{
+        .target = target,
+        .optimize = optimize,
+    });
     if (@hasField(std.Build.TestOptions, "root_module")) {
         const test_module = b.createModule(.{
             .root_source_file = b.path("src/scheduler.zig"),
@@ -51,15 +62,18 @@ fn addCoordinatorTests(
             .optimize = optimize,
             .link_libc = true,
         });
+        test_module.addImport("logz", logz_dep.module("logz"));
         return b.addTest(.{
             .root_module = test_module,
         });
     }
 
-    return b.addTest(.{
+    const tests = b.addTest(.{
         .root_source_file = b.path("src/scheduler.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
+    tests.root_module.addImport("logz", logz_dep.module("logz"));
+    return tests;
 }
