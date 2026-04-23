@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= page_title %></title>
+    <% if content_for?(:turbo_cache_control) %>
+      <meta name="turbo-cache-control" content="<%= content_for(:turbo_cache_control) %>">
+    <% end %>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body data-controller="turbo-loading">
+    <div class="turbo-loading-bar" aria-hidden="true"></div>
+    <div class="app-shell" data-controller="sidebar" data-action="keydown.esc@window->sidebar#close">
+      <aside id="main-sidebar" class="sidebar" aria-label="Main navigation" data-sidebar-target="panel">
+        <div class="sidebar-title">Integration Console</div>
+        <nav class="side-nav">
+          <%= nav_link_to "Health", root_path, icon: :health %>
+          <%= nav_link_to "Audit Logs", audit_logs_path, icon: :audit %>
+          <%= nav_link_to "Backlog", backlog_index_path, icon: :backlog %>
+          <%= nav_link_to "Audit Windows", audit_windows_path, icon: :windows %>
+          <%= nav_link_to "Authorized Wireless", authorized_wireless_networks_path, icon: :wireless %>
+          <%= nav_link_to "Identities", identities_path, icon: :identities %>
+          <%= nav_link_to "Heatmap", heatmap_index_path, icon: :heatmap %>
+          <%= nav_link_to "Alerts", alerts_path, icon: :alerts %>
+          <%= nav_link_to "Shadow IT", shadow_it_alerts_path, icon: :alerts %>
+        </nav>
+      </aside>
+      <div class="sidebar-overlay" data-sidebar-target="overlay" data-action="click->sidebar#close"></div>
+      <main class="main-content">
+        <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="main-sidebar" data-sidebar-target="toggle" data-action="click->sidebar#toggle">
+          <span class="hamburger" aria-hidden="true"></span>
+          <span class="visually-hidden">Toggle navigation</span>
+        </button>
+        <% if notice.present? %><p class="status-ok flash-message" data-controller="flash"><%= notice %></p><% end %>
+        <% if alert.present? %><p class="status-alert flash-message" data-controller="flash"><%= alert %></p><% end %>
+        <%= yield %>
+      </main>
+    </div>
+  </body>
+</html>

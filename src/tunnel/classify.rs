@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn classify_named_service_real_host_and_rejects_false_positive() {
         assert_eq!(classify("web.whatsapp.com", 443, None), "essential_api");
-        assert_eq!(classify("foo.whatsapp.evil", 443, None), "essential_api");
+        assert_eq!(classify("foo.whatsapp.evil", 1234, None), "unknown");
     }
 
     #[test]

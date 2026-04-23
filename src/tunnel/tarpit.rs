@@ -37,12 +37,8 @@ pub(crate) async fn run_tarpit(
     host: String,
     state: SharedState,
 ) -> Option<u64> {
-    let upgraded = match tokio::time::timeout(
-        tokio::time::Duration::from_millis(MAX_TARPIT_MS),
-        upgrade_fut,
-    )
-    .await
-    {
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(MAX_TARPIT_MS);
+    let upgraded = match tokio::time::timeout_at(deadline, upgrade_fut).await {
         Ok(Ok(u)) => u,
         Ok(Err(e)) => {
             debug!(%host, %e, "tarpit upgrade failed");
@@ -55,8 +51,8 @@ pub(crate) async fn run_tarpit(
     };
     let start = Instant::now();
     let mut stream = TokioIo::new(upgraded);
-    let _ = tokio::time::timeout(
-        tokio::time::Duration::from_millis(MAX_TARPIT_MS),
+    let _ = tokio::time::timeout_at(
+        deadline,
         tokio::io::copy(&mut stream, &mut tokio::io::sink()),
     )
     .await;

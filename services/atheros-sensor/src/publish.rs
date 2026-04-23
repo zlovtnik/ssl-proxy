@@ -6,15 +6,20 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use ssl_proxy::sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT};
+use ssl_proxy::{
+    sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT},
+    transport::ENQUEUE_TIMEOUT_ERROR,
+};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    audit::AuditWindow,
+    audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_SUBJECT},
     backlog::{BacklogError, BacklogStore, IngestRecord},
-    model::AuditEntry,
+    model::{AuditEntry, HandshakeAlert},
 };
+
+pub const HANDSHAKE_ALERT_SUBJECT: &str = "wifi.alert.handshake";
 
 #[derive(Debug, Error)]
 pub enum PublishError {
@@ -66,12 +71,59 @@ impl PublishClient for SyncPublisherClient {
     }
 }
 
-static CIRCUIT_BREAKER: Mutex<Option<Instant>> = Mutex::new(None);
 const CIRCUIT_BREAKER_TIMEOUT: Duration = Duration::from_secs(10);
 const MEMORY_BACKLOG_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 
-lazy_static::lazy_static! {
-    static ref MEMORY_BACKLOG: Mutex<LruCache<String, (String, String, String)>> = Mutex::new(LruCache::new(MEMORY_BACKLOG_SIZE));
+type MemoryBacklogEntry = (String, String, String);
+pub type SharedPublishState = Arc<Mutex<PublishState>>;
+
+pub struct PublishState {
+    circuit_breaker: Option<Instant>,
+    memory_backlog: LruCache<String, MemoryBacklogEntry>,
+}
+
+impl Default for PublishState {
+    fn default() -> Self {
+        Self {
+            circuit_breaker: None,
+            memory_backlog: LruCache::new(MEMORY_BACKLOG_SIZE),
+        }
+    }
+}
+
+impl PublishState {
+    pub fn shared() -> SharedPublishState {
+        Arc::new(Mutex::new(Self::default()))
+    }
+
+    fn drain_memory_backlog(&mut self) -> Vec<(String, MemoryBacklogEntry)> {
+        let mut entries = Vec::with_capacity(self.memory_backlog.len());
+        while let Some(entry) = self.memory_backlog.pop_lru() {
+            entries.push(entry);
+        }
+        entries
+    }
+
+    fn put_memory_backlog(
+        &mut self,
+        dedupe_key: String,
+        stream_name: String,
+        payload: String,
+        error: String,
+    ) -> usize {
+        if let Some((evicted_key, (evicted_stream, _, _))) = self
+            .memory_backlog
+            .push(dedupe_key, (stream_name, payload, error))
+        {
+            warn!(
+                evicted_dedupe_key = %evicted_key,
+                evicted_stream_name = %evicted_stream,
+                memory_backlog_size = MEMORY_BACKLOG_SIZE.get(),
+                "memory backlog full; evicted oldest entry"
+            );
+        }
+        self.memory_backlog.len()
+    }
 }
 
 struct PreparedPublish {
@@ -85,6 +137,7 @@ struct PreparedPublish {
 /// Returns [`PublishError::Queued`] when the publish failed and the entry could
 /// only be retained in the in-memory backlog.
 pub async fn publish_entry(
+    state: &SharedPublishState,
     backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     entry: AuditEntry,
@@ -105,7 +158,7 @@ pub async fn publish_entry(
     let prepared = match prepare_publish(publisher, &payload, &dedupe_key, &entry.observed_at) {
         Ok(prepared) => prepared,
         Err(error) => {
-            persist_publish_failure(backlog, &dedupe_key, payload, error).await?;
+            persist_publish_failure(state, backlog, &dedupe_key, payload, error).await?;
             return Ok(());
         }
     };
@@ -124,28 +177,83 @@ pub async fn publish_entry(
         .await
     {
         let error = format!("record sync ingest ledger: {backlog_err}");
-        queue_in_memory_after_backlog_failure(dedupe_key, payload, error.clone(), backlog_err);
+        queue_in_memory_after_backlog_failure(
+            state,
+            dedupe_key,
+            payload,
+            error.clone(),
+            backlog_err,
+        );
         return Err(PublishError::Queued(error));
     }
 
-    flush_memory_backlog(backlog).await;
-    close_postgres_circuit_breaker();
+    flush_memory_backlog(state, backlog).await;
+    close_postgres_circuit_breaker(state);
 
     if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
     {
-        persist_publish_failure(backlog, &dedupe_key, payload, error).await?;
+        persist_publish_failure(state, backlog, &dedupe_key, payload, error).await?;
     }
 
     Ok(())
 }
 
+pub async fn publish_handshake_alert(
+    publisher: &dyn PublishClient,
+    alert: &HandshakeAlert,
+) -> Result<(), PublishError> {
+    let payload = serde_json::to_string(alert)?;
+    let key = sha256_hex(&payload);
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_handshake_alert",
+        HANDSHAKE_ALERT_SUBJECT,
+        &payload,
+        &key,
+    )
+    .await
+    .map_err(PublishError::Publish)?;
+    debug!(
+        dedupe_key = %key,
+        subject = HANDSHAKE_ALERT_SUBJECT,
+        payload_bytes = payload.len(),
+        "queued handshake alert"
+    );
+    Ok(())
+}
+
+pub async fn publish_bandwidth_event(
+    publisher: &dyn PublishClient,
+    event: &WirelessBandwidthEvent,
+) -> Result<(), PublishError> {
+    let payload = serde_json::to_string(event)?;
+    let key = sha256_hex(&payload);
+    queue_publish_with_backpressure(
+        publisher,
+        "publish_bandwidth_event",
+        BANDWIDTH_SUBJECT,
+        &payload,
+        &key,
+    )
+    .await
+    .map_err(PublishError::Publish)?;
+    debug!(
+        dedupe_key = %key,
+        subject = BANDWIDTH_SUBJECT,
+        payload_bytes = payload.len(),
+        "queued wireless bandwidth event"
+    );
+    Ok(())
+}
+
 async fn persist_publish_failure(
+    state: &SharedPublishState,
     backlog: &dyn BacklogStore,
     dedupe_key: &str,
     payload: String,
     error: String,
 ) -> Result<(), PublishError> {
-    if circuit_breaker_is_open(dedupe_key, &payload, &error) {
+    if circuit_breaker_is_open(state, dedupe_key, &payload, &error) {
         return Err(PublishError::Queued(error));
     }
 
@@ -154,6 +262,7 @@ async fn persist_publish_failure(
         .await
     {
         queue_in_memory_after_backlog_failure(
+            state,
             dedupe_key.to_string(),
             payload,
             error.clone(),
@@ -170,11 +279,16 @@ async fn persist_publish_failure(
     Ok(())
 }
 
-fn circuit_breaker_is_open(dedupe_key: &str, payload: &str, error: &str) -> bool {
-    let mut cb = CIRCUIT_BREAKER.lock().unwrap();
-    if let Some(opened_at) = *cb {
+fn circuit_breaker_is_open(
+    state: &SharedPublishState,
+    dedupe_key: &str,
+    payload: &str,
+    error: &str,
+) -> bool {
+    let mut state = state.lock().unwrap();
+    if let Some(opened_at) = state.circuit_breaker {
         if opened_at.elapsed() < CIRCUIT_BREAKER_TIMEOUT {
-            let memory_backlog_entries = put_memory_backlog(
+            let memory_backlog_entries = state.put_memory_backlog(
                 dedupe_key.to_string(),
                 "wireless.audit".to_string(),
                 payload.to_string(),
@@ -190,7 +304,7 @@ fn circuit_breaker_is_open(dedupe_key: &str, payload: &str, error: &str) -> bool
             return true;
         }
 
-        *cb = None;
+        state.circuit_breaker = None;
         info!(
             dedupe_key,
             "postgres backlog circuit breaker probe starting"
@@ -200,14 +314,15 @@ fn circuit_breaker_is_open(dedupe_key: &str, payload: &str, error: &str) -> bool
 }
 
 fn queue_in_memory_after_backlog_failure(
+    state: &SharedPublishState,
     dedupe_key: String,
     payload: String,
     error: String,
     backlog_err: BacklogError,
 ) {
-    let mut cb = CIRCUIT_BREAKER.lock().unwrap();
-    if cb.is_none() {
-        *cb = Some(Instant::now());
+    let mut state = state.lock().unwrap();
+    if state.circuit_breaker.is_none() {
+        state.circuit_breaker = Some(Instant::now());
         error!(
             dedupe_key = %dedupe_key,
             publish_error = %error,
@@ -217,7 +332,7 @@ fn queue_in_memory_after_backlog_failure(
         );
     }
 
-    let memory_backlog_entries = put_memory_backlog(
+    let memory_backlog_entries = state.put_memory_backlog(
         dedupe_key.clone(),
         "wireless.audit".to_string(),
         payload,
@@ -230,8 +345,8 @@ fn queue_in_memory_after_backlog_failure(
     );
 }
 
-async fn flush_memory_backlog(backlog: &dyn BacklogStore) {
-    let memory_entries = drain_memory_backlog();
+async fn flush_memory_backlog(state: &SharedPublishState, backlog: &dyn BacklogStore) {
+    let memory_entries = state.lock().unwrap().drain_memory_backlog();
     if !memory_entries.is_empty() {
         info!(
             memory_backlog_entries = memory_entries.len(),
@@ -247,24 +362,28 @@ async fn flush_memory_backlog(backlog: &dyn BacklogStore) {
                 %backlog_err,
                 "failed to flush memory backlog entry to postgres"
             );
-            queue_in_memory_after_backlog_failure(key, payload, err, backlog_err);
+            queue_in_memory_after_backlog_failure(state, key, payload, err, backlog_err);
             for (key, (stream, payload, err)) in memory_entries {
-                put_memory_backlog(key, stream, payload, err);
+                state
+                    .lock()
+                    .unwrap()
+                    .put_memory_backlog(key, stream, payload, err);
             }
             break;
         }
     }
 }
 
-fn close_postgres_circuit_breaker() {
-    let mut cb = CIRCUIT_BREAKER.lock().unwrap();
-    if cb.is_some() {
-        *cb = None;
+fn close_postgres_circuit_breaker(state: &SharedPublishState) {
+    let mut state = state.lock().unwrap();
+    if state.circuit_breaker.is_some() {
+        state.circuit_breaker = None;
         tracing::info!("postgres circuit breaker closed, backlog resumed");
     }
 }
 
 pub async fn reconcile_backlog(
+    state: &SharedPublishState,
     backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     audit_window: &AuditWindow,
@@ -353,9 +472,14 @@ pub async fn reconcile_backlog(
                 backlog_error = %backlog_err,
                 "backlog entry ingest ledger record failed"
             );
-            if let Err(persist_err) =
-                persist_publish_failure(backlog, &entry.dedupe_key, entry.payload.clone(), error)
-                    .await
+            if let Err(persist_err) = persist_publish_failure(
+                state,
+                backlog,
+                &entry.dedupe_key,
+                entry.payload.clone(),
+                error,
+            )
+            .await
             {
                 warn!(
                     dedupe_key = %entry.dedupe_key,
@@ -379,6 +503,7 @@ pub async fn reconcile_backlog(
                 "backlog entry publish retry enqueue failed after ingest ledger record"
             );
             if let Err(persist_err) = persist_publish_failure(
+                state,
                 backlog,
                 &entry.dedupe_key,
                 entry.payload.clone(),
@@ -475,7 +600,7 @@ async fn queue_publish_with_backpressure(
 ) -> Result<(), String> {
     match publisher.enqueue_message(subject, payload) {
         Ok(()) => Ok(()),
-        Err(error) if error == "sync publisher queue full" => {
+        Err(error) if error == ENQUEUE_TIMEOUT_ERROR => {
             debug!(
                 dedupe_key,
                 subject,
@@ -524,41 +649,12 @@ fn sha256_hex(payload: &str) -> String {
     format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
-fn drain_memory_backlog() -> Vec<(String, (String, String, String))> {
-    let mut backlog = MEMORY_BACKLOG.lock().unwrap();
-    let mut entries = Vec::with_capacity(backlog.len());
-    while let Some(entry) = backlog.pop_lru() {
-        entries.push(entry);
-    }
-    entries
-}
-
-fn put_memory_backlog(
-    dedupe_key: String,
-    stream_name: String,
-    payload: String,
-    error: String,
-) -> usize {
-    let mut backlog = MEMORY_BACKLOG.lock().unwrap();
-    if let Some((evicted_key, (evicted_stream, _, _))) =
-        backlog.push(dedupe_key, (stream_name, payload, error))
-    {
-        warn!(
-            evicted_dedupe_key = %evicted_key,
-            evicted_stream_name = %evicted_stream,
-            memory_backlog_size = MEMORY_BACKLOG_SIZE.get(),
-            "memory backlog full; evicted oldest entry"
-        );
-    }
-    backlog.len()
-}
-
 #[cfg(test)]
 mod tests {
     use base64::Engine;
     use chrono::NaiveTime;
     use std::collections::HashSet;
-    use std::sync::{MutexGuard, OnceLock};
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use serde_json::json;
@@ -567,12 +663,6 @@ mod tests {
         audit::AuditWindow,
         backlog::{BacklogEntry, BacklogError},
     };
-
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn test_lock() -> MutexGuard<'static, ()> {
-        TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
 
     struct MemoryPublisher {
         fail: bool,
@@ -749,9 +839,8 @@ mod tests {
         }
     }
 
-    fn clear_memory_state() {
-        MEMORY_BACKLOG.lock().unwrap().clear();
-        *CIRCUIT_BREAKER.lock().unwrap() = None;
+    fn test_state() -> SharedPublishState {
+        PublishState::shared()
     }
 
     fn entry() -> AuditEntry {
@@ -780,15 +869,16 @@ mod tests {
 
     #[tokio::test]
     async fn successful_publish_emits_both_subjects() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
         };
         let backlog = MemoryBacklog::default();
 
-        publish_entry(&backlog, &publisher, entry()).await.unwrap();
+        publish_entry(&state, &backlog, &publisher, entry())
+            .await
+            .unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 2);
@@ -806,16 +896,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publishes_handshake_alert_subject() {
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let alert = HandshakeAlert {
+            observed_at: "2026-04-20T12:00:00Z".to_string(),
+            sensor_id: "sensor-1".to_string(),
+            location_id: "lab".to_string(),
+            interface: "wlan0".to_string(),
+            bssid: "10:20:30:40:50:60".to_string(),
+            client_mac: "aa:bb:cc:dd:ee:01".to_string(),
+            signal_dbm: Some(-42),
+        };
+
+        publish_handshake_alert(&publisher, &alert).await.unwrap();
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].0, HANDSHAKE_ALERT_SUBJECT);
+        assert!(published[0]
+            .1
+            .contains("\"client_mac\":\"aa:bb:cc:dd:ee:01\""));
+    }
+
+    #[tokio::test]
+    async fn publishes_bandwidth_event_subject() {
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let event = WirelessBandwidthEvent {
+            event_type: "wireless_bandwidth_window".to_string(),
+            window_start: "2026-04-20T12:00:00Z".to_string(),
+            window_end: "2026-04-20T12:01:00Z".to_string(),
+            sensor_id: "sensor-1".to_string(),
+            location_id: "lab".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            source_mac: "aa:bb:cc:dd:ee:01".to_string(),
+            destination_bssid: "10:20:30:40:50:60".to_string(),
+            ssid: Some("CorpWiFi".to_string()),
+            bytes: 1024,
+            frame_count: 2,
+            retry_count: 1,
+            more_data_count: 1,
+            power_save_count: 0,
+            strongest_signal_dbm: Some(-42),
+            external_bssid: true,
+            threshold_exceeded: false,
+        };
+
+        publish_bandwidth_event(&publisher, &event).await.unwrap();
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].0, BANDWIDTH_SUBJECT);
+        assert!(published[0]
+            .1
+            .contains("\"event_type\":\"wireless_bandwidth_window\""));
+    }
+
+    #[tokio::test]
     async fn failed_publish_is_saved_to_backlog_without_pipeline_error() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let publisher = MemoryPublisher {
             fail: true,
             published: Arc::new(Mutex::new(Vec::new())),
         };
         let backlog = MemoryBacklog::default();
 
-        publish_entry(&backlog, &publisher, entry()).await.unwrap();
+        publish_entry(&state, &backlog, &publisher, entry())
+            .await
+            .unwrap();
         assert_eq!(backlog.rows.lock().unwrap().len(), 1);
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
     }
@@ -831,7 +985,7 @@ mod tests {
             let mut queue_full_remaining = self.queue_full_remaining.lock().unwrap();
             if *queue_full_remaining > 0 {
                 *queue_full_remaining -= 1;
-                return Err("sync publisher queue full".to_string());
+                return Err(ENQUEUE_TIMEOUT_ERROR.to_string());
             }
             self.published
                 .lock()
@@ -862,15 +1016,16 @@ mod tests {
 
     #[tokio::test]
     async fn queue_full_is_retried_with_backpressure_before_backlog_fallback() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let publisher = QueueFullOnEnqueuePublisher {
             published: Arc::new(Mutex::new(Vec::new())),
             queue_full_remaining: Mutex::new(1),
         };
         let backlog = MemoryBacklog::default();
 
-        publish_entry(&backlog, &publisher, entry()).await.unwrap();
+        publish_entry(&state, &backlog, &publisher, entry())
+            .await
+            .unwrap();
 
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
@@ -881,8 +1036,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_observed_at_is_rejected_before_side_effects() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
@@ -891,7 +1045,7 @@ mod tests {
         let mut event = entry();
         event.observed_at = "not-a-timestamp".to_string();
 
-        let error = publish_entry(&backlog, &publisher, event)
+        let error = publish_entry(&state, &backlog, &publisher, event)
             .await
             .unwrap_err();
 
@@ -901,50 +1055,45 @@ mod tests {
         assert!(publisher.published.lock().unwrap().is_empty());
         assert!(backlog.rows.lock().unwrap().is_empty());
         assert!(backlog.ingest_rows.lock().unwrap().is_empty());
-        assert!(MEMORY_BACKLOG.lock().unwrap().is_empty());
+        assert!(state.lock().unwrap().memory_backlog.is_empty());
     }
 
     #[tokio::test]
     async fn failed_publish_queued_in_memory_returns_queued() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let publisher = MemoryPublisher {
             fail: true,
             published: Arc::new(Mutex::new(Vec::new())),
         };
 
-        let error = publish_entry(&FailingBacklog, &publisher, entry())
+        let error = publish_entry(&state, &FailingBacklog, &publisher, entry())
             .await
             .unwrap_err();
 
         assert!(matches!(error, PublishError::Queued(_)));
-        assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
-        clear_memory_state();
+        assert_eq!(state.lock().unwrap().memory_backlog.len(), 1);
     }
 
     #[tokio::test]
     async fn flush_memory_backlog_opens_circuit_breaker_when_save_pending_fails() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
 
-        put_memory_backlog(
+        state.lock().unwrap().put_memory_backlog(
             "dedupe-1".to_string(),
             "wireless.audit".to_string(),
             "{\"event_type\":\"wifi_management_frame\"}".to_string(),
             "nats unavailable".to_string(),
         );
 
-        flush_memory_backlog(&FailingBacklog).await;
+        flush_memory_backlog(&state, &FailingBacklog).await;
 
-        assert_eq!(MEMORY_BACKLOG.lock().unwrap().len(), 1);
-        assert!(CIRCUIT_BREAKER.lock().unwrap().is_some());
-        clear_memory_state();
+        assert_eq!(state.lock().unwrap().memory_backlog.len(), 1);
+        assert!(state.lock().unwrap().circuit_breaker.is_some());
     }
 
     #[tokio::test]
     async fn reconciliation_retries_and_clears_backlog() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let backlog = MemoryBacklog::default();
         let event = entry();
         let payload = serde_json::to_string(&event).unwrap();
@@ -959,6 +1108,7 @@ mod tests {
             published: Arc::new(Mutex::new(Vec::new())),
         };
         reconcile_backlog(
+            &state,
             &backlog,
             &publisher,
             &AuditWindow::from_parts(None, None, None, None),
@@ -973,8 +1123,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconciliation_enqueue_failure_keeps_backlog_entry_pending() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let backlog = MemoryBacklog::default();
         let event = entry();
         let payload = serde_json::to_string(&event).unwrap();
@@ -990,6 +1139,7 @@ mod tests {
         };
 
         reconcile_backlog(
+            &state,
             &backlog,
             &publisher,
             &AuditWindow::from_parts(None, None, None, None),
@@ -1006,8 +1156,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconciliation_ingest_failure_is_persisted_and_processing_continues() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
 
         let mut first = entry();
         first.sequence_number = Some(1);
@@ -1021,7 +1170,12 @@ mod tests {
 
         let backlog = SelectiveIngestFailBacklog::new([first_key.clone()]);
         backlog
-            .save_pending(&first_key, "wireless.audit", &first_payload, "nats unavailable")
+            .save_pending(
+                &first_key,
+                "wireless.audit",
+                &first_payload,
+                "nats unavailable",
+            )
             .await
             .unwrap();
         backlog
@@ -1040,6 +1194,7 @@ mod tests {
         };
 
         reconcile_backlog(
+            &state,
             &backlog,
             &publisher,
             &AuditWindow::from_parts(None, None, None, None),
@@ -1060,8 +1215,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconciliation_skips_malformed_backlog_payload() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let backlog = MemoryBacklog::default();
         backlog
             .save_pending("bad", "wireless.audit", "{}", "nats unavailable")
@@ -1073,6 +1227,7 @@ mod tests {
         };
 
         reconcile_backlog(
+            &state,
             &backlog,
             &publisher,
             &AuditWindow::from_parts(None, None, None, None),
@@ -1087,8 +1242,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconciliation_skips_entries_outside_audit_window() {
-        let _guard = test_lock();
-        clear_memory_state();
+        let state = test_state();
         let backlog = MemoryBacklog::default();
         let event = entry();
         let payload = serde_json::to_string(&event).unwrap();
@@ -1103,6 +1257,7 @@ mod tests {
         };
 
         reconcile_backlog(
+            &state,
             &backlog,
             &publisher,
             &AuditWindow::from_parts(

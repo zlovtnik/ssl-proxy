@@ -65,8 +65,8 @@ rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the fo
 schema_apply_failed::psql failed::Coordinator could not apply or validate the sync schema::Check DATABASE_URL and Postgres readiness::manual
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict (often 443 in local tests)::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
-qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
 peer_config_permission_denied::awk: cannot open /config/.*\.conf \(Permission denied\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual
+qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
 SIGEOF
 }
 
@@ -160,7 +160,7 @@ to_container_config_path() {
     local host_path="$1"
     case "$host_path" in
         "$ROOT_DIR"/config/*)
-            printf '/config/%s' "${host_path#"$ROOT_DIR"/config/}"
+            printf '/config/%s' "${host_path#${ROOT_DIR}/config/}"
             return 0
             ;;
     esac
@@ -177,8 +177,8 @@ print_qr_for_config() {
     fi
 
     container_cfg="$(to_container_config_path "$cfg" || true)"
-    if [ -n "$container_cfg" ] && compose exec -T "$SERVICE_NAME" sh -lc "test -r '$container_cfg'"; then
-        compose exec -T "$SERVICE_NAME" sh -lc "cat '$container_cfg'" | qrencode -t "$QR_TYPE" -m "$QR_MARGIN"
+    if [ -n "$container_cfg" ] && compose exec -T "$SERVICE_NAME" test -r "$container_cfg"; then
+        compose exec -T "$SERVICE_NAME" cat "$container_cfg" | qrencode -t "$QR_TYPE" -m "$QR_MARGIN"
         return 0
     fi
 
@@ -301,6 +301,7 @@ health_checks() {
 
     local ready_code body_file ready_body
     body_file="$(mktemp)"
+    trap 'rm -f "$body_file"' RETURN
     ready_code="$(curl -sS -o "$body_file" -w '%{http_code}' --max-time 2 http://127.0.0.1:3002/ready 2>/dev/null || true)"
     if [ "$ready_code" = "000" ]; then
         ready_code="$(compose exec -T "$SERVICE_NAME" curl -sS -o /tmp/up-ready-ready-body.txt -w '%{http_code}' --max-time 2 http://127.0.0.1:3002/ready 2>/dev/null || true)"
@@ -308,6 +309,7 @@ health_checks() {
     fi
     ready_body="$(tr -d '\n' <"$body_file")"
     rm -f "$body_file"
+    trap - RETURN
 
     if [ "$ready_code" = "200" ]; then
         step S04 "ready endpoint: 200"

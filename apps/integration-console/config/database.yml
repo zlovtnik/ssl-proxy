@@ -1,0 +1,31 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+
+development:
+  primary:
+    <<: *default
+    url: <%= ENV.fetch("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync") %>
+  sync:
+    <<: *default
+    url: <%= ENV.fetch("SYNC_DATABASE_URL", ENV.fetch("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync")) %>
+    database_tasks: false
+
+test:
+  primary:
+    <<: *default
+    url: <%= ENV.fetch("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/integration_console_test") %>
+  sync:
+    <<: *default
+    url: <%= ENV.fetch("SYNC_DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/integration_console_sync_test") %>
+    database_tasks: false
+
+production:
+  primary:
+    <<: *default
+    url: <%= ENV["DATABASE_URL"] %>
+  sync:
+    <<: *default
+    url: <%= ENV["SYNC_DATABASE_URL"] || ENV["DATABASE_URL"] %>
+    database_tasks: false

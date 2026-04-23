@@ -16,12 +16,11 @@ axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1.40", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "server", "tokio"] }
-hyper-proxy = "0.9.1"
 http-body-util = "0.1"
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["set-header", "fs", "trace", "cors"] }
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -55,6 +54,10 @@ quic = ["dep:quinn", "dep:h3", "dep:h3-quinn"]
 opt-level = 0
 debug = 1
 incremental = true
+
+[profile.test]
+inherits = "dev"
+opt-level = 0
 
 [profile.release]
 lto = true        # Enable full link-time optimization.

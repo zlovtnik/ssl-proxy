@@ -33,6 +33,11 @@ pub const Coordinator = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.retry_state.deinit();
+        for (self.retry_queue.items) |item| {
+            self.allocator.free(item.job_id);
+            self.allocator.free(item.batch_id);
+            self.allocator.free(item.status);
+        }
         self.retry_queue.deinit(self.allocator);
         self.store.deinit();
         self.publisher.deinit();
@@ -96,11 +101,28 @@ pub const Coordinator = struct {
         const entropy = std.hash.Wyhash.hash(@as(u64, @intCast(next_attempt)), result.batch_id);
         const jitter = entropy % (jitter_cap + 1);
         const backoff_ms = base_backoff_ms + jitter;
+        const owned_job_id = try self.allocator.dupe(u8, result.job_id);
+        errdefer self.allocator.free(owned_job_id);
+        const owned_batch_id = try self.allocator.dupe(u8, result.batch_id);
+        errdefer self.allocator.free(owned_batch_id);
+        const owned_status = try self.allocator.dupe(u8, result.status);
+        errdefer self.allocator.free(owned_status);
         try self.retry_state.put(owned_key, .{
             .attempts = next_attempt,
             .backoff_ms = backoff_ms,
         });
-        try self.retry_queue.append(self.allocator, result);
+        errdefer {
+            _ = self.retry_state.remove(owned_key);
+        }
+        self.retry_queue.append(self.allocator, .{
+            .job_id = owned_job_id,
+            .batch_id = owned_batch_id,
+            .status = owned_status,
+            .retryable = result.retryable,
+        }) catch |err| {
+            _ = self.retry_state.remove(owned_key);
+            return err;
+        };
         std.log.info("event=retry_queued batch_id={s} attempt={d} backoff_ms={d} status=retry_scheduled", .{
             result.batch_id,
             next_attempt,

@@ -43,6 +43,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - ./config:/config
+      - sync-outbox:/sync-outbox
     environment:
       - WG_INTERFACE_NAME=wg0
       - WG_TEMPLATE_PATH=/config/templates/server.conf
@@ -68,8 +69,10 @@ services:
       - WG_SUDO=1
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
-      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
+      - ADMIN_API_KEY=${ADMIN_API_KEY:?ADMIN_API_KEY must be set for admin endpoints}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_OUTBOX_DIR=/sync-outbox
 
     ports:
       # Publish the obfuscated BoringTun-backed UDP relay on the Docker host.
@@ -105,7 +108,13 @@ services:
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
+      - SYNC_SCAN_SUBJECT=${SYNC_SCAN_SUBJECT:-sync.scan.request}
+      - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+      - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
       - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -125,12 +134,14 @@ services:
       - ./lib:/app/lib:ro
       - ./wallet:/app/wallet:ro
       - ./secrets:/run/secrets:ro
+      - sync-outbox:/sync-outbox
     environment:
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
       - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      - SYNC_OUTBOX_DIR=/sync-outbox
       - TNS_ADMIN=/app/wallet
       - LD_LIBRARY_PATH=/app/lib
       - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
@@ -143,10 +154,71 @@ services:
       retries: 5
       start_period: 20s
 
+  integration-console-web:
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-lc", "bin/rails db:prepare && bin/rails server -b 0.0.0.0"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+    ports:
+      - "127.0.0.1:3003:3000"
+
+  integration-console-worker:
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: unless-stopped
+    command: ["bin/rails", "runner", "Nats::Subscriber.new.run_forever"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+
+  integration-console-heartbeat:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-lc", "while true; do bin/rails runner 'SensorHeartbeatMonitor.new.call'; sleep \"$${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}\"; done"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+      - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
+
   atheros-sensor:
     depends_on:
       nats:
         condition: service_healthy
+      nats-bootstrap:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       zig-coordinator:
@@ -164,6 +236,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - /sys/class/net:/sys/class/net:ro
+      - sync-outbox:/sync-outbox
     environment:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
@@ -173,6 +246,8 @@ services:
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
       ATH_SENSOR_CHANNEL: ${ATH_SENSOR_CHANNEL:-11}
       ATH_SENSOR_REG_DOMAIN: ${ATH_SENSOR_REG_DOMAIN:-US}
+      ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED: ${ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED:-true}
+      SYNC_OUTBOX_DIR: /sync-outbox
       RUST_LOG: ${ATH_SENSOR_RUST_LOG:-warn,atheros_sensor=info,ssl_proxy=info}
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/atheros-sensor healthcheck"]
@@ -204,6 +279,15 @@ services:
     volumes:
       - nats-data:/data
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   nats-bootstrap:
     image: natsio/nats-box:0.16.0
     depends_on:
@@ -214,9 +298,13 @@ services:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
       AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      SYNC_RESULT_STREAM_NAME: ${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
+      SYNC_SCAN_SUBJECT: ${SYNC_SCAN_SUBJECT:-sync.scan.request}
       SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
       SYNC_LOAD_SUBJECT: ${SYNC_LOAD_SUBJECT:-sync.oracle.load}
       SYNC_LOAD_CONSUMER: ${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      SYNC_RESULT_SUBJECT: ${SYNC_RESULT_SUBJECT:-sync.oracle.result}
+      SYNC_RESULT_CONSUMER: ${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
     volumes:
       - ./docker/nats:/config:ro
     entrypoint: ["sh"]
@@ -244,3 +332,4 @@ services:
 volumes:
   nats-data:
   postgres-data:
+  sync-outbox:

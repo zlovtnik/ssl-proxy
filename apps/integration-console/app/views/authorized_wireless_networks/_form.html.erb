@@ -1,0 +1,36 @@
+<%= form_with model: authorized_wireless_network do |form| %>
+  <% if authorized_wireless_network.errors.any? %>
+    <div class="status-alert"><%= authorized_wireless_network.errors.full_messages.to_sentence %></div>
+  <% end %>
+
+  <div class="form-grid">
+    <div>
+      <%= form.label :ssid %>
+      <%= form.text_field :ssid, placeholder: "CorpWiFi" %>
+    </div>
+    <div>
+      <%= form.label :bssid %>
+      <%= form.text_field :bssid, placeholder: "10:20:30:40:50:60" %>
+    </div>
+    <div>
+      <%= form.label :location_id %>
+      <%= form.text_field :location_id, placeholder: "optional" %>
+    </div>
+    <div>
+      <%= form.label :label %>
+      <%= form.text_field :label, placeholder: "Lobby AP" %>
+    </div>
+  </div>
+
+  <div>
+    <%= form.label :notes %>
+    <%= form.text_area :notes, rows: 3 %>
+  </div>
+
+  <label class="checkbox-row">
+    <%= form.check_box :enabled %>
+    Enabled
+  </label>
+
+  <%= form.submit %>
+<% end %>

@@ -43,3 +43,34 @@ from sync_scan_ingest
 order by updated_at desc
 limit 10;
 " || true
+
+echo
+echo "== wireless audit counts (last 24h) =="
+docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
+select
+  status,
+  stream_name,
+  count(*),
+  min(observed_at) as oldest,
+  max(observed_at) as newest
+from sync_scan_ingest
+where stream_name = 'wireless.audit'
+  and observed_at >= now() - interval '24 hours'
+group by status, stream_name
+order by status;
+" || true
+
+echo
+echo "== wireless audit threat detections =="
+docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
+select
+  payload->>'ssid' as ssid,
+  payload->>'source_mac' as source_mac,
+  payload->'tags' as threat_tags,
+  observed_at
+from sync_scan_ingest
+where stream_name = 'wireless.audit'
+  and payload::text like '%threat:%'
+order by observed_at desc
+limit 20;
+" || true

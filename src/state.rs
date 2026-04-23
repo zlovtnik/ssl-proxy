@@ -279,7 +279,7 @@ fn weighted_ema(previous: u64, current: u64, weight: u64) -> u64 {
     if weight <= 1 {
         return current;
     }
-    ((previous * (weight - 1)) + current) / weight
+    previous.saturating_mul(weight - 1).saturating_add(current) / weight
 }
 
 /// Process-wide application state shared by all handlers and background tasks.

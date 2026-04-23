@@ -2,17 +2,21 @@
 
 use std::{
     io::Cursor,
-    path::PathBuf,
-    sync::{Arc, Mutex},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
+    runtime::RuntimeFlavor,
     sync::{mpsc, oneshot},
     task::JoinHandle,
     time::timeout,
@@ -28,11 +32,15 @@ use crate::{
     },
 };
 
+pub const ENQUEUE_TIMEOUT_ERROR: &str = "sync publisher enqueue timed out";
+
 #[derive(Clone, Debug)]
 struct SyncPublisherConfig {
     nats_url: Option<String>,
     connect_timeout: Duration,
     publish_timeout: Duration,
+    queue_capacity: usize,
+    enqueue_timeout: Duration,
     username: Option<String>,
     password: Option<String>,
     tls_enabled: bool,
@@ -42,6 +50,7 @@ struct SyncPublisherConfig {
     tls_client_key_path: Option<String>,
     inline_payload_max_bytes: usize,
     outbox_dir: PathBuf,
+    publish_spool_dir: PathBuf,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -58,9 +67,22 @@ pub struct SyncPublisherHealthSnapshot {
     pub tls_enabled: bool,
     pub inline_payload_max_bytes: usize,
     pub outbox_dir: String,
+    pub queue_capacity: usize,
+    pub queue_depth: usize,
+    pub queue_available: usize,
+    pub spool_dir: String,
+    pub spool_pending: usize,
+    pub spooled_total: u64,
+    pub enqueue_timeouts_total: u64,
     pub last_attempt_at: Option<String>,
     pub last_publish_at: Option<String>,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct SyncPublisherCounters {
+    spooled_total: AtomicU64,
+    enqueue_timeouts_total: AtomicU64,
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +90,7 @@ pub struct SyncPublisher {
     config: SyncPublisherConfig,
     published: Arc<Mutex<Vec<PublishedMessage>>>,
     health: Arc<Mutex<SyncPublisherHealth>>,
+    counters: Arc<SyncPublisherCounters>,
     publish_tx: Arc<Mutex<Option<PublishQueueSender>>>,
     publish_task: Arc<Mutex<Option<PublishTaskHandle>>>,
 }
@@ -86,6 +109,18 @@ struct PublishQueueMessage {
 }
 type PublishQueueSender = mpsc::Sender<PublishQueueMessage>;
 type PublishTaskHandle = JoinHandle<()>;
+
+enum EnqueueError {
+    Timeout,
+    Closed,
+}
+
+#[derive(Deserialize, Serialize)]
+struct PublishSpoolEnvelope {
+    subject: String,
+    payload: String,
+    created_at: String,
+}
 
 trait NatsStream: AsyncRead + AsyncWrite + Unpin + Send {}
 
@@ -111,6 +146,8 @@ impl SyncPublisher {
             nats_url: config.nats_url.clone(),
             connect_timeout: Duration::from_millis(config.connect_timeout_ms),
             publish_timeout: Duration::from_millis(config.publish_timeout_ms),
+            queue_capacity: config.publish_queue_capacity,
+            enqueue_timeout: Duration::from_millis(config.publish_enqueue_timeout_ms),
             username: config.username.clone(),
             password: config.password.clone(),
             tls_enabled: config.tls_enabled,
@@ -120,11 +157,14 @@ impl SyncPublisher {
             tls_client_key_path: config.tls_client_key_path.clone(),
             inline_payload_max_bytes: config.inline_payload_max_bytes,
             outbox_dir: PathBuf::from(&config.outbox_dir),
+            publish_spool_dir: PathBuf::from(&config.publish_spool_dir),
         };
 
         let health = Arc::new(Mutex::new(SyncPublisherHealth::default()));
+        let counters = Arc::new(SyncPublisherCounters::default());
         let (publish_tx, publish_task) = if tokio::runtime::Handle::try_current().is_ok() {
-            let (publish_tx, mut publish_rx) = mpsc::channel::<PublishQueueMessage>(64);
+            let (publish_tx, mut publish_rx) =
+                mpsc::channel::<PublishQueueMessage>(publisher_config.queue_capacity);
             let config_clone = publisher_config.clone();
             let health_clone = Arc::clone(&health);
 
@@ -141,6 +181,7 @@ impl SyncPublisher {
             config: publisher_config,
             published: Arc::new(Mutex::new(Vec::new())),
             health,
+            counters,
             publish_tx: Arc::new(Mutex::new(publish_tx)),
             publish_task: Arc::new(Mutex::new(publish_task)),
         }
@@ -192,23 +233,41 @@ impl SyncPublisher {
             return Err(error);
         }
 
-        let publish_tx = self.queue_sender()?;
-        publish_tx
-            .try_send(PublishQueueMessage {
-                subject: subject.to_string(),
-                payload: payload.to_string(),
-                response_tx: None,
-            })
-            .map_err(|error| {
-                let message = match error {
-                    mpsc::error::TrySendError::Full(_) => "sync publisher queue full".to_string(),
-                    mpsc::error::TrySendError::Closed(_) => {
-                        "sync publisher queue closed".to_string()
-                    }
-                };
-                self.record_error(message.clone());
-                message
-            })
+        let message = PublishQueueMessage {
+            subject: subject.to_string(),
+            payload: payload.to_string(),
+            response_tx: None,
+        };
+        let publish_tx = match self.queue_sender() {
+            Ok(publish_tx) => publish_tx,
+            Err(error) => {
+                warn!(%error, %subject, "sync publisher queue unavailable; spooling publish");
+                return self.spool_publish(subject, payload);
+            }
+        };
+
+        match self.enqueue_with_timeout(&publish_tx, message) {
+            Ok(()) => Ok(()),
+            Err(EnqueueError::Timeout) => {
+                self.counters
+                    .enqueue_timeouts_total
+                    .fetch_add(1, Ordering::Relaxed);
+                self.record_error(ENQUEUE_TIMEOUT_ERROR.to_string());
+                warn!(
+                    %subject,
+                    timeout_ms = self.config.enqueue_timeout.as_millis(),
+                    "sync publisher enqueue timed out; spooling publish"
+                );
+                self.spool_publish(subject, payload)
+            }
+            Err(EnqueueError::Closed) => {
+                let error = "sync publisher queue closed".to_string();
+                self.record_error(error.clone());
+                warn!(%subject, "sync publisher queue closed; spooling publish");
+                self.spool_publish(subject, payload)
+                    .map_err(|spool_error| format!("{error}; spool failed: {spool_error}"))
+            }
+        }
     }
 
     pub async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
@@ -322,6 +381,14 @@ impl SyncPublisher {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        let (queue_available, queue_capacity) = self
+            .publish_tx
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|sender| (sender.capacity(), sender.max_capacity()))
+            .unwrap_or((0, self.config.queue_capacity));
+        let queue_depth = queue_capacity.saturating_sub(queue_available);
         SyncPublisherHealthSnapshot {
             configured: self.config.nats_url.is_some(),
             auth_enabled: self.config.username.is_some(),
@@ -334,6 +401,13 @@ impl SyncPublisher {
                     .unwrap_or(false),
             inline_payload_max_bytes: self.config.inline_payload_max_bytes,
             outbox_dir: self.config.outbox_dir.display().to_string(),
+            queue_capacity,
+            queue_depth,
+            queue_available,
+            spool_dir: self.config.publish_spool_dir.display().to_string(),
+            spool_pending: count_spool_pending(&self.config.publish_spool_dir),
+            spooled_total: self.counters.spooled_total.load(Ordering::Relaxed),
+            enqueue_timeouts_total: self.counters.enqueue_timeouts_total.load(Ordering::Relaxed),
             last_attempt_at: health.last_attempt_at,
             last_publish_at: health.last_publish_at,
             last_error: health.last_error,
@@ -384,6 +458,123 @@ impl SyncPublisher {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         health.last_error = Some(error);
     }
+
+    fn enqueue_with_timeout(
+        &self,
+        publish_tx: &PublishQueueSender,
+        message: PublishQueueMessage,
+    ) -> Result<(), EnqueueError> {
+        if self.config.enqueue_timeout.is_zero() {
+            return publish_tx.try_send(message).map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => EnqueueError::Timeout,
+                mpsc::error::TrySendError::Closed(_) => EnqueueError::Closed,
+            });
+        }
+
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| {
+                    handle.block_on(async {
+                        timeout(self.config.enqueue_timeout, publish_tx.send(message))
+                            .await
+                            .map_err(|_| EnqueueError::Timeout)?
+                            .map_err(|_| EnqueueError::Closed)
+                    })
+                })
+            }
+            Ok(_) => publish_tx.try_send(message).map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => EnqueueError::Timeout,
+                mpsc::error::TrySendError::Closed(_) => EnqueueError::Closed,
+            }),
+            Err(_) => publish_tx.try_send(message).map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => EnqueueError::Timeout,
+                mpsc::error::TrySendError::Closed(_) => EnqueueError::Closed,
+            }),
+        }
+    }
+
+    fn spool_publish(&self, subject: &str, payload: &str) -> Result<(), String> {
+        write_spool_envelope(&self.config.publish_spool_dir, subject, payload)?;
+        self.counters.spooled_total.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+fn write_spool_envelope(spool_dir: &Path, subject: &str, payload: &str) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(spool_dir)
+        .map_err(|error| format!("create sync publish spool {}: {error}", spool_dir.display()))?;
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let token = chrono::Utc::now().format("%Y%m%dT%H%M%S%fZ").to_string();
+    let id = uuid::Uuid::new_v4().simple();
+    let tmp_path = spool_dir.join(format!("{token}-{id}.tmp"));
+    let final_path = spool_dir.join(format!("{token}-{id}.json"));
+    let envelope = PublishSpoolEnvelope {
+        subject: subject.to_string(),
+        payload: payload.to_string(),
+        created_at,
+    };
+    let bytes = serde_json::to_vec(&envelope)
+        .map_err(|error| format!("serialize sync publish spool envelope: {error}"))?;
+    std::fs::write(&tmp_path, bytes).map_err(|error| {
+        format!(
+            "write sync publish spool envelope {}: {error}",
+            tmp_path.display()
+        )
+    })?;
+    std::fs::rename(&tmp_path, &final_path).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!(
+            "commit sync publish spool envelope {}: {error}",
+            final_path.display()
+        )
+    })?;
+    Ok(final_path)
+}
+
+fn count_spool_pending(spool_dir: &Path) -> usize {
+    std::fs::read_dir(spool_dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn list_spool_envelopes(spool_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(spool_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "read sync publish spool {}: {error}",
+                spool_dir.display()
+            ));
+        }
+    };
+    let mut paths = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
+}
+
+fn read_spool_envelope(path: &Path) -> Result<PublishSpoolEnvelope, String> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "read sync publish spool envelope {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "decode sync publish spool envelope {}: {error}",
+            path.display()
+        )
+    })
 }
 
 async fn run_publish_worker(
@@ -393,58 +584,135 @@ async fn run_publish_worker(
 ) {
     let mut session = None;
 
-    while let Some(message) = publish_rx.recv().await {
-        let result = async {
-            if session.is_none() {
-                let Some(nats_url) = &config.nats_url else {
-                    return Err("sync publisher disabled".to_string());
-                };
-                session = Some(open_nats_publish_session(&config, nats_url).await?);
-            }
+    loop {
+        let _ = drain_spooled_messages(&config, &health, &mut session).await;
 
-            let publish_result = session
-                .as_mut()
-                .expect("session is initialized above")
-                .publish(&config, &message.subject, &message.payload)
-                .await;
-            if publish_result.is_err() {
-                session = None;
-            }
-            publish_result
-        }
+        let Some(message) = publish_rx.recv().await else {
+            let _ = drain_spooled_messages(&config, &health, &mut session).await;
+            break;
+        };
+
+        let result = publish_with_session(
+            &config,
+            &health,
+            &mut session,
+            &message.subject,
+            &message.payload,
+            "queued",
+        )
         .await;
-
-        match &result {
-            Ok(()) => {
-                let mut snapshot = health
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
-                snapshot.last_error = None;
-                debug!(
-                    subject = %message.subject,
-                    payload_bytes = message.payload.len(),
-                    "sync publisher NATS publish succeeded"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    %error,
-                    subject = %message.subject,
-                    payload_bytes = message.payload.len(),
-                    "sync publisher NATS publish failed"
-                );
-                let mut snapshot = health
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                snapshot.last_error = Some(error.clone());
-            }
-        }
 
         if let Some(response_tx) = message.response_tx {
             let _ = response_tx.send(result);
         }
     }
+}
+
+async fn drain_spooled_messages(
+    config: &SyncPublisherConfig,
+    health: &Arc<Mutex<SyncPublisherHealth>>,
+    session: &mut Option<NatsPublishSession>,
+) -> Result<(), String> {
+    let paths = match list_spool_envelopes(&config.publish_spool_dir) {
+        Ok(paths) => paths,
+        Err(error) => {
+            record_worker_error(health, error.clone());
+            return Err(error);
+        }
+    };
+
+    for path in paths {
+        let envelope = match read_spool_envelope(&path) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                record_worker_error(health, error.clone());
+                return Err(error);
+            }
+        };
+        publish_with_session(
+            config,
+            health,
+            session,
+            &envelope.subject,
+            &envelope.payload,
+            "spooled",
+        )
+        .await?;
+        std::fs::remove_file(&path).map_err(|error| {
+            let message = format!(
+                "delete sync publish spool envelope {}: {error}",
+                path.display()
+            );
+            record_worker_error(health, message.clone());
+            message
+        })?;
+    }
+
+    Ok(())
+}
+
+async fn publish_with_session(
+    config: &SyncPublisherConfig,
+    health: &Arc<Mutex<SyncPublisherHealth>>,
+    session: &mut Option<NatsPublishSession>,
+    subject: &str,
+    payload: &str,
+    source: &str,
+) -> Result<(), String> {
+    let result = async {
+        if session.is_none() {
+            let Some(nats_url) = &config.nats_url else {
+                return Err("sync publisher disabled".to_string());
+            };
+            *session = Some(open_nats_publish_session(config, nats_url).await?);
+        }
+
+        let publish_result = session
+            .as_mut()
+            .expect("session is initialized above")
+            .publish(config, subject, payload)
+            .await;
+        if publish_result.is_err() {
+            *session = None;
+        }
+        publish_result
+    }
+    .await;
+
+    match &result {
+        Ok(()) => {
+            let mut snapshot = health
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
+            snapshot.last_error = None;
+            debug!(
+                %subject,
+                source,
+                payload_bytes = payload.len(),
+                "sync publisher NATS publish succeeded"
+            );
+        }
+        Err(error) => {
+            warn!(
+                %error,
+                %subject,
+                source,
+                payload_bytes = payload.len(),
+                "sync publisher NATS publish failed"
+            );
+            record_worker_error(health, error.clone());
+        }
+    }
+
+    result
+}
+
+fn record_worker_error(health: &Arc<Mutex<SyncPublisherHealth>>, error: String) {
+    let mut snapshot = health
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    snapshot.last_error = Some(error);
 }
 
 async fn open_nats_publish_session(
@@ -769,11 +1037,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, time::Duration};
+    use std::{
+        path::Path,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
-    use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+    use tokio::{
+        io::{duplex, AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
-    use super::{parse_nats_endpoint, NatsPublishSession, SyncPublisher, SyncPublisherConfig};
+    use super::{
+        count_spool_pending, drain_spooled_messages, parse_nats_endpoint, read_spool_envelope,
+        write_spool_envelope, NatsPublishSession, SyncPublisher, SyncPublisherConfig,
+        SyncPublisherHealth,
+    };
     use crate::{
         config::Config,
         sync::{
@@ -830,19 +1109,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enqueue_message_reports_queue_full() {
+    async fn enqueue_message_spools_when_queue_stays_full() {
+        let spool = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.sync.nats_url = Some("nats://127.0.0.1:4222".to_string());
+        config.sync.publish_enqueue_timeout_ms = 1;
+        config.sync.publish_spool_dir = spool.path().display().to_string();
         let publisher = SyncPublisher::new(&config.sync);
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         *publisher.publish_tx.lock().unwrap() = Some(tx);
 
         publisher.enqueue_message("wireless.audit", "{}").unwrap();
-        let error = publisher
-            .enqueue_message("wireless.audit", "{}")
-            .unwrap_err();
+        publisher.enqueue_message("wireless.audit", "{}").unwrap();
 
-        assert_eq!(error, "sync publisher queue full");
+        assert_eq!(count_spool_pending(spool.path()), 1);
+        let path = super::list_spool_envelopes(spool.path()).unwrap().remove(0);
+        let envelope = read_spool_envelope(&path).unwrap();
+        assert_eq!(envelope.subject, "wireless.audit");
+        assert_eq!(envelope.payload, "{}");
+        let snapshot = publisher.health_snapshot();
+        assert_eq!(snapshot.queue_capacity, 1);
+        assert_eq!(snapshot.queue_depth, 1);
+        assert_eq!(snapshot.spool_pending, 1);
+        assert_eq!(snapshot.spooled_total, 1);
+        assert_eq!(snapshot.enqueue_timeouts_total, 1);
         publisher.shutdown().await;
     }
 
@@ -897,6 +1187,8 @@ mod tests {
             nats_url: Some("nats://127.0.0.1:4222".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
+            queue_capacity: 8_192,
+            enqueue_timeout: Duration::from_millis(25),
             username: None,
             password: None,
             tls_enabled: false,
@@ -906,6 +1198,7 @@ mod tests {
             tls_client_key_path: None,
             inline_payload_max_bytes: 2_048,
             outbox_dir: std::env::temp_dir(),
+            publish_spool_dir: std::env::temp_dir().join("ssl-proxy-sync-test-spool"),
         };
 
         let server_task = tokio::spawn(async move {
@@ -949,6 +1242,8 @@ mod tests {
             nats_url: Some("nats://127.0.0.1:4222".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
+            queue_capacity: 8_192,
+            enqueue_timeout: Duration::from_millis(25),
             username: None,
             password: None,
             tls_enabled: false,
@@ -958,6 +1253,7 @@ mod tests {
             tls_client_key_path: None,
             inline_payload_max_bytes: 2_048,
             outbox_dir: std::env::temp_dir(),
+            publish_spool_dir: std::env::temp_dir().join("ssl-proxy-sync-test-spool"),
         };
 
         let server_task = tokio::spawn(async move {
@@ -997,6 +1293,8 @@ mod tests {
             nats_url: Some("nats://127.0.0.1:4222".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
+            queue_capacity: 8_192,
+            enqueue_timeout: Duration::from_millis(25),
             username: None,
             password: None,
             tls_enabled: false,
@@ -1006,6 +1304,7 @@ mod tests {
             tls_client_key_path: None,
             inline_payload_max_bytes: 2_048,
             outbox_dir: std::env::temp_dir(),
+            publish_spool_dir: std::env::temp_dir().join("ssl-proxy-sync-test-spool"),
         };
 
         let server_task = tokio::spawn(async move {
@@ -1045,6 +1344,8 @@ mod tests {
             nats_url: Some("nats://127.0.0.1:4222".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
+            queue_capacity: 8_192,
+            enqueue_timeout: Duration::from_millis(25),
             username: None,
             password: None,
             tls_enabled: false,
@@ -1054,6 +1355,7 @@ mod tests {
             tls_client_key_path: None,
             inline_payload_max_bytes: 2_048,
             outbox_dir: std::env::temp_dir(),
+            publish_spool_dir: std::env::temp_dir().join("ssl-proxy-sync-test-spool"),
         };
 
         let server_task = tokio::spawn(async move {
@@ -1080,5 +1382,108 @@ mod tests {
             .await
             .unwrap();
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_publishes_spooled_envelope_and_deletes_file() {
+        let spool = tempfile::tempdir().unwrap();
+        write_spool_envelope(spool.path(), "wireless.audit", "hello").unwrap();
+        let (url, server_task) = spawn_mock_nats("hello", r#"{}"#).await;
+        let config = test_publisher_config(url, spool.path());
+        let health = Arc::new(Mutex::new(SyncPublisherHealth::default()));
+        let mut session = None;
+
+        drain_spooled_messages(&config, &health, &mut session)
+            .await
+            .unwrap();
+
+        assert_eq!(count_spool_pending(spool.path()), 0);
+        let received = String::from_utf8(server_task.await.unwrap()).unwrap();
+        assert!(received.contains("PUB wireless.audit _INBOX."));
+    }
+
+    #[tokio::test]
+    async fn worker_leaves_spooled_envelope_when_publish_fails() {
+        let spool = tempfile::tempdir().unwrap();
+        write_spool_envelope(spool.path(), "wireless.audit", "hello").unwrap();
+        let (url, server_task) = spawn_mock_nats("hello", r#"{"error":{"code":500}}"#).await;
+        let config = test_publisher_config(url, spool.path());
+        let health = Arc::new(Mutex::new(SyncPublisherHealth::default()));
+        let mut session = None;
+
+        let error = drain_spooled_messages(&config, &health, &mut session)
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("JetStream publish failed"));
+        assert_eq!(count_spool_pending(spool.path()), 1);
+        let _ = server_task.await.unwrap();
+    }
+
+    fn test_publisher_config(nats_url: String, spool_dir: &Path) -> SyncPublisherConfig {
+        SyncPublisherConfig {
+            nats_url: Some(nats_url),
+            connect_timeout: Duration::from_secs(1),
+            publish_timeout: Duration::from_secs(1),
+            queue_capacity: 8_192,
+            enqueue_timeout: Duration::from_millis(25),
+            username: None,
+            password: None,
+            tls_enabled: false,
+            tls_server_name: None,
+            tls_ca_cert_path: None,
+            tls_client_cert_path: None,
+            tls_client_key_path: None,
+            inline_payload_max_bytes: 2_048,
+            outbox_dir: std::env::temp_dir(),
+            publish_spool_dir: spool_dir.to_path_buf(),
+        }
+    }
+
+    async fn spawn_mock_nats(
+        expected_payload: &'static str,
+        ack_payload: &'static str,
+    ) -> (String, tokio::task::JoinHandle<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream.write_all(b"INFO {}\r\n").await.unwrap();
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            loop {
+                let read = stream.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(b"CONNECT ".len())
+                    .any(|window| window == b"CONNECT ")
+                {
+                    break;
+                }
+            }
+            stream.write_all(b"+OK\r\n").await.unwrap();
+            let expected_frame = format!("\r\n{expected_payload}\r\n");
+            loop {
+                let read = stream.read(&mut buffer).await.unwrap();
+                assert!(read > 0);
+                received.extend_from_slice(&buffer[..read]);
+                if received
+                    .windows(expected_frame.as_bytes().len())
+                    .any(|window| window == expected_frame.as_bytes())
+                {
+                    break;
+                }
+            }
+            let frame = format!(
+                "MSG _INBOX.test 1 {}\r\n{}\r\n",
+                ack_payload.len(),
+                ack_payload
+            );
+            stream.write_all(frame.as_bytes()).await.unwrap();
+            received
+        });
+
+        (format!("nats://{address}"), task)
     }
 }

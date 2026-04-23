@@ -11,7 +11,10 @@ pub const Config = struct {
     sync_nats_url: []const u8,
     sync_schema_file: []const u8,
     audit_stream_name: []const u8,
+    result_stream_name: []const u8,
     scan_consumer: []const u8,
+    load_consumer: []const u8,
+    result_consumer: []const u8,
     scan_max_attempts: u32,
     scan_retry_backoff_seconds: u32,
 };
@@ -28,7 +31,10 @@ pub fn load() Config {
         .sync_nats_url = envOrDefault("SYNC_NATS_URL", ""),
         .sync_schema_file = envOrDefault("SYNC_SCHEMA_FILE", "/app/schema/postgres.sql"),
         .audit_stream_name = envOrDefault("AUDIT_STREAM_NAME", "AUDIT_STREAM"),
+        .result_stream_name = envOrDefault("SYNC_RESULT_STREAM_NAME", "ORACLE_RESULT_STREAM"),
         .scan_consumer = envOrDefault("SYNC_SCAN_CONSUMER", "zig-coordinator-scan"),
+        .load_consumer = envOrDefault("SYNC_LOAD_CONSUMER", "oracle-worker-load"),
+        .result_consumer = envOrDefault("SYNC_RESULT_CONSUMER", "zig-coordinator-result"),
         .scan_max_attempts = parsePositiveU32(envOrDefault("SYNC_SCAN_MAX_ATTEMPTS", "5"), 5),
         .scan_retry_backoff_seconds = parsePositiveU32(envOrDefault("SYNC_SCAN_RETRY_BACKOFF_SECONDS", "30"), 30),
     };
@@ -39,7 +45,9 @@ fn envOrDefault(comptime name: [:0]const u8, default_value: []const u8) []const 
 }
 
 fn parseBatchSize(value: []const u8) usize {
-    return std.fmt.parseInt(usize, value, 10) catch 100;
+    const parsed = std.fmt.parseInt(usize, value, 10) catch 100;
+    if (parsed == 0) @panic("SYNC_BATCH_SIZE must be > 0");
+    return parsed;
 }
 
 fn parsePositiveU32(value: []const u8, default_value: u32) u32 {

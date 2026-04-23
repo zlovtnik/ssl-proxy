@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub database_url: String,
     pub sync: SyncConfig,
     pub audit_window: AuditWindow,
+    pub mac_device_lookup_enabled: bool,
+    pub mac_device_cache_size: usize,
 }
 
 #[derive(Debug, Error)]
@@ -55,6 +57,10 @@ impl AppConfig {
                 .filter(|value| !value.is_empty()),
             connect_timeout_ms: parse_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000).unwrap_or(2_000),
             publish_timeout_ms: parse_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000).unwrap_or(2_000),
+            publish_queue_capacity: parse_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192)
+                .unwrap_or(8_192),
+            publish_enqueue_timeout_ms: parse_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25)
+                .unwrap_or(25),
             username: std::env::var("SYNC_NATS_USERNAME")
                 .ok()
                 .map(|value| value.trim().to_string())
@@ -84,6 +90,11 @@ impl AppConfig {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox".to_string()),
+            publish_spool_dir: std::env::var("SYNC_PUBLISH_SPOOL_DIR")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox/publish-spool".to_string()),
         };
         let database_url = std::env::var("DATABASE_URL")
             .ok()
@@ -124,6 +135,10 @@ impl AppConfig {
             database_url,
             sync,
             audit_window: audit_window_from_env()?,
+            mac_device_lookup_enabled: read_bool("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", true),
+            mac_device_cache_size: parse_usize("ATH_SENSOR_MAC_DEVICE_CACHE_SIZE", 4_096)
+                .unwrap_or(4_096)
+                .max(1),
         })
     }
 }
@@ -333,6 +348,8 @@ mod tests {
             "ATH_SENSOR_SNAPLEN",
             "ATH_SENSOR_PCAP_TIMEOUT_MS",
             "ATH_SENSOR_LOG_IDLE_SECS",
+            "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
+            "ATH_SENSOR_MAC_DEVICE_CACHE_SIZE",
             "AUDIT_WINDOW_TZ",
             "AUDIT_WINDOW_DAYS",
             "AUDIT_WINDOW_START",
@@ -370,6 +387,8 @@ mod tests {
         let config = AppConfig::from_env().unwrap();
 
         assert_eq!(config.log_idle_secs, 30);
+        assert!(config.mac_device_lookup_enabled);
+        assert_eq!(config.mac_device_cache_size, 4_096);
     }
 
     #[test]

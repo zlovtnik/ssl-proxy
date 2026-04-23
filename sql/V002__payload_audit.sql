@@ -99,7 +99,7 @@ BEGIN
     EXECUTE IMMEDIATE '
       CREATE TABLE connection_sessions (
         session_id       VARCHAR2(36)   DEFAULT RAWTOHEX(SYS_GUID()) PRIMARY KEY,
-        correlation_id   VARCHAR2(36),
+        correlation_id   VARCHAR2(36), -- NULL is valid for sessions observed before event correlation is assigned.
         host             VARCHAR2(255)  NOT NULL,
         peer_ip          VARCHAR2(45),
         tunnel_kind      VARCHAR2(16)   NOT NULL, -- connect / transparent / quic-h3 / bypass

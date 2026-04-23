@@ -101,7 +101,8 @@ BEGIN
   IF v_count > 0 THEN
     EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions DROP CONSTRAINT cs_device_fk';
   END IF;
-  EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions ADD CONSTRAINT cs_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
+  EXECUTE IMMEDIATE 'UPDATE connection_sessions SET device_id = NULL WHERE device_id IS NOT NULL AND device_id NOT IN (SELECT device_id FROM devices)';
+  EXECUTE IMMEDIATE 'ALTER TABLE connection_sessions ADD CONSTRAINT cs_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE SET NULL';
 
   SELECT COUNT(*) INTO v_count
   FROM user_indexes
@@ -164,7 +165,8 @@ BEGIN
   IF v_count > 0 THEN
     EXECUTE IMMEDIATE 'ALTER TABLE proxy_events DROP CONSTRAINT pe_device_fk';
   END IF;
-  EXECUTE IMMEDIATE 'ALTER TABLE proxy_events ADD CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE';
+  EXECUTE IMMEDIATE 'UPDATE proxy_events SET device_id = NULL WHERE device_id IS NOT NULL AND device_id NOT IN (SELECT device_id FROM devices)';
+  EXECUTE IMMEDIATE 'ALTER TABLE proxy_events ADD CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE SET NULL';
 
   SELECT COUNT(*) INTO v_count
   FROM user_indexes
@@ -264,6 +266,7 @@ LEFT JOIN (
     GROUP BY correlation_id
 ) pe_status
   ON pe_status.correlation_id = cs.correlation_id
+WHERE cs.opened_at >= SYSTIMESTAMP - INTERVAL '7' DAY
 /
 
 CREATE OR REPLACE VIEW v_payload_audit_readable AS

@@ -1,0 +1,44 @@
+<% content_for :title, "Authorized Wireless" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<h1>Authorized Wireless</h1>
+
+<p><%= link_to "New authorized network", new_authorized_wireless_network_path %></p>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Enabled", :enabled %></th>
+        <th><%= sort_link_to "Location", :location_id %></th>
+        <th><%= sort_link_to "SSID", :ssid %></th>
+        <th><%= sort_link_to "BSSID", :bssid %></th>
+        <th><%= sort_link_to "Label", :label %></th>
+        <th><%= sort_link_to "Updated", :updated_at %></th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if @authorized_wireless_networks.any? %>
+        <% @authorized_wireless_networks.each do |network| %>
+          <tr>
+            <td><%= network.enabled ? "yes" : "no" %></td>
+            <td><%= network.location_id || "any" %></td>
+            <td><%= network.ssid || "any" %></td>
+            <td><%= network.bssid || "any" %></td>
+            <td><%= network.label %></td>
+            <td><%= network.updated_at %></td>
+            <td>
+              <%= link_to "Edit", edit_authorized_wireless_network_path(network) %>
+              <%= button_to "Remove", authorized_wireless_network_path(network), method: :delete, form: { data: { turbo_confirm: "Remove #{network.match_label}?" } } %>
+            </td>
+          </tr>
+        <% end %>
+      <% else %>
+        <tr>
+          <td colspan="7" class="empty-state">No authorized wireless networks configured.</td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

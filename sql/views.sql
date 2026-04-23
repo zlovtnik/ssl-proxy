@@ -221,7 +221,8 @@ LEFT JOIN (
     WHERE event_time >= SYSTIMESTAMP - INTERVAL '7' DAY
     GROUP BY correlation_id
 ) pe_agg
-  ON pe_agg.correlation_id = cs.correlation_id;
+  ON pe_agg.correlation_id = cs.correlation_id
+WHERE cs.opened_at >= SYSTIMESTAMP - INTERVAL '7' DAY;
 
 -- ---------------------------------------------------------------------------
 -- V_PAYLOAD_AUDIT_READABLE  — masked operational payload metadata

@@ -32,9 +32,17 @@ For threat-centric review and control-gap tracking, use the companion [Threat Mo
 **Guiding principles:**
 
 - Zero blocking I/O on the request hot path — all writes are fire-and-forget via the existing `EventSender` channel or new side-car queues.
-- Data captured at the proxy is the ground truth; Oracle/ClickHouse are the ledger.
+- Data captured at the proxy is the ground truth; the proxy publishes sync-plane work through NATS/outbox and the Oracle worker owns Oracle persistence.
 - Bandwidth improvements precede new capture features to ensure headroom.
 - Every new table/column is guarded by an idempotent migration following the `Vxxx__*.sql` convention already in `sql/`.
+
+### Sync-plane architecture
+
+- `sync.scan.request` is the proxy-to-coordinator discovery subject. Messages identify a stream, observed timestamp, dedupe key, and a payload reference.
+- `inline://json/...` references carry small JSON payloads directly. `outbox://...` references point to spooled payload files in the shared sync outbox volume.
+- `sync.oracle.load` is the coordinator-to-worker batch dispatch subject. The coordinator dedupes in Postgres, advances cursors, and publishes load batches.
+- `sync.oracle.result` is the worker-to-coordinator result subject. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batch`, `sync_job`, and `sync_error`.
+- `sync-publish` refers to the proxy-side publish path that prepares payload references and emits `sync.scan.request`; it must never call Oracle directly.
 
 ## Execution Mode (How We’ll Run This) {#execution-mode}
 
@@ -90,7 +98,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 | Task | Detail |
 |------|--------|
 | **1.3.1** Extend `classify()` with financial/transaction categories | Add patterns: `"payment"`, `"banking"`, `"auth-oauth"`, `"api-graphql"`, `"api-rest-post"`. Detect domains: `stripe.com`, `braintree.com`, `paypal.com`, `plaid.com`, `*.bank*`, `*checkout*`, `*payment*`. |
-| **1.3.2** HTTP method sniffing for plaintext 80/tcp tunnels | In `run_transparent()`, when `orig_dst.port() == 80` and `capture_plaintext_payloads` is enabled, inspect first 16 bytes of `up_buf` for `POST `, `PUT `, `PATCH ` — set `transaction_signal = true` on the session. |
+| **1.3.2** HTTP method sniffing for plaintext 80/tcp tunnels | `capture_plaintext_payloads` defaults to `false` and may only be enabled after documented legal/compliance sign-off. When enabled and `orig_dst.port() == 80`, inspect first 16 bytes of `up_buf` for `POST `, `PUT `, `PATCH ` — set `transaction_signal = true` on the session. |
 | **1.3.3** `transaction_signals` JSONB column on `connection_sessions` | `sql/V010__transaction_signals.sql` adds `transaction_signals CLOB CHECK (transaction_signals IS JSON)` to `connection_sessions`. Populated with: `{ method, path_prefix, is_financial, category }`. |
 | **1.3.4** `TransactionSignal` event type in `DbEvent` enum | New variant `DbEvent::TransactionSignal(TransactionSignalEvent)` in `src/db/types.rs` with dedicated insert path in `src/db/inserts.rs` writing to a `transaction_signals` table. |
 
@@ -166,7 +174,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 | Task | Detail |
 |------|--------|
-| **3.2.1** Add `aws-sdk-s3` or `opendal` for MinIO | Use `opendal = { version = "0.48", features = ["services-s3"] }`. Gate behind `payload-store` feature. |
+| **3.2.1** Add `opendal` for MinIO | Use `opendal = { version = "0.48", features = ["services-s3"] }`. Gate behind `payload-store` feature. |
 | **3.2.2** `PayloadStore` abstraction | `src/cache.rs`: `async fn store_payload(session_id: &str, direction: Direction, data: &[u8]) -> Result<String>` returns object key. Writes to MinIO bucket `ssl-proxy-payloads/YYYY/MM/DD/{session_id}/{direction}`. |
 | **3.2.3** Async payload offload after tunnel close | When `capture_plaintext_payloads` is true and `up_buf` / `down_buf` are non-empty, `tokio::spawn` a task to upload to MinIO. Store the returned object key in `payload_audit.payload_object_key`. |
 | **3.2.4** `payload_object_key` column | `sql/V014__payload_object_key.sql`: `ALTER TABLE payload_audit ADD (payload_object_key VARCHAR2(512))`. Remove `payload_bytes RAW(8192)` from hot-path writes — only store the object key in Oracle; raw bytes live in MinIO. |
@@ -178,7 +186,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 | Task | Detail |
 |------|--------|
-| **3.3.1** Request velocity per user per domain | Track `requests_per_minute: u32` on `HostStats` per `(user_id, domain)` key. Flag as `SCRAPING_SUSPECT` when a single user hits the same domain > 60 req/min. |
+| **3.3.1** Request velocity per user per domain | Track `requests_per_minute: u32` on `HostStats` per `(user_id, domain)` key. Flag as `SCRAPING_SUSPECT` when a single user hits the same domain > 300 req/min by default, with per-domain allowlist/config override. |
 | **3.3.2** `scraping_signals` table | `sql/V015__scraping_signals.sql`: columns `user_id`, `target_host`, `requests_in_window`, `window_start`, `peak_hz`, `verdict` (`SUSPECT`/`CONFIRMED`/`CLEARED`), `created_at`. Flushed by Oracle flusher every 60 s. |
 | **3.3.3** `bytes_down` anomaly detection | When `bytes_down > 50 MB` in a single session, emit a `high_volume_egress` event with user_id, host, and bytes_down. Write to a new `egress_anomaly_events` table. |
 | **3.3.4** Sequential subdomain sweep detection | Detect when a user opens > 10 TCP sessions to different subdomains of the same root domain within 30 seconds — emit `subdomain_sweep` signal. |
@@ -195,7 +203,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 | Task | Detail |
 |------|--------|
-| **4.1.1** Replace manual read/write loops with `tokio::io::copy_bidirectional` in transparent tunnel | `run_transparent()` currently uses a manual split-and-loop to capture payload previews. Restructure to use `copy_bidirectional` for the non-capture case (most connections), falling back to the manual loop only when `capture_payloads == true`. This eliminates the extra allocation of two `Vec<u8>` buffers for every connection. |
+| **4.1.1** Preserve `copy_bidirectional` transparent fast path | Keep the non-capture path on `copy_bidirectional` as the baseline; only use manual split-and-loop when `capture_payloads == true`. |
 | **4.1.2** Increase buffer sizes to 64 KiB | Change all `[0u8; 8192]` read buffers to `[0u8; 65536]` in tunnel copy loops. Reduces syscall frequency by 8x for high-throughput streams. |
 | **4.1.3** `SO_SNDBUF` / `SO_RCVBUF` tuning | In `set_keepalive()` helpers (both `connect.rs` and `transparent.rs`), also set `socket2::Socket::set_send_buffer_size(256 * 1024)` and `set_recv_buffer_size(256 * 1024)`. |
 | **4.1.4** `TCP_NODELAY` on upstream connections | In `dial_upstream_with_resolver()`, call `stream.set_nodelay(true)?` after successful connect. Eliminates Nagle's algorithm latency for interactive/API traffic. |
@@ -207,7 +215,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 | Task | Detail |
 |------|--------|
-| **4.2.1** Promote DNS cache from opt-in to always-on | Remove `enable_dns_lookups` guard from the DNS cache write path in `dial_upstream_with_resolver()`. Cache all successful resolutions with a 5-minute TTL. The DNS cache already exists in `AppState.dns_cache`. |
+| **4.2.1** DNS cache baseline validation | DNS cache is always-on; keep tests covering successful-resolution cache writes and TTL behavior. |
 | **4.2.2** Negative cache for NXDOMAIN | Add `dns_negative_cache: DashMap<String, Instant>` to `AppState`. Skip resolver entirely for domains that returned NXDOMAIN in the last 60 seconds. |
 | **4.2.3** Pre-warm DNS cache for blocklist domains on startup | After the first successful blocklist refresh, asynchronously resolve the top-1000 most-hit domains (by `hit_count` from Oracle or seed list) into the DNS cache. |
 | **4.2.4** Reduce `DNS_RESOLVE_TIMEOUT_SECS` from 5 to 2 | Most enterprise DNS resolves in < 200 ms. 5-second timeouts can stack up under load. Add `DNS_RESOLVE_TIMEOUT_MS` env var with default 2000 ms. |
@@ -260,6 +268,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 | **5.2.1** Separate `compliance_events` Oracle table | Immutable records — no UPDATE ever. Columns: `id`, `event_time`, `user_id`, `event_type` (`tunnel_open`, `tunnel_close`, `block`, `transaction_detected`, `scraping_detected`), `host`, `session_uuid`, `bytes_up`, `bytes_down`, `peer_ip`, `wg_peer_pubkey`, `category`, `verdict`, `raw_json CLOB IS JSON`. |
 | **5.2.2** Dual-write on all block and transaction events | `events.rs` `emit_serializable()` writes to both `proxy_events` (operational) and `compliance_events` (legal hold) for events where `blocked == true || transaction_signal == true`. |
 | **5.2.3** 7-year retention policy in `data_retention_policy` | Insert row: `('COMPLIANCE_EVENTS', 2555, 'EVENT_TIME', 'Legal hold — 7 year minimum')`. |
+| **5.2.4** Migration V016 | Apply and document `sql/V016__compliance_events.sql` for compliance event storage and retention policy bootstrap. |
 
 ### 5.3 — Dashboard Enhancements
 

@@ -21,6 +21,9 @@ Thumbs.db
 .env.*
 !.env.example
 !**/.env.example
+*.conf
+!*.conf.example
+!config/templates/*.conf
 
 # Rust
 **/debug/

@@ -37,10 +37,17 @@ pub fn createBatches(
     batch_size: usize,
 ) !std.ArrayList(model.Batch) {
     var batches = try std.ArrayList(model.Batch).initCapacity(allocator, batch_size);
+    errdefer {
+        for (batches.items) |batch| {
+            allocator.free(batch.batch_id);
+        }
+        batches.deinit(allocator);
+    }
     var batch_no: usize = 0;
     while (batch_no < batch_size) : (batch_no += 1) {
-        try batches.append(allocator, .{
-            .batch_id = try generateOwnedId(allocator, "batch", batch_no),
+        const batch_id = try generateOwnedId(allocator, "batch", batch_no);
+        batches.append(allocator, .{
+            .batch_id = batch_id,
             .job_id = job_id,
             .batch_no = batch_no,
             .payload_ref = payload_ref,
@@ -48,7 +55,10 @@ pub fn createBatches(
             .cursor_start = cursor_start,
             .cursor_end = cursor_end,
             .status = "pending",
-        });
+        }) catch |err| {
+            allocator.free(batch_id);
+            return err;
+        };
         if (batch_size == 1) break;
     }
     return batches;

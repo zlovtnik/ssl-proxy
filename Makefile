@@ -1,9 +1,9 @@
-.PHONY: build test docker lint clean deploy-ready up-ready diagnose memo-show memo-log
+.PHONY: build test docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
 
-# Build project binaries: root, services/oracle-worker, and services/zig-coordinator
+# Build project binaries: root proxy, Atheros sensor, Oracle worker, and Zig coordinator.
 build:
 	cargo build --release
 	cd services/atheros-sensor && cargo build --release
@@ -17,7 +17,7 @@ test:
 	cd services/oracle-worker && cargo test
 	cd services/zig-coordinator && ZIG_GLOBAL_CACHE_DIR="$(ZIG_GLOBAL_CACHE_DIR)" ZIG_LOCAL_CACHE_DIR="$(ZIG_LOCAL_CACHE_DIR)" zig build test
 
-# Build Docker images for all services
+# Build Docker images used by the compose stack.
 docker:
 	docker compose build ssl-proxy zig-coordinator oracle-worker nats postgres
 
@@ -48,6 +48,14 @@ memo-show:
 # Example: make memo-log EVENT="iphone browse ok" CONTEXT="server 192.168.1.221 amd64; client 192.168.1.68 iPhone" RESULT=pass PROFILE_MODE=iphone
 memo-log:
 	./scripts/memo-log.sh
+
+pipeline-health:
+	./scripts/sync-status.sh
+
+audit-threats:
+	docker compose exec -T postgres psql "$${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}" \
+	  -c "SELECT * FROM v_wireless_threats LIMIT 50;" 2>/dev/null || \
+	  echo "[audit-threats] Run 'make pipeline-health' first to verify DB is up"
 
 # Backward-compatible alias with deprecation warning.
 deploy-ready: up-ready

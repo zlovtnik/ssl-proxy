@@ -203,7 +203,8 @@ function scheduleStatsReconnect() {
 
 function connectStatsWs() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  wsStats = new WebSocket(`${proto}//${location.host}/ws`);
+  const apiKeyParam = encodeURIComponent(window.ADMIN_API_KEY ?? '');
+  wsStats = new WebSocket(`${proto}//${location.host}/ws?api_key=${apiKeyParam}`);
   wsStats.onopen = () => {
     dot.classList.add('live');
     wsStatsBackoff = 1000;
@@ -243,7 +244,8 @@ function scheduleEventsReconnect() {
 
 function connectEventsWs() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsEvents = new WebSocket(`${proto}//${location.host}/events`);
+  const apiKeyParam = encodeURIComponent(window.ADMIN_API_KEY ?? '');
+  const wsEvents = new WebSocket(`${proto}//${location.host}/events?api_key=${apiKeyParam}`);
   wsEvents.onclose = scheduleEventsReconnect;
   wsEvents.onerror = scheduleEventsReconnect;
   wsEvents.onopen = () => { wsEventsBackoff = 1000; };

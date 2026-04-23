@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dashmap::{mapref::entry::Entry, DashMap};
+use dashmap::DashMap;
 use tokio::{net::UdpSocket, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -209,15 +209,18 @@ async fn get_or_create_session(
     sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
     shutdown: CancellationToken,
 ) -> io::Result<Arc<ShimSession>> {
-    let result = match sessions.entry(client_addr) {
-        Entry::Occupied(existing) => Ok(existing.get().clone()),
-        Entry::Vacant(vacant) => {
-            let upstream_socket =
-                Arc::new(UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?);
-            upstream_socket.connect(server_addr).await?;
+    if let Some(existing) = sessions.get(&client_addr) {
+        return Ok(existing.clone());
+    }
 
-            let session = Arc::new(ShimSession::new(upstream_socket.clone()));
-            let session = vacant.insert(session).clone();
+    let upstream_socket = Arc::new(UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?);
+    upstream_socket.connect(server_addr).await?;
+    let candidate = Arc::new(ShimSession::new(upstream_socket));
+
+    let session = match sessions.entry(client_addr) {
+        dashmap::mapref::entry::Entry::Occupied(existing) => existing.get().clone(),
+        dashmap::mapref::entry::Entry::Vacant(vacant) => {
+            let session = vacant.insert(candidate).clone();
             let sessions_for_task = sessions.clone();
             tokio::spawn(run_session_receiver(
                 client_addr,
@@ -228,10 +231,10 @@ async fn get_or_create_session(
                 sessions_for_task,
                 shutdown,
             ));
-            Ok(session)
+            session
         }
     };
-    result
+    Ok(session)
 }
 
 async fn run_session_receiver(

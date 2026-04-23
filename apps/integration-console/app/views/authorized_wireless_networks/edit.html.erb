@@ -1,0 +1,8 @@
+<% content_for :title, "Edit Authorized Wireless" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<p><%= link_to "Back to authorized wireless", authorized_wireless_networks_path %></p>
+
+<h1>Edit Authorized Wireless</h1>
+
+<%= render "form", authorized_wireless_network: @authorized_wireless_network %>

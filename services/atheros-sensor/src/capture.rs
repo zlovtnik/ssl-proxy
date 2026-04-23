@@ -1,7 +1,7 @@
 use std::{thread, time::Duration};
 
 use chrono::Utc;
-use pcap::{Capture, Error as PcapError};
+use pcap::{Capture, Error as PcapError, Linktype};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -12,6 +12,10 @@ use crate::model::RawPacket;
 pub enum CaptureError {
     #[error("pcap error: {0}")]
     Pcap(#[from] PcapError),
+    #[error(
+        "unsupported pcap datalink {actual}; expected DLT_IEEE802_11_RADIO (127). Enable monitor mode with radiotap headers for this interface"
+    )]
+    UnsupportedDatalink { actual: i32 },
 }
 
 pub fn stream_packets(
@@ -26,7 +30,7 @@ pub fn stream_packets(
         .snaplen(snaplen)
         .timeout(timeout_ms);
 
-    let mut capture = match builder.open() {
+    let capture = match builder.open() {
         Ok(cap) => cap,
         Err(e) => {
             if e.to_string().contains("monitor mode")
@@ -46,8 +50,11 @@ pub fn stream_packets(
             }
             return Err(CaptureError::Pcap(e));
         }
-    }
-    .setnonblock()?;
+    };
+
+    validate_radiotap_datalink(capture.get_datalink())?;
+
+    let mut capture = capture.setnonblock()?;
 
     capture.filter(filter, true)?;
 
@@ -78,11 +85,26 @@ pub fn stream_packets(
     Ok(ReceiverStream::new(rx))
 }
 
+fn validate_radiotap_datalink(linktype: Linktype) -> Result<(), CaptureError> {
+    if linktype == Linktype::IEEE802_11_RADIOTAP {
+        return Ok(());
+    }
+
+    eprintln!(
+        "ERROR: Interface returned datalink {} instead of DLT_IEEE802_11_RADIO (127).",
+        linktype.0
+    );
+    eprintln!("       Monitor mode or radiotap capture is not configured correctly.");
+    Err(CaptureError::UnsupportedDatalink { actual: linktype.0 })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
 
+    use super::{validate_radiotap_datalink, CaptureError};
     use pcap::Capture;
+    use pcap::Linktype;
     use tempfile::tempdir;
 
     #[test]
@@ -92,9 +114,9 @@ mod tests {
         write_test_pcap(
             &path,
             &[
-                super::super::parse::tests::beacon_radiotap_frame(),
-                super::super::parse::tests::probe_request_radiotap_frame(),
-                super::super::parse::tests::probe_response_radiotap_frame(),
+                crate::testutil::beacon_radiotap_frame(),
+                crate::testutil::probe_request_radiotap_frame(),
+                crate::testutil::probe_response_radiotap_frame(),
             ],
         );
 
@@ -106,6 +128,19 @@ mod tests {
         }
 
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn accepts_radiotap_datalink() {
+        assert!(validate_radiotap_datalink(Linktype::IEEE802_11_RADIOTAP).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_radiotap_datalink() {
+        assert!(matches!(
+            validate_radiotap_datalink(Linktype::ETHERNET),
+            Err(CaptureError::UnsupportedDatalink { actual: 1 })
+        ));
     }
 
     fn write_test_pcap(path: &Path, frames: &[Vec<u8>]) {

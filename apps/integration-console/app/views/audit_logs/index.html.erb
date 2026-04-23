@@ -1,0 +1,48 @@
+<% content_for :title, "Audit Logs" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<h1>Audit Logs</h1>
+
+<%= form_with url: audit_logs_path, method: :get do |form| %>
+  <%= form.search_field :q, value: @query, placeholder: "Search sensor, MAC, SSID, username, fingerprint, WPS" %>
+  <%= form.submit "Search" %>
+<% end %>
+
+<div
+  class="table-wrap"
+  data-controller="audit-log"
+  data-audit-log-active-value="<%= @live_updates %>"
+  data-audit-log-recent-url-value="<%= recent_audit_logs_path %>"
+>
+  <table>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Observed", :observed_at %></th>
+        <th><%= sort_link_to "Sensor", :sensor_id %></th>
+        <th><%= sort_link_to "Location", :location_id %></th>
+        <th><%= sort_link_to "Subtype", :frame_subtype %></th>
+        <th><%= sort_link_to "SSID", :ssid %></th>
+        <th><%= sort_link_to "Source", :source_mac %></th>
+        <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
+        <th><%= sort_link_to "Signal", :signal_dbm %></th>
+        <th><%= sort_link_to "Bytes", :raw_len %></th>
+        <th><%= sort_link_to "Flags", :frame_control_flags %></th>
+        <th><%= sort_link_to "Security", :security_flags %></th>
+        <th><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
+        <th><%= sort_link_to "Handshake", :handshake_captured %></th>
+      </tr>
+    </thead>
+    <tbody data-audit-log-target="body">
+      <% if @audit_logs.any? %>
+        <% @audit_logs.each do |entry| %>
+          <%= render "row", entry: entry %>
+        <% end %>
+      <% else %>
+        <tr data-audit-log-target="empty">
+          <td colspan="13" class="empty-state">No audit logs found.</td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <%= render "shared/pagination" %>
+</div>

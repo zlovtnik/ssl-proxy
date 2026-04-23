@@ -1,0 +1,43 @@
+<% content_for :title, "Backlog" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<h1>Backlog Manager</h1>
+
+<%= form_with url: backlog_index_path, method: :get do |form| %>
+  <%= form.select :status, [["All", ""], ["Pending", "pending"], ["Failed", "sync_failed"]], selected: @status %>
+  <%= form.submit "Filter" %>
+<% end %>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th><%= sort_link_to "Dedupe Key", :dedupe_key %></th>
+        <th><%= sort_link_to "Subject", :stream_name %></th>
+        <th><%= sort_link_to "Status", :status %></th>
+        <th><%= sort_link_to "Attempts", :attempt_count %></th>
+        <th><%= sort_link_to "Updated", :updated_at %></th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if @entries.any? %>
+        <% @entries.each do |entry| %>
+          <tr>
+            <td><%= entry.dedupe_key %></td>
+            <td><%= entry.stream_name %></td>
+            <td class="<%= status_class(entry.status) %>"><%= entry.status %></td>
+            <td><%= entry.attempt_count %></td>
+            <td><%= entry.updated_at %></td>
+            <td><%= button_to "Retry", retry_backlog_path(entry.dedupe_key), method: :post %></td>
+          </tr>
+        <% end %>
+      <% else %>
+        <tr>
+          <td colspan="6" class="empty-state">No backlog entries found.</td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <%= render "shared/pagination" %>
+</div>

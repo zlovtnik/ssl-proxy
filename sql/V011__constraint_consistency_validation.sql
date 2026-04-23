@@ -24,7 +24,7 @@ BEGIN
         FROM payload_audit
         WHERE payload_bytes IS NULL
           AND payload_b64 IS NOT NULL
-          AND DBMS_LOB.GETLENGTH(payload_b64) > 10924;
+          AND DBMS_LOB.GETLENGTH(payload_b64) > 10920;
 
         IF v_oversized_b64_count > 0 THEN
           log_migration_audit(
@@ -37,7 +37,7 @@ BEGIN
             -20015,
             'Cannot backfill payload_audit.payload_bytes: ' ||
             TO_CHAR(v_oversized_b64_count) ||
-            ' payload_b64 CLOB rows exceed RAW(8192) capacity'
+            ' payload_b64 CLOB rows exceed 10920 chars / 8190 decoded bytes'
           );
         END IF;
 
@@ -50,7 +50,8 @@ BEGIN
               FROM payload_audit
               WHERE payload_bytes IS NULL
                 AND payload_b64 IS NOT NULL
-                AND DBMS_LOB.GETLENGTH(payload_b64) <= 10924
+                AND DBMS_LOB.GETLENGTH(payload_b64) > 0
+                AND DBMS_LOB.GETLENGTH(payload_b64) <= 10920
               ORDER BY ROWID
             )
             WHERE ROWNUM <= v_batch_size

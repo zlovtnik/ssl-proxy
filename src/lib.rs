@@ -76,8 +76,12 @@ pub fn check_proxy_auth<B>(req: &axum::http::Request<B>, username: &str, passwor
         Some(h) => h,
         None => return false,
     };
-    let encoded = if header.len() >= 6 && header.as_bytes()[..6].eq_ignore_ascii_case(b"basic ") {
-        // Safe: if first 6 bytes match "basic " (ASCII), byte 6 is at character boundary
+    let encoded = if header
+        .as_bytes()
+        .get(..6)
+        .map_or(false, |prefix| prefix.eq_ignore_ascii_case(b"basic "))
+    {
+        // Safe: if first 6 bytes match "basic " (ASCII), byte 6 is at a character boundary.
         &header[6..]
     } else {
         return false;
