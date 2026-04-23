@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_22_000700) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_23_000100) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -181,11 +181,54 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000700) do
     t.text "last_error"
     t.text "producer", default: "unknown", null: false
     t.text "event_kind"
+    t.integer "schema_version", default: 1, null: false
+    t.text "frame_type"
     t.text "source_mac"
     t.text "bssid"
     t.text "destination_bssid"
     t.text "ssid"
     t.integer "signal_dbm"
+    t.integer "fragment_number"
+    t.integer "channel_number"
+    t.text "signal_status"
+    t.text "adjacent_mac_hint"
+    t.integer "qos_tid"
+    t.boolean "qos_eosp"
+    t.integer "qos_ack_policy"
+    t.text "qos_ack_policy_label"
+    t.boolean "qos_amsdu"
+    t.text "llc_oui"
+    t.integer "ethertype"
+    t.text "ethertype_name"
+    t.text "src_ip"
+    t.text "dst_ip"
+    t.integer "ip_ttl"
+    t.integer "ip_protocol"
+    t.text "ip_protocol_name"
+    t.integer "src_port"
+    t.integer "dst_port"
+    t.text "transport_protocol"
+    t.integer "transport_length"
+    t.integer "transport_checksum"
+    t.text "app_protocol"
+    t.text "ssdp_message_type"
+    t.text "ssdp_st"
+    t.text "ssdp_mx"
+    t.text "ssdp_usn"
+    t.text "dhcp_requested_ip"
+    t.text "dhcp_hostname"
+    t.text "dhcp_vendor_class"
+    t.text "dns_query_name"
+    t.text "mdns_name"
+    t.text "session_key"
+    t.text "retransmit_key"
+    t.text "frame_fingerprint"
+    t.text "payload_visibility"
+    t.bigint "tsft_delta_us"
+    t.bigint "wall_clock_delta_ms"
+    t.boolean "large_frame", default: false, null: false
+    t.boolean "mixed_encryption"
+    t.boolean "dedupe_or_replay_suspect", default: false, null: false
     t.integer "raw_len", default: 0, null: false
     t.integer "frame_control_flags", default: 0, null: false
     t.boolean "more_data", default: false, null: false
@@ -203,9 +246,15 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_22_000700) do
     t.index "((payload -> 'tags'::text))", name: "ssi_wireless_threat_tags_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
     t.index "lower(bssid)", name: "ssi_wireless_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index "lower(destination_bssid)", name: "ssi_wireless_destination_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "frame_fingerprint", name: "ssi_wireless_frame_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (frame_fingerprint IS NOT NULL))"
     t.index "lower(source_mac)", name: "ssi_wireless_source_mac_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index ["app_protocol", "observed_at"], name: "ssi_wireless_app_protocol_idx", where: "((stream_name = 'wireless.audit'::text) AND (app_protocol IS NOT NULL))"
     t.index "signal_dbm, observed_at DESC", name: "ssi_wireless_signal_idx", where: "((stream_name = 'wireless.audit'::text) AND (signal_dbm IS NOT NULL))"
+    t.index ["schema_version", "observed_at"], name: "ssi_wireless_schema_version_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index ["session_key", "observed_at"], name: "ssi_wireless_session_key_idx", where: "((stream_name = 'wireless.audit'::text) AND (session_key IS NOT NULL))"
     t.index "ssid, observed_at DESC", name: "ssi_wireless_ssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index ["src_ip"], name: "ssi_wireless_src_ip_idx", where: "((stream_name = 'wireless.audit'::text) AND (src_ip IS NOT NULL))"
+    t.index ["dst_ip"], name: "ssi_wireless_dst_ip_idx", where: "((stream_name = 'wireless.audit'::text) AND (dst_ip IS NOT NULL))"
     t.index "device_fingerprint, observed_at DESC", name: "ssi_wireless_device_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))"
     t.index "observed_at DESC", name: "ssi_wireless_handshake_captured_idx", where: "((stream_name = 'wireless.audit'::text) AND handshake_captured)"
     t.index "security_flags, observed_at DESC", name: "ssi_wireless_security_flags_idx", where: "((stream_name = 'wireless.audit'::text) AND (security_flags <> 0))"

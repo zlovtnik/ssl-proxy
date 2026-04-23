@@ -1,0 +1,1069 @@
+const std = @import("std");
+const logz = @import("logz.zig");
+
+const Pool = @import("pool.zig").Pool;
+const Config = @import("config.zig").Config;
+const Buffer = @import("buffer.zig").Buffer;
+
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const b64 = std.base64.url_safe_no_pad.Encoder;
+
+const META_LEN = "{\"@ts\":9999999999999,\"@l\":\"ERROR\",".len;
+
+const t = @import("t.zig");
+
+fn timestamp() ?i64 {
+    return if (t.is_test) t.timestamp() else t.wallTimestampMs();
+}
+
+pub const Json = struct {
+    io: Io,
+
+    out: Io.File,
+
+    lvl: logz.Level,
+
+    // space for a configured prefix + the @ts=$time and @l=$level meta fields
+    meta: []u8,
+
+    buffer: Buffer,
+    // wrapper around Buffer to build the message into buffer (outside of a lock)
+    interface: Io.Writer,
+
+    multiuse_length: ?usize,
+
+    mutex: *Io.Mutex,
+
+    writer: *Io.Writer,
+
+    pub fn init(allocator: Allocator, pool: *Pool) !Json {
+        var buffer = try pool.buffer_pool.create();
+        errdefer buffer.deinit();
+
+        const meta_len = META_LEN + if (pool.config.prefix) |p| p.len else 0;
+
+        const meta = try allocator.alloc(u8, meta_len);
+        errdefer allocator.free(meta);
+
+        if (pool.config.prefix) |prefix| {
+            @memcpy(meta[0..prefix.len], prefix);
+        }
+
+        return .{
+            .io = pool.io,
+            .lvl = .None,
+            .meta = meta,
+            .buffer = buffer,
+            .out = pool.file,
+            .multiuse_length = null,
+            .mutex = &pool.log_mutex,
+            .writer = &pool.writer.interface,
+            .interface = .{
+                .buffer = &.{},
+                .vtable = &.{ .drain = Json.drain },
+            },
+        };
+    }
+
+    pub fn deinit(self: *Json, allocator: Allocator) void {
+        allocator.free(self.meta);
+        self.buffer.deinit();
+    }
+
+    fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
+        _ = splat;
+        const self: *@This() = @fieldParentPtr("interface", io_w);
+        self.buffer.writeAll(data[0]) catch return error.WriteFailed;
+        return data[0].len;
+    }
+
+    pub fn multiuse(self: *Json) void {
+        self.multiuse_length = self.buffer.pos;
+    }
+
+    pub fn reset(self: *Json) void {
+        self.lvl = .None;
+        self.multiuse_length = null;
+        self.buffer.reset(0);
+    }
+
+    pub fn reuse(self: *Json) void {
+        self.lvl = .None;
+        self.buffer.reset(self.multiuse_length orelse 0);
+    }
+
+    pub fn level(self: *Json, lvl: logz.Level) void {
+        self.lvl = lvl;
+    }
+
+    pub fn ctx(self: *Json, value: []const u8) void {
+        self.string("@ctx", value);
+    }
+
+    pub fn src(self: *Json, value: std.builtin.SourceLocation) void {
+        self.writeObject("@src", .{ .file = value.file, .@"fn" = value.fn_name, .line = value.line });
+    }
+
+    pub fn string(self: *Json, key: []const u8, nvalue: ?[]const u8) void {
+        const value = nvalue orelse {
+            self.writeNull(key);
+            return;
+        };
+
+        const rewind = self.startKeyValue(key, value.len) orelse return;
+
+        std.json.Stringify.encodeJsonString(value, .{}, &self.interface) catch {
+            self.buffer.rollback(rewind);
+            return;
+        };
+        self.buffer.writeByte(',') catch self.buffer.rollback(rewind);
+    }
+
+    pub fn fmt(self: *Json, key: []const u8, comptime format: []const u8, values: anytype) void {
+        const rewind = self.startKeyValue(key, 2) orelse return;
+
+        var buffer = &self.buffer;
+
+        buffer.writeByte('"') catch {
+            buffer.rollback(rewind);
+            return;
+        };
+
+        var writter = FmtWriter.init(self);
+        writter.interface.print(format, values) catch {
+            buffer.rollback(rewind);
+            return;
+        };
+
+        buffer.writeAll("\",") catch {
+            buffer.rollback(rewind);
+            return;
+        };
+    }
+
+    pub fn stringZ(self: *Json, key: []const u8, nvalue: ?[*:0]const u8) void {
+        if (nvalue == null) {
+            self.writeNull(key);
+            return;
+        }
+        self.string(key, std.mem.span(nvalue));
+    }
+
+    // cases where the caller is sure value does not need to be encoded
+    pub fn stringSafe(self: *Json, key: []const u8, nvalue: ?[]const u8) void {
+        const value = nvalue orelse {
+            self.writeNull(key);
+            return;
+        };
+
+        // + 2 for the quotes around the key
+        // + 2 for the quotes around the value
+        // + 1 fo rthe comma
+        // + 1 for the trailing comma
+        var aw = self.buffer.attributeWriter(6 + key.len + value.len, true) orelse return;
+        aw.writeByte('"');
+        aw.writeAllAll(key, "\":\"");
+        aw.writeAllAll(value, "\",");
+        aw.done();
+    }
+
+    // cases where the caller is sure value does not need to be encoded
+    pub fn stringSafeZ(self: *Json, key: []const u8, value: ?[*:0]const u8) void {
+        if (value) |v| {
+            self.stringSafe(key, std.mem.span(v));
+        } else {
+            self.writeNull(key);
+        }
+    }
+
+    pub fn int(self: *Json, key: []const u8, value: anytype) void {
+        const f = switch (@typeInfo(@TypeOf(value))) {
+            .optional => blk: {
+                if (value) |v| {
+                    break :blk v;
+                }
+                self.writeNull(key);
+                return;
+            },
+            .null => {
+                self.writeNull(key);
+                return;
+            },
+            else => value,
+        };
+
+        const rewind = self.startKeyValue(key, 0) orelse return;
+        self.interface.print("{d}", .{f}) catch {
+            self.buffer.rollback(rewind);
+            return;
+        };
+        self.buffer.writeByte(',') catch self.buffer.rollback(rewind);
+    }
+
+    pub fn float(self: *Json, key: []const u8, value: anytype) void {
+        const f = switch (@typeInfo(@TypeOf(value))) {
+            .optional => blk: {
+                if (value) |v| {
+                    break :blk v;
+                }
+                self.writeNull(key);
+                return;
+            },
+            .null => {
+                self.writeNull(key);
+                return;
+            },
+            else => value,
+        };
+
+        const rewind = self.startKeyValue(key, 0) orelse return;
+        self.interface.print("{d}", .{f}) catch {
+            self.buffer.rollback(rewind);
+            return;
+        };
+        self.buffer.writeByte(',') catch self.buffer.rollback(rewind);
+    }
+
+    pub fn boolean(self: *Json, key: []const u8, value: anytype) void {
+        const b = switch (@typeInfo(@TypeOf(value))) {
+            .optional => blk: {
+                if (value) |v| {
+                    break :blk v;
+                }
+                self.writeNull(key);
+                return;
+            },
+            .null => {
+                self.writeNull(key);
+                return;
+            },
+            else => value,
+        };
+
+        const l: usize = if (b) 4 else 5;
+        // + 2 for the quotes around the key
+        // + 1 for the colon
+        // + 1 for the trailing comma
+        var aw = self.buffer.attributeWriter(4 + key.len + l, true) orelse return;
+        aw.writeByte('"');
+        if (b) {
+            aw.writeAllAll(key, "\":true,");
+        } else {
+            aw.writeAllAll(key, "\":false,");
+        }
+        aw.done();
+    }
+
+    pub fn binary(self: *Json, key: []const u8, nvalue: ?[]const u8) void {
+        const value = nvalue orelse {
+            self.writeNull(key);
+            return;
+        };
+
+        // + 4 for the quotes around the key and value
+        // + 1 for the colon
+        // + 1 for the trailing comma
+        var aw = self.buffer.attributeWriter(6 + key.len + b64.calcSize(value.len), true) orelse return;
+        aw.writeByte('"');
+        aw.writeAllAll(key, "\":\"");
+
+        var pos: usize = 0;
+        var end: usize = 12;
+        var scratch: [16]u8 = undefined;
+        while (end < value.len) {
+            _ = b64.encode(&scratch, value[pos..end]);
+            pos = end;
+            end += 12;
+            aw.writeAll(&scratch);
+        }
+
+        if (pos < value.len) {
+            const leftover = b64.encode(&scratch, value[pos..]);
+            aw.writeAll(leftover);
+        }
+        aw.writeAll("\",");
+        aw.done();
+    }
+
+    pub fn any(self: *Json, key: []const u8, val: anytype) void {
+        const T = @TypeOf(val);
+
+        switch (@typeInfo(T)) {
+            .optional => if (val) |v| {
+                self.any(key, v);
+            } else {
+                self.writeNull(key);
+            },
+            .null => self.writeNull(key),
+            else => {
+                const rewind = self.startKeyValue(key, 0) orelse return;
+                self.writeValueOnly(val) catch {
+                    self.buffer.rollback(rewind);
+                    return;
+                };
+                self.buffer.writeByte(',') catch self.buffer.rollback(rewind);
+            },
+        }
+    }
+
+    pub fn slice(self: *Json, key: []const u8, values: anytype) void {
+        const rewind = self.startKeyValue(key, 0) orelse return;
+        self.buffer.writeByte('[') catch {
+            self.buffer.rollback(rewind);
+            return;
+        };
+
+        if (values.len > 0) {
+            self.writeValueOnly(values[0]) catch {
+                return self.buffer.rollback(rewind);
+            };
+        }
+
+        if (values.len > 1) {
+            for (values[1..]) |elem| {
+                self.buffer.writeByte(',') catch {
+                    return self.buffer.rollback(rewind);
+                };
+                self.writeValueOnly(elem) catch {
+                    return self.buffer.rollback(rewind);
+                };
+            }
+        }
+        self.buffer.writeAll("],") catch self.buffer.rollback(rewind);
+    }
+
+    pub fn sliceFmt(self: *Json, key: []const u8, values: anytype, formatter: logz.SliceItemFormatCallback(@TypeOf(values))) void {
+        _ = formatter;
+        self.slice(key, values);
+    }
+
+    // Helper to write a value without a key (for array elements and .any())
+    fn writeValueOnly(self: *Json, val: anytype) !void {
+        const T = @TypeOf(val);
+
+        switch (@typeInfo(T)) {
+            .int, .comptime_int => try self.interface.print("{d}", .{val}),
+            .float, .comptime_float => try self.interface.print("{d}", .{val}),
+            .bool => if (val) {
+                try self.interface.writeAll("true");
+            } else {
+                try self.interface.writeAll("false");
+            },
+            .pointer => |ptr| {
+                // Handle string slices []const u8 or []u8
+                if (ptr.size == .slice and ptr.child == u8) {
+                    try self.interface.writeByte('"');
+                    try std.json.Stringify.encodeJsonStringChars(val, .{}, &self.interface);
+                    try self.interface.writeByte('"');
+                } else if (ptr.size == .one and @typeInfo(ptr.child) == .array) {
+                    // Handle *const [N]T
+                    if (@typeInfo(ptr.child).array.child == u8) {
+                        try self.interface.writeByte('"');
+                        try std.json.Stringify.encodeJsonStringChars(val, .{}, &self.interface);
+                        try self.interface.writeByte('"');
+                    } else {
+                        try std.json.Stringify.value(val, .{}, &self.interface);
+                    }
+                } else if (ptr.size == .one and @typeInfo(ptr.child) == .@"struct") {
+                    try std.json.Stringify.value(val, .{}, &self.interface);
+                } else {
+                    try std.json.Stringify.value(val, .{}, &self.interface);
+                }
+            },
+            .array => |arr| if (arr.child == u8) {
+                // Byte array (string)
+                try self.interface.writeByte('"');
+                try std.json.Stringify.encodeJsonStringChars(&val, .{}, &self.interface);
+                try self.interface.writeByte('"');
+            } else {
+                try std.json.Stringify.value(val, .{}, &self.interface);
+            },
+            .@"enum" => {
+                try self.interface.writeByte('"');
+                try self.interface.writeAll(@tagName(val));
+                try self.interface.writeByte('"');
+            },
+            .error_set => {
+                try self.interface.writeByte('"');
+                try self.interface.writeAll(@errorName(val));
+                try self.interface.writeByte('"');
+            },
+            .@"struct" => try std.json.Stringify.value(val, .{}, &self.interface),
+            .@"union" => try std.json.Stringify.value(val, .{}, &self.interface),
+            .null => try self.interface.writeAll("null"),
+            .optional => if (val) |v| {
+                try self.writeValueOnly(v);
+            } else {
+                try self.interface.writeAll("null");
+            },
+            else => try std.json.Stringify.value(val, .{}, &self.interface),
+        }
+    }
+
+    pub fn err(self: *Json, value: anyerror) void {
+        self.string("@err", @errorName(value));
+    }
+
+    pub fn errK(self: *Json, key: []const u8, value: anyerror) void {
+        self.string(key, @errorName(value));
+    }
+
+    pub fn tryLog(self: *Json) !void {
+        return self.logTo(self.writer);
+    }
+
+    pub fn log(self: *Json) void {
+        self.tryLog() catch |e| {
+            const msg = "logz: Failed to write log. Log will be dropped. Error was: {}";
+           std.log.err(msg, .{e});
+        };
+    }
+
+    pub fn logTo(self: *Json, writer: *Io.Writer) !void {
+        const buffer = &self.buffer;
+        var pos = buffer.pos;
+
+        if (pos == 0) {
+            // nothing was logged (or nothing fit in the buffers)
+            return;
+        }
+
+        const meta = self.meta;
+        const meta_len = blk: {
+            // append timestamp to our meta
+            const prefix_len = meta.len - META_LEN;
+            const meta_buf = meta[prefix_len..];
+
+            if (prefix_len == 0) {
+                @memcpy(meta_buf[0..7], "{\"@ts\":");
+            } else {
+                // whitespce in json is ignored, and putting it in keeps all our offsets the same
+                @memcpy(meta_buf[0..7], " \"@ts\":");
+            }
+            const ts_slice = if (timestamp()) |ts| blk_ts: {
+                break :blk_ts std.fmt.bufPrint(meta_buf[7..20], "{d}", .{ts}) catch unreachable;
+            } else blk_null: {
+                @memcpy(meta_buf[7..11], "null");
+                break :blk_null meta_buf[7..11];
+            };
+            const level_start = 7 + ts_slice.len;
+            const level_text = switch (self.lvl) {
+                .Debug => ",\"@l\":\"DEBUG\",",
+                .Info => ",\"@l\":\"INFO\",",
+                .Warn => ",\"@l\":\"WARN\",",
+                .Error => ",\"@l\":\"ERROR\",",
+                .Fatal => ",\"@l\":\"FATAL\",",
+                else => ",",
+            };
+            @memcpy(meta_buf[level_start..][0..level_text.len], level_text);
+            break :blk prefix_len + level_start + level_text.len;
+        };
+
+        var buf = buffer.buf;
+        // replace the last comma
+        buf[pos - 1] = '}';
+
+        const static = buffer.static;
+
+        var flush_newline = false;
+        if (pos < buf.len) {
+            buf[pos] = '\n';
+            pos += 1;
+        } else {
+            // Unlucky, our buffer is full, we don't have space for the final newline
+            // We'll solve this by issuing a final out.writeAll("\n");
+            flush_newline = true;
+        }
+
+        var vec = [4][]const u8{
+            meta[0..meta_len], "", "", "",
+        };
+        var index: usize = 1;
+        if (buf.ptr != static.ptr) {
+            // if we had to get a larger buffer, than static should be filled
+            vec[1] = static;
+            index = 2;
+        }
+        vec[index] = buf[0..pos];
+        if (flush_newline) {
+            index += 1;
+            vec[index] = "\n";
+        }
+
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        try writer.writeVecAll(vec[0..index+1]);
+        try writer.flush();
+    }
+
+    fn startKeyValue(self: *Json, key: []const u8, min_value_len: usize) ?Buffer.RewindState {
+        var buffer = &self.buffer;
+        const rewind = buffer.begin();
+        switch (buffer.sizeCheck(key.len + 4 + min_value_len)) {
+            .none => return null,
+            .buf => {
+                // optimize this common case
+                buffer.writeByteBuf('"');
+                buffer.writeAllBuf(key);
+                buffer.writeAllBuf("\":");
+            },
+            .acquire_large => {
+                buffer.writeByte('"') catch return null;
+                buffer.writeAll(key) catch {
+                    buffer.rollback(rewind);
+                    return null;
+                };
+                buffer.writeAll("\":") catch {
+                    buffer.rollback(rewind);
+                    return null;
+                };
+            },
+        }
+
+        return rewind;
+    }
+
+    fn writeNull(self: *Json, key: []const u8) void {
+        // + 2 for the quotes around the key
+        // + 1 for the colon
+        // + 4 for null
+        // + 1 for the trailing comma
+        var aw = self.buffer.attributeWriter(8 + key.len, true) orelse return;
+        aw.writeByte('"');
+        aw.writeAllAll(key, "\":null,");
+        aw.done();
+    }
+
+    fn writeObject(self: *Json, key: []const u8, value: anytype) void {
+        const rewind = self.startKeyValue(key, 2) orelse return;
+        var buffer = &self.buffer;
+        std.json.Stringify.value(value, .{}, &self.interface) catch {
+            buffer.rollback(rewind);
+            return;
+        };
+        buffer.writeByte(',') catch buffer.rollback(rewind);
+    }
+
+    pub const FmtWriter = struct {
+        json: *Json,
+        interface: std.Io.Writer,
+
+        fn init(json: *Json) FmtWriter {
+            return .{
+                .json = json,
+                .interface = .{
+                    .buffer = &.{},
+                    .vtable = &.{ .drain = FmtWriter.drain },
+                },
+            };
+        }
+
+        fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
+            _ = splat;
+            const self: *@This() = @fieldParentPtr("interface", io_w);
+            std.json.Stringify.encodeJsonStringChars(data[0], .{}, &self.json.interface) catch return error.WriteFailed;
+            return data[0].len;
+        }
+    };
+};
+
+test "json: static buffer" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 35 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    // data fits
+    json.string("key", "a-value");
+    try expectLog(&json, "\"key\":\"a-value\"");
+
+    // data fits with two pairs
+    json.string("a-key", "a-val");
+    json.string("b-key", "b-val1");
+    try expectLog(&json, "\"a-key\":\"a-val\",\"b-key\":\"b-val1\"");
+
+    // only one pair fits
+    json.string("a-key", "a-val");
+    json.string("b-key", "b-val123aa");
+    try expectLog(&json, "\"a-key\":\"a-val\"");
+
+    // only one pair fits (key too long)
+    json.string("a-key", "a-val");
+    json.string("b-key933", "b-val1");
+    try expectLog(&json, "\"a-key\":\"a-val\"");
+
+    json.string("key", null);
+    try expectLog(&json, "\"key\":null");
+}
+
+test "json: large buffer" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 40, .buffer_size = 20 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    {
+        json.string("a-key", "a-value");
+        try expectLog(&json, "\"a-key\":\"a-value\"");
+    }
+
+    {
+        json.string("a-key", "a-value");
+        json.string("b-key", "b-value");
+        try expectLog(&json, "\"a-key\":\"a-value\",\"b-key\":\"b-value\"");
+    }
+
+    {
+        json.string("a-key", "a-value");
+        json.string("larger_key", "b-value");
+        json.string("c-key", "c-v");
+        try expectLog(&json, "\"a-key\":\"a-value\",\"larger_key\":\"b-value\",\"c-key\":\"c-v\"");
+    }
+
+    {
+        json.string("a-key", "a-value");
+        json.string("b-key", "b-value");
+        json.string("c-key", "c-value");
+        try expectLog(&json, "\"a-key\":\"a-value\",\"b-key\":\"b-value\",\"c-key\":\"c-value\"");
+    }
+
+    {
+        // doesn't fit
+        json.string("a-key", "a-value");
+        json.string("b-key", "b-value");
+        json.string("c-key", "c-value");
+        json.string("d-key", "d-value");
+        try expectLog(&json, "\"a-key\":\"a-value\",\"b-key\":\"b-value\",\"c-key\":\"c-value\"");
+    }
+}
+
+test "json: buffer fuzz" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 25, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    const data = "1234567890ABCDEFGHIJKLMNOPQRSTUFWXYZ";
+
+    {
+        inline for (1..28) |i| {
+            json.string(data[0..i], "v");
+            try expectLog(&json, "\"" ++ data[0..i] ++ "\":\"v\"");
+        }
+
+        // a key of 33 is too long, it makes our total key+value == 36
+        json.string(data[0..29], "v");
+        try expectLog(&json, null);
+    }
+
+    {
+        // long values
+        // We should be able to write values from length 1-32
+        // "k=" + 32 + " " (note the space) is 35, our max
+        inline for (1..28) |i| {
+            json.string("k", data[0..i]);
+            try expectLog(&json, "\"k\":\"" ++ data[0..i] ++ "\"");
+        }
+
+        // a value of 33 is too long, it makes our total key+value == 36
+        json.string("k", data[0..29]);
+        try expectLog(&json, null);
+    }
+}
+
+test "json: stringZ" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 100 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    {
+        // normal strings
+        json.stringZ("key", "value");
+        json.stringZ("other", "rehto");
+        try expectLog(&json, "\"key\":\"value\",\"other\":\"rehto\"");
+    }
+
+    {
+        // null string
+        json.stringZ("key", @as(?[*:0]const u8, null));
+        try expectLog(&json, "\"key\":null");
+    }
+}
+
+test "json: binary" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 20, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    {
+        json.binary("key", &[_]u8{ 9, 200, 33, 0 });
+        try expectLog(&json, "\"key\":\"CcghAA\"");
+    }
+
+    {
+        json.binary("key", @as(?[]const u8, null));
+        try expectLog(&json, "\"key\":null");
+    }
+
+    var buf: [50]u8 = undefined;
+    const data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25 };
+    for (1..17) |i| {
+        const real = b64.encode(&buf, data[0..i]);
+        json.binary("k", data[0..i]);
+        try expectFmt(&json, "\"k\":\"{s}\"", .{real});
+    }
+
+    json.binary("k", data[0..18]);
+    try expectLog(&json, null);
+}
+
+test "json: int" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 15, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    json.int("key", 0);
+    try expectLog(&json, "\"key\":0");
+
+    json.int("key", -1);
+    try expectLog(&json, "\"key\":-1");
+
+    json.int("key", 1234567890);
+    try expectLog(&json, "\"key\":1234567890");
+
+    json.int("key", -1234567890);
+    try expectLog(&json, "\"key\":-1234567890");
+
+    const data = "1234567890ABCDEFGHIJKLMNOPQRSTUFWXYZ";
+    inline for (1..16) |i| {
+        json.int(data[0..i], 12345);
+        try expectLog(&json, "\"" ++ data[0..i] ++ "\":12345");
+    }
+    json.int(data[0..17], 12345);
+    try expectLog(&json, null);
+
+    json.int(data[0..16], -12345);
+    try expectLog(&json, null);
+
+    json.int(data[0..16], -1234);
+    try expectLog(&json, "\"" ++ data[0..16] ++ "\":-1234");
+
+    json.int(data[0..16], null);
+    try expectLog(&json, "\"" ++ data[0..16] ++ "\":null");
+}
+
+test "json: int special values" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 100 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    // max-ish
+    json.int("n", 123456789123456798123456789123456789123456798123456789);
+    try expectLog(&json, "\"n\":123456789123456798123456789123456789123456798123456789");
+
+    // min-ish
+    json.int("n", -123456789123456798123456789123456789123456798123456789);
+    try expectLog(&json, "\"n\":-123456789123456798123456789123456789123456798123456789");
+
+    json.int("n", @as(?u32, null));
+    try expectLog(&json, "\"n\":null");
+}
+
+test "json: bool null/true/false" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 20 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    json.boolean("tea", true);
+    try expectLog(&json, "\"tea\":true");
+
+    json.boolean("coffee", false);
+    try expectLog(&json, "\"coffee\":false");
+
+    json.boolean("other", @as(?bool, null));
+    try expectLog(&json, "\"other\":null");
+}
+
+test "json: float" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 15, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    json.float("key", 0);
+    try expectLog(&json, "\"key\":0");
+
+    json.float("key", -1);
+    try expectLog(&json, "\"key\":-1");
+
+    json.float("key", 12345.67891);
+    try expectLog(&json, "\"key\":12345.67891");
+
+    json.float("key", -1.234567891);
+    try expectLog(&json, "\"key\":-1.234567891");
+
+    const data = "1234567890ABCDEFGHIJKLMNOPQRSTUFWXYZ";
+    inline for (1..15) |i| {
+        json.float(data[0..i], 1.2345);
+        try expectLog(&json, "\"" ++ data[0..i] ++ "\":1.2345");
+    }
+    json.float(data[0..16], 1.2345);
+    try expectLog(&json, null);
+
+    json.float(data[0..16], -1.234);
+    try expectLog(&json, null);
+
+    json.float(data[0..15], -123.4);
+    try expectLog(&json, "\"" ++ data[0..15] ++ "\":-123.4");
+
+    json.float(data[0..15], null);
+    try expectLog(&json, "\"" ++ data[0..15] ++ "\":null");
+}
+
+test "json: error" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 100 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    {
+        // normal strings
+        json.errK("err", error.FileNotFound);
+        try expectLog(&json, "\"err\":\"FileNotFound\"");
+    }
+
+    {
+        json.err(error.FileNotFound);
+        try expectLog(&json, "\"@err\":\"FileNotFound\"");
+    }
+}
+
+test "json: ctx" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 100 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    json.ctx("test.json.ctx");
+    try expectLog(&json, "\"@ctx\":\"test.json.ctx\"");
+}
+
+test "json: src" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 100 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    const src = @src();
+    json.src(src);
+    try expectFmt(&json, "\"@src\":{{\"file\":\"json.zig\",\"fn\":\"test.json: src\",\"line\":{d}}}", .{src.line});
+}
+
+test "json: src larger" {
+    // more tests for this since it's the only code that calls writeObjet for now
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 70, .buffer_size = 30 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    const src = @src();
+    json.src(src);
+    try expectFmt(&json, "\"@src\":{{\"file\":\"json.zig\",\"fn\":\"test.json: src larger\",\"line\":{d}}}", .{src.line});
+}
+
+test "json: src doesn't fit" {
+    // more tests for this since it's the only code that calls writeObjet for now
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 30, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    json.src(@src());
+    try expectLog(&json, null);
+}
+
+test "json: tabs" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 20, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    json.string("key1", "key_with_tab\t");
+    try expectLog(&json, "\"key1\":\"key_with_tab\\t\"");
+}
+
+test "json: fmt" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 1, .large_buffer_size = 20, .buffer_size = 10 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    {
+        // normal strings
+        json.fmt("key", "over:{d}", .{9000});
+        try expectLog(&json, "\"key\":\"over:9000\"");
+    }
+
+    {
+        // with escape
+        json.fmt("key", "over={d}\n!!", .{9001});
+        try expectLog(&json, "\"key\":\"over=9001\\n!!\"");
+    }
+
+    const data = "1234567890ABCDEFGHIJKLMNOPQRSTUFWXYZ";
+    inline for (0..18) |i| {
+        json.fmt("key", "> {s} <", .{data[0..i]});
+        try expectLog(&json, "\"key\":\"> " ++ data[0..i] ++ " <\"");
+    }
+
+    json.fmt("key", "> {s} <", .{data[0..19]});
+    try expectLog(&json, null);
+}
+
+test "json: any" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 200 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    const Color = enum { red, green, blue };
+
+    json.any("count", @as(i32, 42));
+    try expectLog(&json, "\"count\":42");
+
+    json.any("score", @as(f64, 3.14));
+    try expectLog(&json, "\"score\":3.14");
+
+    json.any("active", true);
+    try expectLog(&json, "\"active\":true");
+
+    json.any("name", "alice");
+    try expectLog(&json, "\"name\":\"alice\"");
+
+    json.any("color", Color.red);
+    try expectLog(&json, "\"color\":\"red\"");
+
+    json.any("maybe", @as(?i32, 99));
+    try expectLog(&json, "\"maybe\":99");
+
+    json.any("maybe", @as(?i32, null));
+    try expectLog(&json, "\"maybe\":null");
+
+    var user = TestUser{ .id = 99 };
+    json.any("user", user);
+    try expectLog(&json, "\"user\":{\"id\":99}");
+
+    json.any("user", &user);
+    try expectLog(&json, "\"user\":{\"id\":99}");
+}
+
+test "json: slice" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 200 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    const ints = [_]i32{ 1, 2, 3 };
+    json.slice("nums", &ints);
+    try expectLog(&json, "\"nums\":[1,2,3]");
+
+    const one = [_]i32{4023};
+    json.slice("nums", one);
+    try expectLog(&json, "\"nums\":[4023]");
+
+    const names = [_][]const u8{ "alice", "bob", "charlie" };
+    json.slice("users", &names);
+    try expectLog(&json, "\"users\":[\"alice\",\"bob\",\"charlie\"]");
+
+    const flags = [_]bool{ true, false, true };
+    json.slice("flags", &flags);
+    try expectLog(&json, "\"flags\":[true,false,true]");
+
+    const empty = [_]i32{};
+    json.slice("empty", &empty);
+    try expectLog(&json, "\"empty\":[]");
+}
+
+test "json: sliceFmt" {
+    const p = try Pool.init(t.io, t.allocator, .{ .pool_size = 1, .encoding = .json, .large_buffer_count = 0, .buffer_size = 200 });
+    defer p.deinit();
+
+    var json = try Json.init(t.allocator, p);
+    defer json.deinit(t.allocator);
+
+    // sliceFmt just calls slice for JSON
+    const ints = [_]i32{ 1, 2, 3 };
+    json.sliceFmt("nums", ints, struct {
+        fn format(_: i32, _: *std.Io.Writer) !void {
+            unreachable;
+        }
+    }.format);
+    try expectLog(&json, "\"nums\":[1,2,3]");
+
+    const users = [_]TestUser{ .{ .id = 4 }, .{ .id = 10 } };
+    json.sliceFmt("users", users, struct {
+        fn format(_: *const TestUser, _: *std.Io.Writer) !void {
+            unreachable;
+        }
+    }.format);
+    try expectLog(&json, "\"users\":[{\"id\":4},{\"id\":10}]");
+}
+
+fn expectLog(json: *Json, comptime expected: ?[]const u8) !void {
+    defer json.reset();
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+
+    try json.logTo(&out.writer);
+    if (expected) |e| {
+        try t.expectString("{\"@ts\":9999999999999," ++ e ++ "}\n", out.written());
+    } else {
+        try t.expectEqual(0, out.written().len);
+    }
+}
+
+fn expectFmt(json: *Json, comptime fmt: []const u8, args: anytype) !void {
+    defer json.reset();
+
+    var out: std.Io.Writer.Allocating = .init(t.allocator);
+    defer out.deinit();
+
+    try json.logTo(&out.writer);
+
+    var buf: [200]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&buf, "{{\"@ts\":9999999999999," ++ fmt ++ "}}\n", args);
+    try t.expectString(expected, out.written());
+}
+
+const TestUser = struct {
+    id: u32,
+
+    pub fn format(self: *const TestUser, writer: *std.Io.Writer) !void {
+        return writer.print("{d}", .{self.id});
+    }
+};

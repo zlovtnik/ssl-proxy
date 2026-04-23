@@ -24,10 +24,14 @@ class AuditLogTest < ActiveSupport::TestCase
       dedupe_key: "audit-rf",
       observed_at: Time.current,
       payload: {
+        "schema_version" => 2,
+        "frame_type" => "management",
         "sensor_id" => "sensor-1",
         "tsft" => 72_623_859_790_382_856,
         "signal_dbm" => -42,
         "frequency_mhz" => 2437,
+        "channel_number" => 6,
+        "signal_status" => "present",
         "channel_flags" => 160,
         "data_rate_kbps" => 6000,
         "antenna_id" => 3
@@ -36,12 +40,72 @@ class AuditLogTest < ActiveSupport::TestCase
 
     entry = AuditLog.find("audit-rf")
 
+    assert_equal 2, entry.schema_version
+    assert_equal "management", entry.frame_type
     assert_equal 72_623_859_790_382_856, entry.tsft
     assert_equal(-42, entry.signal_dbm)
     assert_equal 2437, entry.frequency_mhz
+    assert_equal 6, entry.channel_number
+    assert_equal "present", entry.signal_status
     assert_equal 160, entry.channel_flags
     assert_equal 6000, entry.data_rate_kbps
     assert_equal 3, entry.antenna_id
+  end
+
+  test "protocol and correlation accessors return payload values" do
+    insert_sync_ingest(
+      dedupe_key: "audit-protocol",
+      observed_at: Time.current,
+      payload: {
+        "schema_version" => 2,
+        "sensor_id" => "sensor-1",
+        "frame_type" => "data",
+        "frame_subtype" => "qos_data",
+        "llc_oui" => "00:00:00",
+        "ethertype" => 2048,
+        "ethertype_name" => "ipv4",
+        "src_ip" => "192.168.1.10",
+        "dst_ip" => "239.255.255.250",
+        "src_port" => 49_152,
+        "dst_port" => 1900,
+        "transport_protocol" => "udp",
+        "transport_length" => 180,
+        "transport_checksum" => 0,
+        "app_protocol" => "ssdp",
+        "ssdp_message_type" => "M-SEARCH",
+        "ssdp_st" => "upnp:rootdevice",
+        "dhcp_hostname" => "sensor",
+        "dns_query_name" => "printer.local",
+        "mdns_name" => "_airplay._tcp.local",
+        "session_key" => "aa|bb",
+        "retransmit_key" => "tx|rx|1|0",
+        "frame_fingerprint" => "abc123",
+        "payload_visibility" => "plaintext",
+        "large_frame" => true,
+        "mixed_encryption" => false,
+        "dedupe_or_replay_suspect" => false,
+        "anomaly_reasons" => ["large_frame"]
+      }
+    )
+
+    entry = AuditLog.find("audit-protocol")
+
+    assert_equal "00:00:00", entry.llc_oui
+    assert_equal 2048, entry.ethertype
+    assert_equal "ipv4", entry.ethertype_name
+    assert_equal "192.168.1.10", entry.src_ip
+    assert_equal "239.255.255.250", entry.dst_ip
+    assert_equal 49_152, entry.src_port
+    assert_equal 1900, entry.dst_port
+    assert_equal "udp", entry.transport_protocol
+    assert_equal 180, entry.transport_length
+    assert_equal "ssdp", entry.app_protocol
+    assert_equal "M-SEARCH", entry.ssdp_message_type
+    assert_equal "aa|bb", entry.session_key
+    assert_equal "abc123", entry.frame_fingerprint
+    assert_equal "plaintext", entry.payload_visibility
+    assert entry.large_frame
+    assert_equal ["large_frame"], entry.anomaly_reasons
   end
 
   test "wireless security fields prefer physical columns" do

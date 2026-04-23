@@ -34,6 +34,13 @@ pub(crate) fn extended_mask_radiotap_beacon_frame() -> Vec<u8> {
     bytes
 }
 
+pub(crate) fn namespace_radiotap_beacon_frame() -> Vec<u8> {
+    let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+    let mut bytes = namespace_radiotap_header();
+    bytes.extend_from_slice(&frame[10..]);
+    bytes
+}
+
 pub(crate) fn probe_request_radiotap_frame() -> Vec<u8> {
     build_frame(0x40, 0x00, BROADCAST, CLIENT, BROADCAST, None, ssid_ie())
 }
@@ -104,6 +111,10 @@ pub(crate) fn extended_mask_radiotap_header() -> Vec<u8> {
     vec![
         0x00, 0x00, 0x0d, 0x00, 0x20, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0xd6,
     ]
+}
+
+pub(crate) fn namespace_radiotap_header() -> Vec<u8> {
+    vec![0x00, 0x00, 0x09, 0x00, 0x20, 0x00, 0x00, 0x20, 0xd6]
 }
 
 pub(crate) fn beacon_body() -> Vec<u8> {
@@ -182,4 +193,150 @@ pub(crate) fn eapol_key_payload(message: u8) -> Vec<u8> {
     payload.push(0x02);
     payload.extend_from_slice(&key_info.to_be_bytes());
     payload
+}
+
+pub(crate) fn dynamic_channel_radiotap_header() -> Vec<u8> {
+    vec![
+        0x00, 0x00, 0x19, 0x00, 0x6d, 0x08, 0x00, 0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02,
+        0x01, 0x0c, 0x00, 0x85, 0x09, 0x80, 0x04, 0xd6, 0xa1, 0x03,
+    ]
+}
+
+pub(crate) fn dynamic_channel_beacon_frame() -> Vec<u8> {
+    let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+    let mut bytes = dynamic_channel_radiotap_header();
+    bytes.extend_from_slice(&frame[10..]);
+    bytes
+}
+
+pub(crate) fn qos_data_to_distribution_radiotap_frame(qos_control: u16, payload: Vec<u8>) -> Vec<u8> {
+    let mut body = qos_control.to_le_bytes().to_vec();
+    body.extend_from_slice(&payload);
+    build_frame(0x88, 0x01, AP, CLIENT, DISTRIBUTION_DST, None, body)
+}
+
+pub(crate) fn llc_snap_ipv4_udp_payload(
+    src_ip: [u8; 4],
+    dst_ip: [u8; 4],
+    src_port: u16,
+    dst_port: u16,
+    udp_payload: &[u8],
+) -> Vec<u8> {
+    let udp_len = (8 + udp_payload.len()) as u16;
+    let total_len = 20 + udp_len;
+    let mut bytes = vec![0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00];
+    bytes.extend_from_slice(&[
+        0x45,
+        0x00,
+        (total_len >> 8) as u8,
+        total_len as u8,
+        0x12,
+        0x34,
+        0x00,
+        0x00,
+        64,
+        17,
+        0x00,
+        0x00,
+    ]);
+    bytes.extend_from_slice(&src_ip);
+    bytes.extend_from_slice(&dst_ip);
+    bytes.extend_from_slice(&src_port.to_be_bytes());
+    bytes.extend_from_slice(&dst_port.to_be_bytes());
+    bytes.extend_from_slice(&udp_len.to_be_bytes());
+    bytes.extend_from_slice(&0u16.to_be_bytes());
+    bytes.extend_from_slice(udp_payload);
+    bytes
+}
+
+pub(crate) fn llc_snap_ipv4_tcp_payload(
+    src_ip: [u8; 4],
+    dst_ip: [u8; 4],
+    src_port: u16,
+    dst_port: u16,
+    tcp_flags: u8,
+    tcp_payload: &[u8],
+) -> Vec<u8> {
+    let tcp_len = 20 + tcp_payload.len();
+    let total_len = 20 + tcp_len;
+    let mut bytes = vec![0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00];
+    bytes.extend_from_slice(&[
+        0x45,
+        0x00,
+        (total_len >> 8) as u8,
+        total_len as u8,
+        0xab,
+        0xcd,
+        0x00,
+        0x00,
+        64,
+        6,
+        0x00,
+        0x00,
+    ]);
+    bytes.extend_from_slice(&src_ip);
+    bytes.extend_from_slice(&dst_ip);
+    bytes.extend_from_slice(&src_port.to_be_bytes());
+    bytes.extend_from_slice(&dst_port.to_be_bytes());
+    bytes.extend_from_slice(&0x0102_0304u32.to_be_bytes());
+    bytes.extend_from_slice(&0x0000_0000u32.to_be_bytes());
+    bytes.push(0x50);
+    bytes.push(tcp_flags);
+    bytes.extend_from_slice(&0x4000u16.to_be_bytes());
+    bytes.extend_from_slice(&0u16.to_be_bytes());
+    bytes.extend_from_slice(&0u16.to_be_bytes());
+    bytes.extend_from_slice(tcp_payload);
+    bytes
+}
+
+pub(crate) fn ssdp_udp_payload() -> Vec<u8> {
+    b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nST: urn:schemas-upnp-org:device:MediaRenderer:1\r\nMX: 3\r\nMAN: \"ssdp:discover\"\r\nUSN: uuid:device-1::upnp:rootdevice\r\n\r\n".to_vec()
+}
+
+pub(crate) fn dns_query_payload(name: &str) -> Vec<u8> {
+    let mut bytes = vec![
+        0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    append_dns_name(&mut bytes, name);
+    bytes.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+    bytes
+}
+
+pub(crate) fn mdns_response_payload(name: &str) -> Vec<u8> {
+    let mut bytes = vec![
+        0x00, 0x00, 0x84, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    ];
+    append_dns_name(&mut bytes, name);
+    bytes.extend_from_slice(&[0x00, 0x0c, 0x00, 0x01]);
+    append_dns_name(&mut bytes, name);
+    bytes.extend_from_slice(&[0x00, 0x0c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x78]);
+    let mut rdata = Vec::new();
+    append_dns_name(&mut rdata, "speaker.local");
+    bytes.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+    bytes.extend_from_slice(&rdata);
+    bytes
+}
+
+pub(crate) fn dhcp_discover_payload() -> Vec<u8> {
+    let mut bytes = vec![0u8; 240];
+    bytes[0] = 1;
+    bytes[1] = 1;
+    bytes[2] = 6;
+    bytes[236..240].copy_from_slice(&[99, 130, 83, 99]);
+    bytes.extend_from_slice(&[53, 1, 1]);
+    bytes.extend_from_slice(&[50, 4, 192, 168, 1, 44]);
+    bytes.extend_from_slice(&[12, 6]);
+    bytes.extend_from_slice(b"sensor");
+    bytes.extend_from_slice(&[60, 11]);
+    bytes.extend_from_slice(b"AcmeClient1");
+    bytes.push(255);
+    bytes
+}
+
+fn append_dns_name(bytes: &mut Vec<u8>, name: &str) {
+    for label in name.split('.') {
+        bytes.push(label.len() as u8);
+        bytes.extend_from_slice(label.as_bytes());
+    }
+    bytes.push(0);
 }

@@ -17,10 +17,13 @@
     <tbody>
       <tr><th>Dedupe key</th><td><%= @audit_log.dedupe_key %></td></tr>
       <tr><th>Location</th><td><%= @audit_log.location_id %></td></tr>
+      <tr><th>Schema version</th><td><%= @audit_log.schema_version %></td></tr>
+      <tr><th>Frame type</th><td><%= @audit_log.frame_type %></td></tr>
       <tr><th>SSID</th><td><%= @audit_log.ssid %></td></tr>
       <tr><th>BSSID</th><td><%= display_mac(@audit_log.bssid) %></td></tr>
       <tr><th>Destination BSSID</th><td><%= display_mac(@audit_log.destination_bssid) %></td></tr>
       <tr><th>Source MAC</th><td><%= display_mac(@audit_log.source_mac) %></td></tr>
+      <tr><th>Fragment number</th><td><%= @audit_log.fragment_number %></td></tr>
       <tr><th>Signal</th><td><%= @audit_log.signal_dbm %></td></tr>
       <tr><th>Username</th><td><%= @audit_log.username %></td></tr>
       <tr><th>Frame control</th><td><%= @audit_log.frame_control_flags %></td></tr>
@@ -56,7 +59,9 @@
   ["Signal", @audit_log.signal_dbm],
   ["Raw length", @audit_log.raw_len],
   ["Frequency MHz", @audit_log.frequency_mhz],
+  ["Channel number", @audit_log.channel_number],
   ["Channel flags", @audit_log.channel_flags],
+  ["Signal status", @audit_log.signal_status],
   ["Data rate kbps", @audit_log.data_rate_kbps],
   ["Antenna ID", @audit_log.antenna_id],
   ["TSFT", @audit_log.tsft]
@@ -67,6 +72,60 @@
     <table>
       <tbody>
         <% rf_metadata.each do |label, value| %>
+          <% if value.present? %>
+            <tr><th><%= label %></th><td><%= value %></td></tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
+<% protocol_metadata = [
+  ["Protocol", @audit_log.protocol_summary],
+  ["EtherType", @audit_log.ethertype_name || @audit_log.ethertype],
+  ["Source IP", @audit_log.src_ip],
+  ["Destination IP", @audit_log.dst_ip],
+  ["Source port", @audit_log.src_port],
+  ["Destination port", @audit_log.dst_port],
+  ["App protocol", @audit_log.app_protocol],
+  ["SSDP type", @audit_log.ssdp_message_type],
+  ["SSDP ST", @audit_log.ssdp_st],
+  ["DHCP hostname", @audit_log.dhcp_hostname],
+  ["DNS query", @audit_log.dns_query_name],
+  ["mDNS name", @audit_log.mdns_name]
+] %>
+<% if protocol_metadata.any? { |_label, value| value.present? } %>
+  <section class="table-wrap" style="margin-top: 16px;">
+    <h2>Protocol Metadata</h2>
+    <table>
+      <tbody>
+        <% protocol_metadata.each do |label, value| %>
+          <% if value.present? %>
+            <tr><th><%= label %></th><td><%= value %></td></tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
+<% correlation_metadata = [
+  ["Session key", @audit_log.session_key],
+  ["Retransmit key", @audit_log.retransmit_key],
+  ["Frame fingerprint", @audit_log.frame_fingerprint],
+  ["Payload visibility", @audit_log.payload_visibility],
+  ["Large frame", @audit_log.large_frame ? "yes" : nil],
+  ["Mixed encryption", @audit_log.mixed_encryption ? "yes" : nil],
+  ["Replay suspect", @audit_log.dedupe_or_replay_suspect ? "yes" : nil],
+  ["Anomaly reasons", @audit_log.anomaly_reasons.presence&.join(", ")]
+] %>
+<% if correlation_metadata.any? { |_label, value| value.present? } %>
+  <section class="table-wrap" style="margin-top: 16px;">
+    <h2>Correlation</h2>
+    <table>
+      <tbody>
+        <% correlation_metadata.each do |label, value| %>
           <% if value.present? %>
             <tr><th><%= label %></th><td><%= value %></td></tr>
           <% end %>

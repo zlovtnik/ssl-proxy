@@ -3,12 +3,26 @@
 
 <h1>Identity Viewer</h1>
 
+<p>
+  <%= link_to "Inventory CSV", inventory_identities_path(request.query_parameters.merge(format: :csv)) %>
+  |
+  <%= link_to "Inventory JSON", inventory_identities_path(request.query_parameters.merge(format: :json)) %>
+</p>
+
 <%= form_with url: identities_path, method: :get do |form| %>
   <%= form.search_field :q, value: @query, placeholder: "Search MAC, username, SSID, fingerprint, WPS" %>
   <%= form.submit "Search" %>
 <% end %>
 
-<div class="table-wrap">
+<div
+  class="table-wrap"
+  data-controller="mac-link"
+  data-mac-link-inventory-url-value="<%= inventory_identities_path(format: :json) %>"
+  data-mac-link-recent-audit-logs-url-value="<%= recent_audit_logs_path %>"
+  data-mac-link-audit-logs-url-value="<%= audit_logs_path %>"
+  data-mac-link-identities-url-value="<%= identities_path %>"
+  data-mac-link-shadow-it-url-value="<%= shadow_it_alerts_path %>"
+>
   <table>
     <thead>
       <tr>

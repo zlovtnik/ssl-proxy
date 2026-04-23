@@ -3,6 +3,8 @@
 
 <h1>Audit Logs</h1>
 
+<p><%= link_to "Export CSV", export_audit_logs_path(request.query_parameters) %></p>
+
 <%= form_with url: audit_logs_path, method: :get do |form| %>
   <%= form.search_field :q, value: @query, placeholder: "Search sensor, MAC, SSID, username, fingerprint, WPS" %>
   <%= form.submit "Search" %>
@@ -10,26 +12,31 @@
 
 <div
   class="table-wrap"
-  data-controller="audit-log"
+  data-controller="audit-log mac-link"
   data-audit-log-active-value="<%= @live_updates %>"
   data-audit-log-recent-url-value="<%= recent_audit_logs_path %>"
+  data-mac-link-inventory-url-value="<%= inventory_identities_path(format: :json) %>"
+  data-mac-link-recent-audit-logs-url-value="<%= recent_audit_logs_path %>"
+  data-mac-link-audit-logs-url-value="<%= audit_logs_path %>"
+  data-mac-link-identities-url-value="<%= identities_path %>"
+  data-mac-link-shadow-it-url-value="<%= shadow_it_alerts_path %>"
 >
-  <table>
+  <table class="audit-log-table">
     <thead>
       <tr>
-        <th><%= sort_link_to "Observed", :observed_at %></th>
-        <th><%= sort_link_to "Sensor", :sensor_id %></th>
-        <th><%= sort_link_to "Location", :location_id %></th>
-        <th><%= sort_link_to "Subtype", :frame_subtype %></th>
-        <th><%= sort_link_to "SSID", :ssid %></th>
-        <th><%= sort_link_to "Source", :source_mac %></th>
-        <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
-        <th><%= sort_link_to "Signal", :signal_dbm %></th>
-        <th><%= sort_link_to "Bytes", :raw_len %></th>
-        <th><%= sort_link_to "Flags", :frame_control_flags %></th>
-        <th><%= sort_link_to "Security", :security_flags %></th>
-        <th><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
-        <th><%= sort_link_to "Handshake", :handshake_captured %></th>
+        <th class="col-observed"><%= sort_link_to "Observed", :observed_at %></th>
+        <th class="col-sensor"><%= sort_link_to "Sensor", :sensor_id %></th>
+        <th class="col-location"><%= sort_link_to "Location", :location_id %></th>
+        <th class="col-subtype"><%= sort_link_to "Subtype", :frame_subtype %></th>
+        <th class="col-ssid"><%= sort_link_to "SSID", :ssid %></th>
+        <th class="col-source"><%= sort_link_to "Source", :source_mac %></th>
+        <th class="col-dest"><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
+        <th class="col-signal"><%= sort_link_to "Signal", :signal_dbm %></th>
+        <th class="col-bytes"><%= sort_link_to "Bytes", :raw_len %></th>
+        <th class="col-flags"><%= sort_link_to "Flags", :frame_control_flags %></th>
+        <th class="col-security"><%= sort_link_to "Security", :security_flags %></th>
+        <th class="col-fp"><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
+        <th class="col-hs"><%= sort_link_to "Handshake", :handshake_captured %></th>
       </tr>
     </thead>
     <tbody data-audit-log-target="body">

@@ -1,9 +1,13 @@
 mod addresses;
+mod channel;
+mod correlation;
+mod decap;
 mod eapol;
 mod frame;
 mod handshake;
 mod identity;
 mod ie;
+mod qos;
 mod radiotap;
 mod tags;
 

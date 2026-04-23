@@ -5,6 +5,22 @@ require "minitest/mock"
 require "securerandom"
 
 class ActiveSupport::TestCase
+  SYNC_SCAN_INGEST_MANAGED_COLUMNS = %w[
+    dedupe_key
+    stream_name
+    observed_at
+    payload_ref
+    payload
+    payload_sha256
+    status
+    attempt_count
+    last_error
+    producer
+    event_kind
+    created_at
+    updated_at
+  ].freeze
+
   parallelize(workers: 1)
 
   def sync_connection
@@ -18,30 +34,30 @@ class ActiveSupport::TestCase
   end
 
   def insert_sync_ingest(dedupe_key:, observed_at:, payload:, stream_name: "wireless.audit", status: "pending")
-    quoted_payload = sync_connection.quote(payload.to_json)
-    security_flags = payload.fetch("security_flags", 0).to_i
-    wps_device_name = payload["wps_device_name"]
-    wps_manufacturer = payload["wps_manufacturer"]
-    wps_model_name = payload["wps_model_name"]
-    device_fingerprint = payload["device_fingerprint"]
-    handshake_captured = payload.fetch("handshake_captured", false) ? "TRUE" : "FALSE"
-    source_mac = payload["source_mac"]
-    bssid = payload["bssid"]
-    destination_bssid = payload["destination_bssid"] || bssid
-    ssid = payload["ssid"]
-    signal_dbm = payload["signal_dbm"]
-    raw_len = payload.fetch("raw_len", 0).to_i
-    frame_control_flags = payload.fetch("frame_control_flags", 0).to_i
-    more_data = payload.fetch("more_data", false) ? "TRUE" : "FALSE"
-    retry_value = payload.fetch("retry", false) ? "TRUE" : "FALSE"
-    power_save = payload.fetch("power_save", false) ? "TRUE" : "FALSE"
-    protected_value = payload.fetch("protected", false) ? "TRUE" : "FALSE"
-    sync_connection.execute(<<~SQL.squish)
-      INSERT INTO sync_scan_ingest
-        (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256, status, producer, event_kind, source_mac, bssid, destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data, retry, power_save, protected, security_flags, wps_device_name, wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured, created_at, updated_at)
-      VALUES
-        (#{sync_connection.quote(dedupe_key)}, #{sync_connection.quote(stream_name)}, #{sync_connection.quote(observed_at)}, #{sync_connection.quote("payload://#{dedupe_key}")}, #{quoted_payload}::jsonb, #{sync_connection.quote(SecureRandom.hex(16))}, #{sync_connection.quote(status)}, 'test', 'test', #{sync_connection.quote(source_mac)}, #{sync_connection.quote(bssid)}, #{sync_connection.quote(destination_bssid)}, #{sync_connection.quote(ssid)}, #{signal_dbm.nil? ? "NULL" : signal_dbm.to_i}, #{raw_len}, #{frame_control_flags}, #{more_data}, #{retry_value}, #{power_save}, #{protected_value}, #{security_flags}, #{sync_connection.quote(wps_device_name)}, #{sync_connection.quote(wps_manufacturer)}, #{sync_connection.quote(wps_model_name)}, #{sync_connection.quote(device_fingerprint)}, #{handshake_captured}, now(), now())
-    SQL
+    attributes = {
+      "dedupe_key" => dedupe_key,
+      "stream_name" => stream_name,
+      "observed_at" => observed_at,
+      "payload_ref" => "payload://#{dedupe_key}",
+      "payload" => payload,
+      "payload_sha256" => SecureRandom.hex(16),
+      "status" => status,
+      "producer" => "test",
+      "event_kind" => "test",
+      "destination_bssid" => payload["destination_bssid"] || payload["bssid"]
+    }.compact
+
+    sync_scan_ingest_promoted_columns.each_value do |column|
+      next if attributes.key?(column.name)
+      next unless payload.key?(column.name)
+
+      attributes[column.name] = cast_sync_scan_ingest_value(column, payload[column.name])
+    end
+
+    columns_sql = attributes.keys.map { |name| sync_connection.quote_column_name(name) }.join(", ")
+    values_sql = attributes.map { |name, value| quote_sync_scan_ingest_value(name, value) }.join(", ")
+
+    sync_connection.execute("INSERT INTO sync_scan_ingest (#{columns_sql}) VALUES (#{values_sql})")
   end
 
   def insert_backlog(dedupe_key:, status:, updated_at: Time.current)
@@ -51,5 +67,36 @@ class ActiveSupport::TestCase
       VALUES
         (#{sync_connection.quote(dedupe_key)}, 'sync.scan.request', '{}', #{sync_connection.quote(status)}, 0, now(), #{sync_connection.quote(updated_at)})
     SQL
+  end
+
+  private
+
+  def sync_scan_ingest_promoted_columns
+    @sync_scan_ingest_promoted_columns ||= sync_connection.columns("sync_scan_ingest").each_with_object({}) do |column, memo|
+      next if SYNC_SCAN_INGEST_MANAGED_COLUMNS.include?(column.name)
+
+      memo[column.name] = column
+    end.freeze
+  end
+
+  def cast_sync_scan_ingest_value(column, value)
+    return if value.nil?
+
+    case column.type
+    when :boolean
+      ActiveModel::Type::Boolean.new.cast(value)
+    when :integer, :bigint
+      value.to_i
+    when :float
+      value.to_f
+    else
+      value
+    end
+  end
+
+  def quote_sync_scan_ingest_value(column_name, value)
+    return "#{sync_connection.quote(value.to_json)}::jsonb" if column_name == "payload"
+
+    sync_connection.quote(value)
   end
 end

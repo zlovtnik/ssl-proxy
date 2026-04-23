@@ -104,7 +104,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
-      - SYNC_SCHEMA_FILE=/app/schema/postgres.sql
+      - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
