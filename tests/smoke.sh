@@ -97,7 +97,7 @@ assert_wg_interface() {
 assert_unique_server_address() {
     local count
 
-    count="$(docker compose exec -T ssl-proxy sh -lc "grep -c '^Address = 10.13.13.1/24$' /run/wireguard/wg0.conf")"
+    count="$(docker compose exec -T ssl-proxy sh -lc "grep -c '^Address = 10.13.13.1/24$' /run/wireguard/wg0.conf || true")"
     if [ "$count" -ne 1 ]; then
         echo "❌ Expected exactly one rendered server address, found $count"
         docker compose exec -T ssl-proxy sh -lc 'nl -ba /run/wireguard/wg0.conf'

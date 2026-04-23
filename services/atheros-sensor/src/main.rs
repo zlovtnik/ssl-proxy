@@ -4,12 +4,15 @@ mod capture;
 mod config;
 mod config_subscriber;
 mod device;
+mod error;
 mod model;
 mod parse;
 mod publish;
+mod stats;
+#[cfg(test)]
+mod testutil;
 
 use std::{
-    error::Error,
     fmt::Display,
     future,
     num::NonZeroUsize,
@@ -18,7 +21,7 @@ use std::{
 };
 
 use lru::LruCache;
-use tokio_stream::StreamExt;
+use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, error, info, info_span, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -28,20 +31,23 @@ use crate::{
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
     backlog::{BacklogStore, PostgresBacklog},
-    capture::stream_packets,
+    capture::{stream_packets, CaptureError},
     config::AppConfig,
     device::{detect, read_mac_address},
-    model::{AuditContext, EnrichedFrame},
+    error::SensorError,
+    model::{AuditContext, EnrichedFrame, RawPacket},
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
         publish_bandwidth_event, publish_entry, publish_handshake_alert, reconcile_backlog,
-        PublishClient, PublishError, SyncPublisherClient,
+        PublishClient, PublishError, PublishState, SharedPublishState, SyncPublisherClient,
     },
+    stats::{CaptureStats, PipelineOutcome},
 };
 
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
+const HANDSHAKE_MONITOR_TTL: Duration = Duration::from_secs(10 * 60);
 
-async fn run_healthcheck() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
     let config = step("load configuration", AppConfig::from_env())?;
 
@@ -94,8 +100,117 @@ async fn main() {
     }
 }
 
-async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_sensor() -> Result<(), SensorError> {
     let config = step("load configuration", AppConfig::from_env())?;
+    let mut handles = init_sensor(&config).await?;
+    let mut heartbeat = capture_heartbeat(handles.config.log_idle_secs);
+    let mut stats = CaptureStats::default();
+    let mut pipeline_state = PipelineState::new(&handles.config);
+    let mut bandwidth_flush = bandwidth_flush_interval();
+
+    loop {
+        tokio::select! {
+            packet = handles.packets.next() => {
+                let Some(packet) = packet else {
+                    break;
+                };
+
+                let packet = match packet {
+                    Ok(packet) => {
+                        stats.packets_seen += 1;
+                        packet
+                    }
+                    Err(error) => {
+                        stats.capture_errors += 1;
+                        error!(%error, interface = %handles.device, "packet capture failed");
+                        continue;
+                    }
+                };
+
+                if !audit_window_snapshot(&handles.audit_window).is_active_at(packet.observed_at) {
+                    stats.audit_window_drops += 1;
+                    debug!("audit window inactive; dropping packet");
+                    continue;
+                }
+
+                let span = info_span!(
+                    "wireless_capture",
+                    sensor_id = %handles.context.sensor_id,
+                    location_id = %handles.context.location_id,
+                    interface = %handles.context.interface
+                );
+
+                let result = process_packet(
+                    packet,
+                    &handles.context,
+                    &handles.config,
+                    &handles.backlog,
+                    &*handles.publish_client,
+                    &handles.publish_state,
+                    &mut pipeline_state,
+                )
+                .instrument(span)
+                .await;
+
+                match result {
+                    Ok(PipelineOutcome::DecodedFrame) => stats.decoded_frames += 1,
+                    Ok(PipelineOutcome::UnsupportedFrame) => stats.unsupported_frames += 1,
+                    Err(error) => {
+                        stats.pipeline_errors += 1;
+                        error!(%error, "wireless packet pipeline failed");
+                    }
+                }
+            }
+            _ = tick_capture_heartbeat(&mut heartbeat) => {
+                stats.log(&handles.device, &handles.config);
+            }
+            _ = bandwidth_flush.tick() => {
+                pipeline_state
+                    .handshake_monitor
+                    .cleanup_expired(HANDSHAKE_MONITOR_TTL);
+                let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
+                publish_bandwidth_events(&handles.backlog, &*handles.publish_client, bandwidth_events).await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+struct SensorHandles {
+    config: AppConfig,
+    audit_window: SharedAuditWindow,
+    device: String,
+    context: AuditContext,
+    packets: ReceiverStream<Result<RawPacket, CaptureError>>,
+    backlog: Arc<PostgresBacklog>,
+    publish_client: Arc<SyncPublisherClient>,
+    publish_state: SharedPublishState,
+}
+
+struct PipelineState {
+    identity_cache: IdentityCache,
+    handshake_monitor: HandshakeMonitor,
+    traffic_bucket: TrafficBucket,
+    mac_device_cache: LruCache<String, Option<(String, Option<String>)>>,
+}
+
+impl PipelineState {
+    fn new(config: &AppConfig) -> Self {
+        Self {
+            identity_cache: IdentityCache::default(),
+            handshake_monitor: HandshakeMonitor::default(),
+            traffic_bucket: TrafficBucket::new(DEFAULT_BANDWIDTH_WINDOW_SECS),
+            mac_device_cache: LruCache::new(
+                NonZeroUsize::new(config.mac_device_cache_size).unwrap_or_else(|| {
+                    NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
+                }),
+            ),
+        }
+    }
+}
+
+async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
     let log_filter = init_tracing(Arc::clone(&audit_window));
@@ -136,6 +251,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
         audit_window = ?audit_window_snapshot(&audit_window),
         "atheros sensor starting"
     );
+
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     info!(
         nats_configured = config.sync.nats_url.is_some(),
@@ -150,6 +266,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!("atheros sensor postgres backlog connected");
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
+    let publish_state = PublishState::shared();
 
     config_subscriber::spawn_audit_window_config_subscriber(
         config.sync.clone(),
@@ -160,14 +277,20 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
     let reconcile_window = Arc::clone(&audit_window);
     let reconcile_backlog_store = Arc::clone(&backlog);
     let reconcile_client = Arc::clone(&publish_client);
+    let reconcile_publish_state = Arc::clone(&publish_state);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(15));
         info!("backlog reconciliation task started");
         loop {
             interval.tick().await;
             let window = audit_window_snapshot(&reconcile_window);
-            if let Err(error) =
-                reconcile_backlog(&*reconcile_backlog_store, &*reconcile_client, &window).await
+            if let Err(error) = reconcile_backlog(
+                &reconcile_publish_state,
+                &*reconcile_backlog_store,
+                &*reconcile_client,
+                &window,
+            )
+            .await
             {
                 error!(%error, "backlog reconciliation failed");
             }
@@ -182,7 +305,7 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
         reg_domain: config.reg_domain.clone(),
     };
 
-    let mut packets = step(
+    let packets = step(
         format!("open pcap capture on interface {device}"),
         stream_packets(&device, config.snaplen, config.pcap_timeout_ms, &config.bpf),
     )?;
@@ -195,144 +318,99 @@ async fn run_sensor() -> Result<(), Box<dyn std::error::Error>> {
         "atheros sensor pcap capture opened"
     );
 
-    let mut heartbeat = capture_heartbeat(config.log_idle_secs);
-    let mut stats = CaptureStats::default();
-    let mut identity_cache = IdentityCache::default();
-    let mut handshake_monitor = HandshakeMonitor::default();
-    let mut traffic_bucket = TrafficBucket::new(DEFAULT_BANDWIDTH_WINDOW_SECS);
-    let mut bandwidth_flush = bandwidth_flush_interval();
-    let mut mac_device_cache: LruCache<String, Option<(String, Option<String>)>> =
-        LruCache::new(NonZeroUsize::new(config.mac_device_cache_size).unwrap());
+    Ok(SensorHandles {
+        config: config.clone(),
+        audit_window,
+        device,
+        context,
+        packets,
+        backlog,
+        publish_client,
+        publish_state,
+    })
+}
 
-    loop {
-        tokio::select! {
-            packet = packets.next() => {
-                let Some(packet) = packet else {
-                    break;
-                };
+async fn process_packet(
+    packet: RawPacket,
+    context: &AuditContext,
+    config: &AppConfig,
+    backlog: &PostgresBacklog,
+    publish_client: &dyn PublishClient,
+    publish_state: &SharedPublishState,
+    pipeline: &mut PipelineState,
+) -> Result<PipelineOutcome, SensorError> {
+    let mut wifi_frame = match decode_frame(&packet) {
+        Ok(frame) => frame,
+        Err(error) => {
+            debug!(%error, "ignoring unsupported frame");
+            return Ok(PipelineOutcome::UnsupportedFrame);
+        }
+    };
 
-                let packet = match packet {
-                    Ok(packet) => {
-                        stats.packets_seen += 1;
-                        packet
-                    }
+    let handshake_alert = pipeline.handshake_monitor.observe(&mut wifi_frame, context);
+    let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
+    let enriched: EnrichedFrame = attach_context(wifi_frame, context);
+    let mut entry = to_audit_entry(enriched);
+    if let Some(alert) = handshake_alert.as_ref() {
+        if let Err(error) = publish_handshake_alert(publish_client, alert).await {
+            warn!(%error, "handshake alert publish failed; continuing audit publish");
+        }
+    }
+    if let Some(identity) = resolved_identity {
+        entry.username = Some(identity.username);
+        entry.identity_source = identity.source;
+        entry.tags.extend(identity.tags);
+    }
+    if config.mac_device_lookup_enabled {
+        if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
+            let cache_key = mac.to_ascii_lowercase();
+            let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
+                cached.clone()
+            } else {
+                let lookup = match backlog.lookup_device_by_mac(&cache_key).await {
+                    Ok(lookup) => lookup,
                     Err(error) => {
-                        stats.capture_errors += 1;
-                        error!(%error, interface = %device, "packet capture failed");
-                        continue;
+                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
+                        None
                     }
                 };
-
-                if !audit_window_snapshot(&audit_window).is_active_at(packet.observed_at) {
-                    stats.audit_window_drops += 1;
-                    debug!("audit window inactive; dropping packet");
-                    continue;
+                pipeline
+                    .mac_device_cache
+                    .put(cache_key.clone(), lookup.clone());
+                lookup
+            };
+            if let Some((device_id, username)) = lookup {
+                entry.device_id = Some(device_id);
+                if entry.username.is_none() {
+                    entry.username = username;
                 }
-
-                let span = info_span!(
-                    "wireless_capture",
-                    sensor_id = %context.sensor_id,
-                    location_id = %context.location_id,
-                    interface = %context.interface
-                );
-
-                let result = async {
-                    let mut wifi_frame = match decode_frame(&packet) {
-                        Ok(frame) => frame,
-                        Err(error) => {
-                            debug!(%error, "ignoring unsupported frame");
-                            return Ok::<PipelineOutcome, Box<dyn std::error::Error>>(
-                                PipelineOutcome::UnsupportedFrame,
-                            );
-                        }
-                    };
-
-                    let handshake_alert = handshake_monitor.observe(&mut wifi_frame, &context);
-                    let resolved_identity = identity_cache.resolve(&wifi_frame);
-                    let enriched: EnrichedFrame = attach_context(wifi_frame, &context);
-                    let mut entry = to_audit_entry(enriched);
-                    if let Some(alert) = handshake_alert.as_ref() {
-                        if let Err(error) = publish_handshake_alert(&*publish_client, alert).await {
-                            warn!(%error, "handshake alert publish failed; continuing audit publish");
-                        }
-                    }
-                    if let Some(identity) = resolved_identity {
-                        entry.username = Some(identity.username);
-                        entry.identity_source = identity.source;
-                        entry.tags.extend(identity.tags);
-                    }
-                    if config.mac_device_lookup_enabled {
-                        if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
-                            let cache_key = mac.to_ascii_lowercase();
-                            let lookup = if let Some(cached) = mac_device_cache.get(&cache_key) {
-                                cached.clone()
-                            } else {
-                                let lookup = match backlog.lookup_device_by_mac(&cache_key).await {
-                                    Ok(lookup) => lookup,
-                                    Err(error) => {
-                                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
-                                        None
-                                    }
-                                };
-                                mac_device_cache.put(cache_key.clone(), lookup.clone());
-                                lookup
-                            };
-                            if let Some((device_id, username)) = lookup {
-                                entry.device_id = Some(device_id);
-                                if entry.username.is_none() {
-                                    entry.username = username;
-                                }
-                                if matches!(entry.identity_source.as_str(), "unknown" | "mac_observed") {
-                                    entry.identity_source = "device_registry".to_string();
-                                }
-                            }
-                        }
-                    }
-                    let bandwidth_events = match traffic_bucket.observe(&entry) {
-                        Ok(events) => events,
-                        Err(error) => {
-                            warn!(%error, "wireless bandwidth bucket update failed; continuing audit publish");
-                            Vec::new()
-                        }
-                    };
-                    publish_bandwidth_events(&backlog, &*publish_client, bandwidth_events).await;
-                    info!(
-                        target: "wireless_audit",
-                        event_type = %entry.event_type,
-                        frame_subtype = %entry.frame_subtype,
-                        bssid = ?entry.bssid,
-                        ssid = ?entry.ssid,
-                        "captured wifi frame"
-                    );
-                    match publish_entry(&*backlog, &*publish_client, entry).await {
-                        Ok(()) | Err(PublishError::Queued(_)) => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                    Ok(PipelineOutcome::DecodedFrame)
+                if matches!(entry.identity_source.as_str(), "unknown" | "mac_observed") {
+                    entry.identity_source = "device_registry".to_string();
                 }
-                .instrument(span)
-                .await;
-
-                match result {
-                    Ok(PipelineOutcome::DecodedFrame) => stats.decoded_frames += 1,
-                    Ok(PipelineOutcome::UnsupportedFrame) => stats.unsupported_frames += 1,
-                    Err(error) => {
-                        stats.pipeline_errors += 1;
-                        error!(%error, "wireless packet pipeline failed");
-                    }
-                }
-            }
-            _ = tick_capture_heartbeat(&mut heartbeat) => {
-                stats.log(&device, &config);
-            }
-            _ = bandwidth_flush.tick() => {
-                let bandwidth_events = traffic_bucket.flush_current();
-                publish_bandwidth_events(&backlog, &*publish_client, bandwidth_events).await;
             }
         }
     }
-
-    Ok(())
+    let bandwidth_events = match pipeline.traffic_bucket.observe(&entry) {
+        Ok(events) => events,
+        Err(error) => {
+            warn!(%error, "wireless bandwidth bucket update failed; continuing audit publish");
+            Vec::new()
+        }
+    };
+    publish_bandwidth_events(backlog, publish_client, bandwidth_events).await;
+    info!(
+        target: "wireless_audit",
+        event_type = %entry.event_type,
+        frame_subtype = %entry.frame_subtype,
+        bssid = ?entry.bssid,
+        ssid = ?entry.ssid,
+        "captured wifi frame"
+    );
+    match publish_entry(publish_state, backlog, publish_client, entry).await {
+        Ok(()) | Err(PublishError::Queued(_)) => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(PipelineOutcome::DecodedFrame)
 }
 
 fn bandwidth_flush_interval() -> tokio::time::Interval {
@@ -446,61 +524,25 @@ async fn tick_capture_heartbeat(interval: &mut Option<tokio::time::Interval>) {
     }
 }
 
-#[derive(Default)]
-struct CaptureStats {
-    packets_seen: u64,
-    decoded_frames: u64,
-    unsupported_frames: u64,
-    audit_window_drops: u64,
-    capture_errors: u64,
-    pipeline_errors: u64,
-}
-
-impl CaptureStats {
-    fn log(&self, device: &str, config: &AppConfig) {
-        info!(
-            interface = %device,
-            channel = config.channel,
-            bpf = %config.bpf,
-            packets_seen = self.packets_seen,
-            decoded_frames = self.decoded_frames,
-            unsupported_frames = self.unsupported_frames,
-            audit_window_drops = self.audit_window_drops,
-            capture_errors = self.capture_errors,
-            pipeline_errors = self.pipeline_errors,
-            "atheros sensor capture heartbeat"
-        );
-    }
-}
-
-enum PipelineOutcome {
-    DecodedFrame,
-    UnsupportedFrame,
-}
-
 fn configured_device_suffix(device: Option<&str>) -> String {
     device
         .map(|device| format!(" configured by ATH_SENSOR_DEVICE={device}"))
         .unwrap_or_default()
 }
 
-fn step<T, E>(label: impl Display, result: Result<T, E>) -> Result<T, Box<dyn Error>>
+fn step<T, E>(label: impl Display, result: Result<T, E>) -> Result<T, SensorError>
 where
     E: Display,
 {
-    result.map_err(|error| boxed_error(format!("{label}: {error}")))
+    result.map_err(|error| SensorError::step(label, error))
 }
 
-async fn step_async<T, E, F>(label: impl Display, future: F) -> Result<T, Box<dyn Error>>
+async fn step_async<T, E, F>(label: impl Display, future: F) -> Result<T, SensorError>
 where
     E: Display,
     F: std::future::Future<Output = Result<T, E>>,
 {
     future
         .await
-        .map_err(|error| boxed_error(format!("{label}: {error}")))
-}
-
-fn boxed_error(message: String) -> Box<dyn Error> {
-    Box::new(std::io::Error::other(message))
+        .map_err(|error| SensorError::step(label, error))
 }

@@ -35,8 +35,8 @@ pub fn main(init: std.process.Init) !void {
     const mode = if (args.next()) |value| value[0..value.len] else "run";
 
     std.debug.print(
-        "service={s} event=process_start mode={s} stream_name={s} stream_names={s} scan_subject={s} load_subject={s} result_subject={s}\n",
-        .{ SERVICE_NAME, mode, cfg.stream_name, cfg.stream_names_csv, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
+        "service={s} event=process_start mode={s} stream_name={s} stream_names={s} audit_stream={s} result_stream={s} scan_subject={s} load_subject={s} result_subject={s}\n",
+        .{ SERVICE_NAME, mode, cfg.stream_name, cfg.stream_names_csv, cfg.audit_stream_name, cfg.result_stream_name, cfg.scan_subject, cfg.load_subject, cfg.result_subject },
     );
 
     if (std.mem.eql(u8, mode, "healthcheck")) {
@@ -148,9 +148,17 @@ fn healthcheck(gpa: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
     std.debug.print("service={s} event=healthcheck_step status=start step=check_nats_stream\n", .{SERVICE_NAME});
     checkNatsStream(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name) catch |err| {
         std.debug.print(
-            "service={s} event=healthcheck_step status=warn step=check_nats_stream stream={s} duration_ms={d} error={}\n",
+            "service={s} event=healthcheck_step status=error step=check_nats_stream stream={s} duration_ms={d} error={}\n",
             .{ SERVICE_NAME, cfg.audit_stream_name, elapsedMs(check_stream_started_ts, io), err },
         );
+        return err;
+    };
+    checkNatsStream(gpa, io, cfg.sync_nats_url, cfg.result_stream_name) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=check_nats_stream stream={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, cfg.result_stream_name, elapsedMs(check_stream_started_ts, io), err },
+        );
+        return err;
     };
     std.debug.print(
         "service={s} event=healthcheck_step status=ok step=check_nats_stream duration_ms={d}\n",
@@ -161,9 +169,24 @@ fn healthcheck(gpa: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
     std.debug.print("service={s} event=healthcheck_step status=start step=check_nats_consumer\n", .{SERVICE_NAME});
     checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name, cfg.scan_consumer) catch |err| {
         std.debug.print(
-            "service={s} event=healthcheck_step status=warn step=check_nats_consumer stream={s} consumer={s} duration_ms={d} error={}\n",
+            "service={s} event=healthcheck_step status=error step=check_nats_consumer stream={s} consumer={s} duration_ms={d} error={}\n",
             .{ SERVICE_NAME, cfg.audit_stream_name, cfg.scan_consumer, elapsedMs(check_consumer_started_ts, io), err },
         );
+        return err;
+    };
+    checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.audit_stream_name, cfg.load_consumer) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=check_nats_consumer stream={s} consumer={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, cfg.audit_stream_name, cfg.load_consumer, elapsedMs(check_consumer_started_ts, io), err },
+        );
+        return err;
+    };
+    checkNatsConsumer(gpa, io, cfg.sync_nats_url, cfg.result_stream_name, cfg.result_consumer) catch |err| {
+        std.debug.print(
+            "service={s} event=healthcheck_step status=error step=check_nats_consumer stream={s} consumer={s} duration_ms={d} error={}\n",
+            .{ SERVICE_NAME, cfg.result_stream_name, cfg.result_consumer, elapsedMs(check_consumer_started_ts, io), err },
+        );
+        return err;
     };
     std.debug.print(
         "service={s} event=healthcheck_step status=ok step=check_nats_consumer duration_ms={d}\n",
@@ -694,7 +717,7 @@ fn handleResults(io: std.Io, coordinator: *scheduler.Coordinator, cfg: config.Co
         script,
         "zig-coordinator-results",
         cfg.sync_nats_url,
-        cfg.audit_stream_name,
+        cfg.result_stream_name,
         cfg.result_consumer,
         cfg.database_url,
     };

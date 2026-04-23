@@ -556,10 +556,14 @@ pub async fn stats_bandwidth(
     State(state): State<SharedState>,
     Query(query): Query<BandwidthQuery>,
 ) -> Json<Vec<BandwidthPoint>> {
-    let _window = &query.window;
+    let window = match query.window.as_str() {
+        "1h" | "24h" | "7d" => query.window.as_str(),
+        _ => "1h",
+    };
     let wg_peers = state.wg_peers_snapshot();
 
     let now = chrono::Utc::now().to_rfc3339();
+    let bucket = format!("{window}:{now}");
     Json(
         wg_peers
             .inventory
@@ -572,7 +576,7 @@ pub async fn stats_bandwidth(
                     .into_iter()
                     .max_by(|a, b| a.last_seen.cmp(&b.last_seen));
                 BandwidthPoint {
-                    bucket: now.clone(),
+                    bucket: bucket.clone(),
                     wg_pubkey: peer.wg_pubkey.clone(),
                     device_id: preferred_device
                         .as_ref()

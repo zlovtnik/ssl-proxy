@@ -56,6 +56,11 @@ Operational note: recurrence means the mount change was not made durable. The re
   - Local shim listening on client loopback (`127.0.0.1:51821`)
   - Shim forwards to server endpoint and key/magic settings match server.
 
+## Open Risks
+- CoreDNS upstream reachability may fail depending on host egress/DNS policy; browsing symptoms can mimic tunnel issues.
+- Transparent fail-closed SNI policy can block application flows even with healthy handshakes.
+- Running full-tunnel client profiles on the VPN server host can break host DNS/egress and cause misleading build/connectivity failures.
+
 ## Incident Timeline
 - 2026-04-17T00:00:00Z | result=fail | mode=linux-shim | signature=magic_byte_mismatch | action=switched server runtime for direct client test | context=server 192.168.1.221 amd64; client 192.168.1.68 iPhone | event=iPhone traffic reached obfuscated ingress and was dropped
 - 2026-04-17T00:00:00Z | result=fail | mode=linux-shim | signature=wg_client_listenport_conflict | action=removed ListenPort from client profile | context=linux test client 192.168.1.68 | event=local client interface failed to come up with Address already in use
@@ -63,11 +68,6 @@ Operational note: recurrence means the mount change was not made durable. The re
 - 2026-04-17T00:00:00Z | result=fail | mode=iphone | signature=admin_loopback_false_negative | action=added in-container health fallback | context=server 192.168.1.221 amd64 | event=up-ready looped on host admin endpoint while container was healthy
 - 2026-04-17T00:00:00Z | result=fail | mode=iphone | signature=qr_permission_denied | action=rendered qr from container bind mount path | context=server 192.168.1.221 amd64 | event=qr generation failed on root-owned config file
 - 2026-04-17T00:00:00Z | result=fail | mode=iphone | signature=docker_registry_dns_timeout | action=fallback no-build recreate | context=server 192.168.1.221 amd64 | event=compose build metadata pull failed during dns outage
-
-## Open Risks
-- CoreDNS upstream reachability may fail depending on host egress/DNS policy; browsing symptoms can mimic tunnel issues.
-- Transparent fail-closed SNI policy can block application flows even with healthy handshakes.
-- Running full-tunnel client profiles on the VPN server host can break host DNS/egress and cause misleading build/connectivity failures.
 - 2026-04-18T12:52:11Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into oracle-worker only
 - 2026-04-20T15:49:32Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:52:10Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle

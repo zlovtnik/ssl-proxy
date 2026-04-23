@@ -220,7 +220,8 @@ fn load_key(options: &CliOptions) -> Result<Option<String>, ConfigParseOutcome> 
 
     if let Some(path) = std::env::var("WG_OBFUSCATION_KEY_FILE")
         .ok()
-        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
     {
         return read_key_file(&path);
     }

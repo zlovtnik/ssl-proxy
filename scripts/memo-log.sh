@@ -38,6 +38,20 @@ grep -q '^## Incident Timeline' "$MEMORY_FILE" || {
 }
 
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '%s\n' "- ${TS} | result=${RESULT} | mode=${PROFILE_MODE} | signature=${SIGNATURE} | action=${ACTION} | context=${CONTEXT} | event=${EVENT}" >> "$MEMORY_FILE"
+entry="- ${TS} | result=${RESULT} | mode=${PROFILE_MODE} | signature=${SIGNATURE} | action=${ACTION} | context=${CONTEXT} | event=${EVENT}"
+tmp_file="$(mktemp)"
+awk -v entry="$entry" '
+    { print }
+    !inserted && $0 ~ /^## Incident Timeline/ {
+        print entry
+        inserted = 1
+    }
+    END {
+        if (!inserted) {
+            print entry
+        }
+    }
+' "$MEMORY_FILE" >"$tmp_file"
+mv "$tmp_file" "$MEMORY_FILE"
 
-echo "[memo-log] appended incident entry"
+echo "[memo-log] inserted incident entry"

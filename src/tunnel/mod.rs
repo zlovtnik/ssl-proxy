@@ -12,7 +12,9 @@ mod tls;
 mod transparent;
 
 pub use connect::handle;
+#[cfg(feature = "quic")]
 pub(crate) use dial::dial_upstream_with_resolver;
+#[cfg(feature = "quic")]
 pub(crate) use dial::parse_host_port;
 pub use tarpit::tarpit_semaphore;
 pub use transparent::handle_transparent;

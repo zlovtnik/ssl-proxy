@@ -108,7 +108,12 @@ services:
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
+      - SYNC_SCAN_SUBJECT=${SYNC_SCAN_SUBJECT:-sync.scan.request}
+      - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+      - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
       - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
@@ -293,9 +298,12 @@ services:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
       AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      SYNC_RESULT_STREAM_NAME: ${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
+      SYNC_SCAN_SUBJECT: ${SYNC_SCAN_SUBJECT:-sync.scan.request}
       SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
       SYNC_LOAD_SUBJECT: ${SYNC_LOAD_SUBJECT:-sync.oracle.load}
       SYNC_LOAD_CONSUMER: ${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      SYNC_RESULT_SUBJECT: ${SYNC_RESULT_SUBJECT:-sync.oracle.result}
       SYNC_RESULT_CONSUMER: ${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
     volumes:
       - ./docker/nats:/config:ro

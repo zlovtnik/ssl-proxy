@@ -5,10 +5,17 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/wireguard/wg-obfs-shim.env
+EnvironmentFile=-/etc/wireguard/wg-obfs-shim.env
 ExecStart=/usr/local/bin/wg-obfs-shim
 Restart=on-failure
 RestartSec=2s
+User=wg-obfs-shim
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run /var/run
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

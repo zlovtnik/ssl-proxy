@@ -89,7 +89,7 @@ Priority is based on impact to enforcement integrity + audit integrity.
 | Privilege escalation | Abuse of operator/admin capabilities | Role separation expectations, feature gating | **Unknown** (actual RBAC/role count not documented) |
 | Defense evasion | Suppressing events or disabling DB persistence | `/ready` Oracle readiness signal, audit/event pipeline design | **Partial** (tamper-evidence controls not yet explicit) |
 | Collection/Exfiltration | High-volume transfer via allowed domains/APIs | Blocklist + heuristics + future transaction/scraping detection work | **Partial** |
-| Impact | Compliance failure, forensic blind spots, outage | Health/readiness endpoints, planned observability/alertging improvements | **Partial** |
+| Impact | Compliance failure, forensic blind spots, outage | Health/readiness endpoints, planned observability/alerting improvements | **Partial** |
 
 ## 8) open questions/assumptions
 

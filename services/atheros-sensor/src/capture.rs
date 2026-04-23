@@ -114,9 +114,9 @@ mod tests {
         write_test_pcap(
             &path,
             &[
-                super::super::parse::tests::beacon_radiotap_frame(),
-                super::super::parse::tests::probe_request_radiotap_frame(),
-                super::super::parse::tests::probe_response_radiotap_frame(),
+                crate::testutil::beacon_radiotap_frame(),
+                crate::testutil::probe_request_radiotap_frame(),
+                crate::testutil::probe_response_radiotap_frame(),
             ],
         );
 

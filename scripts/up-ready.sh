@@ -160,7 +160,7 @@ to_container_config_path() {
     local host_path="$1"
     case "$host_path" in
         "$ROOT_DIR"/config/*)
-            printf '/config/%s' "${host_path#"$ROOT_DIR"/config/}"
+            printf '/config/%s' "${host_path#${ROOT_DIR}/config/}"
             return 0
             ;;
     esac
@@ -177,8 +177,8 @@ print_qr_for_config() {
     fi
 
     container_cfg="$(to_container_config_path "$cfg" || true)"
-    if [ -n "$container_cfg" ] && compose exec -T "$SERVICE_NAME" sh -lc "test -r '$container_cfg'"; then
-        compose exec -T "$SERVICE_NAME" sh -lc "cat '$container_cfg'" | qrencode -t "$QR_TYPE" -m "$QR_MARGIN"
+    if [ -n "$container_cfg" ] && compose exec -T "$SERVICE_NAME" test -r "$container_cfg"; then
+        compose exec -T "$SERVICE_NAME" cat "$container_cfg" | qrencode -t "$QR_TYPE" -m "$QR_MARGIN"
         return 0
     fi
 
@@ -301,6 +301,7 @@ health_checks() {
 
     local ready_code body_file ready_body
     body_file="$(mktemp)"
+    trap 'rm -f "$body_file"' RETURN
     ready_code="$(curl -sS -o "$body_file" -w '%{http_code}' --max-time 2 http://127.0.0.1:3002/ready 2>/dev/null || true)"
     if [ "$ready_code" = "000" ]; then
         ready_code="$(compose exec -T "$SERVICE_NAME" curl -sS -o /tmp/up-ready-ready-body.txt -w '%{http_code}' --max-time 2 http://127.0.0.1:3002/ready 2>/dev/null || true)"
@@ -308,6 +309,7 @@ health_checks() {
     fi
     ready_body="$(tr -d '\n' <"$body_file")"
     rm -f "$body_file"
+    trap - RETURN
 
     if [ "$ready_code" = "200" ]; then
         step S04 "ready endpoint: 200"

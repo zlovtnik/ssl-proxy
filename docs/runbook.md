@@ -172,7 +172,7 @@ All views are optimized for ADB columnar storage.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - NATS is part of the compose stack and runs JetStream for sync subjects. The JetStream banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs nats`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
-- `nats-bootstrap` must complete successfully before `zig-coordinator` is healthy. It creates `AUDIT_STREAM` for `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`, plus the `zig-coordinator-scan` durable consumer.
+- `nats-bootstrap` must complete successfully before `zig-coordinator` is healthy. It creates `AUDIT_STREAM` for `wireless.audit`, `sync.scan.request`, and `sync.oracle.load`, plus `ORACLE_RESULT_STREAM` for `sync.oracle.result`. Durable pull consumers are `zig-coordinator-scan`, `oracle-worker-load`, and `zig-coordinator-result`.
 - `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
 Quick sync-plane inspection:

@@ -28,6 +28,8 @@ ADMIN_BIND_ADDR="${ADMIN_BIND_ADDR:-127.0.0.1}"
 ADMIN_PORT="${ADMIN_PORT:-3002}"
 PROXY_PORT="${PROXY_PORT:-3000}"
 TPROXY_PORT="${TPROXY_PORT:-3001}"
+PROXY_RESTART_LIMIT="${PROXY_RESTART_LIMIT:-5}"
+PROXY_RESTART_BACKOFF="${PROXY_RESTART_BACKOFF:-1}"
 RAW_WG_SERVER_ADDRESS=""
 WG_RUNTIME_LISTEN_PORT=""
 
@@ -314,21 +316,45 @@ configure_network_segmentation() {
 	iptables -F SSL_PROXY_SEGMENT
 	iptables -D INPUT -j SSL_PROXY_SEGMENT 2>/dev/null || true
 	iptables -I INPUT 1 -j SSL_PROXY_SEGMENT
+	if command -v ip6tables >/dev/null 2>&1; then
+		ip6tables -N SSL_PROXY_SEGMENT 2>/dev/null || true
+		ip6tables -F SSL_PROXY_SEGMENT
+		ip6tables -D INPUT -j SSL_PROXY_SEGMENT 2>/dev/null || true
+		ip6tables -I INPUT 1 -j SSL_PROXY_SEGMENT
+	elif [ -f /proc/net/if_inet6 ]; then
+		echo "[!] ip6tables not available while IPv6 is active; cannot enforce IPv6 network segmentation" >&2
+		return 1
+	fi
 
 	# Baseline allows.
 	iptables -A SSL_PROXY_SEGMENT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 	iptables -A SSL_PROXY_SEGMENT -i lo -j ACCEPT
+	if command -v ip6tables >/dev/null 2>&1; then
+		ip6tables -A SSL_PROXY_SEGMENT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+		ip6tables -A SSL_PROXY_SEGMENT -i lo -j ACCEPT
+	fi
 
 	# Admin/control-plane must remain host-local only.
 	iptables -A SSL_PROXY_SEGMENT -p tcp --dport "$ADMIN_PORT" -s 127.0.0.1/32 -j ACCEPT
 	iptables -A SSL_PROXY_SEGMENT -p tcp --dport "$ADMIN_PORT" -j REJECT
+	if command -v ip6tables >/dev/null 2>&1; then
+		ip6tables -A SSL_PROXY_SEGMENT -p tcp --dport "$ADMIN_PORT" -s ::1/128 -j ACCEPT
+		ip6tables -A SSL_PROXY_SEGMENT -p tcp --dport "$ADMIN_PORT" -j REJECT
+	fi
 
 	# Data-plane ports must arrive through WireGuard interface only.
 	iptables -A SSL_PROXY_SEGMENT -i "$WG_INTERFACE_NAME" -p tcp -m multiport --dports "$PROXY_PORT","$TPROXY_PORT" -j ACCEPT
 	iptables -A SSL_PROXY_SEGMENT -p tcp -m multiport --dports "$PROXY_PORT","$TPROXY_PORT" -j REJECT
+	if command -v ip6tables >/dev/null 2>&1; then
+		ip6tables -A SSL_PROXY_SEGMENT -i "$WG_INTERFACE_NAME" -p tcp -m multiport --dports "$PROXY_PORT","$TPROXY_PORT" -j ACCEPT
+		ip6tables -A SSL_PROXY_SEGMENT -p tcp -m multiport --dports "$PROXY_PORT","$TPROXY_PORT" -j REJECT
+	fi
 
 	# Leave all other traffic untouched for explicit deployment policy control.
 	iptables -A SSL_PROXY_SEGMENT -j RETURN
+	if command -v ip6tables >/dev/null 2>&1; then
+		ip6tables -A SSL_PROXY_SEGMENT -j RETURN
+	fi
 	echo "[#] Network segmentation policy active (admin_bind=${ADMIN_BIND_ADDR}:${ADMIN_PORT})"
 }
 
@@ -734,20 +760,6 @@ if [ ! -f "$COREDNS_CONFIG" ]; then
 	exit 1
 fi
 
-# Signal handler for graceful shutdown
-shutdown() {
-	echo "Received shutdown signal, terminating children..."
-	if [ -n "${PROXY_PID:-}" ]; then
-		kill -TERM "$PROXY_PID" 2>/dev/null || true
-	fi
-	if [ -n "${COREDNS_PID:-}" ]; then
-		kill -TERM "$COREDNS_PID" 2>/dev/null || true
-	fi
-	exit 0
-}
-
-trap shutdown TERM
-
 ensure_wireguard_server_keys
 resolve_wan_interface
 resolve_wireguard_runtime_ports
@@ -804,6 +816,7 @@ fi
 echo "starting ssl-proxy"
 "$PROXY_BIN" &
 PROXY_PID=$!
+PROXY_RESTART_COUNT=0
 
 # Monitor critical child processes
 while true; do
@@ -823,7 +836,14 @@ while true; do
 
 	# If ssl-proxy died, restart it
 	if ! kill -0 "$PROXY_PID" 2>/dev/null; then
-		echo "ssl-proxy exited, restarting..."
+		PROXY_RESTART_COUNT=$((PROXY_RESTART_COUNT + 1))
+		if [ "$PROXY_RESTART_COUNT" -gt "$PROXY_RESTART_LIMIT" ]; then
+			echo "ssl-proxy exited ${PROXY_RESTART_COUNT} consecutive times; restart limit ${PROXY_RESTART_LIMIT} exceeded" >&2
+			exit 1
+		fi
+		echo "ssl-proxy exited, restarting after ${PROXY_RESTART_BACKOFF}s (attempt ${PROXY_RESTART_COUNT}/${PROXY_RESTART_LIMIT})..."
+		sleep "$PROXY_RESTART_BACKOFF"
+		PROXY_RESTART_BACKOFF=$((PROXY_RESTART_BACKOFF * 2))
 		"$PROXY_BIN" &
 		PROXY_PID=$!
 	fi
