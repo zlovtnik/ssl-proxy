@@ -116,7 +116,7 @@ pub const Client = struct {
             query,
         });
 
-        const output = self.runScalar(argv.items, "psql", error.IngestProcessFailed) catch |err| return err;
+        const output = self.runScalar(argv.items, "psql", error.IngestProcessFailed, false) catch |err| return err;
         defer if (output) |value| self.allocator.free(value);
 
         if (output) |value| {
@@ -136,7 +136,7 @@ pub const Client = struct {
             "-c",
             "select coordinator.get_next_batch()::text;",
         };
-        return self.runScalar(&argv, "psql", error.NextBatchFetchFailed);
+        return self.runScalar(&argv, "psql", error.NextBatchFetchFailed, false);
     }
 
     pub fn generateShadowAlerts(self: *Client) Error!?[]u8 {
@@ -149,7 +149,7 @@ pub const Client = struct {
             "-c",
             "select coordinator.generate_shadow_alerts()::text;",
         };
-        return self.runScalar(&argv, "psql", error.ShadowAuditFailed);
+        return self.runScalar(&argv, "psql", error.ShadowAuditFailed, false);
     }
 
     pub fn processBatchResult(self: *Client, result_json: []const u8) Error!void {
@@ -183,8 +183,6 @@ pub const Client = struct {
             command.logFailure("psql", exec_result);
             return error.BatchResultFailed;
         }
-
-        command.logOutput("psql", exec_result.stdout);
     }
 
     fn runScalar(
@@ -192,6 +190,7 @@ pub const Client = struct {
         argv: []const []const u8,
         command_name: []const u8,
         on_error: Error,
+        log_output: bool,
     ) Error!?[]u8 {
         var result = command.exec(self.allocator, self.io, argv) catch {
             return on_error;
@@ -203,7 +202,7 @@ pub const Client = struct {
             return on_error;
         }
 
-        command.logOutput(command_name, result.stdout);
+        if (log_output) command.logOutput(command_name, result.stdout);
         const output = command.trimmedOutput(result.stdout);
         if (output.len == 0) return null;
         return self.allocator.dupe(u8, output) catch on_error;

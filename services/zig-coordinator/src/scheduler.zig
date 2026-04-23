@@ -315,7 +315,6 @@ pub const Service = struct {
             return error.ResultFetchFailed;
         }
 
-        command.logOutput("nats", result.stdout);
         const output = command.trimmedOutput(result.stdout);
         if (output.len == 0) return null;
         return self.allocator.dupe(u8, output) catch error.ResultFetchFailed;
