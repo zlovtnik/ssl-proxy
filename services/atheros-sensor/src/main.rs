@@ -22,7 +22,7 @@ use std::{
 
 use lru::LruCache;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
-use tracing::{debug, error, info, info_span, warn, Instrument};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::{
@@ -345,7 +345,7 @@ async fn process_packet(
     let mut wifi_frame = match decode_frame(&packet) {
         Ok(frame) => frame,
         Err(error) => {
-            debug!(%error, len = packet_len, "counted raw bytes for unsupported frame");
+            trace!(%error, len = packet_len, "counted raw bytes for unsupported frame");
             pipeline.traffic_bucket.observe_raw(packet_len, packet.observed_at);
             return Ok(PipelineOutcome::UnsupportedFrame);
         }
