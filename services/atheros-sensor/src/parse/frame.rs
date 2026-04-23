@@ -2,12 +2,22 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use ieee80211::GenericFrame;
 use thiserror::Error;
 
-use crate::model::{AuditContext, AuditEntry, EnrichedFrame, RawPacket, WifiFrame};
+use crate::model::{
+    AnomalyLayer, AuditContext, AuditEntry, CorrelationLayer, EnrichedFrame, MacLayer, RawPacket,
+    RfLayer, WifiFrame, WIRELESS_AUDIT_SCHEMA_VERSION,
+};
 
 use super::{
     addresses::parse_addresses,
+    channel::{decode_channel_flags, frequency_to_channel},
+    correlation::{
+        adjacent_mac_hint, frame_fingerprint, retransmit_key as build_retransmit_key,
+        session_key as build_session_key,
+    },
+    decap::analyze_payload,
     eapol::{extract_eap_identity, extract_eapol_key_message},
     ie::{extract_ie_metadata, extract_ssid},
+    qos::parse_qos_control,
     radiotap::strip_radiotap,
     tags::{add_audit_threat_tags, data_direction_tag, tag_probe_response_destination},
 };
@@ -20,8 +30,6 @@ pub enum ParseError {
     MissingFrameHeader,
     #[error("unsupported control frame")]
     UnsupportedControlFrame,
-    #[error("unsupported radiotap field bit {bit}")]
-    UnsupportedRadiotapField { bit: usize },
     #[error("ieee80211 parser rejected frame")]
     Invalid80211,
 }
@@ -45,9 +53,12 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let _validated = GenericFrame::new(frame_bytes, false).map_err(|_| ParseError::Invalid80211)?;
 
     let subtype = ((frame_control >> 4) & 0x0f) as u8;
+    let frame_type_name = frame_type_name(frame_type).to_string();
     let frame_subtype = frame_subtype_name(frame_type, subtype).to_string();
     let addresses = parse_addresses(frame_type, frame_control, frame_bytes)?;
-    let sequence_number = Some(u16::from_le_bytes([frame_bytes[22], frame_bytes[23]]) >> 4);
+    let sequence_control = u16::from_le_bytes([frame_bytes[22], frame_bytes[23]]);
+    let sequence_number = Some(sequence_control >> 4);
+    let fragment_number = Some((sequence_control & 0x000f) as u8);
     let ssid = extract_ssid(frame_type, subtype, frame_bytes);
     let ie_metadata = extract_ie_metadata(frame_type, subtype, frame_bytes);
     let username_hint = extract_eap_identity(frame_type, frame_control, subtype, frame_bytes);
@@ -61,11 +72,58 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let to_ds = frame_control & (1 << 8) != 0;
     let from_ds = frame_control & (1 << 9) != 0;
     let destination_bssid = addresses.bssid.clone();
+    let qos = parse_qos_control(frame_type, subtype, frame_control, frame_bytes);
+    let payload = analyze_payload(frame_type, frame_control, subtype, protected, frame_bytes);
+    let channel_number = frequency_to_channel(radiotap.frequency_mhz);
+    let channel_flags = decode_channel_flags(radiotap.channel_flags);
+    let signal_status = signal_status(&radiotap);
+    let adjacent_mac_hint = adjacent_mac_hint(&addresses);
+    let session_key = build_session_key(
+        addresses.source_mac.as_deref(),
+        destination_bssid.as_deref(),
+        addresses.destination_mac.as_deref(),
+    );
+    let retransmit_key = build_retransmit_key(
+        addresses.transmitter_mac.as_deref(),
+        addresses.receiver_mac.as_deref(),
+        sequence_number,
+        fragment_number,
+    );
+    let frame_fingerprint = frame_fingerprint(frame_control, &frame_subtype, &addresses, frame_bytes);
+    let payload_visibility = payload_visibility(frame_type, protected).to_string();
+    let large_frame = frame_bytes.len() > 1000;
+    let mut anomaly_reasons = Vec::new();
+    if large_frame {
+        anomaly_reasons.push("large_frame".to_string());
+    }
+    let bssid = addresses.bssid.clone();
+    let source_mac = addresses.source_mac.clone();
+    let destination_mac = addresses.destination_mac.clone();
+    let transmitter_mac = addresses.transmitter_mac.clone();
+    let receiver_mac = addresses.receiver_mac.clone();
+    let mac = MacLayer {
+        frame_type: frame_type_name.clone(),
+        frame_subtype: frame_subtype.clone(),
+        to_ds,
+        from_ds,
+        protected,
+        retry,
+        more_data,
+        power_save,
+        sequence_number,
+        fragment_number,
+        bssid: destination_bssid.clone().or_else(|| bssid.clone()),
+        source_mac: source_mac.clone(),
+        destination_mac: destination_mac.clone(),
+        transmitter_mac: transmitter_mac.clone(),
+        receiver_mac: receiver_mac.clone(),
+        adjacent_mac_hint: adjacent_mac_hint.clone(),
+    };
 
     let mut tags = vec![
         "wifi".to_string(),
-        frame_type_name(frame_type).to_string(),
-        format!("frame_type:{}", frame_type_name(frame_type)),
+        frame_type_name.clone(),
+        format!("frame_type:{frame_type_name}"),
     ];
     if frame_type == 2 {
         tags.push(data_direction_tag(frame_control).to_string());
@@ -97,20 +155,37 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     if frame_subtype == "probe_response" {
         tag_probe_response_destination(addresses.destination_mac.as_deref(), &mut tags);
     }
+    if qos.is_some() {
+        tags.push("qos".to_string());
+    }
+    if let Some(protocol) = payload.app_protocol.as_ref() {
+        tags.push(format!("app:{protocol}"));
+    }
+    if payload.network.is_some() {
+        tags.push("network:ipv4".to_string());
+    }
+    if let Some(ethertype_name) = payload.ethertype_name.as_ref() {
+        tags.push(format!("ethertype:{ethertype_name}"));
+    }
+    if large_frame {
+        tags.push("anomaly:large_frame".to_string());
+    }
 
     Ok(WifiFrame {
+        schema_version: WIRELESS_AUDIT_SCHEMA_VERSION,
         observed_at: packet.observed_at,
         event_type: match frame_type {
             0 => "wifi_management_frame".to_string(),
             2 => "wifi_data_frame".to_string(),
             _ => "wifi_frame".to_string(),
         },
-        bssid: addresses.bssid,
+        frame_type: frame_type_name.clone(),
+        bssid,
         destination_bssid,
-        source_mac: addresses.source_mac,
-        destination_mac: addresses.destination_mac,
-        transmitter_mac: addresses.transmitter_mac,
-        receiver_mac: addresses.receiver_mac,
+        source_mac,
+        destination_mac,
+        transmitter_mac,
+        receiver_mac,
         ssid,
         frame_subtype,
         tsft: radiotap.tsft,
@@ -121,6 +196,10 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         data_rate_kbps: radiotap.data_rate_kbps,
         antenna_id: radiotap.antenna_id,
         sequence_number,
+        fragment_number,
+        channel_number,
+        signal_status: signal_status.clone(),
+        adjacent_mac_hint: adjacent_mac_hint.clone(),
         duration_id,
         frame_control_flags: frame_control,
         more_data,
@@ -141,6 +220,76 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         eapol_key_message,
         username_hint,
         identity_source_hint,
+        qos_tid: qos.as_ref().map(|value| value.tid),
+        qos_eosp: qos.as_ref().map(|value| value.eosp),
+        qos_ack_policy: qos.as_ref().map(|value| value.ack_policy),
+        qos_ack_policy_label: qos.as_ref().map(|value| value.ack_policy_label.clone()),
+        qos_amsdu: qos.as_ref().map(|value| value.amsdu),
+        llc_oui: payload.llc_oui.clone(),
+        ethertype: payload.ethertype,
+        ethertype_name: payload.ethertype_name.clone(),
+        src_ip: payload.src_ip.clone(),
+        dst_ip: payload.dst_ip.clone(),
+        ip_ttl: payload.ip_ttl,
+        ip_protocol: payload.ip_protocol,
+        ip_protocol_name: payload.ip_protocol_name.clone(),
+        src_port: payload.src_port,
+        dst_port: payload.dst_port,
+        transport_protocol: payload.transport_protocol.clone(),
+        transport_length: payload.transport_length,
+        transport_checksum: payload.transport_checksum,
+        app_protocol: payload.app_protocol.clone(),
+        ssdp_message_type: payload.ssdp_message_type.clone(),
+        ssdp_st: payload.ssdp_st.clone(),
+        ssdp_mx: payload.ssdp_mx.clone(),
+        ssdp_usn: payload.ssdp_usn.clone(),
+        dhcp_requested_ip: payload.dhcp_requested_ip.clone(),
+        dhcp_hostname: payload.dhcp_hostname.clone(),
+        dhcp_vendor_class: payload.dhcp_vendor_class.clone(),
+        dns_query_name: payload.dns_query_name.clone(),
+        mdns_name: payload.mdns_name.clone(),
+        session_key: session_key.clone(),
+        retransmit_key: retransmit_key.clone(),
+        frame_fingerprint: frame_fingerprint.clone(),
+        payload_visibility: payload_visibility.clone(),
+        tsft_delta_us: None,
+        wall_clock_delta_ms: None,
+        large_frame,
+        mixed_encryption: None,
+        dedupe_or_replay_suspect: false,
+        anomaly_reasons: anomaly_reasons.clone(),
+        mac,
+        rf: RfLayer {
+            tsft: radiotap.tsft,
+            signal_dbm: radiotap.signal_dbm,
+            noise_dbm: radiotap.noise_dbm,
+            frequency_mhz: radiotap.frequency_mhz,
+            channel_number,
+            channel_flags,
+            data_rate_kbps: radiotap.data_rate_kbps,
+            antenna_id: radiotap.antenna_id,
+            raw_len: frame_bytes.len(),
+            signal_status,
+        },
+        qos,
+        llc_snap: payload.llc_snap,
+        network: payload.network,
+        transport: payload.transport,
+        application: payload.application,
+        correlation: CorrelationLayer {
+            session_key,
+            retransmit_key,
+            frame_fingerprint,
+            payload_visibility,
+            tsft_delta_us: None,
+            wall_clock_delta_ms: None,
+        },
+        anomalies: AnomalyLayer {
+            large_frame,
+            mixed_encryption: None,
+            dedupe_or_replay_suspect: false,
+            reasons: anomaly_reasons,
+        },
     })
 }
 
@@ -161,8 +310,8 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     tags.push(format!("channel:{}", enriched.channel));
     tags.push(format!("reg_domain:{}", enriched.reg_domain));
     add_audit_threat_tags(&frame, &mut tags);
-    let username = frame.username_hint;
-    let identity_source = match (username.as_ref(), frame.identity_source_hint) {
+    let username = frame.username_hint.clone();
+    let identity_source = match (username.as_ref(), frame.identity_source_hint.clone()) {
         (Some(_), Some(source)) => source,
         (Some(_), None) => "observed_identity".to_string(),
         (None, _) if frame.source_mac.is_some() || frame.bssid.is_some() => {
@@ -172,12 +321,14 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     };
 
     AuditEntry {
+        schema_version: frame.schema_version,
         event_type: frame.event_type,
         observed_at: frame.observed_at.to_rfc3339(),
         sensor_id: enriched.sensor_id,
         location_id: enriched.location_id,
         interface: enriched.interface,
         channel: enriched.channel,
+        frame_type: Some(frame.frame_type),
         bssid: frame.bssid,
         destination_bssid: frame.destination_bssid,
         source_mac: frame.source_mac,
@@ -194,6 +345,10 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         data_rate_kbps: frame.data_rate_kbps,
         antenna_id: frame.antenna_id,
         sequence_number: frame.sequence_number,
+        fragment_number: frame.fragment_number,
+        channel_number: frame.channel_number,
+        signal_status: Some(frame.signal_status),
+        adjacent_mac_hint: frame.adjacent_mac_hint,
         duration_id: Some(frame.duration_id),
         frame_control_flags: Some(frame.frame_control_flags),
         more_data: Some(frame.more_data),
@@ -211,6 +366,53 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         wps_model_name: frame.wps_model_name,
         device_fingerprint: frame.device_fingerprint,
         handshake_captured: frame.handshake_captured,
+        qos_tid: frame.qos_tid,
+        qos_eosp: frame.qos_eosp,
+        qos_ack_policy: frame.qos_ack_policy,
+        qos_ack_policy_label: frame.qos_ack_policy_label,
+        qos_amsdu: frame.qos_amsdu,
+        llc_oui: frame.llc_oui,
+        ethertype: frame.ethertype,
+        ethertype_name: frame.ethertype_name,
+        src_ip: frame.src_ip,
+        dst_ip: frame.dst_ip,
+        ip_ttl: frame.ip_ttl,
+        ip_protocol: frame.ip_protocol,
+        ip_protocol_name: frame.ip_protocol_name,
+        src_port: frame.src_port,
+        dst_port: frame.dst_port,
+        transport_protocol: frame.transport_protocol,
+        transport_length: frame.transport_length,
+        transport_checksum: frame.transport_checksum,
+        app_protocol: frame.app_protocol,
+        ssdp_message_type: frame.ssdp_message_type,
+        ssdp_st: frame.ssdp_st,
+        ssdp_mx: frame.ssdp_mx,
+        ssdp_usn: frame.ssdp_usn,
+        dhcp_requested_ip: frame.dhcp_requested_ip,
+        dhcp_hostname: frame.dhcp_hostname,
+        dhcp_vendor_class: frame.dhcp_vendor_class,
+        dns_query_name: frame.dns_query_name,
+        mdns_name: frame.mdns_name,
+        session_key: frame.session_key,
+        retransmit_key: frame.retransmit_key,
+        frame_fingerprint: Some(frame.frame_fingerprint),
+        payload_visibility: Some(frame.payload_visibility),
+        tsft_delta_us: frame.tsft_delta_us,
+        wall_clock_delta_ms: frame.wall_clock_delta_ms,
+        large_frame: Some(frame.large_frame),
+        mixed_encryption: frame.mixed_encryption,
+        dedupe_or_replay_suspect: Some(frame.dedupe_or_replay_suspect),
+        anomaly_reasons: frame.anomaly_reasons,
+        mac: Some(frame.mac),
+        rf: Some(frame.rf),
+        qos: frame.qos,
+        llc_snap: frame.llc_snap,
+        network: frame.network,
+        transport: frame.transport,
+        application: frame.application,
+        correlation: Some(frame.correlation),
+        anomalies: Some(frame.anomalies),
         device_id: None,
         username,
         identity_source,
@@ -247,6 +449,32 @@ fn frame_subtype_name(frame_type: u8, subtype: u8) -> &'static str {
             _ => "other_data",
         },
         _ => "unknown",
+    }
+}
+
+fn payload_visibility(frame_type: u8, protected: bool) -> &'static str {
+    if protected && frame_type == 2 {
+        "ciphertext"
+    } else if frame_type == 2 {
+        "plaintext"
+    } else {
+        "header_only"
+    }
+}
+
+fn signal_status(radiotap: &super::radiotap::RadiotapMetadata) -> String {
+    if radiotap.signal_present {
+        "present".to_string()
+    } else if radiotap.frequency_mhz.is_some()
+        || radiotap.channel_flags.is_some()
+        || radiotap.data_rate_kbps.is_some()
+        || radiotap.antenna_id.is_some()
+        || radiotap.tsft.is_some()
+        || radiotap.noise_dbm.is_some()
+    {
+        "stripped".to_string()
+    } else {
+        "absent".to_string()
     }
 }
 
@@ -304,6 +532,27 @@ mod tests {
         assert_eq!(metadata.data_rate_kbps, Some(6_000));
         assert_eq!(metadata.antenna_id, Some(3));
         assert!(payload.len() > 24);
+    }
+
+    #[test]
+    fn decodes_dynamic_channel_flags() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: dynamic_channel_beacon_frame(),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.channel_flags, Some(0x0480));
+        assert_eq!(frame.channel_number, Some(6));
+        assert_eq!(frame.signal_status, "present");
+        let rf = frame.rf;
+        let channel_flags = rf.channel_flags.unwrap();
+        assert!(channel_flags.is_2ghz);
+        assert!(channel_flags.dynamic_cck_ofdm);
+        assert!(channel_flags.ofdm);
+        assert!(channel_flags.cck);
+        assert!(channel_flags.labels.contains(&"dynamic_cck_ofdm".to_string()));
     }
 
     #[test]
@@ -467,6 +716,155 @@ mod tests {
     }
 
     #[test]
+    fn parses_fragment_number() {
+        let mut data = data_to_distribution_radiotap_frame(vec![0xaa, 0xbb]);
+        data[32] = 0x21;
+        data[33] = 0x43;
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data,
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.sequence_number, Some(0x0432));
+        assert_eq!(frame.fragment_number, Some(1));
+    }
+
+    #[test]
+    fn parses_qos_ipv4_udp_and_ssdp() {
+        let payload = llc_snap_ipv4_udp_payload(
+            [192, 168, 1, 10],
+            [239, 255, 255, 250],
+            49152,
+            1900,
+            &ssdp_udp_payload(),
+        );
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: qos_data_to_distribution_radiotap_frame(0x0083, payload),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.frame_subtype, "qos_data");
+        assert_eq!(frame.qos_tid, Some(3));
+        assert_eq!(frame.qos_ack_policy, Some(0));
+        assert_eq!(frame.ethertype, Some(0x0800));
+        assert_eq!(frame.src_ip.as_deref(), Some("192.168.1.10"));
+        assert_eq!(frame.dst_ip.as_deref(), Some("239.255.255.250"));
+        assert_eq!(frame.src_port, Some(49152));
+        assert_eq!(frame.dst_port, Some(1900));
+        assert_eq!(frame.app_protocol.as_deref(), Some("ssdp"));
+        assert_eq!(frame.ssdp_message_type.as_deref(), Some("M-SEARCH"));
+        assert_eq!(
+            frame.ssdp_st.as_deref(),
+            Some("urn:schemas-upnp-org:device:MediaRenderer:1")
+        );
+        assert_eq!(frame.payload_visibility, "plaintext");
+        assert!(frame.tags.contains(&"qos".to_string()));
+        assert!(frame.tags.contains(&"app:ssdp".to_string()));
+    }
+
+    #[test]
+    fn parses_dns_and_dhcp_application_fields() {
+        let dns_packet = RawPacket {
+            observed_at: Utc::now(),
+            data: data_to_distribution_radiotap_frame(llc_snap_ipv4_udp_payload(
+                [10, 0, 0, 2],
+                [8, 8, 8, 8],
+                53000,
+                53,
+                &dns_query_payload("printer.local"),
+            )),
+        };
+        let dns_frame = decode_frame(&dns_packet).unwrap();
+        assert_eq!(dns_frame.app_protocol.as_deref(), Some("dns"));
+        assert_eq!(dns_frame.dns_query_name.as_deref(), Some("printer.local"));
+
+        let dhcp_packet = RawPacket {
+            observed_at: Utc::now(),
+            data: data_to_distribution_radiotap_frame(llc_snap_ipv4_udp_payload(
+                [0, 0, 0, 0],
+                [255, 255, 255, 255],
+                68,
+                67,
+                &dhcp_discover_payload(),
+            )),
+        };
+        let dhcp_frame = decode_frame(&dhcp_packet).unwrap();
+        assert_eq!(dhcp_frame.app_protocol.as_deref(), Some("dhcp"));
+        assert_eq!(dhcp_frame.dhcp_requested_ip.as_deref(), Some("192.168.1.44"));
+        assert_eq!(dhcp_frame.dhcp_hostname.as_deref(), Some("sensor"));
+        assert_eq!(dhcp_frame.dhcp_vendor_class.as_deref(), Some("AcmeClient1"));
+    }
+
+    #[test]
+    fn parses_tcp_transport_header() {
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: data_to_distribution_radiotap_frame(llc_snap_ipv4_tcp_payload(
+                [192, 168, 1, 10],
+                [192, 168, 1, 20],
+                443,
+                54_321,
+                0x12,
+                b"GET / HTTP/1.1\r\n\r\n",
+            )),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.transport_protocol.as_deref(), Some("tcp"));
+        assert_eq!(frame.src_port, Some(443));
+        assert_eq!(frame.dst_port, Some(54_321));
+        let transport = frame.transport.unwrap();
+        assert!(transport.tcp_flags.contains(&"syn".to_string()));
+        assert!(transport.tcp_flags.contains(&"ack".to_string()));
+    }
+
+    #[test]
+    fn parses_mdns_and_skips_protected_payload_decoding() {
+        let mdns_packet = RawPacket {
+            observed_at: Utc::now(),
+            data: data_from_distribution_radiotap_frame(llc_snap_ipv4_udp_payload(
+                [224, 0, 0, 251],
+                [224, 0, 0, 251],
+                5353,
+                5353,
+                &mdns_response_payload("_airplay._tcp.local"),
+            )),
+        };
+        let mdns_frame = decode_frame(&mdns_packet).unwrap();
+        assert_eq!(mdns_frame.app_protocol.as_deref(), Some("mdns"));
+        assert_eq!(mdns_frame.mdns_name.as_deref(), Some("_airplay._tcp.local"));
+
+        let protected_packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(
+                0x08,
+                0x41,
+                AP,
+                CLIENT,
+                DISTRIBUTION_DST,
+                None,
+                llc_snap_ipv4_udp_payload(
+                    [192, 168, 1, 10],
+                    [8, 8, 8, 8],
+                    53000,
+                    53,
+                    &dns_query_payload("blocked.local"),
+                ),
+            ),
+        };
+        let protected_frame = decode_frame(&protected_packet).unwrap();
+        assert!(protected_frame.protected);
+        assert_eq!(protected_frame.payload_visibility, "ciphertext");
+        assert_eq!(protected_frame.src_ip, None);
+        assert_eq!(protected_frame.app_protocol, None);
+    }
+
+    #[test]
     fn parses_eap_identity_and_resolves_username_cache() {
         let mut cache = IdentityCache::default();
         let identity_packet = RawPacket {
@@ -624,6 +1022,7 @@ mod tests {
         let expected_raw_frame = STANDARD.encode(payload);
         let entry = to_audit_entry(attach_context(decode_frame(&packet).unwrap(), &context));
         let value = serde_json::to_value(entry).unwrap();
+        assert_eq!(value["schema_version"], Value::Number(2u64.into()));
         assert_eq!(
             value["event_type"],
             Value::String("wifi_management_frame".to_string())
@@ -651,6 +1050,7 @@ mod tests {
         assert_eq!(value["protected"], Value::Bool(false));
         assert_eq!(value["to_ds"], Value::Bool(false));
         assert_eq!(value["from_ds"], Value::Bool(false));
+        assert_eq!(value["payload_visibility"], Value::String("header_only".to_string()));
         assert_eq!(value["raw_frame"], Value::String(expected_raw_frame));
         assert_eq!(value["username"], Value::Null);
         assert_eq!(
@@ -658,6 +1058,8 @@ mod tests {
             Value::String("mac_observed".to_string())
         );
         assert!(value["device_id"].is_null());
+        assert!(value["mac"].is_object());
+        assert!(value["rf"].is_object());
         let tags = value["tags"].as_array().unwrap();
         assert!(tags.contains(&Value::String("signal:strong".to_string())));
         assert!(tags.contains(&Value::String("threat:potential_evil_twin".to_string())));

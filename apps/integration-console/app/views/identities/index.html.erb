@@ -3,6 +3,12 @@
 
 <h1>Identity Viewer</h1>
 
+<p>
+  <%= link_to "Inventory CSV", inventory_identities_path(request.query_parameters.merge(format: :csv)) %>
+  |
+  <%= link_to "Inventory JSON", inventory_identities_path(request.query_parameters.merge(format: :json)) %>
+</p>
+
 <%= form_with url: identities_path, method: :get do |form| %>
   <%= form.search_field :q, value: @query, placeholder: "Search MAC, username, SSID, fingerprint, WPS" %>
   <%= form.submit "Search" %>

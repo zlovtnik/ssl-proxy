@@ -9,6 +9,7 @@ pub struct RadiotapMetadata {
     pub channel_flags: Option<u16>,
     pub data_rate_kbps: Option<u32>,
     pub antenna_id: Option<u8>,
+    pub signal_present: bool,
 }
 
 pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseError> {
@@ -75,7 +76,10 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseEr
                     metadata.channel_flags =
                         Some(u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]));
                 }
-                5 => metadata.signal_dbm = Some(bytes[cursor] as i8),
+                5 => {
+                    metadata.signal_dbm = Some(bytes[cursor] as i8);
+                    metadata.signal_present = true;
+                }
                 6 => metadata.noise_dbm = Some(bytes[cursor] as i8),
                 11 => metadata.antenna_id = Some(bytes[cursor]),
                 _ => {}

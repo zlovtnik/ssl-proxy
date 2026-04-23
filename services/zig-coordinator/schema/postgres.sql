@@ -30,11 +30,54 @@ create table if not exists sync_scan_ingest (
   last_error text,
   producer text not null default 'unknown',
   event_kind text,
+  schema_version integer not null default 1,
+  frame_type text,
   source_mac text,
   bssid text,
   destination_bssid text,
   ssid text,
   signal_dbm integer,
+  fragment_number integer,
+  channel_number integer,
+  signal_status text,
+  adjacent_mac_hint text,
+  qos_tid integer,
+  qos_eosp boolean,
+  qos_ack_policy integer,
+  qos_ack_policy_label text,
+  qos_amsdu boolean,
+  llc_oui text,
+  ethertype integer,
+  ethertype_name text,
+  src_ip text,
+  dst_ip text,
+  ip_ttl integer,
+  ip_protocol integer,
+  ip_protocol_name text,
+  src_port integer,
+  dst_port integer,
+  transport_protocol text,
+  transport_length integer,
+  transport_checksum integer,
+  app_protocol text,
+  ssdp_message_type text,
+  ssdp_st text,
+  ssdp_mx text,
+  ssdp_usn text,
+  dhcp_requested_ip text,
+  dhcp_hostname text,
+  dhcp_vendor_class text,
+  dns_query_name text,
+  mdns_name text,
+  session_key text,
+  retransmit_key text,
+  frame_fingerprint text,
+  payload_visibility text,
+  tsft_delta_us bigint,
+  wall_clock_delta_ms bigint,
+  large_frame boolean not null default false,
+  mixed_encryption boolean,
+  dedupe_or_replay_suspect boolean not null default false,
   raw_len integer not null default 0,
   frame_control_flags integer not null default 0,
   more_data boolean not null default false,
@@ -94,6 +137,49 @@ alter table sync_scan_ingest add column if not exists bssid text;
 alter table sync_scan_ingest add column if not exists destination_bssid text;
 alter table sync_scan_ingest add column if not exists ssid text;
 alter table sync_scan_ingest add column if not exists signal_dbm integer;
+alter table sync_scan_ingest add column if not exists schema_version integer not null default 1;
+alter table sync_scan_ingest add column if not exists frame_type text;
+alter table sync_scan_ingest add column if not exists fragment_number integer;
+alter table sync_scan_ingest add column if not exists channel_number integer;
+alter table sync_scan_ingest add column if not exists signal_status text;
+alter table sync_scan_ingest add column if not exists adjacent_mac_hint text;
+alter table sync_scan_ingest add column if not exists qos_tid integer;
+alter table sync_scan_ingest add column if not exists qos_eosp boolean;
+alter table sync_scan_ingest add column if not exists qos_ack_policy integer;
+alter table sync_scan_ingest add column if not exists qos_ack_policy_label text;
+alter table sync_scan_ingest add column if not exists qos_amsdu boolean;
+alter table sync_scan_ingest add column if not exists llc_oui text;
+alter table sync_scan_ingest add column if not exists ethertype integer;
+alter table sync_scan_ingest add column if not exists ethertype_name text;
+alter table sync_scan_ingest add column if not exists src_ip text;
+alter table sync_scan_ingest add column if not exists dst_ip text;
+alter table sync_scan_ingest add column if not exists ip_ttl integer;
+alter table sync_scan_ingest add column if not exists ip_protocol integer;
+alter table sync_scan_ingest add column if not exists ip_protocol_name text;
+alter table sync_scan_ingest add column if not exists src_port integer;
+alter table sync_scan_ingest add column if not exists dst_port integer;
+alter table sync_scan_ingest add column if not exists transport_protocol text;
+alter table sync_scan_ingest add column if not exists transport_length integer;
+alter table sync_scan_ingest add column if not exists transport_checksum integer;
+alter table sync_scan_ingest add column if not exists app_protocol text;
+alter table sync_scan_ingest add column if not exists ssdp_message_type text;
+alter table sync_scan_ingest add column if not exists ssdp_st text;
+alter table sync_scan_ingest add column if not exists ssdp_mx text;
+alter table sync_scan_ingest add column if not exists ssdp_usn text;
+alter table sync_scan_ingest add column if not exists dhcp_requested_ip text;
+alter table sync_scan_ingest add column if not exists dhcp_hostname text;
+alter table sync_scan_ingest add column if not exists dhcp_vendor_class text;
+alter table sync_scan_ingest add column if not exists dns_query_name text;
+alter table sync_scan_ingest add column if not exists mdns_name text;
+alter table sync_scan_ingest add column if not exists session_key text;
+alter table sync_scan_ingest add column if not exists retransmit_key text;
+alter table sync_scan_ingest add column if not exists frame_fingerprint text;
+alter table sync_scan_ingest add column if not exists payload_visibility text;
+alter table sync_scan_ingest add column if not exists tsft_delta_us bigint;
+alter table sync_scan_ingest add column if not exists wall_clock_delta_ms bigint;
+alter table sync_scan_ingest add column if not exists large_frame boolean not null default false;
+alter table sync_scan_ingest add column if not exists mixed_encryption boolean;
+alter table sync_scan_ingest add column if not exists dedupe_or_replay_suspect boolean not null default false;
 alter table sync_scan_ingest add column if not exists raw_len integer not null default 0;
 alter table sync_scan_ingest add column if not exists frame_control_flags integer not null default 0;
 alter table sync_scan_ingest add column if not exists more_data boolean not null default false;
@@ -235,6 +321,8 @@ select
   ssi.status,
   ssi.producer,
   ssi.event_kind,
+  coalesce(ssi.schema_version, nullif(ssi.payload->>'schema_version', '')::integer, 1) as schema_version,
+  coalesce(ssi.frame_type, ssi.payload->>'frame_type') as frame_type,
   coalesce(ssi.source_mac, ssi.payload->>'source_mac') as source_mac,
   ssi.payload->>'transmitter_mac' as transmitter_mac,
   ssi.payload->>'receiver_mac' as receiver_mac,
@@ -245,6 +333,25 @@ select
   coalesce(ssi.signal_dbm::text, ssi.payload->>'signal_dbm') as signal_dbm,
   ssi.payload->>'noise_dbm' as noise_dbm,
   ssi.payload->>'frequency_mhz' as frequency_mhz,
+  coalesce(ssi.channel_number::text, ssi.payload->>'channel_number') as channel_number,
+  coalesce(ssi.signal_status, ssi.payload->>'signal_status') as signal_status,
+  coalesce(ssi.qos_tid::text, ssi.payload->>'qos_tid') as qos_tid,
+  coalesce(ssi.ethertype::text, ssi.payload->>'ethertype') as ethertype,
+  coalesce(ssi.src_ip, ssi.payload->>'src_ip') as src_ip,
+  coalesce(ssi.dst_ip, ssi.payload->>'dst_ip') as dst_ip,
+  coalesce(ssi.src_port::text, ssi.payload->>'src_port') as src_port,
+  coalesce(ssi.dst_port::text, ssi.payload->>'dst_port') as dst_port,
+  coalesce(ssi.app_protocol, ssi.payload->>'app_protocol') as app_protocol,
+  coalesce(ssi.session_key, ssi.payload->>'session_key') as session_key,
+  coalesce(ssi.retransmit_key, ssi.payload->>'retransmit_key') as retransmit_key,
+  coalesce(ssi.frame_fingerprint, ssi.payload->>'frame_fingerprint') as frame_fingerprint,
+  coalesce(ssi.payload_visibility, ssi.payload->>'payload_visibility') as payload_visibility,
+  coalesce(ssi.large_frame::text, ssi.payload->>'large_frame') as large_frame,
+  coalesce(ssi.mixed_encryption::text, ssi.payload->>'mixed_encryption') as mixed_encryption,
+  coalesce(ssi.dedupe_or_replay_suspect::text, ssi.payload->>'dedupe_or_replay_suspect') as dedupe_or_replay_suspect,
+  coalesce(ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') as dhcp_hostname,
+  coalesce(ssi.dns_query_name, ssi.payload->>'dns_query_name') as dns_query_name,
+  coalesce(ssi.mdns_name, ssi.payload->>'mdns_name') as mdns_name,
   ssi.payload->>'data_rate_kbps' as data_rate_kbps,
   coalesce(ssi.raw_len::text, ssi.payload->>'raw_len') as raw_len,
   coalesce(ssi.frame_control_flags::text, ssi.payload->>'frame_control_flags') as frame_control_flags,
@@ -267,7 +374,7 @@ select
   coalesce(d_src.display_name, d_bssid.display_name) as display_name,
   coalesce(d_src.username, d_bssid.username) as registered_username,
   coalesce(d_src.os_hint, d_bssid.os_hint) as os_hint,
-  coalesce(d_src.hostname, d_bssid.hostname) as hostname
+  coalesce(d_src.hostname, d_bssid.hostname, ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') as hostname
 from sync_scan_ingest ssi
 left join devices d_src
   on lower(d_src.mac_hint) = lower(coalesce(ssi.source_mac, ssi.payload->>'source_mac'))
@@ -330,9 +437,33 @@ create index if not exists ssi_wireless_destination_bssid_idx
   on sync_scan_ingest (lower(destination_bssid))
   where stream_name = 'wireless.audit';
 
+create index if not exists ssi_wireless_schema_version_idx
+  on sync_scan_ingest (schema_version, observed_at desc)
+  where stream_name = 'wireless.audit';
+
 create index if not exists ssi_wireless_signal_idx
   on sync_scan_ingest (signal_dbm, observed_at desc)
   where stream_name = 'wireless.audit' and signal_dbm is not null;
+
+create index if not exists ssi_wireless_src_ip_idx
+  on sync_scan_ingest (src_ip)
+  where stream_name = 'wireless.audit' and src_ip is not null;
+
+create index if not exists ssi_wireless_dst_ip_idx
+  on sync_scan_ingest (dst_ip)
+  where stream_name = 'wireless.audit' and dst_ip is not null;
+
+create index if not exists ssi_wireless_app_protocol_idx
+  on sync_scan_ingest (app_protocol, observed_at desc)
+  where stream_name = 'wireless.audit' and app_protocol is not null;
+
+create index if not exists ssi_wireless_session_key_idx
+  on sync_scan_ingest (session_key, observed_at desc)
+  where stream_name = 'wireless.audit' and session_key is not null;
+
+create index if not exists ssi_wireless_frame_fingerprint_idx
+  on sync_scan_ingest (frame_fingerprint)
+  where stream_name = 'wireless.audit' and frame_fingerprint is not null;
 
 create index if not exists ssi_wireless_threat_tags_idx
   on sync_scan_ingest using gin ((payload->'tags'))
@@ -394,6 +525,108 @@ where stream_name = 'wireless.audit'
     or handshake_captured
   )
 order by observed_at desc;
+
+create or replace view v_wireless_session_timeline as
+with base as (
+  select
+    ssi.dedupe_key,
+    ssi.observed_at,
+    coalesce(ssi.session_key, ssi.payload->>'session_key') as session_key,
+    coalesce(ssi.retransmit_key, ssi.payload->>'retransmit_key') as retransmit_key,
+    coalesce(ssi.frame_fingerprint, ssi.payload->>'frame_fingerprint') as frame_fingerprint,
+    coalesce(ssi.source_mac, ssi.payload->>'source_mac') as source_mac,
+    coalesce(ssi.destination_bssid, ssi.bssid, ssi.payload->>'destination_bssid', ssi.payload->>'bssid') as destination_bssid,
+    coalesce(ssi.ssid, ssi.payload->>'ssid') as ssid,
+    coalesce(ssi.protected, false) as protected,
+    coalesce(ssi.large_frame, false) as large_frame,
+    coalesce(ssi.dedupe_or_replay_suspect, false) as dedupe_or_replay_suspect,
+    nullif(ssi.payload->>'tsft', '')::bigint as tsft
+  from sync_scan_ingest ssi
+  where ssi.stream_name = 'wireless.audit'
+)
+select
+  dedupe_key,
+  observed_at,
+  session_key,
+  retransmit_key,
+  frame_fingerprint,
+  source_mac,
+  destination_bssid,
+  ssid,
+  protected,
+  large_frame,
+  dedupe_or_replay_suspect,
+  tsft,
+  case
+    when lag(tsft) over session_window is not null and tsft is not null
+      then tsft - lag(tsft) over session_window
+  end as tsft_delta_us,
+  case
+    when lag(observed_at) over session_window is not null
+      then round(extract(epoch from (observed_at - lag(observed_at) over session_window)) * 1000)
+  end as wall_clock_delta_ms,
+  (count(distinct case when protected then 'protected' else 'open' end) over session_partition) > 1 as mixed_encryption
+from base
+window
+  session_partition as (partition by session_key),
+  session_window as (partition by session_key order by observed_at);
+
+create or replace view v_wireless_device_inventory as
+select
+  md5(coalesce(lower(source_mac), '') || '|' || coalesce(location_id, '')) as inventory_key,
+  lower(source_mac) as source_mac,
+  max(location_id) as location_id,
+  min(observed_at) as first_seen,
+  max(observed_at) as last_seen,
+  max(ssid) as ssid,
+  max(destination_bssid) as destination_bssid,
+  string_agg(distinct src_ip, ', ') filter (where src_ip is not null) as ip_addresses,
+  string_agg(distinct hostname, ', ') filter (where hostname is not null) as hostnames,
+  string_agg(distinct app_protocol, ', ') filter (where app_protocol is not null) as services,
+  string_agg(distinct dns_query_name, ', ') filter (where dns_query_name is not null) as dns_names,
+  count(*) as frame_count,
+  sum(case when protected then 1 else 0 end) as protected_frame_count,
+  sum(case when not protected then 1 else 0 end) as open_frame_count
+from (
+  select
+    observed_at,
+    coalesce(source_mac, payload->>'source_mac') as source_mac,
+    payload->>'location_id' as location_id,
+    coalesce(ssid, payload->>'ssid') as ssid,
+    coalesce(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
+    coalesce(src_ip, payload->>'src_ip') as src_ip,
+    coalesce(dhcp_hostname, mdns_name, payload->>'dhcp_hostname', payload->>'mdns_name') as hostname,
+    coalesce(app_protocol, payload->>'app_protocol') as app_protocol,
+    coalesce(dns_query_name, payload->>'dns_query_name') as dns_query_name,
+    coalesce(protected, false) as protected
+  from sync_scan_ingest
+  where stream_name = 'wireless.audit'
+) inventory
+where source_mac is not null
+group by lower(source_mac), location_id;
+
+create or replace view v_wireless_anomalies as
+select
+  timeline.dedupe_key,
+  timeline.observed_at,
+  timeline.session_key,
+  timeline.source_mac,
+  timeline.destination_bssid,
+  timeline.ssid,
+  timeline.tsft_delta_us,
+  timeline.wall_clock_delta_ms,
+  timeline.mixed_encryption,
+  timeline.large_frame,
+  timeline.dedupe_or_replay_suspect,
+  array_remove(array[
+    case when timeline.large_frame then 'large_frame' end,
+    case when timeline.mixed_encryption then 'mixed_encryption' end,
+    case when timeline.dedupe_or_replay_suspect then 'dedupe_or_replay_suspect' end
+  ], null) as reasons
+from v_wireless_session_timeline timeline
+where timeline.large_frame
+   or timeline.mixed_encryption
+   or timeline.dedupe_or_replay_suspect;
 
 create or replace view v_shadow_it_alerts as
 select

@@ -26,4 +26,36 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_no_match(/user-00/, response.body)
     assert_includes response.body, "Page 2 of 2"
   end
+
+  test "inventory exports csv and json summaries" do
+    insert_sync_ingest(
+      dedupe_key: "inventory-1",
+      observed_at: Time.current,
+      payload: {
+        "source_mac" => "00:11:22:33:44:55",
+        "destination_bssid" => "10:20:30:40:50:60",
+        "ssid" => "lab",
+        "location_id" => "lab",
+        "src_ip" => "192.168.1.10",
+        "dhcp_hostname" => "sensor",
+        "app_protocol" => "ssdp",
+        "dns_query_name" => "printer.local",
+        "protected" => false
+      }
+    )
+
+    get inventory_identities_url(format: :json)
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    assert_equal "00:11:22:33:44:55", json.first["source_mac"]
+    assert_includes json.first["services"], "ssdp"
+
+    get inventory_identities_url(format: :csv)
+
+    assert_response :success
+    assert_includes response.body, "source_mac"
+    assert_includes response.body, "00:11:22:33:44:55"
+    assert_includes response.body, "printer.local"
+  end
 end

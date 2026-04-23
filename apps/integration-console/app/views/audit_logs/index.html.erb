@@ -3,6 +3,8 @@
 
 <h1>Audit Logs</h1>
 
+<p><%= link_to "Export CSV", export_audit_logs_path(request.query_parameters) %></p>
+
 <%= form_with url: audit_logs_path, method: :get do |form| %>
   <%= form.search_field :q, value: @query, placeholder: "Search sensor, MAC, SSID, username, fingerprint, WPS" %>
   <%= form.submit "Search" %>
