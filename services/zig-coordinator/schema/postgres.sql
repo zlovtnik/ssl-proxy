@@ -565,7 +565,10 @@ select
     when lag(observed_at) over session_window is not null
       then round(extract(epoch from (observed_at - lag(observed_at) over session_window)) * 1000)
   end as wall_clock_delta_ms,
-  (count(distinct case when protected then 'protected' else 'open' end) over session_partition) > 1 as mixed_encryption
+  (
+    bool_or(protected) over session_partition
+    and bool_or(not protected) over session_partition
+  ) as mixed_encryption
 from base
 window
   session_partition as (partition by session_key),
