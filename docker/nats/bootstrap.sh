@@ -20,8 +20,7 @@ if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
   set +e
   edit_output=$(nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
     --subjects "${SUBJECTS}" \
-    --max-age=720h \
-    --defaults 2>&1)
+    --max-age=720h 2>&1)
   edit_status=$?
   set -e
   if [ "${edit_status}" -ne 0 ]; then
@@ -66,8 +65,7 @@ if nats --server "${NATS_URL}" str info "${RESULT_STREAM_NAME}" >/dev/null 2>&1;
   set +e
   result_edit_output=$(nats --server "${NATS_URL}" str edit "${RESULT_STREAM_NAME}" \
     --subjects "${RESULT_SUBJECT}" \
-    --max-age=720h \
-    --defaults 2>&1)
+    --max-age=720h 2>&1)
   result_edit_status=$?
   set -e
   if [ "${result_edit_status}" -ne 0 ]; then
