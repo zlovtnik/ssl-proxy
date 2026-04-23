@@ -78,6 +78,31 @@ impl TrafficBucket {
         }
     }
 
+    pub fn observe_raw(&mut self, bytes: u64, observed_at: DateTime<Utc>) -> Vec<WirelessBandwidthEvent> {
+        let flushed = self.flush_if_elapsed(observed_at);
+
+        if self.window_start.is_none() {
+            self.window_start = Some(observed_at);
+        }
+
+        // Count raw bytes against unknown bucket for unsupported frames
+        let key = TrafficKey {
+            sensor_id: "unknown".to_string(),
+            location_id: "unknown".to_string(),
+            interface: "unknown".to_string(),
+            channel: 0,
+            source_mac: "unknown".to_string(),
+            destination_bssid: "unknown".to_string(),
+            ssid: None,
+        };
+
+        let counters = self.entries.entry(key).or_default();
+        counters.bytes = counters.bytes.saturating_add(bytes);
+        counters.frame_count = counters.frame_count.saturating_add(1);
+
+        flushed
+    }
+
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
