@@ -2,7 +2,7 @@ class WirelessAuditIdentity < SyncRecord
   self.table_name = "v_wireless_audit_with_devices"
   self.primary_key = "dedupe_key"
 
-  scope :recent, -> { order(observed_at: :desc) }
+  scope :recent, -> { where(observed_at: 7.days.ago..).order(observed_at: :desc) }
   scope :search, ->(query) {
     next none if query.blank?
 

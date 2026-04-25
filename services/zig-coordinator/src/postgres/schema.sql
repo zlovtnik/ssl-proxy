@@ -161,7 +161,7 @@ begin
     select batch.batch_id
       from sync_batch batch
      where batch.status = 'pending'
-     order by batch.batch_id
+     order by batch.created_at asc, batch.batch_id
      limit 1
      for update skip locked
   ),

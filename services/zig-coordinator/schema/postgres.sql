@@ -223,6 +223,7 @@ create index if not exists idx_sync_job_stream_name on sync_job (stream_name);
 create index if not exists idx_sync_job_status_created_at on sync_job (status, created_at);
 create index if not exists idx_sync_batch_job_batch_no on sync_batch (job_id, batch_no);
 create index if not exists idx_sync_batch_status on sync_batch (status);
+create index if not exists idx_sync_batch_pending_created_at on sync_batch (status, created_at, batch_id) where status = 'pending';
 create index if not exists idx_sync_error_job_id on sync_error (job_id);
 create index if not exists idx_sync_error_batch_id on sync_error (batch_id);
 create index if not exists sync_scan_ingest_status_idx on sync_scan_ingest (status, observed_at);
@@ -316,6 +317,120 @@ create index if not exists devices_mac_hint_idx on devices (lower(mac_hint));
 create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
 create index if not exists devices_username_idx on devices (username, last_seen desc);
 
+create table if not exists identities (
+  source_mac_lower text primary key,
+  source_mac text not null,
+  ssid text,
+  bssid text,
+  destination_bssid text,
+  signal_dbm integer,
+  device_id text,
+  display_name text,
+  username text,
+  hostname text,
+  device_fingerprint text,
+  wps_device_name text,
+  wps_manufacturer text,
+  wps_model_name text,
+  observed_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint fk_identities_device_id foreign key (device_id) references devices(device_id) on delete set null
+);
+
+create index if not exists identities_observed_at_idx on identities (observed_at desc);
+create index if not exists identities_device_id_idx on identities (device_id);
+create index if not exists identities_username_idx on identities (username);
+create index if not exists identities_ssid_idx on identities (ssid) where ssid is not null;
+
+create or replace function sync_update_identities()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_source_mac_lower text;
+  v_device_id text;
+  v_display_name text;
+begin
+  if new.stream_name != 'wireless.audit' then
+    return new;
+  end if;
+
+  v_source_mac_lower := lower(coalesce(new.source_mac, new.payload->>'source_mac'));
+  if v_source_mac_lower is null then
+    return new;
+  end if;
+
+  select device_id, display_name
+    into v_device_id, v_display_name
+    from devices d
+   where lower(d.mac_hint) = v_source_mac_lower
+   order by d.last_seen desc, d.device_id asc
+   limit 1;
+
+  insert into identities (
+    source_mac_lower,
+    source_mac,
+    ssid,
+    bssid,
+    destination_bssid,
+    signal_dbm,
+    device_id,
+    display_name,
+    username,
+    hostname,
+    device_fingerprint,
+    wps_device_name,
+    wps_manufacturer,
+    wps_model_name,
+    observed_at,
+    created_at,
+    updated_at
+  ) values (
+    v_source_mac_lower,
+    coalesce(new.source_mac, new.payload->>'source_mac'),
+    coalesce(new.ssid, new.payload->>'ssid'),
+    coalesce(new.bssid, new.payload->>'bssid'),
+    coalesce(new.destination_bssid, new.payload->>'destination_bssid', new.payload->>'bssid'),
+    new.signal_dbm,
+    v_device_id,
+    v_display_name,
+    new.payload->>'username',
+    coalesce(new.payload->>'dhcp_hostname', new.dhcp_hostname),
+    new.device_fingerprint,
+    new.wps_device_name,
+    new.wps_manufacturer,
+    new.wps_model_name,
+    new.observed_at,
+    now(),
+    now()
+  )
+  on conflict (source_mac_lower) do update set
+    source_mac = excluded.source_mac,
+    ssid = coalesce(excluded.ssid, identities.ssid),
+    bssid = coalesce(excluded.bssid, identities.bssid),
+    destination_bssid = coalesce(excluded.destination_bssid, identities.destination_bssid),
+    signal_dbm = coalesce(excluded.signal_dbm, identities.signal_dbm),
+    device_id = coalesce(excluded.device_id, identities.device_id),
+    display_name = coalesce(excluded.display_name, identities.display_name),
+    username = coalesce(excluded.username, identities.username),
+    hostname = coalesce(excluded.hostname, identities.hostname),
+    device_fingerprint = coalesce(excluded.device_fingerprint, identities.device_fingerprint),
+    wps_device_name = coalesce(excluded.wps_device_name, identities.wps_device_name),
+    wps_manufacturer = coalesce(excluded.wps_manufacturer, identities.wps_manufacturer),
+    wps_model_name = coalesce(excluded.wps_model_name, identities.wps_model_name),
+    observed_at = greatest(identities.observed_at, excluded.observed_at),
+    updated_at = now();
+
+  return new;
+end;
+$$;
+
+create or replace trigger trg_sync_scan_ingest_identities
+  after insert on sync_scan_ingest
+  for each row
+  execute function sync_update_identities();
+
 create or replace view v_wireless_audit_with_devices as
 select
   ssi.dedupe_key,
@@ -373,14 +488,14 @@ select
   ssi.wps_model_name,
   ssi.device_fingerprint,
   ssi.handshake_captured,
-  coalesce(d_src.device_id, d_bssid.device_id) as device_id,
-  coalesce(d_src.display_name, d_bssid.display_name) as display_name,
-  coalesce(d_src.username, d_bssid.username) as registered_username,
-  coalesce(d_src.os_hint, d_bssid.os_hint) as os_hint,
-  coalesce(d_src.hostname, d_bssid.hostname, ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') as hostname
+  i.device_id,
+  i.display_name,
+  i.username as registered_username,
+  d_bssid.os_hint,
+  coalesce(i.hostname, ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') as hostname
 from sync_scan_ingest ssi
-left join devices d_src
-  on lower(d_src.mac_hint) = lower(coalesce(ssi.source_mac, ssi.payload->>'source_mac'))
+left join identities i
+  on lower(coalesce(ssi.source_mac, ssi.payload->>'source_mac')) = i.source_mac_lower
 left join devices d_bssid
   on lower(d_bssid.mac_hint) = lower(coalesce(ssi.bssid, ssi.payload->>'bssid'))
 where ssi.stream_name = 'wireless.audit';
@@ -495,6 +610,13 @@ create index if not exists ssi_wireless_handshake_captured_idx
 create index if not exists ssi_pending_observed_idx
   on sync_scan_ingest (observed_at asc)
   where status in ('pending', 'failed');
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'chk_identities_source_mac_not_null') then
+    alter table identities add constraint chk_identities_source_mac_not_null check (source_mac is not null);
+  end if;
+end $$;
 
 create or replace view v_wireless_threats as
 select

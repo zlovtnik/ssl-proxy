@@ -17,6 +17,9 @@ pub struct AppConfig {
     pub pcap_timeout_ms: i32,
     pub log_idle_secs: u64,
     pub database_url: String,
+    pub pg_pool_size: usize,
+    pub pg_batch_size: usize,
+    pub pg_batch_flush_ms: u64,
     pub sync: SyncConfig,
     pub audit_window: AuditWindow,
     pub mac_device_lookup_enabled: bool,
@@ -101,6 +104,15 @@ impl AppConfig {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .ok_or(ConfigError::MissingDatabaseUrl)?;
+        let pg_pool_size = parse_usize("ATH_SENSOR_PG_POOL_SIZE", 8)
+            .unwrap_or(8)
+            .max(2);
+        let pg_batch_size = parse_usize("ATH_SENSOR_PG_BATCH_SIZE", 100)
+            .unwrap_or(100)
+            .max(1);
+        let pg_batch_flush_ms = parse_u64("ATH_SENSOR_PG_BATCH_FLUSH_MS", 500)
+            .unwrap_or(500)
+            .max(50);
 
         if read_bool("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", false) {
             validate_host_network_endpoints(sync.nats_url.as_deref(), &database_url)?;
@@ -133,6 +145,9 @@ impl AppConfig {
             log_idle_secs: parse_u64("ATH_SENSOR_LOG_IDLE_SECS", 30)
                 .map_err(ConfigError::InvalidLogIdleSecs)?,
             database_url,
+            pg_pool_size,
+            pg_batch_size,
+            pg_batch_flush_ms,
             sync,
             audit_window: audit_window_from_env()?,
             mac_device_lookup_enabled: read_bool("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", true),
@@ -350,6 +365,9 @@ mod tests {
             "ATH_SENSOR_LOG_IDLE_SECS",
             "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
             "ATH_SENSOR_MAC_DEVICE_CACHE_SIZE",
+            "ATH_SENSOR_PG_POOL_SIZE",
+            "ATH_SENSOR_PG_BATCH_SIZE",
+            "ATH_SENSOR_PG_BATCH_FLUSH_MS",
             "AUDIT_WINDOW_TZ",
             "AUDIT_WINDOW_DAYS",
             "AUDIT_WINDOW_START",

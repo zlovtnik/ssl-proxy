@@ -29,10 +29,10 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
             }
         }
 
-        pub fn observe(self: *Self, value: V) void {
+        pub fn observe(self: *Self, io: Io, value: V) void {
             switch (self.*) {
                 .noop => {},
-                .impl => |*impl| impl.observe(value),
+                .impl => |*impl| impl.observe(io, value),
             }
         }
 
@@ -45,7 +45,8 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
         pub const Impl = struct {
             sum: V,
-            sum_lock: std.atomic.Mutex,
+            sum_lock: Io.Mutex,
+            io: Io,
             count: usize,
             preamble: []const u8,
             buckets: [upper_bounds.len]usize,
@@ -68,7 +69,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
                     return .{
                         .sum = 0,
-                        .sum_lock = .unlocked,
+                        .sum_lock = .init,
                         .count = 0,
                         .preamble = m.preamble(name, .histogram, false, opts.help),
                         .output_sum_prefix = output_sum_prefix,
@@ -80,12 +81,12 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                 }
             }
 
-            pub fn observe(self: *Impl, value: V) void {
+            pub fn observe(self: *Impl, io: Io, value: V) void {
                 _ = @atomicRmw(usize, &self.count, .Add, 1, .monotonic);
                 switch (@typeInfo(V)) {
                     .float => {
-                        while (!self.sum_lock.tryLock()) std.atomic.spinLoopHint();
-                        defer self.sum_lock.unlock();
+                        self.sum_lock.lockUncancelable(io);
+                        defer self.sum_lock.unlock(io);
                         self.sum += value;
                     },
                     else => _ = @atomicRmw(V, &self.sum, .Add, value, .monotonic),
@@ -130,9 +131,9 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                     try writer.writeAll(self.output_sum_prefix);
                     const sum_value = switch (@typeInfo(V)) {
                         .float => blk: {
-                            while (!self.sum_lock.tryLock()) std.atomic.spinLoopHint();
+                            self.sum_lock.lockUncancelable(self.io);
                             const locked_sum = self.sum;
-                            self.sum_lock.unlock();
+                            self.sum_lock.unlock(self.io);
                             break :blk locked_sum;
                         },
                         else => @atomicLoad(V, &self.sum, .monotonic),

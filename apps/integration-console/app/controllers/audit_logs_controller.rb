@@ -46,6 +46,9 @@ class AuditLogsController < ApplicationController
     if params[:after].present?
       after = Time.zone.parse(params[:after].to_s)
       scope = scope.where("observed_at > ?", after) if after
+    else
+      # Default to last hour for live-updates endpoint to prevent unbounded scans
+      scope = scope.where("observed_at > ?", 1.hour.ago)
     end
 
     limit = params[:limit].to_i

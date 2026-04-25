@@ -1,7 +1,11 @@
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
+use tokio::time::interval;
 use tokio_postgres::{Config as PostgresConfig, NoTls};
 use tracing::{debug, error, info, warn};
 
@@ -11,12 +15,46 @@ use super::{
     wireless_columns::WirelessIngestColumns,
 };
 
+#[derive(Clone)]
+pub struct BatchConfig {
+    pub max_size: usize,
+    pub flush_interval: Duration,
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            max_size: 100,
+            flush_interval: Duration::from_millis(500),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct IngestBufferEntry {
+    dedupe_key: String,
+    stream_name: String,
+    observed_at: DateTime<Utc>,
+    payload_ref: String,
+    payload: serde_json::Value,
+    payload_sha256: String,
+    producer: String,
+    event_kind: Option<String>,
+    wireless: WirelessIngestColumns,
+}
+
 pub struct PostgresBacklog {
     pool: Pool,
+    batch: Arc<Mutex<Vec<IngestBufferEntry>>>,
+    batch_config: BatchConfig,
 }
 
 impl PostgresBacklog {
-    pub async fn connect(database_url: &str) -> Result<Self, BacklogError> {
+    pub async fn connect(
+        database_url: &str,
+        pool_size: usize,
+        batch_config: BatchConfig,
+    ) -> Result<Self, BacklogError> {
         let config = PostgresConfig::from_str(database_url)
             .map_err(|error| BacklogError::InvalidDatabaseUrl(error.to_string()))?;
         let target = database_target(&config);
@@ -28,15 +66,169 @@ impl PostgresBacklog {
             },
         );
         let pool = Pool::builder(manager)
-            .max_size(2)
+            .max_size(pool_size)
             .build()
             .map_err(|error| BacklogError::PoolBuild(error.to_string()))?;
         info!(
             postgres_target = %target,
-            pool_max_size = 2,
+            pool_max_size = pool_size,
+            batch_max_size = batch_config.max_size,
+            batch_flush_ms = batch_config.flush_interval.as_millis(),
             "postgres backlog pool initialized"
         );
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            batch: Arc::new(Mutex::new(Vec::with_capacity(batch_config.max_size))),
+            batch_config,
+        })
+    }
+
+    pub fn spawn_flush_task(self: Arc<Self>) {
+        let flush_interval = self.batch_config.flush_interval;
+        let backlog = Arc::clone(&self);
+        tokio::spawn(async move {
+            let mut tick = interval(flush_interval);
+            loop {
+                tick.tick().await;
+                if let Err(error) = backlog.flush().await {
+                    error!(%error, "postgres backlog periodic flush failed");
+                }
+            }
+        });
+    }
+
+    pub async fn flush(&self) -> Result<usize, BacklogError> {
+        let batch = {
+            let mut guard = self.batch.lock().unwrap();
+            if guard.is_empty() {
+                return Ok(0);
+            }
+            std::mem::take(&mut *guard)
+        };
+
+        let operation = "flush_batch";
+        let client = self.client(operation).await?;
+        let count = batch.len();
+
+        // Build multi-row INSERT ... ON CONFLICT
+        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+        let mut values_clauses = Vec::with_capacity(count);
+
+        for (idx, entry) in batch.iter().enumerate() {
+            let base = idx * 25;
+            let mut parts: Vec<String> = Vec::with_capacity(29);
+            parts.push(format!("${}", base + 1));   // dedupe_key
+            parts.push(format!("${}", base + 2));   // stream_name
+            parts.push(format!("${}", base + 3));   // observed_at
+            parts.push(format!("${}", base + 4));   // payload_ref
+            parts.push(format!("${}::jsonb", base + 5)); // payload
+            parts.push(format!("${}", base + 6));   // payload_sha256
+            parts.push("'pending'".to_string());     // status
+            parts.push("0".to_string());             // attempt_count
+            parts.push(format!("${}", base + 7));   // producer
+            parts.push(format!("${}", base + 8));   // event_kind
+            parts.push(format!("${}", base + 9));   // source_mac
+            parts.push(format!("${}", base + 10));  // bssid
+            parts.push(format!("${}", base + 11));  // destination_bssid
+            parts.push(format!("${}", base + 12));  // ssid
+            parts.push(format!("${}", base + 13));  // signal_dbm
+            parts.push(format!("${}", base + 14));  // raw_len
+            parts.push(format!("${}", base + 15));  // frame_control_flags
+            parts.push(format!("${}", base + 16));  // more_data
+            parts.push(format!("${}", base + 17));  // retry
+            parts.push(format!("${}", base + 18));  // power_save
+            parts.push(format!("${}", base + 19));  // protected
+            parts.push(format!("${}", base + 20));  // security_flags
+            parts.push(format!("${}", base + 21));  // wps_device_name
+            parts.push(format!("${}", base + 22));  // wps_manufacturer
+            parts.push(format!("${}", base + 23));  // wps_model_name
+            parts.push(format!("${}", base + 24));  // device_fingerprint
+            parts.push(format!("${}", base + 25));  // handshake_captured
+            parts.push("now()".to_string());         // created_at
+            parts.push("now()".to_string());         // updated_at
+            values_clauses.push(format!("({})", parts.join(", ")));
+            params.push(&entry.dedupe_key);
+            params.push(&entry.stream_name);
+            params.push(&entry.observed_at);
+            params.push(&entry.payload_ref);
+            params.push(&entry.payload);
+            params.push(&entry.payload_sha256);
+            params.push(&entry.producer);
+            params.push(&entry.event_kind);
+            params.push(&entry.wireless.source_mac);
+            params.push(&entry.wireless.bssid);
+            params.push(&entry.wireless.destination_bssid);
+            params.push(&entry.wireless.ssid);
+            params.push(&entry.wireless.signal_dbm);
+            params.push(&entry.wireless.raw_len);
+            params.push(&entry.wireless.frame_control_flags);
+            params.push(&entry.wireless.more_data);
+            params.push(&entry.wireless.retry);
+            params.push(&entry.wireless.power_save);
+            params.push(&entry.wireless.protected);
+            params.push(&entry.wireless.security_flags);
+            params.push(&entry.wireless.wps_device_name);
+            params.push(&entry.wireless.wps_manufacturer);
+            params.push(&entry.wireless.wps_model_name);
+            params.push(&entry.wireless.device_fingerprint);
+            params.push(&entry.wireless.handshake_captured);
+        }
+
+        if values_clauses.is_empty() {
+            return Ok(0);
+        }
+
+        let sql = format!(
+            "insert into sync_scan_ingest
+               (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256,
+                status, attempt_count, producer, event_kind, source_mac, bssid,
+                destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data,
+                retry, power_save, protected, security_flags, wps_device_name,
+                wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured,
+                created_at, updated_at)
+             values {}
+             on conflict (dedupe_key)
+             do update set
+                payload_ref = excluded.payload_ref,
+                payload = excluded.payload,
+                payload_sha256 = excluded.payload_sha256,
+                producer = excluded.producer,
+                event_kind = excluded.event_kind,
+                source_mac = excluded.source_mac,
+                bssid = excluded.bssid,
+                destination_bssid = excluded.destination_bssid,
+                ssid = excluded.ssid,
+                signal_dbm = excluded.signal_dbm,
+                raw_len = excluded.raw_len,
+                frame_control_flags = excluded.frame_control_flags,
+                more_data = excluded.more_data,
+                retry = excluded.retry,
+                power_save = excluded.power_save,
+                protected = excluded.protected,
+                security_flags = excluded.security_flags,
+                wps_device_name = excluded.wps_device_name,
+                wps_manufacturer = excluded.wps_manufacturer,
+                wps_model_name = excluded.wps_model_name,
+                device_fingerprint = excluded.device_fingerprint,
+                handshake_captured = excluded.handshake_captured,
+                updated_at = now()",
+            values_clauses.join(", ")
+        );
+
+        let rows_affected = match client.execute(&sql, &params).await {
+            Ok(rows) => rows,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+
+        debug!(
+            batch_count = count,
+            rows_affected,
+            "postgres backlog batch flushed"
+        );
+        Ok(count)
     }
 
     async fn client(&self, operation: &'static str) -> Result<Client, BacklogError> {
@@ -97,16 +289,19 @@ impl PostgresBacklog {
         }
 
         let normalized_mac = mac.trim().to_ascii_lowercase();
-        let row = match client
-            .query_opt(
-                "select device_id, username
-                   from devices
-                  where lower(mac_hint) = $1
-                  limit 1",
-                &[&normalized_mac],
+        let stmt = match client
+            .prepare(
+                "select device_id, username from devices where lower(mac_hint) = $1 limit 1",
             )
             .await
         {
+            Ok(stmt) => stmt,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        let row = match client.query_opt(&stmt, &[&normalized_mac]).await {
             Ok(row) => row,
             Err(source) => {
                 self.log_postgres_error(operation, &source);
@@ -151,8 +346,9 @@ impl PostgresBacklog {
             .filter(|value| !value.is_empty())
             .map(|value| value.to_ascii_lowercase());
         let normalized_location = location_id.trim();
-        let row = match client
-            .query_one(
+
+        let stmt = match client
+            .prepare(
                 "select exists (
                    select 1
                      from authorized_wireless_networks
@@ -163,8 +359,18 @@ impl PostgresBacklog {
                       and (ssid is not null or bssid is not null)
                     limit 1
                  )",
-                &[&normalized_ssid, &normalized_bssid, &normalized_location],
             )
+            .await
+        {
+            Ok(stmt) => stmt,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+
+        let row = match client
+            .query_one(&stmt, &[&normalized_ssid, &normalized_bssid, &normalized_location])
             .await
         {
             Ok(row) => row,
@@ -206,98 +412,37 @@ impl PostgresBacklog {
 #[async_trait]
 impl BacklogStore for PostgresBacklog {
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
-        let operation = "record_ingest";
-        let client = self.client(operation).await?;
-        let payload: serde_json::Value =
-            serde_json::from_str(record.payload).map_err(|source| {
-                BacklogError::InvalidIngestPayload {
-                    operation,
-                    dedupe_key: record.dedupe_key.to_string(),
-                    source,
-                }
-            })?;
-        let payload_json = tokio_postgres::types::Json(&payload);
-        let wireless = WirelessIngestColumns::from_payload(record.stream_name, &payload);
-        let rows_affected = match client
-            .execute(
-                "insert into sync_scan_ingest
-                   (dedupe_key, stream_name, observed_at, payload_ref, payload, payload_sha256,
-                    status, attempt_count, producer, event_kind, source_mac, bssid,
-                    destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data,
-                    retry, power_save, protected, security_flags, wps_device_name,
-                    wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured,
-                    created_at, updated_at)
-                 values ($1, $2, $3, $4, $5::jsonb, $6,
-                    'pending', 0, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                    $17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now())
-                 on conflict (dedupe_key)
-                 do update set
-                    payload_ref = excluded.payload_ref,
-                    payload = excluded.payload,
-                    payload_sha256 = excluded.payload_sha256,
-                    producer = excluded.producer,
-                    event_kind = excluded.event_kind,
-                    source_mac = excluded.source_mac,
-                    bssid = excluded.bssid,
-                    destination_bssid = excluded.destination_bssid,
-                    ssid = excluded.ssid,
-                    signal_dbm = excluded.signal_dbm,
-                    raw_len = excluded.raw_len,
-                    frame_control_flags = excluded.frame_control_flags,
-                    more_data = excluded.more_data,
-                    retry = excluded.retry,
-                    power_save = excluded.power_save,
-                    protected = excluded.protected,
-                    security_flags = excluded.security_flags,
-                    wps_device_name = excluded.wps_device_name,
-                    wps_manufacturer = excluded.wps_manufacturer,
-                    wps_model_name = excluded.wps_model_name,
-                    device_fingerprint = excluded.device_fingerprint,
-                    handshake_captured = excluded.handshake_captured,
-                    updated_at = now()",
-                &[
-                    &record.dedupe_key,
-                    &record.stream_name,
-                    &record.observed_at,
-                    &record.payload_ref,
-                    &payload_json,
-                    &record.payload_sha256,
-                    &record.producer,
-                    &record.event_kind,
-                    &wireless.source_mac,
-                    &wireless.bssid,
-                    &wireless.destination_bssid,
-                    &wireless.ssid,
-                    &wireless.signal_dbm,
-                    &wireless.raw_len,
-                    &wireless.frame_control_flags,
-                    &wireless.more_data,
-                    &wireless.retry,
-                    &wireless.power_save,
-                    &wireless.protected,
-                    &wireless.security_flags,
-                    &wireless.wps_device_name,
-                    &wireless.wps_manufacturer,
-                    &wireless.wps_model_name,
-                    &wireless.device_fingerprint,
-                    &wireless.handshake_captured,
-                ],
-            )
-            .await
-        {
-            Ok(rows_affected) => rows_affected,
-            Err(source) => {
-                self.log_postgres_error(operation, &source);
-                return Err(BacklogError::Postgres { operation, source });
+        let payload: serde_json::Value = serde_json::from_str(record.payload).map_err(|source| {
+            BacklogError::InvalidIngestPayload {
+                operation: "record_ingest",
+                dedupe_key: record.dedupe_key.to_string(),
+                source,
             }
+        })?;
+        let wireless = WirelessIngestColumns::from_payload(record.stream_name, &payload);
+
+        let entry = IngestBufferEntry {
+            dedupe_key: record.dedupe_key.to_string(),
+            stream_name: record.stream_name.to_string(),
+            observed_at: record.observed_at,
+            payload_ref: record.payload_ref.to_string(),
+            payload,
+            payload_sha256: record.payload_sha256.to_string(),
+            producer: record.producer.to_string(),
+            event_kind: record.event_kind.map(|s| s.to_string()),
+            wireless,
         };
-        debug!(
-            dedupe_key = record.dedupe_key,
-            stream_name = record.stream_name,
-            payload_bytes = record.payload.len(),
-            rows_affected,
-            "sync scan ingest row recorded"
-        );
+
+        let should_flush = {
+            let mut guard = self.batch.lock().unwrap();
+            guard.push(entry);
+            guard.len() >= self.batch_config.max_size
+        };
+
+        if should_flush {
+            self.flush().await?;
+        }
+
         Ok(())
     }
 
@@ -351,7 +496,7 @@ impl BacklogStore for PostgresBacklog {
                  from audit_backlog
                  where status = 'pending'
                  order by updated_at asc
-                 limit 100",
+                 limit 1000",
                 &[],
             )
             .await

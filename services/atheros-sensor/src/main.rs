@@ -30,7 +30,7 @@ use crate::{
         AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
-    backlog::{BacklogStore, PostgresBacklog},
+    backlog::{BacklogStore, BatchConfig, PostgresBacklog},
     capture::{stream_packets, CaptureError},
     config::AppConfig,
     device::{detect, read_mac_address},
@@ -68,7 +68,12 @@ async fn run_healthcheck() -> Result<(), SensorError> {
 
     // Verify database connection works
     let backlog = step_async("connect to Postgres backlog", async {
-        PostgresBacklog::connect(&config.database_url).await
+        PostgresBacklog::connect(
+            &config.database_url,
+            config.pg_pool_size,
+            BatchConfig::default(),
+        )
+        .await
     })
     .await?;
     let _ = step_async("query Postgres backlog", async {
@@ -258,12 +263,17 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         nats_tls_enabled = config.sync.tls_enabled,
         "atheros sensor publisher initialized"
     );
+    let batch_config = BatchConfig {
+        max_size: config.pg_batch_size,
+        flush_interval: Duration::from_millis(config.pg_batch_flush_ms),
+    };
     let backlog = Arc::new(
         step_async("connect to Postgres backlog", async {
-            PostgresBacklog::connect(&config.database_url).await
+            PostgresBacklog::connect(&config.database_url, config.pg_pool_size, batch_config).await
         })
         .await?,
     );
+    Arc::clone(&backlog).spawn_flush_task();
     info!("atheros sensor postgres backlog connected");
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let publish_state = PublishState::shared();

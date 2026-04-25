@@ -2,7 +2,7 @@ class WirelessDeviceInventory < SyncRecord
   self.table_name = "v_wireless_device_inventory"
   self.primary_key = "inventory_key"
 
-  scope :recent, -> { order(last_seen: :desc) }
+  scope :recent, -> { where(last_seen: 7.days.ago..).order(last_seen: :desc) }
   scope :search, ->(query) {
     next none if query.blank?
 
