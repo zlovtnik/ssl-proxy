@@ -5,6 +5,5 @@
 /storage/*
 !/storage/.keep
 /node_modules
-/app/assets/builds/*
-!/app/assets/builds/.keep
+/public/vite*
 /db/sync_schema.rb

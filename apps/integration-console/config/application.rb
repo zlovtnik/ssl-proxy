@@ -7,11 +7,9 @@ require "active_record/railtie"
 require "action_controller/railtie"
 require "action_view/railtie"
 require "action_cable/engine"
-require "sprockets/railtie"
 require "rails/test_unit/railtie"
-require "importmap-rails"
 require "turbo-rails"
-require "stimulus-rails"
+require "vite_rails"
 
 Bundler.require(*Rails.groups)
 

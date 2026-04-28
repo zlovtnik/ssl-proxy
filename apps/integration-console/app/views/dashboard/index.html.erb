@@ -4,16 +4,18 @@
 <h1>Integration Console</h1>
 
 <section class="grid grid-3">
-  <div class="metric"><div>Active Sensors</div><div class="value"><%= @active_sensors %></div></div>
-  <div class="metric"><div>Stale Sensors</div><div class="value"><%= @stale_sensors %></div></div>
-  <div class="metric"><div>Backlog Pending / Failed</div><div class="value"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
+  <div class="metric"><div>Active Sensors</div><div class="value" data-animate-morph="true"><%= @active_sensors %></div></div>
+  <div class="metric"><div>Stale Sensors</div><div class="value" data-animate-morph="true"><%= @stale_sensors %></div></div>
+  <div class="metric"><div>Backlog Pending / Failed</div><div class="value" data-animate-morph="true"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
 </section>
 
 <section class="grid grid-3" style="margin-top: 16px;">
-  <div class="panel" data-controller="live-feed" data-live-feed-recent-url-value="<%= recent_audit_logs_path %>">
-    <h2>Live Heads-up Stream</h2>
-    <ul data-live-feed-target="list"></ul>
-  </div>
+  <div
+    class="panel"
+    data-controller="svelte"
+    data-svelte-component-value="LiveFeed"
+    data-svelte-props-value="<%= { recentUrl: recent_audit_logs_path }.to_json %>"
+  ></div>
   <div class="panel">
     <h2>NATS Throughput</h2>
     <% (@recent_samples || []).each do |subject, count| %>

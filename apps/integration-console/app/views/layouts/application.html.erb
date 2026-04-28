@@ -1,22 +1,25 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <title><%= page_title %></title>
     <% if content_for?(:turbo_cache_control) %>
       <meta name="turbo-cache-control" content="<%= content_for(:turbo_cache_control) %>">
     <% end %>
+    <meta name="view-transition" content="same-origin">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <%= csrf_meta_tags %>
     <%= csp_meta_tag %>
-    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
-    <%= javascript_importmap_tags %>
+    <%= vite_client_tag %>
+    <%= vite_stylesheet_tag "application", "data-turbo-track": "reload" %>
+    <%= vite_javascript_tag "application", "data-turbo-track": "reload" %>
   </head>
   <body data-controller="turbo-loading">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="turbo-loading-bar" aria-hidden="true"></div>
     <div class="app-shell" data-controller="sidebar" data-action="keydown.esc@window->sidebar#close">
       <aside id="main-sidebar" class="sidebar" aria-label="Main navigation" data-sidebar-target="panel">
         <div class="sidebar-title">Integration Console</div>
-        <nav class="side-nav">
+        <nav class="side-nav" aria-label="Primary">
           <%= nav_link_to "Health", root_path, icon: :health %>
           <%= nav_link_to "Audit Logs", audit_logs_path, icon: :audit %>
           <%= nav_link_to "Backlog", backlog_index_path, icon: :backlog %>
@@ -29,13 +32,15 @@
         </nav>
       </aside>
       <div class="sidebar-overlay" data-sidebar-target="overlay" data-action="click->sidebar#close"></div>
-      <main class="main-content">
-        <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="main-sidebar" data-sidebar-target="toggle" data-action="click->sidebar#toggle">
-          <span class="hamburger" aria-hidden="true"></span>
-          <span class="visually-hidden">Toggle navigation</span>
-        </button>
-        <% if notice.present? %><p class="status-ok flash-message" data-controller="flash"><%= notice %></p><% end %>
-        <% if alert.present? %><p class="status-alert flash-message" data-controller="flash"><%= alert %></p><% end %>
+      <main id="main-content" class="main-content" tabindex="-1">
+        <header class="main-header">
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="main-sidebar" data-sidebar-target="toggle" data-action="click->sidebar#toggle">
+            <span class="hamburger" aria-hidden="true"></span>
+            <span class="visually-hidden">Toggle navigation</span>
+          </button>
+        </header>
+        <% if notice.present? %><p class="status-ok flash-message" data-controller="flash" role="status" aria-live="polite"><%= notice %></p><% end %>
+        <% if alert.present? %><p class="status-alert flash-message" data-controller="flash" role="alert" aria-live="assertive"><%= alert %></p><% end %>
         <%= yield %>
       </main>
     </div>

@@ -18,4 +18,11 @@ class BacklogControllerTest < ActionDispatch::IntegrationTest
     assert_no_match(/failed-1/, response.body)
     assert_includes response.body, "status=pending"
   end
+
+  test "retry redirects with see other when backlog row is missing" do
+    post retry_backlog_url("missing-row")
+
+    assert_redirected_to backlog_index_path
+    assert_response :see_other
+  end
 end

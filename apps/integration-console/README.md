@@ -15,9 +15,19 @@ Rails management interface for the wireless sensor sync plane.
 
 ```sh
 bundle install
+bun install
 bin/rails db:prepare
+bun run build
 bin/rails test
 bin/rails server
+```
+
+For frontend HMR during development, run the Rails server and Vite server in
+separate terminals:
+
+```sh
+bin/rails server
+bun run dev
 ```
 
 Run the worker with:
