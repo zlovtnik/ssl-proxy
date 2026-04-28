@@ -48,7 +48,9 @@ class AuditLogsController < ApplicationController
     query = params[:q].to_s.strip
 
     if params[:after].present?
-      after = Time.zone.parse(params[:after].to_s)
+      after_value = params[:after].to_s
+      after = Time.zone.parse(after_value)
+      after = after.change(usec: 999_999) unless after_value.match?(/\.\d+/)
       scope = scope.where("observed_at > ?", after) if after
     elsif query.present?
       scope = scope.search(query)
@@ -121,7 +123,7 @@ class AuditLogsController < ApplicationController
     {
       dedupe_key: entry.dedupe_key,
       show_url: audit_log_path(entry),
-      observed_at: entry.observed_at&.iso8601,
+      observed_at: entry.observed_at&.iso8601(6),
       schema_version: entry.schema_version,
       sensor_id: entry.sensor_id,
       location_id: entry.location_id,

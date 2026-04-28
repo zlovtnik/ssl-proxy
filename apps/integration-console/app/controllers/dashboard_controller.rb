@@ -58,7 +58,7 @@ class DashboardController < ApplicationController
           sparkline: [@pending_backlog, @failed_backlog]
         }
       ],
-      endpoint: root_path
+      endpoint: root_path(format: :json)
     }
   end
 end

@@ -223,8 +223,7 @@
       <a class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" href={link(auditLogsUrl)}>Audit logs</a>
       <a class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" href={link(identitiesUrl)}>Identities</a>
       <a class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" href={link(shadowItUrl)}>Shadow IT</a>
-      <button type="button" class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" on:click={copyMac}>{copied ? "Copied" : "Copy MAC"}</button>
+      <button type="button" class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" on:click={copyMac}>{copied ? "Copied ✓" : "Copy MAC"}</button>
     </div>
   </div>
 {/if}
-

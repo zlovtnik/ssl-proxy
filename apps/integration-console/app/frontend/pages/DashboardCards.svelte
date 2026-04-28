@@ -5,7 +5,7 @@
   export let initial = {}
 
   let cards = initial.cards || []
-  let endpoint = initial.endpoint || "/"
+  let endpoint = initial.endpoint || "/?format=json"
   let loading = false
 
   onMount(() => {
@@ -21,7 +21,7 @@
 
   async function fetchCards() {
     loading = true
-    const response = await fetch(`${endpoint}.json`, { headers: { accept: "application/json" } }).catch(() => null)
+    const response = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
     loading = false
     if (!response?.ok) return
 
@@ -31,4 +31,3 @@
 </script>
 
 <MetricCardGrid cards={cards.map((card) => ({ ...card, loading }))} columns={3} />
-

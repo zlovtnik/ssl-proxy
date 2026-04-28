@@ -136,16 +136,3 @@
   </section>
 </div>
 
-<style>
-  .signal-bucket-0 { background-color: rgba(74, 222, 128, 0.10); }
-  .signal-bucket-1 { background-color: rgba(74, 222, 128, 0.20); }
-  .signal-bucket-2 { background-color: rgba(74, 222, 128, 0.30); }
-  .signal-bucket-3 { background-color: rgba(74, 222, 128, 0.40); }
-  .signal-bucket-4 { background-color: rgba(74, 222, 128, 0.50); }
-  .signal-bucket-5 { background-color: rgba(74, 222, 128, 0.60); }
-  .signal-bucket-6 { background-color: rgba(74, 222, 128, 0.70); }
-  .signal-bucket-7 { background-color: rgba(74, 222, 128, 0.80); }
-  .signal-bucket-8 { background-color: rgba(74, 222, 128, 0.90); }
-  .signal-bucket-9 { background-color: rgba(74, 222, 128, 1.00); }
-</style>
-

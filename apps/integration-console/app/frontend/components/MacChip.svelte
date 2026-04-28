@@ -39,7 +39,7 @@
 </script>
 
 {#if mac || shown}
-  <span class="relative inline-flex" on:mouseenter={show} on:mouseleave={scheduleHide} on:focusin={show} on:focusout={scheduleHide}>
+  <span class="relative inline-flex" role="presentation" on:mouseenter={show} on:mouseleave={scheduleHide} on:focusin={show} on:focusout={scheduleHide}>
     <a
       bind:this={anchor}
       class="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-[#1f6b1f] bg-[#0f2d0f] px-2 py-0.5 font-mono text-xs text-[#86efac] no-underline hover:bg-[#163d16] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
@@ -62,4 +62,3 @@
     />
   </span>
 {/if}
-

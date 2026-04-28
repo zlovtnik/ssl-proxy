@@ -39,6 +39,8 @@ module ApplicationHelper
     indicator = active ? (params[:direction].to_s == "asc" ? " up" : " down") : ""
 
     link_to "#{label}#{indicator}", url_for(sort_params(key, next_direction)), class: css_class
+  rescue ActionController::UrlGenerationError
+    tag.span "#{label}#{indicator}", class: css_class
   end
 
   private

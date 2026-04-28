@@ -10,8 +10,9 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_23_000100) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
   # These are extensions that must be enabled in order to support this database
+  enable_extension "pg_trgm"
   enable_extension "plpgsql"
 
   create_table "audit_backlog", primary_key: "dedupe_key", id: :text, force: :cascade do |t|
@@ -181,6 +182,10 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_23_000100) do
     t.text "last_error"
     t.text "producer", default: "unknown", null: false
     t.text "event_kind"
+    t.text "sensor_id"
+    t.text "location_id"
+    t.text "frame_subtype"
+    t.text "username"
     t.integer "schema_version", default: 1, null: false
     t.text "frame_type"
     t.text "source_mac"
@@ -244,24 +249,58 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_23_000100) do
     t.timestamptz "created_at", default: -> { "now()" }, null: false
     t.timestamptz "updated_at", default: -> { "now()" }, null: false
     t.index "((payload -> 'tags'::text))", name: "ssi_wireless_threat_tags_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
+    t.index "lower(app_protocol) gin_trgm_ops", name: "ssi_wireless_app_protocol_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (app_protocol IS NOT NULL))", using: :gin
     t.index "lower(bssid)", name: "ssi_wireless_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(bssid) gin_trgm_ops", name: "ssi_wireless_bssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (bssid IS NOT NULL))", using: :gin
+    t.index ["observed_at"], name: "ssi_wireless_audit_cover_idx", order: { observed_at: :desc }, where: "(stream_name = 'wireless.audit'::text)", include: ["dedupe_key", "sensor_id", "location_id", "frame_subtype", "source_mac", "bssid", "destination_bssid", "ssid", "signal_dbm", "raw_len", "frame_control_flags", "security_flags", "device_fingerprint", "handshake_captured", "frame_type", "wps_device_name"]
     t.index "lower(destination_bssid)", name: "ssi_wireless_destination_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(destination_bssid) gin_trgm_ops", name: "ssi_wireless_destination_bssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (destination_bssid IS NOT NULL))", using: :gin
     t.index "frame_fingerprint", name: "ssi_wireless_frame_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (frame_fingerprint IS NOT NULL))"
+    t.index "lower(device_fingerprint) gin_trgm_ops", name: "ssi_wireless_device_fingerprint_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))", using: :gin
+    t.index "lower(dst_ip) gin_trgm_ops", name: "ssi_wireless_dst_ip_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (dst_ip IS NOT NULL))", using: :gin
     t.index "lower(source_mac)", name: "ssi_wireless_source_mac_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(source_mac) gin_trgm_ops", name: "ssi_wireless_source_mac_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (source_mac IS NOT NULL))", using: :gin
+    t.index "lower(sensor_id) gin_trgm_ops", name: "ssi_wireless_sensor_id_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (sensor_id IS NOT NULL))", using: :gin
     t.index ["app_protocol", "observed_at"], name: "ssi_wireless_app_protocol_idx", where: "((stream_name = 'wireless.audit'::text) AND (app_protocol IS NOT NULL))"
     t.index "signal_dbm, observed_at DESC", name: "ssi_wireless_signal_idx", where: "((stream_name = 'wireless.audit'::text) AND (signal_dbm IS NOT NULL))"
     t.index ["schema_version", "observed_at"], name: "ssi_wireless_schema_version_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index ["session_key", "observed_at"], name: "ssi_wireless_session_key_idx", where: "((stream_name = 'wireless.audit'::text) AND (session_key IS NOT NULL))"
     t.index "ssid, observed_at DESC", name: "ssi_wireless_ssid_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(ssid) gin_trgm_ops", name: "ssi_wireless_ssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (ssid IS NOT NULL))", using: :gin
     t.index ["src_ip"], name: "ssi_wireless_src_ip_idx", where: "((stream_name = 'wireless.audit'::text) AND (src_ip IS NOT NULL))"
+    t.index "lower(src_ip) gin_trgm_ops", name: "ssi_wireless_src_ip_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (src_ip IS NOT NULL))", using: :gin
     t.index ["dst_ip"], name: "ssi_wireless_dst_ip_idx", where: "((stream_name = 'wireless.audit'::text) AND (dst_ip IS NOT NULL))"
     t.index "device_fingerprint, observed_at DESC", name: "ssi_wireless_device_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))"
     t.index "observed_at DESC", name: "ssi_wireless_handshake_captured_idx", where: "((stream_name = 'wireless.audit'::text) AND handshake_captured)"
     t.index "security_flags, observed_at DESC", name: "ssi_wireless_security_flags_idx", where: "((stream_name = 'wireless.audit'::text) AND (security_flags <> 0))"
+    t.index "lower(username) gin_trgm_ops", name: "ssi_wireless_username_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (username IS NOT NULL))", using: :gin
+    t.index "lower(wps_device_name) gin_trgm_ops", name: "ssi_wireless_wps_device_name_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_device_name IS NOT NULL))", using: :gin
+    t.index "lower(wps_manufacturer) gin_trgm_ops", name: "ssi_wireless_wps_manufacturer_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_manufacturer IS NOT NULL))", using: :gin
+    t.index "lower(wps_model_name) gin_trgm_ops", name: "ssi_wireless_wps_model_name_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_model_name IS NOT NULL))", using: :gin
     t.index ["observed_at"], name: "ssi_pending_observed_idx", where: "(status = ANY (ARRAY['pending'::text, 'failed'::text]))"
     t.index ["status", "observed_at"], name: "sync_scan_ingest_status_idx"
     t.index ["stream_name", "observed_at"], name: "sync_scan_ingest_stream_idx"
   end
+
+  execute <<~SQL
+    CREATE MATERIALIZED VIEW IF NOT EXISTS mv_wireless_heatmap AS
+    SELECT
+      COALESCE(location_id, payload->>'location_id') AS location_id,
+      count(*) AS event_count,
+      avg(COALESCE(signal_dbm, CASE WHEN payload->>'signal_dbm' ~ '^-?[0-9]+$' THEN (payload->>'signal_dbm')::integer END)) AS avg_signal_dbm,
+      count(DISTINCT lower(COALESCE(source_mac, payload->>'source_mac'))) AS unique_devices,
+      max(observed_at) AS last_seen_at
+    FROM sync_scan_ingest
+    WHERE stream_name = 'wireless.audit'
+      AND COALESCE(location_id, payload->>'location_id') IS NOT NULL
+    GROUP BY COALESCE(location_id, payload->>'location_id')
+    WITH NO DATA
+  SQL
+
+  execute <<~SQL
+    CREATE UNIQUE INDEX IF NOT EXISTS mv_wireless_heatmap_location_idx
+      ON mv_wireless_heatmap (location_id)
+  SQL
 
   add_check_constraint "audit_backlog", "status = ANY (ARRAY['pending'::text, 'synced'::text, 'sync_failed'::text, 'failed'::text])", name: "chk_audit_backlog_status"
   add_check_constraint "authorized_wireless_networks", "NULLIF(TRIM(BOTH FROM COALESCE(ssid, ''::text)), ''::text) IS NOT NULL OR NULLIF(TRIM(BOTH FROM COALESCE(bssid, ''::text)), ''::text) IS NOT NULL", name: "authorized_wireless_network_identity_chk"
