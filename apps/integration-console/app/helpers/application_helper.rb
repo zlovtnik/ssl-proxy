@@ -21,6 +21,17 @@ module ApplicationHelper
     "masked"
   end
 
+  def full_macs_enabled?
+    ENV.fetch("INTEGRATION_CONSOLE_FULL_MACS", "false") == "true"
+  end
+
+  def svelte_bundle_tags(entrypoint)
+    safe_join([
+      vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload"),
+      vite_javascript_tag(entrypoint.to_s, "data-turbo-track": "reload")
+    ], "\n")
+  end
+
   def sort_link_to(label, key)
     active = params[:sort].to_s == key.to_s
     next_direction = active && params[:direction].to_s == "asc" ? "desc" : "asc"
