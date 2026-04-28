@@ -302,6 +302,133 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
       ON mv_wireless_heatmap (location_id)
   SQL
 
+  execute <<~SQL
+    CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
+    SELECT
+      ssi.dedupe_key,
+      ssi.observed_at,
+      ssi.stream_name,
+      ssi.status,
+      ssi.producer,
+      ssi.event_kind,
+      COALESCE(ssi.schema_version, NULLIF(ssi.payload->>'schema_version', '')::integer, 1) AS schema_version,
+      COALESCE(ssi.frame_type, ssi.payload->>'frame_type') AS frame_type,
+      COALESCE(ssi.source_mac, ssi.payload->>'source_mac') AS source_mac,
+      ssi.payload->>'transmitter_mac' AS transmitter_mac,
+      ssi.payload->>'receiver_mac' AS receiver_mac,
+      COALESCE(ssi.bssid, ssi.payload->>'bssid') AS bssid,
+      COALESCE(ssi.destination_bssid, ssi.bssid, ssi.payload->>'destination_bssid', ssi.payload->>'bssid') AS destination_bssid,
+      COALESCE(ssi.ssid, ssi.payload->>'ssid') AS ssid,
+      COALESCE(ssi.frame_subtype, ssi.payload->>'frame_subtype') AS frame_subtype,
+      COALESCE(ssi.signal_dbm::text, ssi.payload->>'signal_dbm') AS signal_dbm,
+      ssi.payload->>'noise_dbm' AS noise_dbm,
+      ssi.payload->>'frequency_mhz' AS frequency_mhz,
+      COALESCE(ssi.channel_number::text, ssi.payload->>'channel_number') AS channel_number,
+      COALESCE(ssi.signal_status, ssi.payload->>'signal_status') AS signal_status,
+      COALESCE(ssi.qos_tid::text, ssi.payload->>'qos_tid') AS qos_tid,
+      COALESCE(ssi.ethertype::text, ssi.payload->>'ethertype') AS ethertype,
+      COALESCE(ssi.src_ip, ssi.payload->>'src_ip') AS src_ip,
+      COALESCE(ssi.dst_ip, ssi.payload->>'dst_ip') AS dst_ip,
+      COALESCE(ssi.src_port::text, ssi.payload->>'src_port') AS src_port,
+      COALESCE(ssi.dst_port::text, ssi.payload->>'dst_port') AS dst_port,
+      COALESCE(ssi.app_protocol, ssi.payload->>'app_protocol') AS app_protocol,
+      COALESCE(ssi.session_key, ssi.payload->>'session_key') AS session_key,
+      COALESCE(ssi.retransmit_key, ssi.payload->>'retransmit_key') AS retransmit_key,
+      COALESCE(ssi.frame_fingerprint, ssi.payload->>'frame_fingerprint') AS frame_fingerprint,
+      COALESCE(ssi.payload_visibility, ssi.payload->>'payload_visibility') AS payload_visibility,
+      COALESCE(ssi.large_frame::text, ssi.payload->>'large_frame') AS large_frame,
+      COALESCE(ssi.mixed_encryption::text, ssi.payload->>'mixed_encryption') AS mixed_encryption,
+      COALESCE(ssi.dedupe_or_replay_suspect::text, ssi.payload->>'dedupe_or_replay_suspect') AS dedupe_or_replay_suspect,
+      COALESCE(ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') AS dhcp_hostname,
+      COALESCE(ssi.dns_query_name, ssi.payload->>'dns_query_name') AS dns_query_name,
+      COALESCE(ssi.mdns_name, ssi.payload->>'mdns_name') AS mdns_name,
+      COALESCE(ssi.raw_len::text, ssi.payload->>'raw_len') AS raw_len,
+      COALESCE(ssi.frame_control_flags::text, ssi.payload->>'frame_control_flags') AS frame_control_flags,
+      COALESCE(ssi.more_data::text, ssi.payload->>'more_data') AS more_data,
+      COALESCE(ssi.retry::text, ssi.payload->>'retry') AS retry,
+      COALESCE(ssi.power_save::text, ssi.payload->>'power_save') AS power_save,
+      COALESCE(ssi.protected::text, ssi.payload->>'protected') AS protected,
+      COALESCE(ssi.location_id, ssi.payload->>'location_id') AS location_id,
+      COALESCE(ssi.sensor_id, ssi.payload->>'sensor_id') AS sensor_id,
+      ssi.payload->>'identity_source' AS identity_source,
+      COALESCE(ssi.username, ssi.payload->>'username') AS username,
+      ssi.payload->'tags' AS tags,
+      ssi.security_flags,
+      ssi.wps_device_name,
+      ssi.wps_manufacturer,
+      ssi.wps_model_name,
+      ssi.device_fingerprint,
+      ssi.handshake_captured,
+      COALESCE(d_src.device_id, d_bssid.device_id) AS device_id,
+      COALESCE(d_src.display_name, d_bssid.display_name) AS display_name,
+      COALESCE(d_src.username, d_bssid.username) AS registered_username,
+      COALESCE(d_src.os_hint, d_bssid.os_hint) AS os_hint,
+      COALESCE(d_src.hostname, d_bssid.hostname, ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') AS hostname
+    FROM sync_scan_ingest ssi
+    LEFT JOIN devices d_src
+      ON lower(d_src.mac_hint) = lower(COALESCE(ssi.source_mac, ssi.payload->>'source_mac'))
+    LEFT JOIN devices d_bssid
+      ON lower(d_bssid.mac_hint) = lower(COALESCE(ssi.bssid, ssi.payload->>'bssid'))
+    WHERE ssi.stream_name = 'wireless.audit'
+  SQL
+
+  execute <<~SQL
+    CREATE OR REPLACE VIEW v_wireless_device_inventory AS
+    SELECT
+      md5(COALESCE(lower(source_mac), '') || '|' || COALESCE(location_id, '')) AS inventory_key,
+      lower(source_mac) AS source_mac,
+      max(location_id) AS location_id,
+      min(observed_at) AS first_seen,
+      max(observed_at) AS last_seen,
+      max(ssid) AS ssid,
+      max(destination_bssid) AS destination_bssid,
+      string_agg(DISTINCT src_ip, ', ') FILTER (WHERE src_ip IS NOT NULL) AS ip_addresses,
+      string_agg(DISTINCT hostname, ', ') FILTER (WHERE hostname IS NOT NULL) AS hostnames,
+      string_agg(DISTINCT app_protocol, ', ') FILTER (WHERE app_protocol IS NOT NULL) AS services,
+      string_agg(DISTINCT dns_query_name, ', ') FILTER (WHERE dns_query_name IS NOT NULL) AS dns_names,
+      count(*) AS frame_count,
+      sum(CASE WHEN protected THEN 1 ELSE 0 END) AS protected_frame_count,
+      sum(CASE WHEN NOT protected THEN 1 ELSE 0 END) AS open_frame_count
+    FROM (
+      SELECT
+        observed_at,
+        COALESCE(source_mac, payload->>'source_mac') AS source_mac,
+        COALESCE(location_id, payload->>'location_id') AS location_id,
+        COALESCE(ssid, payload->>'ssid') AS ssid,
+        COALESCE(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') AS destination_bssid,
+        COALESCE(src_ip, payload->>'src_ip') AS src_ip,
+        COALESCE(dhcp_hostname, mdns_name, payload->>'dhcp_hostname', payload->>'mdns_name') AS hostname,
+        COALESCE(app_protocol, payload->>'app_protocol') AS app_protocol,
+        COALESCE(dns_query_name, payload->>'dns_query_name') AS dns_query_name,
+        COALESCE(protected, FALSE) AS protected
+      FROM sync_scan_ingest
+      WHERE stream_name = 'wireless.audit'
+    ) inventory
+    WHERE source_mac IS NOT NULL
+    GROUP BY lower(source_mac), location_id
+  SQL
+
+  execute <<~SQL
+    CREATE OR REPLACE VIEW v_shadow_it_alerts AS
+    SELECT
+      alert_id,
+      dedupe_key,
+      observed_at,
+      source_mac,
+      destination_bssid,
+      ssid,
+      sensor_id,
+      location_id,
+      signal_dbm,
+      reason,
+      evidence,
+      resolved_at,
+      created_at,
+      updated_at
+    FROM shadow_it_alerts
+    ORDER BY observed_at DESC
+  SQL
+
   add_check_constraint "audit_backlog", "status = ANY (ARRAY['pending'::text, 'synced'::text, 'sync_failed'::text, 'failed'::text])", name: "chk_audit_backlog_status"
   add_check_constraint "authorized_wireless_networks", "NULLIF(TRIM(BOTH FROM COALESCE(ssid, ''::text)), ''::text) IS NOT NULL OR NULLIF(TRIM(BOTH FROM COALESCE(bssid, ''::text)), ''::text) IS NOT NULL", name: "authorized_wireless_network_identity_chk"
   add_check_constraint "sync_batch", "status = ANY (ARRAY['pending'::text, 'processing'::text, 'dispatched'::text, 'completed'::text, 'failed'::text])", name: "chk_sync_batch_status"
