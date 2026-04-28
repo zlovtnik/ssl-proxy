@@ -3,13 +3,19 @@
 
 <h1>Integration Console</h1>
 
-<section class="grid grid-3">
-  <div class="metric"><div>Active Sensors</div><div class="value" data-animate-morph="true"><%= @active_sensors %></div></div>
-  <div class="metric"><div>Stale Sensors</div><div class="value" data-animate-morph="true"><%= @stale_sensors %></div></div>
-  <div class="metric"><div>Backlog Pending / Failed</div><div class="value" data-animate-morph="true"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
-</section>
+<script type="application/json" id="dashboard-cards-svelte-root-props"><%= json_escape({ initial: @dashboard_cards_payload }.to_json).html_safe %></script>
+<div id="dashboard-cards-svelte-root"></div>
+<%= svelte_bundle_tags(:dashboard_cards) %>
 
-<section class="grid grid-3" style="margin-top: 16px;">
+<noscript>
+  <section class="grid grid-3">
+    <div class="metric"><div>Active Sensors</div><div class="value" data-animate-morph="true"><%= @active_sensors %></div></div>
+    <div class="metric"><div>Stale Sensors</div><div class="value" data-animate-morph="true"><%= @stale_sensors %></div></div>
+    <div class="metric"><div>Backlog Pending / Failed</div><div class="value" data-animate-morph="true"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
+  </section>
+</noscript>
+
+<section class="grid grid-3 section-spaced">
   <div
     class="panel"
     data-controller="svelte"
@@ -30,7 +36,7 @@
   </div>
 </section>
 
-<section class="table-wrap" style="margin-top: 16px;">
+<section class="table-wrap section-spaced">
   <h2>Sensors</h2>
   <table>
     <thead>

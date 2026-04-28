@@ -1,4 +1,3 @@
-import "../styles/svelte.css"
 import { mountPage } from "../lib/mount"
 import DashboardCards from "../pages/DashboardCards.svelte"
 

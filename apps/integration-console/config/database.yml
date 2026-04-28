@@ -10,7 +10,11 @@ development:
   sync:
     <<: *default
     url: <%= ENV.fetch("SYNC_DATABASE_URL", ENV.fetch("DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/sync")) %>
+    pool: <%= ENV.fetch("SYNC_DB_POOL", ENV.fetch("RAILS_MAX_THREADS", 5)) %>
     database_tasks: false
+    variables:
+      statement_timeout: 8000
+      lock_timeout: 2000
 
 test:
   primary:
@@ -19,7 +23,11 @@ test:
   sync:
     <<: *default
     url: <%= ENV.fetch("SYNC_DATABASE_URL", "postgres://sync:sync@127.0.0.1:5432/integration_console_sync_test") %>
+    pool: <%= ENV.fetch("SYNC_DB_POOL", ENV.fetch("RAILS_MAX_THREADS", 5)) %>
     database_tasks: false
+    variables:
+      statement_timeout: 8000
+      lock_timeout: 2000
 
 production:
   primary:
@@ -28,4 +36,8 @@ production:
   sync:
     <<: *default
     url: <%= ENV["SYNC_DATABASE_URL"] || ENV["DATABASE_URL"] %>
+    pool: <%= ENV.fetch("SYNC_DB_POOL", ENV.fetch("RAILS_MAX_THREADS", 5)) %>
     database_tasks: false
+    variables:
+      statement_timeout: 8000
+      lock_timeout: 2000

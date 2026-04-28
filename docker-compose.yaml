@@ -171,6 +171,7 @@ services:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
     ports:
@@ -193,7 +194,24 @@ services:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+
+  integration-console-heatmap-refresh:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-lc", "while true; do bin/rails runner 'WirelessHeatmap.refresh!'; sleep \"$${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}\"; done"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
+      - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
 
   integration-console-heartbeat:
     depends_on:
@@ -210,6 +228,7 @@ services:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
 

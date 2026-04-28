@@ -3,6 +3,7 @@ require "test_helper"
 class HeatmapControllerTest < ActionDispatch::IntegrationTest
   setup do
     clear_sync_tables("sync_scan_ingest")
+    ensure_wireless_heatmap_materialized_view
   end
 
   test "index paginates grouped heatmap rows" do
@@ -16,6 +17,7 @@ class HeatmapControllerTest < ActionDispatch::IntegrationTest
         }
       )
     end
+    refresh_wireless_heatmap_materialized_view
 
     get heatmap_index_url(page: 2, sort: "location_id", direction: "asc")
 

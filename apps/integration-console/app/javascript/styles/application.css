@@ -186,6 +186,10 @@ body {
   background: #111a11;
 }
 
+.section-spaced {
+  margin-top: 16px;
+}
+
 .metric {
   border: 1px solid #1f3320;
   border-radius: 8px;
