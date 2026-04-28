@@ -1,5 +1,9 @@
 class PromoteWirelessAuditSearchColumns < ActiveRecord::Migration[7.2]
   def up
+    # Postgres will not allow ALTER TABLE on columns used in views.
+    # Drop view first, make schema changes, then recreate view.
+    execute "DROP VIEW IF EXISTS v_wireless_audit_with_devices"
+
     add_column :sync_scan_ingest, :sensor_id, :text, if_not_exists: true
     add_column :sync_scan_ingest, :location_id, :text, if_not_exists: true
     add_column :sync_scan_ingest, :frame_subtype, :text, if_not_exists: true
