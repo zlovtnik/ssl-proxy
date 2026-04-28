@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+
+if command -v foreman >/dev/null 2>&1; then
+  exec foreman start -f Procfile.dev "$@"
+fi
+
+if command -v overmind >/dev/null 2>&1; then
+  exec overmind start -f Procfile.dev "$@"
+fi
+
+echo "Install foreman or overmind to run Procfile.dev, or run these in separate terminals:" >&2
+echo "  bin/rails server" >&2
+echo "  bun run dev" >&2
+exit 1

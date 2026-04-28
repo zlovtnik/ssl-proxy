@@ -1,0 +1,2 @@
+import "../../frontend/entrypoints/heatmap"
+

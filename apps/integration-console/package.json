@@ -13,6 +13,8 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.0.0",
+    "@tailwindcss/vite": "^4.2.4",
+    "tailwindcss": "^4.2.4",
     "vite": "8.0.10",
     "vite-plugin-ruby": "5.2.1"
   }

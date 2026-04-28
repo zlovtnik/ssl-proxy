@@ -12,7 +12,9 @@ WORKDIR /app
 RUN apt-get update -qq \
   && apt-get install -y --no-install-recommends build-essential libpq-dev libyaml-dev pkg-config curl unzip \
   && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash \
+  && ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun \
+  && bun --version
 
 COPY apps/integration-console/Gemfile apps/integration-console/Gemfile.lock ./
 RUN bundle install
