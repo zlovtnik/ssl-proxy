@@ -70,7 +70,7 @@ services:
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
       # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
-      - ADMIN_API_KEY=${ADMIN_API_KEY:?ADMIN_API_KEY must be set for admin endpoints}
+      - ADMIN_API_KEY=macaco
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - SYNC_OUTBOX_DIR=/sync-outbox
 

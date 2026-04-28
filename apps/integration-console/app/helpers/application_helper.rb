@@ -38,9 +38,10 @@ module ApplicationHelper
     css_class = active ? "sort-link active" : "sort-link"
     indicator = active ? (params[:direction].to_s == "asc" ? " up" : " down") : ""
 
-    link_to "#{label}#{indicator}", url_for(sort_params(key, next_direction)), class: css_class
+    params = sort_params(key, next_direction)
+    link_to "#{label}#{indicator}", url_for(params), class: css_class
   rescue ActionController::UrlGenerationError
-    tag.span "#{label}#{indicator}", class: css_class
+    link_to "#{label}#{indicator}", "?#{params.to_query}", class: css_class
   end
 
   private

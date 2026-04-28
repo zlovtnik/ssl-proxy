@@ -5,9 +5,7 @@ class ShadowItAlert < SyncRecord
   scope :recent, -> { order(observed_at: :desc) }
   scope :open, -> { where(resolved_at: nil) }
   scope :search, ->(query) {
-    next none if query.blank?
-
-    where(
+    query.blank? ? none : where(
       "source_mac ILIKE :q OR destination_bssid ILIKE :q OR ssid ILIKE :q OR sensor_id ILIKE :q OR location_id ILIKE :q OR reason ILIKE :q",
       q: "%#{sanitize_sql_like(query)}%"
     )

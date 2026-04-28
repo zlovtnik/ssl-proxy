@@ -6,10 +6,8 @@ class AuditLog < SyncRecord
 
   scope :recent, -> { where(stream_name: "wireless.audit").order(observed_at: :desc) }
   scope :search, ->(query) {
-    next none if query.blank?
-
     q = "%#{sanitize_sql_like(query.to_s.downcase)}%"
-    where(
+    query.blank? ? none : where(
       "lower(sensor_id) ILIKE :q
        OR lower(source_mac) ILIKE :q
        OR lower(bssid) ILIKE :q
