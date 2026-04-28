@@ -6,9 +6,24 @@ class AuditLog < SyncRecord
 
   scope :recent, -> { where(stream_name: "wireless.audit").order(observed_at: :desc) }
   scope :search, ->(query) {
+    next none if query.blank?
+
+    q = "%#{sanitize_sql_like(query.to_s.downcase)}%"
     where(
-      "payload->>'sensor_id' ILIKE :q OR payload->>'source_mac' ILIKE :q OR payload->>'bssid' ILIKE :q OR payload->>'destination_bssid' ILIKE :q OR payload->>'ssid' ILIKE :q OR payload->>'username' ILIKE :q OR device_fingerprint ILIKE :q OR wps_device_name ILIKE :q OR wps_manufacturer ILIKE :q OR wps_model_name ILIKE :q",
-      q: "%#{sanitize_sql_like(query)}%"
+      "lower(sensor_id) ILIKE :q
+       OR lower(source_mac) ILIKE :q
+       OR lower(bssid) ILIKE :q
+       OR lower(destination_bssid) ILIKE :q
+       OR lower(ssid) ILIKE :q
+       OR lower(wps_device_name) ILIKE :q
+       OR lower(wps_manufacturer) ILIKE :q
+       OR lower(wps_model_name) ILIKE :q
+       OR lower(device_fingerprint) ILIKE :q
+       OR lower(app_protocol) ILIKE :q
+       OR lower(src_ip) ILIKE :q
+       OR lower(dst_ip) ILIKE :q
+       OR lower(username) ILIKE :q",
+      q: q
     )
   }
 

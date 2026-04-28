@@ -17,5 +17,48 @@ class DashboardController < ApplicationController
     @failed_backlog = BacklogStatus.failed_count
     @recent_samples = NatsTrafficSample.recent.group(:subject).sum(:event_count)
     @recent_alerts = SensorAlert.order(created_at: :desc).limit(5)
+
+    respond_to do |format|
+      format.html { @dashboard_cards_payload = dashboard_cards_payload }
+      format.json { render json: dashboard_cards_payload }
+    end
+  end
+
+  private
+
+  def dashboard_cards_payload
+    {
+      cards: [
+        {
+          label: "Active Sensors",
+          value: @active_sensors,
+          status: @active_sensors.positive? ? "ok" : "neutral",
+          trend: "flat",
+          trendLabel: "current",
+          icon: "sensor",
+          sparkline: [@active_sensors]
+        },
+        {
+          label: "Stale Sensors",
+          value: @stale_sensors,
+          status: @stale_sensors.positive? ? "warn" : "ok",
+          trend: @stale_sensors.positive? ? "up" : "flat",
+          trendLabel: "#{@stale_sensors} stale",
+          icon: "wifi",
+          sparkline: [@stale_sensors]
+        },
+        {
+          label: "Backlog Pending / Failed",
+          value: "#{@pending_backlog} / #{@failed_backlog}",
+          subValue: "#{@failed_backlog} failed",
+          status: @failed_backlog.positive? ? "alert" : (@pending_backlog.positive? ? "warn" : "ok"),
+          trend: @failed_backlog.positive? ? "up" : "flat",
+          trendLabel: "queue depth",
+          icon: @failed_backlog.positive? ? "alert" : "backlog",
+          sparkline: [@pending_backlog, @failed_backlog]
+        }
+      ],
+      endpoint: root_path
+    }
   end
 end

@@ -6,10 +6,10 @@ class AuditLogsController < ApplicationController
   SORTS = {
     "observed_at" => "observed_at",
     "schema_version" => "schema_version",
-    "sensor_id" => "payload->>'sensor_id'",
-    "location_id" => "payload->>'location_id'",
+    "sensor_id" => "sensor_id",
+    "location_id" => "location_id",
     "frame_type" => "frame_type",
-    "frame_subtype" => "payload->>'frame_subtype'",
+    "frame_subtype" => "frame_subtype",
     "ssid" => "ssid",
     "source_mac" => "source_mac",
     "bssid" => "bssid",
@@ -32,6 +32,11 @@ class AuditLogsController < ApplicationController
     @audit_logs = apply_sql_sort(@audit_logs, SORTS, default_sort: :observed_at)
     @audit_logs = paginate(@audit_logs)
     @live_updates = @query.blank? && @current_page == 1 && @sort == "observed_at" && @direction == "desc"
+
+    respond_to do |format|
+      format.html { @audit_log_payload = audit_logs_payload(@audit_logs) }
+      format.json { render json: audit_logs_payload(@audit_logs) }
+    end
   end
 
   def show
@@ -41,11 +46,12 @@ class AuditLogsController < ApplicationController
   def recent
     scope = AuditLog.recent
     query = params[:q].to_s.strip
-    scope = scope.search(query) if query.present?
 
     if params[:after].present?
       after = Time.zone.parse(params[:after].to_s)
       scope = scope.where("observed_at > ?", after) if after
+    elsif query.present?
+      scope = scope.search(query)
     end
 
     limit = params[:limit].to_i
@@ -153,6 +159,32 @@ class AuditLogsController < ApplicationController
       device_fingerprint: entry.device_fingerprint,
       wps_device_name: entry.wps_device_name,
       handshake_captured: entry.handshake_captured
+    }
+  end
+
+  def audit_logs_payload(entries)
+    {
+      rows: entries.map { |entry| live_payload(entry) },
+      totalCount: @total_count,
+      totalPages: @total_pages,
+      currentPage: @current_page,
+      perPage: @per_page,
+      sortKey: @sort,
+      sortDirection: @direction,
+      query: @query,
+      fullMacs: helpers.full_macs_enabled?,
+      endpoints: {
+        index: audit_logs_path,
+        recent: recent_audit_logs_path(format: :json),
+        export: export_audit_logs_path
+      },
+      macOptions: {
+        inventoryUrl: inventory_identities_path(format: :json),
+        recentAuditLogsUrl: recent_audit_logs_path(format: :json),
+        auditLogsUrl: audit_logs_path,
+        identitiesUrl: identities_path,
+        shadowItUrl: shadow_it_alerts_path
+      }
     }
   end
 end
