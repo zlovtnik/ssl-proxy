@@ -154,6 +154,20 @@ services:
       retries: 5
       start_period: 20s
 
+  integration-console-migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: on-failure
+    command: ["sh", "-lc", "bin/rails db:prepare"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+
   integration-console-web:
     depends_on:
       nats:
@@ -162,11 +176,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-migrate:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: unless-stopped
-    command: ["sh", "-lc", "bin/rails db:prepare && bin/rails server -b 0.0.0.0"]
+    command: ["bin/rails", "server", "-b", "0.0.0.0"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
@@ -175,7 +191,7 @@ services:
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
     ports:
-      - "127.0.0.1:3003:3000"
+      - "3003:3000"
 
   integration-console-worker:
     depends_on:
@@ -185,6 +201,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-migrate:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -201,6 +219,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      integration-console-migrate:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -219,6 +239,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-migrate:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -337,7 +359,7 @@ services:
       POSTGRES_USER: sync
       POSTGRES_PASSWORD: sync
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sync -d sync"]
       interval: 10s
