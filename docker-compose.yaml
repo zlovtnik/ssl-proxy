@@ -154,20 +154,6 @@ services:
       retries: 5
       start_period: 20s
 
-  integration-console-migrate:
-    depends_on:
-      postgres:
-        condition: service_healthy
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-    restart: on-failure
-    command: ["sh", "-lc", "bin/rails db:prepare"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-
   integration-console-web:
     depends_on:
       nats:
@@ -176,8 +162,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      integration-console-migrate:
-        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -201,8 +185,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      integration-console-migrate:
-        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -219,8 +201,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      integration-console-migrate:
-        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -239,8 +219,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      integration-console-migrate:
-        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
