@@ -56,6 +56,7 @@ class IdentitiesController < ApplicationController
   def apply_identity_sort(scope)
     if SORTS.key?(params[:sort].to_s)
       apply_sort(scope, SORTS, default_sort: :observed_at)
+      apply_sort(scope, SORTS, default_sort: :signal_dbm)
     else
       @sort = "observed_at"
       @direction = "desc"
