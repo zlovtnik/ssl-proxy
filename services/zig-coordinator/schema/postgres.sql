@@ -300,9 +300,6 @@ create unique index if not exists authorized_wireless_networks_match_idx
     coalesce(location_id, '')
   );
 
-create index if not exists authorized_wireless_networks_enabled_idx
-  on authorized_wireless_networks (enabled, location_id);
-
 create table if not exists shadow_it_alerts (
   alert_id bigserial primary key,
   dedupe_key text not null unique,
@@ -320,6 +317,9 @@ create table if not exists shadow_it_alerts (
   updated_at timestamptz not null default now()
 );
 
+create index if not exists authorized_wireless_networks_enabled_idx
+  on authorized_wireless_networks (enabled, location_id);
+  
 create index if not exists shadow_it_alerts_open_idx
   on shadow_it_alerts (observed_at desc)
   where resolved_at is null;
