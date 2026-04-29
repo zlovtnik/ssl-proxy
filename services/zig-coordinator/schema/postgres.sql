@@ -357,7 +357,9 @@ begin
   end if;
 end $$;
 
-create or replace view v_wireless_audit_with_devices as
+drop view if exists v_wireless_audit_with_devices;
+
+create view v_wireless_audit_with_devices as
 select
   ssi.dedupe_key,
   ssi.observed_at,
