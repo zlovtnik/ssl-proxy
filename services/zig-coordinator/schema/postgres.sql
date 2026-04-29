@@ -347,16 +347,6 @@ create index if not exists devices_username_idx on devices (username, last_seen 
 
 -- Handle view column rename safely - Postgres does not allow renaming columns via CREATE OR REPLACE VIEW
 do $$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_name = 'v_wireless_audit_with_devices'
-      and column_name = 'raw_len'
-  ) then
-    alter view v_wireless_audit_with_devices rename column raw_len to data_rate_kbps;
-  end if;
-end $$;
-
 drop view if exists v_wireless_audit_with_devices;
 
 create view v_wireless_audit_with_devices as
