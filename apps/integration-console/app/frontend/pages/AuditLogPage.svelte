@@ -15,7 +15,9 @@
   let sortKey = initial.sortKey || "observed_at"
   let sortDirection = initial.sortDirection || "desc"
   let query = initial.query || ""
+  let locationId = initial.locationId || ""
   let loading = false
+  let loadError = ""
   let lastObservedAt = latestObservedAt(rows)
   let pollTimer = null
 
@@ -56,8 +58,9 @@
   $: exportUrl = buildExportUrl()
 
   onMount(() => {
-    const next = paramsFromLocation({ q: query, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ q: query, location_id: locationId, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
     query = next.q
+    locationId = next.location_id || ""
     sortKey = next.sort || "observed_at"
     sortDirection = next.direction || "desc"
     currentPage = next.page
@@ -95,6 +98,7 @@
   function state() {
     return {
       q: query,
+      location_id: locationId || undefined,
       sort: sortKey,
       direction: sortDirection,
       page: currentPage,
@@ -121,8 +125,9 @@
   }
 
   function handlePopState() {
-    const next = paramsFromLocation({ q: query, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ q: query, location_id: locationId, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
     query = next.q
+    locationId = next.location_id || ""
     sortKey = next.sort || "observed_at"
     sortDirection = next.direction || "desc"
     currentPage = next.page
@@ -139,9 +144,14 @@
     const url = `${endpoints.index}.json?${toQueryString(state())}`
     const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null)
     loading = false
-    if (!response?.ok) return
+    if (response?.status === 304) return
+    if (!response?.ok) {
+      loadError = await errorMessage(response)
+      return
+    }
 
     const payload = await response.json()
+    loadError = ""
     rows = payload.rows || []
     totalCount = payload.totalCount || 0
     currentPage = payload.currentPage || currentPage
@@ -164,12 +174,25 @@
     url.searchParams.set("limit", "25")
 
     const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null)
-    if (!response?.ok) return
+    if (response?.status === 304) return
+    if (!response?.ok) {
+      loadError = await errorMessage(response)
+      return
+    }
 
     const recentRows = await response.json().catch(() => [])
     if (!Array.isArray(recentRows)) return
 
-    prependRows(recentRows.reverse())
+    loadError = ""
+    prependRows(recentRows)
+  }
+
+  async function errorMessage(response) {
+    if (!response) return "Unable to load audit data."
+    if (response.status !== 503) return "Unable to load audit data."
+
+    const payload = await response.json().catch(() => null)
+    return payload?.error || "Query timed out. Narrow the search and try again."
   }
 
   function prependRows(nextRows) {
@@ -196,7 +219,7 @@
   }
 
   function liveEligible() {
-    return !query && currentPage === 1 && sortKey === "observed_at" && sortDirection === "desc"
+    return !query && !locationId && currentPage === 1 && sortKey === "observed_at" && sortDirection === "desc"
   }
 
   function rowIdentifier(row) {
@@ -209,7 +232,7 @@
 
   function buildExportUrl() {
     const base = endpoints.export || "/audit_logs/export"
-    const params = { q: query, sort: sortKey, direction: sortDirection, per_page: perPage }
+    const params = { q: query, location_id: locationId || undefined, sort: sortKey, direction: sortDirection, per_page: perPage }
     const queryString = toQueryString(params)
     return queryString ? `${base}?${queryString}` : base
   }
@@ -222,6 +245,10 @@
   </div>
 
   <FilterBar query={query} onSearch={handleSearch} />
+
+  {#if loadError}
+    <div class="mb-3 rounded-md border border-[#7f1d1d] bg-[#190d0d] px-3 py-2 text-sm text-[#fecaca]" role="alert">{loadError}</div>
+  {/if}
 
   <DataGrid
     {columns}
@@ -237,4 +264,3 @@
     rowKey={rowIdentifier}
   />
 </div>
-

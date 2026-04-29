@@ -13,7 +13,7 @@ module ApplicationHelper
 
   def display_mac(mac)
     return if mac.blank?
-    return mac if ENV.fetch("INTEGRATION_CONSOLE_FULL_MACS", "false") == "true"
+    return mac if full_macs_enabled?
 
     octets = mac.to_s.split(":")
     return "XX:XX:XX:XX:#{octets[-2]}:#{octets[-1]}" if octets.length == 6

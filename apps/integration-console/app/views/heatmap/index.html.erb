@@ -1,7 +1,7 @@
 <% content_for :title, "Heatmap" %>
 <% content_for :turbo_cache_control, "no-cache" %>
 
-<script type="application/json" id="heatmap-svelte-root-props"><%= json_escape({ initial: @heatmap_payload }.to_json).html_safe %></script>
+<script type="application/json" id="heatmap-svelte-root-props"><%= json_escape({ initial: @heatmap_payload }.to_json) %></script>
 <div id="heatmap-svelte-root"></div>
 <%= svelte_bundle_tags(:heatmap) %>
 

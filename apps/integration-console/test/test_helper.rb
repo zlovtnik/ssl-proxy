@@ -5,6 +5,8 @@ require "minitest/mock"
 require "securerandom"
 
 class ActiveSupport::TestCase
+  include ActiveSupport::Testing::TimeHelpers
+
   SYNC_SCAN_INGEST_MANAGED_COLUMNS = %w[
     dedupe_key
     stream_name
@@ -22,6 +24,11 @@ class ActiveSupport::TestCase
   ].freeze
 
   parallelize(workers: 1)
+
+  teardown do
+    travel_back
+    Rails.cache.clear
+  end
 
   def sync_connection
     SyncRecord.connection

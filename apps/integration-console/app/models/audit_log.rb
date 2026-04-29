@@ -4,25 +4,11 @@ class AuditLog < SyncRecord
   self.table_name = "sync_scan_ingest"
   self.primary_key = "dedupe_key"
 
-  scope :recent, -> { where(stream_name: "wireless.audit").order(observed_at: :desc) }
+  scope :wireless, -> { where(stream_name: "wireless.audit") }
+  scope :recent, -> { wireless.where("observed_at > ?", 24.hours.ago).order(observed_at: :desc) }
   scope :search, ->(query) {
-    q = "%#{sanitize_sql_like(query.to_s.downcase)}%"
-    query.blank? ? none : where(
-      "lower(sensor_id) ILIKE :q
-       OR lower(source_mac) ILIKE :q
-       OR lower(bssid) ILIKE :q
-       OR lower(destination_bssid) ILIKE :q
-       OR lower(ssid) ILIKE :q
-       OR lower(wps_device_name) ILIKE :q
-       OR lower(wps_manufacturer) ILIKE :q
-       OR lower(wps_model_name) ILIKE :q
-       OR lower(device_fingerprint) ILIKE :q
-       OR lower(app_protocol) ILIKE :q
-       OR lower(src_ip) ILIKE :q
-       OR lower(dst_ip) ILIKE :q
-       OR lower(username) ILIKE :q",
-      q: q
-    )
+    sanitized = query.to_s.strip
+    sanitized.blank? ? none : where("wireless_search_tsv @@ websearch_to_tsquery('simple', ?)", sanitized)
   }
 
   def schema_version = integer_payload_value("schema_version", default: 1)

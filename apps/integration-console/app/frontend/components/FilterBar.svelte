@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from "svelte"
   import Select from "./Select.svelte"
 
   export let query = ""
@@ -60,6 +61,10 @@
     values = { ...values }
     searchNow()
   }
+
+  onDestroy(() => {
+    window.clearTimeout(timer)
+  })
 </script>
 
 <div class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-[#1f3320] bg-[#111a11] p-3">
@@ -123,4 +128,3 @@
     Clear filters
   </button>
 </div>
-

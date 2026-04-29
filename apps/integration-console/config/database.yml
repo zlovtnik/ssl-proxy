@@ -13,8 +13,8 @@ development:
     pool: <%= ENV.fetch("SYNC_DB_POOL", ENV.fetch("RAILS_MAX_THREADS", 5)) %>
     database_tasks: false
     variables:
-      statement_timeout: 8000
-      lock_timeout: 2000
+      statement_timeout: <%= ENV.fetch("STATEMENT_TIMEOUT", 8000) %>
+      lock_timeout: <%= ENV.fetch("LOCK_TIMEOUT", 2000) %>
 
 test:
   primary:
@@ -26,8 +26,8 @@ test:
     pool: <%= ENV.fetch("SYNC_DB_POOL", ENV.fetch("RAILS_MAX_THREADS", 5)) %>
     database_tasks: false
     variables:
-      statement_timeout: 8000
-      lock_timeout: 2000
+      statement_timeout: <%= ENV.fetch("STATEMENT_TIMEOUT", 8000) %>
+      lock_timeout: <%= ENV.fetch("LOCK_TIMEOUT", 2000) %>
 
 production:
   primary:
@@ -39,5 +39,5 @@ production:
     pool: <%= ENV.fetch("SYNC_DB_POOL", ENV.fetch("RAILS_MAX_THREADS", 5)) %>
     database_tasks: false
     variables:
-      statement_timeout: 8000
-      lock_timeout: 2000
+      statement_timeout: <%= ENV.fetch("STATEMENT_TIMEOUT", 8000) %>
+      lock_timeout: <%= ENV.fetch("LOCK_TIMEOUT", 2000) %>

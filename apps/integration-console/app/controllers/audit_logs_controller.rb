@@ -2,6 +2,9 @@ require "csv"
 
 class AuditLogsController < ApplicationController
   EXPORT_MAX_ROWS = 10_000
+  EXPORT_CACHE_TTL = 5.minutes
+
+  around_action :with_audit_statement_timeout, only: %i[index recent]
 
   SORTS = {
     "observed_at" => "observed_at",
@@ -28,10 +31,11 @@ class AuditLogsController < ApplicationController
 
   def index
     @query = params[:q].to_s.strip
+    @location_id = params[:location_id].to_s.strip
     @audit_logs = filtered_scope
     @audit_logs = apply_sql_sort(@audit_logs, SORTS, default_sort: :observed_at)
     @audit_logs = paginate(@audit_logs)
-    @live_updates = @query.blank? && @current_page == 1 && @sort == "observed_at" && @direction == "desc"
+    @live_updates = @query.blank? && @location_id.blank? && @current_page == 1 && @sort == "observed_at" && @direction == "desc"
 
     respond_to do |format|
       format.html { @audit_log_payload = audit_logs_payload(@audit_logs) }
@@ -40,37 +44,65 @@ class AuditLogsController < ApplicationController
   end
 
   def show
-    @audit_log = AuditLog.recent.find(params[:id])
+    @audit_log = AuditLog.wireless.find(params[:id])
   end
 
   def recent
-    scope = AuditLog.recent
     query = params[:q].to_s.strip
-
-    if params[:after].present?
-      after_value = params[:after].to_s
-      after = Time.zone.parse(after_value)
-      after = after.change(usec: 999_999) unless after_value.match?(/\.\d+/)
-      scope = scope.where("observed_at > ?", after) if after
-    elsif query.present?
-      scope = scope.search(query)
-    end
-
     limit = params[:limit].to_i
     limit = 20 unless limit.positive?
     limit = [limit, 100].min
 
-    render json: scope.limit(limit).map { |entry| live_payload(entry) }
+    if params[:after].blank? && query.blank?
+      render_cached_json([], browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
+      return
+    end
+
+    data = Rails.cache.fetch(recent_cache_key(query: query, after: params[:after], limit: limit), expires_in: IntegrationConsole::CacheTtl.audit_recent) do
+      scope = AuditLog.recent
+
+      if params[:after].present?
+        after_value = params[:after].to_s
+        after = Time.zone.parse(after_value)
+        after = after.change(usec: 999_999) unless after_value.match?(/\.\d+/)
+        scope = scope.where("observed_at > ?", after) if after
+      elsif query.present?
+        scope = scope.search(query)
+      end
+
+      scope.limit(limit).map { |entry| live_payload(entry) }
+    end
+
+    render_cached_json(data, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
   rescue ArgumentError
-    render json: []
+    render_cached_json([], browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
   end
 
   def export
     @query = params[:q].to_s.strip
+    @location_id = params[:location_id].to_s.strip
     scope = filtered_scope
     scope = apply_sql_sort(scope, SORTS, default_sort: :observed_at)
     scope = scope.limit(EXPORT_MAX_ROWS)
 
+    key = ExportStore.key_for(type: "audit", query: export_query_key, sort: @sort, direction: @direction)
+    url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL) do
+      audit_logs_csv(scope)
+    end
+
+    redirect_to url, allow_other_host: true
+  end
+
+  private
+
+  def filtered_scope
+    scope = AuditLog.recent
+    scope = scope.search(@query) if @query.present?
+    scope = scope.where(location_id: @location_id) if @location_id.present?
+    scope
+  end
+
+  def audit_logs_csv(scope)
     csv = CSV.generate(headers: true) do |rows|
       rows << [
         "dedupe_key", "observed_at", "schema_version", "sensor_id", "location_id", "frame_type", "frame_subtype",
@@ -80,43 +112,41 @@ class AuditLogsController < ApplicationController
       ]
       scope.each do |entry|
         rows << [
-          entry.dedupe_key,
+          csv_safe(entry.dedupe_key),
           entry.observed_at&.iso8601,
           entry.schema_version,
-          entry.sensor_id,
-          entry.location_id,
-          entry.frame_type,
-          entry.frame_subtype,
-          entry.ssid,
-          entry.source_mac,
-          entry.destination_bssid,
+          csv_safe(entry.sensor_id),
+          csv_safe(entry.location_id),
+          csv_safe(entry.frame_type),
+          csv_safe(entry.frame_subtype),
+          csv_safe(entry.ssid),
+          csv_safe(entry.source_mac),
+          csv_safe(entry.destination_bssid),
           entry.channel,
           entry.channel_number,
           entry.signal_dbm,
           entry.raw_len,
           entry.protected,
-          entry.payload_visibility,
-          entry.src_ip,
-          entry.dst_ip,
+          csv_safe(entry.payload_visibility),
+          csv_safe(entry.src_ip),
+          csv_safe(entry.dst_ip),
           entry.src_port,
           entry.dst_port,
-          entry.app_protocol,
-          entry.session_key,
-          entry.frame_fingerprint,
+          csv_safe(entry.app_protocol),
+          csv_safe(entry.session_key),
+          csv_safe(entry.frame_fingerprint),
           entry.large_frame
         ]
       end
     end
-
-    send_data csv, filename: "wireless-audit-#{Time.zone.now.strftime("%Y%m%d%H%M%S")}.csv", type: "text/csv"
+    csv
   end
 
-  private
+  def csv_safe(value)
+    return value unless value.is_a?(String)
+    return value unless value.match?(/\A[=+\-@]/)
 
-  def filtered_scope
-    scope = AuditLog.recent
-    scope = scope.search(@query) if @query.present?
-    scope
+    "'#{value}"
   end
 
   def live_payload(entry)
@@ -174,6 +204,7 @@ class AuditLogsController < ApplicationController
       sortKey: @sort,
       sortDirection: @direction,
       query: @query,
+      locationId: @location_id,
       fullMacs: helpers.full_macs_enabled?,
       endpoints: {
         index: audit_logs_path,
@@ -188,5 +219,29 @@ class AuditLogsController < ApplicationController
         shadowItUrl: shadow_it_alerts_path
       }
     }
+  end
+
+  def recent_cache_key(query:, after:, limit:)
+    source = {
+      after: after.to_s,
+      full_macs: helpers.full_macs_enabled?,
+      limit: limit,
+      query: query.to_s.downcase
+    }.to_json
+
+    "audit_recent:#{Digest::SHA1.hexdigest(source)}"
+  end
+
+  def export_query_key
+    { q: @query, location_id: @location_id }.to_json
+  end
+
+  def with_audit_statement_timeout
+    connection = AuditLog.connection
+    previous_timeout = connection.select_value("SHOW statement_timeout")
+    connection.execute("SET statement_timeout TO '8000ms'")
+    yield
+  ensure
+    connection&.execute("SET statement_timeout TO #{connection.quote(previous_timeout)}") if previous_timeout
   end
 end

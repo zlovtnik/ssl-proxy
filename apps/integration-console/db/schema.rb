@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_29_000100) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "plpgsql"
@@ -246,6 +246,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
     t.text "wps_model_name"
     t.text "device_fingerprint"
     t.boolean "handshake_captured", default: false, null: false
+    t.virtual "wireless_search_tsv", type: :tsvector, as: "to_tsvector('simple'::regconfig, lower((((((((((((((((((((((((COALESCE(sensor_id, ''::text) || ' '::text) || COALESCE(source_mac, ''::text)) || ' '::text) || COALESCE(bssid, ''::text)) || ' '::text) || COALESCE(destination_bssid, ''::text)) || ' '::text) || COALESCE(ssid, ''::text)) || ' '::text) || COALESCE(wps_device_name, ''::text)) || ' '::text) || COALESCE(wps_manufacturer, ''::text)) || ' '::text) || COALESCE(wps_model_name, ''::text)) || ' '::text) || COALESCE(device_fingerprint, ''::text)) || ' '::text) || COALESCE(app_protocol, ''::text)) || ' '::text) || COALESCE(src_ip, ''::text)) || ' '::text) || COALESCE(dst_ip, ''::text)) || ' '::text) || COALESCE(username, ''::text))))", stored: true
     t.timestamptz "created_at", default: -> { "now()" }, null: false
     t.timestamptz "updated_at", default: -> { "now()" }, null: false
     t.index "((payload -> 'tags'::text))", name: "ssi_wireless_threat_tags_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
@@ -253,6 +254,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
     t.index "lower(bssid)", name: "ssi_wireless_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index "lower(bssid) gin_trgm_ops", name: "ssi_wireless_bssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (bssid IS NOT NULL))", using: :gin
     t.index ["observed_at"], name: "ssi_wireless_audit_cover_idx", order: { observed_at: :desc }, where: "(stream_name = 'wireless.audit'::text)", include: ["dedupe_key", "sensor_id", "location_id", "frame_subtype", "source_mac", "bssid", "destination_bssid", "ssid", "signal_dbm", "raw_len", "frame_control_flags", "security_flags", "device_fingerprint", "handshake_captured", "frame_type", "wps_device_name"]
+    t.index "(((lower(COALESCE(sensor_id, ''::text)) || ' '::text) || lower(COALESCE(source_mac, ''::text))) || ' '::text) || lower(COALESCE(ssid, ''::text)) gin_trgm_ops", name: "ssi_wireless_common_search_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
     t.index "lower(destination_bssid)", name: "ssi_wireless_destination_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index "lower(destination_bssid) gin_trgm_ops", name: "ssi_wireless_destination_bssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (destination_bssid IS NOT NULL))", using: :gin
     t.index "frame_fingerprint", name: "ssi_wireless_frame_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (frame_fingerprint IS NOT NULL))"
@@ -273,6 +275,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
     t.index "device_fingerprint, observed_at DESC", name: "ssi_wireless_device_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))"
     t.index "observed_at DESC", name: "ssi_wireless_handshake_captured_idx", where: "((stream_name = 'wireless.audit'::text) AND handshake_captured)"
     t.index "security_flags, observed_at DESC", name: "ssi_wireless_security_flags_idx", where: "((stream_name = 'wireless.audit'::text) AND (security_flags <> 0))"
+    t.index "wireless_search_tsv", name: "ssi_wireless_search_tsv_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
     t.index "lower(username) gin_trgm_ops", name: "ssi_wireless_username_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (username IS NOT NULL))", using: :gin
     t.index "lower(wps_device_name) gin_trgm_ops", name: "ssi_wireless_wps_device_name_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_device_name IS NOT NULL))", using: :gin
     t.index "lower(wps_manufacturer) gin_trgm_ops", name: "ssi_wireless_wps_manufacturer_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_manufacturer IS NOT NULL))", using: :gin
@@ -297,6 +300,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
     WITH NO DATA
   SQL
 
+  execute "REFRESH MATERIALIZED VIEW mv_wireless_heatmap"
+
   execute <<~SQL
     CREATE UNIQUE INDEX IF NOT EXISTS mv_wireless_heatmap_location_idx
       ON mv_wireless_heatmap (location_id)
@@ -311,7 +316,11 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_28_000400) do
       ssi.status,
       ssi.producer,
       ssi.event_kind,
-      COALESCE(ssi.schema_version, NULLIF(ssi.payload->>'schema_version', '')::integer, 1) AS schema_version,
+      COALESCE(
+        ssi.schema_version,
+        CASE WHEN ssi.payload->>'schema_version' ~ '^[0-9]+$' THEN (ssi.payload->>'schema_version')::integer END,
+        1
+      ) AS schema_version,
       COALESCE(ssi.frame_type, ssi.payload->>'frame_type') AS frame_type,
       COALESCE(ssi.source_mac, ssi.payload->>'source_mac') AS source_mac,
       ssi.payload->>'transmitter_mac' AS transmitter_mac,

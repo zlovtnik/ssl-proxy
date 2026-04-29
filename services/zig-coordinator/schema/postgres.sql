@@ -130,6 +130,8 @@ create table if not exists sync_error (
   created_at timestamptz not null default now()
 );
 
+create extension if not exists pg_trgm;
+
 alter table sync_batch add column if not exists created_at timestamptz not null default now();
 alter table sync_batch add column if not exists updated_at timestamptz not null default now();
 alter table sync_scan_ingest add column if not exists source_mac text;
@@ -192,6 +194,27 @@ alter table sync_scan_ingest add column if not exists wps_manufacturer text;
 alter table sync_scan_ingest add column if not exists wps_model_name text;
 alter table sync_scan_ingest add column if not exists device_fingerprint text;
 alter table sync_scan_ingest add column if not exists handshake_captured boolean not null default false;
+alter table sync_scan_ingest add column if not exists wireless_search_tsv tsvector
+  generated always as (
+    to_tsvector(
+      'simple'::regconfig,
+      lower(
+        coalesce(sensor_id, '') || ' ' ||
+        coalesce(source_mac, '') || ' ' ||
+        coalesce(bssid, '') || ' ' ||
+        coalesce(destination_bssid, '') || ' ' ||
+        coalesce(ssid, '') || ' ' ||
+        coalesce(wps_device_name, '') || ' ' ||
+        coalesce(wps_manufacturer, '') || ' ' ||
+        coalesce(wps_model_name, '') || ' ' ||
+        coalesce(device_fingerprint, '') || ' ' ||
+        coalesce(app_protocol, '') || ' ' ||
+        coalesce(src_ip, '') || ' ' ||
+        coalesce(dst_ip, '') || ' ' ||
+        coalesce(username, '')
+      )
+    )
+  ) stored;
 
 do $$
 begin
@@ -478,6 +501,18 @@ create index if not exists ssi_wireless_frame_fingerprint_idx
 
 create index if not exists ssi_wireless_threat_tags_idx
   on sync_scan_ingest using gin ((payload->'tags'))
+  where stream_name = 'wireless.audit';
+
+create index if not exists ssi_wireless_search_tsv_idx
+  on sync_scan_ingest using gin (wireless_search_tsv)
+  where stream_name = 'wireless.audit';
+
+create index if not exists ssi_wireless_common_search_idx
+  on sync_scan_ingest using gin ((
+    lower(coalesce(sensor_id, '')) || ' ' ||
+    lower(coalesce(source_mac, '')) || ' ' ||
+    lower(coalesce(ssid, ''))
+  ) gin_trgm_ops)
   where stream_name = 'wireless.audit';
 
 create index if not exists ssi_wireless_device_fingerprint_idx

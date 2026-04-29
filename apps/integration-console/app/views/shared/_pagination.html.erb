@@ -2,8 +2,20 @@
   <nav class="pagination" aria-label="Pagination">
     <% previous_params = request.query_parameters.merge(page: @current_page - 1).compact %>
     <% next_params = request.query_parameters.merge(page: @current_page + 1).compact %>
-    <% previous_url = url_for(previous_params) rescue "?#{previous_params.to_query}" %>
-    <% next_url = url_for(next_params) rescue "?#{next_params.to_query}" %>
+    <%
+      previous_url =
+        begin
+          url_for(previous_params)
+        rescue ActionController::UrlGenerationError
+          "?#{previous_params.to_query}"
+        end
+      next_url =
+        begin
+          url_for(next_params)
+        rescue ActionController::UrlGenerationError
+          "?#{next_params.to_query}"
+        end
+    %>
 
     <% if @current_page <= 1 %>
       <span class="pagination-link disabled" aria-disabled="true">Prev</span>

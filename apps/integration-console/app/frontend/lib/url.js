@@ -2,6 +2,7 @@ export function paramsFromLocation(defaults = {}) {
   const searchParams = new URLSearchParams(window.location.search)
   return {
     q: searchParams.get("q") || defaults.q || "",
+    location_id: searchParams.get("location_id") || defaults.location_id || defaults.locationId || "",
     sort: searchParams.get("sort") || defaults.sort || defaults.sortKey || "",
     direction: searchParams.get("direction") || defaults.direction || defaults.sortDirection || "desc",
     page: positiveInteger(searchParams.get("page"), defaults.page || defaults.currentPage || 1),
@@ -33,4 +34,3 @@ function positiveInteger(value, fallback) {
   const number = Number.parseInt(value, 10)
   return Number.isFinite(number) && number > 0 ? number : fallback
 }
-

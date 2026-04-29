@@ -12,6 +12,7 @@
   let perPage = initial.perPage || 50
   let sortKey = initial.sortKey || "event_count"
   let sortDirection = initial.sortDirection || "desc"
+  let lastRefreshedAt = initial.lastRefreshedAt || null
   let loading = false
   const endpoints = initial.endpoints || {}
 
@@ -81,6 +82,7 @@
     perPage = payload.perPage || perPage
     sortKey = payload.sortKey || sortKey
     sortDirection = payload.sortDirection || sortDirection
+    lastRefreshedAt = payload.lastRefreshedAt || lastRefreshedAt
   }
 
   function formatSignal(value) {
@@ -96,13 +98,16 @@
 
   function auditUrl(location) {
     const url = new URL("/audit_logs", window.location.origin)
-    url.searchParams.set("q", location.location_id)
+    url.searchParams.set("location_id", location.location_id)
     return url.toString()
   }
 </script>
 
 <div>
   <h1 class="mb-4 text-2xl font-bold text-[#c8e6c8]">Logical Heatmap</h1>
+  {#if lastRefreshedAt}
+    <p class="mb-3 text-sm text-[#6b9e6b]">Last refreshed: {lastRefreshedAt}</p>
+  {/if}
 
   <DataGrid
     {columns}
@@ -135,4 +140,3 @@
     </div>
   </section>
 </div>
-

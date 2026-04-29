@@ -1,5 +1,6 @@
 require "test_helper"
 require "base64"
+require "csv"
 require "json"
 
 class AuditLogsControllerTest < ActionDispatch::IntegrationTest
@@ -47,6 +48,34 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Flags"
     assert_includes response.body, "Security"
     assert_includes response.body, "Fingerprint"
+  end
+
+  test "index filters by location id" do
+    insert_sync_ingest(
+      dedupe_key: "audit-lab",
+      observed_at: 1.minute.ago,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "location_id" => "lab",
+        "source_mac" => "00:11:22:33:44:55"
+      }
+    )
+    insert_sync_ingest(
+      dedupe_key: "audit-branch",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-2",
+        "location_id" => "branch",
+        "source_mac" => "00:11:22:33:44:66"
+      }
+    )
+
+    get audit_logs_url(format: :json, location_id: "lab")
+
+    assert_response :success
+    rows = JSON.parse(response.body).fetch("rows")
+    assert_equal ["audit-lab"], rows.map { |row| row["dedupe_key"] }
+    assert_equal "lab", JSON.parse(response.body).fetch("locationId")
   end
 
   test "show renders rf metadata when present" do
@@ -268,5 +297,46 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "audit-export"
     assert_includes response.body, "ssdp"
     assert_includes response.body, "abc123"
+  end
+
+  test "export escapes formula-like csv cells" do
+    insert_sync_ingest(
+      dedupe_key: "=audit-export",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "+sensor-1",
+        "location_id" => "-lab",
+        "frame_type" => "@data",
+        "frame_subtype" => "=qos_data",
+        "ssid" => "+wifi",
+        "source_mac" => "-00:11:22:33:44:55",
+        "destination_bssid" => "@10:20:30:40:50:60",
+        "payload_visibility" => "=plaintext",
+        "src_ip" => "+192.168.1.10",
+        "dst_ip" => "-239.255.255.250",
+        "app_protocol" => "@ssdp",
+        "session_key" => "=session",
+        "frame_fingerprint" => "+abc123"
+      }
+    )
+
+    get export_audit_logs_url(format: :csv)
+
+    assert_response :success
+    row = CSV.parse(response.body, headers: true).first
+    assert_equal "'=audit-export", row["dedupe_key"]
+    assert_equal "'+sensor-1", row["sensor_id"]
+    assert_equal "'-lab", row["location_id"]
+    assert_equal "'@data", row["frame_type"]
+    assert_equal "'=qos_data", row["frame_subtype"]
+    assert_equal "'+wifi", row["ssid"]
+    assert_equal "'-00:11:22:33:44:55", row["source_mac"]
+    assert_equal "'@10:20:30:40:50:60", row["destination_bssid"]
+    assert_equal "'=plaintext", row["payload_visibility"]
+    assert_equal "'+192.168.1.10", row["src_ip"]
+    assert_equal "'-239.255.255.250", row["dst_ip"]
+    assert_equal "'@ssdp", row["app_protocol"]
+    assert_equal "'=session", row["session_key"]
+    assert_equal "'+abc123", row["frame_fingerprint"]
   end
 end

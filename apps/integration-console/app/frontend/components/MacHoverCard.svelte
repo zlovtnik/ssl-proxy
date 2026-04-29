@@ -1,6 +1,7 @@
 <script context="module">
   const lookupCache = new Map()
-  const CACHE_LIMIT = 80
+  const CACHE_LIMIT = 200
+  const CACHE_TTL_MS = 60_000
 </script>
 
 <script>
@@ -29,8 +30,9 @@
 
   async function load(force = false) {
     const key = mac.toLowerCase()
-    if (!force && lookupCache.has(key)) {
-      data = lookupCache.get(key)
+    const cached = cacheEntry(key)
+    if (!force && cached) {
+      data = cached.data
       error = false
       position()
       return
@@ -47,8 +49,7 @@
       ])
 
       data = summarize(devices, auditLogs)
-      lookupCache.set(key, data)
-      if (lookupCache.size > CACHE_LIMIT) lookupCache.delete(lookupCache.keys().next().value)
+      setCacheEntry(key, data)
     } catch {
       error = true
       data = null
@@ -93,6 +94,34 @@
 
   function unique(values) {
     return Array.from(new Set(values))
+  }
+
+  function cacheEntry(key) {
+    const entry = lookupCache.get(key)
+    if (!entry) return null
+
+    if (Date.now() - entry.cachedAt > CACHE_TTL_MS) {
+      lookupCache.delete(key)
+      return null
+    }
+
+    return entry
+  }
+
+  function setCacheEntry(key, value) {
+    lookupCache.set(key, { data: value, cachedAt: Date.now() })
+    evictCache()
+  }
+
+  function evictCache() {
+    const now = Date.now()
+    for (const [key, entry] of lookupCache.entries()) {
+      if (now - entry.cachedAt > CACHE_TTL_MS) lookupCache.delete(key)
+    }
+
+    while (lookupCache.size > CACHE_LIMIT) {
+      lookupCache.delete(lookupCache.keys().next().value)
+    }
   }
 
   async function position() {
@@ -223,7 +252,7 @@
       <a class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" href={link(auditLogsUrl)}>Audit logs</a>
       <a class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" href={link(identitiesUrl)}>Identities</a>
       <a class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" href={link(shadowItUrl)}>Shadow IT</a>
-      <button type="button" class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" on:click={copyMac}>{copied ? "Copied ✓" : "Copy MAC"}</button>
+      <button type="button" class="rounded border border-[#1f6b1f] px-2 py-1 text-xs text-[#86efac] hover:bg-[#0f2d0f]" on:click={copyMac}>{copied ? "Copied (OK)" : "Copy MAC"}</button>
     </div>
   </div>
 {/if}

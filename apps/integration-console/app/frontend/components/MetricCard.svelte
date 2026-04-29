@@ -28,10 +28,11 @@
   $: iconPaths = icons[icon] || []
 
   function sparklinePath(points) {
-    if (!Array.isArray(points) || points.length < 2) return ""
+    if (!Array.isArray(points) || points.length === 0) return ""
 
     const numbers = points.map(Number).filter(Number.isFinite)
-    if (numbers.length < 2) return ""
+    if (numbers.length === 0) return ""
+    if (numbers.length === 1) numbers.push(numbers[0])
 
     const min = Math.min(...numbers)
     const max = Math.max(...numbers)

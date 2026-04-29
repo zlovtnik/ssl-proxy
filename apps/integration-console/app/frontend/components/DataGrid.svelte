@@ -9,7 +9,7 @@
   export let loading = false
   export let onSort = () => {}
   export let onPageChange = () => {}
-  export let rowKey = (row) => row.id || row.dedupe_key || row.location_id
+  export let rowKey = (row, index) => row.id || row.dedupe_key || row.location_id || index
 
   $: totalPages = Math.max(Math.ceil(Number(totalCount || 0) / Number(perPage || 1)), 1)
 
@@ -75,7 +75,7 @@
       </tr>
     </thead>
     <tbody class={loading ? "opacity-60" : ""}>
-      {#each rows as row (rowKey(row))}
+      {#each rows as row, index (rowKey(row, index))}
         <tr class={row.__new ? "row-new hover:bg-[#0f2d0f]" : "hover:bg-[#0f2d0f]"}>
           {#each columns as column}
             <td class={cellClasses(column)}>

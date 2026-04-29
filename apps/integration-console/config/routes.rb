@@ -1,5 +1,6 @@
 Rails.application.routes.draw do
   root "dashboard#index"
+  get "/health", to: "health#show"
 
   resources :audit_logs, only: %i[index show] do
     get :recent, on: :collection

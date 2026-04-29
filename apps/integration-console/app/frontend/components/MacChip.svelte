@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from "svelte"
   import MacHoverCard from "./MacHoverCard.svelte"
   import { searchQueryForMac, searchUrl } from "../lib/format"
 
@@ -36,6 +37,11 @@
       open = false
     }, 180)
   }
+
+  onDestroy(() => {
+    window.clearTimeout(hideTimer)
+    hideTimer = null
+  })
 </script>
 
 {#if mac || shown}

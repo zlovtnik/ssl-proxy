@@ -1,4 +1,6 @@
 class NatsTrafficSample < ApplicationRecord
+  after_commit { DashboardCache.expire! }
+
   validates :subject, presence: true
   validates :sampled_at, presence: true
   validates :event_count, numericality: { greater_than_or_equal_to: 0 }
