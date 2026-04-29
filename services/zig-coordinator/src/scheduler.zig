@@ -69,13 +69,25 @@ pub const Service = struct {
             return error.MissingNatsUrl;
         }
 
-        try self.runHealthcheckStep("apply_schema", Service.applySchema);
-        try self.runHealthcheckStep("check_nats", Service.checkNatsConnectivity);
-        try self.runHealthcheckStep("check_nats_streams", Service.checkNatsStreams);
-        try self.runHealthcheckStep("check_nats_consumers", Service.checkNatsConsumers);
+        try self.runLoggedStep("healthcheck_step", "check_nats", Service.checkNatsConnectivity);
+        try self.runLoggedStep("healthcheck_step", "check_nats_streams", Service.checkNatsStreams);
+        try self.runLoggedStep("healthcheck_step", "check_nats_consumers", Service.checkNatsConsumers);
 
         logging.info()
             .stringSafe("event", "healthcheck")
+            .stringSafe("status", "ok")
+            .int("duration_ms", elapsedMs(start_ts, self.io))
+            .log();
+    }
+
+    pub fn bootstrap(self: *Service) Error!void {
+        const start_ts = std.Io.Timestamp.now(self.io, .awake);
+        logging.info().stringSafe("event", "bootstrap").stringSafe("status", "start").log();
+
+        try self.runLoggedStep("bootstrap_step", "apply_schema", Service.applySchema);
+
+        logging.info()
+            .stringSafe("event", "bootstrap")
             .stringSafe("status", "ok")
             .int("duration_ms", elapsedMs(start_ts, self.io))
             .log();
@@ -346,21 +358,22 @@ pub const Service = struct {
         command.logOutput(command_name, result.stdout);
     }
 
-    fn runHealthcheckStep(
+    fn runLoggedStep(
         self: *Service,
+        event_name: []const u8,
         step_name: []const u8,
         comptime step_fn: fn (*Service) Error!void,
     ) Error!void {
         const started_ts = std.Io.Timestamp.now(self.io, .awake);
         logging.info()
-            .stringSafe("event", "healthcheck_step")
+            .stringSafe("event", event_name)
             .stringSafe("status", "start")
             .string("step", step_name)
             .log();
 
         step_fn(self) catch |err| {
             logging.err()
-                .stringSafe("event", "healthcheck_step")
+                .stringSafe("event", event_name)
                 .stringSafe("status", "error")
                 .string("step", step_name)
                 .int("duration_ms", elapsedMs(started_ts, self.io))
@@ -370,7 +383,7 @@ pub const Service = struct {
         };
 
         logging.info()
-            .stringSafe("event", "healthcheck_step")
+            .stringSafe("event", event_name)
             .stringSafe("status", "ok")
             .string("step", step_name)
             .int("duration_ms", elapsedMs(started_ts, self.io))

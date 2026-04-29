@@ -30,6 +30,9 @@ create table if not exists sync_scan_ingest (
   last_error text,
   producer text not null default 'unknown',
   event_kind text,
+  sensor_id text,
+  location_id text,
+  username text,
   schema_version integer not null default 1,
   frame_type text,
   source_mac text,
@@ -134,6 +137,9 @@ create extension if not exists pg_trgm;
 
 alter table sync_batch add column if not exists created_at timestamptz not null default now();
 alter table sync_batch add column if not exists updated_at timestamptz not null default now();
+alter table sync_scan_ingest add column if not exists sensor_id text;
+alter table sync_scan_ingest add column if not exists location_id text;
+alter table sync_scan_ingest add column if not exists username text;
 alter table sync_scan_ingest add column if not exists source_mac text;
 alter table sync_scan_ingest add column if not exists bssid text;
 alter table sync_scan_ingest add column if not exists destination_bssid text;
