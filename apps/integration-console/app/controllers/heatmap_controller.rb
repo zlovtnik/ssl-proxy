@@ -13,6 +13,7 @@ class HeatmapController < ApplicationController
     @heatmap_payload = Rails.cache.fetch(heatmap_cache_key, expires_in: IntegrationConsole::CacheTtl.heatmap) do
       heatmap_payload
     end
+    apply_pagination_state(@heatmap_payload)
     @locations = location_views(@heatmap_payload[:rows])
 
     respond_to do |format|
@@ -135,6 +136,15 @@ class HeatmapController < ApplicationController
         last_seen_at: row[:last_seen_at]
       )
     end
+  end
+
+  def apply_pagination_state(payload)
+    @total_count = payload[:totalCount]
+    @total_pages = payload[:totalPages]
+    @current_page = payload[:currentPage]
+    @per_page = payload[:perPage]
+    @sort = payload[:sortKey]
+    @direction = payload[:sortDirection]
   end
 
   def iso8601(value)

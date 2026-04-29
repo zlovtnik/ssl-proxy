@@ -6,6 +6,7 @@ require "json"
 class AuditLogsControllerTest < ActionDispatch::IntegrationTest
   setup do
     clear_sync_tables("sync_scan_ingest")
+    ensure_wireless_audit_search_vector
   end
 
   test "index returns requested audit log page slice" do

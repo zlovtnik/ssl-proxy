@@ -4,6 +4,7 @@ require "base64"
 class AuditLogTest < ActiveSupport::TestCase
   setup do
     clear_sync_tables("sync_scan_ingest")
+    ensure_wireless_audit_search_vector
   end
 
   test "raw_frame returns payload value" do

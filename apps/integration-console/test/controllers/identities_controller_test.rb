@@ -3,6 +3,7 @@ require "test_helper"
 class IdentitiesControllerTest < ActionDispatch::IntegrationTest
   setup do
     clear_sync_tables("sync_scan_ingest")
+    ensure_wireless_audit_views
   end
 
   test "index paginates identities" do

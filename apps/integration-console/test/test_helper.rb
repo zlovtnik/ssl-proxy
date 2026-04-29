@@ -101,6 +101,107 @@ class ActiveSupport::TestCase
     sync_connection.execute("REFRESH MATERIALIZED VIEW mv_wireless_heatmap")
   end
 
+  def ensure_wireless_audit_search_vector
+    sync_connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    sync_connection.execute(<<~SQL)
+      ALTER TABLE sync_scan_ingest
+      ADD COLUMN IF NOT EXISTS wireless_search_tsv tsvector
+      GENERATED ALWAYS AS (
+        to_tsvector(
+          'simple'::regconfig,
+          lower(
+            COALESCE(sensor_id, '') || ' ' ||
+            COALESCE(source_mac, '') || ' ' ||
+            COALESCE(bssid, '') || ' ' ||
+            COALESCE(destination_bssid, '') || ' ' ||
+            COALESCE(ssid, '') || ' ' ||
+            COALESCE(wps_device_name, '') || ' ' ||
+            COALESCE(wps_manufacturer, '') || ' ' ||
+            COALESCE(wps_model_name, '') || ' ' ||
+            COALESCE(device_fingerprint, '') || ' ' ||
+            COALESCE(app_protocol, '') || ' ' ||
+            COALESCE(src_ip, '') || ' ' ||
+            COALESCE(dst_ip, '') || ' ' ||
+            COALESCE(username, '')
+          )
+        )
+      ) STORED
+    SQL
+  end
+
+  def ensure_wireless_audit_views
+    sync_connection.execute(<<~SQL)
+      CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
+      SELECT
+        ssi.dedupe_key,
+        ssi.observed_at,
+        ssi.stream_name,
+        ssi.status,
+        ssi.producer,
+        ssi.event_kind,
+        COALESCE(ssi.schema_version, CASE WHEN ssi.payload->>'schema_version' ~ '^[0-9]+$' THEN (ssi.payload->>'schema_version')::integer END, 1) AS schema_version,
+        COALESCE(ssi.frame_type, ssi.payload->>'frame_type') AS frame_type,
+        COALESCE(ssi.source_mac, ssi.payload->>'source_mac') AS source_mac,
+        COALESCE(ssi.bssid, ssi.payload->>'bssid') AS bssid,
+        COALESCE(ssi.destination_bssid, ssi.bssid, ssi.payload->>'destination_bssid', ssi.payload->>'bssid') AS destination_bssid,
+        COALESCE(ssi.ssid, ssi.payload->>'ssid') AS ssid,
+        COALESCE(ssi.frame_subtype, ssi.payload->>'frame_subtype') AS frame_subtype,
+        COALESCE(ssi.signal_dbm::text, ssi.payload->>'signal_dbm') AS signal_dbm,
+        COALESCE(ssi.src_ip, ssi.payload->>'src_ip') AS src_ip,
+        COALESCE(ssi.dst_ip, ssi.payload->>'dst_ip') AS dst_ip,
+        COALESCE(ssi.app_protocol, ssi.payload->>'app_protocol') AS app_protocol,
+        COALESCE(ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') AS hostname,
+        COALESCE(ssi.location_id, ssi.payload->>'location_id') AS location_id,
+        COALESCE(ssi.sensor_id, ssi.payload->>'sensor_id') AS sensor_id,
+        COALESCE(ssi.username, ssi.payload->>'username') AS username,
+        NULL::text AS registered_username,
+        NULL::text AS display_name,
+        NULL::text AS device_id,
+        ssi.wps_device_name,
+        ssi.wps_manufacturer,
+        ssi.wps_model_name,
+        ssi.device_fingerprint
+      FROM sync_scan_ingest ssi
+      WHERE ssi.stream_name = 'wireless.audit'
+    SQL
+
+    sync_connection.execute(<<~SQL)
+      CREATE OR REPLACE VIEW v_wireless_device_inventory AS
+      SELECT
+        md5(COALESCE(lower(source_mac), '') || '|' || COALESCE(location_id, '')) AS inventory_key,
+        lower(source_mac) AS source_mac,
+        max(location_id) AS location_id,
+        min(observed_at) AS first_seen,
+        max(observed_at) AS last_seen,
+        max(ssid) AS ssid,
+        max(destination_bssid) AS destination_bssid,
+        string_agg(DISTINCT src_ip, ', ') FILTER (WHERE src_ip IS NOT NULL) AS ip_addresses,
+        string_agg(DISTINCT hostname, ', ') FILTER (WHERE hostname IS NOT NULL) AS hostnames,
+        string_agg(DISTINCT app_protocol, ', ') FILTER (WHERE app_protocol IS NOT NULL) AS services,
+        string_agg(DISTINCT dns_query_name, ', ') FILTER (WHERE dns_query_name IS NOT NULL) AS dns_names,
+        count(*) AS frame_count,
+        sum(CASE WHEN protected THEN 1 ELSE 0 END) AS protected_frame_count,
+        sum(CASE WHEN NOT protected THEN 1 ELSE 0 END) AS open_frame_count
+      FROM (
+        SELECT
+          observed_at,
+          COALESCE(source_mac, payload->>'source_mac') AS source_mac,
+          COALESCE(location_id, payload->>'location_id') AS location_id,
+          COALESCE(ssid, payload->>'ssid') AS ssid,
+          COALESCE(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') AS destination_bssid,
+          COALESCE(src_ip, payload->>'src_ip') AS src_ip,
+          COALESCE(dhcp_hostname, mdns_name, payload->>'dhcp_hostname', payload->>'mdns_name') AS hostname,
+          COALESCE(app_protocol, payload->>'app_protocol') AS app_protocol,
+          COALESCE(dns_query_name, payload->>'dns_query_name') AS dns_query_name,
+          COALESCE(protected, FALSE) AS protected
+        FROM sync_scan_ingest
+        WHERE stream_name = 'wireless.audit'
+      ) inventory
+      WHERE source_mac IS NOT NULL
+      GROUP BY lower(source_mac), location_id
+    SQL
+  end
+
   private
 
   def sync_scan_ingest_promoted_columns
