@@ -82,17 +82,19 @@
 </script>
 
 <h2>Live Heads-up Stream</h2>
-<ul class="live-feed-list" role="log" aria-live="polite" aria-relevant="additions text">
-  {#each rows as row (row.key)}
-    <li
-      class="live-row"
-      animate:flip={transitionsEnabled ? { duration: 160 } : { duration: 0 }}
-      in:fly={transitionsEnabled ? { y: -4, duration: 160 } : { y: 0, duration: 0 }}
-      out:fade={transitionsEnabled ? { duration: 120 } : { duration: 0 }}
-    >
-      {row.text}
-    </li>
-  {:else}
-    <li class="live-row live-row-empty">Waiting for audit events.</li>
-  {/each}
-</ul>
+<div role="log" aria-live="polite" aria-relevant="additions text">
+  <ul class="live-feed-list">
+    {#each rows as row (row.key)}
+      <li
+        class="live-row"
+        animate:flip={transitionsEnabled ? { duration: 160 } : { duration: 0 }}
+        in:fly={transitionsEnabled ? { y: -4, duration: 160 } : { y: 0, duration: 0 }}
+        out:fade={transitionsEnabled ? { duration: 120 } : { duration: 0 }}
+      >
+        {row.text}
+      </li>
+    {:else}
+      <li class="live-row live-row-empty">Waiting for audit events.</li>
+    {/each}
+  </ul>
+</div>
