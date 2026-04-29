@@ -212,4 +212,28 @@ class AuditLogTest < ActiveSupport::TestCase
     assert_nil AuditLog.find("audit-missing").raw_frame_hex_dump
     assert_nil AuditLog.find("audit-invalid").raw_frame_hex_dump
   end
+
+  test "search uses wireless generated text vector" do
+    insert_sync_ingest(
+      dedupe_key: "audit-search",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-vector",
+        "ssid" => "engineering"
+      }
+    )
+
+    assert_equal ["audit-search"], AuditLog.recent.search("sensor-vector").pluck(:dedupe_key)
+  end
+
+  test "recent scope defaults to last 24 hours but wireless can find older rows" do
+    insert_sync_ingest(
+      dedupe_key: "audit-old-window",
+      observed_at: 25.hours.ago,
+      payload: { "sensor_id" => "sensor-old" }
+    )
+
+    assert_empty AuditLog.recent.where(dedupe_key: "audit-old-window")
+    assert_equal "audit-old-window", AuditLog.wireless.find("audit-old-window").dedupe_key
+  end
 end

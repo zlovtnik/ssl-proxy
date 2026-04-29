@@ -339,9 +339,12 @@ services:
         condition: service_started
     restart: "no"
     entrypoint: ["sh", "-lc"]
-    command: >
-      until mc alias set local http://minio:9000 "$$MINIO_ACCESS_KEY_ID" "$$MINIO_SECRET_ACCESS_KEY"; do sleep 1; done;
-      mc mb --ignore-existing "local/$$MINIO_BUCKET"
+    command:
+      - |
+        until mc alias set local http://minio:9000 "$$MINIO_ACCESS_KEY_ID" "$$MINIO_SECRET_ACCESS_KEY"; do
+          sleep 1
+        done
+        mc mb --ignore-existing "local/$$MINIO_BUCKET"
     environment:
       - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-minioadmin}
       - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minioadmin}

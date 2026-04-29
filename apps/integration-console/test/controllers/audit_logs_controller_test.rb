@@ -263,7 +263,54 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal audit_log_path("audit-new"), rows.first["show_url"]
   end
 
-  test "export returns csv summary" do
+  test "recent returns empty array without cursor or query" do
+    insert_sync_ingest(
+      dedupe_key: "audit-cold-scan",
+      observed_at: Time.current,
+      payload: { "sensor_id" => "sensor-1" }
+    )
+
+    get recent_audit_logs_url(format: :json)
+
+    assert_response :success
+    assert_equal [], JSON.parse(response.body)
+  end
+
+  test "recent caches query results until ttl expires" do
+    insert_sync_ingest(
+      dedupe_key: "audit-cache-1",
+      observed_at: 2.minutes.ago,
+      payload: {
+        "sensor_id" => "sensor-cache",
+        "source_mac" => "00:11:22:33:44:55"
+      }
+    )
+
+    get recent_audit_logs_url(format: :json, q: "sensor-cache")
+    assert_response :success
+    assert_equal ["audit-cache-1"], JSON.parse(response.body).map { |row| row["dedupe_key"] }
+
+    insert_sync_ingest(
+      dedupe_key: "audit-cache-2",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-cache",
+        "source_mac" => "00:11:22:33:44:66"
+      }
+    )
+
+    get recent_audit_logs_url(format: :json, q: "sensor-cache")
+    assert_response :success
+    assert_equal ["audit-cache-1"], JSON.parse(response.body).map { |row| row["dedupe_key"] }
+
+    travel 11.seconds
+
+    get recent_audit_logs_url(format: :json, q: "sensor-cache")
+    assert_response :success
+    assert_equal ["audit-cache-2", "audit-cache-1"], JSON.parse(response.body).map { |row| row["dedupe_key"] }
+  end
+
+  test "export redirects to cached csv export" do
     insert_sync_ingest(
       dedupe_key: "audit-export",
       observed_at: Time.current,
@@ -289,14 +336,19 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
       }
     )
 
-    get export_audit_logs_url(format: :csv)
+    captured_csv = nil
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+      captured_csv = block.call
+      "http://minio.test/audit.csv"
+    }) do
+      get export_audit_logs_url(format: :csv)
+    end
 
-    assert_response :success
-    assert_includes response.media_type, "text/csv"
-    assert_includes response.body, "schema_version"
-    assert_includes response.body, "audit-export"
-    assert_includes response.body, "ssdp"
-    assert_includes response.body, "abc123"
+    assert_redirected_to "http://minio.test/audit.csv"
+    assert_includes captured_csv, "schema_version"
+    assert_includes captured_csv, "audit-export"
+    assert_includes captured_csv, "ssdp"
+    assert_includes captured_csv, "abc123"
   end
 
   test "export escapes formula-like csv cells" do
@@ -320,10 +372,16 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
       }
     )
 
-    get export_audit_logs_url(format: :csv)
+    captured_csv = nil
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+      captured_csv = block.call
+      "http://minio.test/audit.csv"
+    }) do
+      get export_audit_logs_url(format: :csv)
+    end
 
-    assert_response :success
-    row = CSV.parse(response.body, headers: true).first
+    assert_redirected_to "http://minio.test/audit.csv"
+    row = CSV.parse(captured_csv, headers: true).first
     assert_equal "'=audit-export", row["dedupe_key"]
     assert_equal "'+sensor-1", row["sensor_id"]
     assert_equal "'-lab", row["location_id"]
