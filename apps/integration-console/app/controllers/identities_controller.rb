@@ -5,7 +5,7 @@ class IdentitiesController < ApplicationController
   EXPORT_CACHE_TTL = 2.minutes
 
   SORTS = {
-    "observed_at" => :observed_at
+    "observed_at" => :observed_at,
     "signal_dbm" => :signal_dbm
   }.freeze
 
