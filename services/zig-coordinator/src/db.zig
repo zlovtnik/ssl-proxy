@@ -3,6 +3,7 @@ const command = @import("command.zig");
 
 pub const Error = error{
     OutOfMemory,
+    DatabaseCheckFailed,
     SchemaApplyFailed,
     CursorEnsureFailed,
     CursorLookupFailed,
@@ -50,6 +51,22 @@ pub const Client = struct {
             command.logFailure("psql", result);
             return error.SchemaApplyFailed;
         }
+    }
+
+    pub fn checkConnectivity(self: *Client) Error!void {
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            "select 1;",
+        };
+        const output = self.runScalar(&argv, "psql", error.DatabaseCheckFailed, false) catch |err| return err;
+        defer if (output) |value| self.allocator.free(value);
+
+        if (output == null or !std.mem.eql(u8, output.?, "1")) return error.DatabaseCheckFailed;
     }
 
     pub fn ensureCursor(self: *Client, stream_name: []const u8) Error![]u8 {

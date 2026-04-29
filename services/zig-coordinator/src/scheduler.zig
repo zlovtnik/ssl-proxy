@@ -69,6 +69,7 @@ pub const Service = struct {
             return error.MissingNatsUrl;
         }
 
+        try self.runLoggedStep("healthcheck_step", "check_postgres", Service.checkDatabaseConnectivity);
         try self.runLoggedStep("healthcheck_step", "check_nats", Service.checkNatsConnectivity);
         try self.runLoggedStep("healthcheck_step", "check_nats_streams", Service.checkNatsStreams);
         try self.runLoggedStep("healthcheck_step", "check_nats_consumers", Service.checkNatsConsumers);
@@ -220,6 +221,10 @@ pub const Service = struct {
 
     fn applySchema(self: *Service) Error!void {
         try self.database.applySchema();
+    }
+
+    fn checkDatabaseConnectivity(self: *Service) Error!void {
+        try self.database.checkConnectivity();
     }
 
     fn checkNatsConnectivity(self: *Service) Error!void {
