@@ -245,7 +245,7 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'fk_sync_error_batch_id') then
     alter table sync_error add constraint fk_sync_error_batch_id foreign key (batch_id) references sync_batch(batch_id);
   end if;
-end $$;
+end $$ ;
 
 create unique index if not exists sync_batch_dedupe_idx on sync_batch (dedupe_key);
 create index if not exists idx_sync_job_stream_name on sync_job (stream_name);
