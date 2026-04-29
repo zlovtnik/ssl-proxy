@@ -6,6 +6,7 @@ class IdentitiesController < ApplicationController
 
   SORTS = {
     "observed_at" => :observed_at
+    "signal_dbm" => :signal_dbm
   }.freeze
 
   def index
