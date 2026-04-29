@@ -293,12 +293,8 @@ create table if not exists authorized_wireless_networks (
   )
 );
 
-create unique index if not exists authorized_wireless_networks_match_idx
-  on authorized_wireless_networks (
-    coalesce(lower(ssid), ''),
-    coalesce(lower(bssid), ''),
-    coalesce(location_id, '')
-  );
+create index if not exists authorized_wireless_networks_enabled_idx
+  on authorized_wireless_networks (enabled, location_id);
 
 create table if not exists shadow_it_alerts (
   alert_id bigserial primary key,
@@ -317,9 +313,6 @@ create table if not exists shadow_it_alerts (
   updated_at timestamptz not null default now()
 );
 
-create index if not exists authorized_wireless_networks_enabled_idx
-  on authorized_wireless_networks (enabled, location_id);
-  
 create index if not exists shadow_it_alerts_open_idx
   on shadow_it_alerts (observed_at desc)
   where resolved_at is null;
@@ -345,8 +338,7 @@ create index if not exists devices_mac_hint_idx on devices (lower(mac_hint));
 create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
 create index if not exists devices_username_idx on devices (username, last_seen desc);
 
--- Handle view column rename safely - Postgres does not allow renaming columns via CREATE OR REPLACE VIEW
-do $$
+
 drop view if exists v_wireless_audit_with_devices;
 
 create view v_wireless_audit_with_devices as
@@ -418,44 +410,6 @@ left join devices d_bssid
   on lower(d_bssid.mac_hint) = lower(coalesce(ssi.bssid, ssi.payload->>'bssid'))
 where ssi.stream_name = 'wireless.audit';
 
-do $$
-begin
-  if exists (
-    select 1
-    from pg_indexes
-    where schemaname = current_schema()
-      and indexname = 'ssi_wireless_ssid_idx'
-      and indexdef not ilike '%(ssid,%'
-  ) then
-    drop index ssi_wireless_ssid_idx;
-  end if;
-end $$;
-
-do $$
-begin
-  if exists (
-    select 1
-    from pg_indexes
-    where schemaname = current_schema()
-      and indexname = 'ssi_wireless_source_mac_idx'
-      and indexdef not ilike '%lower(source_mac)%'
-  ) then
-    drop index ssi_wireless_source_mac_idx;
-  end if;
-end $$;
-
-do $$
-begin
-  if exists (
-    select 1
-    from pg_indexes
-    where schemaname = current_schema()
-      and indexname = 'ssi_wireless_bssid_idx'
-      and indexdef not ilike '%lower(bssid)%'
-  ) then
-    drop index ssi_wireless_bssid_idx;
-  end if;
-end $$;
 
 create index if not exists ssi_wireless_ssid_idx
   on sync_scan_ingest (ssid, observed_at desc)
