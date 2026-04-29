@@ -130,6 +130,9 @@ class ActiveSupport::TestCase
   end
 
   def ensure_wireless_audit_views
+    sync_connection.execute("DROP VIEW IF EXISTS v_wireless_device_inventory")
+    sync_connection.execute("DROP VIEW IF EXISTS v_wireless_audit_with_devices")
+
     sync_connection.execute(<<~SQL)
       CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
       SELECT

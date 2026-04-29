@@ -29,6 +29,39 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Page 2 of 2"
   end
 
+  test "index ignores unsafe sort parameters" do
+    older = 10.minutes.ago
+    newer = Time.current
+
+    insert_sync_ingest(
+      dedupe_key: "identity-old",
+      observed_at: older,
+      payload: {
+        "source_mac" => "00:11:22:33:44:55",
+        "bssid" => "aa:bb:cc:dd:ee:ff",
+        "ssid" => "old-lab",
+        "signal_dbm" => -20
+      }
+    )
+    insert_sync_ingest(
+      dedupe_key: "identity-new",
+      observed_at: newer,
+      payload: {
+        "source_mac" => "00:11:22:33:44:66",
+        "bssid" => "aa:bb:cc:dd:ee:ff",
+        "ssid" => "new-lab",
+        "signal_dbm" => -90
+      }
+    )
+
+    get identities_url(sort: "signal_dbm", direction: "asc")
+
+    assert_response :success
+    assert_operator response.body.index("new-lab"), :<, response.body.index("old-lab")
+    assert_no_match(/sort=signal_dbm/, response.body)
+    assert_no_match(/sort=ssid/, response.body)
+  end
+
   test "inventory exports json summaries and redirects cached csv exports" do
     insert_sync_ingest(
       dedupe_key: "inventory-1",

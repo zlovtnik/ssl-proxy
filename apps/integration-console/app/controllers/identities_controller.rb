@@ -5,24 +5,15 @@ class IdentitiesController < ApplicationController
   EXPORT_CACHE_TTL = 2.minutes
 
   SORTS = {
-    "observed_at" => :observed_at,
-    "source_mac" => :source_mac,
-    "bssid" => :bssid,
-    "destination_bssid" => :destination_bssid,
-    "ssid" => :ssid,
-    "signal_dbm" => :signal_dbm,
-    "username" => :username,
-    "registered_username" => :registered_username,
-    "display_name" => :display_name,
-    "device_fingerprint" => :device_fingerprint,
-    "wps_device_name" => :wps_device_name
+    "observed_at" => :observed_at
   }.freeze
 
   def index
     @query = params[:q].to_s.strip
+    @inventory_query_parameters = @query.present? ? { q: @query } : {}
     @identities = WirelessAuditIdentity.recent
     @identities = @identities.search(@query) if @query.present?
-    @identities = apply_sort(@identities, SORTS, default_sort: :observed_at)
+    @identities = apply_identity_sort(@identities)
     @identities = paginate_window(@identities)
   end
 
@@ -60,6 +51,16 @@ class IdentitiesController < ApplicationController
   end
 
   private
+
+  def apply_identity_sort(scope)
+    if SORTS.key?(params[:sort].to_s)
+      apply_sort(scope, SORTS, default_sort: :observed_at)
+    else
+      @sort = "observed_at"
+      @direction = "desc"
+      scope.reorder(observed_at: :desc)
+    end
+  end
 
   def mac_summary_payload(query)
     normalized = Device.normalize_mac(query)
