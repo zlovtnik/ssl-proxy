@@ -232,9 +232,19 @@ async fn handle_load_message(
         .ack()
         .await
         .map_err(|error| format!("ack sync.oracle.load message for batch {batch_id}: {error}"))?;
-    println!(
-        "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status={status}"
-    );
+    
+    if status == "success" {
+        println!(
+            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status=success"
+        );
+    } else {
+        eprintln!(
+            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status={status} error_class={} retryable={} error=\"{}\"",
+            result.error_class,
+            result.retryable,
+            escape_for_log(&result.error_text)
+        );
+    }
 
     Ok(())
 }

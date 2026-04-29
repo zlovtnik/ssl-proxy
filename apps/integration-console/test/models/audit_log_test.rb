@@ -233,8 +233,15 @@ class AuditLogTest < ActiveSupport::TestCase
     insert_sync_ingest(dedupe_key: "cleanup-new", observed_at: base + 20.seconds, payload: payload)
     sync_connection.execute(<<~SQL.squish)
       UPDATE sync_scan_ingest
-      SET created_at = '2026-04-29 10:16:00+00', updated_at = '2026-04-29 10:16:00+00'
-      WHERE dedupe_key = 'cleanup-new'
+      SET created_at = CASE dedupe_key
+            WHEN 'cleanup-old' THEN '2026-04-29 10:15:00+00'::timestamptz
+            ELSE '2026-04-29 10:16:00+00'::timestamptz
+          END,
+          updated_at = CASE dedupe_key
+            WHEN 'cleanup-old' THEN '2026-04-29 10:15:00+00'::timestamptz
+            ELSE '2026-04-29 10:16:00+00'::timestamptz
+          END
+      WHERE dedupe_key IN ('cleanup-old', 'cleanup-new')
     SQL
 
     result = sync_connection.select_one(<<~SQL.squish)

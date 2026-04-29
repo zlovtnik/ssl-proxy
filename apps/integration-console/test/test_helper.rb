@@ -207,6 +207,8 @@ class ActiveSupport::TestCase
 
   def ensure_sync_plane_health_view
     sync_connection.execute(<<~SQL)
+      DROP VIEW IF EXISTS v_sync_plane_health;
+
       CREATE OR REPLACE VIEW v_sync_plane_health AS
       WITH ingest_status AS (
         SELECT status, count(*)::bigint AS row_count

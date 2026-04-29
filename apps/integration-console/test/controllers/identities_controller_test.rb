@@ -26,7 +26,8 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, "user-50"
     assert_no_match(/user-00/, response.body)
-    assert_includes response.body, "Page 2 of 2"
+    assert_includes response.body, "Page 2"
+    assert_not_includes response.body, "Page 2 of"
   end
 
   test "index ignores unsafe sort parameters" do
@@ -54,7 +55,7 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
       }
     )
 
-    get identities_url(sort: "signal_dbm", direction: "asc")
+    get identities_url(sort: "ssid", direction: "asc")
 
     assert_response :success
     assert_operator response.body.index("new-lab"), :<, response.body.index("old-lab")

@@ -1,6 +1,8 @@
 class CreateSyncPlaneHealthView < ActiveRecord::Migration[7.2]
   def up
     execute <<~SQL
+      DROP VIEW IF EXISTS v_sync_plane_health;
+
       CREATE OR REPLACE VIEW v_sync_plane_health AS
       WITH ingest_status AS (
         SELECT
