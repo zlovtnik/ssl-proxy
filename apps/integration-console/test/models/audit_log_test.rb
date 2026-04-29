@@ -238,7 +238,7 @@ class AuditLogTest < ActiveSupport::TestCase
     SQL
 
     result = sync_connection.select_one(<<~SQL.squish)
-      SELECT * FROM normalize_wireless_audit_minutes('2026-04-29 10:00:00+00', '2026-04-29 11:00:00+00')
+      SELECT * FROM normalize_wireless_audit_minutes('2026-04-29 10:15:10+00', '2026-04-29 11:00:00+00')
     SQL
     rows = sync_connection.select_all("SELECT dedupe_key, observed_at FROM sync_scan_ingest ORDER BY dedupe_key").to_a
 

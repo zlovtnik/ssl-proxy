@@ -4,7 +4,6 @@
   import ResourceActions from "../components/ResourceActions.svelte"
   import ResourceForm from "../components/ResourceForm.svelte"
   import { requestJson, errorMessages } from "../lib/api"
-  import { formatTime } from "../lib/format"
   import { paramsFromLocation, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
@@ -176,8 +175,8 @@
     query = next.q
     sortKey = next.sort || sortKey
     sortDirection = next.direction || sortDirection
-    currentPage = next.page
-    perPage = next.per_page
+    currentPage = next.page ?? currentPage
+    perPage = next.per_page ?? perPage
   }
 
   initializeFromUrl()
@@ -185,11 +184,11 @@
 
 <div>
   <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-    <h1 class="text-2xl font-bold text-[var(--color-text)]">{config.title}</h1>
+    <h1 class="text-2xl font-bold text-(--color-text)">{config.title}</h1>
     {#if initial.mode !== "form"}
       <button
         type="button"
-        class="min-h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-semibold text-[var(--color-accent-vivid)] hover:bg-[var(--color-accent-surface)]"
+        class="min-h-9 rounded-md border border-(--color-border-strong) bg-(--color-surface) px-3 py-2 text-sm font-semibold text-(--color-accent-vivid) hover:bg-(--color-accent-surface)"
         on:click={startNew}
       >
         {config.newLabel || "New"}
@@ -198,11 +197,11 @@
   </div>
 
   {#if notice}
-    <div class="mb-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-accent-surface)] px-3 py-2 text-sm text-[var(--color-accent-vivid)]" role="status">{notice}</div>
+    <div class="mb-3 rounded-md border border-(--color-border-strong) bg-(--color-accent-surface) px-3 py-2 text-sm text-(--color-accent-vivid)" role="status">{notice}</div>
   {/if}
 
   {#if loadError}
-    <div class="mb-3 rounded-md border border-[var(--color-danger-border)] bg-[var(--color-danger-surface)] px-3 py-2 text-sm text-[var(--color-danger-text)]" role="alert">{loadError}</div>
+    <div class="mb-3 rounded-md border border-(--color-danger-border) bg-(--color-danger-surface) px-3 py-2 text-sm text-(--color-danger-text)" role="alert">{loadError}</div>
   {/if}
 
   {#if mode !== "index" && formRecord}

@@ -17,4 +17,11 @@ class DeviceTest < ActiveSupport::TestCase
 
     assert_not device.valid?
   end
+
+  test "search normalizes mac-like queries" do
+    device = Device.create!(display_name: "Phone", mac_hint: "AA-BB-CC-DD-EE-FF")
+
+    assert_equal [device], Device.search("aabbccddeeff").to_a
+    assert_equal [device], Device.search("aa-bb-cc-dd-ee-ff").to_a
+  end
 end

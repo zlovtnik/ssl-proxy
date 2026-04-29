@@ -20,10 +20,13 @@ class Device < ApplicationRecord
     if sanitized.blank?
       all
     else
+      normalized = normalize_mac(sanitized) if sanitized.match?(/\A[0-9a-f:.-]+\z/i)
+      mac_pattern = "%#{sanitize_sql_like(normalized || sanitized)}%"
       pattern = "%#{sanitize_sql_like(sanitized)}%"
       where(
-        "lower(device_id) LIKE :q OR lower(COALESCE(display_name, '')) LIKE :q OR lower(COALESCE(username, '')) LIKE :q OR lower(COALESCE(hostname, '')) LIKE :q OR lower(COALESCE(os_hint, '')) LIKE :q OR lower(COALESCE(mac_hint, '')) LIKE :q",
-        q: pattern
+        "lower(device_id) LIKE :q OR lower(COALESCE(display_name, '')) LIKE :q OR lower(COALESCE(username, '')) LIKE :q OR lower(COALESCE(hostname, '')) LIKE :q OR lower(COALESCE(os_hint, '')) LIKE :q OR lower(COALESCE(mac_hint, '')) LIKE :mac_q",
+        q: pattern,
+        mac_q: mac_pattern
       )
     end
   }

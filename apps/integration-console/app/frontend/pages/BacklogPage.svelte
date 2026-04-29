@@ -117,22 +117,22 @@
   const next = paramsFromLocation({ sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
   sortKey = next.sort || sortKey
   sortDirection = next.direction || sortDirection
-  currentPage = next.page
-  perPage = next.per_page
+  currentPage = next.page ?? currentPage
+  perPage = next.per_page ?? perPage
 </script>
 
 <div>
   <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-    <h1 class="text-2xl font-bold text-[var(--color-text)]">Backlog Manager</h1>
+    <h1 class="text-2xl font-bold text-(--color-text)">Backlog Manager</h1>
     <Select label="Status" bind:value={status} options={statusOptions} onChange={handleStatusChange} />
   </div>
 
   {#if notice}
-    <div class="mb-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-accent-surface)] px-3 py-2 text-sm text-[var(--color-accent-vivid)]" role="status">{notice}</div>
+    <div class="mb-3 rounded-md border border-(--color-border-strong) bg-(--color-accent-surface) px-3 py-2 text-sm text-(--color-accent-vivid)" role="status">{notice}</div>
   {/if}
 
   {#if loadError}
-    <div class="mb-3 rounded-md border border-[var(--color-danger-border)] bg-[var(--color-danger-surface)] px-3 py-2 text-sm text-[var(--color-danger-text)]" role="alert">{loadError}</div>
+    <div class="mb-3 rounded-md border border-(--color-danger-border) bg-(--color-danger-surface) px-3 py-2 text-sm text-(--color-danger-text)" role="alert">{loadError}</div>
   {/if}
 
   <DataGrid

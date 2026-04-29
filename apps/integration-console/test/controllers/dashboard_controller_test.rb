@@ -60,6 +60,13 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
       },
       status: "pending"
     )
+    insert_sync_ingest(
+      dedupe_key: "failed-global-ingest",
+      observed_at: 2.minutes.ago,
+      payload: { "source_mac" => "66:77:88:99:aa:bb" },
+      stream_name: "sync.scan.request",
+      status: "failed"
+    )
     insert_backlog(dedupe_key: "pending-backlog", status: "pending")
     insert_shadow_it_alert
 
@@ -82,6 +89,12 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
     assert_equal 1, counts.fetch("job_orphans")
     assert_equal 1, counts.fetch("job_effective_running")
     assert_equal 1, counts.fetch("job_effective_completed")
+
+    get root_url
+
+    assert_response :success
+    assert_includes response.body, "Wireless ingest"
+    assert_includes response.body, "1 pending, 0 processing, 0 failed"
   end
 
   private

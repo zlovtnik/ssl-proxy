@@ -215,7 +215,7 @@ Client migration guidance: treat `claim_token` as nullable/optional and only per
 
 ---
 
-### 8. Security Hardening Controls (Threat-Model Gap Closure)
+### 9. Security Hardening Controls (Threat-Model Gap Closure)
 
 Set these environment variables for hardened control-plane behavior:
 

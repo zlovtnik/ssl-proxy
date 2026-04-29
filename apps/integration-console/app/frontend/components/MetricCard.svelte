@@ -12,17 +12,17 @@
   export let sparkline = []
 
   $: statusClass = {
-    ok: "border-l-[var(--color-accent-vivid)]",
-    warn: "border-l-[var(--color-accent)]",
-    alert: "border-l-[var(--color-danger-text)]",
-    neutral: "border-l-[var(--color-border)]"
-  }[status] || "border-l-[var(--color-border)]"
+    ok: "border-l-(--color-accent-vivid)",
+    warn: "border-l-(--color-accent)",
+    alert: "border-l-(--color-danger-text)",
+    neutral: "border-l-(--color-border)"
+  }[status] || "border-l-(--color-border)"
 
   $: trendClass = {
-    up: "text-[var(--color-accent-vivid)]",
-    down: "text-[var(--color-danger-text)]",
-    flat: "text-[var(--color-text-muted)]"
-  }[trend] || "text-[var(--color-text-muted)]"
+    up: "text-(--color-accent-vivid)",
+    down: "text-(--color-danger-text)",
+    flat: "text-(--color-text-muted)"
+  }[trend] || "text-(--color-text-muted)"
 
   $: path = sparklinePath(sparkline)
   $: iconPaths = icons[icon] || []
@@ -47,21 +47,21 @@
   }
 </script>
 
-<article class={`rounded-lg border border-[var(--color-border-muted)] border-l-4 ${statusClass} bg-[var(--color-surface)] p-4`}>
+<article class={`rounded-lg border border-(--color-border-muted) border-l-4 ${statusClass} bg-(--color-surface) p-4`}>
   <div class="flex items-start justify-between gap-3">
     <div>
-      <div class="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">{label}</div>
       {#if loading}
-        <div class="mt-3 h-8 w-24 animate-pulse rounded bg-[var(--color-border-muted)]"></div>
+        <div class="mt-3 h-8 w-24 animate-pulse rounded bg-(--color-border-muted)"></div>
       {:else}
-        <div class="mt-2 text-3xl font-bold text-[var(--color-accent-vivid)]">{value}</div>
+        <div class="mt-2 text-3xl font-bold text-(--color-accent-vivid)">{value}</div>
       {/if}
       {#if subValue}
-        <div class="mt-1 text-sm text-[var(--color-text-muted)]">{subValue}</div>
+        <div class="mt-1 text-sm text-(--color-text-muted)">{subValue}</div>
       {/if}
     </div>
     {#if iconPaths.length}
-      <svg class="h-8 w-8 shrink-0 text-[var(--color-accent-vivid)]" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="h-8 w-8 shrink-0 text-(--color-accent-vivid)" viewBox="0 0 24 24" aria-hidden="true">
         {#each iconPaths as d}
           <path {d} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         {/each}
@@ -77,7 +77,7 @@
   {/if}
 
   {#if path}
-    <svg class="mt-3 h-8 w-full text-[var(--color-accent-vivid)]" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="mt-3 h-8 w-full text-(--color-accent-vivid)" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
       <path d={path} fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" />
     </svg>
   {/if}

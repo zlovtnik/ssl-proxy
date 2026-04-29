@@ -1,6 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 
 const MAC_RE = /^(?:[0-9a-fA-F]{2}|[xX]{2})(?::(?:[0-9a-fA-F]{2}|[xX]{2})){5}$/
+const HOVER_DELAY_MS = 350
 
 export default class extends Controller {
   static values = {
@@ -66,7 +67,7 @@ export default class extends Controller {
     window.clearTimeout(this.hideTimer)
     window.clearTimeout(this.showTimer)
 
-    this.showTimer = window.setTimeout(() => this._show(mac, anchor), 2000)
+    this.showTimer = window.setTimeout(() => this._show(mac, anchor), HOVER_DELAY_MS)
   }
 
   showNow(mac, anchor) {

@@ -84,7 +84,7 @@ class IdentitiesController < ApplicationController
     if lookup.include?(":") && lookup.split(":").length == 6
       Device.where("lower(mac_hint) = ?", lookup.downcase).first
     else
-      Device.where("lower(mac_hint) LIKE ?", "%#{Device.sanitize_sql_like(lookup.downcase)}").first
+      Device.where("lower(mac_hint) LIKE ?", "%#{Device.sanitize_sql_like(lookup.downcase)}%").first
     end
   end
 
@@ -96,7 +96,7 @@ class IdentitiesController < ApplicationController
         mac: lookup.downcase
       )
     else
-      pattern = "%#{AuditLog.sanitize_sql_like(lookup.downcase)}"
+      pattern = "%#{AuditLog.sanitize_sql_like(lookup.downcase)}%"
       scope.where(
         "lower(source_mac) LIKE :q OR lower(bssid) LIKE :q OR lower(destination_bssid) LIKE :q",
         q: pattern

@@ -62,11 +62,11 @@
   <span class="relative inline-flex" role="presentation" on:mouseenter={scheduleShow} on:mouseleave={scheduleHide} on:focusin={showNow} on:focusout={scheduleHide}>
     <a
       bind:this={anchor}
-      class="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-[var(--color-border-strong)] bg-[var(--color-accent-surface)] px-2 py-0.5 font-mono text-xs text-[var(--color-accent-vivid)] no-underline hover:bg-[var(--color-accent-surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
+      class="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-(--color-border-strong) bg-(--color-accent-surface) px-2 py-0.5 font-mono text-xs text-(--color-accent-vivid) no-underline hover:bg-(--color-accent-surface-strong) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
       {href}
       aria-label={`Search for MAC ${shown || mac}`}
     >
-      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" aria-hidden="true"></span>
+      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-(--color-accent)" aria-hidden="true"></span>
       <span>{shown || mac}</span>
     </a>
     <MacHoverCard

@@ -211,7 +211,7 @@
   <div
     bind:this={cardElement}
     class={[
-      "absolute z-50 w-80 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-text)] shadow-[var(--shadow-popover)]",
+      "absolute z-50 w-80 rounded-lg border border-(--color-border-strong) bg-(--color-surface) p-3 text-sm text-(--color-text) shadow-(--shadow-popover)",
       placement === "above" ? "bottom-full mb-2" : "top-full mt-2",
       align === "right" ? "right-0" : "left-0"
     ].join(" ")}
@@ -222,71 +222,71 @@
   >
     <div class="mb-2 flex items-start justify-between gap-2">
       <div class="min-w-0">
-        <div class="truncate font-semibold text-[var(--color-accent-vivid)]">{mac}</div>
+        <div class="truncate font-semibold text-(--color-accent-vivid)">{mac}</div>
         {#if data?.registry?.display_name || data?.registry?.username}
-          <div class="mt-1 truncate text-xs text-[var(--color-text-muted)]">{data.registry.display_name || "Known device"}{#if data.registry.username} / {data.registry.username}{/if}</div>
+          <div class="mt-1 truncate text-xs text-(--color-text-muted)">{data.registry.display_name || "Known device"}{#if data.registry.username} / {data.registry.username}{/if}</div>
         {/if}
         {#if data?.device?.ssid}
-          <div class="mt-1 inline-flex max-w-full rounded border border-[var(--color-border-strong)] bg-[var(--color-accent-surface)] px-2 py-0.5 text-xs text-[var(--color-accent-vivid)]">{data.device.ssid}</div>
+          <div class="mt-1 inline-flex max-w-full rounded border border-(--color-border-strong) bg-(--color-accent-surface) px-2 py-0.5 text-xs text-(--color-accent-vivid)">{data.device.ssid}</div>
         {/if}
       </div>
-      <button type="button" class="rounded border border-[var(--color-border-muted)] px-2 py-1 text-xs text-[var(--color-accent-vivid)]" on:click={onDismiss} aria-label="Close MAC summary">Close</button>
+      <button type="button" class="rounded border border-(--color-border-muted) px-2 py-1 text-xs text-(--color-accent-vivid)" on:click={onDismiss} aria-label="Close MAC summary">Close</button>
     </div>
 
     {#if loading}
-      <div class="rounded bg-[var(--color-bg)] p-3 text-[var(--color-text-muted)]">Loading...</div>
+      <div class="rounded bg-(--color-bg) p-3 text-(--color-text-muted)">Loading...</div>
     {:else if error}
-      <div class="rounded border border-[var(--color-danger-border)] bg-[var(--color-danger-surface)] p-3 text-[var(--color-danger-text)]">
+      <div class="rounded border border-(--color-danger-border) bg-(--color-danger-surface) p-3 text-(--color-danger-text)">
         <div>No MAC summary available.</div>
-        <button type="button" class="mt-2 rounded border border-[var(--color-danger-text)] px-2 py-1 text-xs text-[var(--color-danger-text)]" on:click={retry}>Retry</button>
+        <button type="button" class="mt-2 rounded border border-(--color-danger-text) px-2 py-1 text-xs text-(--color-danger-text)" on:click={retry}>Retry</button>
       </div>
     {:else if data}
       <div class="grid grid-cols-3 gap-2">
-        <div class="rounded bg-[var(--color-bg)] p-2">
-          <div class="truncate text-base font-semibold text-[var(--color-accent-vivid)]">{data.count || "-"}</div>
-          <div class="text-xs text-[var(--color-text-faint)]">frames</div>
+        <div class="rounded bg-(--color-bg) p-2">
+          <div class="truncate text-base font-semibold text-(--color-accent-vivid)">{data.count || "-"}</div>
+          <div class="text-xs text-(--color-text-faint)">frames</div>
         </div>
-        <div class="rounded bg-[var(--color-bg)] p-2">
-          <div class="truncate text-base font-semibold text-[var(--color-accent-vivid)]">{data.signal || "-"}</div>
-          <div class="text-xs text-[var(--color-text-faint)]">signal</div>
+        <div class="rounded bg-(--color-bg) p-2">
+          <div class="truncate text-base font-semibold text-(--color-accent-vivid)">{data.signal || "-"}</div>
+          <div class="text-xs text-(--color-text-faint)">signal</div>
         </div>
-        <div class="rounded bg-[var(--color-bg)] p-2">
-          <div class="truncate text-base font-semibold text-[var(--color-accent-vivid)]">{data.device?.protected_frame_count ?? "-"}</div>
-          <div class="text-xs text-[var(--color-text-faint)]">encrypted</div>
+        <div class="rounded bg-(--color-bg) p-2">
+          <div class="truncate text-base font-semibold text-(--color-accent-vivid)">{data.device?.protected_frame_count ?? "-"}</div>
+          <div class="text-xs text-(--color-text-faint)">encrypted</div>
         </div>
       </div>
 
       {#if data.device?.ip_addresses}
-        <div class="mt-2 truncate text-xs text-[var(--color-text-muted)]">{data.device.ip_addresses}</div>
+        <div class="mt-2 truncate text-xs text-(--color-text-muted)">{data.device.ip_addresses}</div>
       {/if}
       {#if data.device?.services}
-        <div class="mt-1 truncate text-xs text-[var(--color-text-muted)]">{data.device.services}</div>
+        <div class="mt-1 truncate text-xs text-(--color-text-muted)">{data.device.services}</div>
       {/if}
 
-      <div class="mt-2 text-xs leading-5 text-[var(--color-text-faint)]">
+      <div class="mt-2 text-xs leading-5 text-(--color-text-faint)">
         <div>First: {formatTime(data.firstSeen) || "-"}</div>
         <div>Last: {formatTime(data.lastSeen) || "-"}</div>
       </div>
 
-      <div class="mt-2 border-t border-[var(--color-border-muted)] pt-2">
-        <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent-vivid)]">Sessions</div>
+      <div class="mt-2 border-t border-(--color-border-muted) pt-2">
+        <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-(--color-accent-vivid)">Sessions</div>
         {#if data.sessions.length}
           <ul class="space-y-1">
             {#each data.sessions as session}
-              <li class="truncate rounded bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-text-muted)]">{session}</li>
+              <li class="truncate rounded bg-(--color-bg) px-2 py-1 text-xs text-(--color-text-muted)">{session}</li>
             {/each}
           </ul>
         {:else}
-          <div class="text-xs text-[var(--color-text-faint)]">No recent sessions.</div>
+          <div class="text-xs text-(--color-text-faint)">No recent sessions.</div>
         {/if}
       </div>
     {/if}
 
-    <div class="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-border-muted)] pt-2">
-      <a class="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs text-[var(--color-accent-vivid)] hover:bg-[var(--color-accent-surface)]" href={link(auditLogsUrl)}>Audit logs</a>
-      <a class="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs text-[var(--color-accent-vivid)] hover:bg-[var(--color-accent-surface)]" href={link(identitiesUrl)}>Identities</a>
-      <a class="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs text-[var(--color-accent-vivid)] hover:bg-[var(--color-accent-surface)]" href={link(shadowItUrl)}>Shadow IT</a>
-      <button type="button" class="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs text-[var(--color-accent-vivid)] hover:bg-[var(--color-accent-surface)]" on:click={copyMac}>{copied ? "Copied (OK)" : "Copy MAC"}</button>
+    <div class="mt-3 flex flex-wrap gap-2 border-t border-(--color-border-muted) pt-2">
+      <a class="rounded border border-(--color-border-strong) px-2 py-1 text-xs text-(--color-accent-vivid) hover:bg-(--color-accent-surface)" href={link(auditLogsUrl)}>Audit logs</a>
+      <a class="rounded border border-(--color-border-strong) px-2 py-1 text-xs text-(--color-accent-vivid) hover:bg-(--color-accent-surface)" href={link(identitiesUrl)}>Identities</a>
+      <a class="rounded border border-(--color-border-strong) px-2 py-1 text-xs text-(--color-accent-vivid) hover:bg-(--color-accent-surface)" href={link(shadowItUrl)}>Shadow IT</a>
+      <button type="button" class="rounded border border-(--color-border-strong) px-2 py-1 text-xs text-(--color-accent-vivid) hover:bg-(--color-accent-surface)" on:click={copyMac}>{copied ? "Copied (OK)" : "Copy MAC"}</button>
     </div>
   </div>
 {/if}

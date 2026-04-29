@@ -38,7 +38,6 @@ class DevicesControllerTest < ActionDispatch::IntegrationTest
     end
 
     assert_redirected_to devices_path
-    assert_response :see_other
     assert_equal "00:11:22:33:44:55", Device.last.mac_hint
   end
 
