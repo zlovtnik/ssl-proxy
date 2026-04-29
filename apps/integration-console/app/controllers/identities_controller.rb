@@ -23,7 +23,7 @@ class IdentitiesController < ApplicationController
     @identities = WirelessAuditIdentity.recent
     @identities = @identities.search(@query) if @query.present?
     @identities = apply_sort(@identities, SORTS, default_sort: :observed_at)
-    @identities = paginate(@identities)
+    @identities = paginate_window(@identities)
   end
 
   def inventory
@@ -40,7 +40,7 @@ class IdentitiesController < ApplicationController
       end
       format.csv do
         key = ExportStore.key_for(type: "inventory", query: @query, sort: "last_seen", direction: "desc")
-        url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL) do
+        url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL, filename: "wireless-inventory.csv") do
           inventory_csv(scope.limit(EXPORT_MAX_ROWS))
         end
 
@@ -49,7 +49,104 @@ class IdentitiesController < ApplicationController
     end
   end
 
+  def mac_summary
+    query = params[:q].to_s.strip
+    if query.blank?
+      render_cached_json({ mac: "", device: nil, inventory: nil, recentAuditLogs: [] }, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
+      return
+    end
+
+    render_cached_json(mac_summary_payload(query), browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
+  end
+
   private
+
+  def mac_summary_payload(query)
+    normalized = Device.normalize_mac(query)
+    lookup = normalized || query.downcase
+    device = device_for_mac(lookup)
+    logs = recent_logs_for_mac(lookup).limit(25).to_a
+
+    {
+      mac: normalized || query,
+      device: device && device_payload(device),
+      inventory: inventory_from_logs(logs),
+      recentAuditLogs: logs.map { |entry| audit_summary_payload(entry) }
+    }
+  end
+
+  def device_for_mac(lookup)
+    return if lookup.blank?
+
+    if lookup.include?(":") && lookup.split(":").length == 6
+      Device.where("lower(mac_hint) = ?", lookup.downcase).first
+    else
+      Device.where("lower(mac_hint) LIKE ?", "%#{Device.sanitize_sql_like(lookup.downcase)}").first
+    end
+  end
+
+  def recent_logs_for_mac(lookup)
+    scope = AuditLog.recent
+    if lookup.include?(":") && lookup.split(":").length == 6
+      scope.where(
+        "lower(source_mac) = :mac OR lower(bssid) = :mac OR lower(destination_bssid) = :mac",
+        mac: lookup.downcase
+      )
+    else
+      pattern = "%#{AuditLog.sanitize_sql_like(lookup.downcase)}"
+      scope.where(
+        "lower(source_mac) LIKE :q OR lower(bssid) LIKE :q OR lower(destination_bssid) LIKE :q",
+        q: pattern
+      )
+    end
+  end
+
+  def device_payload(device)
+    {
+      device_id: device.device_id,
+      display_name: device.display_name,
+      username: device.username,
+      hostname: device.hostname,
+      os_hint: device.os_hint,
+      mac_hint: device.mac_hint,
+      notes: device.notes
+    }
+  end
+
+  def inventory_from_logs(logs)
+    return if logs.blank?
+
+    signals = logs.map(&:signal_dbm).compact
+    {
+      source_mac: logs.filter_map(&:source_mac).first,
+      location_id: logs.filter_map(&:location_id).first,
+      first_seen: logs.map(&:observed_at).compact.min&.iso8601(6),
+      last_seen: logs.map(&:observed_at).compact.max&.iso8601(6),
+      ssid: logs.filter_map(&:ssid).first,
+      destination_bssid: logs.filter_map(&:destination_bssid).first,
+      ip_addresses: logs.flat_map { |entry| [entry.src_ip, entry.dst_ip] }.compact.uniq.first(5).join(", "),
+      hostnames: logs.filter_map(&:dhcp_hostname).uniq.first(5).join(", "),
+      services: logs.filter_map(&:app_protocol).uniq.first(5).join(", "),
+      frame_count: logs.length,
+      protected_frame_count: logs.count(&:protected),
+      open_frame_count: logs.count { |entry| !entry.protected },
+      signal_min: signals.min,
+      signal_max: signals.max
+    }
+  end
+
+  def audit_summary_payload(entry)
+    {
+      dedupe_key: entry.dedupe_key,
+      observed_at: entry.observed_at&.iso8601(6),
+      signal_dbm: entry.signal_dbm,
+      session_key: entry.session_key,
+      ssid: entry.ssid,
+      source_mac: entry.source_mac,
+      destination_bssid: entry.destination_bssid,
+      app_protocol: entry.app_protocol
+    }
+  end
 
   def inventory_cache_key(query)
     "inventory:#{Digest::SHA1.hexdigest(query.to_s.strip.downcase)}"

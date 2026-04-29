@@ -1,0 +1,12 @@
+<% content_for :title, "Edit MAC Identifier" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<%= svelte_props_tag("devices-svelte-root", initial: @device_page_payload) %>
+<div id="devices-svelte-root"></div>
+<%= svelte_bundle_tags(:devices) %>
+
+<noscript>
+  <p><%= link_to "Back to MAC identifiers", devices_path %></p>
+  <h1>Edit MAC Identifier</h1>
+  <%= render "form", device: @device %>
+</noscript>

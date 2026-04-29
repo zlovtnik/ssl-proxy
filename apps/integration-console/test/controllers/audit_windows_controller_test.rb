@@ -1,6 +1,25 @@
 require "test_helper"
 
 class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
+  setup do
+    AuditWindow.delete_all
+  end
+
+  test "index renders svelte root and json payload" do
+    AuditWindow.create!(location_id: "lab", timezone: "UTC", enabled: true)
+
+    get audit_windows_url
+
+    assert_response :success
+    assert_includes response.body, "audit-windows-svelte-root"
+    assert_includes response.body, "lab"
+
+    get audit_windows_url(format: :json)
+
+    assert_response :success
+    assert_equal ["lab"], JSON.parse(response.body).fetch("rows").map { |row| row["location_id"] }
+  end
+
   test "create redirects with see other when publishing succeeds" do
     publisher = Object.new
     def publisher.call = true

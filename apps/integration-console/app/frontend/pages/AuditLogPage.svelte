@@ -91,6 +91,7 @@
       identitiesUrl: macOptions.identitiesUrl || "/identities",
       shadowItUrl: macOptions.shadowItUrl || "/shadow_it_alerts",
       inventoryUrl: macOptions.inventoryUrl || "/identities/inventory.json",
+      summaryUrl: macOptions.macSummaryUrl || "/identities/mac_summary.json",
       recentAuditLogsUrl: macOptions.recentAuditLogsUrl || "/audit_logs/recent.json"
     }
   }
@@ -236,12 +237,35 @@
     const queryString = toQueryString(params)
     return queryString ? `${base}?${queryString}` : base
   }
+
+  async function handleExport(event) {
+    event.preventDefault()
+    loadError = ""
+
+    const response = await fetch(exportUrl, {
+      headers: { accept: "application/json" },
+      redirect: "manual"
+    }).catch(() => null)
+
+    if (!response) {
+      loadError = "Unable to start CSV export."
+      return
+    }
+
+    if (response.ok || response.status === 0 || (response.status >= 300 && response.status < 400)) {
+      window.location.href = response.headers.get("Location") || exportUrl
+      return
+    }
+
+    const payload = await response.json().catch(() => null)
+    loadError = payload?.error || "Unable to start CSV export."
+  }
 </script>
 
 <div>
   <div class="mb-3 flex items-center justify-between gap-3">
     <h1 class="text-2xl font-bold text-[#c8e6c8]">Audit Logs</h1>
-    <a class="rounded-md border border-[#1f6b1f] bg-[#111a11] px-3 py-2 text-sm font-semibold text-[#86efac] hover:bg-[#0f2d0f]" href={exportUrl}>Export CSV</a>
+    <a class="rounded-md border border-[#1f6b1f] bg-[#111a11] px-3 py-2 text-sm font-semibold text-[#86efac] hover:bg-[#0f2d0f]" href={exportUrl} on:click={handleExport}>Export CSV</a>
   </div>
 
   <FilterBar query={query} onSearch={handleSearch} />

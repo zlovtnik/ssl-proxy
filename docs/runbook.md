@@ -175,6 +175,17 @@ All views are optimized for ADB columnar storage.
 - `nats-bootstrap` must complete successfully before `zig-coordinator` is healthy. It creates `AUDIT_STREAM` for `wireless.audit`, `sync.scan.request`, and `sync.oracle.load`, plus `ORACLE_RESULT_STREAM` for `sync.oracle.result`. Durable pull consumers are `zig-coordinator-scan`, `oracle-worker-load`, and `zig-coordinator-result`.
 - `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
+### 8. Wireless Audit Minute Cleanup
+
+Use the cleanup function after confirming an audit time range is safe to normalize. It truncates `wireless.audit` `observed_at` values to the UTC minute and removes duplicate rows with the same wireless fingerprint, keeping the newest row by `updated_at`, then `created_at`, then `dedupe_key`.
+
+```sql
+SELECT * FROM normalize_wireless_audit_minutes(
+  '2026-04-29 00:00:00+00'::timestamptz,
+  '2026-04-30 00:00:00+00'::timestamptz
+);
+```
+
 Quick sync-plane inspection:
 
 ```sh

@@ -11,8 +11,10 @@ Rails.application.routes.draw do
   end
   resources :audit_windows
   resources :authorized_wireless_networks
+  resources :devices
   resources :identities, only: :index do
     get :inventory, on: :collection
+    get :mac_summary, on: :collection
   end
   resources :heatmap, only: :index
   resources :alerts, only: :index

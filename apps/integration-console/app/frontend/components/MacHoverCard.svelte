@@ -15,6 +15,7 @@
   export let identitiesUrl = ""
   export let shadowItUrl = ""
   export let inventoryUrl = ""
+  export let summaryUrl = ""
   export let recentAuditLogsUrl = ""
   export let onDismiss = () => {}
 
@@ -43,12 +44,7 @@
 
     try {
       const query = searchQueryForMac(mac)
-      const [devices, auditLogs] = await Promise.all([
-        fetchJson(inventoryUrl, query),
-        fetchJson(recentAuditLogsUrl, query)
-      ])
-
-      data = summarize(devices, auditLogs)
+      data = summaryUrl ? await fetchSummary(query) : await fetchLegacySummary(query)
       setCacheEntry(key, data)
     } catch {
       error = true
@@ -71,6 +67,41 @@
 
     const body = await response.json()
     return Array.isArray(body) ? body : body.rows || []
+  }
+
+  async function fetchSummary(query) {
+    const url = new URL(summaryUrl, window.location.origin)
+    url.searchParams.set("q", query)
+
+    const response = await fetch(url, { headers: { accept: "application/json" } })
+    if (!response.ok) throw new Error("Lookup failed")
+
+    return summarizePayload(await response.json())
+  }
+
+  async function fetchLegacySummary(query) {
+    const [devices, auditLogs] = await Promise.all([
+      fetchJson(inventoryUrl, query),
+      fetchJson(recentAuditLogsUrl, query)
+    ])
+
+    return summarize(devices, auditLogs)
+  }
+
+  function summarizePayload(payload) {
+    const inventory = payload?.inventory || {}
+    const auditLogs = payload?.recentAuditLogs || []
+    const registry = payload?.device || {}
+    const base = summarize(inventory.source_mac ? [inventory] : [], auditLogs)
+
+    return {
+      ...base,
+      registry,
+      device: {
+        ...base.device,
+        ...inventory
+      }
+    }
   }
 
   function summarize(devices, auditLogs) {
@@ -192,6 +223,9 @@
     <div class="mb-2 flex items-start justify-between gap-2">
       <div class="min-w-0">
         <div class="truncate font-semibold text-[#4ade80]">{mac}</div>
+        {#if data?.registry?.display_name || data?.registry?.username}
+          <div class="mt-1 truncate text-xs text-[#a3d9a3]">{data.registry.display_name || "Known device"}{#if data.registry.username} / {data.registry.username}{/if}</div>
+        {/if}
         {#if data?.device?.ssid}
           <div class="mt-1 inline-flex max-w-full rounded border border-[#1f6b1f] bg-[#0f2d0f] px-2 py-0.5 text-xs text-[#86efac]">{data.device.ssid}</div>
         {/if}

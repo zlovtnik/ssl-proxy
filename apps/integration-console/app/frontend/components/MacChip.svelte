@@ -10,10 +10,12 @@
   export let identitiesUrl = ""
   export let shadowItUrl = ""
   export let inventoryUrl = ""
+  export let summaryUrl = ""
   export let recentAuditLogsUrl = ""
 
   let open = false
   let hideTimer = null
+  let showTimer = null
   let anchor
 
   $: shown = display || (masked ? maskMac(mac) : mac)
@@ -26,12 +28,22 @@
     return `XX:XX:XX:XX:${parts[4]}:${parts[5]}`
   }
 
-  function show() {
+  function scheduleShow() {
     window.clearTimeout(hideTimer)
+    window.clearTimeout(showTimer)
+    showTimer = window.setTimeout(() => {
+      open = true
+    }, 2000)
+  }
+
+  function showNow() {
+    window.clearTimeout(hideTimer)
+    window.clearTimeout(showTimer)
     open = true
   }
 
   function scheduleHide() {
+    window.clearTimeout(showTimer)
     window.clearTimeout(hideTimer)
     hideTimer = window.setTimeout(() => {
       open = false
@@ -40,12 +52,14 @@
 
   onDestroy(() => {
     window.clearTimeout(hideTimer)
+    window.clearTimeout(showTimer)
     hideTimer = null
+    showTimer = null
   })
 </script>
 
 {#if mac || shown}
-  <span class="relative inline-flex" role="presentation" on:mouseenter={show} on:mouseleave={scheduleHide} on:focusin={show} on:focusout={scheduleHide}>
+  <span class="relative inline-flex" role="presentation" on:mouseenter={scheduleShow} on:mouseleave={scheduleHide} on:focusin={showNow} on:focusout={scheduleHide}>
     <a
       bind:this={anchor}
       class="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-[#1f6b1f] bg-[#0f2d0f] px-2 py-0.5 font-mono text-xs text-[#86efac] no-underline hover:bg-[#163d16] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
@@ -63,6 +77,7 @@
       {identitiesUrl}
       {shadowItUrl}
       {inventoryUrl}
+      {summaryUrl}
       {recentAuditLogsUrl}
       onDismiss={() => (open = false)}
     />

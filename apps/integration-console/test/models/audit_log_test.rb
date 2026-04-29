@@ -214,6 +214,40 @@ class AuditLogTest < ActiveSupport::TestCase
     assert_nil AuditLog.find("audit-invalid").raw_frame_hex_dump
   end
 
+  test "wireless audit cleanup function truncates minutes and removes duplicates" do
+    ensure_wireless_audit_cleanup_function
+    base = Time.utc(2026, 4, 29, 10, 15, 12)
+    payload = {
+      "source_mac" => "00:11:22:33:44:55",
+      "bssid" => "10:20:30:40:50:60",
+      "ssid" => "CorpWiFi",
+      "sensor_id" => "sensor-1",
+      "location_id" => "lab",
+      "frame_subtype" => "probe",
+      "app_protocol" => "mdns",
+      "session_key" => "session-1",
+      "frame_fingerprint" => "fingerprint-1"
+    }
+
+    insert_sync_ingest(dedupe_key: "cleanup-old", observed_at: base, payload: payload)
+    insert_sync_ingest(dedupe_key: "cleanup-new", observed_at: base + 20.seconds, payload: payload)
+    sync_connection.execute(<<~SQL.squish)
+      UPDATE sync_scan_ingest
+      SET created_at = '2026-04-29 10:16:00+00', updated_at = '2026-04-29 10:16:00+00'
+      WHERE dedupe_key = 'cleanup-new'
+    SQL
+
+    result = sync_connection.select_one(<<~SQL.squish)
+      SELECT * FROM normalize_wireless_audit_minutes('2026-04-29 10:00:00+00', '2026-04-29 11:00:00+00')
+    SQL
+    rows = sync_connection.select_all("SELECT dedupe_key, observed_at FROM sync_scan_ingest ORDER BY dedupe_key").to_a
+
+    assert_equal 2, result.fetch("normalized_count")
+    assert_equal 1, result.fetch("deleted_count")
+    assert_equal ["cleanup-new"], rows.map { |row| row.fetch("dedupe_key") }
+    assert_equal Time.utc(2026, 4, 29, 10, 15), rows.first.fetch("observed_at")
+  end
+
   test "search uses wireless generated text vector" do
     insert_sync_ingest(
       dedupe_key: "audit-search",

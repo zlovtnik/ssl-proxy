@@ -1,8 +1,14 @@
 <% content_for :title, "Edit Authorized Wireless" %>
 <% content_for :turbo_cache_control, "no-cache" %>
 
-<p><%= link_to "Back to authorized wireless", authorized_wireless_networks_path %></p>
+<%= svelte_props_tag("authorized-wireless-svelte-root", initial: @authorized_wireless_page_payload) %>
+<div id="authorized-wireless-svelte-root"></div>
+<%= svelte_bundle_tags(:authorized_wireless) %>
 
-<h1>Edit Authorized Wireless</h1>
+<noscript>
+  <p><%= link_to "Back to authorized wireless", authorized_wireless_networks_path %></p>
 
-<%= render "form", authorized_wireless_network: @authorized_wireless_network %>
+  <h1>Edit Authorized Wireless</h1>
+
+  <%= render "form", authorized_wireless_network: @authorized_wireless_network %>
+</noscript>

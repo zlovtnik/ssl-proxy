@@ -1,0 +1,50 @@
+<% content_for :title, "MAC Identifiers" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<%= svelte_props_tag("devices-svelte-root", initial: @device_page_payload) %>
+<div id="devices-svelte-root"></div>
+<%= svelte_bundle_tags(:devices) %>
+
+<noscript>
+  <h1>MAC Identifiers</h1>
+  <p><%= link_to "New MAC identifier", new_device_path %></p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th><%= sort_link_to "Device", :display_name %></th>
+          <th><%= sort_link_to "Owner", :username %></th>
+          <th><%= sort_link_to "MAC", :mac_hint %></th>
+          <th><%= sort_link_to "Hostname", :hostname %></th>
+          <th><%= sort_link_to "OS", :os_hint %></th>
+          <th><%= sort_link_to "Last Seen", :last_seen %></th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if @devices.any? %>
+          <% @devices.each do |device| %>
+            <tr>
+              <td><%= device.display_name %></td>
+              <td><%= device.username %></td>
+              <td><%= device.mac_hint %></td>
+              <td><%= device.hostname %></td>
+              <td><%= device.os_hint %></td>
+              <td><%= device.last_seen %></td>
+              <td>
+                <%= link_to "Edit", edit_device_path(device) %>
+                <%= button_to "Remove", device_path(device), method: :delete, form: { data: { turbo_confirm: "Remove #{device.label}?" } } %>
+              </td>
+            </tr>
+          <% end %>
+        <% else %>
+          <tr>
+            <td colspan="7" class="empty-state">No MAC identifiers found.</td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+    <%= render "shared/pagination" %>
+  </div>
+</noscript>

@@ -3,6 +3,7 @@ require "test_helper"
 class IdentitiesControllerTest < ActionDispatch::IntegrationTest
   setup do
     clear_sync_tables("sync_scan_ingest")
+    Device.delete_all
     ensure_wireless_audit_views
   end
 
@@ -53,8 +54,9 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_includes json.first["services"], "ssdp"
 
     captured_csv = nil
-    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, filename: nil, &block) {
       captured_csv = block.call
+      assert_equal "wireless-inventory.csv", filename
       "http://minio.test/inventory.csv"
     }) do
       get inventory_identities_url(format: :csv)
@@ -98,5 +100,36 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     get inventory_identities_url(format: :json, q: "cached-lab")
     assert_response :success
     assert_equal ["00:11:22:33:44:66", "00:11:22:33:44:55"], JSON.parse(response.body).map { |row| row["source_mac"] }
+  end
+
+  test "mac summary returns registry labels and recent audit rows" do
+    Device.create!(
+      display_name: "Lobby Printer",
+      username: "facilities",
+      mac_hint: "00:11:22:33:44:55",
+      hostname: "printer-lobby"
+    )
+    insert_sync_ingest(
+      dedupe_key: "mac-summary-1",
+      observed_at: Time.current,
+      payload: {
+        "source_mac" => "00:11:22:33:44:55",
+        "ssid" => "CorpWiFi",
+        "location_id" => "lobby",
+        "signal_dbm" => -40,
+        "app_protocol" => "mdns",
+        "session_key" => "session-1",
+        "protected" => true
+      }
+    )
+
+    get mac_summary_identities_url(format: :json, q: "00:11:22:33:44:55")
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    assert_equal "Lobby Printer", json.dig("device", "display_name")
+    assert_equal "facilities", json.dig("device", "username")
+    assert_equal "CorpWiFi", json.dig("inventory", "ssid")
+    assert_equal ["mac-summary-1"], json.fetch("recentAuditLogs").map { |row| row["dedupe_key"] }
   end
 end

@@ -6,6 +6,7 @@
   export let filters = []
   export let onSearch = () => {}
   export let debounceMs = 350
+  export let placeholder = "Search sensor, MAC, SSID, username, fingerprint, WPS"
 
   let values = {}
   let timer = null
@@ -74,7 +75,7 @@
       class="min-h-9 rounded-md border border-[#2d4a2d] bg-[#0d130d] px-3 py-2 text-sm text-[#c8e6c8] placeholder:text-[#4d7a4d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
       type="search"
       bind:value={query}
-      placeholder="Search sensor, MAC, SSID, username, fingerprint, WPS"
+      {placeholder}
       on:input={scheduleSearch}
     />
   </label>

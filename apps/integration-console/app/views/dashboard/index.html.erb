@@ -3,7 +3,7 @@
 
 <h1>Integration Console</h1>
 
-<script type="application/json" id="dashboard-cards-svelte-root-props"><%= json_escape({ initial: @dashboard_cards_payload }.to_json) %></script>
+<%= svelte_props_tag("dashboard-cards-svelte-root", initial: @dashboard_cards_payload) %>
 <div id="dashboard-cards-svelte-root"></div>
 <%= svelte_bundle_tags(:dashboard_cards) %>
 

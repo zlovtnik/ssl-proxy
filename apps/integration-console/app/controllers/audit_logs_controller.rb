@@ -86,7 +86,7 @@ class AuditLogsController < ApplicationController
     scope = scope.limit(EXPORT_MAX_ROWS)
 
     key = ExportStore.key_for(type: "audit", query: export_query_key, sort: @sort, direction: @direction)
-    url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL) do
+    url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL, filename: "audit-logs.csv") do
       audit_logs_csv(scope)
     end
 
@@ -213,6 +213,7 @@ class AuditLogsController < ApplicationController
       },
       macOptions: {
         inventoryUrl: inventory_identities_path(format: :json),
+        macSummaryUrl: mac_summary_identities_path(format: :json),
         recentAuditLogsUrl: recent_audit_logs_path(format: :json),
         auditLogsUrl: audit_logs_path,
         identitiesUrl: identities_path,

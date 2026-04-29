@@ -25,6 +25,15 @@ module ApplicationHelper
     ENV.fetch("INTEGRATION_CONSOLE_FULL_MACS", "false") == "true"
   end
 
+  def svelte_props_tag(root_id, props)
+    content_tag(
+      :script,
+      json_escape(props.to_json).html_safe,
+      type: "application/json",
+      id: "#{root_id}-props"
+    )
+  end
+
   def svelte_bundle_tags(entrypoint)
     safe_join([
       vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload"),

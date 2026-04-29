@@ -338,8 +338,9 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     )
 
     captured_csv = nil
-    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, filename: nil, &block) {
       captured_csv = block.call
+      assert_equal "audit-logs.csv", filename
       "http://minio.test/audit.csv"
     }) do
       get export_audit_logs_url(format: :csv)
@@ -374,7 +375,7 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     )
 
     captured_csv = nil
-    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, filename: nil, &block) {
       captured_csv = block.call
       "http://minio.test/audit.csv"
     }) do

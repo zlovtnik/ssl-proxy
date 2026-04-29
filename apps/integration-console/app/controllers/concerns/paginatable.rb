@@ -20,4 +20,20 @@ module Paginatable
 
     scope.offset((@current_page - 1) * @per_page).limit(@per_page)
   end
+
+  def paginate_window(scope, per_page: 50)
+    requested_per_page = params[:per_page].to_i
+    @per_page = requested_per_page.positive? ? [requested_per_page, MAX_PER_PAGE].min : per_page
+    @current_page = params[:page].to_i
+    @current_page = 1 if @current_page < 1
+
+    offset = (@current_page - 1) * @per_page
+    rows = scope.offset(offset).limit(@per_page + 1).to_a
+    @has_previous_page = @current_page > 1
+    @has_next_page = rows.length > @per_page
+    @total_pages = @has_next_page ? @current_page + 1 : @current_page
+    @total_count = offset + [rows.length, @per_page].min + (@has_next_page ? 1 : 0)
+
+    rows.first(@per_page)
+  end
 end

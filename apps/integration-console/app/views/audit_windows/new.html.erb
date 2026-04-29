@@ -1,4 +1,11 @@
 <% content_for :title, "New Audit Window" %>
+<% content_for :turbo_cache_control, "no-cache" %>
 
-<h1>New Audit Window</h1>
-<%= render "form", audit_window: @audit_window %>
+<%= svelte_props_tag("audit-windows-svelte-root", initial: @audit_windows_page_payload) %>
+<div id="audit-windows-svelte-root"></div>
+<%= svelte_bundle_tags(:audit_windows) %>
+
+<noscript>
+  <h1>New Audit Window</h1>
+  <%= render "form", audit_window: @audit_window %>
+</noscript>
