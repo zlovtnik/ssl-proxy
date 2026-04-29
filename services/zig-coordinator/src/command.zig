@@ -46,8 +46,8 @@ pub fn exitCode(result: Result) ?u8 {
 }
 
 pub fn logFailure(command_name: []const u8, result: Result) void {
-    var stderr_buffer: [256]u8 = undefined;
-    const stderr_snippet = sanitizeSnippet(&stderr_buffer, result.stderr);
+    var stderr_buffer: [1024]u8 = undefined;
+    const stderr_snippet = sanitizeTailSnippet(&stderr_buffer, result.stderr);
 
     if (exitCode(result)) |code| {
         logging.err()
@@ -98,4 +98,9 @@ fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
     }
 
     return std.mem.trim(u8, buffer[0..out_index], " ");
+}
+
+fn sanitizeTailSnippet(buffer: []u8, raw: []const u8) []const u8 {
+    const start = if (raw.len > buffer.len) raw.len - buffer.len else 0;
+    return sanitizeSnippet(buffer, raw[start..]);
 }
