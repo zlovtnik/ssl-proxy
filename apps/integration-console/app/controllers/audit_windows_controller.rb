@@ -19,7 +19,7 @@ class AuditWindowsController < ApplicationController
   def create
     @audit_window = AuditWindow.new(audit_window_params)
     if save_and_publish(@audit_window)
-      redirect_to audit_windows_path, notice: "Audit window saved and published"
+      redirect_to audit_windows_path, notice: "Audit window saved and published", status: :see_other
     else
       render :new, status: :unprocessable_entity
     end
@@ -36,7 +36,7 @@ class AuditWindowsController < ApplicationController
     @audit_window = AuditWindow.find(params[:id])
     @audit_window.assign_attributes(audit_window_params)
     if save_and_publish(@audit_window)
-      redirect_to audit_windows_path, notice: "Audit window updated and published"
+      redirect_to audit_windows_path, notice: "Audit window updated and published", status: :see_other
     else
       render :edit, status: :unprocessable_entity
     end
@@ -49,7 +49,7 @@ class AuditWindowsController < ApplicationController
 
   def destroy
     AuditWindow.find(params[:id]).destroy!
-    redirect_to audit_windows_path, notice: "Audit window removed"
+    redirect_to audit_windows_path, notice: "Audit window removed", status: :see_other
   end
 
   private

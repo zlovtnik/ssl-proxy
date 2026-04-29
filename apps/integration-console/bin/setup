@@ -4,5 +4,10 @@ require "fileutils"
 APP_ROOT = File.expand_path("..", __dir__)
 Dir.chdir(APP_ROOT) do
   system("bundle check") || system("bundle install")
+  if File.exist?("bun.lock")
+    system("bun install --frozen-lockfile")
+  else
+    system("bun install")
+  end
   system("bin/rails db:prepare")
 end

@@ -8,7 +8,15 @@
   <%= form.submit "Search" %>
 <% end %>
 
-<div class="table-wrap">
+<div
+  class="table-wrap"
+  data-controller="mac-link"
+  data-mac-link-inventory-url-value="<%= inventory_identities_path(format: :json) %>"
+  data-mac-link-recent-audit-logs-url-value="<%= recent_audit_logs_path %>"
+  data-mac-link-audit-logs-url-value="<%= audit_logs_path %>"
+  data-mac-link-identities-url-value="<%= identities_path %>"
+  data-mac-link-shadow-it-url-value="<%= shadow_it_alerts_path %>"
+>
   <table>
     <thead>
       <tr>

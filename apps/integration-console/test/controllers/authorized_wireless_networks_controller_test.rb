@@ -28,5 +28,6 @@ class AuthorizedWirelessNetworksControllerTest < ActionDispatch::IntegrationTest
     end
 
     assert_redirected_to authorized_wireless_networks_path
+    assert_response :see_other
   end
 end

@@ -109,7 +109,7 @@ pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObserva
     })
 }
 
-fn data_payload_offset(frame_control: u16, subtype: u8, frame_bytes: &[u8]) -> Option<usize> {
+pub(super) fn data_payload_offset(frame_control: u16, subtype: u8, frame_bytes: &[u8]) -> Option<usize> {
     let to_ds = frame_control & (1 << 8) != 0;
     let from_ds = frame_control & (1 << 9) != 0;
 

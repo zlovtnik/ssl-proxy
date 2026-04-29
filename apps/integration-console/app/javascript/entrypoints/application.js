@@ -1,0 +1,6 @@
+import "@hotwired/turbo-rails"
+import "../channels"
+import "../controllers"
+import "../turbo/accessibility"
+import "../turbo/morph_animations"
+import "../turbo/stream_actions"

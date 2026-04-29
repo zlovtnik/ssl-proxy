@@ -1,0 +1,36 @@
+export function paramsFromLocation(defaults = {}) {
+  const searchParams = new URLSearchParams(window.location.search)
+  return {
+    q: searchParams.get("q") || defaults.q || "",
+    location_id: searchParams.get("location_id") || defaults.location_id || defaults.locationId || "",
+    sort: searchParams.get("sort") || defaults.sort || defaults.sortKey || "",
+    direction: searchParams.get("direction") || defaults.direction || defaults.sortDirection || "desc",
+    page: positiveInteger(searchParams.get("page"), defaults.page || defaults.currentPage || 1),
+    per_page: positiveInteger(searchParams.get("per_page"), defaults.per_page || defaults.perPage || 50)
+  }
+}
+
+export function toQueryString(state, { includeBlank = false } = {}) {
+  const params = new URLSearchParams()
+
+  Object.entries(state).forEach(([key, value]) => {
+    if (value === undefined || value === null) return
+    if (!includeBlank && value === "") return
+    params.set(key, value)
+  })
+
+  return params.toString()
+}
+
+export function updateHistory(path, state, replace = false) {
+  const query = toQueryString(state)
+  const url = query ? `${path}?${query}` : path
+  const method = replace ? "replaceState" : "pushState"
+
+  window.history[method]({ ...state }, "", url)
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number.parseInt(value, 10)
+  return Number.isFinite(number) && number > 0 ? number : fallback
+}

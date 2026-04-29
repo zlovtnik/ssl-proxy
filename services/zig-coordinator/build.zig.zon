@@ -1,0 +1,11 @@
+.{
+    .name = .zig_coordinator,
+    .version = "0.16.0",
+    .dependencies = .{
+        .logz = .{
+            .path = "third_party/logz",
+        },
+    },
+    .paths = .{""},
+    .fingerprint = 0xd71d72c9b482387c,
+}

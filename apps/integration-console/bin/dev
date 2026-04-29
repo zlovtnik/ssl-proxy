@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+
+SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+PROCFILE="$SCRIPT_DIR/../Procfile.dev"
+
+if command -v foreman >/dev/null 2>&1; then
+  exec foreman start -f "$PROCFILE" "$@"
+fi
+
+if command -v overmind >/dev/null 2>&1; then
+  exec overmind start -f "$PROCFILE" "$@"
+fi
+
+echo "Install foreman or overmind to run Procfile.dev, or run these in separate terminals:" >&2
+echo "  bin/rails server" >&2
+echo "  bun run dev" >&2
+exit 1

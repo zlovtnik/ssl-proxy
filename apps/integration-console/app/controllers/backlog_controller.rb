@@ -17,11 +17,11 @@ class BacklogController < ApplicationController
 
   def retry
     result = BacklogRetryService.new(params[:id]).call
-    redirect_to backlog_index_path, notice: "Retry published to #{result.subject}"
+    redirect_to backlog_index_path, notice: "Retry published to #{result.subject}", status: :see_other
   rescue ActiveRecord::RecordNotFound
-    redirect_to backlog_index_path, alert: "Backlog row was not found"
+    redirect_to backlog_index_path, alert: "Backlog row was not found", status: :see_other
   rescue StandardError => error
     Rails.logger.error("Backlog retry failed: #{error.class} - #{error.message}")
-    redirect_to backlog_index_path, alert: "Retry failed. Please try again or contact support."
+    redirect_to backlog_index_path, alert: "Retry failed. Please try again or contact support.", status: :see_other
   end
 end

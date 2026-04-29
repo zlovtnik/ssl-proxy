@@ -2,11 +2,25 @@
   <nav class="pagination" aria-label="Pagination">
     <% previous_params = request.query_parameters.merge(page: @current_page - 1).compact %>
     <% next_params = request.query_parameters.merge(page: @current_page + 1).compact %>
+    <%
+      previous_url =
+        begin
+          url_for(previous_params)
+        rescue ActionController::UrlGenerationError
+          "?#{previous_params.to_query}"
+        end
+      next_url =
+        begin
+          url_for(next_params)
+        rescue ActionController::UrlGenerationError
+          "?#{next_params.to_query}"
+        end
+    %>
 
     <% if @current_page <= 1 %>
       <span class="pagination-link disabled" aria-disabled="true">Prev</span>
     <% else %>
-      <%= link_to "Prev", url_for(previous_params), class: "pagination-link", rel: "prev" %>
+      <%= link_to "Prev", previous_url, class: "pagination-link", rel: "prev" %>
     <% end %>
 
     <span class="pagination-status">Page <%= @current_page %> of <%= @total_pages %></span>
@@ -14,7 +28,7 @@
     <% if @current_page >= @total_pages %>
       <span class="pagination-link disabled" aria-disabled="true">Next</span>
     <% else %>
-      <%= link_to "Next", url_for(next_params), class: "pagination-link", rel: "next" %>
+      <%= link_to "Next", next_url, class: "pagination-link", rel: "next" %>
     <% end %>
   </nav>
 <% end %>

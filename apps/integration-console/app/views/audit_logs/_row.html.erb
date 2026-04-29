@@ -1,15 +1,15 @@
 <tr data-audit-log-id="<%= entry.dedupe_key %>" data-audit-log-observed-at="<%= entry.observed_at&.iso8601 %>">
-  <td><%= link_to entry.observed_at, audit_log_path(entry) %></td>
-  <td><%= entry.sensor_id %></td>
-  <td><%= entry.location_id %></td>
-  <td><%= entry.frame_subtype %></td>
-  <td><%= entry.ssid %></td>
-  <td><%= display_mac(entry.source_mac) %></td>
-  <td><%= display_mac(entry.destination_bssid) %></td>
-  <td><%= entry.signal_dbm %></td>
-  <td><%= entry.raw_len %></td>
-  <td><%= entry.frame_flags_label %></td>
-  <td><%= entry.compact_security_label || "open/unknown" %></td>
-  <td><%= entry.device_fingerprint&.first(12) %></td>
-  <td><%= entry.handshake_captured ? "captured" : "" %></td>
+  <td class="col-observed"><%= link_to entry.observed_at, audit_log_path(entry) %></td>
+  <td class="col-sensor"><%= entry.sensor_id %></td>
+  <td class="col-location"><%= entry.location_id %></td>
+  <td class="col-subtype"><%= entry.frame_subtype %></td>
+  <td class="col-ssid"><%= entry.ssid %></td>
+  <td class="col-source"><%= display_mac(entry.source_mac) %></td>
+  <td class="col-dest"><%= display_mac(entry.destination_bssid) %></td>
+  <td class="col-signal"><%= entry.signal_dbm %></td>
+  <td class="col-bytes"><%= entry.raw_len %></td>
+  <td class="col-flags"><%= entry.frame_flags_label %></td>
+  <td class="col-security"><%= entry.compact_security_label || "open/unknown" %></td>
+  <td class="col-fp"><%= entry.device_fingerprint&.first(12) %></td>
+  <td class="col-hs"><%= entry.handshake_captured ? "captured" : "" %></td>
 </tr>

@@ -14,6 +14,7 @@ pub use window::{AuditWindow, SharedAuditWindow};
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone, Utc};
+    use serde_json::json;
 
     use super::{AuditWindow, TrafficBucket};
     use crate::model::AuditEntry;
@@ -71,49 +72,41 @@ mod tests {
     fn bandwidth_entry(offset_secs: i64, raw_len: usize, signal_dbm: i8) -> AuditEntry {
         let observed_at = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap()
             + chrono::Duration::seconds(offset_secs);
-        AuditEntry {
-            event_type: "wifi_data_frame".to_string(),
-            observed_at: observed_at.to_rfc3339(),
-            sensor_id: "sensor-1".to_string(),
-            location_id: "lab".to_string(),
-            interface: "wlan0".to_string(),
-            channel: 6,
-            bssid: Some("10:20:30:40:50:60".to_string()),
-            destination_bssid: Some("10:20:30:40:50:60".to_string()),
-            source_mac: Some("AA:BB:CC:DD:EE:01".to_string()),
-            destination_mac: Some("22:33:44:55:66:77".to_string()),
-            transmitter_mac: Some("aa:bb:cc:dd:ee:01".to_string()),
-            receiver_mac: Some("10:20:30:40:50:60".to_string()),
-            ssid: Some("CorpWiFi".to_string()),
-            frame_subtype: "data".to_string(),
-            tsft: None,
-            signal_dbm: Some(signal_dbm),
-            noise_dbm: None,
-            frequency_mhz: None,
-            channel_flags: None,
-            data_rate_kbps: None,
-            antenna_id: None,
-            sequence_number: Some(1),
-            duration_id: Some(0),
-            frame_control_flags: Some(0x7908),
-            more_data: Some(true),
-            retry: Some(true),
-            power_save: Some(true),
-            protected: Some(true),
-            to_ds: Some(true),
-            from_ds: Some(false),
-            raw_len,
-            raw_frame: None,
-            tags: vec!["wifi".to_string(), "data".to_string()],
-            security_flags: 0,
-            wps_device_name: None,
-            wps_manufacturer: None,
-            wps_model_name: None,
-            device_fingerprint: None,
-            handshake_captured: false,
-            device_id: None,
-            username: None,
-            identity_source: "mac_observed".to_string(),
-        }
+        serde_json::from_value(json!({
+            "schema_version": 2,
+            "event_type": "wifi_data_frame",
+            "observed_at": observed_at.to_rfc3339(),
+            "sensor_id": "sensor-1",
+            "location_id": "lab",
+            "interface": "wlan0",
+            "channel": 6,
+            "frame_type": "data",
+            "bssid": "10:20:30:40:50:60",
+            "destination_bssid": "10:20:30:40:50:60",
+            "source_mac": "AA:BB:CC:DD:EE:01",
+            "destination_mac": "22:33:44:55:66:77",
+            "transmitter_mac": "aa:bb:cc:dd:ee:01",
+            "receiver_mac": "10:20:30:40:50:60",
+            "ssid": "CorpWiFi",
+            "frame_subtype": "data",
+            "signal_dbm": signal_dbm,
+            "sequence_number": 1,
+            "raw_len": raw_len,
+            "frame_control_flags": 0x7908,
+            "more_data": true,
+            "retry": true,
+            "power_save": true,
+            "protected": true,
+            "to_ds": true,
+            "from_ds": false,
+            "tags": ["wifi", "data"],
+            "security_flags": 0,
+            "handshake_captured": false,
+            "anomaly_reasons": [],
+            "device_id": null,
+            "username": null,
+            "identity_source": "mac_observed"
+        }))
+        .unwrap()
     }
 }

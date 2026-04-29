@@ -9,6 +9,7 @@ pub struct RadiotapMetadata {
     pub channel_flags: Option<u16>,
     pub data_rate_kbps: Option<u32>,
     pub antenna_id: Option<u8>,
+    pub signal_present: bool,
 }
 
 pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseError> {
@@ -22,41 +23,39 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseEr
     }
 
     let mut present_offset = 4usize;
+    let mut present_words = Vec::new();
     loop {
         if present_offset + 4 > length {
             return Err(ParseError::MissingRadiotap);
         }
         let word = read_present_word(bytes, present_offset);
+        present_words.push(word);
         present_offset += 4;
         if word & (1 << 31) == 0 {
             break;
         }
     }
 
+    let metadata = parse_metadata(bytes, length, present_offset, &present_words)?;
+    Ok((metadata, &bytes[length..]))
+}
+
+fn parse_metadata(
+    bytes: &[u8],
+    length: usize,
+    present_offset: usize,
+    present_words: &[u32],
+) -> Result<RadiotapMetadata, ParseError> {
     let mut cursor = present_offset;
     let mut metadata = RadiotapMetadata::default();
-    let mut word_offset = 4usize;
-    let mut word_index = 0usize;
-    loop {
-        let word = read_present_word(bytes, word_offset);
+    for (word_index, word) in present_words.iter().copied().enumerate() {
         for bit in 0..31 {
             if word & (1 << bit) == 0 {
                 continue;
             }
             let global_bit = word_index * 32 + bit;
-            let (align, size) = match field_layout(global_bit) {
-                Some(layout) => layout,
-                None => {
-                    // Resilient parsing for modern unknown fields:
-                    //   29 -> VHT: 12 bytes, 4 align
-                    //   30 -> HE:  14 bytes, 2 align
-                    //   All others: assume minimal alignment, advance safely
-                    match global_bit {
-                        29 => (4, 12),
-                        30 => (2, 14),
-                        _ => (1, 0),
-                    }
-                }
+            let Some((align, size)) = field_layout(global_bit) else {
+                return Ok(metadata);
             };
             cursor = align_offset(cursor, align);
             if cursor + size > length {
@@ -75,24 +74,19 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseEr
                     metadata.channel_flags =
                         Some(u16::from_le_bytes([bytes[cursor + 2], bytes[cursor + 3]]));
                 }
-                5 => metadata.signal_dbm = Some(bytes[cursor] as i8),
+                5 => {
+                    metadata.signal_dbm = Some(bytes[cursor] as i8);
+                    metadata.signal_present = true;
+                }
                 6 => metadata.noise_dbm = Some(bytes[cursor] as i8),
                 11 => metadata.antenna_id = Some(bytes[cursor]),
                 _ => {}
             }
             cursor += size;
         }
-        if word & (1 << 31) == 0 {
-            break;
-        }
-        word_offset += 4;
-        word_index += 1;
-        if word_offset + 4 > present_offset {
-            return Err(ParseError::MissingRadiotap);
-        }
     }
 
-    Ok((metadata, &bytes[length..]))
+    Ok(metadata)
 }
 
 fn read_present_word(bytes: &[u8], offset: usize) -> u32 {
@@ -116,6 +110,25 @@ fn field_layout(bit: usize) -> Option<(usize, usize)> {
         12 => Some((1, 1)),
         13 => Some((1, 1)),
         14 => Some((2, 2)),
+        15 => Some((2, 2)),
+        16 => Some((1, 1)),
+        17 => Some((1, 1)),
+        18 => Some((4, 8)),
+        19 => Some((1, 3)),
+        20 => Some((4, 8)),
+        21 => Some((2, 12)),
+        22 => Some((8, 12)),
+        23 => Some((2, 12)),
+        24 => Some((2, 12)),
+        25 => Some((2, 6)),
+        26 => Some((1, 1)),
+        27 => Some((2, 4)),
+        // 28 is a variable-length TLV namespace. Stop metadata parsing before it.
+        28 => None,
+        // 29 is the radiotap namespace marker and carries no field data.
+        29 => Some((1, 0)),
+        // 30 is a vendor namespace with a variable skip length. Stop before it.
+        30 => None,
         _ => None,
     }
 }

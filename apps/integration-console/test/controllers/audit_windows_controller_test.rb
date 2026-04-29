@@ -1,6 +1,27 @@
 require "test_helper"
 
 class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
+  test "create redirects with see other when publishing succeeds" do
+    publisher = Object.new
+    def publisher.call = true
+
+    AuditWindowPublisher.stub(:new, publisher) do
+      post audit_windows_url, params: {
+        audit_window: {
+          location_id: "lab",
+          timezone: "UTC",
+          days: "mon",
+          start_time: "09:00",
+          end_time: "17:00",
+          enabled: true
+        }
+      }
+    end
+
+    assert_redirected_to audit_windows_path
+    assert_response :see_other
+  end
+
   test "create rolls back when publishing fails" do
     publisher = Object.new
     def publisher.call = raise "nats down"

@@ -1,0 +1,53 @@
+@layer theme, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+@source "../";
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(74, 222, 128, 0.16), transparent);
+  animation: svelte-island-shimmer 1.1s linear infinite;
+  transform: translateX(-100%);
+}
+
+.row-new td {
+  animation: svelte-island-row-prepend 300ms ease-out;
+}
+
+.signal-bucket-0 { background-color: rgba(74, 222, 128, 0.10); }
+.signal-bucket-1 { background-color: rgba(74, 222, 128, 0.20); }
+.signal-bucket-2 { background-color: rgba(74, 222, 128, 0.30); }
+.signal-bucket-3 { background-color: rgba(74, 222, 128, 0.40); }
+.signal-bucket-4 { background-color: rgba(74, 222, 128, 0.50); }
+.signal-bucket-5 { background-color: rgba(74, 222, 128, 0.60); }
+.signal-bucket-6 { background-color: rgba(74, 222, 128, 0.70); }
+.signal-bucket-7 { background-color: rgba(74, 222, 128, 0.80); }
+.signal-bucket-8 { background-color: rgba(74, 222, 128, 0.90); }
+.signal-bucket-9 { background-color: rgba(74, 222, 128, 1.00); }
+
+@keyframes svelte-island-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes svelte-island-row-prepend {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer,
+  .row-new td {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+}

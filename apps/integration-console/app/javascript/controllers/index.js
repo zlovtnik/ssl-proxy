@@ -1,12 +1,14 @@
-import { application } from "controllers/application"
-import AuditLogController from "controllers/audit_log_controller"
-import FlashController from "controllers/flash_controller"
-import LiveFeedController from "controllers/live_feed_controller"
-import SidebarController from "controllers/sidebar_controller"
-import TurboLoadingController from "controllers/turbo_loading_controller"
+import { application } from "./application"
+import AuditLogController from "./audit_log_controller"
+import FlashController from "./flash_controller"
+import MacLinkController from "./mac_link_controller"
+import SidebarController from "./sidebar_controller"
+import SvelteController from "./svelte_controller"
+import TurboLoadingController from "./turbo_loading_controller"
 
 application.register("audit-log", AuditLogController)
 application.register("flash", FlashController)
-application.register("live-feed", LiveFeedController)
+application.register("mac-link", MacLinkController)
 application.register("sidebar", SidebarController)
+application.register("svelte", SvelteController)
 application.register("turbo-loading", TurboLoadingController)

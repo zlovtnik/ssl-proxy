@@ -19,7 +19,7 @@ class AuthorizedWirelessNetworksController < ApplicationController
   def create
     @authorized_wireless_network = AuthorizedWirelessNetwork.new(authorized_wireless_network_params)
     if @authorized_wireless_network.save
-      redirect_to authorized_wireless_networks_path, notice: "Authorized wireless network saved"
+      redirect_to authorized_wireless_networks_path, notice: "Authorized wireless network saved", status: :see_other
     else
       render :new, status: :unprocessable_entity
     end
@@ -32,7 +32,7 @@ class AuthorizedWirelessNetworksController < ApplicationController
   def update
     @authorized_wireless_network = AuthorizedWirelessNetwork.find(params[:id])
     if @authorized_wireless_network.update(authorized_wireless_network_params)
-      redirect_to authorized_wireless_networks_path, notice: "Authorized wireless network updated"
+      redirect_to authorized_wireless_networks_path, notice: "Authorized wireless network updated", status: :see_other
     else
       render :edit, status: :unprocessable_entity
     end
@@ -40,7 +40,7 @@ class AuthorizedWirelessNetworksController < ApplicationController
 
   def destroy
     AuthorizedWirelessNetwork.find(params[:id]).destroy!
-    redirect_to authorized_wireless_networks_path, notice: "Authorized wireless network removed"
+    redirect_to authorized_wireless_networks_path, notice: "Authorized wireless network removed", status: :see_other
   end
 
   private

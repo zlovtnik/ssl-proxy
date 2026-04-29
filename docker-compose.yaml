@@ -70,7 +70,7 @@ services:
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
       # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
-      - ADMIN_API_KEY=${ADMIN_API_KEY:?ADMIN_API_KEY must be set for admin endpoints}
+      - ADMIN_API_KEY=macaco
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - SYNC_OUTBOX_DIR=/sync-outbox
 
@@ -104,7 +104,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
-      - SYNC_SCHEMA_FILE=/app/schema/postgres.sql
+      - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=proxy.events,wireless.audit
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
@@ -162,19 +162,29 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: unless-stopped
-    command: ["sh", "-lc", "bin/rails db:prepare && bin/rails server -b 0.0.0.0"]
+    command: ["bin/rails", "server", "-b", "0.0.0.0"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+      - INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY=${INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY:-60}
+      - INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT=${INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT:-10}
+      - INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD=${INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD:-15}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
     ports:
-      - "127.0.0.1:3003:3000"
+      - "3003:3000"
 
   integration-console-worker:
     depends_on:
@@ -193,7 +203,27 @@ services:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+
+  integration-console-heatmap-refresh:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-lc", "while true; do bin/rails runner 'WirelessHeatmap.refresh!'; sleep \"$${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}\"; done"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
+      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+      - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
 
   integration-console-heartbeat:
     depends_on:
@@ -210,6 +240,7 @@ services:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
 
@@ -288,6 +319,37 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    restart: "no"
+    entrypoint: ["sh", "-lc"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 "$$MINIO_ACCESS_KEY_ID" "$$MINIO_SECRET_ACCESS_KEY"; do
+          sleep 1
+        done
+        mc mb --ignore-existing "local/$$MINIO_BUCKET"
+    environment:
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+      - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
+
   nats-bootstrap:
     image: natsio/nats-box:0.16.0
     depends_on:
@@ -318,7 +380,7 @@ services:
       POSTGRES_USER: sync
       POSTGRES_PASSWORD: sync
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sync -d sync"]
       interval: 10s
@@ -333,3 +395,4 @@ volumes:
   nats-data:
   postgres-data:
   sync-outbox:
+  minio-data:

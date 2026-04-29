@@ -33,5 +33,6 @@ WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
 COPY --from=natsbox /usr/local/bin/nats /usr/local/bin/nats
 COPY services/zig-coordinator/schema ./schema
-ENV SYNC_SCHEMA_FILE=/app/schema/postgres.sql
+COPY services/zig-coordinator/src/postgres ./src/postgres
+ENV SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]

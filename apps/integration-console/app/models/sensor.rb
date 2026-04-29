@@ -1,6 +1,8 @@
 class Sensor < ApplicationRecord
   STALE_AFTER = 5.minutes
 
+  after_commit { DashboardCache.expire! }
+
   validates :sensor_id, presence: true, uniqueness: true
   validates :location_id, presence: true
 
