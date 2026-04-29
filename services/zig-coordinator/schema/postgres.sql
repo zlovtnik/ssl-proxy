@@ -345,6 +345,18 @@ create index if not exists devices_mac_hint_idx on devices (lower(mac_hint));
 create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
 create index if not exists devices_username_idx on devices (username, last_seen desc);
 
+-- Handle view column rename safely - Postgres does not allow renaming columns via CREATE OR REPLACE VIEW
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_name = 'v_wireless_audit_with_devices'
+      and column_name = 'raw_len'
+  ) then
+    alter view v_wireless_audit_with_devices rename column raw_len to data_rate_kbps;
+  end if;
+end $$;
+
 create or replace view v_wireless_audit_with_devices as
 select
   ssi.dedupe_key,
