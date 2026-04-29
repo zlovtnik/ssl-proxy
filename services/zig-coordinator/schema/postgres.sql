@@ -405,10 +405,10 @@ select
   coalesce(ssi.retry::text, ssi.payload->>'retry') as retry,
   coalesce(ssi.power_save::text, ssi.payload->>'power_save') as power_save,
   coalesce(ssi.protected::text, ssi.payload->>'protected') as protected,
-  ssi.payload->>'location_id' as location_id,
-  ssi.payload->>'sensor_id' as sensor_id,
+  coalesce(ssi.location_id, ssi.payload->>'location_id') as location_id,
+  coalesce(ssi.sensor_id, ssi.payload->>'sensor_id') as sensor_id,
   ssi.payload->>'identity_source' as identity_source,
-  ssi.payload->>'username' as username,
+  coalesce(ssi.username, ssi.payload->>'username') as username,
   ssi.payload->'tags' as tags,
   ssi.security_flags,
   ssi.wps_device_name,
@@ -705,6 +705,14 @@ with ingest_status as (
   from sync_scan_ingest
   group by status
 ),
+wireless_ingest_status as (
+  select
+    status,
+    count(*)::bigint as row_count
+  from sync_scan_ingest
+  where stream_name = 'wireless.audit'
+  group by status
+),
 ingest_time as (
   select
     count(*) filter (where stream_name = 'wireless.audit' and observed_at >= now() - interval '24 hours')::bigint as wireless_events_24h_count,
@@ -770,6 +778,11 @@ select
   now() as measured_at,
   coalesce((select wireless_events_24h_count from ingest_time), 0)::bigint as wireless_events_24h_count,
   (select wireless_last_observed_at from ingest_time) as wireless_last_observed_at,
+  coalesce((select row_count from wireless_ingest_status where status = 'pending'), 0)::bigint as wireless_ingest_pending_count,
+  coalesce((select row_count from wireless_ingest_status where status = 'processing'), 0)::bigint as wireless_ingest_processing_count,
+  coalesce((select row_count from wireless_ingest_status where status = 'batched'), 0)::bigint as wireless_ingest_batched_count,
+  coalesce((select row_count from wireless_ingest_status where status = 'failed'), 0)::bigint as wireless_ingest_failed_count,
+  coalesce((select sum(row_count) from wireless_ingest_status), 0)::bigint as wireless_ingest_total_count,
   coalesce((select row_count from ingest_status where status = 'pending'), 0)::bigint as ingest_pending_count,
   coalesce((select row_count from ingest_status where status = 'processing'), 0)::bigint as ingest_processing_count,
   coalesce((select row_count from ingest_status where status = 'batched'), 0)::bigint as ingest_batched_count,

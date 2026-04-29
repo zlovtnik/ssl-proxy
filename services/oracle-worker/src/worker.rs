@@ -1,8 +1,9 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use oracle::{sql_type::ToSql, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::{env, fs, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
@@ -38,7 +39,6 @@ pub enum OracleErrorClass {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SinkTarget {
     ProxyEvents,
-    WirelessAudit,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,50 +58,44 @@ pub struct ProxyEventRow {
     pub status_code: Option<u16>,
     pub blocked: Option<bool>,
     pub obfuscation_profile: Option<String>,
+    pub correlation_id: Option<String>,
+    pub parent_event_id: Option<String>,
+    pub event_sequence: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub reason: Option<String>,
     pub time: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-pub struct WirelessAuditRow {
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProxyEventInsert {
+    pub event_time: DateTime<Utc>,
     pub event_type: String,
-    pub observed_at: String,
-    pub sensor_id: String,
-    pub location_id: String,
-    pub interface: String,
-    pub channel: u8,
-    pub bssid: Option<String>,
-    pub source_mac: Option<String>,
-    pub destination_mac: Option<String>,
-    pub transmitter_mac: Option<String>,
-    pub receiver_mac: Option<String>,
-    pub ssid: Option<String>,
-    pub frame_subtype: String,
-    pub signal_dbm: Option<i8>,
-    pub noise_dbm: Option<i8>,
-    pub frequency_mhz: Option<u16>,
-    pub channel_flags: Option<u16>,
-    pub data_rate_kbps: Option<u32>,
-    pub sequence_number: Option<u16>,
-    pub duration_id: Option<u16>,
-    pub retry: Option<bool>,
-    pub power_save: Option<bool>,
-    pub protected: Option<bool>,
-    pub to_ds: Option<bool>,
-    pub from_ds: Option<bool>,
-    pub raw_len: usize,
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub security_flags: u32,
-    pub wps_device_name: Option<String>,
-    pub wps_manufacturer: Option<String>,
-    pub wps_model_name: Option<String>,
-    pub device_fingerprint: Option<String>,
-    #[serde(default)]
-    pub handshake_captured: bool,
+    pub host: String,
+    pub peer_ip: Option<String>,
+    pub wg_pubkey: Option<String>,
     pub device_id: Option<String>,
-    pub username: Option<String>,
-    pub identity_source: String,
+    pub identity_source: Option<String>,
+    pub peer_hostname: Option<String>,
+    pub client_ua: Option<String>,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
+    pub status_code: Option<i64>,
+    pub blocked: i64,
+    pub obfuscation_profile: Option<String>,
+    pub correlation_id: Option<String>,
+    pub parent_event_id: Option<String>,
+    pub event_sequence: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub reason: Option<String>,
+    pub raw_json: String,
+}
+
+pub trait ProxyEventSink {
+    fn insert_proxy_events(&mut self, rows: &[ProxyEventInsert]) -> Result<u64, String>;
+}
+
+pub struct OracleProxyEventSink {
+    connection: Connection,
 }
 
 pub fn classify_oracle_error(message: &str) -> OracleErrorClass {
@@ -120,7 +114,6 @@ pub fn classify_oracle_error(message: &str) -> OracleErrorClass {
 pub fn sink_target(stream_name: &str) -> Result<SinkTarget, OracleErrorClass> {
     match stream_name {
         "proxy.events" => Ok(SinkTarget::ProxyEvents),
-        "wireless.audit" => Ok(SinkTarget::WirelessAudit),
         _ => Err(OracleErrorClass::Permanent),
     }
 }
@@ -157,6 +150,17 @@ pub fn resolve_payload(payload_ref: &str) -> Result<String, String> {
 }
 
 pub fn handle_load(load: OracleLoad) -> OracleResult {
+    let mut sink = match OracleProxyEventSink::connect_from_env() {
+        Ok(sink) => sink,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
+    handle_load_with_sink(load, &mut sink)
+}
+
+pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) -> OracleResult {
     let target = match sink_target(&load.stream_name) {
         Ok(target) => target,
         Err(error_class) => {
@@ -177,11 +181,29 @@ pub fn handle_load(load: OracleLoad) -> OracleResult {
         }
     };
 
-    let row_count = match validate_payload(target, &payload) {
+    let rows = match proxy_event_rows_from_payload(target, &payload) {
+        Ok(rows) => rows,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
+    let row_count = match sink.insert_proxy_events(&rows) {
         Ok(row_count) => row_count,
         Err(error) => {
             let error_class = classify_oracle_error(&error);
             return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
+    let row_count = match i32::try_from(row_count) {
+        Ok(row_count) => row_count,
+        Err(_) => {
+            return failure_result(
+                load.job_id,
+                load.batch_id,
+                OracleErrorClass::Permanent,
+                "inserted row count exceeds i32 limit".to_string(),
+            );
         }
     };
 
@@ -198,44 +220,175 @@ pub fn handle_load(load: OracleLoad) -> OracleResult {
     }
 }
 
-fn validate_payload(target: SinkTarget, payload: &str) -> Result<i32, String> {
+pub fn proxy_event_rows_from_payload(
+    target: SinkTarget,
+    payload: &str,
+) -> Result<Vec<ProxyEventInsert>, String> {
+    match target {
+        SinkTarget::ProxyEvents => {}
+    }
+
     let value: serde_json::Value =
         serde_json::from_str(payload).map_err(|error| format!("decode payload json: {error}"))?;
     match value {
         serde_json::Value::Array(rows) => {
-            for row in &rows {
-                validate_payload_row(target, row.clone())?;
+            let mut inserts = Vec::with_capacity(rows.len());
+            for row in rows {
+                inserts.push(proxy_event_insert_from_value(row)?);
             }
-            i32::try_from(rows.len()).map_err(|_| "payload row count exceeds i32 limit".to_string())
+            Ok(inserts)
         }
-        other => {
-            validate_payload_row(target, other)?;
-            Ok(1)
-        }
+        other => Ok(vec![proxy_event_insert_from_value(other)?]),
     }
 }
 
-fn validate_payload_row(target: SinkTarget, row: serde_json::Value) -> Result<(), String> {
-    match target {
-        SinkTarget::ProxyEvents => {
-            let parsed: ProxyEventRow = serde_json::from_value(row)
-                .map_err(|error| format!("decode proxy.events row: {error}"))?;
-            if parsed.event_type.trim().is_empty() || parsed.host.trim().is_empty() {
-                return Err("proxy.events row missing event type or host".to_string());
-            }
-            Ok(())
+fn proxy_event_insert_from_value(row: serde_json::Value) -> Result<ProxyEventInsert, String> {
+    let raw_json = serde_json::to_string(&row)
+        .map_err(|error| format!("encode raw proxy row json: {error}"))?;
+    let parsed: ProxyEventRow =
+        serde_json::from_value(row).map_err(|error| format!("decode proxy.events row: {error}"))?;
+    if parsed.event_type.trim().is_empty() || parsed.host.trim().is_empty() {
+        return Err("proxy.events row missing event type or host".to_string());
+    }
+    let event_time = DateTime::parse_from_rfc3339(&parsed.time)
+        .map_err(|error| format!("decode proxy.events time: {error}"))?
+        .with_timezone(&Utc);
+
+    Ok(ProxyEventInsert {
+        event_time,
+        event_type: parsed.event_type,
+        host: parsed.host,
+        peer_ip: parsed.peer_ip,
+        wg_pubkey: parsed.wg_pubkey,
+        device_id: parsed.device_id,
+        identity_source: parsed.identity_source,
+        peer_hostname: parsed.peer_hostname,
+        client_ua: parsed.client_ua,
+        bytes_up: u64_to_i64(parsed.bytes_up.unwrap_or(0), "bytes_up")?,
+        bytes_down: u64_to_i64(parsed.bytes_down.unwrap_or(0), "bytes_down")?,
+        status_code: parsed.status_code.map(i64::from),
+        blocked: if parsed.blocked.unwrap_or(false) {
+            1
+        } else {
+            0
+        },
+        obfuscation_profile: parsed.obfuscation_profile,
+        correlation_id: parsed.correlation_id,
+        parent_event_id: parsed.parent_event_id,
+        event_sequence: parsed.event_sequence,
+        duration_ms: parsed.duration_ms,
+        reason: parsed.reason,
+        raw_json,
+    })
+}
+
+fn u64_to_i64(value: u64, field: &str) -> Result<i64, String> {
+    i64::try_from(value).map_err(|_| format!("{field} exceeds Oracle NUMBER signed range"))
+}
+
+impl OracleProxyEventSink {
+    pub fn connect_from_env() -> Result<Self, String> {
+        let connect_string = required_env("ORACLE_CONN")?;
+        let user = required_env("ORACLE_USER")?;
+        let password_file = required_env("ORACLE_PASS_FILE")?;
+        let password = fs::read_to_string(&password_file)
+            .map_err(|error| format!("read Oracle password file {password_file}: {error}"))?;
+        let password = password.trim_end_matches(['\r', '\n']);
+        let connection = Connection::connect(user.as_str(), password, connect_string.as_str())
+            .map_err(|error| format!("connect Oracle {connect_string}: {error}"))?;
+        Ok(Self { connection })
+    }
+
+    pub fn ping(&self) -> Result<(), String> {
+        self.connection
+            .ping()
+            .map_err(|error| format!("ping Oracle: {error}"))
+    }
+}
+
+impl ProxyEventSink for OracleProxyEventSink {
+    fn insert_proxy_events(&mut self, rows: &[ProxyEventInsert]) -> Result<u64, String> {
+        let result = insert_proxy_events_transaction(&self.connection, rows);
+        if result.is_err() {
+            let _ = self.connection.rollback();
         }
-        SinkTarget::WirelessAudit => {
-            let parsed: WirelessAuditRow = serde_json::from_value(row)
-                .map_err(|error| format!("decode wireless.audit row: {error}"))?;
-            if parsed.event_type.trim().is_empty()
-                || parsed.sensor_id.trim().is_empty()
-                || parsed.frame_subtype.trim().is_empty()
-            {
-                return Err("wireless.audit row missing required identity fields".to_string());
-            }
-            Ok(())
-        }
+        result
+    }
+}
+
+fn insert_proxy_events_transaction(
+    connection: &Connection,
+    rows: &[ProxyEventInsert],
+) -> Result<u64, String> {
+    const INSERT_SQL: &str = r#"
+        insert into proxy_events (
+            event_time,
+            event_type,
+            host,
+            peer_ip,
+            wg_pubkey,
+            device_id,
+            identity_source,
+            peer_hostname,
+            client_ua,
+            bytes_up,
+            bytes_down,
+            status_code,
+            blocked,
+            obfuscation_profile,
+            correlation_id,
+            parent_event_id,
+            event_sequence,
+            duration_ms,
+            reason,
+            raw_json
+        ) values (
+            :1, :2, :3, :4, :5, :6, coalesce(:7, 'unknown'), :8, :9, :10,
+            :11, :12, :13, :14, :15, :16, :17, :18, :19, :20
+        )
+    "#;
+
+    for row in rows {
+        let params: [&dyn ToSql; 20] = [
+            &row.event_time,
+            &row.event_type,
+            &row.host,
+            &row.peer_ip,
+            &row.wg_pubkey,
+            &row.device_id,
+            &row.identity_source,
+            &row.peer_hostname,
+            &row.client_ua,
+            &row.bytes_up,
+            &row.bytes_down,
+            &row.status_code,
+            &row.blocked,
+            &row.obfuscation_profile,
+            &row.correlation_id,
+            &row.parent_event_id,
+            &row.event_sequence,
+            &row.duration_ms,
+            &row.reason,
+            &row.raw_json,
+        ];
+        connection
+            .execute(INSERT_SQL, &params)
+            .map_err(|error| format!("insert proxy_events row host={}: {error}", row.host))?;
+    }
+    connection
+        .commit()
+        .map_err(|error| format!("commit proxy_events batch: {error}"))?;
+    Ok(rows.len() as u64)
+}
+
+pub fn check_oracle_connection_from_env() -> Result<(), String> {
+    OracleProxyEventSink::connect_from_env()?.ping()
+}
+
+fn required_env(name: &str) -> Result<String, String> {
+    match env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        _ => Err(format!("missing required env: {name}")),
     }
 }
 
@@ -251,7 +404,6 @@ impl SinkTarget {
     fn checksum_tag(self) -> &'static str {
         match self {
             SinkTarget::ProxyEvents => "proxy.events",
-            SinkTarget::WirelessAudit => "wireless.audit",
         }
     }
 }
@@ -287,8 +439,9 @@ mod tests {
     };
 
     use super::{
-        checksum, classify_oracle_error, handle_load, resolve_payload, sink_target,
-        OracleErrorClass, OracleLoad, SinkTarget,
+        checksum, classify_oracle_error, handle_load_with_sink, proxy_event_rows_from_payload,
+        resolve_payload, sink_target, OracleErrorClass, OracleLoad, ProxyEventInsert,
+        ProxyEventSink, SinkTarget,
     };
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -314,59 +467,86 @@ mod tests {
         )
     }
 
-    fn wireless_payload() -> String {
-        inline_payload(
-            r#"{"event_type":"wifi_management_frame","observed_at":"2026-04-21T00:00:00Z","sensor_id":"sensor-1","location_id":"lab","interface":"wlan0","channel":11,"bssid":"10:20:30:40:50:60","source_mac":"10:20:30:40:50:60","destination_mac":"ff:ff:ff:ff:ff:ff","ssid":"CorpWiFi","frame_subtype":"beacon","signal_dbm":-42,"sequence_number":1,"raw_len":44,"tags":["wifi"],"security_flags":10,"wps_device_name":"AP","wps_manufacturer":"Acme","wps_model_name":"Model 1","device_fingerprint":"0123456789abcdef","handshake_captured":false,"device_id":null,"username":null,"identity_source":"mac_observed"}"#,
-        )
+    #[derive(Default)]
+    struct RecordingSink {
+        rows: Vec<ProxyEventInsert>,
+        error: Option<String>,
+    }
+
+    impl ProxyEventSink for RecordingSink {
+        fn insert_proxy_events(&mut self, rows: &[ProxyEventInsert]) -> Result<u64, String> {
+            if let Some(error) = &self.error {
+                return Err(error.clone());
+            }
+            self.rows.extend_from_slice(rows);
+            Ok(rows.len() as u64)
+        }
     }
 
     #[test]
     fn emits_success_result() {
-        let result = handle_load(OracleLoad {
-            job_id: "job-1".to_string(),
-            batch_id: "batch-1".to_string(),
-            batch_no: 0,
-            stream_name: "proxy.events".to_string(),
-            payload_ref: proxy_payload(),
-            cursor_start: "1".to_string(),
-            cursor_end: "2".to_string(),
-            attempt: 1,
-        });
+        let mut sink = RecordingSink::default();
+        let result = handle_load_with_sink(
+            OracleLoad {
+                job_id: "job-1".to_string(),
+                batch_id: "batch-1".to_string(),
+                batch_no: 0,
+                stream_name: "proxy.events".to_string(),
+                payload_ref: proxy_payload(),
+                cursor_start: "1".to_string(),
+                cursor_end: "2".to_string(),
+                attempt: 1,
+            },
+            &mut sink,
+        );
 
         assert_eq!(result.status, "success");
         assert_eq!(result.row_count, 1);
         assert!(!result.retryable);
+        assert_eq!(sink.rows.len(), 1);
+        assert_eq!(sink.rows[0].event_type, "tunnel_open");
+        assert_eq!(sink.rows[0].host, "example.com");
+        assert_eq!(sink.rows[0].blocked, 0);
     }
 
     #[test]
-    fn accepts_wireless_audit_loads() {
-        let result = handle_load(OracleLoad {
-            job_id: "job-2".to_string(),
-            batch_id: "batch-2".to_string(),
-            batch_no: 0,
-            stream_name: "wireless.audit".to_string(),
-            payload_ref: wireless_payload(),
-            cursor_start: "20".to_string(),
-            cursor_end: "21".to_string(),
-            attempt: 1,
-        });
+    fn rejects_wireless_audit_loads_until_oracle_target_exists() {
+        let mut sink = RecordingSink::default();
+        let result = handle_load_with_sink(
+            OracleLoad {
+                job_id: "job-2".to_string(),
+                batch_id: "batch-2".to_string(),
+                batch_no: 0,
+                stream_name: "wireless.audit".to_string(),
+                payload_ref: proxy_payload(),
+                cursor_start: "20".to_string(),
+                cursor_end: "21".to_string(),
+                attempt: 1,
+            },
+            &mut sink,
+        );
 
-        assert_eq!(result.status, "success");
-        assert!(!result.checksum.is_empty());
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.error_class, "permanent");
+        assert!(sink.rows.is_empty());
     }
 
     #[test]
     fn rejects_unknown_streams() {
-        let result = handle_load(OracleLoad {
-            job_id: "job-3".to_string(),
-            batch_id: "batch-3".to_string(),
-            batch_no: 0,
-            stream_name: "other.events".to_string(),
-            payload_ref: proxy_payload(),
-            cursor_start: "20".to_string(),
-            cursor_end: "21".to_string(),
-            attempt: 1,
-        });
+        let mut sink = RecordingSink::default();
+        let result = handle_load_with_sink(
+            OracleLoad {
+                job_id: "job-3".to_string(),
+                batch_id: "batch-3".to_string(),
+                batch_no: 0,
+                stream_name: "other.events".to_string(),
+                payload_ref: proxy_payload(),
+                cursor_start: "20".to_string(),
+                cursor_end: "21".to_string(),
+                attempt: 1,
+            },
+            &mut sink,
+        );
 
         assert_eq!(result.status, "failed");
         assert_eq!(result.error_class, "permanent");
@@ -395,11 +575,51 @@ mod tests {
             sink_target("proxy.events").unwrap(),
             SinkTarget::ProxyEvents
         );
-        assert_eq!(
-            sink_target("wireless.audit").unwrap(),
-            SinkTarget::WirelessAudit
-        );
+        assert!(sink_target("wireless.audit").is_err());
         assert!(sink_target("unknown").is_err());
+    }
+
+    #[test]
+    fn maps_proxy_payload_rows_for_oracle_insert() {
+        let rows = proxy_event_rows_from_payload(
+            SinkTarget::ProxyEvents,
+            &resolve_payload(&proxy_payload()).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event_type, "tunnel_open");
+        assert_eq!(rows[0].host, "example.com");
+        assert_eq!(rows[0].peer_ip.as_deref(), Some("10.0.0.2"));
+        assert_eq!(rows[0].bytes_up, 0);
+        assert_eq!(rows[0].status_code, None);
+        assert!(rows[0].raw_json.contains("\"type\":\"tunnel_open\""));
+    }
+
+    #[test]
+    fn returns_failed_result_when_oracle_insert_fails() {
+        let mut sink = RecordingSink {
+            rows: Vec::new(),
+            error: Some("unique constraint violated".to_string()),
+        };
+
+        let result = handle_load_with_sink(
+            OracleLoad {
+                job_id: "job-4".to_string(),
+                batch_id: "batch-4".to_string(),
+                batch_no: 0,
+                stream_name: "proxy.events".to_string(),
+                payload_ref: proxy_payload(),
+                cursor_start: "1".to_string(),
+                cursor_end: "2".to_string(),
+                attempt: 1,
+            },
+            &mut sink,
+        );
+
+        assert_eq!(result.status, "failed");
+        assert_eq!(result.error_class, "permanent");
+        assert!(!result.retryable);
     }
 
     #[test]
@@ -431,10 +651,8 @@ mod tests {
         let payload = r#"{"ok":true}"#;
         let first = checksum(SinkTarget::ProxyEvents, payload);
         let second = checksum(SinkTarget::ProxyEvents, payload);
-        let other_target = checksum(SinkTarget::WirelessAudit, payload);
 
         assert_eq!(first, second);
-        assert_ne!(first, other_target);
         assert_eq!(first.len(), 64);
     }
 }

@@ -52,7 +52,7 @@ services:
       - WG_SERVER_ADDRESS=${WG_SERVER_ADDRESS:-10.13.13.1/24}
       - WG_PORT=${WG_PORT:-443}
       - WG_INTERNAL_PORT=${WG_INTERNAL_PORT:-51820}
-      - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-true}
+      - WG_OBFUSCATION_ENABLED=false
       - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY:-}
       - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
       - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
@@ -106,7 +106,7 @@ services:
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
       - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
       - SYNC_STREAM_NAME=proxy.events
-      - SYNC_STREAM_NAMES=proxy.events,wireless.audit
+      - SYNC_STREAM_NAMES=proxy.events
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
       - SYNC_SCAN_SUBJECT=${SYNC_SCAN_SUBJECT:-sync.scan.request}
@@ -115,6 +115,9 @@ services:
       - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      - SYNC_OUTBOX_DIR=/sync-outbox
+    volumes:
+      - sync-outbox:/sync-outbox
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -126,6 +129,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+      nats-bootstrap:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: services/oracle-worker/Dockerfile

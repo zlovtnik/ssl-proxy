@@ -31,8 +31,9 @@ module Paginatable
     rows = scope.offset(offset).limit(@per_page + 1).to_a
     @has_previous_page = @current_page > 1
     @has_next_page = rows.length > @per_page
-    @total_pages = @has_next_page ? @current_page + 1 : @current_page
-    @total_count = offset + [rows.length, @per_page].min + (@has_next_page ? 1 : 0)
+    @total_pages = nil
+    @total_count = nil
+    @total_count_lower_bound = offset + rows.length
 
     rows.first(@per_page)
   end

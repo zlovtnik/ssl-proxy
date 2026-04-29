@@ -213,6 +213,12 @@ class ActiveSupport::TestCase
         FROM sync_scan_ingest
         GROUP BY status
       ),
+      wireless_ingest_status AS (
+        SELECT status, count(*)::bigint AS row_count
+        FROM sync_scan_ingest
+        WHERE stream_name = 'wireless.audit'
+        GROUP BY status
+      ),
       ingest_time AS (
         SELECT
           count(*) FILTER (WHERE stream_name = 'wireless.audit' AND observed_at >= now() - interval '24 hours')::bigint AS wireless_events_24h_count,
@@ -274,6 +280,11 @@ class ActiveSupport::TestCase
         now() AS measured_at,
         coalesce((SELECT wireless_events_24h_count FROM ingest_time), 0)::bigint AS wireless_events_24h_count,
         (SELECT wireless_last_observed_at FROM ingest_time) AS wireless_last_observed_at,
+        coalesce((SELECT row_count FROM wireless_ingest_status WHERE status = 'pending'), 0)::bigint AS wireless_ingest_pending_count,
+        coalesce((SELECT row_count FROM wireless_ingest_status WHERE status = 'processing'), 0)::bigint AS wireless_ingest_processing_count,
+        coalesce((SELECT row_count FROM wireless_ingest_status WHERE status = 'batched'), 0)::bigint AS wireless_ingest_batched_count,
+        coalesce((SELECT row_count FROM wireless_ingest_status WHERE status = 'failed'), 0)::bigint AS wireless_ingest_failed_count,
+        coalesce((SELECT sum(row_count) FROM wireless_ingest_status), 0)::bigint AS wireless_ingest_total_count,
         coalesce((SELECT row_count FROM ingest_status WHERE status = 'pending'), 0)::bigint AS ingest_pending_count,
         coalesce((SELECT row_count FROM ingest_status WHERE status = 'processing'), 0)::bigint AS ingest_processing_count,
         coalesce((SELECT row_count FROM ingest_status WHERE status = 'batched'), 0)::bigint AS ingest_batched_count,

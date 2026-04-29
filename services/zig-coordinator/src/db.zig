@@ -8,6 +8,7 @@ pub const Error = error{
     CursorEnsureFailed,
     CursorLookupFailed,
     IngestProcessFailed,
+    ScanRecordFailed,
     NextBatchFetchFailed,
     ShadowAuditFailed,
     BatchResultFailed,
@@ -141,6 +142,49 @@ pub const Client = struct {
             return count > 0;
         }
         return false;
+    }
+
+    pub fn recordScanRequest(
+        self: *Client,
+        request_json: []const u8,
+        payload_json: ?[]const u8,
+        payload_sha256: []const u8,
+    ) Error!void {
+        const request_literal = try self.sqlLiteral(request_json);
+        defer self.allocator.free(request_literal);
+        const payload_literal = if (payload_json) |payload| try self.sqlLiteral(payload) else null;
+        defer if (payload_literal) |literal| self.allocator.free(literal);
+        const sha_literal = try self.sqlLiteral(payload_sha256);
+        defer self.allocator.free(sha_literal);
+        const payload_expr = payload_literal orelse "null";
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.record_scan_request({s}::jsonb, {s}::jsonb, {s})::text;",
+            .{ request_literal, payload_expr, sha_literal },
+        );
+        defer self.allocator.free(query);
+
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+        defer argv.deinit(self.allocator);
+        try argv.appendSlice(self.allocator, &.{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        });
+
+        var exec_result = command.exec(self.allocator, self.io, argv.items) catch {
+            return error.ScanRecordFailed;
+        };
+        defer exec_result.deinit(self.allocator);
+
+        if (!command.isSuccess(exec_result)) {
+            command.logFailure("psql", exec_result);
+            return error.ScanRecordFailed;
+        }
     }
 
     pub fn getNextBatch(self: *Client) Error!?[]u8 {

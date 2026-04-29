@@ -157,8 +157,8 @@ class DashboardController < ApplicationController
       {
         label: "Wireless ingest",
         source: "sync_scan_ingest",
-        value: sync_health.ingest_total_count.to_i,
-        detail: "#{sync_health.ingest_pending_count.to_i} pending, #{sync_health.ingest_processing_count.to_i} processing, #{sync_health.ingest_failed_count.to_i} failed",
+        value: sync_health.wireless_ingest_total_count.to_i,
+        detail: "#{sync_health.wireless_ingest_pending_count.to_i} pending, #{sync_health.wireless_ingest_processing_count.to_i} processing, #{sync_health.wireless_ingest_failed_count.to_i} failed",
         last_seen: sync_health.wireless_last_observed_at
       },
       {

@@ -15,6 +15,7 @@ pub const Config = struct {
     scan_consumer: []const u8,
     load_consumer: []const u8,
     result_consumer: []const u8,
+    sync_outbox_dir: []const u8,
     scan_max_attempts: u32,
     scan_retry_backoff_seconds: u32,
 };
@@ -22,7 +23,7 @@ pub const Config = struct {
 pub fn load() Config {
     return .{
         .stream_name = envOrDefault("SYNC_STREAM_NAME", "proxy.events"),
-        .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", "proxy.events,wireless.audit"),
+        .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", "proxy.events"),
         .batch_size = parseBatchSize(envOrDefault("SYNC_BATCH_SIZE", "100")),
         .scan_subject = envOrDefault("SYNC_SCAN_SUBJECT", "sync.scan.request"),
         .load_subject = envOrDefault("SYNC_LOAD_SUBJECT", "sync.oracle.load"),
@@ -35,6 +36,7 @@ pub fn load() Config {
         .scan_consumer = envOrDefault("SYNC_SCAN_CONSUMER", "zig-coordinator-scan"),
         .load_consumer = envOrDefault("SYNC_LOAD_CONSUMER", "oracle-worker-load"),
         .result_consumer = envOrDefault("SYNC_RESULT_CONSUMER", "zig-coordinator-result"),
+        .sync_outbox_dir = envOrDefault("SYNC_OUTBOX_DIR", "/sync-outbox"),
         .scan_max_attempts = parsePositiveU32(envOrDefault("SYNC_SCAN_MAX_ATTEMPTS", "5"), 5),
         .scan_retry_backoff_seconds = parsePositiveU32(envOrDefault("SYNC_SCAN_RETRY_BACKOFF_SECONDS", "30"), 30),
     };

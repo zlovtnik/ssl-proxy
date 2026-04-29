@@ -7,6 +7,18 @@ const logging = @import("logging.zig");
 const HEARTBEAT_INTERVAL_MS: u64 = 300 * 1000;
 const SHADOW_AUDIT_INTERVAL_MS: i64 = 10_000;
 const SHADOW_ALERT_SUBJECT = "audit.threat.shadow_device";
+const INLINE_PAYLOAD_REF_PREFIX = "inline://json/";
+const OUTBOX_PAYLOAD_REF_PREFIX = "outbox://";
+const PROXY_EVENTS_STREAM = "proxy.events";
+const MAX_SCAN_PAYLOAD_BYTES = 16 * 1024 * 1024;
+const MAX_SCAN_PAYLOAD_SQL_BYTES = 64 * 1024;
+
+const ScanRequest = struct {
+    stream_name: []const u8,
+    dedupe_key: []const u8,
+    payload_ref: []const u8,
+    observed_at: []const u8,
+};
 
 pub const Error = error{
     MissingDatabaseUrl,
@@ -16,6 +28,9 @@ pub const Error = error{
     NatsStreamMissing,
     NatsConsumerMissing,
     CursorNotFound,
+    ScanFetchFailed,
+    ScanIngestFailed,
+    PayloadResolveFailed,
     BatchDispatchFailed,
     ResultFetchFailed,
     AlertPublishFailed,
@@ -148,6 +163,7 @@ pub const Service = struct {
 
     fn runIteration(self: *Service) Error!bool {
         var had_work = false;
+        had_work = (try self.drainScanRequests()) or had_work;
         had_work = (try self.database.processIngestLedger(
             self.cfg.stream_names_csv,
             self.cfg.scan_max_attempts,
@@ -157,6 +173,80 @@ pub const Service = struct {
         had_work = (try self.handleResults()) or had_work;
         had_work = (try self.runShadowAudit()) or had_work;
         return had_work;
+    }
+
+    fn drainScanRequests(self: *Service) Error!bool {
+        var had_work = false;
+        var pulls: usize = 0;
+        while (pulls < 50) : (pulls += 1) {
+            if (!(try self.scanConsumerHasBacklog())) break;
+
+            const output = try self.pullScanMessage();
+            defer if (output) |value| self.allocator.free(value);
+            if (output == null) break;
+
+            var iterator = std.mem.splitScalar(u8, output.?, '\n');
+            while (iterator.next()) |raw_line| {
+                const line = std.mem.trim(u8, raw_line, " \t\r\n");
+                if (line.len == 0) continue;
+
+                if (try self.recordScanRequest(line)) {
+                    had_work = true;
+                }
+            }
+        }
+
+        return had_work;
+    }
+
+    fn recordScanRequest(self: *Service, raw_json: []const u8) Error!bool {
+        var parsed = std.json.parseFromSlice(ScanRequest, self.allocator, raw_json, .{
+            .ignore_unknown_fields = true,
+        }) catch |err| {
+            logging.err()
+                .stringSafe("event", "scan_request_ingest")
+                .stringSafe("status", "error")
+                .stringSafe("error", "InvalidScanRequestJson")
+                .err(err)
+                .log();
+            return error.ScanIngestFailed;
+        };
+        defer parsed.deinit();
+
+        const request = parsed.value;
+        if (!std.mem.eql(u8, request.stream_name, PROXY_EVENTS_STREAM)) {
+            logging.info()
+                .stringSafe("event", "scan_request_ingest")
+                .stringSafe("status", "ignored")
+                .string("stream_name", request.stream_name)
+                .log();
+            return false;
+        }
+
+        const payload = resolvePayloadRef(self.allocator, self.io, self.cfg.sync_outbox_dir, request.payload_ref) catch |err| {
+            logging.err()
+                .stringSafe("event", "scan_request_ingest")
+                .stringSafe("status", "error")
+                .string("dedupe_key", request.dedupe_key)
+                .stringSafe("error", "PayloadResolveFailed")
+                .err(err)
+                .log();
+            return error.PayloadResolveFailed;
+        };
+        defer self.allocator.free(payload);
+
+        const payload_sha256 = sha256Hex(payload);
+        const payload_for_sql: ?[]const u8 = if (payload.len <= MAX_SCAN_PAYLOAD_SQL_BYTES) payload else null;
+        try self.database.recordScanRequest(raw_json, payload_for_sql, &payload_sha256);
+        logging.info()
+            .stringSafe("event", "scan_request_ingest")
+            .stringSafe("status", "recorded")
+            .string("dedupe_key", request.dedupe_key)
+            .string("stream_name", request.stream_name)
+            .int("payload_bytes", payload.len)
+            .boolean("payload_stored", payload_for_sql != null)
+            .log();
+        return true;
     }
 
     fn dispatchNextBatch(self: *Service) Error!bool {
@@ -281,6 +371,60 @@ pub const Service = struct {
             consumer_name,
         };
         try self.runRequiredCommand(&argv, "nats", error.NatsConsumerMissing);
+    }
+
+    fn scanConsumerHasBacklog(self: *Service) Error!bool {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "info",
+            self.cfg.audit_stream_name,
+            self.cfg.scan_consumer,
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.ScanFetchFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return error.ScanFetchFailed;
+        }
+
+        return consumerInfoHasBacklog(result.stdout);
+    }
+
+    fn pullScanMessage(self: *Service) Error!?[]u8 {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "next",
+            self.cfg.audit_stream_name,
+            self.cfg.scan_consumer,
+            "--count",
+            "1",
+            "--raw",
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.ScanFetchFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            if (looksLikeNoMessage(result.stderr)) return null;
+            command.logFailure("nats", result);
+            return error.ScanFetchFailed;
+        }
+
+        const output = command.trimmedOutput(result.stdout);
+        if (output.len == 0) return null;
+        return self.allocator.dupe(u8, output) catch error.ScanFetchFailed;
     }
 
     fn resultConsumerHasBacklog(self: *Service) Error!bool {
@@ -412,6 +556,62 @@ fn parseNatsAuthority(allocator: std.mem.Allocator, nats_url: []const u8) Error!
     return std.fmt.allocPrint(allocator, "{s}:4222", .{authority}) catch error.InvalidNatsUrl;
 }
 
+fn resolvePayloadRef(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    outbox_dir: []const u8,
+    payload_ref: []const u8,
+) Error![]u8 {
+    if (std.mem.startsWith(u8, payload_ref, INLINE_PAYLOAD_REF_PREFIX)) {
+        const encoded = payload_ref[INLINE_PAYLOAD_REF_PREFIX.len..];
+        const decoded_len = std.base64.url_safe_no_pad.Decoder.calcSizeForSlice(encoded) catch {
+            return error.PayloadResolveFailed;
+        };
+        const decoded = allocator.alloc(u8, decoded_len) catch return error.PayloadResolveFailed;
+        errdefer allocator.free(decoded);
+        std.base64.url_safe_no_pad.Decoder.decode(decoded, encoded) catch {
+            return error.PayloadResolveFailed;
+        };
+        return decoded;
+    }
+
+    if (std.mem.startsWith(u8, payload_ref, OUTBOX_PAYLOAD_REF_PREFIX)) {
+        const locator = payload_ref[OUTBOX_PAYLOAD_REF_PREFIX.len..];
+        if (!isSafeOutboxLocator(locator)) return error.PayloadResolveFailed;
+
+        var dir = if (std.fs.path.isAbsolute(outbox_dir))
+            std.Io.Dir.openDirAbsolute(io, outbox_dir, .{}) catch return error.PayloadResolveFailed
+        else
+            std.Io.Dir.openDir(.cwd(), io, outbox_dir, .{}) catch return error.PayloadResolveFailed;
+        defer dir.close(io);
+
+        return dir.readFileAlloc(io, locator, allocator, .limited(MAX_SCAN_PAYLOAD_BYTES)) catch {
+            return error.PayloadResolveFailed;
+        };
+    }
+
+    return error.PayloadResolveFailed;
+}
+
+fn isSafeOutboxLocator(locator: []const u8) bool {
+    if (locator.len == 0) return false;
+    if (std.fs.path.isAbsolute(locator)) return false;
+    if (std.mem.indexOfScalar(u8, locator, '\\') != null) return false;
+
+    var parts = std.mem.splitScalar(u8, locator, '/');
+    while (parts.next()) |part| {
+        if (part.len == 0) return false;
+        if (std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
+    }
+    return true;
+}
+
+fn sha256Hex(payload: []const u8) [64]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
 fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: u64) void {
     var remaining_ms = total_ms;
     while (remaining_ms > 0 and !shutdown.load(.acquire)) {
@@ -509,4 +709,56 @@ fn containsAsciiCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
 test "containsAsciiCaseInsensitive matches mixed case substrings" {
     try std.testing.expect(containsAsciiCaseInsensitive("Timed Out Waiting For Message", "timed out"));
     try std.testing.expect(!containsAsciiCaseInsensitive("all good", "timeout"));
+}
+
+test "resolvePayloadRef decodes inline JSON payloads" {
+    const payload = try resolvePayloadRef(
+        std.testing.allocator,
+        std.testing.io,
+        "/sync-outbox",
+        "inline://json/eyJvayI6dHJ1ZX0",
+    );
+    defer std.testing.allocator.free(payload);
+
+    try std.testing.expectEqualStrings("{\"ok\":true}", payload);
+    try std.testing.expectEqualStrings(
+        "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93",
+        &sha256Hex(payload),
+    );
+}
+
+test "resolvePayloadRef rejects outbox path traversal" {
+    try std.testing.expectError(
+        error.PayloadResolveFailed,
+        resolvePayloadRef(std.testing.allocator, std.testing.io, "/sync-outbox", "outbox://../escape.json"),
+    );
+    try std.testing.expectError(
+        error.PayloadResolveFailed,
+        resolvePayloadRef(std.testing.allocator, std.testing.io, "/sync-outbox", "outbox:///escape.json"),
+    );
+}
+
+test "resolvePayloadRef reads safe outbox locators" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "event.json",
+        .data = "{\"type\":\"tunnel_open\",\"host\":\"example.com\"}",
+    });
+    const outbox_dir = try std.fmt.allocPrint(
+        std.testing.allocator,
+        ".zig-cache/tmp/{s}",
+        .{tmp.sub_path},
+    );
+    defer std.testing.allocator.free(outbox_dir);
+
+    const payload = try resolvePayloadRef(
+        std.testing.allocator,
+        std.testing.io,
+        outbox_dir,
+        "outbox://event.json",
+    );
+    defer std.testing.allocator.free(payload);
+
+    try std.testing.expectEqualStrings("{\"type\":\"tunnel_open\",\"host\":\"example.com\"}", payload);
 }
