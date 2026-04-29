@@ -68,11 +68,11 @@
   })
 </script>
 
-<div class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-[#1f3320] bg-[#111a11] p-3">
-  <label class="grid min-w-64 flex-1 gap-1 text-xs font-semibold uppercase tracking-wide text-[#86efac]">
+<div class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-[var(--color-border-muted)] bg-[var(--color-surface)] p-3">
+  <label class="grid min-w-64 flex-1 gap-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent-vivid)]">
     <span>Search</span>
     <input
-      class="min-h-9 rounded-md border border-[#2d4a2d] bg-[#0d130d] px-3 py-2 text-sm text-[#c8e6c8] placeholder:text-[#4d7a4d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
+      class="min-h-9 rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
       type="search"
       bind:value={query}
       {placeholder}
@@ -84,33 +84,33 @@
     {#if filter.type === "select"}
       <Select label={filter.label} bind:value={values[filter.key]} options={filter.options || []} onChange={searchNow} />
     {:else if filter.type === "text"}
-      <label class="grid gap-1 text-xs font-semibold uppercase tracking-wide text-[#86efac]">
+      <label class="grid gap-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent-vivid)]">
         <span>{filter.label}</span>
         <input
-          class="min-h-9 rounded-md border border-[#2d4a2d] bg-[#0d130d] px-3 py-2 text-sm text-[#c8e6c8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
+          class="min-h-9 rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
           type="text"
           bind:value={values[filter.key]}
           on:input={scheduleSearch}
         />
       </label>
     {:else if filter.type === "checkbox"}
-      <label class="inline-flex min-h-9 items-center gap-2 rounded-md border border-[#2d4a2d] bg-[#0d130d] px-3 py-2 text-sm text-[#c8e6c8]">
+      <label class="inline-flex min-h-9 items-center gap-2 rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)]">
         <input type="checkbox" bind:checked={values[filter.key]} on:change={searchNow} />
         <span>{filter.label}</span>
       </label>
     {:else if filter.type === "daterange"}
-      <fieldset class="grid gap-1 text-xs font-semibold uppercase tracking-wide text-[#86efac]">
+      <fieldset class="grid gap-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent-vivid)]">
         <legend>{filter.label}</legend>
         <div class="flex gap-2">
           <input
-            class="min-h-9 rounded-md border border-[#2d4a2d] bg-[#0d130d] px-3 py-2 text-sm text-[#c8e6c8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
+            class="min-h-9 rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
             type="date"
             max={values[`${filter.key}_to`] || undefined}
             bind:value={values[`${filter.key}_from`]}
             on:change={searchNow}
           />
           <input
-            class="min-h-9 rounded-md border border-[#2d4a2d] bg-[#0d130d] px-3 py-2 text-sm text-[#c8e6c8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
+            class="min-h-9 rounded-md border border-[var(--color-control-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
             type="date"
             min={values[`${filter.key}_from`] || undefined}
             bind:value={values[`${filter.key}_to`]}
@@ -123,7 +123,7 @@
 
   <button
     type="button"
-    class="min-h-9 rounded-md border border-[#1f6b1f] bg-[#0d130d] px-3 py-2 text-sm font-semibold text-[#86efac] hover:bg-[#0f2d0f] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fbbf24]"
+    class="min-h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-2 text-sm font-semibold text-[var(--color-accent-vivid)] hover:bg-[var(--color-accent-surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
     on:click={clearFilters}
   >
     Clear filters

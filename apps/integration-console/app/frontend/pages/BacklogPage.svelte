@@ -123,16 +123,16 @@
 
 <div>
   <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-    <h1 class="text-2xl font-bold text-[#c8e6c8]">Backlog Manager</h1>
+    <h1 class="text-2xl font-bold text-[var(--color-text)]">Backlog Manager</h1>
     <Select label="Status" bind:value={status} options={statusOptions} onChange={handleStatusChange} />
   </div>
 
   {#if notice}
-    <div class="mb-3 rounded-md border border-[#1f6b1f] bg-[#0f2d0f] px-3 py-2 text-sm text-[#bbf7d0]" role="status">{notice}</div>
+    <div class="mb-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-accent-surface)] px-3 py-2 text-sm text-[var(--color-accent-vivid)]" role="status">{notice}</div>
   {/if}
 
   {#if loadError}
-    <div class="mb-3 rounded-md border border-[#7f1d1d] bg-[#190d0d] px-3 py-2 text-sm text-[#fecaca]" role="alert">{loadError}</div>
+    <div class="mb-3 rounded-md border border-[var(--color-danger-border)] bg-[var(--color-danger-surface)] px-3 py-2 text-sm text-[var(--color-danger-text)]" role="alert">{loadError}</div>
   {/if}
 
   <DataGrid

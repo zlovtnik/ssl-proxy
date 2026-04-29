@@ -104,9 +104,9 @@
 </script>
 
 <div>
-  <h1 class="mb-4 text-2xl font-bold text-[#c8e6c8]">Logical Heatmap</h1>
+  <h1 class="mb-4 text-2xl font-bold text-[var(--color-text)]">Logical Heatmap</h1>
   {#if lastRefreshedAt}
-    <p class="mb-3 text-sm text-[#6b9e6b]">Last refreshed: {lastRefreshedAt}</p>
+    <p class="mb-3 text-sm text-[var(--color-text-muted)]">Last refreshed: {lastRefreshedAt}</p>
   {/if}
 
   <DataGrid
@@ -124,18 +124,18 @@
   />
 
   <section class="mt-5">
-    <h2 class="mb-3 text-lg font-semibold text-[#86efac]">Signal Strength</h2>
+    <h2 class="mb-3 text-lg font-semibold text-[var(--color-accent-vivid)]">Signal Strength</h2>
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
       {#each visualLocations.slice(0, 200) as location}
-        <a class={`group relative block rounded-lg border border-[#1f3320] p-3 text-[#0d130d] ${bucketClass(location.avg_signal_dbm)}`} href={auditUrl(location)}>
+        <a class={`group relative block rounded-lg border border-[var(--color-border-muted)] p-3 ${bucketClass(location.avg_signal_dbm)}`} href={auditUrl(location)}>
           <span class="block truncate font-semibold">{location.location_id}</span>
           <span class="block text-xs">{formatSignal(location.avg_signal_dbm)} dBm</span>
-          <span class="pointer-events-none absolute left-2 right-2 top-full z-20 mt-1 hidden rounded border border-[#1f6b1f] bg-[#111a11] p-2 text-xs text-[#c8e6c8] shadow-xl group-hover:block group-focus:block">
+          <span class="pointer-events-none absolute left-2 right-2 top-full z-20 mt-1 hidden rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-2 text-xs text-[var(--color-text)] shadow-xl group-hover:block group-focus:block">
             {location.event_count} events, {formatSignal(location.avg_signal_dbm)} dBm average
           </span>
         </a>
       {:else}
-        <div class="rounded-lg border border-[#1f3320] bg-[#111a11] p-4 text-[#4d7a4d]">No heatmap data found.</div>
+        <div class="rounded-lg border border-[var(--color-border-muted)] bg-[var(--color-surface)] p-4 text-[var(--color-text-faint)]">No heatmap data found.</div>
       {/each}
     </div>
   </section>
