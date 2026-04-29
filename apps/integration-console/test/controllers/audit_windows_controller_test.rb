@@ -24,7 +24,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
     publisher = Object.new
     def publisher.call = true
 
-    AuditWindowPublisher.stub(:new, publisher) do
+    AuditWindowPublisher.stub(:new, ->(_audit_window) { publisher }) do
       post audit_windows_url, params: {
         audit_window: {
           location_id: "lab",
@@ -46,7 +46,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
     def publisher.call = raise "nats down"
 
     assert_no_difference -> { AuditWindow.count } do
-      AuditWindowPublisher.stub(:new, publisher) do
+      AuditWindowPublisher.stub(:new, ->(_audit_window) { publisher }) do
         post audit_windows_url, params: {
           audit_window: {
             location_id: "lab",
@@ -69,7 +69,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
     publisher = Object.new
     def publisher.call = raise "nats down"
 
-    AuditWindowPublisher.stub(:new, publisher) do
+    AuditWindowPublisher.stub(:new, ->(_audit_window) { publisher }) do
       patch audit_window_url(audit_window), params: {
         audit_window: {
           location_id: "branch",
