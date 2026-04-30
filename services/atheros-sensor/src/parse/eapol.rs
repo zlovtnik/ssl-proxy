@@ -1,5 +1,7 @@
 use crate::model::WifiFrame;
 
+use super::text::utf8_text;
+
 pub(super) const LLC_SNAP_EAPOL_PREFIX: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -180,11 +182,5 @@ pub(super) fn data_payload_offset(
 }
 
 fn normalize_identity(bytes: &[u8]) -> Option<String> {
-    let value = std::str::from_utf8(bytes).ok()?;
-    let value = value.trim_matches(char::from(0)).trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    utf8_text(bytes)
 }

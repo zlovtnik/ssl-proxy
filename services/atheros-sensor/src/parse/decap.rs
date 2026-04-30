@@ -4,7 +4,10 @@ use crate::model::{
     ApplicationLayer, DhcpLayer, DnsLayer, Ipv4Layer, LlcSnapLayer, SsdpLayer, TransportLayer,
 };
 
-use super::eapol::data_payload_offset;
+use super::{
+    eapol::data_payload_offset,
+    text::{sanitize_text, utf8_text},
+};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct PayloadAnalysis {
@@ -281,7 +284,9 @@ fn parse_ssdp(bytes: &[u8]) -> Option<SsdpLayer> {
             continue;
         };
         let name = name.trim().to_ascii_uppercase();
-        let value = value.trim().to_string();
+        let Some(value) = sanitize_text(value) else {
+            continue;
+        };
         match name.as_str() {
             "ST" | "NT" => st = Some(value),
             "MX" => mx = Some(value),
@@ -396,7 +401,7 @@ fn decode_dns_name(bytes: &[u8], offset: usize) -> Option<(String, usize)> {
             break;
         }
         let label = bytes.get(cursor..cursor + len)?;
-        labels.push(std::str::from_utf8(label).ok()?.to_string());
+        labels.push(utf8_text(label)?);
         cursor += len;
     }
     Some((labels.join("."), end_offset.unwrap_or(cursor)))
@@ -451,13 +456,5 @@ fn ethertype_name(ethertype: u16) -> &'static str {
 }
 
 fn text_option(bytes: &[u8]) -> Option<String> {
-    let value = std::str::from_utf8(bytes)
-        .ok()?
-        .trim_matches(char::from(0))
-        .trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    utf8_text(bytes)
 }

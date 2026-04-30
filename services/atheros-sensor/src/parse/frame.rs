@@ -1171,6 +1171,32 @@ mod tests {
     }
 
     #[test]
+    fn sanitizes_nul_bytes_from_ssid_before_json_payload() {
+        let context = AuditContext {
+            sensor_id: "00:11:22:33:44:55".to_string(),
+            location_id: "North-Wing-Entry".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+        let mut body = vec![0; 8];
+        body.extend_from_slice(&100u16.to_le_bytes());
+        body.extend_from_slice(&0x0431u16.to_le_bytes());
+        body.extend_from_slice(&[0x00, 0x09]);
+        body.extend_from_slice(b"\0CorpWiFi");
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+        };
+
+        let entry = to_audit_entry(attach_context(decode_frame(&packet).unwrap(), &context));
+        let payload = serde_json::to_string(&entry).unwrap();
+
+        assert_eq!(entry.ssid.as_deref(), Some("CorpWiFi"));
+        assert!(!payload.contains("\\u0000"));
+    }
+
+    #[test]
     fn detects_new_bssid_for_known_ssid() {
         let mut cache = IdentityCache::default();
         let first = decode_frame(&RawPacket {
