@@ -15,7 +15,7 @@ use super::{
         session_key as build_session_key,
     },
     decap::analyze_payload,
-    eapol::{extract_eap_identity, extract_eapol_key_message},
+    eapol::{extract_eap_identity, extract_eapol_key_message, extract_pmkid},
     ie::{extract_ie_metadata, extract_ssid},
     qos::parse_qos_control,
     radiotap::strip_radiotap,
@@ -64,6 +64,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let username_hint = extract_eap_identity(frame_type, frame_control, subtype, frame_bytes);
     let eapol_key_message =
         extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes);
+    let pmkid = extract_pmkid(frame_type, frame_control, subtype, frame_bytes);
     let identity_source_hint = username_hint.as_ref().map(|_| "eap_identity".to_string());
     let retry = frame_control & (1 << 11) != 0;
     let more_data = frame_control & (1 << 13) != 0;
@@ -76,6 +77,11 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let payload = analyze_payload(frame_type, frame_control, subtype, protected, frame_bytes);
     let channel_number = frequency_to_channel(radiotap.frequency_mhz);
     let channel_flags = decode_channel_flags(radiotap.channel_flags);
+    let band = derive_band(
+        radiotap.frequency_mhz,
+        radiotap.channel_flags,
+        channel_number,
+    );
     let signal_status = signal_status(&radiotap);
     let adjacent_mac_hint = adjacent_mac_hint(&addresses);
     let session_key = build_session_key(
@@ -89,7 +95,8 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         sequence_number,
         fragment_number,
     );
-    let frame_fingerprint = frame_fingerprint(frame_control, &frame_subtype, &addresses, frame_bytes);
+    let frame_fingerprint =
+        frame_fingerprint(frame_control, &frame_subtype, &addresses, frame_bytes);
     let payload_visibility = payload_visibility(frame_type, protected).to_string();
     let large_frame = frame_bytes.len() > 1000;
     let mut anomaly_reasons = Vec::new();
@@ -195,6 +202,10 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         channel_flags: radiotap.channel_flags,
         data_rate_kbps: radiotap.data_rate_kbps,
         antenna_id: radiotap.antenna_id,
+        vht_known: radiotap.vht_known,
+        vht_flags: radiotap.vht_flags,
+        vht_bandwidth: radiotap.vht_bandwidth,
+        he_data: radiotap.he_data.clone(),
         sequence_number,
         fragment_number,
         channel_number,
@@ -210,6 +221,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         from_ds,
         raw_len: frame_bytes.len(),
         raw_frame: Some(STANDARD.encode(frame_bytes)),
+        band: band.to_string(),
         tags,
         security_flags: ie_metadata.security_flags,
         wps_device_name: ie_metadata.wps_device_name,
@@ -218,6 +230,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         device_fingerprint: ie_metadata.device_fingerprint,
         handshake_captured: false,
         eapol_key_message,
+        pmkid,
         username_hint,
         identity_source_hint,
         qos_tid: qos.as_ref().map(|value| value.tid),
@@ -270,6 +283,10 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
             antenna_id: radiotap.antenna_id,
             raw_len: frame_bytes.len(),
             signal_status,
+            vht_known: radiotap.vht_known,
+            vht_flags: radiotap.vht_flags,
+            vht_bandwidth: radiotap.vht_bandwidth,
+            he_data: radiotap.he_data,
         },
         qos,
         llc_snap: payload.llc_snap,
@@ -328,6 +345,7 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         location_id: enriched.location_id,
         interface: enriched.interface,
         channel: enriched.channel,
+        band: frame.band,
         frame_type: Some(frame.frame_type),
         bssid: frame.bssid,
         destination_bssid: frame.destination_bssid,
@@ -344,6 +362,10 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         channel_flags: frame.channel_flags,
         data_rate_kbps: frame.data_rate_kbps,
         antenna_id: frame.antenna_id,
+        vht_known: frame.vht_known,
+        vht_flags: frame.vht_flags,
+        vht_bandwidth: frame.vht_bandwidth,
+        he_data: frame.he_data,
         sequence_number: frame.sequence_number,
         fragment_number: frame.fragment_number,
         channel_number: frame.channel_number,
@@ -478,6 +500,34 @@ fn signal_status(radiotap: &super::radiotap::RadiotapMetadata) -> String {
     }
 }
 
+fn derive_band(
+    frequency_mhz: Option<u16>,
+    channel_flags: Option<u16>,
+    channel_number: Option<u16>,
+) -> &'static str {
+    if let Some(frequency) = frequency_mhz {
+        return match frequency {
+            2400..=2500 => "2.4ghz",
+            4900..=5900 => "5ghz",
+            5925..=7125 => "6ghz",
+            _ => "unknown",
+        };
+    }
+    if let Some(flags) = channel_flags {
+        if flags & 0x0080 != 0 {
+            return "2.4ghz";
+        }
+        if flags & 0x0100 != 0 {
+            return "5ghz";
+        }
+    }
+    match channel_number {
+        Some(1..=14) => "2.4ghz",
+        Some(32..=177) => "5ghz",
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine};
@@ -552,7 +602,9 @@ mod tests {
         assert!(channel_flags.dynamic_cck_ofdm);
         assert!(channel_flags.ofdm);
         assert!(channel_flags.cck);
-        assert!(channel_flags.labels.contains(&"dynamic_cck_ofdm".to_string()));
+        assert!(channel_flags
+            .labels
+            .contains(&"dynamic_cck_ofdm".to_string()));
     }
 
     #[test]
@@ -577,6 +629,14 @@ mod tests {
         assert!(payload.len() > 24);
         assert_eq!(frame.frame_subtype, "beacon");
         assert_eq!(frame.signal_dbm, Some(-42));
+    }
+
+    #[test]
+    fn strips_radiotap_with_vendor_namespace_skip() {
+        let frame = vendor_namespace_before_signal_beacon_frame();
+        let (metadata, payload) = strip_radiotap(&frame).unwrap();
+        assert_eq!(metadata.signal_dbm, Some(-42));
+        assert!(payload.len() > 24);
     }
 
     #[test]
@@ -810,7 +870,10 @@ mod tests {
         };
         let dhcp_frame = decode_frame(&dhcp_packet).unwrap();
         assert_eq!(dhcp_frame.app_protocol.as_deref(), Some("dhcp"));
-        assert_eq!(dhcp_frame.dhcp_requested_ip.as_deref(), Some("192.168.1.44"));
+        assert_eq!(
+            dhcp_frame.dhcp_requested_ip.as_deref(),
+            Some("192.168.1.44")
+        );
         assert_eq!(dhcp_frame.dhcp_hostname.as_deref(), Some("sensor"));
         assert_eq!(dhcp_frame.dhcp_vendor_class.as_deref(), Some("AcmeClient1"));
     }
@@ -967,7 +1030,7 @@ mod tests {
                 data,
             })
             .unwrap();
-            if let Some(alert) = monitor.observe(&mut frame, &context) {
+            if let Some(alert) = monitor.observe(&mut frame, &context, None) {
                 assert!(frame.handshake_captured);
                 assert!(frame.tags.contains(&"handshake_captured".to_string()));
                 alerts.push(alert);
@@ -983,7 +1046,7 @@ mod tests {
             data: data_to_distribution_radiotap_frame(eapol_key_payload(4)),
         })
         .unwrap();
-        assert!(monitor.observe(&mut duplicate, &context).is_none());
+        assert!(monitor.observe(&mut duplicate, &context, None).is_none());
     }
 
     #[test]
@@ -1066,7 +1129,10 @@ mod tests {
         assert_eq!(value["protected"], Value::Bool(false));
         assert_eq!(value["to_ds"], Value::Bool(false));
         assert_eq!(value["from_ds"], Value::Bool(false));
-        assert_eq!(value["payload_visibility"], Value::String("header_only".to_string()));
+        assert_eq!(
+            value["payload_visibility"],
+            Value::String("header_only".to_string())
+        );
         assert_eq!(value["raw_frame"], Value::String(expected_raw_frame));
         assert_eq!(value["username"], Value::Null);
         assert_eq!(

@@ -246,6 +246,26 @@ pub async fn publish_bandwidth_event(
     Ok(())
 }
 
+pub async fn publish_json<T: serde::Serialize>(
+    publisher: &dyn PublishClient,
+    operation: &'static str,
+    subject: &str,
+    value: &T,
+) -> Result<(), PublishError> {
+    let payload = serde_json::to_string(value)?;
+    let key = sha256_hex(&payload);
+    queue_publish_with_backpressure(publisher, operation, subject, &payload, &key)
+        .await
+        .map_err(PublishError::Publish)?;
+    debug!(
+        dedupe_key = %key,
+        subject,
+        payload_bytes = payload.len(),
+        "queued wireless JSON event"
+    );
+    Ok(())
+}
+
 async fn persist_publish_failure(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,
@@ -345,7 +365,7 @@ fn queue_in_memory_after_backlog_failure(
     );
 }
 
-async fn flush_memory_backlog(state: &SharedPublishState, backlog: &dyn BacklogStore) {
+pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &dyn BacklogStore) {
     let memory_entries = state.lock().unwrap().drain_memory_backlog();
     if !memory_entries.is_empty() {
         info!(
@@ -741,6 +761,14 @@ mod tests {
                 .retain(|entry| entry.dedupe_key != dedupe_key);
             Ok(())
         }
+
+        async fn prune_stale(
+            &self,
+            _max_attempts: i32,
+            _max_age_hours: i64,
+        ) -> Result<u64, BacklogError> {
+            Ok(0)
+        }
     }
 
     struct FailingBacklog;
@@ -767,6 +795,14 @@ mod tests {
 
         async fn mark_synced(&self, _dedupe_key: &str) -> Result<(), BacklogError> {
             Ok(())
+        }
+
+        async fn prune_stale(
+            &self,
+            _max_attempts: i32,
+            _max_age_hours: i64,
+        ) -> Result<u64, BacklogError> {
+            Ok(0)
         }
     }
 
@@ -837,6 +873,14 @@ mod tests {
                 .retain(|entry| entry.dedupe_key != dedupe_key);
             Ok(())
         }
+
+        async fn prune_stale(
+            &self,
+            _max_attempts: i32,
+            _max_age_hours: i64,
+        ) -> Result<u64, BacklogError> {
+            Ok(0)
+        }
     }
 
     fn test_state() -> SharedPublishState {
@@ -902,6 +946,7 @@ mod tests {
             published: Arc::new(Mutex::new(Vec::new())),
         };
         let alert = HandshakeAlert {
+            schema_version: 1,
             observed_at: "2026-04-20T12:00:00Z".to_string(),
             sensor_id: "sensor-1".to_string(),
             location_id: "lab".to_string(),
@@ -909,6 +954,7 @@ mod tests {
             bssid: "10:20:30:40:50:60".to_string(),
             client_mac: "aa:bb:cc:dd:ee:01".to_string(),
             signal_dbm: Some(-42),
+            pmkid: None,
         };
 
         publish_handshake_alert(&publisher, &alert).await.unwrap();
@@ -928,6 +974,7 @@ mod tests {
             published: Arc::new(Mutex::new(Vec::new())),
         };
         let event = WirelessBandwidthEvent {
+            schema_version: 1,
             event_type: "wireless_bandwidth_window".to_string(),
             window_start: "2026-04-20T12:00:00Z".to_string(),
             window_end: "2026-04-20T12:01:00Z".to_string(),

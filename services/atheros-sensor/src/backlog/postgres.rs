@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{
     pool_diag::database_target,
-    store::{BacklogEntry, BacklogError, BacklogStore, IngestRecord},
+    store::{AuthorizedWirelessNetwork, BacklogEntry, BacklogError, BacklogStore, IngestRecord},
     wireless_columns::WirelessIngestColumns,
 };
 
@@ -117,6 +117,7 @@ impl PostgresBacklog {
         Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1))))
     }
 
+    #[allow(dead_code)]
     pub async fn is_authorized_wireless_network(
         &self,
         ssid: Option<&str>,
@@ -175,6 +176,56 @@ impl PostgresBacklog {
         };
 
         Ok(row.get::<_, bool>(0))
+    }
+
+    pub async fn list_authorized_wireless_networks(
+        &self,
+    ) -> Result<Vec<AuthorizedWirelessNetwork>, BacklogError> {
+        let operation = "list_authorized_wireless_networks";
+        let client = self.client(operation).await?;
+        let table_exists = match client
+            .query_one(
+                "select to_regclass('public.authorized_wireless_networks') is not null",
+                &[],
+            )
+            .await
+        {
+            Ok(row) => row.get::<_, bool>(0),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        if !table_exists {
+            return Ok(Vec::new());
+        }
+        let rows = match client
+            .query(
+                "select ssid, lower(bssid), location_id
+                   from authorized_wireless_networks
+                  where enabled",
+                &[],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| AuthorizedWirelessNetwork {
+                ssid: row.get::<_, Option<String>>(0),
+                bssid: row.get::<_, Option<String>>(1),
+                location_id: row.get::<_, Option<String>>(2),
+            })
+            .collect())
+    }
+
+    pub fn pool_status(&self) -> deadpool_postgres::Status {
+        self.pool.status()
     }
 
     fn log_postgres_error(&self, operation: &'static str, source: &tokio_postgres::Error) {
@@ -405,5 +456,35 @@ impl BacklogStore for PostgresBacklog {
             );
         }
         Ok(())
+    }
+
+    async fn prune_stale(
+        &self,
+        max_attempts: i32,
+        max_age_hours: i64,
+    ) -> Result<u64, BacklogError> {
+        let operation = "prune_stale";
+        let client = self.client(operation).await?;
+        let rows_affected = match client
+            .execute(
+                "delete from audit_backlog
+                  where status = 'pending'
+                    and (attempt_count >= $1
+                         or created_at < now() - ($2::text || ' hours')::interval)",
+                &[&max_attempts, &max_age_hours],
+            )
+            .await
+        {
+            Ok(rows_affected) => rows_affected,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        info!(
+            rows_affected,
+            max_attempts, max_age_hours, "pruned stale wireless audit backlog rows"
+        );
+        Ok(rows_affected)
     }
 }

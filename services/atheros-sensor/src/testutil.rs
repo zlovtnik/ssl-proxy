@@ -117,6 +117,20 @@ pub(crate) fn namespace_radiotap_header() -> Vec<u8> {
     vec![0x00, 0x00, 0x09, 0x00, 0x20, 0x00, 0x00, 0x20, 0xd6]
 }
 
+pub(crate) fn vendor_namespace_before_signal_radiotap_header() -> Vec<u8> {
+    vec![
+        0x00, 0x00, 0x10, 0x00, 0x20, 0x00, 0x00, 0x40, 0xd6, 0x11, 0x22, 0x33, 0x01, 0x01, 0x00,
+        0xff,
+    ]
+}
+
+pub(crate) fn vendor_namespace_before_signal_beacon_frame() -> Vec<u8> {
+    let frame = build_frame(0x80, 0x00, BROADCAST, AP, AP, None, beacon_body());
+    let mut bytes = vendor_namespace_before_signal_radiotap_header();
+    bytes.extend_from_slice(&frame[10..]);
+    bytes
+}
+
 pub(crate) fn beacon_body() -> Vec<u8> {
     let mut body = vec![0; 8];
     body.extend_from_slice(&100u16.to_le_bytes());
@@ -209,7 +223,10 @@ pub(crate) fn dynamic_channel_beacon_frame() -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn qos_data_to_distribution_radiotap_frame(qos_control: u16, payload: Vec<u8>) -> Vec<u8> {
+pub(crate) fn qos_data_to_distribution_radiotap_frame(
+    qos_control: u16,
+    payload: Vec<u8>,
+) -> Vec<u8> {
     let mut body = qos_control.to_le_bytes().to_vec();
     body.extend_from_slice(&payload);
     build_frame(0x88, 0x01, AP, CLIENT, DISTRIBUTION_DST, None, body)

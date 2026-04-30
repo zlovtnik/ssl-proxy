@@ -66,7 +66,11 @@ pub(super) fn frame_fingerprint(
 ) -> String {
     let normalized = format!(
         "{frame_control:04x}|{frame_subtype}|{}|{}|{}|{}|{}",
-        addresses.bssid.as_deref().and_then(normalize_mac).unwrap_or(""),
+        addresses
+            .bssid
+            .as_deref()
+            .and_then(normalize_mac)
+            .unwrap_or(""),
         addresses
             .source_mac
             .as_deref()

@@ -43,15 +43,17 @@ mod tests {
     fn traffic_bucket_flushes_protected_data_frames_by_bssid() {
         let mut bucket = TrafficBucket::new(60);
         assert!(bucket
-            .observe(&bandwidth_entry(0, 100, -52))
+            .observe(&bandwidth_entry(0, 100, -52), false)
             .unwrap()
             .is_empty());
         assert!(bucket
-            .observe(&bandwidth_entry(30, 125, -47))
+            .observe(&bandwidth_entry(30, 125, -47), false)
             .unwrap()
             .is_empty());
 
-        let events = bucket.observe(&bandwidth_entry(61, 75, -60)).unwrap();
+        let events = bucket
+            .observe(&bandwidth_entry(61, 75, -60), false)
+            .unwrap();
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].source_mac, "aa:bb:cc:dd:ee:01");

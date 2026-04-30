@@ -4,6 +4,7 @@ use std::{
 };
 
 use thiserror::Error;
+use tracing::{info, warn};
 
 #[derive(Debug, Error)]
 pub enum DeviceError {
@@ -48,7 +49,13 @@ pub fn detect_in(root: &Path) -> Result<String, DeviceError> {
             continue;
         }
 
-        wireless_interfaces.push((interface, interface_path));
+        let driver = driver_name(&interface_path);
+        info!(
+            interface = %interface,
+            driver = driver.as_deref().unwrap_or("unknown"),
+            "wireless interface detected"
+        );
+        wireless_interfaces.push((interface, interface_path, driver));
     }
 
     if wireless_interfaces.is_empty() {
@@ -57,13 +64,21 @@ pub fn detect_in(root: &Path) -> Result<String, DeviceError> {
 
     wireless_interfaces.sort_by(|left, right| left.0.cmp(&right.0));
 
-    for (interface, interface_path) in &wireless_interfaces {
-        if driver_name(interface_path).as_deref() == Some("ath9k_htc") {
+    for (interface, _, driver) in &wireless_interfaces {
+        if driver.as_deref() == Some("ath9k_htc") {
+            info!(interface = %interface, reason = "ath9k_htc preferred", "wireless interface selected");
             return Ok(interface.clone());
         }
     }
 
-    Ok(wireless_interfaces[0].0.clone())
+    let (interface, _, driver) = &wireless_interfaces[0];
+    warn!(
+        interface = %interface,
+        driver = driver.as_deref().unwrap_or("unknown"),
+        reason = "sorted fallback",
+        "selected wireless interface is not using ath9k_htc"
+    );
+    Ok(interface.clone())
 }
 
 fn is_wireless_interface(interface_path: &Path) -> bool {

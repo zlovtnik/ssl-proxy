@@ -12,6 +12,13 @@ pub struct BacklogEntry {
     pub attempt_count: i32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorizedWirelessNetwork {
+    pub ssid: Option<String>,
+    pub bssid: Option<String>,
+    pub location_id: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct IngestRecord<'a> {
     pub dedupe_key: &'a str,
@@ -63,4 +70,6 @@ pub trait BacklogStore: Send + Sync {
     ) -> Result<(), BacklogError>;
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError>;
     async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError>;
+    async fn prune_stale(&self, max_attempts: i32, max_age_hours: i64)
+        -> Result<u64, BacklogError>;
 }

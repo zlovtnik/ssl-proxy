@@ -2,7 +2,7 @@ use tracing::info;
 
 use crate::config::AppConfig;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct CaptureStats {
     pub(crate) packets_seen: u64,
     pub(crate) decoded_frames: u64,
@@ -10,6 +10,7 @@ pub(crate) struct CaptureStats {
     pub(crate) audit_window_drops: u64,
     pub(crate) capture_errors: u64,
     pub(crate) pipeline_errors: u64,
+    pub(crate) mac_lookup_failures: u64,
 }
 
 impl CaptureStats {
@@ -24,6 +25,7 @@ impl CaptureStats {
             audit_window_drops = self.audit_window_drops,
             capture_errors = self.capture_errors,
             pipeline_errors = self.pipeline_errors,
+            mac_lookup_failures = self.mac_lookup_failures,
             "atheros sensor capture heartbeat"
         );
     }

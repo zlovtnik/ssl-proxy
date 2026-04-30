@@ -9,6 +9,10 @@ pub struct RadiotapMetadata {
     pub channel_flags: Option<u16>,
     pub data_rate_kbps: Option<u32>,
     pub antenna_id: Option<u8>,
+    pub vht_known: Option<u16>,
+    pub vht_flags: Option<u8>,
+    pub vht_bandwidth: Option<u8>,
+    pub he_data: Option<Vec<u8>>,
     pub signal_present: bool,
 }
 
@@ -54,6 +58,10 @@ fn parse_metadata(
                 continue;
             }
             let global_bit = word_index * 32 + bit;
+            if global_bit == 30 {
+                cursor = skip_vendor_namespace(bytes, length, cursor)?;
+                continue;
+            }
             let Some((align, size)) = field_layout(global_bit) else {
                 return Ok(metadata);
             };
@@ -80,6 +88,13 @@ fn parse_metadata(
                 }
                 6 => metadata.noise_dbm = Some(bytes[cursor] as i8),
                 11 => metadata.antenna_id = Some(bytes[cursor]),
+                21 => {
+                    metadata.vht_known =
+                        Some(u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]));
+                    metadata.vht_flags = Some(bytes[cursor + 2]);
+                    metadata.vht_bandwidth = Some(bytes[cursor + 3]);
+                }
+                23 => metadata.he_data = Some(bytes[cursor..cursor + size].to_vec()),
                 _ => {}
             }
             cursor += size;
@@ -87,6 +102,18 @@ fn parse_metadata(
     }
 
     Ok(metadata)
+}
+
+fn skip_vendor_namespace(bytes: &[u8], length: usize, cursor: usize) -> Result<usize, ParseError> {
+    if cursor + 6 > length {
+        return Err(ParseError::MissingRadiotap);
+    }
+    let skip_len = u16::from_le_bytes([bytes[cursor + 4], bytes[cursor + 5]]) as usize;
+    let next = cursor + 6 + skip_len;
+    if next > length {
+        return Err(ParseError::MissingRadiotap);
+    }
+    Ok(next)
 }
 
 fn read_present_word(bytes: &[u8], offset: usize) -> u32 {
@@ -127,8 +154,7 @@ fn field_layout(bit: usize) -> Option<(usize, usize)> {
         28 => None,
         // 29 is the radiotap namespace marker and carries no field data.
         29 => Some((1, 0)),
-        // 30 is a vendor namespace with a variable skip length. Stop before it.
-        30 => None,
+        30 => Some((1, 0)),
         _ => None,
     }
 }

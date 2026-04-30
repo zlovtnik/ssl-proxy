@@ -18,12 +18,32 @@ pub enum CaptureError {
     UnsupportedDatalink { actual: i32 },
 }
 
+#[derive(Clone)]
+pub struct CaptureControl {
+    tx: mpsc::UnboundedSender<CaptureCommand>,
+}
+
+impl CaptureControl {
+    pub fn apply_filter(&self, filter: String) {
+        let _ = self.tx.send(CaptureCommand::ApplyFilter(filter));
+    }
+}
+
+enum CaptureCommand {
+    ApplyFilter(String),
+}
+
+pub struct PacketStream {
+    pub packets: ReceiverStream<Result<RawPacket, CaptureError>>,
+    pub control: CaptureControl,
+}
+
 pub fn stream_packets(
     device: &str,
     snaplen: i32,
     timeout_ms: i32,
     filter: &str,
-) -> Result<ReceiverStream<Result<RawPacket, CaptureError>>, CaptureError> {
+) -> Result<PacketStream, CaptureError> {
     let builder = Capture::from_device(device)?
         .immediate_mode(true)
         .promisc(true)
@@ -59,7 +79,18 @@ pub fn stream_packets(
     capture.filter(filter, true)?;
 
     let (tx, rx) = mpsc::channel(64);
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
     thread::spawn(move || loop {
+        while let Ok(command) = control_rx.try_recv() {
+            match command {
+                CaptureCommand::ApplyFilter(filter) => {
+                    if let Err(error) = capture.filter(&filter, true) {
+                        let _ = tx.blocking_send(Err(CaptureError::Pcap(error)));
+                        return;
+                    }
+                }
+            }
+        }
         match capture.next_packet() {
             Ok(packet) => {
                 if tx
@@ -82,7 +113,10 @@ pub fn stream_packets(
         }
     });
 
-    Ok(ReceiverStream::new(rx))
+    Ok(PacketStream {
+        packets: ReceiverStream::new(rx),
+        control: CaptureControl { tx: control_tx },
+    })
 }
 
 fn validate_radiotap_datalink(linktype: Linktype) -> Result<(), CaptureError> {

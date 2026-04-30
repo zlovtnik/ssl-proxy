@@ -21,6 +21,27 @@ pub struct AppConfig {
     pub audit_window: AuditWindow,
     pub mac_device_lookup_enabled: bool,
     pub mac_device_cache_size: usize,
+    pub channel_hop_enabled: bool,
+    pub channel_hop_interval_ms: u64,
+    pub client_inventory_flush_secs: u64,
+    pub signal_anomaly_dbm_delta: i8,
+    pub deauth_flood_threshold: u64,
+    pub deauth_flood_window_secs: u64,
+    pub deauth_flood_cooldown_secs: u64,
+    pub export_handshakes: bool,
+    pub authorized_network_cache_ttl_secs: u64,
+    pub metrics_port: Option<u16>,
+    pub shutdown_grace_secs: u64,
+    pub backlog_max_attempts: i32,
+    pub backlog_max_age_hours: i64,
+    pub mac_lookup_error_ttl_secs: u64,
+    pub audit_layer_stream: AuditLayerStream,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuditLayerStream {
+    Stdout,
+    Stderr,
 }
 
 #[derive(Debug, Error)]
@@ -35,6 +56,8 @@ pub enum ConfigError {
     InvalidTimeout(String),
     #[error("invalid ATH_SENSOR_LOG_IDLE_SECS: {0}")]
     InvalidLogIdleSecs(String),
+    #[error("invalid ATH_SENSOR_METRICS_PORT: {0}")]
+    InvalidMetricsPort(String),
     #[error("invalid AUDIT_WINDOW_START: {0}")]
     InvalidAuditWindowStart(String),
     #[error("invalid AUDIT_WINDOW_END: {0}")]
@@ -139,6 +162,47 @@ impl AppConfig {
             mac_device_cache_size: parse_usize("ATH_SENSOR_MAC_DEVICE_CACHE_SIZE", 4_096)
                 .unwrap_or(4_096)
                 .max(1),
+            channel_hop_enabled: read_bool("ATH_SENSOR_CHANNEL_HOP_ENABLED", false),
+            channel_hop_interval_ms: parse_u64("ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS", 1_000)
+                .unwrap_or(1_000)
+                .max(100),
+            client_inventory_flush_secs: parse_u64("ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS", 60)
+                .unwrap_or(60)
+                .max(1),
+            signal_anomaly_dbm_delta: parse_i8("ATH_SENSOR_SIGNAL_ANOMALY_DBM_DELTA", 15)
+                .unwrap_or(15)
+                .max(1),
+            deauth_flood_threshold: parse_u64("ATH_SENSOR_DEAUTH_FLOOD_THRESHOLD", 20)
+                .unwrap_or(20)
+                .max(1),
+            deauth_flood_window_secs: parse_u64("ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS", 30)
+                .unwrap_or(30)
+                .max(1),
+            deauth_flood_cooldown_secs: parse_u64("ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS", 60)
+                .unwrap_or(60)
+                .max(1),
+            export_handshakes: read_bool("ATH_SENSOR_EXPORT_HANDSHAKES", false),
+            authorized_network_cache_ttl_secs: parse_u64(
+                "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS",
+                60,
+            )
+            .unwrap_or(60)
+            .max(1),
+            metrics_port: parse_optional_u16("ATH_SENSOR_METRICS_PORT")
+                .map_err(ConfigError::InvalidMetricsPort)?,
+            shutdown_grace_secs: parse_u64("ATH_SENSOR_SHUTDOWN_GRACE_SECS", 5)
+                .unwrap_or(5)
+                .max(1),
+            backlog_max_attempts: parse_i32("ATH_SENSOR_BACKLOG_MAX_ATTEMPTS", 10)
+                .unwrap_or(10)
+                .max(1),
+            backlog_max_age_hours: parse_i64("ATH_SENSOR_BACKLOG_MAX_AGE_HOURS", 72)
+                .unwrap_or(72)
+                .max(1),
+            mac_lookup_error_ttl_secs: parse_u64("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", 30)
+                .unwrap_or(30)
+                .max(1),
+            audit_layer_stream: audit_layer_stream_from_env(),
         })
     }
 }
@@ -260,6 +324,40 @@ fn parse_i32(name: &str, default: i32) -> Result<i32, String> {
     }
 }
 
+fn parse_i64(name: &str, default: i64) -> Result<i64, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => value.trim().parse::<i64>().map_err(|_| value),
+        _ => Ok(default),
+    }
+}
+
+fn parse_i8(name: &str, default: i8) -> Result<i8, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => value.trim().parse::<i8>().map_err(|_| value),
+        _ => Ok(default),
+    }
+}
+
+fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => {
+            value.trim().parse::<u16>().map(Some).map_err(|_| value)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn audit_layer_stream_from_env() -> AuditLayerStream {
+    match std::env::var("ATH_SENSOR_AUDIT_LAYER_STREAM")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("stderr") => AuditLayerStream::Stderr,
+        _ => AuditLayerStream::Stdout,
+    }
+}
+
 fn parse_u64(name: &str, default: u64) -> Result<u64, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u64>().map_err(|_| value),
@@ -351,6 +449,21 @@ mod tests {
             "ATH_SENSOR_LOG_IDLE_SECS",
             "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
             "ATH_SENSOR_MAC_DEVICE_CACHE_SIZE",
+            "ATH_SENSOR_CHANNEL_HOP_ENABLED",
+            "ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS",
+            "ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS",
+            "ATH_SENSOR_SIGNAL_ANOMALY_DBM_DELTA",
+            "ATH_SENSOR_DEAUTH_FLOOD_THRESHOLD",
+            "ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS",
+            "ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS",
+            "ATH_SENSOR_EXPORT_HANDSHAKES",
+            "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS",
+            "ATH_SENSOR_METRICS_PORT",
+            "ATH_SENSOR_SHUTDOWN_GRACE_SECS",
+            "ATH_SENSOR_BACKLOG_MAX_ATTEMPTS",
+            "ATH_SENSOR_BACKLOG_MAX_AGE_HOURS",
+            "ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS",
+            "ATH_SENSOR_AUDIT_LAYER_STREAM",
             "AUDIT_WINDOW_TZ",
             "AUDIT_WINDOW_DAYS",
             "AUDIT_WINDOW_START",

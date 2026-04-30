@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, RwLock,
+    },
+    time::Duration,
+};
 
 use chrono::NaiveTime;
 use serde::Deserialize;
@@ -10,9 +16,16 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
-use crate::audit::{AuditWindow, SharedAuditWindow};
+use crate::{
+    audit::{AuditWindow, SharedAuditWindow},
+    capture::CaptureControl,
+    channel_control::set_channel,
+    model::AuditContext,
+};
 
 pub const AUDIT_CONFIG_SUBJECT: &str = "wireless.audit.config";
+pub const AUTHORIZED_NETWORKS_CONFIG_SUBJECT: &str = "wireless.config.authorized_networks";
+pub const SENSOR_CONFIG_SUBJECT: &str = "wireless.config.sensor";
 const NATS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +36,15 @@ struct AuditWindowUpdate {
     start_time: Option<String>,
     end_time: Option<String>,
     enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SensorConfigUpdate {
+    location_id: Option<String>,
+    bpf: Option<String>,
+    channel: Option<u8>,
+    log_idle_secs: Option<u64>,
+    mac_device_lookup_enabled: Option<bool>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -43,6 +65,42 @@ pub fn spawn_audit_window_config_subscriber(
                 run_subscriber_once(&config, &location_id, Arc::clone(&audit_window)).await
             {
                 warn!(%error, subject = AUDIT_CONFIG_SUBJECT, "audit config subscriber disconnected");
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
+}
+
+pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation: Arc<AtomicU64>) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) =
+                run_invalidation_subscriber_once(&config, Arc::clone(&generation)).await
+            {
+                warn!(%error, subject = AUTHORIZED_NETWORKS_CONFIG_SUBJECT, "authorized network config subscriber disconnected");
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
+}
+
+pub fn spawn_sensor_config_subscriber(
+    config: SyncConfig,
+    location_id: String,
+    context: Arc<RwLock<AuditContext>>,
+    capture_control: CaptureControl,
+) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) = run_sensor_config_subscriber_once(
+                &config,
+                &location_id,
+                Arc::clone(&context),
+                capture_control.clone(),
+            )
+            .await
+            {
+                warn!(%error, subject = SENSOR_CONFIG_SUBJECT, "sensor config subscriber disconnected");
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -176,6 +234,167 @@ async fn run_subscriber_once(
             Ok(None) => {}
             Err(error) => warn!(%error, "invalid audit window config update"),
         }
+    }
+}
+
+async fn run_invalidation_subscriber_once(
+    config: &SyncConfig,
+    generation: Arc<AtomicU64>,
+) -> Result<(), String> {
+    run_message_loop(config, AUTHORIZED_NETWORKS_CONFIG_SUBJECT, |payload| {
+        generation.fetch_add(1, Ordering::Relaxed);
+        info!(
+            subject = AUTHORIZED_NETWORKS_CONFIG_SUBJECT,
+            payload_bytes = payload.len(),
+            "authorized network cache invalidated from NATS"
+        );
+        Ok(())
+    })
+    .await
+}
+
+async fn run_sensor_config_subscriber_once(
+    config: &SyncConfig,
+    current_location_id: &str,
+    context: Arc<RwLock<AuditContext>>,
+    capture_control: CaptureControl,
+) -> Result<(), String> {
+    run_message_loop(config, SENSOR_CONFIG_SUBJECT, |payload| {
+        let update: SensorConfigUpdate =
+            serde_json::from_str(payload).map_err(|error| format!("decode JSON: {error}"))?;
+        if let Some(location_id) = update.location_id.as_deref() {
+            if location_id != "*" && location_id != current_location_id {
+                return Ok(());
+            }
+        }
+        if let Some(channel) = update.channel {
+            let interface = context
+                .read()
+                .map_err(|_| "sensor context lock poisoned".to_string())?
+                .interface
+                .clone();
+            let before = context
+                .read()
+                .map_err(|_| "sensor context lock poisoned".to_string())?
+                .channel;
+            set_channel(&interface, channel).map_err(|error| error.to_string())?;
+            context
+                .write()
+                .map_err(|_| "sensor context lock poisoned".to_string())?
+                .channel = channel;
+            info!(
+                before_channel = before,
+                after_channel = channel,
+                interface = %interface,
+                "sensor channel reloaded from NATS"
+            );
+        }
+        if let Some(bpf) = update
+            .bpf
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            capture_control.apply_filter(bpf.to_string());
+            info!(bpf = %bpf, "sensor BPF reloaded from NATS");
+        }
+        if update.log_idle_secs.is_some() || update.mac_device_lookup_enabled.is_some() {
+            info!(
+                log_idle_secs = ?update.log_idle_secs,
+                mac_device_lookup_enabled = ?update.mac_device_lookup_enabled,
+                "sensor config update received; restart required for these fields"
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+async fn run_message_loop<F>(
+    config: &SyncConfig,
+    subject: &'static str,
+    mut on_payload: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let Some(nats_url) = config.nats_url.as_deref() else {
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+        return Ok(());
+    };
+    if config.tls_enabled || nats_url.starts_with("tls://") {
+        return Err("config subscriber supports plain nats:// endpoints only".to_string());
+    }
+    let endpoint = parse_nats_endpoint(nats_url)?;
+    let stream = timeout(NATS_CONNECT_TIMEOUT, TcpStream::connect(&endpoint.address))
+        .await
+        .map_err(|_| format!("connect to NATS {} timed out", endpoint.address))?
+        .map_err(|error| format!("connect to NATS {}: {error}", endpoint.address))?;
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .await
+        .map_err(|error| format!("read NATS INFO: {error}"))?;
+    let user = config.username.clone().or(endpoint.user);
+    let password = config.password.clone().or(endpoint.password);
+    let mut connect_options = serde_json::json!({
+        "lang": "rust",
+        "version": env!("CARGO_PKG_VERSION"),
+        "verbose": false,
+        "pedantic": false
+    });
+    if let Some(user) = user {
+        connect_options["user"] = serde_json::Value::String(user);
+    }
+    if let Some(password) = password {
+        connect_options["pass"] = serde_json::Value::String(password);
+    }
+    write_half
+        .write_all(format!("CONNECT {}\r\nPING\r\nSUB {subject} 1\r\n", connect_options).as_bytes())
+        .await
+        .map_err(|error| format!("subscribe to NATS: {error}"))?;
+    info!(subject, "sensor config subscriber connected");
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|error| format!("read NATS frame: {error}"))?;
+        if bytes == 0 {
+            return Err("NATS connection closed".to_string());
+        }
+        let trimmed = line.trim_end();
+        if trimmed == "PING" {
+            write_half
+                .write_all(b"PONG\r\n")
+                .await
+                .map_err(|error| format!("write NATS PONG: {error}"))?;
+            continue;
+        }
+        if !trimmed.starts_with("MSG ") {
+            continue;
+        }
+        let size = trimmed
+            .split_whitespace()
+            .last()
+            .ok_or_else(|| format!("missing NATS message size: {trimmed}"))?
+            .parse::<usize>()
+            .map_err(|error| format!("invalid NATS message size: {error}"))?;
+        let mut payload = vec![0_u8; size];
+        reader
+            .read_exact(&mut payload)
+            .await
+            .map_err(|error| format!("read NATS payload: {error}"))?;
+        let mut terminator = [0_u8; 2];
+        reader
+            .read_exact(&mut terminator)
+            .await
+            .map_err(|error| format!("read NATS payload terminator: {error}"))?;
+        let payload = String::from_utf8(payload)
+            .map_err(|error| format!("config payload is not UTF-8: {error}"))?;
+        on_payload(&payload)?;
     }
 }
 
