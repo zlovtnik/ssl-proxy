@@ -54,7 +54,7 @@ impl SyncPublisherClient {
 #[async_trait]
 impl PublishClient for SyncPublisherClient {
     fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
-        self.publisher.enqueue_message(subject, payload)
+        self.publisher.try_enqueue_message(subject, payload)
     }
 
     async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
