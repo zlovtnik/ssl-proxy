@@ -589,7 +589,15 @@ window
   session_window as (partition by session_key order by observed_at);
 
 create or replace view v_wireless_device_inventory as
-with base as (
+with recent_ingest as materialized (
+  select *
+  from sync_scan_ingest
+  where stream_name = 'wireless.audit'
+    and coalesce(source_mac, payload->>'source_mac') is not null
+  order by observed_at desc
+  limit 20000
+),
+base as (
   select
     dedupe_key,
     observed_at,
@@ -611,9 +619,7 @@ with base as (
     wps_manufacturer,
     wps_model_name,
     device_fingerprint
-  from sync_scan_ingest
-  where stream_name = 'wireless.audit'
-    and coalesce(source_mac, payload->>'source_mac') is not null
+  from recent_ingest
 ),
 latest as (
   select *

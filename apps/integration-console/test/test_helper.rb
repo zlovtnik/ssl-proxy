@@ -137,7 +137,15 @@ class ActiveSupport::TestCase
 
     sync_connection.execute(<<~SQL)
       CREATE OR REPLACE VIEW v_wireless_device_inventory AS
-      WITH base AS (
+      WITH recent_ingest AS MATERIALIZED (
+        SELECT *
+        FROM sync_scan_ingest
+        WHERE stream_name = 'wireless.audit'
+          AND COALESCE(source_mac, payload->>'source_mac') IS NOT NULL
+        ORDER BY observed_at DESC
+        LIMIT 20000
+      ),
+      base AS (
         SELECT
           dedupe_key,
           observed_at,
@@ -159,9 +167,7 @@ class ActiveSupport::TestCase
           wps_manufacturer,
           wps_model_name,
           device_fingerprint
-        FROM sync_scan_ingest
-        WHERE stream_name = 'wireless.audit'
-          AND COALESCE(source_mac, payload->>'source_mac') IS NOT NULL
+        FROM recent_ingest
       ),
       latest AS (
         SELECT *

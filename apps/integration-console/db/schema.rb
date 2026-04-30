@@ -10,7 +10,9 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_30_000300) do
+  create_schema "coordinator"
+
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "plpgsql"
@@ -29,14 +31,13 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
 
   create_table "audit_windows", force: :cascade do |t|
     t.string "location_id", null: false
-    t.string "timezone", default: "America/New_York", null: false
+    t.string "timezone", default: "UTC", null: false
     t.string "days"
     t.time "start_time"
     t.time "end_time"
     t.boolean "enabled", default: true, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["location_id"], name: "index_audit_windows_on_location_id", unique: true
   end
 
   create_table "authorized_wireless_networks", force: :cascade do |t|
@@ -69,6 +70,25 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
     t.check_constraint "mac_id ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'::text AND lower(mac_hint) = mac_id", name: "devices_mac_id_format_chk"
   end
 
+  create_table "identities", primary_key: "source_mac_lower", id: :text, force: :cascade do |t|
+    t.text "source_mac", null: false
+    t.text "ssid"
+    t.text "bssid"
+    t.text "destination_bssid"
+    t.integer "signal_dbm"
+    t.text "device_id"
+    t.text "display_name"
+    t.text "username"
+    t.text "hostname"
+    t.text "device_fingerprint"
+    t.text "wps_device_name"
+    t.text "wps_manufacturer"
+    t.text "wps_model_name"
+    t.timestamptz "observed_at", null: false
+    t.timestamptz "created_at", default: -> { "now()" }, null: false
+    t.timestamptz "updated_at", default: -> { "now()" }, null: false
+  end
+
   create_table "nats_traffic_samples", force: :cascade do |t|
     t.string "subject", null: false
     t.string "sensor_id"
@@ -76,9 +96,6 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
     t.integer "event_count", default: 0, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["sampled_at"], name: "index_nats_traffic_samples_on_sampled_at"
-    t.index ["sensor_id", "sampled_at"], name: "idx_nats_traffic_samples_sensor_sampled_at"
-    t.index ["subject", "sensor_id", "sampled_at"], name: "idx_nats_samples_subject_sensor_time", unique: true
   end
 
   create_table "sensor_alerts", force: :cascade do |t|
@@ -89,9 +106,6 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
     t.datetime "resolved_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["sensor_id", "alert_type", "resolved_at"], name: "idx_sensor_alerts_sensor_type_open"
-    t.index ["sensor_id", "alert_type"], name: "idx_sensor_alerts_open_unique", unique: true, where: "(resolved_at IS NULL)"
-    t.index ["severity", "resolved_at"], name: "idx_sensor_alerts_severity_resolved_at"
   end
 
   create_table "sensors", force: :cascade do |t|
@@ -104,9 +118,6 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
     t.string "status", default: "unknown", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["location_id"], name: "idx_sensors_location_id"
-    t.index ["sensor_id"], name: "index_sensors_on_sensor_id", unique: true
-    t.index ["status", "last_seen_at"], name: "index_sensors_on_status_and_last_seen_at"
   end
 
   create_table "shadow_it_alerts", primary_key: "source_mac", id: :text, force: :cascade do |t|
@@ -185,10 +196,6 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
     t.text "last_error"
     t.text "producer", default: "unknown", null: false
     t.text "event_kind"
-    t.text "sensor_id"
-    t.text "location_id"
-    t.text "frame_subtype"
-    t.text "username"
     t.integer "schema_version", default: 1, null: false
     t.text "frame_type"
     t.text "source_mac"
@@ -249,43 +256,36 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000200) do
     t.text "wps_model_name"
     t.text "device_fingerprint"
     t.boolean "handshake_captured", default: false, null: false
-    t.virtual "wireless_search_tsv", type: :tsvector, as: "to_tsvector('simple'::regconfig, lower(((((((((((((((((((((((((COALESCE(sensor_id, ''::text) || ' '::text) || COALESCE(source_mac, ''::text)) || ' '::text) || COALESCE(bssid, ''::text)) || ' '::text) || COALESCE(destination_bssid, ''::text)) || ' '::text) || COALESCE(ssid, ''::text)) || ' '::text) || COALESCE(wps_device_name, ''::text)) || ' '::text) || COALESCE(wps_manufacturer, ''::text)) || ' '::text) || COALESCE(wps_model_name, ''::text)) || ' '::text) || COALESCE(device_fingerprint, ''::text)) || ' '::text) || COALESCE(app_protocol, ''::text)) || ' '::text) || COALESCE(src_ip, ''::text)) || ' '::text) || COALESCE(dst_ip, ''::text)) || ' '::text) || COALESCE(username, ''::text))))", stored: true
     t.timestamptz "created_at", default: -> { "now()" }, null: false
     t.timestamptz "updated_at", default: -> { "now()" }, null: false
+    t.text "sensor_id"
+    t.text "location_id"
+    t.text "frame_subtype"
+    t.text "username"
+    t.virtual "wireless_search_tsv", type: :tsvector, as: "to_tsvector('simple'::regconfig, lower(((((((((((((((((((((((((COALESCE(sensor_id, ''::text) || ' '::text) || COALESCE(source_mac, ''::text)) || ' '::text) || COALESCE(bssid, ''::text)) || ' '::text) || COALESCE(destination_bssid, ''::text)) || ' '::text) || COALESCE(ssid, ''::text)) || ' '::text) || COALESCE(wps_device_name, ''::text)) || ' '::text) || COALESCE(wps_manufacturer, ''::text)) || ' '::text) || COALESCE(wps_model_name, ''::text)) || ' '::text) || COALESCE(device_fingerprint, ''::text)) || ' '::text) || COALESCE(app_protocol, ''::text)) || ' '::text) || COALESCE(src_ip, ''::text)) || ' '::text) || COALESCE(dst_ip, ''::text)) || ' '::text) || COALESCE(username, ''::text))))", stored: true
     t.index "(((((lower(COALESCE(sensor_id, ''::text)) || ' '::text) || lower(COALESCE(source_mac, ''::text))) || ' '::text) || lower(COALESCE(ssid, ''::text)))) gin_trgm_ops", name: "ssi_wireless_common_search_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
     t.index "((payload -> 'tags'::text))", name: "ssi_wireless_threat_tags_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
-    t.index "lower(app_protocol) gin_trgm_ops", name: "ssi_wireless_app_protocol_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (app_protocol IS NOT NULL))", using: :gin
-    t.index "lower(bssid) gin_trgm_ops", name: "ssi_wireless_bssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (bssid IS NOT NULL))", using: :gin
+    t.index "lower(COALESCE(bssid, (payload ->> 'bssid'::text)))", name: "ssi_wireless_bssid_payload_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index "lower(COALESCE(source_mac, (payload ->> 'source_mac'::text)))", name: "ssi_wireless_source_mac_payload_idx", where: "(stream_name = 'wireless.audit'::text)"
     t.index "lower(bssid)", name: "ssi_wireless_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
-    t.index "lower(destination_bssid) gin_trgm_ops", name: "ssi_wireless_destination_bssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (destination_bssid IS NOT NULL))", using: :gin
     t.index "lower(destination_bssid)", name: "ssi_wireless_destination_bssid_idx", where: "(stream_name = 'wireless.audit'::text)"
-    t.index "lower(device_fingerprint) gin_trgm_ops", name: "ssi_wireless_device_fingerprint_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))", using: :gin
-    t.index "lower(dst_ip) gin_trgm_ops", name: "ssi_wireless_dst_ip_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (dst_ip IS NOT NULL))", using: :gin
-    t.index "lower(sensor_id) gin_trgm_ops", name: "ssi_wireless_sensor_id_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (sensor_id IS NOT NULL))", using: :gin
-    t.index "lower(source_mac) gin_trgm_ops", name: "ssi_wireless_source_mac_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (source_mac IS NOT NULL))", using: :gin
     t.index "lower(source_mac)", name: "ssi_wireless_source_mac_idx", where: "(stream_name = 'wireless.audit'::text)"
-    t.index "lower(src_ip) gin_trgm_ops", name: "ssi_wireless_src_ip_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (src_ip IS NOT NULL))", using: :gin
-    t.index "lower(ssid) gin_trgm_ops", name: "ssi_wireless_ssid_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (ssid IS NOT NULL))", using: :gin
-    t.index "lower(username) gin_trgm_ops", name: "ssi_wireless_username_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (username IS NOT NULL))", using: :gin
-    t.index "lower(wps_device_name) gin_trgm_ops", name: "ssi_wireless_wps_device_name_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_device_name IS NOT NULL))", using: :gin
-    t.index "lower(wps_manufacturer) gin_trgm_ops", name: "ssi_wireless_wps_manufacturer_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_manufacturer IS NOT NULL))", using: :gin
-    t.index "lower(wps_model_name) gin_trgm_ops", name: "ssi_wireless_wps_model_name_trgm_idx", where: "((stream_name = 'wireless.audit'::text) AND (wps_model_name IS NOT NULL))", using: :gin
-    t.index ["app_protocol", "observed_at"], name: "ssi_wireless_app_protocol_idx", where: "((stream_name = 'wireless.audit'::text) AND (app_protocol IS NOT NULL))"
+    t.index ["app_protocol", "observed_at"], name: "ssi_wireless_app_protocol_idx", order: { observed_at: :desc }, where: "((stream_name = 'wireless.audit'::text) AND (app_protocol IS NOT NULL))"
     t.index ["device_fingerprint", "observed_at"], name: "ssi_wireless_device_fingerprint_idx", order: { observed_at: :desc }, where: "((stream_name = 'wireless.audit'::text) AND (device_fingerprint IS NOT NULL))"
     t.index ["dst_ip"], name: "ssi_wireless_dst_ip_idx", where: "((stream_name = 'wireless.audit'::text) AND (dst_ip IS NOT NULL))"
     t.index ["frame_fingerprint"], name: "ssi_wireless_frame_fingerprint_idx", where: "((stream_name = 'wireless.audit'::text) AND (frame_fingerprint IS NOT NULL))"
     t.index ["observed_at"], name: "ssi_pending_observed_idx", where: "(status = ANY (ARRAY['pending'::text, 'failed'::text]))"
-    t.index ["observed_at"], name: "ssi_wireless_audit_cover_idx", order: :desc, where: "(stream_name = 'wireless.audit'::text)", include: ["dedupe_key", "sensor_id", "location_id", "frame_subtype", "source_mac", "bssid", "destination_bssid", "ssid", "signal_dbm", "raw_len", "frame_control_flags", "security_flags", "device_fingerprint", "handshake_captured", "frame_type", "wps_device_name"]
     t.index ["observed_at"], name: "ssi_wireless_handshake_captured_idx", order: :desc, where: "((stream_name = 'wireless.audit'::text) AND handshake_captured)"
-    t.index ["schema_version", "observed_at"], name: "ssi_wireless_schema_version_idx", where: "(stream_name = 'wireless.audit'::text)"
+    t.index ["schema_version", "observed_at"], name: "ssi_wireless_schema_version_idx", order: { observed_at: :desc }, where: "(stream_name = 'wireless.audit'::text)"
     t.index ["security_flags", "observed_at"], name: "ssi_wireless_security_flags_idx", order: { observed_at: :desc }, where: "((stream_name = 'wireless.audit'::text) AND (security_flags <> 0))"
-    t.index ["session_key", "observed_at"], name: "ssi_wireless_session_key_idx", where: "((stream_name = 'wireless.audit'::text) AND (session_key IS NOT NULL))"
+    t.index ["session_key", "observed_at"], name: "ssi_wireless_session_key_idx", order: { observed_at: :desc }, where: "((stream_name = 'wireless.audit'::text) AND (session_key IS NOT NULL))"
     t.index ["signal_dbm", "observed_at"], name: "ssi_wireless_signal_idx", order: { observed_at: :desc }, where: "((stream_name = 'wireless.audit'::text) AND (signal_dbm IS NOT NULL))"
     t.index ["src_ip"], name: "ssi_wireless_src_ip_idx", where: "((stream_name = 'wireless.audit'::text) AND (src_ip IS NOT NULL))"
     t.index ["ssid", "observed_at"], name: "ssi_wireless_ssid_idx", order: { observed_at: :desc }, where: "(stream_name = 'wireless.audit'::text)"
     t.index ["status", "observed_at"], name: "sync_scan_ingest_status_idx"
     t.index ["stream_name", "observed_at"], name: "sync_scan_ingest_stream_idx"
     t.index ["wireless_search_tsv"], name: "ssi_wireless_search_tsv_idx", where: "(stream_name = 'wireless.audit'::text)", using: :gin
+    t.check_constraint "status = ANY (ARRAY['pending'::text, 'processing'::text, 'batched'::text, 'failed'::text])", name: "chk_sync_scan_ingest_status"
   end
 
   add_foreign_key "sync_batch", "sync_job", column: "job_id", primary_key: "job_id", name: "fk_sync_batch_job_id"
