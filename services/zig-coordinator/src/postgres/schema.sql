@@ -311,16 +311,11 @@ as $$
     where stream_name = 'wireless.audit'
       and observed_at >= now() - interval '60 seconds'
       and source_mac is not null
+      and lower(source_mac) ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
       and signal_dbm >= -50
   ),
   candidates as (
-    select distinct on (source_mac, destination_bssid, coalesce(location_id, ''))
-      md5(
-        source_mac || '|' ||
-        coalesce(destination_bssid, '') || '|' ||
-        coalesce(location_id, '') || '|' ||
-        date_trunc('minute', observed_at)::text
-      ) as dedupe_key,
+    select distinct on (source_mac)
       observed_at,
       source_mac,
       destination_bssid,
@@ -347,26 +342,25 @@ as $$
       and not exists (
         select 1
           from devices d
-         where d.mac_hint is not null
-           and lower(d.mac_hint) = w.source_mac
+         where d.mac_id = w.source_mac
            and d.last_seen >= now() - interval '5 minutes'
       )
       and not exists (
         select 1
           from sync_scan_ingest proxy
-          join devices d on d.device_id = proxy.payload->>'device_id'
+          join devices d on d.mac_id = lower(coalesce(proxy.payload->>'mac_id', proxy.payload->>'device_id'))
          where proxy.stream_name = 'proxy.events'
            and proxy.observed_at >= now() - interval '5 minutes'
-           and d.mac_hint is not null
-           and lower(d.mac_hint) = w.source_mac
+           and d.mac_id = w.source_mac
       )
-    order by source_mac, destination_bssid, coalesce(location_id, ''), observed_at desc
+    order by source_mac, observed_at desc
   ),
   inserted as (
-    insert into shadow_it_alerts (
-      dedupe_key,
-      observed_at,
+    insert into shadow_it_alerts as target (
       source_mac,
+      first_occurred_at,
+      last_occurred_at,
+      occurrence_count,
       destination_bssid,
       ssid,
       sensor_id,
@@ -378,9 +372,10 @@ as $$
       updated_at
     )
     select
-      dedupe_key,
-      observed_at,
       source_mac,
+      observed_at,
+      observed_at,
+      1,
       destination_bssid,
       ssid,
       sensor_id,
@@ -391,13 +386,26 @@ as $$
       now(),
       now()
     from candidates
-    on conflict (dedupe_key) do nothing
+    on conflict (source_mac) do update
+      set last_occurred_at = greatest(target.last_occurred_at, excluded.last_occurred_at),
+          occurrence_count = target.occurrence_count + 1,
+          destination_bssid = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.destination_bssid else target.destination_bssid end,
+          ssid = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.ssid else target.ssid end,
+          sensor_id = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.sensor_id else target.sensor_id end,
+          location_id = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.location_id else target.location_id end,
+          signal_dbm = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.signal_dbm else target.signal_dbm end,
+          reason = excluded.reason,
+          evidence = excluded.evidence,
+          resolved_at = null,
+          updated_at = now()
     returning *
   )
   select jsonb_build_object(
            'event_type', 'shadow_device',
-           'observed_at', observed_at,
+           'first_occurred_at', first_occurred_at,
+           'last_occurred_at', last_occurred_at,
            'source_mac', source_mac,
+           'occurrence_count', occurrence_count,
            'destination_bssid', destination_bssid,
            'ssid', ssid,
            'sensor_id', sensor_id,

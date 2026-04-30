@@ -297,10 +297,10 @@ create index if not exists authorized_wireless_networks_enabled_idx
   on authorized_wireless_networks (enabled, location_id);
 
 create table if not exists shadow_it_alerts (
-  alert_id bigserial primary key,
-  dedupe_key text not null unique,
-  observed_at timestamptz not null,
-  source_mac text not null,
+  source_mac text primary key,
+  first_occurred_at timestamptz not null,
+  last_occurred_at timestamptz not null,
+  occurrence_count bigint not null default 1,
   destination_bssid text,
   ssid text,
   sensor_id text,
@@ -310,31 +310,32 @@ create table if not exists shadow_it_alerts (
   evidence jsonb not null default '{}'::jsonb,
   resolved_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint shadow_it_alerts_source_mac_format_chk check (source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$')
 );
 
 create index if not exists shadow_it_alerts_open_idx
-  on shadow_it_alerts (observed_at desc)
+  on shadow_it_alerts (last_occurred_at desc)
   where resolved_at is null;
 
-create index if not exists shadow_it_alerts_source_idx
-  on shadow_it_alerts (lower(source_mac), observed_at desc);
-
 create table if not exists devices (
-  device_id text primary key,
+  mac_id text primary key,
   wg_pubkey text,
   claim_token_hash text,
   display_name text,
   username text,
   hostname text,
   os_hint text,
-  mac_hint text,
+  mac_hint text not null,
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
-  notes text
+  notes text,
+  constraint devices_mac_id_format_chk check (
+    mac_id ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+    and lower(mac_hint) = mac_id
+  )
 );
 
-create index if not exists devices_mac_hint_idx on devices (lower(mac_hint));
 create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
 create index if not exists devices_username_idx on devices (username, last_seen desc);
 
@@ -398,7 +399,7 @@ select
   ssi.wps_model_name,
   ssi.device_fingerprint,
   ssi.handshake_captured,
-  coalesce(d_src.device_id, d_bssid.device_id) as device_id,
+  coalesce(d_src.mac_id, d_bssid.mac_id) as device_id,
   coalesce(d_src.display_name, d_bssid.display_name) as display_name,
   coalesce(d_src.username, d_bssid.username) as registered_username,
   coalesce(d_src.os_hint, d_bssid.os_hint) as os_hint,
@@ -588,38 +589,90 @@ window
   session_window as (partition by session_key order by observed_at);
 
 create or replace view v_wireless_device_inventory as
-select
-  md5(coalesce(lower(source_mac), '') || '|' || coalesce(location_id, '')) as inventory_key,
-  lower(source_mac) as source_mac,
-  max(location_id) as location_id,
-  min(observed_at) as first_seen,
-  max(observed_at) as last_seen,
-  max(ssid) as ssid,
-  max(destination_bssid) as destination_bssid,
-  string_agg(distinct src_ip, ', ') filter (where src_ip is not null) as ip_addresses,
-  string_agg(distinct hostname, ', ') filter (where hostname is not null) as hostnames,
-  string_agg(distinct app_protocol, ', ') filter (where app_protocol is not null) as services,
-  string_agg(distinct dns_query_name, ', ') filter (where dns_query_name is not null) as dns_names,
-  count(*) as frame_count,
-  sum(case when protected then 1 else 0 end) as protected_frame_count,
-  sum(case when not protected then 1 else 0 end) as open_frame_count
-from (
+with base as (
   select
+    dedupe_key,
     observed_at,
-    coalesce(source_mac, payload->>'source_mac') as source_mac,
-    coalesce(location_id, payload->>'location_id') as location_id,
-    coalesce(ssid, payload->>'ssid') as ssid,
+    lower(coalesce(source_mac, payload->>'source_mac')) as source_mac,
+    coalesce(bssid, payload->>'bssid') as bssid,
     coalesce(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
+    coalesce(ssid, payload->>'ssid') as ssid,
+    coalesce(signal_dbm, nullif(payload->>'signal_dbm', '')::integer) as signal_dbm,
+    coalesce(location_id, payload->>'location_id') as location_id,
+    coalesce(sensor_id, payload->>'sensor_id') as sensor_id,
+    coalesce(username, payload->>'username') as username,
     coalesce(src_ip, payload->>'src_ip') as src_ip,
+    coalesce(dst_ip, payload->>'dst_ip') as dst_ip,
     coalesce(dhcp_hostname, mdns_name, payload->>'dhcp_hostname', payload->>'mdns_name') as hostname,
     coalesce(app_protocol, payload->>'app_protocol') as app_protocol,
     coalesce(dns_query_name, payload->>'dns_query_name') as dns_query_name,
-    coalesce(protected, false) as protected
+    coalesce(protected, false) as protected,
+    wps_device_name,
+    wps_manufacturer,
+    wps_model_name,
+    device_fingerprint
   from sync_scan_ingest
   where stream_name = 'wireless.audit'
-) inventory
-where source_mac is not null
-group by lower(source_mac), location_id;
+    and coalesce(source_mac, payload->>'source_mac') is not null
+),
+latest as (
+  select *
+  from (
+    select base.*, row_number() over (partition by source_mac order by observed_at desc, dedupe_key desc) as row_number
+    from base
+  ) ranked
+  where row_number = 1
+),
+rollup as (
+  select
+    source_mac,
+    min(observed_at) as first_occurred_at,
+    max(observed_at) as last_occurred_at,
+    count(*)::bigint as occurrence_count,
+    string_agg(distinct src_ip, ', ') filter (where src_ip is not null) as ip_addresses,
+    string_agg(distinct hostname, ', ') filter (where hostname is not null) as hostnames,
+    string_agg(distinct app_protocol, ', ') filter (where app_protocol is not null) as services,
+    string_agg(distinct dns_query_name, ', ') filter (where dns_query_name is not null) as dns_names,
+    sum(case when protected then 1 else 0 end)::bigint as protected_frame_count,
+    sum(case when not protected then 1 else 0 end)::bigint as open_frame_count
+  from base
+  group by source_mac
+)
+select
+  rollup.source_mac as inventory_key,
+  rollup.source_mac,
+  rollup.first_occurred_at,
+  rollup.last_occurred_at,
+  rollup.first_occurred_at as first_seen,
+  rollup.last_occurred_at as last_seen,
+  rollup.last_occurred_at as observed_at,
+  rollup.occurrence_count,
+  rollup.occurrence_count as frame_count,
+  latest.location_id,
+  latest.sensor_id,
+  latest.bssid,
+  latest.destination_bssid,
+  latest.ssid,
+  latest.signal_dbm::text as signal_dbm,
+  latest.username,
+  rollup.ip_addresses,
+  rollup.hostnames,
+  rollup.services,
+  rollup.dns_names,
+  rollup.protected_frame_count,
+  rollup.open_frame_count,
+  latest.wps_device_name,
+  latest.wps_manufacturer,
+  latest.wps_model_name,
+  latest.device_fingerprint,
+  devices.mac_id as device_id,
+  devices.display_name,
+  devices.username as registered_username,
+  devices.os_hint,
+  coalesce(devices.hostname, latest.hostname) as hostname
+from rollup
+join latest on latest.source_mac = rollup.source_mac
+left join devices on devices.mac_id = rollup.source_mac;
 
 create or replace view v_wireless_anomalies as
 select
@@ -718,7 +771,7 @@ backlog_status as (
 shadow_status as (
   select
     count(*) filter (where resolved_at is null)::bigint as open_alert_count,
-    max(observed_at) filter (where resolved_at is null) as last_open_alert_at
+    max(last_occurred_at) filter (where resolved_at is null) as last_open_alert_at
   from shadow_it_alerts
 )
 select
@@ -760,10 +813,13 @@ select
 
 create or replace view v_shadow_it_alerts as
 select
-  alert_id,
-  dedupe_key,
-  observed_at,
+  source_mac as alert_id,
+  source_mac as dedupe_key,
   source_mac,
+  first_occurred_at,
+  last_occurred_at,
+  last_occurred_at as observed_at,
+  occurrence_count,
   destination_bssid,
   ssid,
   sensor_id,
@@ -775,4 +831,4 @@ select
   created_at,
   updated_at
 from shadow_it_alerts
-order by observed_at desc;
+order by last_occurred_at desc;

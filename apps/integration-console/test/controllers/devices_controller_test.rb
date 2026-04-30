@@ -39,6 +39,23 @@ class DevicesControllerTest < ActionDispatch::IntegrationTest
 
     assert_redirected_to devices_path
     assert_equal "00:11:22:33:44:55", Device.last.mac_hint
+    assert_equal "00:11:22:33:44:55", Device.last.mac_id
+  end
+
+  test "create rejects duplicate mac identifier" do
+    Device.create!(display_name: "Lobby Printer", username: "facilities", mac_hint: "00:11:22:33:44:55")
+
+    assert_no_difference("Device.count") do
+      post devices_url(format: :json), params: {
+        device: {
+          display_name: "Duplicate",
+          mac_hint: "0011.2233.4455"
+        }
+      }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes JSON.parse(response.body).fetch("errors").join(" "), "already been taken"
   end
 
   test "json create reports validation errors" do

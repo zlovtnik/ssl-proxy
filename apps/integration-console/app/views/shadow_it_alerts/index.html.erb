@@ -21,7 +21,7 @@
   <table>
     <thead>
       <tr>
-        <th><%= sort_link_to "Observed", :observed_at %></th>
+        <th><%= sort_link_to "Last Occurred", :last_occurred_at %></th>
         <th><%= sort_link_to "Source MAC", :source_mac %></th>
         <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
         <th><%= sort_link_to "SSID", :ssid %></th>
@@ -36,7 +36,7 @@
       <% if @shadow_it_alerts.any? %>
         <% @shadow_it_alerts.each do |alert| %>
           <tr>
-            <td><%= alert.observed_at %></td>
+            <td><%= alert.last_occurred_at %></td>
             <td><%= display_mac(alert.source_mac) %></td>
             <td><%= display_mac(alert.destination_bssid) %></td>
             <td><%= alert.ssid %></td>

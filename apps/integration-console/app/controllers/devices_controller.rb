@@ -99,7 +99,8 @@ class DevicesController < ApplicationController
 
   def device_payload(device)
     {
-      id: device.device_id,
+      id: device.mac_id,
+      mac_id: device.mac_id,
       device_id: device.device_id,
       display_name: device.display_name,
       username: device.username,

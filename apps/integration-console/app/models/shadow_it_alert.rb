@@ -2,7 +2,7 @@ class ShadowItAlert < SyncRecord
   self.table_name = "v_shadow_it_alerts"
   self.primary_key = "alert_id"
 
-  scope :recent, -> { order(observed_at: :desc) }
+  scope :recent, -> { order(last_occurred_at: :desc) }
   scope :open, -> { where(resolved_at: nil) }
   scope :search, ->(query) {
     query.blank? ? none : where(

@@ -1,7 +1,7 @@
 <% content_for :title, "Identities" %>
 <% content_for :turbo_cache_control, "no-cache" %>
 
-<h1>Identity Viewer</h1>
+<h1>MAC Identity Inventory</h1>
 
 <p>
   <%= link_to "Inventory CSV", inventory_identities_path(@inventory_query_parameters.merge(format: :csv)) %>
@@ -27,12 +27,13 @@
   <table>
     <thead>
       <tr>
-        <th><%= sort_link_to "Observed", :observed_at %></th>
-        <th>Source MAC</th>
+        <th><%= sort_link_to "Last Occurred", :last_occurred_at %></th>
+        <th>MAC</th>
         <th>BSSID</th>
         <th>Dest BSSID</th>
         <th>SSID</th>
         <th>Signal</th>
+        <th>Location</th>
         <th>Username</th>
         <th>Registered</th>
         <th>Device</th>
@@ -44,12 +45,13 @@
       <% if @identities.any? %>
         <% @identities.each do |identity| %>
           <tr>
-            <td><%= identity.observed_at %></td>
+            <td><%= identity.last_occurred_at %></td>
             <td><%= identity.source_mac %></td>
             <td><%= identity.bssid %></td>
             <td><%= identity.destination_bssid %></td>
             <td><%= identity.ssid %></td>
             <td><%= identity.signal_dbm %></td>
+            <td><%= identity.location_id %></td>
             <td><%= identity.username %></td>
             <td><%= identity.registered_username %></td>
             <td><%= identity.display_name || identity.device_id %></td>
@@ -59,7 +61,7 @@
         <% end %>
       <% else %>
         <tr>
-          <td colspan="11" class="empty-state">No identities found.</td>
+          <td colspan="12" class="empty-state">No identities found.</td>
         </tr>
       <% end %>
     </tbody>

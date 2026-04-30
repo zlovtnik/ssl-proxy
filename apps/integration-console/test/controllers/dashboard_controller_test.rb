@@ -168,9 +168,10 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
   def insert_shadow_it_alert
     sync_connection.execute(<<~SQL.squish)
       INSERT INTO shadow_it_alerts (
-        dedupe_key,
-        observed_at,
         source_mac,
+        first_occurred_at,
+        last_occurred_at,
+        occurrence_count,
         destination_bssid,
         ssid,
         reason,
@@ -179,9 +180,10 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
         updated_at
       )
       VALUES (
-        'shadow-alert',
-        now(),
         '00:11:22:33:44:55',
+        now(),
+        now(),
+        1,
         'aa:bb:cc:dd:ee:ff',
         'lab',
         'strong_wireless_without_proxy_presence',

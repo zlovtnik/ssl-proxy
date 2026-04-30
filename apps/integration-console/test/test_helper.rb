@@ -36,6 +36,7 @@ class ActiveSupport::TestCase
 
   def clear_sync_tables(*tables)
     tables.each do |table|
+      ensure_shadow_it_alerts_table if table.to_s == "shadow_it_alerts"
       sync_connection.execute("DELETE FROM #{table}")
     end
   end
@@ -130,78 +131,188 @@ class ActiveSupport::TestCase
   end
 
   def ensure_wireless_audit_views
-    sync_connection.execute("DROP VIEW IF EXISTS v_wireless_device_inventory")
     sync_connection.execute("DROP VIEW IF EXISTS v_wireless_audit_with_devices")
-
-    sync_connection.execute(<<~SQL)
-      CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
-      SELECT
-        ssi.dedupe_key,
-        ssi.observed_at,
-        ssi.stream_name,
-        ssi.status,
-        ssi.producer,
-        ssi.event_kind,
-        COALESCE(ssi.schema_version, CASE WHEN ssi.payload->>'schema_version' ~ '^[0-9]+$' THEN (ssi.payload->>'schema_version')::integer END, 1) AS schema_version,
-        COALESCE(ssi.frame_type, ssi.payload->>'frame_type') AS frame_type,
-        COALESCE(ssi.source_mac, ssi.payload->>'source_mac') AS source_mac,
-        COALESCE(ssi.bssid, ssi.payload->>'bssid') AS bssid,
-        COALESCE(ssi.destination_bssid, ssi.bssid, ssi.payload->>'destination_bssid', ssi.payload->>'bssid') AS destination_bssid,
-        COALESCE(ssi.ssid, ssi.payload->>'ssid') AS ssid,
-        COALESCE(ssi.frame_subtype, ssi.payload->>'frame_subtype') AS frame_subtype,
-        COALESCE(ssi.signal_dbm::text, ssi.payload->>'signal_dbm') AS signal_dbm,
-        COALESCE(ssi.src_ip, ssi.payload->>'src_ip') AS src_ip,
-        COALESCE(ssi.dst_ip, ssi.payload->>'dst_ip') AS dst_ip,
-        COALESCE(ssi.app_protocol, ssi.payload->>'app_protocol') AS app_protocol,
-        COALESCE(ssi.dhcp_hostname, ssi.payload->>'dhcp_hostname') AS hostname,
-        COALESCE(ssi.location_id, ssi.payload->>'location_id') AS location_id,
-        COALESCE(ssi.sensor_id, ssi.payload->>'sensor_id') AS sensor_id,
-        COALESCE(ssi.username, ssi.payload->>'username') AS username,
-        NULL::text AS registered_username,
-        NULL::text AS display_name,
-        NULL::text AS device_id,
-        ssi.wps_device_name,
-        ssi.wps_manufacturer,
-        ssi.wps_model_name,
-        ssi.device_fingerprint
-      FROM sync_scan_ingest ssi
-      WHERE ssi.stream_name = 'wireless.audit'
-    SQL
+    sync_connection.execute("DROP VIEW IF EXISTS v_wireless_device_inventory")
+    ensure_sync_devices_table
 
     sync_connection.execute(<<~SQL)
       CREATE OR REPLACE VIEW v_wireless_device_inventory AS
-      SELECT
-        md5(COALESCE(lower(source_mac), '') || '|' || COALESCE(location_id, '')) AS inventory_key,
-        lower(source_mac) AS source_mac,
-        max(location_id) AS location_id,
-        min(observed_at) AS first_seen,
-        max(observed_at) AS last_seen,
-        max(ssid) AS ssid,
-        max(destination_bssid) AS destination_bssid,
-        string_agg(DISTINCT src_ip, ', ') FILTER (WHERE src_ip IS NOT NULL) AS ip_addresses,
-        string_agg(DISTINCT hostname, ', ') FILTER (WHERE hostname IS NOT NULL) AS hostnames,
-        string_agg(DISTINCT app_protocol, ', ') FILTER (WHERE app_protocol IS NOT NULL) AS services,
-        string_agg(DISTINCT dns_query_name, ', ') FILTER (WHERE dns_query_name IS NOT NULL) AS dns_names,
-        count(*) AS frame_count,
-        sum(CASE WHEN protected THEN 1 ELSE 0 END) AS protected_frame_count,
-        sum(CASE WHEN NOT protected THEN 1 ELSE 0 END) AS open_frame_count
-      FROM (
+      WITH base AS (
         SELECT
+          dedupe_key,
           observed_at,
-          COALESCE(source_mac, payload->>'source_mac') AS source_mac,
-          COALESCE(location_id, payload->>'location_id') AS location_id,
-          COALESCE(ssid, payload->>'ssid') AS ssid,
+          lower(COALESCE(source_mac, payload->>'source_mac')) AS source_mac,
+          COALESCE(bssid, payload->>'bssid') AS bssid,
           COALESCE(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') AS destination_bssid,
+          COALESCE(location_id, payload->>'location_id') AS location_id,
+          COALESCE(sensor_id, payload->>'sensor_id') AS sensor_id,
+          COALESCE(ssid, payload->>'ssid') AS ssid,
+          COALESCE(signal_dbm, CASE WHEN payload->>'signal_dbm' ~ '^-?[0-9]+$' THEN (payload->>'signal_dbm')::integer END) AS signal_dbm,
+          COALESCE(username, payload->>'username') AS username,
           COALESCE(src_ip, payload->>'src_ip') AS src_ip,
+          COALESCE(dst_ip, payload->>'dst_ip') AS dst_ip,
           COALESCE(dhcp_hostname, mdns_name, payload->>'dhcp_hostname', payload->>'mdns_name') AS hostname,
           COALESCE(app_protocol, payload->>'app_protocol') AS app_protocol,
           COALESCE(dns_query_name, payload->>'dns_query_name') AS dns_query_name,
-          COALESCE(protected, FALSE) AS protected
+          COALESCE(protected, FALSE) AS protected,
+          wps_device_name,
+          wps_manufacturer,
+          wps_model_name,
+          device_fingerprint
         FROM sync_scan_ingest
         WHERE stream_name = 'wireless.audit'
-      ) inventory
-      WHERE source_mac IS NOT NULL
-      GROUP BY lower(source_mac), location_id
+          AND COALESCE(source_mac, payload->>'source_mac') IS NOT NULL
+      ),
+      latest AS (
+        SELECT *
+        FROM (
+          SELECT base.*, row_number() OVER (PARTITION BY source_mac ORDER BY observed_at DESC, dedupe_key DESC) AS row_number
+          FROM base
+        ) ranked
+        WHERE row_number = 1
+      ),
+      rollup AS (
+        SELECT
+          source_mac,
+          min(observed_at) AS first_occurred_at,
+          max(observed_at) AS last_occurred_at,
+          count(*)::bigint AS occurrence_count,
+          string_agg(DISTINCT src_ip, ', ') FILTER (WHERE src_ip IS NOT NULL) AS ip_addresses,
+          string_agg(DISTINCT hostname, ', ') FILTER (WHERE hostname IS NOT NULL) AS hostnames,
+          string_agg(DISTINCT app_protocol, ', ') FILTER (WHERE app_protocol IS NOT NULL) AS services,
+          string_agg(DISTINCT dns_query_name, ', ') FILTER (WHERE dns_query_name IS NOT NULL) AS dns_names,
+          sum(CASE WHEN protected THEN 1 ELSE 0 END)::bigint AS protected_frame_count,
+          sum(CASE WHEN NOT protected THEN 1 ELSE 0 END)::bigint AS open_frame_count
+        FROM base
+        GROUP BY source_mac
+      )
+      SELECT
+        rollup.source_mac AS inventory_key,
+        rollup.source_mac,
+        rollup.first_occurred_at,
+        rollup.last_occurred_at,
+        rollup.first_occurred_at AS first_seen,
+        rollup.last_occurred_at AS last_seen,
+        rollup.last_occurred_at AS observed_at,
+        rollup.occurrence_count,
+        rollup.occurrence_count AS frame_count,
+        latest.location_id,
+        latest.sensor_id,
+        latest.bssid,
+        latest.destination_bssid,
+        latest.ssid,
+        latest.signal_dbm::text AS signal_dbm,
+        latest.username,
+        rollup.ip_addresses,
+        rollup.hostnames,
+        rollup.services,
+        rollup.dns_names,
+        rollup.protected_frame_count,
+        rollup.open_frame_count,
+        latest.wps_device_name,
+        latest.wps_manufacturer,
+        latest.wps_model_name,
+        latest.device_fingerprint,
+        devices.mac_id AS device_id,
+        devices.display_name,
+        devices.username AS registered_username,
+        devices.os_hint,
+        COALESCE(devices.hostname, latest.hostname) AS hostname
+      FROM rollup
+      JOIN latest ON latest.source_mac = rollup.source_mac
+      LEFT JOIN devices ON devices.mac_id = rollup.source_mac
+    SQL
+
+    sync_connection.execute(<<~SQL)
+      CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
+      SELECT * FROM v_wireless_device_inventory
+    SQL
+  end
+
+  def ensure_sync_devices_table
+    mac_id_present = sync_connection.select_value(<<~SQL.squish)
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'devices'
+          AND column_name = 'mac_id'
+      )
+    SQL
+
+    return if mac_id_present
+
+    sync_connection.execute("DROP TABLE IF EXISTS devices CASCADE")
+    sync_connection.execute(<<~SQL)
+      CREATE TABLE devices (
+        mac_id text PRIMARY KEY,
+        wg_pubkey text,
+        claim_token_hash text,
+        display_name text,
+        username text,
+        hostname text,
+        os_hint text,
+        mac_hint text NOT NULL,
+        first_seen timestamptz NOT NULL DEFAULT now(),
+        last_seen timestamptz NOT NULL DEFAULT now(),
+        notes text
+      )
+    SQL
+  end
+
+  def ensure_shadow_it_alerts_table
+    last_occurred_present = sync_connection.select_value(<<~SQL.squish)
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'shadow_it_alerts'
+          AND column_name = 'last_occurred_at'
+      )
+    SQL
+
+    return if last_occurred_present
+
+    sync_connection.execute("DROP VIEW IF EXISTS v_shadow_it_alerts")
+    sync_connection.execute("DROP TABLE IF EXISTS shadow_it_alerts CASCADE")
+    sync_connection.execute(<<~SQL)
+      CREATE TABLE shadow_it_alerts (
+        source_mac text PRIMARY KEY,
+        first_occurred_at timestamptz NOT NULL,
+        last_occurred_at timestamptz NOT NULL,
+        occurrence_count bigint NOT NULL DEFAULT 1,
+        destination_bssid text,
+        ssid text,
+        sensor_id text,
+        location_id text,
+        signal_dbm integer,
+        reason text NOT NULL,
+        evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+        resolved_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    SQL
+    sync_connection.execute(<<~SQL)
+      CREATE OR REPLACE VIEW v_shadow_it_alerts AS
+      SELECT
+        source_mac AS alert_id,
+        source_mac AS dedupe_key,
+        source_mac,
+        first_occurred_at,
+        last_occurred_at,
+        last_occurred_at AS observed_at,
+        occurrence_count,
+        destination_bssid,
+        ssid,
+        sensor_id,
+        location_id,
+        signal_dbm,
+        reason,
+        evidence,
+        resolved_at,
+        created_at,
+        updated_at
+      FROM shadow_it_alerts
+      ORDER BY last_occurred_at DESC
     SQL
   end
 
@@ -275,7 +386,7 @@ class ActiveSupport::TestCase
       shadow_status AS (
         SELECT
           count(*) FILTER (WHERE resolved_at IS NULL)::bigint AS open_alert_count,
-          max(observed_at) FILTER (WHERE resolved_at IS NULL) AS last_open_alert_at
+          max(last_occurred_at) FILTER (WHERE resolved_at IS NULL) AS last_open_alert_at
         FROM shadow_it_alerts
       )
       SELECT

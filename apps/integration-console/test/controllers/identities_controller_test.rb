@@ -61,6 +61,7 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_operator response.body.index("new-lab"), :<, response.body.index("old-lab")
     assert_no_match(/sort=signal_dbm/, response.body)
     assert_no_match(/sort=ssid/, response.body)
+    assert_no_match(/sort=observed_at/, response.body)
   end
 
   test "inventory exports json summaries and redirects cached csv exports" do
@@ -85,6 +86,7 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     json = JSON.parse(response.body)
     assert_equal "00:11:22:33:44:55", json.first["source_mac"]
+    assert_equal json.first["last_seen"], json.first["last_occurred_at"]
     assert_includes json.first["services"], "ssdp"
 
     captured_csv = nil
@@ -97,9 +99,42 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     end
 
     assert_redirected_to "http://minio.test/inventory.csv"
-    assert_includes captured_csv, "source_mac"
+    assert_includes captured_csv, "last_occurred_at"
     assert_includes captured_csv, "00:11:22:33:44:55"
     assert_includes captured_csv, "printer.local"
+  end
+
+  test "inventory json returns one row per mac with max occurrence time" do
+    older = 10.minutes.ago
+    newer = Time.current
+
+    insert_sync_ingest(
+      dedupe_key: "inventory-mac-old",
+      observed_at: older,
+      payload: {
+        "source_mac" => "00:11:22:33:44:55",
+        "ssid" => "old-lab",
+        "location_id" => "first-floor"
+      }
+    )
+    insert_sync_ingest(
+      dedupe_key: "inventory-mac-new",
+      observed_at: newer,
+      payload: {
+        "source_mac" => "00:11:22:33:44:55",
+        "ssid" => "new-lab",
+        "location_id" => "second-floor"
+      }
+    )
+
+    get inventory_identities_url(format: :json)
+
+    assert_response :success
+    json = JSON.parse(response.body)
+    assert_equal ["00:11:22:33:44:55"], json.map { |row| row["source_mac"] }
+    assert_equal "new-lab", json.first["ssid"]
+    assert_equal 2, json.first["occurrence_count"]
+    assert_in_delta newer.to_f, Time.zone.parse(json.first["last_occurred_at"]).to_f, 0.01
   end
 
   test "inventory json uses cache until ttl expires" do

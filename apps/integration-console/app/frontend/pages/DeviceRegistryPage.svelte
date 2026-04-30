@@ -25,7 +25,7 @@
       { key: "mac_hint", label: "MAC", sortable: true, width: "w-36" },
       { key: "hostname", label: "Hostname", sortable: true, width: "w-32" },
       { key: "os_hint", label: "OS", sortable: true, width: "w-28" },
-      { key: "last_seen", label: "Last Seen", sortable: true, width: "w-36", format: formatTime }
+      { key: "last_seen", label: "Last Occurred", sortable: true, width: "w-36", format: formatTime }
     ],
     fields: [
       { key: "display_name", label: "Device", placeholder: "Lobby printer" },
