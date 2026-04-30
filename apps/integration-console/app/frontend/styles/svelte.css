@@ -15,6 +15,27 @@
   animation: svelte-island-row-prepend 300ms ease-out;
 }
 
+.query-conjunction {
+  justify-self: start;
+  min-height: 1.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-muted);
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.query-conjunction-and {
+  background: var(--color-accent-surface);
+  color: var(--color-accent-vivid);
+}
+
+.query-conjunction-or {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+}
+
 .signal-bucket-0 { background-color: rgba(244, 184, 96, 0.10); color: var(--color-signal-text-light); }
 .signal-bucket-1 { background-color: rgba(244, 184, 96, 0.20); color: var(--color-signal-text-light); }
 .signal-bucket-2 { background-color: rgba(244, 184, 96, 0.30); color: var(--color-signal-text-light); }

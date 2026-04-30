@@ -11,7 +11,7 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
     ensure_sync_plane_health_view
   end
 
-  test "index paginates sensors table with default page size" do
+  test "index renders async dashboard shell without loading sensor rows" do
     26.times do |index|
       Sensor.create!(
         sensor_id: format("sensor-%02d", index),
@@ -24,8 +24,9 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
     get root_url(page: 2)
 
     assert_response :success
-    assert_includes response.body, "sensor-25"
-    assert_includes response.body, "Page 2 of 2"
+    assert_includes response.body, "dashboard-cards-svelte-root"
+    assert_includes response.body, "/health/sensors.json"
+    assert_not_includes response.body, "sensor-25"
   end
 
   test "json cards use conditional response and combined backlog counts" do
@@ -94,11 +95,11 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
     get root_url
 
     assert_response :success
-    assert_includes response.body, "Wireless ingest"
-    assert_includes response.body, "1 pending, 0 processing, 0 failed"
+    assert_includes response.body, "/health/sync_data.json"
+    assert_not_includes response.body, "1 pending, 0 processing, 0 failed"
   end
 
-  test "html dashboard reuses one sync health snapshot" do
+  test "html dashboard does not block on sync health snapshot" do
     calls = 0
     snapshot = SyncPlaneHealth.from_attributes({})
 
@@ -107,7 +108,7 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :success
-    assert_equal 1, calls
+    assert_equal 0, calls
   end
 
   private

@@ -4,14 +4,16 @@
 
   export let initial = {}
 
-  let cards = initial.cards || []
-  let endpoint = initial.endpoint || "/?format=json"
-  let loading = false
+  let cards = initial.cards || skeletonCards()
+  let endpoint = initial.endpoint || "/health/cards.json"
+  let loadingLabels = new Set(cards.map((card) => card.label))
+  let errors = {}
   let lastFetchAt = 0
   let pendingFetch = null
   const MIN_FETCH_INTERVAL_MS = 5000
 
   onMount(() => {
+    fetchCards()
     const refresh = () => scheduleFetchCards()
     window.addEventListener("sensor-health", refresh)
     window.addEventListener("alert", refresh)
@@ -38,11 +40,13 @@
     window.clearTimeout(pendingFetch)
     pendingFetch = null
     lastFetchAt = Date.now()
-    loading = true
     try {
       const response = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
       if (response?.status === 304) return
-      if (!response?.ok) return
+      if (!response?.ok) {
+        markErrors("Unable to load cards.")
+        return
+      }
 
       let payload
       try {
@@ -51,11 +55,30 @@
         return
       }
 
-      cards = payload.cards || cards
+      const nextCards = payload.cards || []
+      cards = nextCards.length ? nextCards : cards
+      loadingLabels = new Set()
+      errors = {}
     } finally {
-      loading = false
     }
+  }
+
+  function markErrors(message) {
+    loadingLabels = new Set()
+    errors = Object.fromEntries(cards.map((card) => [card.label, message]))
+  }
+
+  function skeletonCards() {
+    return [
+      { label: "Active Sensors", icon: "sensor" },
+      { label: "Stale Sensors", icon: "wifi" },
+      { label: "Backlog Pending / Failed", icon: "backlog" },
+      { label: "Wireless Events 24h", icon: "wifi" },
+      { label: "Ingest Pending", icon: "backlog" },
+      { label: "Open Shadow IT", icon: "alert" },
+      { label: "Job Orphans", icon: "backlog" }
+    ]
   }
 </script>
 
-<MetricCardGrid cards={cards.map((card) => ({ ...card, loading }))} columns={3} />
+<MetricCardGrid cards={cards.map((card) => ({ ...card, loading: loadingLabels.has(card.label), subValue: errors[card.label] || card.subValue }))} columns={3} />

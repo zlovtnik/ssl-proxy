@@ -2,6 +2,7 @@ export function paramsFromLocation(defaults = {}) {
   const searchParams = new URLSearchParams(window.location.search)
   return {
     q: searchParams.get("q") || defaults.q || "",
+    filters: filtersFromSearchParams(searchParams, defaults.filters || []),
     location_id: searchParams.get("location_id") || defaults.location_id || defaults.locationId || "",
     sort: searchParams.get("sort") || defaults.sort || defaults.sortKey || "",
     direction: searchParams.get("direction") || defaults.direction || defaults.sortDirection || "desc",
@@ -28,6 +29,46 @@ export function updateHistory(path, state, replace = false) {
   const method = replace ? "replaceState" : "pushState"
 
   window.history[method]({ ...state }, "", url)
+}
+
+export function serializeFilters(filters = []) {
+  const compact = filters
+    .map((filter) => ({
+      field: filter.field || "",
+      operator: filter.operator || "",
+      value: filter.value ?? "",
+      conjunction: filter.conjunction === "OR" ? "OR" : "AND"
+    }))
+    .filter((filter) => filter.field && filter.operator)
+
+  return compact.length ? JSON.stringify(compact) : ""
+}
+
+export function deserializeFilters(value, fallback = []) {
+  if (!value) return fallback
+
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return fallback
+
+    return parsed.map((filter) => ({
+      field: String(filter.field || ""),
+      operator: String(filter.operator || ""),
+      value: filter.value ?? "",
+      conjunction: filter.conjunction === "OR" ? "OR" : "AND"
+    }))
+  } catch {
+    return fallback
+  }
+}
+
+export function filtersFromSearchParams(searchParams, fallback = []) {
+  return deserializeFilters(searchParams.get("filters"), fallback)
+}
+
+export function toApiParams(filters = []) {
+  const serialized = serializeFilters(filters)
+  return serialized ? { filters: serialized } : {}
 }
 
 function positiveInteger(value, fallback) {

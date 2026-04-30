@@ -4,6 +4,7 @@
   import { fade, fly } from "svelte/transition"
 
   export let recentUrl = ""
+  export let showHeading = true
 
   let rows = []
   let seen = new Set()
@@ -81,7 +82,9 @@
   }
 </script>
 
-<h2>Live Heads-up Stream</h2>
+{#if showHeading}
+  <h2>Live Heads-up Stream</h2>
+{/if}
 <div role="log" aria-live="polite" aria-relevant="additions text">
   <ul class="live-feed-list">
     {#each rows as row (row.key)}

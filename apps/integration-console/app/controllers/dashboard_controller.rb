@@ -8,32 +8,26 @@ class DashboardController < ApplicationController
   }.freeze
 
   def index
-    @sensors = Sensor.all
-    @sensors = apply_sort(@sensors, SENSOR_SORTS, default_sort: :last_seen_at)
-    @sensors = paginate(@sensors, per_page: 25)
-    @dashboard_cards_payload = DashboardCache.fetch { dashboard_cards_payload }
-    apply_dashboard_counts(@dashboard_cards_payload)
-    if request.format.html?
-      @sync_health = sync_health_snapshot
-      @sync_data_rows = sync_data_rows(@sync_health)
-      @sync_relation_rows = SyncPlaneHealth.important_relations
-    end
-    @recent_samples = NatsTrafficSample.recent.group(:subject).sum(:event_count)
-    @recent_alerts = SensorAlert.order(created_at: :desc).limit(5)
-
     respond_to do |format|
-      format.html
+      format.html { @dashboard_cards_payload = { endpoint: health_cards_path(format: :json) } }
       format.json do
-        ttl = IntegrationConsole::CacheTtl.dashboard
-        expires_in ttl, public: true
-        if stale?(etag: @dashboard_cards_payload, last_modified: cache_bucket_time(ttl.to_i), public: true)
-          render json: @dashboard_cards_payload
-        end
+        render_cards_payload
       end
     end
   end
 
+  def cards
+    render_cards_payload
+  end
+
   private
+
+  def render_cards_payload
+    payload = DashboardCache.fetch { dashboard_cards_payload }
+    ttl = IntegrationConsole::CacheTtl.dashboard
+    expires_in ttl, public: true
+    render json: payload if stale?(etag: payload, last_modified: cache_bucket_time(ttl.to_i), public: true)
+  end
 
   def dashboard_cards_payload
     counts = dashboard_counts
@@ -134,14 +128,6 @@ class DashboardController < ApplicationController
       job_effective_running: sync_health.job_effective_running_count.to_i,
       job_effective_completed: sync_health.job_effective_completed_count.to_i
     }
-  end
-
-  def apply_dashboard_counts(payload)
-    counts = payload[:counts] || payload["counts"] || {}
-    @active_sensors = (counts[:active_sensors] || counts["active_sensors"]).to_i
-    @stale_sensors = (counts[:stale_sensors] || counts["stale_sensors"]).to_i
-    @pending_backlog = (counts[:pending_backlog] || counts["pending_backlog"]).to_i
-    @failed_backlog = (counts[:failed_backlog] || counts["failed_backlog"]).to_i
   end
 
   def sync_health_snapshot
