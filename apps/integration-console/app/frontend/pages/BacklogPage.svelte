@@ -4,12 +4,13 @@
   import Select from "../components/Select.svelte"
   import { requestJson, errorMessages } from "../lib/api"
   import { formatTime } from "../lib/format"
-  import { paramsFromLocation, toQueryString, updateHistory } from "../lib/url"
+  import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
 
   let rows = initial.rows || []
   let status = initial.status || ""
+  let filters = initial.filters || []
   let totalCount = initial.totalCount || rows.length
   let totalPages = initial.totalPages || 1
   let currentPage = initial.currentPage || 1
@@ -32,8 +33,8 @@
     { key: "dedupe_key", label: "Dedupe Key", sortable: true, width: "w-56" },
     { key: "stream_name", label: "Subject", sortable: true, width: "w-36" },
     { key: "status", label: "Status", sortable: true, width: "w-28" },
-    { key: "attempt_count", label: "Attempts", sortable: true, width: "w-24" },
-    { key: "updated_at", label: "Updated", sortable: true, width: "w-36", format: formatTime },
+    { key: "attempt_count", label: "Attempts", sortable: true, width: "w-24", filterType: "number" },
+    { key: "updated_at", label: "Updated", sortable: true, width: "w-36", format: formatTime, filterType: "date" },
     {
       key: "__actions",
       label: "Action",
@@ -46,6 +47,7 @@
   function state() {
     return {
       status: status || undefined,
+      filters: serializeFilters(filters) || undefined,
       sort: sortKey,
       direction: sortDirection,
       page: currentPage,
@@ -70,6 +72,12 @@
     fetchPage(true)
   }
 
+  function handleFiltersChange(nextFilters) {
+    filters = nextFilters
+    currentPage = 1
+    fetchPage(true)
+  }
+
   async function fetchPage(push) {
     if (!endpoints.index) return
 
@@ -80,6 +88,7 @@
     try {
       const payload = await requestJson(`${endpoints.index}.json?${toQueryString(state())}`)
       rows = payload.rows || []
+      filters = payload.filters || filters
       status = payload.status || ""
       totalCount = payload.totalCount || rows.length
       totalPages = payload.totalPages || 1
@@ -114,7 +123,8 @@
     return row.id
   }
 
-  const next = paramsFromLocation({ sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+  const next = paramsFromLocation({ filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+  filters = next.filters || []
   sortKey = next.sort || sortKey
   sortDirection = next.direction || sortDirection
   currentPage = next.page ?? currentPage
@@ -144,8 +154,10 @@
     {sortKey}
     {sortDirection}
     {loading}
+    {filters}
     onSort={handleSort}
     onPageChange={handlePageChange}
+    onFiltersChange={handleFiltersChange}
     rowKey={rowKey}
   />
 </div>

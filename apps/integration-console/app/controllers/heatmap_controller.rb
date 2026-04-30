@@ -9,6 +9,14 @@ class HeatmapController < ApplicationController
     "last_seen_at" => "last_seen_at"
   }.freeze
 
+  FILTERS = {
+    "location_id" => "location_id",
+    "event_count" => { column: "event_count", type: :number },
+    "avg_signal_dbm" => { column: "avg_signal_dbm", type: :number },
+    "unique_devices" => { column: "unique_devices", type: :number },
+    "last_seen_at" => { column: "last_seen_at", type: :date }
+  }.freeze
+
   def index
     @heatmap_payload = Rails.cache.fetch(heatmap_cache_key, expires_in: IntegrationConsole::CacheTtl.heatmap) do
       heatmap_payload
@@ -47,6 +55,7 @@ class HeatmapController < ApplicationController
       perPage: @per_page,
       sortKey: @sort,
       sortDirection: @direction,
+      filters: parsed_grid_filters,
       lastRefreshedAt: iso8601(last_refreshed_at),
       endpoints: {
         index: heatmap_index_path
@@ -74,6 +83,7 @@ class HeatmapController < ApplicationController
           count(*) OVER () AS total_count,
           max(last_seen_at) OVER () AS last_refreshed_at
         FROM mv_wireless_heatmap
+        #{heatmap_where_sql}
       )
       SELECT *
       FROM (
@@ -120,10 +130,44 @@ class HeatmapController < ApplicationController
       direction: params[:direction].to_s,
       page: params[:page].to_i,
       per_page: params[:per_page].to_i,
-      sort: params[:sort].to_s
+      sort: params[:sort].to_s,
+      filters: params[:filters].to_s
     }.to_json
 
     "heatmap:payload:#{Digest::SHA1.hexdigest(source)}"
+  end
+
+  def heatmap_where_sql
+    filters = parsed_grid_filters
+    return "" if filters.blank?
+
+    clauses = []
+    binds = []
+
+    filters.first(GridFilterable::MAX_FILTERS).each do |filter|
+      field = filter["field"].to_s
+      config = FILTERS[field]
+      next unless config
+
+      column = filter_column_sql(config)
+      type = filter_type(config)
+      clause, values = grid_filter_clause(column, type, filter["operator"].to_s, filter["value"])
+      next if clause.blank?
+
+      conjunction = filter["conjunction"].to_s == "OR" ? "OR" : "AND"
+      clauses << { sql: clause, conjunction: conjunction }
+      binds.concat(values)
+    end
+
+    return "" if clauses.blank?
+
+    sql = clauses.each_with_index.map do |clause, index|
+      prefix = index.zero? ? "" : "#{clause[:conjunction]} "
+      "#{prefix}(#{clause[:sql]})"
+    end.join(" ")
+
+    sanitized = WirelessHeatmap.sanitize_sql_array([sql, *binds])
+    "WHERE #{sanitized}"
   end
 
   def location_views(rows)

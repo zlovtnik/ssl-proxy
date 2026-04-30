@@ -8,9 +8,19 @@ class DevicesController < ApplicationController
     "last_seen" => :last_seen
   }.freeze
 
+  FILTERS = {
+    "display_name" => :display_name,
+    "username" => :username,
+    "hostname" => :hostname,
+    "os_hint" => :os_hint,
+    "mac_hint" => :mac_hint,
+    "last_seen" => { column: :last_seen, type: :date }
+  }.freeze
+
   def index
     @query = params[:q].to_s.strip
     @devices = Device.search(@query)
+    @devices = apply_grid_filters(@devices, FILTERS)
     @devices = apply_sort(@devices, SORTS, default_sort: :display_name, default_direction: :asc)
     @devices = paginate(@devices)
     @device_page_payload = device_page_payload(rows: @devices, mode: "index")
@@ -90,6 +100,7 @@ class DevicesController < ApplicationController
       sortKey: @sort || "display_name",
       sortDirection: @direction || "asc",
       query: @query || "",
+      filters: parsed_grid_filters,
       endpoints: {
         index: devices_path,
         create: devices_path

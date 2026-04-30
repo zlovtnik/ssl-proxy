@@ -23,7 +23,7 @@
       { key: "days", label: "Days", sortable: true, width: "w-32" },
       { key: "start_time", label: "Start", sortable: true, width: "w-24" },
       { key: "end_time", label: "End", sortable: true, width: "w-24" },
-      { key: "enabled", label: "Enabled", sortable: true, width: "w-20", format: (value) => displayBoolean(value, "yes") || "no" }
+      { key: "enabled", label: "Enabled", sortable: true, width: "w-20", format: (value) => displayBoolean(value, "yes") || "no", filterType: "boolean" }
     ],
     fields: [
       { key: "location_id", label: "Location", placeholder: "lab" },

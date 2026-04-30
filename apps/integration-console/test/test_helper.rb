@@ -68,12 +68,12 @@ class ActiveSupport::TestCase
     sync_connection.execute("INSERT INTO sync_scan_ingest (#{columns_sql}) VALUES (#{values_sql})")
   end
 
-  def insert_backlog(dedupe_key:, status:, updated_at: Time.current)
+  def insert_backlog(dedupe_key:, status:, updated_at: Time.current, stream_name: "sync.scan.request", attempt_count: 0)
     sync_connection.execute(<<~SQL.squish)
       INSERT INTO audit_backlog
         (dedupe_key, stream_name, payload, status, attempt_count, created_at, updated_at)
       VALUES
-        (#{sync_connection.quote(dedupe_key)}, 'sync.scan.request', '{}', #{sync_connection.quote(status)}, 0, now(), #{sync_connection.quote(updated_at)})
+        (#{sync_connection.quote(dedupe_key)}, #{sync_connection.quote(stream_name)}, '{}', #{sync_connection.quote(status)}, #{attempt_count.to_i}, now(), #{sync_connection.quote(updated_at)})
     SQL
   end
 

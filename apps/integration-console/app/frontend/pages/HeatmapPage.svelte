@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
-  import { toQueryString, updateHistory, paramsFromLocation } from "../lib/url"
+  import { serializeFilters, toQueryString, updateHistory, paramsFromLocation } from "../lib/url"
 
   export let initial = {}
 
@@ -13,19 +13,21 @@
   let sortKey = initial.sortKey || "event_count"
   let sortDirection = initial.sortDirection || "desc"
   let lastRefreshedAt = initial.lastRefreshedAt || null
+  let filters = initial.filters || []
   let loading = false
   const endpoints = initial.endpoints || {}
 
   const columns = [
     { key: "location_id", label: "Location", sortable: true, width: "w-48" },
-    { key: "event_count", label: "Events", sortable: true, width: "w-32" },
-    { key: "avg_signal_dbm", label: "Average Signal dBm", sortable: true, width: "w-40", format: (value) => formatSignal(value) },
-    { key: "unique_devices", label: "Devices", sortable: true, width: "w-32", hiddenBelow: "md" },
-    { key: "last_seen_at", label: "Last Seen", sortable: true, width: "w-40", hiddenBelow: "lg", format: (value) => value || "" }
+    { key: "event_count", label: "Events", sortable: true, width: "w-32", filterType: "number" },
+    { key: "avg_signal_dbm", label: "Average Signal dBm", sortable: true, width: "w-40", format: (value) => formatSignal(value), filterType: "number" },
+    { key: "unique_devices", label: "Devices", sortable: true, width: "w-32", hiddenBelow: "md", filterType: "number" },
+    { key: "last_seen_at", label: "Last Seen", sortable: true, width: "w-40", hiddenBelow: "lg", format: (value) => value || "", filterType: "date" }
   ]
 
   onMount(() => {
-    const next = paramsFromLocation({ sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    filters = next.filters || []
     sortKey = next.sort || "event_count"
     sortDirection = next.direction || "desc"
     currentPage = next.page
@@ -37,6 +39,7 @@
   function state() {
     return {
       sort: sortKey,
+      filters: serializeFilters(filters) || undefined,
       direction: sortDirection,
       page: currentPage,
       per_page: perPage
@@ -55,8 +58,15 @@
     fetchPage(true)
   }
 
+  function handleFiltersChange(nextFilters) {
+    filters = nextFilters
+    currentPage = 1
+    fetchPage(true)
+  }
+
   function handlePopState() {
-    const next = paramsFromLocation({ sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    filters = next.filters || []
     sortKey = next.sort || "event_count"
     sortDirection = next.direction || "desc"
     currentPage = next.page
@@ -76,6 +86,7 @@
 
     const payload = await response.json()
     rows = payload.rows || []
+    filters = payload.filters || filters
     visualLocations = payload.visualLocations || []
     totalCount = payload.totalCount || 0
     currentPage = payload.currentPage || currentPage
@@ -118,8 +129,10 @@
     {sortKey}
     {sortDirection}
     {loading}
+    {filters}
     onSort={handleSort}
     onPageChange={handlePageChange}
+    onFiltersChange={handleFiltersChange}
     rowKey={(row) => row.location_id}
   />
 

@@ -8,8 +8,18 @@ class AuthorizedWirelessNetworksController < ApplicationController
     "updated_at" => :updated_at
   }.freeze
 
+  FILTERS = {
+    "enabled" => { column: :enabled, type: :boolean },
+    "location_id" => :location_id,
+    "ssid" => :ssid,
+    "bssid" => :bssid,
+    "label" => :label,
+    "updated_at" => { column: :updated_at, type: :date }
+  }.freeze
+
   def index
-    @authorized_wireless_networks = apply_sort(AuthorizedWirelessNetwork.ordered, SORTS, default_sort: :ssid, default_direction: :asc)
+    @authorized_wireless_networks = apply_grid_filters(AuthorizedWirelessNetwork.ordered, FILTERS)
+    @authorized_wireless_networks = apply_sort(@authorized_wireless_networks, SORTS, default_sort: :ssid, default_direction: :asc)
     @authorized_wireless_page_payload = authorized_wireless_page_payload(rows: @authorized_wireless_networks, mode: "index")
 
     respond_to do |format|
@@ -82,6 +92,7 @@ class AuthorizedWirelessNetworksController < ApplicationController
       errors: network&.errors&.full_messages || [],
       sortKey: @sort || "ssid",
       sortDirection: @direction || "asc",
+      filters: parsed_grid_filters,
       endpoints: {
         index: authorized_wireless_networks_path,
         create: authorized_wireless_networks_path

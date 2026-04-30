@@ -7,10 +7,19 @@ class BacklogController < ApplicationController
     "updated_at" => :updated_at
   }.freeze
 
+  FILTERS = {
+    "dedupe_key" => :dedupe_key,
+    "stream_name" => :stream_name,
+    "status" => :status,
+    "attempt_count" => { column: :attempt_count, type: :number },
+    "updated_at" => { column: :updated_at, type: :date }
+  }.freeze
+
   def index
     @status = params[:status].presence
     @entries = BacklogStatus.all
     @entries = @entries.where(status: @status) if @status.present?
+    @entries = apply_grid_filters(@entries, FILTERS)
     @entries = apply_sort(@entries, SORTS, default_sort: :updated_at, default_direction: :asc)
     @entries = paginate(@entries)
 
@@ -51,6 +60,7 @@ class BacklogController < ApplicationController
       perPage: @per_page,
       sortKey: @sort,
       sortDirection: @direction,
+      filters: parsed_grid_filters,
       endpoints: {
         index: backlog_index_path
       }

@@ -9,6 +9,14 @@ class HealthController < ApplicationController
     "status" => :status
   }.freeze
 
+  SENSOR_FILTERS = {
+    "sensor_id" => :sensor_id,
+    "location_id" => :location_id,
+    "last_seen_at" => { column: :last_seen_at, type: :date },
+    "last_signal_dbm" => { column: :last_signal_dbm, type: :number },
+    "status" => :status
+  }.freeze
+
   def show
     checks = {
       redis: redis_status,
@@ -34,7 +42,8 @@ class HealthController < ApplicationController
   end
 
   def sensors
-    scope = apply_sort(Sensor.all, SENSOR_SORTS, default_sort: :last_seen_at)
+    scope = apply_grid_filters(Sensor.all, SENSOR_FILTERS)
+    scope = apply_sort(scope, SENSOR_SORTS, default_sort: :last_seen_at)
     sensors = paginate(scope, per_page: 25)
     payload = {
       rows: sensors.map { |sensor| sensor_payload(sensor) },
@@ -42,7 +51,8 @@ class HealthController < ApplicationController
       currentPage: @current_page,
       perPage: @per_page,
       sortKey: @sort,
-      sortDirection: @direction
+      sortDirection: @direction,
+      filters: parsed_grid_filters
     }
 
     render_cached_json(payload, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)

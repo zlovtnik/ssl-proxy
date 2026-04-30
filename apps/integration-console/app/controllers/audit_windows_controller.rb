@@ -8,8 +8,18 @@ class AuditWindowsController < ApplicationController
     "enabled" => :enabled
   }.freeze
 
+  FILTERS = {
+    "location_id" => :location_id,
+    "timezone" => :timezone,
+    "days" => :days,
+    "start_time" => :start_time,
+    "end_time" => :end_time,
+    "enabled" => { column: :enabled, type: :boolean }
+  }.freeze
+
   def index
-    @audit_windows = apply_sort(AuditWindow.all, SORTS, default_sort: :location_id, default_direction: :asc)
+    @audit_windows = apply_grid_filters(AuditWindow.all, FILTERS)
+    @audit_windows = apply_sort(@audit_windows, SORTS, default_sort: :location_id, default_direction: :asc)
     @audit_windows_page_payload = audit_windows_page_payload(rows: @audit_windows, mode: "index")
 
     respond_to do |format|
@@ -106,6 +116,7 @@ class AuditWindowsController < ApplicationController
       errors: audit_window&.errors&.full_messages || [],
       sortKey: @sort || "location_id",
       sortDirection: @direction || "asc",
+      filters: parsed_grid_filters,
       endpoints: {
         index: audit_windows_path,
         create: audit_windows_path

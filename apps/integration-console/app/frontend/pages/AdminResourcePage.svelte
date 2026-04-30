@@ -4,7 +4,7 @@
   import ResourceActions from "../components/ResourceActions.svelte"
   import ResourceForm from "../components/ResourceForm.svelte"
   import { requestJson, errorMessages } from "../lib/api"
-  import { paramsFromLocation, toQueryString, updateHistory } from "../lib/url"
+  import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
   export let config = {}
@@ -14,6 +14,7 @@
   let formRecord = initial.current ? { ...initial.current } : null
   let formErrors = initial.errors || []
   let query = initial.query || ""
+  let filters = initial.filters || []
   let totalCount = initial.totalCount || rows.length
   let totalPages = initial.totalPages || 1
   let currentPage = initial.currentPage || 1
@@ -47,6 +48,7 @@
   function state() {
     return {
       q: config.search ? query : undefined,
+      filters: serializeFilters(filters) || undefined,
       sort: sortKey,
       direction: sortDirection,
       page: currentPage,
@@ -144,6 +146,12 @@
     fetchPage(true)
   }
 
+  function handleFiltersChange(nextFilters) {
+    filters = nextFilters
+    currentPage = 1
+    fetchPage(true)
+  }
+
   async function fetchPage(push) {
     if (!endpoints.index) return
 
@@ -156,6 +164,7 @@
       const payload = await requestJson(`${endpoints.index}.json?${toQueryString(state())}`)
       if (requestId !== currentRequestId) return
       rows = payload.rows || []
+      filters = payload.filters || filters
       totalCount = payload.totalCount || rows.length
       totalPages = payload.totalPages || 1
       currentPage = payload.currentPage || currentPage
@@ -175,8 +184,9 @@
   }
 
   function initializeFromUrl() {
-    const next = paramsFromLocation({ q: query, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ q: query, filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
     query = next.q
+    filters = next.filters || []
     sortKey = next.sort || sortKey
     sortDirection = next.direction || sortDirection
     currentPage = next.page ?? currentPage
@@ -236,8 +246,10 @@
       {sortKey}
       {sortDirection}
       {loading}
+      {filters}
       onSort={handleSort}
       onPageChange={handlePageChange}
+      onFiltersChange={handleFiltersChange}
       rowKey={rowKey}
     />
   {/if}
