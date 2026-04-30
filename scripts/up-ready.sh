@@ -52,7 +52,6 @@ fail() {
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
-profile_obfuscation_mismatch::wg_obfuscation_enabled=true::iPhone/linux-direct mode cannot use obfuscated ingress::Use WG_OBFUSCATION_ENABLED=false and recreate::auto
 docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Treat in-container health as authoritative::auto
