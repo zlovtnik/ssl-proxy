@@ -238,10 +238,67 @@ body {
   background: var(--color-surface);
 }
 
+.metric-card {
+  border-left-width: 4px;
+}
+
+.metric-card-ok {
+  border-left-color: var(--color-accent-vivid);
+}
+
+.metric-card-warn {
+  border-left-color: var(--color-accent);
+}
+
+.metric-card-alert {
+  border-left-color: var(--color-danger-text);
+}
+
+.metric-card-neutral {
+  border-left-color: var(--color-border);
+}
+
+.metric-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metric-card-label {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .metric .value {
   font-size: 28px;
   font-weight: 700;
   color: var(--color-accent-vivid);
+}
+
+.metric-card-subvalue,
+.muted {
+  color: var(--color-text-muted);
+}
+
+.metric-card-subvalue {
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.metric-card-trend {
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 12px;
+}
+
+.metric-card-sparkline {
+  color: var(--color-accent-vivid);
+  height: 32px;
+  margin-top: 12px;
+  width: 100%;
 }
 
 /* Tighter table wrapper - allow horizontal scroll before hiding content */

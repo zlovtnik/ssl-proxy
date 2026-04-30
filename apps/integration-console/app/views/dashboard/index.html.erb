@@ -3,25 +3,49 @@
 
 <h1>Integration Console</h1>
 
-<%= svelte_props_tag("dashboard-cards-svelte-root", initial: @dashboard_cards_payload) %>
-<div id="dashboard-cards-svelte-root"></div>
-<%= svelte_bundle_tags(:dashboard_cards) %>
-
-<noscript>
-  <section class="grid grid-3">
-    <div class="metric"><div>Active Sensors</div><div class="value" data-animate-morph="true"><%= @active_sensors %></div></div>
-    <div class="metric"><div>Stale Sensors</div><div class="value" data-animate-morph="true"><%= @stale_sensors %></div></div>
-    <div class="metric"><div>Backlog Pending / Failed</div><div class="value" data-animate-morph="true"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
-  </section>
-</noscript>
+<section class="grid grid-3">
+  <% dashboard_cards = @dashboard_cards_payload || {} %>
+  <% Array(dashboard_cards[:cards] || dashboard_cards["cards"]).each do |card| %>
+    <% card = card.with_indifferent_access %>
+    <% sparkline_path = metric_card_sparkline_path(card[:sparkline]) %>
+    <article class="metric metric-card <%= metric_card_status_class(card[:status]) %>">
+      <div class="metric-card-head">
+        <div>
+          <div class="metric-card-label"><%= card[:label] %></div>
+          <div class="value" data-animate-morph="true"><%= card[:value] %></div>
+          <% if card[:subValue].present? %>
+            <div class="metric-card-subvalue"><%= card[:subValue] %></div>
+          <% end %>
+        </div>
+      </div>
+      <% if card[:trendLabel].present? %>
+        <div class="metric-card-trend <%= metric_card_trend_class(card[:trend]) %>">
+          <span aria-hidden="true"><%= metric_card_trend_symbol(card[:trend]) %></span>
+          <span><%= card[:trendLabel] %></span>
+        </div>
+      <% end %>
+      <% if sparkline_path.present? %>
+        <svg class="metric-card-sparkline" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+          <path d="<%= sparkline_path %>" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" />
+        </svg>
+      <% end %>
+    </article>
+  <% end %>
+</section>
 
 <section class="grid grid-3 section-spaced">
   <div
     class="panel"
-    data-controller="svelte"
-    data-svelte-component-value="LiveFeed"
-    data-svelte-props-value="<%= { recentUrl: recent_audit_logs_path }.to_json %>"
-  ></div>
+    data-controller="live-feed"
+    data-live-feed-recent-url-value="<%= recent_audit_logs_path %>"
+  >
+    <h2>Live Heads-up Stream</h2>
+    <div role="log" aria-live="polite" aria-relevant="additions text">
+      <ul class="live-feed-list" data-live-feed-target="list">
+        <li class="live-row live-row-empty">Waiting for audit events.</li>
+      </ul>
+    </div>
+  </div>
   <div class="panel">
     <h2>NATS Throughput</h2>
     <% (@recent_samples || []).each do |subject, count| %>

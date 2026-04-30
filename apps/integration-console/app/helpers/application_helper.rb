@@ -41,6 +41,49 @@ module ApplicationHelper
     ], "\n")
   end
 
+  def metric_card_status_class(status)
+    {
+      "ok" => "metric-card-ok",
+      "warn" => "metric-card-warn",
+      "alert" => "metric-card-alert",
+      "neutral" => "metric-card-neutral"
+    }.fetch(status.to_s, "metric-card-neutral")
+  end
+
+  def metric_card_trend_class(trend)
+    {
+      "up" => "status-ok",
+      "down" => "status-alert",
+      "flat" => "muted"
+    }.fetch(trend.to_s, "muted")
+  end
+
+  def metric_card_trend_symbol(trend)
+    {
+      "up" => "\u2191",
+      "down" => "\u2193",
+      "flat" => "\u2192"
+    }.fetch(trend.to_s, "\u2192")
+  end
+
+  def metric_card_sparkline_path(points)
+    numbers = Array(points).filter_map { |point| Float(point, exception: false) }
+    return if numbers.empty?
+
+    numbers << numbers.first if numbers.one?
+    min = numbers.min
+    max = numbers.max
+    span = max - min
+    span = 1 if span.zero?
+    step = 100.0 / (numbers.length - 1)
+
+    numbers.each_with_index.map do |point, index|
+      x = index * step
+      y = 28 - ((point - min) / span) * 24
+      "#{index.zero? ? "M" : "L"}#{format("%.1f", x)} #{format("%.1f", y)}"
+    end.join(" ")
+  end
+
   def sort_link_to(label, key)
     active = params[:sort].to_s == key.to_s
     next_direction = active && params[:direction].to_s == "asc" ? "desc" : "asc"
