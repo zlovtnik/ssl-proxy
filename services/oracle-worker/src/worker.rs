@@ -41,6 +41,34 @@ pub enum SinkTarget {
     ProxyEvents,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct BlockedFingerprint {
+    #[serde(default)]
+    pub tls_ver: Option<String>,
+    #[serde(default)]
+    pub alpn: Option<String>,
+    #[serde(default)]
+    pub ja3_lite: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct BlockedMetrics {
+    #[serde(default)]
+    pub attempt_count: Option<i64>,
+    #[serde(default)]
+    pub blocked_bytes: Option<i64>,
+    #[serde(default)]
+    pub total_blocked_bytes_approx: Option<i64>,
+    #[serde(default)]
+    pub frequency_hz: Option<f64>,
+    #[serde(default)]
+    pub risk_score: Option<f64>,
+    #[serde(default)]
+    pub iat_ms: Option<i64>,
+    #[serde(default)]
+    pub consecutive_blocks: Option<i64>,
+}
+
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct ProxyEventRow {
@@ -63,6 +91,34 @@ pub struct ProxyEventRow {
     pub event_sequence: Option<i64>,
     pub duration_ms: Option<i64>,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub verdict: Option<String>,
+    #[serde(default)]
+    pub blocked_session_id: Option<String>,
+    #[serde(default)]
+    pub attempt_count: Option<i64>,
+    #[serde(default)]
+    pub blocked_bytes: Option<i64>,
+    #[serde(default)]
+    pub frequency_hz: Option<f64>,
+    #[serde(default)]
+    pub risk_score: Option<f64>,
+    #[serde(default)]
+    pub consecutive_blocks: Option<i64>,
+    #[serde(default)]
+    pub iat_ms: Option<i64>,
+    #[serde(default)]
+    pub tarpit_held_ms: Option<i64>,
+    #[serde(default)]
+    pub fingerprint: Option<BlockedFingerprint>,
+    #[serde(default)]
+    pub metrics: Option<BlockedMetrics>,
+    #[serde(default)]
+    pub resolved_ip: Option<String>,
+    #[serde(default)]
+    pub asn_org: Option<String>,
     pub time: String,
 }
 
@@ -91,7 +147,30 @@ pub struct ProxyEventInsert {
 }
 
 pub trait ProxyEventSink {
-    fn insert_proxy_events(&mut self, rows: &[ProxyEventInsert]) -> Result<u64, String>;
+    fn insert_proxy_events(
+        &mut self,
+        rows: &[ProxyEventInsert],
+        blocked_rows: &[BlockedEventInsert],
+    ) -> Result<u64, String>;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockedEventInsert {
+    pub host: String,
+    pub blocked_bytes: i64,
+    pub frequency_hz: Option<f64>,
+    pub risk_score: Option<f64>,
+    pub category: Option<String>,
+    pub verdict: Option<String>,
+    pub tarpit_held_ms: i64,
+    pub iat_ms: Option<i64>,
+    pub consecutive_blocks: Option<i64>,
+    pub last_verdict: Option<String>,
+    pub tls_ver: Option<String>,
+    pub alpn: Option<String>,
+    pub ja3_lite: Option<String>,
+    pub resolved_ip: Option<String>,
+    pub asn_org: Option<String>,
 }
 
 pub struct OracleProxyEventSink {
@@ -188,7 +267,14 @@ pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) ->
             return failure_result(load.job_id, load.batch_id, error_class, error);
         }
     };
-    let row_count = match sink.insert_proxy_events(&rows) {
+    let blocked_rows = match blocked_event_rows_from_payload(target, &payload) {
+        Ok(rows) => rows,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
+    let row_count = match sink.insert_proxy_events(&rows, &blocked_rows) {
         Ok(row_count) => row_count,
         Err(error) => {
             let error_class = classify_oracle_error(&error);
@@ -224,6 +310,19 @@ pub fn proxy_event_rows_from_payload(
     target: SinkTarget,
     payload: &str,
 ) -> Result<Vec<ProxyEventInsert>, String> {
+    let rows = payload_rows(target, payload)?;
+    proxy_event_rows_from_values(target, &rows)
+}
+
+pub fn blocked_event_rows_from_payload(
+    target: SinkTarget,
+    payload: &str,
+) -> Result<Vec<BlockedEventInsert>, String> {
+    let rows = payload_rows(target, payload)?;
+    blocked_event_rows_from_values(target, &rows)
+}
+
+fn payload_rows(target: SinkTarget, payload: &str) -> Result<Vec<serde_json::Value>, String> {
     match target {
         SinkTarget::ProxyEvents => {}
     }
@@ -231,22 +330,49 @@ pub fn proxy_event_rows_from_payload(
     let value: serde_json::Value =
         serde_json::from_str(payload).map_err(|error| format!("decode payload json: {error}"))?;
     match value {
-        serde_json::Value::Array(rows) => {
-            let mut inserts = Vec::with_capacity(rows.len());
-            for row in rows {
-                inserts.push(proxy_event_insert_from_value(row)?);
-            }
-            Ok(inserts)
-        }
-        other => Ok(vec![proxy_event_insert_from_value(other)?]),
+        serde_json::Value::Array(rows) => Ok(rows),
+        other => Ok(vec![other]),
     }
 }
 
-fn proxy_event_insert_from_value(row: serde_json::Value) -> Result<ProxyEventInsert, String> {
-    let raw_json = serde_json::to_string(&row)
+fn proxy_event_rows_from_values(
+    target: SinkTarget,
+    rows: &[serde_json::Value],
+) -> Result<Vec<ProxyEventInsert>, String> {
+    match target {
+        SinkTarget::ProxyEvents => {}
+    }
+
+    let mut inserts = Vec::with_capacity(rows.len());
+    for row in rows {
+        inserts.push(proxy_event_insert_from_value(row)?);
+    }
+    Ok(inserts)
+}
+
+fn blocked_event_rows_from_values(
+    target: SinkTarget,
+    rows: &[serde_json::Value],
+) -> Result<Vec<BlockedEventInsert>, String> {
+    match target {
+        SinkTarget::ProxyEvents => {}
+    }
+
+    let mut inserts = Vec::with_capacity(rows.len());
+    for row in rows {
+        let proxy_row = proxy_event_insert_from_value(row)?;
+        if let Some(blocked_row) = blocked_event_insert_from_value(row, &proxy_row)? {
+            inserts.push(blocked_row);
+        }
+    }
+    Ok(inserts)
+}
+
+fn proxy_event_insert_from_value(row: &serde_json::Value) -> Result<ProxyEventInsert, String> {
+    let raw_json = serde_json::to_string(row)
         .map_err(|error| format!("encode raw proxy row json: {error}"))?;
-    let parsed: ProxyEventRow =
-        serde_json::from_value(row).map_err(|error| format!("decode proxy.events row: {error}"))?;
+    let parsed: ProxyEventRow = serde_json::from_value(row.clone())
+        .map_err(|error| format!("decode proxy.events row: {error}"))?;
     if parsed.event_type.trim().is_empty() || parsed.host.trim().is_empty() {
         return Err("proxy.events row missing event type or host".to_string());
     }
@@ -282,6 +408,92 @@ fn proxy_event_insert_from_value(row: serde_json::Value) -> Result<ProxyEventIns
     })
 }
 
+fn blocked_event_insert_from_value(
+    row: &serde_json::Value,
+    proxy_row: &ProxyEventInsert,
+) -> Result<Option<BlockedEventInsert>, String> {
+    let parsed: ProxyEventRow = serde_json::from_value(row.clone())
+        .map_err(|error| format!("decode blocked.events row: {error}"))?;
+    if !parsed.blocked.unwrap_or(false) {
+        return Ok(None);
+    }
+
+    let blocked_bytes = parsed
+        .blocked_bytes
+        .or_else(|| {
+            parsed
+                .metrics
+                .as_ref()
+                .and_then(|metrics| metrics.blocked_bytes)
+        })
+        .or_else(|| {
+            parsed
+                .metrics
+                .as_ref()
+                .and_then(|metrics| metrics.total_blocked_bytes_approx)
+        })
+        .unwrap_or_else(|| proxy_row.bytes_up.saturating_add(proxy_row.bytes_down));
+
+    let frequency_hz = parsed.frequency_hz.or_else(|| {
+        parsed
+            .metrics
+            .as_ref()
+            .and_then(|metrics| metrics.frequency_hz)
+    });
+    let risk_score = parsed.risk_score.or_else(|| {
+        parsed
+            .metrics
+            .as_ref()
+            .and_then(|metrics| metrics.risk_score)
+    });
+    let consecutive_blocks = parsed
+        .consecutive_blocks
+        .or_else(|| {
+            parsed
+                .metrics
+                .as_ref()
+                .and_then(|metrics| metrics.consecutive_blocks)
+        })
+        .or(parsed.attempt_count)
+        .or_else(|| {
+            parsed
+                .metrics
+                .as_ref()
+                .and_then(|metrics| metrics.attempt_count)
+        });
+    let iat_ms = parsed
+        .iat_ms
+        .or_else(|| parsed.metrics.as_ref().and_then(|metrics| metrics.iat_ms));
+    let tarpit_held_ms = parsed.tarpit_held_ms.unwrap_or(0);
+    let fingerprint = parsed.fingerprint.as_ref();
+    let category = parsed
+        .category
+        .clone()
+        .or_else(|| Some("unknown".to_string()));
+    let verdict = parsed
+        .verdict
+        .clone()
+        .or_else(|| Some("BLOCKED".to_string()));
+
+    Ok(Some(BlockedEventInsert {
+        host: proxy_row.host.clone(),
+        blocked_bytes,
+        frequency_hz,
+        risk_score,
+        category,
+        verdict: verdict.clone(),
+        tarpit_held_ms,
+        iat_ms,
+        consecutive_blocks,
+        last_verdict: verdict,
+        tls_ver: fingerprint.and_then(|value| value.tls_ver.clone()),
+        alpn: fingerprint.and_then(|value| value.alpn.clone()),
+        ja3_lite: fingerprint.and_then(|value| value.ja3_lite.clone()),
+        resolved_ip: parsed.resolved_ip.clone(),
+        asn_org: parsed.asn_org.clone(),
+    }))
+}
+
 fn normalized_identity_source<'a>(identity_source: Option<&'a str>) -> &'a str {
     identity_source.unwrap_or("unknown")
 }
@@ -311,8 +523,12 @@ impl OracleProxyEventSink {
 }
 
 impl ProxyEventSink for OracleProxyEventSink {
-    fn insert_proxy_events(&mut self, rows: &[ProxyEventInsert]) -> Result<u64, String> {
-        let result = insert_proxy_events_transaction(&self.connection, rows);
+    fn insert_proxy_events(
+        &mut self,
+        rows: &[ProxyEventInsert],
+        blocked_rows: &[BlockedEventInsert],
+    ) -> Result<u64, String> {
+        let result = insert_event_batch_transaction(&self.connection, rows, blocked_rows);
         if result.is_err() {
             let _ = self.connection.rollback();
         }
@@ -320,9 +536,10 @@ impl ProxyEventSink for OracleProxyEventSink {
     }
 }
 
-fn insert_proxy_events_transaction(
+fn insert_event_batch_transaction(
     connection: &Connection,
     rows: &[ProxyEventInsert],
+    blocked_rows: &[BlockedEventInsert],
 ) -> Result<u64, String> {
     const INSERT_SQL: &str = r#"
         insert into proxy_events (
@@ -380,10 +597,136 @@ fn insert_proxy_events_transaction(
             .execute(INSERT_SQL, &params)
             .map_err(|error| format!("insert proxy_events row host={}: {error}", row.host))?;
     }
+    upsert_blocked_events_transaction(connection, blocked_rows)?;
     connection
         .commit()
         .map_err(|error| format!("commit proxy_events batch: {error}"))?;
     Ok(rows.len() as u64)
+}
+
+fn upsert_blocked_events_transaction(
+    connection: &Connection,
+    rows: &[BlockedEventInsert],
+) -> Result<(), String> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    const UPSERT_SQL: &str = r#"
+        merge into blocked_events be
+        using (
+            select
+                :1 as host,
+                :2 as blocked_bytes,
+                :3 as frequency_hz,
+                :4 as risk_score,
+                :5 as category,
+                :6 as verdict,
+                :7 as tarpit_held_ms,
+                :8 as iat_ms,
+                :9 as consecutive_blocks,
+                :10 as last_verdict,
+                :11 as tls_ver,
+                :12 as alpn,
+                :13 as ja3_lite,
+                :14 as resolved_ip,
+                :15 as asn_org
+            from dual
+        ) src
+        on (be.host = src.host)
+        when matched then update set
+            be.blocked_attempts = be.blocked_attempts + 1,
+            be.blocked_bytes = be.blocked_bytes + nvl(src.blocked_bytes, 0),
+            be.frequency_hz = nvl(
+                src.frequency_hz,
+                case
+                    when (cast(systimestamp as date) - cast(be.first_seen as date)) * 86400 > 0
+                    then (be.blocked_attempts + 1) /
+                        ((cast(systimestamp as date) - cast(be.first_seen as date)) * 86400)
+                    else be.frequency_hz
+                end
+            ),
+            be.verdict = nvl(src.verdict, be.verdict),
+            be.category = nvl(src.category, be.category),
+            be.risk_score = nvl(
+                src.risk_score,
+                (be.blocked_bytes + nvl(src.blocked_bytes, 0)) * nvl(src.frequency_hz, be.frequency_hz)
+            ),
+            be.tarpit_held_ms = be.tarpit_held_ms + nvl(src.tarpit_held_ms, 0),
+            be.iat_ms = nvl(src.iat_ms, be.iat_ms),
+            be.consecutive_blocks = nvl(src.consecutive_blocks, be.consecutive_blocks + 1),
+            be.last_verdict = nvl(src.last_verdict, nvl(src.verdict, be.last_verdict)),
+            be.tls_ver = nvl(src.tls_ver, be.tls_ver),
+            be.alpn = nvl(src.alpn, be.alpn),
+            be.ja3_lite = nvl(src.ja3_lite, be.ja3_lite),
+            be.resolved_ip = nvl(src.resolved_ip, be.resolved_ip),
+            be.asn_org = nvl(src.asn_org, be.asn_org),
+            be.updated_at = systimestamp
+        when not matched then insert (
+            host,
+            blocked_attempts,
+            blocked_bytes,
+            frequency_hz,
+            verdict,
+            category,
+            risk_score,
+            tarpit_held_ms,
+            iat_ms,
+            consecutive_blocks,
+            last_verdict,
+            tls_ver,
+            alpn,
+            ja3_lite,
+            resolved_ip,
+            asn_org,
+            updated_at,
+            first_seen
+        ) values (
+            src.host,
+            1,
+            nvl(src.blocked_bytes, 0),
+            nvl(src.frequency_hz, 0),
+            nvl(src.verdict, 'BLOCKED'),
+            nvl(src.category, 'unknown'),
+            nvl(src.risk_score, nvl(src.blocked_bytes, 0) * nvl(src.frequency_hz, 0)),
+            nvl(src.tarpit_held_ms, 0),
+            src.iat_ms,
+            nvl(src.consecutive_blocks, 1),
+            nvl(src.last_verdict, nvl(src.verdict, 'BLOCKED')),
+            src.tls_ver,
+            src.alpn,
+            src.ja3_lite,
+            src.resolved_ip,
+            src.asn_org,
+            systimestamp,
+            systimestamp
+        )
+    "#;
+
+    for row in rows {
+        let params: [&dyn ToSql; 15] = [
+            &row.host,
+            &row.blocked_bytes,
+            &row.frequency_hz,
+            &row.risk_score,
+            &row.category,
+            &row.verdict,
+            &row.tarpit_held_ms,
+            &row.iat_ms,
+            &row.consecutive_blocks,
+            &row.last_verdict,
+            &row.tls_ver,
+            &row.alpn,
+            &row.ja3_lite,
+            &row.resolved_ip,
+            &row.asn_org,
+        ];
+        connection
+            .execute(UPSERT_SQL, &params)
+            .map_err(|error| format!("upsert blocked_events row host={}: {error}", row.host))?;
+    }
+
+    Ok(())
 }
 
 pub fn check_oracle_connection_from_env() -> Result<(), String> {
@@ -444,9 +787,9 @@ mod tests {
     };
 
     use super::{
-        checksum, classify_oracle_error, handle_load_with_sink, proxy_event_rows_from_payload,
-        resolve_payload, sink_target, normalized_identity_source, OracleErrorClass, OracleLoad,
-        ProxyEventInsert, ProxyEventSink, SinkTarget,
+        checksum, classify_oracle_error, handle_load_with_sink, normalized_identity_source,
+        proxy_event_rows_from_payload, resolve_payload, sink_target, BlockedEventInsert,
+        OracleErrorClass, OracleLoad, ProxyEventInsert, ProxyEventSink, SinkTarget,
     };
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -472,18 +815,30 @@ mod tests {
         )
     }
 
+    fn blocked_payload() -> String {
+        inline_payload(
+            r#"{"type":"block","host":"blocked.example","time":"2026-04-21T00:00:00Z","peer_ip":"10.0.0.2","wg_pubkey":"peer","device_id":"device-1","identity_source":"registered","peer_hostname":"phone.local","client_ua":"UA","bytes_up":12,"bytes_down":34,"blocked":true,"category":"analytics","verdict":"HEURISTIC_FLAG_DATA_EXFIL","metrics":{"attempt_count":4,"total_blocked_bytes_approx":46,"frequency_hz":2.5,"risk_score":115.0,"iat_ms":88,"consecutive_blocks":4},"fingerprint":{"tls_ver":"TLS1.3","alpn":"h2","ja3_lite":"ja3-lite-hash"}}"#,
+        )
+    }
+
     #[derive(Default)]
     struct RecordingSink {
         rows: Vec<ProxyEventInsert>,
+        blocked_rows: Vec<BlockedEventInsert>,
         error: Option<String>,
     }
 
     impl ProxyEventSink for RecordingSink {
-        fn insert_proxy_events(&mut self, rows: &[ProxyEventInsert]) -> Result<u64, String> {
+        fn insert_proxy_events(
+            &mut self,
+            rows: &[ProxyEventInsert],
+            blocked_rows: &[BlockedEventInsert],
+        ) -> Result<u64, String> {
             if let Some(error) = &self.error {
                 return Err(error.clone());
             }
             self.rows.extend_from_slice(rows);
+            self.blocked_rows.extend_from_slice(blocked_rows);
             Ok(rows.len() as u64)
         }
     }
@@ -512,6 +867,38 @@ mod tests {
         assert_eq!(sink.rows[0].event_type, "tunnel_open");
         assert_eq!(sink.rows[0].host, "example.com");
         assert_eq!(sink.rows[0].blocked, 0);
+        assert!(sink.blocked_rows.is_empty());
+    }
+
+    #[test]
+    fn emits_blocked_rows_for_blocked_events() {
+        let mut sink = RecordingSink::default();
+        let result = handle_load_with_sink(
+            OracleLoad {
+                job_id: "job-1b".to_string(),
+                batch_id: "batch-1b".to_string(),
+                batch_no: 0,
+                stream_name: "proxy.events".to_string(),
+                payload_ref: blocked_payload(),
+                cursor_start: "1".to_string(),
+                cursor_end: "2".to_string(),
+                attempt: 1,
+            },
+            &mut sink,
+        );
+
+        assert_eq!(result.status, "success");
+        assert_eq!(result.row_count, 1);
+        assert_eq!(sink.rows.len(), 1);
+        assert_eq!(sink.blocked_rows.len(), 1);
+        assert_eq!(sink.blocked_rows[0].host, "blocked.example");
+        assert_eq!(sink.blocked_rows[0].blocked_bytes, 46);
+        assert_eq!(sink.blocked_rows[0].category.as_deref(), Some("analytics"));
+        assert_eq!(
+            sink.blocked_rows[0].verdict.as_deref(),
+            Some("HEURISTIC_FLAG_DATA_EXFIL")
+        );
+        assert_eq!(sink.blocked_rows[0].tls_ver.as_deref(), Some("TLS1.3"));
     }
 
     #[test]
@@ -604,16 +991,14 @@ mod tests {
     #[test]
     fn normalizes_missing_identity_source_to_unknown() {
         assert_eq!(normalized_identity_source(None), "unknown");
-        assert_eq!(
-            normalized_identity_source(Some("registered")),
-            "registered"
-        );
+        assert_eq!(normalized_identity_source(Some("registered")), "registered");
     }
 
     #[test]
     fn returns_failed_result_when_oracle_insert_fails() {
         let mut sink = RecordingSink {
             rows: Vec::new(),
+            blocked_rows: Vec::new(),
             error: Some("unique constraint violated".to_string()),
         };
 
