@@ -100,9 +100,9 @@ impl PostgresBacklog {
         let normalized_mac = mac.trim().to_ascii_lowercase();
         let row = match client
             .query_opt(
-                "select device_id, username
+                "select mac_id, username
                    from devices
-                  where lower(mac_hint) = $1
+                  where mac_id = $1 or lower(mac_hint) = $1
                   limit 1",
                 &[&normalized_mac],
             )
