@@ -42,6 +42,7 @@ where
         })
         .to_string();
         match self.stream {
+            AuditLayerStream::Off => {}
             AuditLayerStream::Stdout => println!("{line}"),
             AuditLayerStream::Stderr => eprintln!("{line}"),
         }

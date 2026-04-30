@@ -622,37 +622,54 @@ fn insert_event_batch_transaction(
         )
     "#;
 
-    for (index, row) in rows.iter().enumerate() {
-        let identity_source = normalized_identity_source(row.identity_source.as_deref());
-        let row_sequence = i64::try_from(index + 1)
-            .map_err(|_| "proxy_events row_sequence exceeds i64".to_string())?;
-        let params: [&dyn ToSql; 22] = [
-            &batch_id,
-            &row_sequence,
-            &row.event_time,
-            &row.event_type,
-            &row.host,
-            &row.peer_ip,
-            &row.wg_pubkey,
-            &row.device_id,
-            &identity_source,
-            &row.peer_hostname,
-            &row.client_ua,
-            &row.bytes_up,
-            &row.bytes_down,
-            &row.status_code,
-            &row.blocked,
-            &row.obfuscation_profile,
-            &row.correlation_id,
-            &row.parent_event_id,
-            &row.event_sequence,
-            &row.duration_ms,
-            &row.reason,
-            &row.raw_json,
-        ];
-        connection
-            .execute(INSERT_SQL, &params)
-            .map_err(|error| format!("insert proxy_events row host={}: {error}", row.host))?;
+    if !rows.is_empty() {
+        let row_sequences = (1..=rows.len())
+            .map(|index| {
+                i64::try_from(index)
+                    .map_err(|_| "proxy_events row_sequence exceeds i64".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let identity_sources = rows
+            .iter()
+            .map(|row| normalized_identity_source(row.identity_source.as_deref()))
+            .collect::<Vec<_>>();
+        let mut batch = connection
+            .batch(INSERT_SQL, rows.len())
+            .build()
+            .map_err(|error| format!("prepare proxy_events batch insert: {error}"))?;
+
+        for (index, row) in rows.iter().enumerate() {
+            let params: [&dyn ToSql; 22] = [
+                &batch_id,
+                &row_sequences[index],
+                &row.event_time,
+                &row.event_type,
+                &row.host,
+                &row.peer_ip,
+                &row.wg_pubkey,
+                &row.device_id,
+                &identity_sources[index],
+                &row.peer_hostname,
+                &row.client_ua,
+                &row.bytes_up,
+                &row.bytes_down,
+                &row.status_code,
+                &row.blocked,
+                &row.obfuscation_profile,
+                &row.correlation_id,
+                &row.parent_event_id,
+                &row.event_sequence,
+                &row.duration_ms,
+                &row.reason,
+                &row.raw_json,
+            ];
+            batch
+                .append_row(&params)
+                .map_err(|error| format!("append proxy_events row host={}: {error}", row.host))?;
+        }
+        batch
+            .execute()
+            .map_err(|error| format!("execute proxy_events batch insert: {error}"))?;
     }
     upsert_blocked_events_transaction(connection, blocked_rows)?;
     connection

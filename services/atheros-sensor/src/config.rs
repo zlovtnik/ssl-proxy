@@ -40,6 +40,7 @@ pub struct AppConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuditLayerStream {
+    Off,
     Stdout,
     Stderr,
 }
@@ -353,8 +354,9 @@ fn audit_layer_stream_from_env() -> AuditLayerStream {
         .map(|value| value.trim().to_ascii_lowercase())
         .as_deref()
     {
+        Some("stdout") => AuditLayerStream::Stdout,
         Some("stderr") => AuditLayerStream::Stderr,
-        _ => AuditLayerStream::Stdout,
+        _ => AuditLayerStream::Off,
     }
 }
 

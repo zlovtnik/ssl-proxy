@@ -83,6 +83,10 @@ the default hop list.
 Counters include packet, decode, capture, pipeline, and MAC lookup failure
 counts; gauges include Postgres pool availability and waiter counts.
 
+`ATH_SENSOR_AUDIT_LAYER_STREAM` defaults to `off`. Set it to `stdout` or
+`stderr` only when you want the legacy audit-trace mirror in addition to the
+normal JSON tracing logs.
+
 Published event schemas use explicit `schema_version` fields where payloads can
 evolve independently. Current versions are `AuditEntry.schema_version=2` and
 `WirelessBandwidthEvent`/`HandshakeAlert` `schema_version=1`.
