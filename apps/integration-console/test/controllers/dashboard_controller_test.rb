@@ -2,6 +2,7 @@ require "test_helper"
 
 class DashboardControllerTest < ActionDispatch::IntegrationTest
   setup do
+    Rails.cache.clear
     Sensor.delete_all
     SensorAlert.delete_all
     NatsTrafficSample.delete_all
@@ -95,6 +96,18 @@ class DashboardControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, "Wireless ingest"
     assert_includes response.body, "1 pending, 0 processing, 0 failed"
+  end
+
+  test "html dashboard reuses one sync health snapshot" do
+    calls = 0
+    snapshot = SyncPlaneHealth.from_attributes({})
+
+    SyncPlaneHealth.stub(:snapshot, -> { calls += 1; snapshot }) do
+      get root_url
+    end
+
+    assert_response :success
+    assert_equal 1, calls
   end
 
   private

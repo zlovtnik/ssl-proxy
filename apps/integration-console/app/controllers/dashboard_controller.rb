@@ -145,19 +145,16 @@ class DashboardController < ApplicationController
   end
 
   def sync_health_snapshot
-    cache_key = "dashboard:sync_plane_health"
-    snapshot = SyncPlaneHealth.snapshot
-    attributes = snapshot.attributes
-    default_attributes = SyncPlaneHealth.from_attributes({}).attributes
+    @sync_health_snapshot ||= begin
+      attributes = Rails.cache.fetch(
+        "dashboard:sync_plane_health",
+        expires_in: IntegrationConsole::CacheTtl.dashboard
+      ) do
+        SyncPlaneHealth.snapshot.attributes
+      end
 
-    if attributes == default_attributes
-      cached_attributes = Rails.cache.read(cache_key)
-      attributes = cached_attributes if cached_attributes.present?
-    else
-      Rails.cache.write(cache_key, attributes, expires_in: IntegrationConsole::CacheTtl.dashboard)
+      SyncPlaneHealth.from_attributes(attributes)
     end
-
-    SyncPlaneHealth.from_attributes(attributes)
   end
 
   def sync_data_rows(sync_health)
