@@ -17,17 +17,27 @@
     loading = true
     error = ""
     const response = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
-    loading = false
 
     if (!response?.ok) {
       error = "Unable to load sync health."
+      loading = false
       return
     }
 
-    const payload = await response.json().catch(() => ({}))
+    let payload
+    try {
+      payload = await response.json()
+    } catch (err) {
+      console.warn("Unable to parse sync health response.", err)
+      error = "Unable to parse sync health response."
+      loading = false
+      return
+    }
+
     syncDataRows = payload.syncDataRows || []
     syncRelationRows = payload.syncRelationRows || []
     fetchedAt = payload.fetchedAt || new Date().toISOString()
+    loading = false
   }
 </script>
 

@@ -126,7 +126,6 @@
       aria-label="Filter value"
       placeholder="Value"
       on:input={(event) => patch({ value: event.currentTarget.value })}
-      on:change={(event) => patch({ value: event.currentTarget.value })}
     />
   {/if}
 

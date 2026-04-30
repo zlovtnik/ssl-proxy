@@ -14,13 +14,24 @@
     loading = true
     error = ""
     const response = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
-    loading = false
     if (!response?.ok) {
       error = "Unable to load NATS throughput."
+      loading = false
       return
     }
-    const payload = await response.json().catch(() => ({}))
+
+    let payload
+    try {
+      payload = await response.json()
+    } catch (err) {
+      console.warn("Unable to parse NATS throughput response.", err)
+      error = "Unable to parse NATS throughput response."
+      loading = false
+      return
+    }
+
     rows = payload.samples || []
+    loading = false
   }
 </script>
 

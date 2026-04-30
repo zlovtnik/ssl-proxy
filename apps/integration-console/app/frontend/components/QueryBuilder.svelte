@@ -78,9 +78,10 @@
 
   function emit(notify = true) {
     if (!notify) return
-    onChange(compactRows(rows), {
+    const compacted = compactRows(rows)
+    onChange(compacted, {
       serialized: serializeFilters(rows),
-      apiParams: toApiParams(rows)
+      apiParams: toApiParams(compacted)
     })
   }
 </script>

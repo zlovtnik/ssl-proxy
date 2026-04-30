@@ -13,6 +13,16 @@
     { key: "status", label: "Status", sortable: true }
   ]
 
+  const uiToBackendKey = {
+    sensorId: "sensor_id",
+    locationId: "location_id",
+    lastSeenAt: "last_seen_at",
+    lastSignalDbm: "last_signal_dbm",
+    status: "status"
+  }
+
+  const backendToUiKey = Object.fromEntries(Object.entries(uiToBackendKey).map(([uiKey, backendKey]) => [backendKey, uiKey]))
+
   let endpoint = initial.endpoint || "/health/sensors.json"
   let rows = []
   let totalCount = 0
@@ -25,14 +35,7 @@
   onMount(fetchPage)
 
   function handleSort(key) {
-    const sortMap = {
-      sensorId: "sensor_id",
-      locationId: "location_id",
-      lastSeenAt: "last_seen_at",
-      lastSignalDbm: "last_signal_dbm",
-      status: "status"
-    }
-    const nextSort = sortMap[key] || key
+    const nextSort = uiToBackendKey[key] || key
     sortDirection = sortKey === nextSort && sortDirection === "asc" ? "desc" : "asc"
     sortKey = nextSort
     currentPage = 1
@@ -69,7 +72,7 @@
     {totalCount}
     {currentPage}
     {perPage}
-    sortKey={sortKey.replaceAll("_", "")}
+    sortKey={backendToUiKey[sortKey] || sortKey}
     {sortDirection}
     {loading}
     onSort={handleSort}

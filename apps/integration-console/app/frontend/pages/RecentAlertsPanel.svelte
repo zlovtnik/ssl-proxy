@@ -14,13 +14,21 @@
     loading = true
     error = ""
     const response = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
-    loading = false
     if (!response?.ok) {
       error = "Unable to load recent alerts."
+      loading = false
       return
     }
-    const payload = await response.json().catch(() => ({}))
-    alerts = payload.alerts || []
+
+    try {
+      const payload = await response.json()
+      alerts = payload.alerts || []
+    } catch (err) {
+      console.warn("Unable to parse recent alerts response.", err)
+      error = "Unable to parse recent alerts response."
+    } finally {
+      loading = false
+    }
   }
 </script>
 

@@ -5,6 +5,7 @@
 
   export let recentUrl = ""
   export let showHeading = true
+  export let onRowsChange = () => {}
 
   let rows = []
   let seen = new Set()
@@ -69,6 +70,7 @@
   function replaceRows(nextRows) {
     rows = nextRows
     seen = new Set(rows.map((row) => row.key).filter(Boolean))
+    onRowsChange(rows)
   }
 
   function rowKey(data) {
