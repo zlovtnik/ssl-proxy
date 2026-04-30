@@ -282,6 +282,10 @@ fn proxy_event_insert_from_value(row: serde_json::Value) -> Result<ProxyEventIns
     })
 }
 
+fn normalized_identity_source<'a>(identity_source: Option<&'a str>) -> &'a str {
+    identity_source.unwrap_or("unknown")
+}
+
 fn u64_to_i64(value: u64, field: &str) -> Result<i64, String> {
     i64::try_from(value).map_err(|_| format!("{field} exceeds Oracle NUMBER signed range"))
 }
@@ -343,12 +347,13 @@ fn insert_proxy_events_transaction(
             reason,
             raw_json
         ) values (
-            :1, :2, :3, :4, :5, :6, coalesce(:7, 'unknown'), :8, :9, :10,
+            :1, :2, :3, :4, :5, :6, :7, :8, :9, :10,
             :11, :12, :13, :14, :15, :16, :17, :18, :19, :20
         )
     "#;
 
     for row in rows {
+        let identity_source = normalized_identity_source(row.identity_source.as_deref());
         let params: [&dyn ToSql; 20] = [
             &row.event_time,
             &row.event_type,
@@ -356,7 +361,7 @@ fn insert_proxy_events_transaction(
             &row.peer_ip,
             &row.wg_pubkey,
             &row.device_id,
-            &row.identity_source,
+            &identity_source,
             &row.peer_hostname,
             &row.client_ua,
             &row.bytes_up,
@@ -440,8 +445,8 @@ mod tests {
 
     use super::{
         checksum, classify_oracle_error, handle_load_with_sink, proxy_event_rows_from_payload,
-        resolve_payload, sink_target, OracleErrorClass, OracleLoad, ProxyEventInsert,
-        ProxyEventSink, SinkTarget,
+        resolve_payload, sink_target, normalized_identity_source, OracleErrorClass, OracleLoad,
+        ProxyEventInsert, ProxyEventSink, SinkTarget,
     };
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -594,6 +599,15 @@ mod tests {
         assert_eq!(rows[0].bytes_up, 0);
         assert_eq!(rows[0].status_code, None);
         assert!(rows[0].raw_json.contains("\"type\":\"tunnel_open\""));
+    }
+
+    #[test]
+    fn normalizes_missing_identity_source_to_unknown() {
+        assert_eq!(normalized_identity_source(None), "unknown");
+        assert_eq!(
+            normalized_identity_source(Some("registered")),
+            "registered"
+        );
     }
 
     #[test]
