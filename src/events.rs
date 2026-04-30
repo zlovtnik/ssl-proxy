@@ -86,7 +86,7 @@ pub fn emit(state: &SharedState, event: &str, host: &str, payload: EmitPayload) 
 
 /// Serializes an event envelope and dispatches it to the broadcast channel and sync publisher.
 ///
-/// This function wraps the provided `extra` payload inside an `EventEnvelope` (including `type`, `host`, and an RFC3339 UTC `time`), serializes it to JSON, sends the resulting raw JSON string to `state.events_tx`, and emits a `sync.scan.request` message only for events on the sync-plane allowlist. If serialization or payload-reference preparation fails the error is logged and the function returns without publishing downstream.
+/// This function wraps the provided `extra` payload inside an `EventEnvelope` (including `type`, `host`, and an Eastern-time RFC3339 `time`), serializes it to JSON, sends the resulting raw JSON string to `state.events_tx`, and emits a `sync.scan.request` message only for events on the sync-plane allowlist. If serialization or payload-reference preparation fails the error is logged and the function returns without publishing downstream.
 ///
 /// # Examples
 ///
@@ -187,7 +187,7 @@ pub(crate) fn emit_serializable<T>(
         );
     }
 
-    let observed_at = chrono::Utc::now().to_rfc3339();
+    let observed_at = crate::time::now_rfc3339();
     let raw = match serde_json::to_string(&EventEnvelope {
         event,
         host,

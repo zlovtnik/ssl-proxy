@@ -75,7 +75,7 @@ mod tests {
         serde_json::from_value(json!({
             "schema_version": 2,
             "event_type": "wifi_data_frame",
-            "observed_at": observed_at.to_rfc3339(),
+            "observed_at": ssl_proxy::time::rfc3339_from_utc(observed_at),
             "sensor_id": "sensor-1",
             "location_id": "lab",
             "interface": "wlan0",

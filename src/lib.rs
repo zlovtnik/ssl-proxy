@@ -19,6 +19,7 @@ pub mod quic;
 pub mod security;
 pub mod state;
 pub mod sync;
+pub mod time;
 pub mod transport;
 pub mod tunnel;
 pub mod wg_packet_obfuscation;

@@ -35,7 +35,7 @@ where
             "{}",
             json!({
                 "type": "audit_trace",
-                "time": now.to_rfc3339(),
+                "time": ssl_proxy::time::rfc3339_from_utc(now),
                 "target": event.metadata().target(),
                 "level": event.metadata().level().as_str(),
                 "fields": visitor.fields,

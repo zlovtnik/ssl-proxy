@@ -6,7 +6,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "index renders svelte root and json payload" do
-    AuditWindow.create!(location_id: "lab", timezone: "UTC", enabled: true)
+    AuditWindow.create!(location_id: "lab", timezone: "America/New_York", enabled: true)
 
     get audit_windows_url
 
@@ -28,7 +28,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
       post audit_windows_url, params: {
         audit_window: {
           location_id: "lab",
-          timezone: "UTC",
+          timezone: "America/New_York",
           days: "mon",
           start_time: "09:00",
           end_time: "17:00",
@@ -50,7 +50,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
         post audit_windows_url, params: {
           audit_window: {
             location_id: "lab",
-            timezone: "UTC",
+            timezone: "America/New_York",
             days: "mon",
             start_time: "09:00",
             end_time: "17:00",
@@ -65,7 +65,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "update rolls back when publishing fails" do
-    audit_window = AuditWindow.create!(location_id: "lab", timezone: "UTC", enabled: true)
+    audit_window = AuditWindow.create!(location_id: "lab", timezone: "America/New_York", enabled: true)
     publisher = Object.new
     def publisher.call = raise "nats down"
 
@@ -73,7 +73,7 @@ class AuditWindowsControllerTest < ActionDispatch::IntegrationTest
       patch audit_window_url(audit_window), params: {
         audit_window: {
           location_id: "branch",
-          timezone: "UTC",
+          timezone: "America/New_York",
           enabled: true
         }
       }

@@ -16,7 +16,7 @@
     paramKey: "audit_window",
     defaultSort: "location_id",
     defaultDirection: "asc",
-    emptyRecord: { enabled: true, location_id: "", timezone: "UTC", days: "", start_time: "", end_time: "" },
+    emptyRecord: { enabled: true, location_id: "", timezone: "America/New_York", days: "", start_time: "", end_time: "" },
     columns: [
       { key: "location_id", label: "Location", sortable: true, width: "w-32" },
       { key: "timezone", label: "Timezone", sortable: true, width: "w-36" },

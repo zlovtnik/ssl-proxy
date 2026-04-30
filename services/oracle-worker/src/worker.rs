@@ -303,7 +303,7 @@ pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) ->
         retryable: false,
         error_class: String::new(),
         error_text: String::new(),
-        finished_at: Utc::now().to_rfc3339(),
+        finished_at: crate::time::now_rfc3339(),
     }
 }
 
@@ -831,7 +831,7 @@ fn failure_result(
             OracleErrorClass::Permanent => "permanent".to_string(),
         },
         error_text,
-        finished_at: Utc::now().to_rfc3339(),
+        finished_at: crate::time::now_rfc3339(),
     }
 }
 

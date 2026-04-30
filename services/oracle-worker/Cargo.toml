@@ -9,6 +9,7 @@ edition = "2021"
 async-nats = "0.40"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = true }
+chrono-tz = "0.10"
 futures = "0.3"
 oracle = { version = "0.6.3", features = ["chrono"] }
 serde = { version = "1", features = ["derive"] }

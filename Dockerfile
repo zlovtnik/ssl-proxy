@@ -21,6 +21,7 @@ FROM rust:1.86-slim AS boringtun-builder
 RUN cargo install --locked boringtun-cli --version 0.5.2 --root /opt/boringtun
 
 FROM debian:bookworm-slim AS atheros-sensor
+ENV TZ=America/New_York
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.revision=$VCS_REF \
@@ -33,6 +34,7 @@ RUN apt-get update && apt-get install -y \
         iptables \
         openssl \
         procps \
+        tzdata \
         libpcap0.8 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

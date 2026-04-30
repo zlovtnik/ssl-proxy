@@ -191,8 +191,8 @@ impl TrafficBucket {
         for (key, counters) in self.entries.drain() {
             events.push(WirelessBandwidthEvent {
                 event_type: "wireless_bandwidth_window".to_string(),
-                window_start: window_start.to_rfc3339(),
-                window_end: window_end.to_rfc3339(),
+                window_start: ssl_proxy::time::rfc3339_from_utc(window_start),
+                window_end: ssl_proxy::time::rfc3339_from_utc(window_end),
                 sensor_id: key.sensor_id,
                 location_id: key.location_id,
                 interface: key.interface,

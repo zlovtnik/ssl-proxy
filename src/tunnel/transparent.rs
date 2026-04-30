@@ -394,7 +394,7 @@ async fn build_transparent_block_decision(
             "next_verdict": next,
             "attempt_count": attempts,
             "frequency_hz": frequency_hz,
-            "time": chrono::Utc::now().to_rfc3339(),
+            "time": crate::time::now_rfc3339(),
         });
         let _ = state.events_tx.send(vc.to_string());
     }

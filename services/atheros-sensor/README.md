@@ -52,6 +52,8 @@ When running through Docker Compose, override the sensor log filter with
 `ATH_SENSOR_RUST_LOG`; compose maps it to the container's `RUST_LOG`. Direct
 binary and systemd runs should set `RUST_LOG` directly.
 
+`AUDIT_WINDOW_TZ` defaults to `America/New_York`.
+
 `ATH_SENSOR_LOG_IDLE_SECS` controls the capture heartbeat interval. The default
 is `30`, which emits periodic logs with packet, decoded-frame, drop, and error
 counters while capture is open. Set it to `0` to disable the heartbeat.

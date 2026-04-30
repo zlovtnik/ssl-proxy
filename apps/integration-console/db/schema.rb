@@ -28,7 +28,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_29_000400) do
 
   create_table "audit_windows", force: :cascade do |t|
     t.string "location_id", null: false
-    t.string "timezone", default: "UTC", null: false
+    t.string "timezone", default: "America/New_York", null: false
     t.string "days"
     t.time "start_time"
     t.time "end_time"

@@ -214,7 +214,8 @@ fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
     let timezone = std::env::var("AUDIT_WINDOW_TZ")
         .ok()
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .or_else(|| Some(ssl_proxy::time::EASTERN_TIME_ZONE_NAME.to_string()));
     let days = std::env::var("AUDIT_WINDOW_DAYS")
         .ok()
         .map(|value| value.trim().to_string())

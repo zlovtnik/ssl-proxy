@@ -360,7 +360,7 @@ pub async fn upsert_device(
     State(state): State<SharedState>,
     Json(body): Json<DeviceUpsertRequest>,
 ) -> Result<Json<DeviceUpsertResponse>, StatusCode> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::time::now_rfc3339();
     let device_id = body
         .device_id
         .clone()
@@ -562,7 +562,7 @@ pub async fn stats_bandwidth(
     };
     let wg_peers = state.wg_peers_snapshot();
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::time::now_rfc3339();
     let bucket = format!("{window}:{now}");
     Json(
         wg_peers

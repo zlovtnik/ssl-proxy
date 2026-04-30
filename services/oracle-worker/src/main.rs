@@ -1,3 +1,4 @@
+mod time;
 mod worker;
 
 use async_nats::jetstream::{
@@ -232,7 +233,7 @@ async fn handle_load_message(
         .ack()
         .await
         .map_err(|error| format!("ack sync.oracle.load message for batch {batch_id}: {error}"))?;
-    
+
     if status == "success" {
         println!(
             "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status=success"

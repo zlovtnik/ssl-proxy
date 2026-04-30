@@ -311,14 +311,14 @@ mod tests {
 
     #[test]
     fn ignores_other_locations() {
-        let payload = r#"{"location_id":"branch","timezone":"UTC","enabled":true}"#;
+        let payload = r#"{"location_id":"branch","timezone":"America/New_York","enabled":true}"#;
 
         assert!(parse_audit_window_update(payload, "lab").unwrap().is_none());
     }
 
     #[test]
     fn disabled_window_is_never_active() {
-        let payload = r#"{"location_id":"lab","timezone":"UTC","enabled":false}"#;
+        let payload = r#"{"location_id":"lab","timezone":"America/New_York","enabled":false}"#;
 
         let window = parse_audit_window_update(payload, "lab").unwrap().unwrap();
 

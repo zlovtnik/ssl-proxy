@@ -236,8 +236,7 @@ fn format_bytes(bytes: u64) -> String {
 
 fn format_unix_timestamp(epoch: u64) -> Option<String> {
     let timestamp = UNIX_EPOCH.checked_add(Duration::from_secs(epoch))?;
-    let datetime: chrono::DateTime<chrono::Utc> = timestamp.into();
-    Some(datetime.to_rfc3339())
+    Some(crate::time::rfc3339_from_system_time(timestamp))
 }
 
 fn parse_get_response(response: &str) -> Result<RuntimeDevice, ControlError> {

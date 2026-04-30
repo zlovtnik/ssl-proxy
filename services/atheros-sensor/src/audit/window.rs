@@ -5,6 +5,7 @@ use std::{
 
 use chrono::{DateTime, Datelike, NaiveTime, Utc, Weekday};
 use chrono_tz::Tz;
+use ssl_proxy::time::EASTERN_TIME_ZONE;
 use tracing::warn;
 
 #[derive(Clone, Debug)]
@@ -30,7 +31,7 @@ impl AuditWindow {
                     warn!(
                         timezone = %value,
                         %error,
-                        "invalid audit window timezone; defaulting to UTC"
+                        "invalid audit window timezone; defaulting to America/New_York"
                     );
                     None
                 },
@@ -57,7 +58,7 @@ impl AuditWindow {
 
         let localized = match self.timezone {
             Some(timezone) => instant.with_timezone(&timezone),
-            None => instant.with_timezone(&chrono_tz::UTC),
+            None => instant.with_timezone(&EASTERN_TIME_ZONE),
         };
         if let Some(days) = &self.days {
             if !days.contains(&localized.weekday()) {

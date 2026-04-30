@@ -16,7 +16,7 @@ LOG_TAIL_LINES="${UP_READY_LOG_TAIL_LINES:-200}"
 QR_TYPE="${UP_READY_QR_TYPE:-ansiutf8}"
 QR_MARGIN="${UP_READY_QR_MARGIN:-0}"
 
-RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_TS="$(TZ="${TZ:-America/New_York}" date +%Y-%m-%dT%H:%M:%S%z)"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 LAST_FAILED_CHECK=""
 LAST_FAILURE_CLASS=""

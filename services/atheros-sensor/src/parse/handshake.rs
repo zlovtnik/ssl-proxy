@@ -84,7 +84,7 @@ impl HandshakeMonitor {
         frame.handshake_captured = true;
         push_tag(&mut frame.tags, "handshake_captured");
         Some(HandshakeAlert {
-            observed_at: frame.observed_at.to_rfc3339(),
+            observed_at: ssl_proxy::time::rfc3339_from_utc(frame.observed_at),
             sensor_id: context.sensor_id.clone(),
             location_id: context.location_id.clone(),
             interface: context.interface.clone(),

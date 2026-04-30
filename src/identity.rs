@@ -122,7 +122,7 @@ pub fn update_device_metadata(
     if device.hostname.is_none() {
         device.hostname = peer_hostname.map(|value| value.to_string());
     }
-    device.last_seen = chrono::Utc::now().to_rfc3339();
+    device.last_seen = crate::time::now_rfc3339();
     device
 }
 

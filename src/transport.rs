@@ -436,7 +436,7 @@ impl SyncPublisher {
             .health
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        health.last_attempt_at = Some(chrono::Utc::now().to_rfc3339());
+        health.last_attempt_at = Some(crate::time::now_rfc3339());
     }
 
     fn queue_sender(&self) -> Result<PublishQueueSender, String> {
@@ -503,8 +503,8 @@ impl SyncPublisher {
 fn write_spool_envelope(spool_dir: &Path, subject: &str, payload: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(spool_dir)
         .map_err(|error| format!("create sync publish spool {}: {error}", spool_dir.display()))?;
-    let created_at = chrono::Utc::now().to_rfc3339();
-    let token = chrono::Utc::now().format("%Y%m%dT%H%M%S%fZ").to_string();
+    let created_at = crate::time::now_rfc3339();
+    let token = crate::time::file_token_now();
     let id = uuid::Uuid::new_v4().simple();
     let tmp_path = spool_dir.join(format!("{token}-{id}.tmp"));
     let final_path = spool_dir.join(format!("{token}-{id}.json"));
@@ -684,7 +684,7 @@ async fn publish_with_session(
             let mut snapshot = health
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
+            snapshot.last_publish_at = Some(crate::time::now_rfc3339());
             snapshot.last_error = None;
             debug!(
                 %subject,

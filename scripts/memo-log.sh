@@ -37,7 +37,7 @@ grep -q '^## Incident Timeline' "$MEMORY_FILE" || {
     exit 1
 }
 
-TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+TS="$(TZ="${TZ:-America/New_York}" date +%Y-%m-%dT%H:%M:%S%z)"
 entry="- ${TS} | result=${RESULT} | mode=${PROFILE_MODE} | signature=${SIGNATURE} | action=${ACTION} | context=${CONTEXT} | event=${EVENT}"
 tmp_file="$(mktemp)"
 awk -v entry="$entry" '
