@@ -149,6 +149,7 @@ pub struct ProxyEventInsert {
 pub trait ProxyEventSink {
     fn insert_proxy_events(
         &mut self,
+        batch_id: &str,
         rows: &[ProxyEventInsert],
         blocked_rows: &[BlockedEventInsert],
     ) -> Result<u64, String>;
@@ -274,7 +275,7 @@ pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) ->
             return failure_result(load.job_id, load.batch_id, error_class, error);
         }
     };
-    let row_count = match sink.insert_proxy_events(&rows, &blocked_rows) {
+    let row_count = match sink.insert_proxy_events(&load.batch_id, &rows, &blocked_rows) {
         Ok(row_count) => row_count,
         Err(error) => {
             let error_class = classify_oracle_error(&error);
@@ -525,10 +526,11 @@ impl OracleProxyEventSink {
 impl ProxyEventSink for OracleProxyEventSink {
     fn insert_proxy_events(
         &mut self,
+        batch_id: &str,
         rows: &[ProxyEventInsert],
         blocked_rows: &[BlockedEventInsert],
     ) -> Result<u64, String> {
-        let result = insert_event_batch_transaction(&self.connection, rows, blocked_rows);
+        let result = insert_event_batch_transaction(&self.connection, batch_id, rows, blocked_rows);
         if result.is_err() {
             let _ = self.connection.rollback();
         }
@@ -538,11 +540,42 @@ impl ProxyEventSink for OracleProxyEventSink {
 
 fn insert_event_batch_transaction(
     connection: &Connection,
+    batch_id: &str,
     rows: &[ProxyEventInsert],
     blocked_rows: &[BlockedEventInsert],
 ) -> Result<u64, String> {
     const INSERT_SQL: &str = r#"
-        insert into proxy_events (
+        merge into proxy_events pe
+        using (
+            select
+                :1 as batch_id,
+                :2 as row_sequence,
+                :3 as event_time,
+                :4 as event_type,
+                :5 as host,
+                :6 as peer_ip,
+                :7 as wg_pubkey,
+                :8 as device_id,
+                :9 as identity_source,
+                :10 as peer_hostname,
+                :11 as client_ua,
+                :12 as bytes_up,
+                :13 as bytes_down,
+                :14 as status_code,
+                :15 as blocked,
+                :16 as obfuscation_profile,
+                :17 as correlation_id,
+                :18 as parent_event_id,
+                :19 as event_sequence,
+                :20 as duration_ms,
+                :21 as reason,
+                :22 as raw_json
+            from dual
+        ) src
+        on (pe.batch_id = src.batch_id and pe.row_sequence = src.row_sequence)
+        when not matched then insert (
+            batch_id,
+            row_sequence,
             event_time,
             event_type,
             host,
@@ -564,14 +597,38 @@ fn insert_event_batch_transaction(
             reason,
             raw_json
         ) values (
-            :1, :2, :3, :4, :5, :6, :7, :8, :9, :10,
-            :11, :12, :13, :14, :15, :16, :17, :18, :19, :20
+            src.batch_id,
+            src.row_sequence,
+            src.event_time,
+            src.event_type,
+            src.host,
+            src.peer_ip,
+            src.wg_pubkey,
+            src.device_id,
+            src.identity_source,
+            src.peer_hostname,
+            src.client_ua,
+            src.bytes_up,
+            src.bytes_down,
+            src.status_code,
+            src.blocked,
+            src.obfuscation_profile,
+            src.correlation_id,
+            src.parent_event_id,
+            src.event_sequence,
+            src.duration_ms,
+            src.reason,
+            src.raw_json
         )
     "#;
 
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
         let identity_source = normalized_identity_source(row.identity_source.as_deref());
-        let params: [&dyn ToSql; 20] = [
+        let row_sequence = i64::try_from(index + 1)
+            .map_err(|_| "proxy_events row_sequence exceeds i64".to_string())?;
+        let params: [&dyn ToSql; 22] = [
+            &batch_id,
+            &row_sequence,
             &row.event_time,
             &row.event_type,
             &row.host,
@@ -823,6 +880,7 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingSink {
+        batch_ids: Vec<String>,
         rows: Vec<ProxyEventInsert>,
         blocked_rows: Vec<BlockedEventInsert>,
         error: Option<String>,
@@ -831,12 +889,14 @@ mod tests {
     impl ProxyEventSink for RecordingSink {
         fn insert_proxy_events(
             &mut self,
+            batch_id: &str,
             rows: &[ProxyEventInsert],
             blocked_rows: &[BlockedEventInsert],
         ) -> Result<u64, String> {
             if let Some(error) = &self.error {
                 return Err(error.clone());
             }
+            self.batch_ids.push(batch_id.to_string());
             self.rows.extend_from_slice(rows);
             self.blocked_rows.extend_from_slice(blocked_rows);
             Ok(rows.len() as u64)
@@ -863,6 +923,7 @@ mod tests {
         assert_eq!(result.status, "success");
         assert_eq!(result.row_count, 1);
         assert!(!result.retryable);
+        assert_eq!(sink.batch_ids, vec!["batch-1".to_string()]);
         assert_eq!(sink.rows.len(), 1);
         assert_eq!(sink.rows[0].event_type, "tunnel_open");
         assert_eq!(sink.rows[0].host, "example.com");
@@ -889,6 +950,7 @@ mod tests {
 
         assert_eq!(result.status, "success");
         assert_eq!(result.row_count, 1);
+        assert_eq!(sink.batch_ids, vec!["batch-1b".to_string()]);
         assert_eq!(sink.rows.len(), 1);
         assert_eq!(sink.blocked_rows.len(), 1);
         assert_eq!(sink.blocked_rows[0].host, "blocked.example");
@@ -997,6 +1059,7 @@ mod tests {
     #[test]
     fn returns_failed_result_when_oracle_insert_fails() {
         let mut sink = RecordingSink {
+            batch_ids: Vec::new(),
             rows: Vec::new(),
             blocked_rows: Vec::new(),
             error: Some("unique constraint violated".to_string()),

@@ -23,6 +23,8 @@ CREATE UNIQUE INDEX devices_claim_token_uq ON devices (claim_token_hash);
 
 CREATE TABLE proxy_events (
     id                   NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    batch_id             VARCHAR2(36) NOT NULL,
+    row_sequence         NUMBER(10,0) NOT NULL,
     event_time           TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
     event_type           VARCHAR2(32)  NOT NULL,
     host                 VARCHAR2(253) NOT NULL,
@@ -46,6 +48,7 @@ CREATE TABLE proxy_events (
     CONSTRAINT pe_device_fk FOREIGN KEY (device_id) REFERENCES devices(device_id) ON DELETE CASCADE
 );
 
+CREATE UNIQUE INDEX proxy_events_batch_row_idx ON proxy_events (batch_id, row_sequence);
 CREATE INDEX ix_pe_time ON proxy_events (event_time DESC);
 CREATE INDEX ix_pe_host ON proxy_events (host, event_time);
 CREATE INDEX ix_pe_blocked ON proxy_events (blocked, event_time DESC);

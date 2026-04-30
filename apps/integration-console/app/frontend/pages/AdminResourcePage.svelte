@@ -24,6 +24,7 @@
   let submitting = false
   let loadError = ""
   let notice = ""
+  let currentRequestId = 0
 
   const endpoints = initial.endpoints || {}
 
@@ -146,12 +147,14 @@
   async function fetchPage(push) {
     if (!endpoints.index) return
 
+    const requestId = ++currentRequestId
     loading = true
     loadError = ""
     if (push) updateHistory(endpoints.index, state())
 
     try {
       const payload = await requestJson(`${endpoints.index}.json?${toQueryString(state())}`)
+      if (requestId !== currentRequestId) return
       rows = payload.rows || []
       totalCount = payload.totalCount || rows.length
       totalPages = payload.totalPages || 1
@@ -160,14 +163,15 @@
       sortKey = payload.sortKey || sortKey
       sortDirection = payload.sortDirection || sortDirection
     } catch (error) {
+      if (requestId !== currentRequestId) return
       loadError = errorMessages(error).join(", ")
     } finally {
-      loading = false
+      if (requestId === currentRequestId) loading = false
     }
   }
 
-  function rowKey(row) {
-    return row.id || row.device_id || row.location_id || row.ssid
+  function rowKey(row, index) {
+    return row.id || row.device_id || row.location_id || row.ssid || `row-${index}`
   }
 
   function initializeFromUrl() {

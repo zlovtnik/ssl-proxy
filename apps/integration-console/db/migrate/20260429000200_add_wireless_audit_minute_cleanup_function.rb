@@ -34,7 +34,8 @@ class AddWirelessAuditMinuteCleanupFunction < ActiveRecord::Migration[7.2]
 
         CREATE TEMP TABLE IF NOT EXISTS wireless_audit_cleanup_scope (
           dedupe_key text PRIMARY KEY,
-          minute_observed_at timestamptz NOT NULL
+          minute_observed_at timestamptz NOT NULL,
+          orig_updated_at timestamptz NOT NULL
         ) ON COMMIT DROP;
 
         v_window_start := COALESCE(p_from, date_trunc('hour', v_first_observed_at));
@@ -45,10 +46,11 @@ class AddWirelessAuditMinuteCleanupFunction < ActiveRecord::Migration[7.2]
 
           TRUNCATE TABLE wireless_audit_cleanup_scope;
 
-          INSERT INTO wireless_audit_cleanup_scope (dedupe_key, minute_observed_at)
+          INSERT INTO wireless_audit_cleanup_scope (dedupe_key, minute_observed_at, orig_updated_at)
           SELECT
             dedupe_key,
-            (date_trunc('minute', observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS minute_observed_at
+            (date_trunc('minute', observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS minute_observed_at,
+            updated_at AS orig_updated_at
           FROM sync_scan_ingest
           WHERE stream_name = 'wireless.audit'
             AND observed_at >= v_window_start
@@ -85,7 +87,7 @@ class AddWirelessAuditMinuteCleanupFunction < ActiveRecord::Migration[7.2]
                   lower(COALESCE(target.session_key, target.payload->>'session_key', '')),
                   lower(COALESCE(target.frame_fingerprint, target.payload->>'frame_fingerprint', '')),
                   lower(COALESCE(target.device_fingerprint, target.payload->>'device_fingerprint', ''))
-                ORDER BY target.updated_at DESC NULLS LAST, target.created_at DESC NULLS LAST, target.dedupe_key DESC
+                ORDER BY wireless_audit_cleanup_scope.orig_updated_at DESC NULLS LAST, target.created_at DESC NULLS LAST, target.dedupe_key DESC
               ) AS duplicate_rank
             FROM sync_scan_ingest target
             JOIN wireless_audit_cleanup_scope

@@ -251,7 +251,7 @@ class AuditLogTest < ActiveSupport::TestCase
 
     assert_equal 2, result.fetch("normalized_count")
     assert_equal 1, result.fetch("deleted_count")
-    assert_equal ["cleanup-new"], rows.map { |row| row.fetch("dedupe_key") }
+    assert_equal(["cleanup-new"], rows.map { |row| row.fetch("dedupe_key") })
     assert_equal Time.utc(2026, 4, 29, 10, 15), rows.first.fetch("observed_at")
   end
 

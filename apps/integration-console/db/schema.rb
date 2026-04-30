@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_29_000300) do
+ActiveRecord::Schema[7.2].define(version: 2026_04_29_000400) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_trgm"
   enable_extension "plpgsql"
@@ -63,6 +63,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_29_000300) do
     t.timestamptz "last_seen", default: -> { "now()" }, null: false
     t.text "notes"
     t.index "lower(mac_hint)", name: "devices_mac_hint_idx"
+    t.index "lower(mac_hint)", name: "index_devices_on_lower_mac_hint_unique", unique: true, where: "(mac_hint IS NOT NULL)"
     t.index ["username", "last_seen"], name: "devices_username_idx", order: { last_seen: :desc }
     t.index ["wg_pubkey"], name: "devices_wg_pubkey_idx"
   end

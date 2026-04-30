@@ -164,13 +164,13 @@ class IdentitiesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Lobby Printer", json.dig("device", "display_name")
     assert_equal "facilities", json.dig("device", "username")
     assert_equal "CorpWiFi", json.dig("inventory", "ssid")
-    assert_equal ["mac-summary-1"], json.fetch("recentAuditLogs").map { |row| row["dedupe_key"] }
+    assert_equal(["mac-summary-1"], json.fetch("recentAuditLogs").map { |row| row["dedupe_key"] })
 
     get mac_summary_identities_url(format: :json, q: "11:22")
 
     assert_response :success
     json = JSON.parse(response.body)
     assert_equal "Lobby Printer", json.dig("device", "display_name")
-    assert_equal ["mac-summary-1"], json.fetch("recentAuditLogs").map { |row| row["dedupe_key"] }
+    assert_equal(["mac-summary-1"], json.fetch("recentAuditLogs").map { |row| row["dedupe_key"] })
   end
 end

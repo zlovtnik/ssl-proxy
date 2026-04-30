@@ -52,7 +52,7 @@ services:
       - WG_SERVER_ADDRESS=${WG_SERVER_ADDRESS:-10.13.13.1/24}
       - WG_PORT=${WG_PORT:-443}
       - WG_INTERNAL_PORT=${WG_INTERNAL_PORT:-51820}
-      - WG_OBFUSCATION_ENABLED=false
+      - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-false}
       - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY:-}
       - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
       - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
@@ -62,10 +62,16 @@ services:
       - WG_SYSCTL_RETRY_DELAY_MS=200
       - WG_RUNTIME_SYSCTLS=0
       - WG_SERVER_PRIVATE_KEY_FILE=/config/server/privatekey-server
-      - WG_PEER_CONFIG_PATH=/config/peer1/peer1.conf
-      - WG_OBFUSCATED_PEER_CONFIG_PATH=/config/peer1/peer1-obfuscated.conf.example
-      - WG_PEER_PUBLIC_KEY_FILE=/config/peer1/publickey-peer1
-      - WG_PEER_ALLOWED_IPS=10.13.13.2/32
+      - WG_PEER1_CONFIG_PATH=/config/peer1/peer1.conf
+      - WG_OBFUSCATED_PEER1_CONFIG_PATH=/config/peer1/peer1-obfuscated.conf.example
+      - WG_PEER1_PUBLIC_KEY_FILE=/config/peer1/publickey-peer1
+      - WG_PEER1_PRESHARED_KEY_FILE=/config/peer1/presharedkey-peer1
+      - WG_PEER1_ALLOWED_IPS=10.13.13.2/32
+      - WG_PEER2_CONFIG_PATH=/config/peer2/peer2.conf
+      - WG_OBFUSCATED_PEER2_CONFIG_PATH=/config/peer2/peer2-obfuscated.conf.example
+      - WG_PEER2_PUBLIC_KEY_FILE=/config/peer2/publickey-peer2
+      - WG_PEER2_PRESHARED_KEY_FILE=/config/peer2/presharedkey-peer2
+      - WG_PEER2_ALLOWED_IPS=10.13.13.3/32
       - WG_SUDO=1
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
@@ -75,8 +81,9 @@ services:
       - SYNC_OUTBOX_DIR=/sync-outbox
 
     ports:
-      # Publish the obfuscated BoringTun-backed UDP relay on the Docker host.
+      # Publish the plain and obfuscated WireGuard UDP entrypoints on the Docker host.
       - "443:443/udp"
+      - "51820:51820/udp"
       # Keep policy-enforcement and admin surfaces local to the host.
       - "127.0.0.1:3001:3001"
       - "127.0.0.1:3002:3002"

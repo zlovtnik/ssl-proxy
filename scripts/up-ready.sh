@@ -118,14 +118,36 @@ require_command() {
 
 require_profile_mode() {
     case "$PROFILE_MODE" in
-        iphone|linux-shim|linux-direct) ;;
+        iphone|linux-shim|linux-direct|mac) ;;
         *)
             cat >&2 <<'EOF_MODE'
 [up-ready][ERROR] PROFILE_MODE is required.
-Allowed values: iphone | linux-shim | linux-direct
-Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
+Allowed values: iphone | linux-shim | linux-direct | mac
+Example: make up-ready PROFILE_MODE=mac SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.53
 EOF_MODE
             exit 1
+            ;;
+    esac
+}
+
+apply_profile_runtime_env() {
+    case "$PROFILE_MODE" in
+        iphone|linux-direct)
+            export WG_OBFUSCATION_ENABLED=false
+            export WG_PORT=443
+            export WG_INTERNAL_PORT=51820
+            ;;
+        linux-shim)
+            export WG_OBFUSCATION_ENABLED=true
+            export WG_PORT=443
+            export WG_INTERNAL_PORT=51820
+            export WG_OBFUSCATION_KEY="${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}"
+            ;;
+        mac)
+            export WG_OBFUSCATION_ENABLED=true
+            export WG_PORT=51820
+            export WG_INTERNAL_PORT=443
+            export WG_OBFUSCATION_KEY="${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}"
             ;;
     esac
 }
@@ -193,7 +215,7 @@ runtime_obfuscation_value() {
 
 desired_obfuscation_value() {
     case "$PROFILE_MODE" in
-        linux-shim) printf 'true' ;;
+        linux-shim|mac) printf 'true' ;;
         iphone|linux-direct) printf 'false' ;;
     esac
 }
@@ -489,8 +511,9 @@ auto_fix() {
         profile_obfuscation_mismatch)
             local desired
             desired="$(desired_obfuscation_value)"
+            apply_profile_runtime_env
             step S09 "auto_fix[$class]: recreate with WG_OBFUSCATION_ENABLED=$desired"
-            if WG_OBFUSCATION_ENABLED="$desired" compose up -d --no-build --force-recreate; then
+            if compose up -d --no-build --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -535,6 +558,7 @@ preflight() {
 
 main() {
     preflight
+    apply_profile_runtime_env
 
     if ! compose_up; then
         diagnostics

@@ -22,12 +22,12 @@ compose() {
 
 require_profile_mode() {
     case "$PROFILE_MODE" in
-        iphone|linux-shim|linux-direct) ;;
+        iphone|linux-shim|linux-direct|mac) ;;
         *)
             cat >&2 <<'EOF_MODE'
 [diagnose][ERROR] PROFILE_MODE is required.
-Allowed values: iphone | linux-shim | linux-direct
-Example: make diagnose PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
+Allowed values: iphone | linux-shim | linux-direct | mac
+Example: make diagnose PROFILE_MODE=mac SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.53
 EOF_MODE
             exit 1
             ;;
@@ -91,7 +91,7 @@ runtime_obfuscation_value() {
 
 desired_obfuscation_value() {
     case "$PROFILE_MODE" in
-        linux-shim) printf 'true' ;;
+        linux-shim|mac) printf 'true' ;;
         iphone|linux-direct) printf 'false' ;;
     esac
 }

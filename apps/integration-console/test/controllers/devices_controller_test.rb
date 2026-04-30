@@ -23,7 +23,7 @@ class DevicesControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     json = JSON.parse(response.body)
-    assert_equal ["Lobby Printer"], json.fetch("rows").map { |row| row["display_name"] }
+    assert_equal(["Lobby Printer"], json.fetch("rows").map { |row| row["display_name"] })
   end
 
   test "create saves mac identifier" do
