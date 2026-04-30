@@ -259,7 +259,30 @@ impl BacklogStore for PostgresBacklog {
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
-        let payload: serde_json::Value =
+        fn sanitize_json_value(value: &mut serde_json::Value) {
+            use serde_json::Value;
+            match value {
+                Value::String(s) => {
+                    *s = s.chars()
+                        .filter(|c| !c.is_control() || c.is_whitespace())
+                        .filter(|&c| c != '\0')
+                        .collect();
+                }
+                Value::Array(arr) => {
+                    for v in arr.iter_mut() {
+                        sanitize_json_value(v);
+                    }
+                }
+                Value::Object(obj) => {
+                    for (_, v) in obj.iter_mut() {
+                        sanitize_json_value(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut payload: serde_json::Value =
             serde_json::from_str(record.payload).map_err(|source| {
                 BacklogError::InvalidIngestPayload {
                     operation,
@@ -267,6 +290,8 @@ impl BacklogStore for PostgresBacklog {
                     source,
                 }
             })?;
+
+        sanitize_json_value(&mut payload);
         let payload_json = tokio_postgres::types::Json(&payload);
         let wireless = WirelessIngestColumns::from_payload(record.stream_name, &payload);
         let rows_affected = match client

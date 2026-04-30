@@ -77,13 +77,20 @@ fn payload_bool(payload: &serde_json::Value, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn sanitize_string(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() || c.is_whitespace())
+        .filter(|&c| c != '\0')
+        .collect()
+}
+
 fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
     payload
         .get(key)
         .and_then(|value| value.as_str())
-        .map(str::trim)
+        .map(sanitize_string)
+        .map(|s| s.trim().to_string())
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 #[cfg(test)]
