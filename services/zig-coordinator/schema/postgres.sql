@@ -495,7 +495,9 @@ create index if not exists ssi_pending_observed_idx
   on sync_scan_ingest (observed_at asc)
   where status in ('pending', 'failed');
 
-create or replace view v_wireless_threats as
+drop view if exists v_wireless_threats;
+
+create view v_wireless_threats as
 select
   observed_at,
   coalesce(ssid, payload->>'ssid') as ssid,
