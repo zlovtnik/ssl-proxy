@@ -373,6 +373,12 @@ where
                 .map_err(|error| format!("write NATS PONG: {error}"))?;
             continue;
         }
+        if trimmed.starts_with("+OK") {
+            continue;
+        }
+        if trimmed.starts_with("-ERR") {
+            return Err(format!("NATS returned {trimmed}"));
+        }
         if !trimmed.starts_with("MSG ") {
             continue;
         }

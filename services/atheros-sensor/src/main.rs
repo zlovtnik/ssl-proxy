@@ -555,9 +555,11 @@ async fn process_packet(
                         }
                     }
                 };
-                pipeline
-                    .mac_device_cache
-                    .put(cache_key.clone(), lookup.clone());
+                if lookup.is_some() {
+                    pipeline
+                        .mac_device_cache
+                        .put(cache_key.clone(), lookup.clone());
+                }
                 lookup
             };
             if let Some((device_id, username)) = lookup {

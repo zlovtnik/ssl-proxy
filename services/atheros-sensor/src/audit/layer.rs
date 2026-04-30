@@ -22,6 +22,9 @@ where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        if let AuditLayerStream::Off = self.stream {
+            return;
+        }
         let now = Utc::now();
         let active = self
             .window

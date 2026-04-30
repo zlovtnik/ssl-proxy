@@ -100,6 +100,8 @@ impl HandshakeMonitor {
         {
             if let Some(state) = self.states.get_mut(&key) {
                 state.messages = 0;
+                state.frames.clear();
+                state.pmkid = None;
                 state.last_seen = now;
             }
             return None;
@@ -120,13 +122,13 @@ impl HandshakeMonitor {
         frame.handshake_captured = true;
         push_tag(&mut frame.tags, "handshake_captured");
         if let Some(dir) = export_dir {
-            export_handshake_bundle(
-                dir,
-                context,
-                &observation.bssid,
-                &observation.client_mac,
-                &frames,
-                pmkid.as_deref(),
+            spawn_handshake_export(
+                dir.to_string(),
+                context.clone(),
+                observation.bssid.clone(),
+                observation.client_mac.clone(),
+                frames.clone(),
+                pmkid.clone(),
             );
         }
         Some(HandshakeAlert {
@@ -140,6 +142,31 @@ impl HandshakeMonitor {
             signal_dbm: frame.signal_dbm,
             pmkid,
         })
+    }
+}
+
+fn spawn_handshake_export(
+    dir: String,
+    context: AuditContext,
+    bssid: String,
+    client_mac: String,
+    frames: Vec<HandshakeFrame>,
+    pmkid: Option<String>,
+) {
+    let export = move || {
+        export_handshake_bundle(
+            &dir,
+            &context,
+            &bssid,
+            &client_mac,
+            &frames,
+            pmkid.as_deref(),
+        );
+    };
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn_blocking(export);
+    } else {
+        std::thread::spawn(export);
     }
 }
 

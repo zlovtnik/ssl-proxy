@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use oracle::{sql_type::ToSql, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{env, fs, path::PathBuf};
+use std::{collections::HashSet, env, fs, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
@@ -157,6 +157,7 @@ pub trait ProxyEventSink {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockedEventInsert {
+    pub row_sequence: i64,
     pub host: String,
     pub blocked_bytes: i64,
     pub frequency_hz: Option<f64>,
@@ -230,6 +231,13 @@ pub fn resolve_payload(payload_ref: &str) -> Result<String, String> {
 }
 
 pub fn handle_load(load: OracleLoad) -> OracleResult {
+    let validated = match validate_load(&load) {
+        Ok(validated) => validated,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
     let mut sink = match OracleProxyEventSink::connect_from_env() {
         Ok(sink) => sink,
         Err(error) => {
@@ -237,51 +245,55 @@ pub fn handle_load(load: OracleLoad) -> OracleResult {
             return failure_result(load.job_id, load.batch_id, error_class, error);
         }
     };
-    handle_load_with_sink(load, &mut sink)
+    handle_validated_load(load, validated, &mut sink)
 }
 
 pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) -> OracleResult {
-    let target = match sink_target(&load.stream_name) {
-        Ok(target) => target,
-        Err(error_class) => {
-            return failure_result(
-                load.job_id,
-                load.batch_id,
-                error_class,
-                format!("unsupported stream_name {}", load.stream_name),
-            );
+    let validated = match validate_load(&load) {
+        Ok(validated) => validated,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
         }
     };
+    handle_validated_load(load, validated, sink)
+}
 
-    let payload = match resolve_payload(&load.payload_ref) {
-        Ok(payload) => payload,
-        Err(error) => {
-            let error_class = classify_oracle_error(&error);
-            return failure_result(load.job_id, load.batch_id, error_class, error);
-        }
-    };
+struct ValidatedLoad {
+    target: SinkTarget,
+    payload: String,
+    rows: Vec<ProxyEventInsert>,
+    blocked_rows: Vec<BlockedEventInsert>,
+}
 
-    let rows = match proxy_event_rows_from_payload(target, &payload) {
-        Ok(rows) => rows,
-        Err(error) => {
-            let error_class = classify_oracle_error(&error);
-            return failure_result(load.job_id, load.batch_id, error_class, error);
-        }
-    };
-    let blocked_rows = match blocked_event_rows_from_payload(target, &payload) {
-        Ok(rows) => rows,
-        Err(error) => {
-            let error_class = classify_oracle_error(&error);
-            return failure_result(load.job_id, load.batch_id, error_class, error);
-        }
-    };
-    let row_count = match sink.insert_proxy_events(&load.batch_id, &rows, &blocked_rows) {
-        Ok(row_count) => row_count,
-        Err(error) => {
-            let error_class = classify_oracle_error(&error);
-            return failure_result(load.job_id, load.batch_id, error_class, error);
-        }
-    };
+fn validate_load(load: &OracleLoad) -> Result<ValidatedLoad, String> {
+    let target = sink_target(&load.stream_name)
+        .map_err(|_| format!("unsupported stream_name {}", load.stream_name))?;
+    let payload = resolve_payload(&load.payload_ref)?;
+    let values = payload_rows(target, &payload)?;
+    let rows = proxy_event_rows_from_values(target, &values)?;
+    let blocked_rows = blocked_event_rows_from_values(target, &values)?;
+    Ok(ValidatedLoad {
+        target,
+        payload,
+        rows,
+        blocked_rows,
+    })
+}
+
+fn handle_validated_load(
+    load: OracleLoad,
+    validated: ValidatedLoad,
+    sink: &mut dyn ProxyEventSink,
+) -> OracleResult {
+    let row_count =
+        match sink.insert_proxy_events(&load.batch_id, &validated.rows, &validated.blocked_rows) {
+            Ok(row_count) => row_count,
+            Err(error) => {
+                let error_class = classify_oracle_error(&error);
+                return failure_result(load.job_id, load.batch_id, error_class, error);
+            }
+        };
     let row_count = match i32::try_from(row_count) {
         Ok(row_count) => row_count,
         Err(_) => {
@@ -299,7 +311,7 @@ pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) ->
         batch_id: load.batch_id,
         status: "success".to_string(),
         row_count,
-        checksum: checksum(target, &payload),
+        checksum: checksum(validated.target, &validated.payload),
         retryable: false,
         error_class: String::new(),
         error_text: String::new(),
@@ -360,10 +372,14 @@ fn blocked_event_rows_from_values(
     }
 
     let mut inserts = Vec::with_capacity(rows.len());
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
         let proxy_row = proxy_event_insert_from_value(row)?;
         if let Some(blocked_row) = blocked_event_insert_from_value(row, &proxy_row)? {
-            inserts.push(blocked_row);
+            inserts.push(BlockedEventInsert {
+                row_sequence: i64::try_from(index + 1)
+                    .map_err(|_| "blocked_events row_sequence exceeds i64".to_string())?,
+                ..blocked_row
+            });
         }
     }
     Ok(inserts)
@@ -477,6 +493,7 @@ fn blocked_event_insert_from_value(
         .or_else(|| Some("BLOCKED".to_string()));
 
     Ok(Some(BlockedEventInsert {
+        row_sequence: 0,
         host: proxy_row.host.clone(),
         blocked_bytes,
         frequency_hz,
@@ -622,6 +639,8 @@ fn insert_event_batch_transaction(
         )
     "#;
 
+    let existing_row_sequences = existing_proxy_row_sequences(connection, batch_id)?;
+
     if !rows.is_empty() {
         let row_sequences = (1..=rows.len())
             .map(|index| {
@@ -671,16 +690,38 @@ fn insert_event_batch_transaction(
             .execute()
             .map_err(|error| format!("execute proxy_events batch insert: {error}"))?;
     }
-    upsert_blocked_events_transaction(connection, blocked_rows)?;
+    upsert_blocked_events_transaction(connection, blocked_rows, &existing_row_sequences)?;
     connection
         .commit()
         .map_err(|error| format!("commit proxy_events batch: {error}"))?;
     Ok(rows.len() as u64)
 }
 
+fn existing_proxy_row_sequences(
+    connection: &Connection,
+    batch_id: &str,
+) -> Result<HashSet<i64>, String> {
+    let mut existing = HashSet::new();
+    let rows = connection
+        .query(
+            "select row_sequence from proxy_events where batch_id = :1",
+            &[&batch_id],
+        )
+        .map_err(|error| format!("query existing proxy_events batch rows: {error}"))?;
+    for row_result in rows {
+        let row = row_result.map_err(|error| format!("read existing proxy_events row: {error}"))?;
+        let row_sequence: i64 = row
+            .get(0)
+            .map_err(|error| format!("read existing proxy_events row_sequence: {error}"))?;
+        existing.insert(row_sequence);
+    }
+    Ok(existing)
+}
+
 fn upsert_blocked_events_transaction(
     connection: &Connection,
     rows: &[BlockedEventInsert],
+    existing_proxy_row_sequences: &HashSet<i64>,
 ) -> Result<(), String> {
     if rows.is_empty() {
         return Ok(());
@@ -778,6 +819,9 @@ fn upsert_blocked_events_transaction(
     "#;
 
     for row in rows {
+        if existing_proxy_row_sequences.contains(&row.row_sequence) {
+            continue;
+        }
         let params: [&dyn ToSql; 15] = [
             &row.host,
             &row.blocked_bytes,

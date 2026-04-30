@@ -141,7 +141,7 @@ fn find_pmkid_in_key_data(key_data: &[u8]) -> Option<String> {
         let len = key_data[offset + 1] as usize;
         offset += 2;
         let data = key_data.get(offset..offset + len)?;
-        if descriptor_type == 0xdd && data.len() >= 22 && data[0..4] == [0x00, 0x0f, 0xac, 0x04] {
+        if descriptor_type == 0xdd && data.len() >= 20 && data[0..4] == [0x00, 0x0f, 0xac, 0x04] {
             return Some(
                 data[4..20]
                     .iter()

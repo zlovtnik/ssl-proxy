@@ -86,7 +86,6 @@ pub fn stream_packets(
                 CaptureCommand::ApplyFilter(filter) => {
                     if let Err(error) = capture.filter(&filter, true) {
                         let _ = tx.blocking_send(Err(CaptureError::Pcap(error)));
-                        return;
                     }
                 }
             }

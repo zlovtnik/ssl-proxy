@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
+use sha2::{Digest, Sha256};
 use tokio_postgres::{Config as PostgresConfig, NoTls};
 use tracing::{debug, error, info, warn};
 
@@ -263,7 +264,8 @@ impl BacklogStore for PostgresBacklog {
             use serde_json::Value;
             match value {
                 Value::String(s) => {
-                    *s = s.chars()
+                    *s = s
+                        .chars()
                         .filter(|c| !c.is_control() || c.is_whitespace())
                         .filter(|&c| c != '\0')
                         .collect();
@@ -292,6 +294,16 @@ impl BacklogStore for PostgresBacklog {
             })?;
 
         sanitize_json_value(&mut payload);
+        let payload_sha256 = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&payload).map_err(|source| {
+                BacklogError::InvalidIngestPayload {
+                    operation,
+                    dedupe_key: record.dedupe_key.to_string(),
+                    source,
+                }
+            })?)
+        );
         let payload_json = tokio_postgres::types::Json(&payload);
         let wireless = WirelessIngestColumns::from_payload(record.stream_name, &payload);
         let rows_affected = match client
@@ -337,7 +349,7 @@ impl BacklogStore for PostgresBacklog {
                     &record.observed_at,
                     &record.payload_ref,
                     &payload_json,
-                    &record.payload_sha256,
+                    &payload_sha256,
                     &record.producer,
                     &record.event_kind,
                     &wireless.source_mac,

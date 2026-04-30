@@ -7,9 +7,10 @@ use serde::Serialize;
 use crate::backlog::{AuthorizedWirelessNetwork, PostgresBacklog};
 use crate::model::AuditEntry;
 
-pub const CLIENT_INVENTORY_SUBJECT: &str = "wireless.client.inventory";
-pub const ROGUE_AP_SUBJECT: &str = "wireless.alert.rogue_ap";
-pub const DEAUTH_FLOOD_SUBJECT: &str = "wireless.alert.deauth_flood";
+pub const CLIENT_INVENTORY_SUBJECT: &str = "sync.scan.request";
+pub const ROGUE_AP_SUBJECT: &str = "sync.oracle.load";
+pub const DEAUTH_FLOOD_SUBJECT: &str = "sync.oracle.result";
+const ROGUE_AP_ALERT_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ClientInventorySnapshot {
@@ -127,6 +128,9 @@ pub struct SignalTracker {
 
 impl SignalTracker {
     pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> bool {
+        if threshold <= 0 {
+            return false;
+        }
         let (Some(bssid), Some(signal)) =
             (entry.bssid.as_deref().map(normalize_mac), entry.signal_dbm)
         else {
@@ -207,10 +211,12 @@ impl RogueApTracker {
             reasons.join(",")
         );
         let now = Instant::now();
+        self.recent_alerts
+            .retain(|_, last| now.saturating_duration_since(*last) < ROGUE_AP_ALERT_TTL);
         if self
             .recent_alerts
             .get(&key)
-            .is_some_and(|last| now.saturating_duration_since(*last) < Duration::from_secs(60))
+            .is_some_and(|last| now.saturating_duration_since(*last) < ROGUE_AP_ALERT_TTL)
         {
             return None;
         }
@@ -257,6 +263,9 @@ impl DeauthFloodTracker {
         window_secs: u64,
         cooldown_secs: u64,
     ) -> Option<DeauthFloodAlert> {
+        if threshold == 0 || window_secs == 0 {
+            return None;
+        }
         if !matches!(
             entry.frame_subtype.as_str(),
             "deauthentication" | "disassociation"
@@ -273,10 +282,19 @@ impl DeauthFloodTracker {
         window.push(observed_at);
         let cutoff = observed_at - chrono::Duration::seconds(window_secs as i64);
         window.retain(|time| *time >= cutoff);
-        if window.len() < threshold as usize {
+        let frame_count = window.len();
+        if frame_count == 0 {
+            self.windows.remove(&key);
+            self.last_alerts.remove(&key);
             return None;
         }
         let now = Instant::now();
+        let retention = Duration::from_secs(cooldown_secs.max(window_secs));
+        self.last_alerts
+            .retain(|_, last| now.saturating_duration_since(*last) <= retention);
+        if frame_count < threshold as usize {
+            return None;
+        }
         if self.last_alerts.get(&key).is_some_and(|last| {
             now.saturating_duration_since(*last) < Duration::from_secs(cooldown_secs)
         }) {
@@ -291,7 +309,7 @@ impl DeauthFloodTracker {
             location_id: entry.location_id.clone(),
             interface: entry.interface.clone(),
             bssid: entry.bssid.clone(),
-            frame_count: window.len() as u64,
+            frame_count: frame_count as u64,
             window_secs,
         })
     }

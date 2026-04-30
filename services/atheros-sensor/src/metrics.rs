@@ -23,7 +23,7 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, backlog: Arc<
         return;
     };
     tokio::spawn(async move {
-        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let listener = match TcpListener::bind(addr).await {
             Ok(listener) => listener,
             Err(error) => {
