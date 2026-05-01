@@ -1,4 +1,6 @@
 class ShadowItAlertsController < ApplicationController
+  include GridFilterable
+
   SORTS = {
     "last_occurred_at" => :last_occurred_at,
     "source_mac" => :source_mac,

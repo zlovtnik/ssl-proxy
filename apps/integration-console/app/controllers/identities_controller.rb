@@ -1,6 +1,8 @@
 require "csv"
 
 class IdentitiesController < ApplicationController
+  include GridFilterable
+
   EXPORT_MAX_ROWS = 10_000
   EXPORT_CACHE_TTL = 2.minutes
 
