@@ -1,0 +1,18 @@
+<script>
+  import ShadowItAlertsFilter from "../components/ShadowItAlertsFilter.svelte"
+
+  export let initial = {}
+
+  function handleFilterChange(filters, meta) {
+    if (meta?.serialized) {
+      const url = new URL(window.location)
+      url.searchParams.set('filters', meta.serialized)
+      url.searchParams.delete('page')
+      window.location.href = url.toString()
+    }
+  }
+</script>
+
+<div class="mb-4">
+  <ShadowItAlertsFilter onFilterChange={handleFilterChange} />
+</div>

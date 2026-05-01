@@ -18,4 +18,18 @@ class ShadowItAlertsController < ApplicationController
     @shadow_it_alerts = apply_sort(@shadow_it_alerts, SORTS, default_sort: :last_occurred_at)
     @shadow_it_alerts = paginate(@shadow_it_alerts)
   end
+
+  def distinct_values
+    field = params[:field].to_s
+    allowed_fields = %w[source_mac destination_bssid ssid sensor_id location_id reason]
+    
+    if allowed_fields.include?(field)
+      values = Rails.cache.fetch("shadow_it_alerts:distinct:#{field}", expires_in: 60.seconds) do
+        ShadowItAlert.where.not(field => nil).distinct.pluck(field).compact.sort.take(100)
+      end
+      render json: values
+    else
+      render json: [], status: :bad_request
+    end
+  end
 end

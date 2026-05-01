@@ -1,5 +1,5 @@
 <script>
-  let { fields = [], onSearch = () => {} } = $props()
+  let { fields = [], onSearch = () => {}, onFetchValues = null } = $props()
 
   const safeFields = $derived(fields.filter(f => !f.internal && !f.hidden))
 
@@ -8,6 +8,9 @@
   let isOpen = $state(false)
   let searchInput = $state('')
   let inputRef = $state(null)
+  let valueCache = $state(new Map()) // Map<fieldKey, { values: [], timestamp: number }>
+  let loadingValues = $state(false)
+  let availableValues = $state([])
 
   const defaultOperators = {
     text: [
@@ -38,6 +41,12 @@
       : safeFields.filter(f => f.label.toLowerCase().includes(searchInput.toLowerCase()))
   )
 
+  const filteredValues = $derived(
+    searchInput.trim() === ''
+      ? availableValues
+      : availableValues.filter(v => String(v).toLowerCase().includes(searchInput.toLowerCase()))
+  )
+
   const availableOperators = $derived(
     activeQuery.field 
       ? (activeQuery.field.operators || defaultOperators[activeQuery.field.type] || defaultOperators.text)
@@ -50,9 +59,50 @@
     searchInput = ''
   }
 
-  function selectOperator(operator) {
+  async function selectOperator(operator) {
     activeQuery.operator = operator.key
     step = 'value'
+    
+    if (activeQuery.field?.type === 'select') {
+      await loadDistinctValues()
+      isOpen = true
+    } else {
+      isOpen = false
+    }
+  }
+
+  async function loadDistinctValues() {
+    if (!activeQuery.field || !onFetchValues) {
+      availableValues = []
+      return
+    }
+
+    const fieldKey = activeQuery.field.key
+    const cached = valueCache.get(fieldKey)
+    const now = Date.now()
+    
+    // Check if cache is valid (less than 60 seconds old)
+    if (cached && (now - cached.timestamp) < 60000) {
+      availableValues = cached.values
+      return
+    }
+
+    // Fetch new values
+    loadingValues = true
+    try {
+      const values = await onFetchValues(fieldKey)
+      valueCache.set(fieldKey, { values, timestamp: now })
+      availableValues = values
+    } catch (err) {
+      console.error('Failed to load distinct values:', err)
+      availableValues = []
+    } finally {
+      loadingValues = false
+    }
+  }
+
+  function selectValue(value) {
+    activeQuery.value = value
     isOpen = false
   }
 
@@ -95,14 +145,26 @@
     {/if}
 
     {#if step === 'value'}
-      <input
-        type={activeQuery.field?.type === 'number' ? 'number' : activeQuery.field?.type === 'date' ? 'date' : 'text'}
-        bind:value={activeQuery.value}
-        placeholder="Enter value..."
-        onkeydown={handleKeydown}
-        class="value-input"
-      />
-      <button onclick={commitSearch} class="commit-btn">Search</button>
+      {#if activeQuery.field?.type === 'select'}
+        <input
+          type="text"
+          bind:value={searchInput}
+          placeholder={loadingValues ? 'Loading...' : 'Search values...'}
+          onfocus={() => isOpen = true}
+          onkeydown={handleKeydown}
+          class="value-input"
+          disabled={loadingValues}
+        />
+      {:else}
+        <input
+          type={activeQuery.field?.type === 'number' ? 'number' : activeQuery.field?.type === 'date' ? 'date' : 'text'}
+          bind:value={activeQuery.value}
+          placeholder="Enter value..."
+          onkeydown={handleKeydown}
+          class="value-input"
+        />
+      {/if}
+      <button onclick={commitSearch} class="commit-btn" disabled={!activeQuery.value}>Search</button>
     {:else}
       <input
         bind:this={inputRef}
@@ -116,7 +178,7 @@
     {/if}
   </div>
 
-  {#if isOpen && step !== 'value'}
+  {#if isOpen}
     <div class="dropdown" style="left: {activeQuery.field ? inputRef?.offsetLeft || 0 : 0}px;">
       {#if step === 'field'}
         {#each filteredFields as field}
@@ -131,6 +193,18 @@
             {operator.label}
           </button>
         {/each}
+      {:else if step === 'value' && activeQuery.field?.type === 'select'}
+        {#if loadingValues}
+          <div class="dropdown-item loading">Loading values...</div>
+        {:else if filteredValues.length === 0}
+          <div class="dropdown-item empty">No values found</div>
+        {:else}
+          {#each filteredValues as value}
+            <button class="dropdown-item" onclick={() => selectValue(value)}>
+              {value}
+            </button>
+          {/each}
+        {/if}
       {/if}
     </div>
   {/if}
@@ -205,8 +279,19 @@
     font-weight: 500;
   }
 
-  .commit-btn:hover {
+  .commit-btn:hover:not(:disabled) {
     background: #218838;
+  }
+
+  .commit-btn:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .value-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .dropdown {
@@ -238,8 +323,15 @@
     color: var(--color-text, #000);
   }
 
-  .dropdown-item:hover {
+  .dropdown-item:hover:not(.loading):not(.empty) {
     background: var(--color-bg-hover, #f0f0f0);
+  }
+
+  .dropdown-item.loading,
+  .dropdown-item.empty {
+    cursor: default;
+    color: var(--color-text-faint, #999);
+    font-style: italic;
   }
 
   .item-label {

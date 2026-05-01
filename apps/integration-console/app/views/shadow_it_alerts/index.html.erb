@@ -3,10 +3,9 @@
 
 <h1>Shadow IT Alerts</h1>
 
-<%= form_with url: shadow_it_alerts_path, method: :get do |form| %>
-  <%= form.search_field :q, value: @query, placeholder: "Search MAC, BSSID, SSID, sensor, location, reason" %>
-  <%= form.submit "Search" %>
-<% end %>
+<%= svelte_props_tag("shadow-it-alerts-svelte-root", initial: {}) %>
+<div id="shadow-it-alerts-svelte-root"></div>
+<%= svelte_bundle_tags(:shadow_it_alerts) %>
 
 <div
   class="table-wrap"

@@ -2,7 +2,7 @@
   import CommandPaletteSearch from "./CommandPaletteSearch.svelte"
   import { serializeFilters, toApiParams } from "../lib/url"
 
-  let { fields = [], filters = [], onChange = () => {} } = $props()
+  let { fields = [], filters = [], onChange = () => {}, onFetchValues = null } = $props()
 
   let activeFilters = $state([])
   let nextId = $state(1)
@@ -75,7 +75,7 @@
 
 <div class="query-builder mb-4 rounded-lg border border-(--color-border-muted) bg-(--color-surface) p-3">
   <div class="mb-3">
-    <CommandPaletteSearch {fields} onSearch={handleSearch} />
+    <CommandPaletteSearch {fields} onSearch={handleSearch} {onFetchValues} />
   </div>
 
   {#if activeFilters.length > 0}

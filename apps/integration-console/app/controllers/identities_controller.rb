@@ -51,6 +51,20 @@ class IdentitiesController < ApplicationController
     render_cached_json(mac_summary_payload(query), browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
   end
 
+  def distinct_values
+    field = params[:field].to_s
+    allowed_fields = %w[source_mac location_id ssid destination_bssid registered_username]
+    
+    if allowed_fields.include?(field)
+      values = Rails.cache.fetch("identities:distinct:#{field}", expires_in: 60.seconds) do
+        WirelessDeviceInventory.where.not(field => nil).distinct.pluck(field).compact.sort.take(100)
+      end
+      render json: values
+    else
+      render json: [], status: :bad_request
+    end
+  end
+
   private
 
   def apply_identity_sort(scope)
