@@ -35,10 +35,18 @@ module ApplicationHelper
   end
 
   def svelte_bundle_tags(entrypoint)
-    safe_join([
-      vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload"),
-      vite_javascript_tag(entrypoint.to_s, "data-turbo-track": "reload")
-    ], "\n")
+    tags = []
+    
+    # Only include stylesheet if it exists
+    begin
+      tags << vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload")
+    rescue ViteRuby::Manifest::MissingEntrypointError
+      # CSS file doesn't exist, skip it
+    end
+    
+    tags << vite_javascript_tag(entrypoint.to_s, "data-turbo-track": "reload")
+    
+    safe_join(tags, "\n")
   end
 
   def metric_card_status_class(status)
