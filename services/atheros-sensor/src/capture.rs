@@ -17,6 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::model::RawPacket;
 
+//todo: doc it!
 #[derive(Debug, Error)]
 pub enum CaptureError {
     /// Fired by libpcap for any I/O or filter compilation failure during capture setup or runtime.
@@ -44,7 +45,7 @@ impl CaptureControl {
 enum CaptureCommand {
     ApplyFilter(String),
 }
-
+//todo: doc it!
 pub struct PacketStream {
     pub packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     pub control: CaptureControl,

@@ -13,7 +13,7 @@
 //! `bpf` (BPF filter), `channel` (via `wireless.config.sensor`), and the `audit_window`
 //! schedule (via `wireless.audit.config`).
 //!
-//! All other fields — including `database_url`, `snaplen`, `pcap_timeout_ms`,
+//! All other fields - including `database_url`, `snaplen`, `pcap_timeout_ms`,
 //! `mac_device_lookup_enabled`, `log_idle_secs`, and all backlog/metrics settings — are
 //! read once at startup and require a process restart to change.
 
@@ -266,7 +266,7 @@ fn reject_docker_service_host(variable: &'static str, host: &str) -> Result<(), 
     }
     Ok(())
 }
-
+//todo: doc it!
 fn nats_host(nats_url: &str) -> Option<String> {
     let trimmed = nats_url.trim();
     if trimmed.is_empty() {
@@ -304,7 +304,7 @@ fn nats_host(nats_url: &str) -> Option<String> {
         Some(host.to_string())
     }
 }
-
+//todo: doc it!
 fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
     let timezone = std::env::var("AUDIT_WINDOW_TZ")
         .ok()
@@ -340,35 +340,35 @@ fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
 
     Ok(AuditWindow::from_parts(timezone, days, start, end))
 }
-
+//todo: doc it!
 fn parse_u8(name: &str, default: u8) -> Result<u8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u8>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_i32(name: &str, default: i32) -> Result<i32, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i32>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_i64(name: &str, default: i64) -> Result<i64, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i64>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_i8(name: &str, default: i8) -> Result<i8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i8>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => {
@@ -377,7 +377,7 @@ fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
         _ => Ok(None),
     }
 }
-
+//todo: doc it!
 fn audit_layer_stream_from_env() -> AuditLayerStream {
     match std::env::var("ATH_SENSOR_AUDIT_LAYER_STREAM")
         .ok()
@@ -389,21 +389,21 @@ fn audit_layer_stream_from_env() -> AuditLayerStream {
         _ => AuditLayerStream::Off,
     }
 }
-
+//todo: doc it!
 fn parse_u64(name: &str, default: u64) -> Result<u64, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u64>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_usize(name: &str, default: usize) -> Result<usize, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<usize>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn read_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
         Ok(value) => matches!(
@@ -413,7 +413,7 @@ fn read_bool(name: &str, default: bool) -> bool {
         Err(_) => default,
     }
 }
-
+//todo: doc it!
 fn read_secret(value_var: &str, file_var: &str) -> Option<String> {
     if let Ok(value) = std::env::var(value_var) {
         let trimmed = value.trim();

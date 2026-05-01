@@ -129,6 +129,10 @@ pub trait BacklogStore: Send + Sync {
     /// Writes or updates a row in the `sync_scan_ingest` table with upsert semantics.
     /// On dedupe_key collision, all wireless columns and payload fields are updated.
     ///
+    /// IMPORTANT: This provides pre-enqueue durability only. It records that the event
+    /// was handed off to the sync pipeline, but does not guarantee downstream delivery
+    /// or processing. The event may still fail in subsequent pipeline stages.
+    ///
     /// # Parameters
     ///
     /// - `record`: The ingest record containing event metadata and payload

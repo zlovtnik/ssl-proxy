@@ -1,7 +1,7 @@
 //! Frequency-to-channel conversion and channel flags decoding.
 //!
 //! frequency_to_channel maps radiotap frequency values to 802.11 channel numbers:
-//! 2.4 GHz channels 1–13 via (freq - 2412) / 5 + 1, channel 14 at 2484 MHz,
+//! 2.4 GHz channels 1-13 via (freq - 2412) / 5 + 1, channel 14 at 2484 MHz,
 //! and 5 GHz channels via (freq - 5000) / 5. decode_channel_flags unpacks the
 //! radiotap channel flags bitmask into named booleans (2ghz, 5ghz, cck, ofdm,
 //! dynamic_cck_ofdm) and a human-readable labels vec for the AuditEntry.
@@ -9,8 +9,8 @@
 use crate::model::ChannelFlagsLayer;
 
 /// Maps radiotap frequency values to 802.11 channel numbers. Covers three frequency bands:
-/// 2.4 GHz channels 1–13 (2412–2472 MHz), channel 14 (2484 MHz), and 5 GHz channels
-/// (5000–5895 MHz). 6 GHz (UNII-5 through UNII-8) is not yet mapped.
+/// 2.4 GHz channels 1-13 (2412-2472 MHz), channel 14 (2484 MHz), and 5 GHz channels
+/// (5000-5895 MHz). 6 GHz (UNII-5 through UNII-8) is not yet mapped.
 pub(super) fn frequency_to_channel(frequency_mhz: Option<u16>) -> Option<u16> {
     let frequency_mhz = frequency_mhz?;
     match frequency_mhz {

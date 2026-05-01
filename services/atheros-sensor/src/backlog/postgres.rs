@@ -580,6 +580,16 @@ impl BacklogStore for PostgresBacklog {
         max_attempts: i32,
         max_age_hours: i64,
     ) -> Result<u64, BacklogError> {
+        if max_attempts <= 0 {
+            return Err(BacklogError::InvalidDatabaseUrl(
+                "max_attempts must be greater than 0".to_string(),
+            ));
+        }
+        if max_age_hours < 0 {
+            return Err(BacklogError::InvalidDatabaseUrl(
+                "max_age_hours must be non-negative".to_string(),
+            ));
+        }
         let operation = "prune_stale";
         let client = self.client(operation).await?;
         let rows_affected = match client

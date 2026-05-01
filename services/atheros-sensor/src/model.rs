@@ -24,7 +24,7 @@
 //!
 //! [`MacLayer`]: the 802.11 MAC header fields serialized as a sub-object in `AuditEntry`;
 //! `adjacent_mac_hint` is non-None when two address fields share the first five octets and
-//! differ in the last by 1–4, a common AP/client interface adjacency indicator.
+//! differ in the last by 1-4, a common AP/client interface adjacency indicator.
 //!
 //! [`RfLayer`]: the radiotap physical-layer fields serialized as a sub-object in `AuditEntry`;
 //! `signal_status` is `"present"`, `"stripped"`, or `"absent"` and reflects whether the

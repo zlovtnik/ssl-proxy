@@ -339,7 +339,7 @@ async fn run_sensor_config_subscriber_once(
     })
     .await
 }
-
+//todo: doc it!
 async fn run_message_loop<F>(
     config: &SyncConfig,
     subject: &'static str,
@@ -465,7 +465,7 @@ fn parse_audit_window_update(
         end,
     )))
 }
-
+//todo: doc it!
 fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTime>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -548,7 +548,7 @@ fn percent_decode_userinfo(value: &str) -> Result<String, String> {
 
     String::from_utf8(decoded).map_err(|_| "invalid UTF-8 in NATS userinfo".to_string())
 }
-
+//todo: doc it!
 fn hex_value(value: u8) -> Option<u8> {
     match value {
         b'0'..=b'9' => Some(value - b'0'),

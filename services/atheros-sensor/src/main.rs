@@ -13,7 +13,7 @@
 //! # Type notes
 //!
 //! [`SensorHandles`]: the main loop's owned state bundle; fields are either `Clone`-cheap
-//! shared handles (`Arc`, `SharedAuditWindow`) or values consumed once at startup — nothing
+//! shared handles (`Arc`, `SharedAuditWindow`) or values consumed once at startup - nothing
 //! here is mutated per-packet.
 //!
 //! [`PipelineState`]: all per-packet mutable state (identity cache, handshake monitor,
@@ -21,7 +21,7 @@
 //! and reset only by a process restart.
 //!
 //! [`CaptureStats`]: cumulative counters incremented since process startup, not windowed or
-//! reset between heartbeat log lines — use the delta between two log lines for rate calculation.
+//! reset between heartbeat log lines - use the delta between two log lines for rate calculation.
 
 mod audit;
 mod backlog;
@@ -448,9 +448,9 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     })
 }
 
-/// Hot path: decodes raw packet → extracts handshake → resolves identity → checks
-/// authorized network → tags threats → enriches with MAC device lookup → observes
-/// bandwidth → publishes to NATS and Postgres ingest ledger.
+/// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
+/// authorized network -> tags threats -> enriches with MAC device lookup -> observes
+/// bandwidth -> publishes to NATS and Postgres ingest ledger.
 async fn process_packet(
     packet: RawPacket,
     context: &AuditContext,

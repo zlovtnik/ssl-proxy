@@ -1,4 +1,4 @@
-//! Optional OpenMetrics endpoint for operational observability.
+//! Optional Prometheus text exposition format 0.0.4 endpoint for operational observability.
 //!
 //! The server only starts when ATH_SENSOR_METRICS_PORT is set; if unset, spawn_metrics_server
 //! returns immediately with no listener. Counters (packets_seen, decoded_frames,
@@ -67,7 +67,7 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, backlog: Arc<
     });
 }
 
-/// Serves OpenMetrics text format (version 0.0.4) with counters (packets_seen, decoded_frames,
+/// Serves Prometheus text format (version 0.0.4) with counters (packets_seen, decoded_frames,
 /// unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures)
 /// and gauges (postgres_pool_available, postgres_pool_waiting).
 async fn serve_metrics(

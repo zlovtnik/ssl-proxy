@@ -5,7 +5,7 @@
 //! SignalTracker fires a signal_anomaly tag when a BSSID's signal jumps beyond the configured
 //! dBm delta, indicating a possible AP impersonation or physical movement event;
 //! RogueApTracker checks beacons and probe responses for open authorized SSIDs, SSID typosquats
-//! (edit distance ≤ 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
+//! (edit distance <= 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
 //! DeauthFloodTracker counts deauthentication and disassociation frames per BSSID in a sliding
 //! window and fires an alert when the threshold is exceeded, with a cooldown to suppress repeats;
 //! AuthorizedNetworkCache holds the Postgres-backed list of known SSIDs/BSSIDs and is
@@ -16,14 +16,14 @@
 //! # Type notes
 //!
 //! [`ClientInventory`] / [`ClientProfile`]: per-MAC observation state; `excessive_probing`
-//! latches to `true` once a client sends ≥ 20 probe requests within any 60-second window
+//! latches to `true` once a client sends >= 20 probe requests within any 60-second window
 //! and is never reset to `false` within the same session (inventory flush required).
 //!
 //! [`RogueApTracker`]: fires [`RogueApAlert`] for beacons/probe-responses that match rogue
 //! heuristics; the per-key `recent_alerts` map enforces a 60-second cooldown so a single
 //! misbehaving AP cannot produce an unbounded alert storm.
 //!
-//! [`DeauthFloodTracker`]: maintains two independent clocks per BSSID — a sliding
+//! [`DeauthFloodTracker`]: maintains two independent clocks per BSSID - a sliding
 //! `chrono::DateTime` window that counts frames within `window_secs`, and a separate
 //! `Instant`-based cooldown that suppresses repeat alerts for `cooldown_secs` after firing.
 //!
@@ -84,7 +84,7 @@ pub struct ClientInventory {
 
 impl ClientInventory {
     /// Observes a frame and updates client profile. The excessive_probing flag latches to true
-    /// once a client sends ≥20 probe requests within any 60-second window and is never reset
+    /// once a client sends >=20 probe requests within any 60-second window and is never reset
     /// to false within the same session (inventory flush required to clear).
     pub fn observe(&mut self, entry: &AuditEntry) {
         let Some(source_mac) = entry.source_mac.as_deref().map(normalize_mac) else {
@@ -205,7 +205,7 @@ pub struct RogueApTracker {
 impl RogueApTracker {
     /// Observes a beacon or probe response and returns a RogueApAlert when any of four detection
     /// reasons fire: open_authorized_ssid (known SSID with no encryption), ssid_typosquat
-    /// (edit distance ≤2 from known SSID), bssid_spoofing (BSSID changed SSID mapping), or
+    /// (edit distance <=2 from known SSID), bssid_spoofing (BSSID changed SSID mapping), or
     /// channel_conflict (same BSSID seen on multiple channels).
     pub fn observe(
         &mut self,
@@ -426,7 +426,7 @@ impl AuthorizedNetworkCache {
         })
     }
 
-    /// Returns true when the candidate SSID has edit distance ≤ 2 from any known SSID.
+    /// Returns true when the candidate SSID has edit distance <= 2 from any known SSID.
     /// Early exit when length difference exceeds the limit (2) to skip expensive DP.
     pub fn is_typosquat(&self, ssid: &str) -> bool {
         let ssid = ssid.trim().to_ascii_lowercase();

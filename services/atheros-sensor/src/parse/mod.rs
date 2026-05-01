@@ -3,7 +3,7 @@
 //! Each frame passes through a fixed sequence of sub-modules:
 //! radiotap strips the radiotap header and extracts RF metadata (signal, frequency, data rate);
 //! frame decodes the 802.11 MAC header, frame type, subtype, and control flags;
-//! addresses resolves addr1–addr4 to named roles (bssid, source, destination, transmitter,
+//! addresses resolves addr1-addr4 to named roles (bssid, source, destination, transmitter,
 //! receiver) based on the DS-bit combination;
 //! ie parses Information Elements from management frames (SSID, RSN, WPS, vendor IEs) and
 //! computes security_flags;

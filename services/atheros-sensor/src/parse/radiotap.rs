@@ -5,7 +5,7 @@
 //!
 //! [`RadiotapMetadata`]: physical-layer fields extracted from the radiotap header;
 //! `signal_present` is `true` only when the radiotap present-word bit 5 (dBm signal) was
-//! set, distinguishing a genuine zero-dBm reading from a stripped or absent signal field —
+//! set, distinguishing a genuine zero-dBm reading from a stripped or absent signal field -
 //! the `signal_status` string in `RfLayer` is derived from this flag.
 
 use super::frame::ParseError;

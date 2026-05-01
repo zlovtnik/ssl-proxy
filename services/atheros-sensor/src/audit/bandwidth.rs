@@ -128,7 +128,7 @@ impl TrafficBucket {
             source_mac: "unknown".to_string(),
             destination_bssid: "unknown".to_string(),
             ssid: None,
-            external_bssid: true,
+            external_bssid: false,
         };
 
         let counters = self.entries.entry(key).or_default();
