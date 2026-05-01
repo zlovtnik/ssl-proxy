@@ -19,6 +19,27 @@ use super::{
     wireless_columns::WirelessIngestColumns,
 };
 
+/// Postgres implementation of BacklogStore with intentional connection limits.
+///
+/// Maintains a connection pool capped at 2 connections to avoid overwhelming the database
+/// during high-volume wireless capture. Implements graceful degradation when tables are
+/// missing (returns empty results rather than errors) to support fresh deployments before
+/// migrations run.
+///
+/// # Tables
+///
+/// - `sync_scan_ingest`: Primary ledger for all ingested events with wireless-specific columns
+/// - `audit_backlog`: Fallback store for events that fail to publish to NATS
+/// - `devices`: Optional device registry for MAC address lookups
+/// - `authorized_wireless_networks`: Optional network authorization rules
+///
+/// # Connection Pool Sizing
+///
+/// The pool is intentionally limited to 2 connections because:
+/// - This is a low-contention sensor workload with infrequent writes
+/// - Backlog operations are not latency-critical
+/// - Prevents database overload during wireless capture bursts
+/// - Allows database resources to be shared with other services
 pub struct PostgresBacklog {
     pool: Pool,
 }
@@ -196,6 +217,21 @@ impl PostgresBacklog {
         Ok(row.get::<_, bool>(0))
     }
 
+    /// Loads all enabled authorized wireless networks from the database.
+    ///
+    /// Returns an empty vector if the `authorized_wireless_networks` table does not exist,
+    /// allowing the service to start before migrations run. The in-memory
+    /// `AuthorizedNetworkCache` uses this method to populate its cache.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `AuthorizedWirelessNetwork` entries with SSID, BSSID (normalized to
+    /// lowercase), and location_id. Only enabled networks are returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BacklogError::Postgres` on database query failures or
+    /// `BacklogError::Pool` on connection pool exhaustion.
     pub async fn list_authorized_wireless_networks(
         &self,
     ) -> Result<Vec<AuthorizedWirelessNetwork>, BacklogError> {
@@ -242,6 +278,10 @@ impl PostgresBacklog {
             .collect())
     }
 
+    /// Returns the current connection pool status for monitoring and diagnostics.
+    ///
+    /// Exposes pool metrics including max_size (always 2), current size, available
+    /// connections, and waiting requests. Useful for health checks and capacity planning.
     pub fn pool_status(&self) -> deadpool_postgres::Status {
         self.pool.status()
     }
@@ -276,10 +316,12 @@ impl PostgresBacklog {
 
 #[async_trait]
 impl BacklogStore for PostgresBacklog {
-    /// Writes or updates a row in sync_scan_ingest with upsert-on-conflict behavior:
-    /// on dedupe_key collision, all wireless columns and payload fields are updated.
+    /// Postgres implementation: Writes or updates a row in sync_scan_ingest with upsert-on-conflict behavior.
+    ///
+    /// On dedupe_key collision, all wireless columns and payload fields are updated.
     /// Strips control characters (except whitespace) and null bytes from JSON strings
-    /// via sanitize_json_value to prevent Postgres TEXT encoding errors.
+    /// via sanitize_json_value to prevent Postgres TEXT encoding errors. The payload_sha256
+    /// is computed after sanitization to ensure integrity checks match the stored payload.
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
@@ -412,6 +454,10 @@ impl BacklogStore for PostgresBacklog {
         Ok(())
     }
 
+    /// Postgres implementation: Inserts or updates a row in audit_backlog with conflict handling.
+    ///
+    /// On dedupe_key collision, increments attempt_count and updates the error message.
+    /// This allows the same event to be retried multiple times with failure tracking.
     async fn save_pending(
         &self,
         dedupe_key: &str,
@@ -453,6 +499,10 @@ impl BacklogStore for PostgresBacklog {
         Ok(())
     }
 
+    /// Postgres implementation: Queries audit_backlog for pending entries, limited to 100 rows.
+    ///
+    /// Returns entries ordered by updated_at ascending (oldest first) to prioritize
+    /// long-pending events. The 100-row limit prevents memory exhaustion during retry storms.
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
         let operation = "list_pending";
         let client = self.client(operation).await?;
@@ -489,6 +539,11 @@ impl BacklogStore for PostgresBacklog {
         Ok(entries)
     }
 
+    /// Postgres implementation: Updates audit_backlog status to 'synced' and clears last_error.
+    ///
+    /// Logs a warning if no rows are matched (dedupe_key not found), which can occur if
+    /// the entry was already pruned or never existed. This is not treated as an error to
+    /// maintain idempotency.
     async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError> {
         let operation = "mark_synced";
         let client = self.client(operation).await?;

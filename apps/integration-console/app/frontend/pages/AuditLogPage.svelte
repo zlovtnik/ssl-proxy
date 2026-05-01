@@ -2,8 +2,7 @@
   import { onDestroy, onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
   import FilterBar from "../components/FilterBar.svelte"
-  import MacChip from "../components/MacChip.svelte"
-  import { displayBoolean, formatTime, shortFingerprint } from "../lib/format"
+  import { buildAuditLogColumns } from "../config/auditLogColumns"
   import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
@@ -25,36 +24,7 @@
   const endpoints = initial.endpoints || {}
   const macOptions = initial.macOptions || {}
   const fullMacs = Boolean(initial.fullMacs)
-
-  const columns = [
-    { key: "observed_at", label: "Observed", sortable: true, width: "w-32", href: (row) => row.show_url, format: formatTime, filterType: "date" },
-    { key: "sensor_id", label: "Sensor", sortable: true, width: "w-24" },
-    { key: "location_id", label: "Location", sortable: true, width: "w-20" },
-    { key: "frame_subtype", label: "Subtype", sortable: true, width: "w-24", format: (value, row) => value || row.event_type || "event" },
-    { key: "ssid", label: "SSID", sortable: true, width: "w-28" },
-    {
-      key: "source_mac",
-      label: "Source",
-      sortable: true,
-      width: "w-32",
-      component: MacChip,
-      componentProps: (value, row) => macProps(value, row.source_mac_display)
-    },
-    {
-      key: "destination_bssid",
-      label: "Dest BSSID",
-      sortable: true,
-      width: "w-32",
-      component: MacChip,
-      componentProps: (value, row) => macProps(value, row.destination_bssid_display)
-    },
-    { key: "signal_dbm", label: "Signal", sortable: true, width: "w-16", filterType: "number" },
-    { key: "raw_len", label: "Bytes", sortable: true, width: "w-16", filterType: "number" },
-    { key: "frame_control_flags", label: "Flags", sortable: true, width: "w-28", hiddenBelow: "lg", format: (value, row) => row.frame_flags_label || value || "", filterType: "number" },
-    { key: "security_flags", label: "Security", sortable: true, width: "w-28", hiddenBelow: "md", format: (value, row) => row.security_label || "open/unknown", filterType: "number" },
-    { key: "device_fingerprint", label: "Fingerprint", sortable: true, width: "w-28", hiddenBelow: "lg", format: shortFingerprint },
-    { key: "handshake_captured", label: "Handshake", sortable: true, width: "w-20", hiddenBelow: "lg", format: (value) => displayBoolean(value), filterType: "boolean" }
-  ]
+  const columns = buildAuditLogColumns({ endpoints, macOptions, fullMacs })
 
   $: exportUrl = buildExportUrl()
 
@@ -83,20 +53,6 @@
   onDestroy(() => {
     window.clearInterval(pollTimer)
   })
-
-  function macProps(value, display) {
-    return {
-      mac: value,
-      display,
-      masked: !fullMacs,
-      auditLogsUrl: macOptions.auditLogsUrl || endpoints.index || "/audit_logs",
-      identitiesUrl: macOptions.identitiesUrl || "/identities",
-      shadowItUrl: macOptions.shadowItUrl || "/shadow_it_alerts",
-      inventoryUrl: macOptions.inventoryUrl || "/identities/inventory.json",
-      summaryUrl: macOptions.macSummaryUrl || "/identities/mac_summary.json",
-      recentAuditLogsUrl: macOptions.recentAuditLogsUrl || "/audit_logs/recent.json"
-    }
-  }
 
   function state() {
     return {

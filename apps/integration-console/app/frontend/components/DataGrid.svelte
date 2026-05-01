@@ -23,7 +23,7 @@
   function headerClasses(column) {
     return [
       "sticky top-0 z-10 border-b-2 border-(--color-border-strong) bg-(--color-accent-surface) px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-(--color-accent-vivid)",
-      column.width || "",
+      column.minWidth || "",
       hiddenClass(column.hiddenBelow)
     ].filter(Boolean).join(" ")
   }
@@ -31,7 +31,7 @@
   function cellClasses(column) {
     return [
       "border-b border-(--color-border-muted) px-3 py-2 align-top text-sm text-(--color-text)",
-      column.width || "",
+      column.minWidth || "",
       hiddenClass(column.hiddenBelow)
     ].filter(Boolean).join(" ")
   }
@@ -71,7 +71,7 @@
   {/if}
 
   <div class="relative overflow-x-auto rounded-lg border border-(--color-border-muted) bg-(--color-surface)">
-    <table class="min-w-full table-fixed border-collapse">
+    <table class="min-w-full table-auto border-collapse">
       <thead>
         <tr>
           {#each columns as column}

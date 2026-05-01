@@ -36,12 +36,16 @@ pub enum SensorError {
     Step(String),
 }
 
+/// Constructs a SensorError::Step variant with a formatted label and error message.
 impl SensorError {
+    /// Creates a Step error by formatting the label and error into a single string.
+    /// Used during startup sequencing for ad-hoc failures not covered by typed variants.
     pub fn step(label: impl Display, error: impl Display) -> Self {
         Self::Step(format!("{label}: {error}"))
     }
 }
 
+/// Converts io::Error into SensorError::Step for generic I/O failures during startup.
 impl From<io::Error> for SensorError {
     fn from(error: io::Error) -> Self {
         Self::Step(error.to_string())

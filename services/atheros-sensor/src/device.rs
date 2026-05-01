@@ -17,14 +17,19 @@ use tracing::{info, warn};
 
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    /// Wraps std::io::Error when sysfs cannot be read during interface discovery.
     #[error("failed to read sysfs device inventory: {0}")]
     Io(#[from] std::io::Error),
+    /// Fired when no wireless interface is found under /sys/class/net.
     #[error("no wireless interface found under /sys/class/net (ath9k_htc preferred)")]
     NotFound,
+    /// Fired when ATH_SENSOR_DEVICE names an interface that exists but is not wireless.
     #[error("configured interface {0} exists but is not a wireless interface")]
     OverrideNotWireless(String),
+    /// Fired when ATH_SENSOR_DEVICE names an interface that does not exist.
     #[error("configured interface {0} was not found under /sys/class/net")]
     OverrideNotFound(String),
+    /// Fired when the interface address file is empty or missing.
     #[error("missing interface MAC address for {0}")]
     MissingMac(String),
 }
@@ -106,6 +111,8 @@ fn driver_name(interface_path: &Path) -> Option<String> {
         .map(|name| name.to_string_lossy().to_string())
 }
 
+/// Reads the MAC address from /sys/class/net/<interface>/address, returning it
+/// trimmed and lowercased. Fails if the file is missing, unreadable, or empty.
 pub fn read_mac_address(interface: &str) -> Result<String, DeviceError> {
     let path = PathBuf::from("/sys/class/net")
         .join(interface)

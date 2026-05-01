@@ -26,13 +26,21 @@ pub struct Config {
 }
 
 /// Explicit proxy credentials loaded from environment or files.
+///
+/// Both username and password must be provided together; partial credentials
+/// will cause `Config::from_env()` to return a `ConfigError`.
 #[derive(Clone)]
 pub struct ProxyCredentials {
+    /// Username for proxy authentication.
     pub username: String,
+    /// Password for proxy authentication (redacted in Debug output).
     pub password: String,
 }
 
 /// Proxy listener and tunnel runtime settings.
+///
+/// Controls both transparent proxy (TPROXY) and explicit proxy modes,
+/// connection limits, upstream proxy chaining, and forensic capture features.
 #[derive(Clone)]
 pub struct ProxyConfig {
     pub port: u16,
@@ -51,6 +59,9 @@ pub struct ProxyConfig {
 }
 
 /// Admin API settings.
+///
+/// Configures the administrative HTTP API including authentication,
+/// CORS policies, and MFA requirements.
 #[derive(Clone)]
 pub struct AdminConfig {
     pub port: u16,
@@ -64,6 +75,9 @@ pub struct AdminConfig {
 }
 
 /// Sync-plane publisher settings.
+///
+/// Configures NATS connectivity, TLS, authentication, and local spooling
+/// for the event synchronization pipeline.
 #[derive(Clone)]
 pub struct SyncConfig {
     pub nats_url: Option<String>,
@@ -84,6 +98,9 @@ pub struct SyncConfig {
 }
 
 /// Traffic obfuscation settings and prebuilt domain map.
+///
+/// Controls which obfuscation profiles are active and maintains a mapping
+/// from domain patterns to their corresponding obfuscation profiles.
 #[derive(Clone, Debug)]
 pub struct ObfuscationConfig {
     pub enabled: bool,
@@ -93,6 +110,8 @@ pub struct ObfuscationConfig {
 }
 
 /// TLS listener certificate settings.
+///
+/// Specifies paths to certificate and private key files for TLS termination.
 #[derive(Clone, Debug)]
 pub struct TlsConfig {
     pub cert_path: Option<String>,
@@ -100,6 +119,10 @@ pub struct TlsConfig {
 }
 
 /// WireGuard ingress settings.
+///
+/// Configures WireGuard listener ports, packet obfuscation, and session management.
+/// When obfuscation is enabled, the public port receives obfuscated packets which
+/// are deobfuscated and forwarded to the internal port.
 #[derive(Clone)]
 pub struct WireGuardConfig {
     pub port: u16,
@@ -112,7 +135,10 @@ pub struct WireGuardConfig {
     pub obfuscation_session_idle_secs: u64,
 }
 
-/// Runtime-only logging settings.
+/// Runtime-only logging and operational settings.
+///
+/// Controls log formatting, sampling intervals, and timeout values that
+/// don't fit into other subsystem configurations.
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub log_format: String,

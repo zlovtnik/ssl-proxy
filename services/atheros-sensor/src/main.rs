@@ -81,8 +81,10 @@ use crate::{
     },
     stats::PipelineOutcome,
 };
-
+/// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
+
+/// Maximum age for handshake monitor entries before cleanup.
 const HANDSHAKE_MONITOR_TTL: Duration = Duration::from_secs(10 * 60);
 
 async fn run_healthcheck() -> Result<(), SensorError> {
@@ -121,6 +123,7 @@ async fn run_healthcheck() -> Result<(), SensorError> {
     Ok(())
 }
 
+/// Entry point: runs healthcheck subcommand if requested, otherwise starts the sensor.
 #[tokio::main]
 async fn main() {
     // Check for healthcheck subcommand
@@ -138,6 +141,7 @@ async fn main() {
     }
 }
 
+/// Main sensor loop: initializes resources, then processes packets until shutdown.
 async fn run_sensor() -> Result<(), SensorError> {
     let config = step("load configuration", AppConfig::from_env())?;
     let mut handles = init_sensor(&config).await?;
@@ -238,6 +242,8 @@ async fn run_sensor() -> Result<(), SensorError> {
     Ok(())
 }
 
+/// Shared handles and resources used by the main sensor loop.
+/// All fields are either cheap-to-clone Arc wrappers or read-only references.
 struct SensorHandles {
     config: AppConfig,
     audit_window: SharedAuditWindow,
@@ -251,8 +257,11 @@ struct SensorHandles {
     authorized_config_generation: Arc<AtomicU64>,
 }
 
+/// Thread-safe shared reference to the current audit context.
 type SharedContext = Arc<RwLock<AuditContext>>;
 
+/// Mutable per-packet state owned by the main loop.
+/// Never shared across tasks to avoid locks on the hot path.
 struct PipelineState {
     identity_cache: IdentityCache,
     handshake_monitor: HandshakeMonitor,
@@ -658,6 +667,7 @@ async fn publish_bandwidth_events(
     }
 }
 
+/// Creates a tokio interval that ticks every N seconds, with at least 1 second minimum.
 fn interval_secs(secs: u64) -> tokio::time::Interval {
     let interval = Duration::from_secs(secs.max(1));
     let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
@@ -665,10 +675,12 @@ fn interval_secs(secs: u64) -> tokio::time::Interval {
     interval
 }
 
+/// Returns a clone of the current audit context.
 fn context_snapshot(context: &SharedContext) -> AuditContext {
     context.read().unwrap().clone()
 }
 
+/// Spawns a background task that cycles through channels 1, 6, and 11 at the configured interval.
 fn spawn_channel_hopper(
     device: String,
     bpf: String,
@@ -709,6 +721,7 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
 
+/// Waits for SIGTERM or Ctrl-C, then returns.
 async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
@@ -726,6 +739,7 @@ async fn wait_for_shutdown_signal() {
     }
 }
 
+/// Returns a clone of the current audit window, or a default inactive window on lock failure.
 fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
     audit_window
         .read()
@@ -733,6 +747,8 @@ fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
         .unwrap_or_else(|_| AuditWindow::from_parts(None, None, None, None))
 }
 
+/// Initializes the tracing subscriber with JSON formatting and audit layer.
+/// Returns the active filter string for logging.
 fn init_tracing(
     audit_window: SharedAuditWindow,
     audit_layer_stream: config::AuditLayerStream,
@@ -765,6 +781,7 @@ fn init_tracing(
     filter_source
 }
 
+/// Creates an interval for periodic heartbeat logging, or None if disabled.
 fn capture_heartbeat(idle_secs: u64) -> Option<tokio::time::Interval> {
     if idle_secs == 0 {
         return None;
@@ -776,6 +793,7 @@ fn capture_heartbeat(idle_secs: u64) -> Option<tokio::time::Interval> {
     Some(interval)
 }
 
+/// Awaits the next tick of the heartbeat interval, or pends forever if disabled.
 async fn tick_capture_heartbeat(interval: &mut Option<tokio::time::Interval>) {
     match interval {
         Some(interval) => {
@@ -785,12 +803,14 @@ async fn tick_capture_heartbeat(interval: &mut Option<tokio::time::Interval>) {
     }
 }
 
+/// Returns a suffix string describing the configured device override, if any.
 fn configured_device_suffix(device: Option<&str>) -> String {
     device
         .map(|device| format!(" configured by ATH_SENSOR_DEVICE={device}"))
         .unwrap_or_default()
 }
 
+/// Wraps a synchronous result with a labeled error context for startup steps.
 fn step<T, E>(label: impl Display, result: Result<T, E>) -> Result<T, SensorError>
 where
     E: Display,
@@ -798,6 +818,7 @@ where
     result.map_err(|error| SensorError::step(label, error))
 }
 
+/// Wraps an async result with a labeled error context for startup steps.
 async fn step_async<T, E, F>(label: impl Display, future: F) -> Result<T, SensorError>
 where
     E: Display,

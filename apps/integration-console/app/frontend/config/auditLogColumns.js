@@ -1,0 +1,140 @@
+import MacChip from "../components/MacChip.svelte"
+import { displayBoolean, formatTime, shortFingerprint } from "../lib/format"
+
+/**
+ * @typedef {Object} ColumnDefinition
+ * @property {string} key - Column key matching row data
+ * @property {string} label - Display label
+ * @property {boolean} [sortable] - Enable sorting
+ * @property {string} [minWidth] - Minimum width (Tailwind class)
+ * @property {Function} [href] - Generate link URL from row
+ * @property {Function} [format] - Format cell value
+ * @property {string} [filterType] - Filter type (date, number, boolean, text)
+ * @property {*} [component] - Svelte component for cell
+ * @property {Function} [componentProps] - Generate component props from row
+ * @property {string} [hiddenBelow] - Hide column below breakpoint (sm, md, lg)
+ */
+
+/**
+ * Build column definitions for audit log table
+ * @param {Object} options
+ * @param {Object} options.endpoints - API endpoints
+ * @param {Object} options.macOptions - MAC address display options
+ * @param {boolean} options.fullMacs - Show full MAC addresses
+ * @returns {ColumnDefinition[]}
+ */
+export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs = false }) {
+  const macProps = (value, display) => ({
+    mac: value,
+    display,
+    masked: !fullMacs,
+    auditLogsUrl: macOptions.auditLogsUrl || endpoints.index || "/audit_logs",
+    identitiesUrl: macOptions.identitiesUrl || "/identities",
+    shadowItUrl: macOptions.shadowItUrl || "/shadow_it_alerts",
+    inventoryUrl: macOptions.inventoryUrl || "/identities/inventory.json",
+    summaryUrl: macOptions.macSummaryUrl || "/identities/mac_summary.json",
+    recentAuditLogsUrl: macOptions.recentAuditLogsUrl || "/audit_logs/recent.json"
+  })
+
+  return [
+    {
+      key: "observed_at",
+      label: "Observed",
+      sortable: true,
+      minWidth: "min-w-32",
+      href: (row) => row.show_url,
+      format: formatTime,
+      filterType: "date"
+    },
+    {
+      key: "sensor_id",
+      label: "Sensor",
+      sortable: true,
+      minWidth: "min-w-24"
+    },
+    {
+      key: "location_id",
+      label: "Location",
+      sortable: true,
+      minWidth: "min-w-20"
+    },
+    {
+      key: "frame_subtype",
+      label: "Subtype",
+      sortable: true,
+      minWidth: "min-w-24",
+      format: (value, row) => value || row.event_type || "event"
+    },
+    {
+      key: "ssid",
+      label: "SSID",
+      sortable: true,
+      minWidth: "min-w-28"
+    },
+    {
+      key: "source_mac",
+      label: "Source",
+      sortable: true,
+      minWidth: "min-w-32",
+      component: MacChip,
+      componentProps: (value, row) => macProps(value, row.source_mac_display)
+    },
+    {
+      key: "destination_bssid",
+      label: "Dest BSSID",
+      sortable: true,
+      minWidth: "min-w-32",
+      component: MacChip,
+      componentProps: (value, row) => macProps(value, row.destination_bssid_display)
+    },
+    {
+      key: "signal_dbm",
+      label: "Signal",
+      sortable: true,
+      minWidth: "min-w-16",
+      filterType: "number"
+    },
+    {
+      key: "raw_len",
+      label: "Bytes",
+      sortable: true,
+      minWidth: "min-w-16",
+      filterType: "number"
+    },
+    {
+      key: "frame_control_flags",
+      label: "Flags",
+      sortable: true,
+      minWidth: "min-w-28",
+      hiddenBelow: "lg",
+      format: (value, row) => row.frame_flags_label || value || "",
+      filterType: "number"
+    },
+    {
+      key: "security_flags",
+      label: "Security",
+      sortable: true,
+      minWidth: "min-w-28",
+      hiddenBelow: "md",
+      format: (value, row) => row.security_label || "open/unknown",
+      filterType: "number"
+    },
+    {
+      key: "device_fingerprint",
+      label: "Fingerprint",
+      sortable: true,
+      minWidth: "min-w-28",
+      hiddenBelow: "lg",
+      format: shortFingerprint
+    },
+    {
+      key: "handshake_captured",
+      label: "Handshake",
+      sortable: true,
+      minWidth: "min-w-20",
+      hiddenBelow: "lg",
+      format: (value) => displayBoolean(value),
+      filterType: "boolean"
+    }
+  ]
+}
