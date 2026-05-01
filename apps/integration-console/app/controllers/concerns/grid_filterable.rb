@@ -46,6 +46,7 @@ module GridFilterable
   rescue JSON::ParserError
     []
   end
+  helper_method :parsed_grid_filters
 
   def filter_column_sql(config)
     column = config.is_a?(Hash) ? config.fetch(:column) : config
