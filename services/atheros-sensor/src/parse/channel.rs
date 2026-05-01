@@ -8,6 +8,9 @@
 
 use crate::model::ChannelFlagsLayer;
 
+/// Maps radiotap frequency values to 802.11 channel numbers. Covers three frequency bands:
+/// 2.4 GHz channels 1–13 (2412–2472 MHz), channel 14 (2484 MHz), and 5 GHz channels
+/// (5000–5895 MHz). 6 GHz (UNII-5 through UNII-8) is not yet mapped.
 pub(super) fn frequency_to_channel(frequency_mhz: Option<u16>) -> Option<u16> {
     let frequency_mhz = frequency_mhz?;
     match frequency_mhz {
@@ -18,6 +21,9 @@ pub(super) fn frequency_to_channel(frequency_mhz: Option<u16>) -> Option<u16> {
     }
 }
 
+/// Decodes the radiotap channel flags bitmask into named booleans and a labels vector.
+/// When the dynamic_cck_ofdm flag (bit 10, 0x0400) is set, both cck and ofdm are forced
+/// to true regardless of their individual bits, overriding the standard flag interpretation.
 pub(super) fn decode_channel_flags(raw: Option<u16>) -> Option<ChannelFlagsLayer> {
     let raw = raw?;
     let dynamic_cck_ofdm = raw & 0x0400 != 0;

@@ -40,6 +40,10 @@ pub enum PublishError {
     Queued(String),
 }
 
+/// Trait for publishing audit entries and alerts to NATS. Three methods:
+/// enqueue_message is non-blocking (fails fast on queue full), publish_message is async and
+/// blocks on backpressure, payload_ref_for_event produces the outbox reference (inline base64
+/// or file path) used in the scan request based on payload size vs SYNC_INLINE_PAYLOAD_MAX_BYTES.
 #[async_trait]
 pub trait PublishClient: Send + Sync {
     fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String>;
@@ -89,6 +93,11 @@ pub type SharedPublishState = Arc<Mutex<PublishState>>;
 /// `circuit_breaker` is `None` when the Postgres backlog is healthy (circuit closed) and
 /// `Some(Instant)` recording when the breaker opened; it resets to `None` after
 /// `CIRCUIT_BREAKER_TIMEOUT` elapses and a probe write succeeds.
+/// Mutable publish state shared across the pipeline via [`SharedPublishState`].
+///
+/// circuit_breaker is None when Postgres is healthy (circuit closed) and Some(Instant) recording
+/// when the breaker opened; it resets to None after CIRCUIT_BREAKER_TIMEOUT elapses and a probe
+/// write succeeds. memory_backlog is the LRU that absorbs entries while the breaker is open.
 pub struct PublishState {
     circuit_breaker: Option<Instant>,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
@@ -419,6 +428,9 @@ fn close_postgres_circuit_breaker(state: &SharedPublishState) {
 /// Retries pending backlog entries that fall within the audit window; skips entries
 /// outside the window. Ingest ledger failure keeps the entry in audit_backlog for
 /// future retry, preventing data loss when the primary ledger is unavailable.
+/// Retries pending backlog entries that fall within the audit window; skips entries outside
+/// the window but leaves them pending. Ingest ledger failure keeps the entry in audit_backlog
+/// for future retry, preventing data loss when the primary ledger is unavailable.
 pub async fn reconcile_backlog(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,
@@ -569,6 +581,9 @@ pub async fn reconcile_backlog(
     Ok(())
 }
 
+/// Prepares a publish by generating payload_ref (URL-safe base64 inline ref or outbox file path
+/// depending on payload size vs SYNC_INLINE_PAYLOAD_MAX_BYTES), serializing the ScanRequest, and
+/// computing the payload SHA256 hash.
 fn prepare_publish(
     publisher: &dyn PublishClient,
     payload: &str,

@@ -28,6 +28,8 @@ pub fn shared_stats() -> SharedStats {
     Arc::new(Mutex::new(CaptureStats::default()))
 }
 
+/// Spawns the metrics HTTP server on 127.0.0.1 (not 0.0.0.0) serving exactly one path:
+/// /metrics. No-op when port is None, returning immediately with no listener.
 pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, backlog: Arc<PostgresBacklog>) {
     let Some(port) = port else {
         return;
@@ -65,6 +67,9 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, backlog: Arc<
     });
 }
 
+/// Serves OpenMetrics text format (version 0.0.4) with counters (packets_seen, decoded_frames,
+/// unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures)
+/// and gauges (postgres_pool_available, postgres_pool_waiting).
 async fn serve_metrics(
     req: Request<hyper::body::Incoming>,
     stats: SharedStats,

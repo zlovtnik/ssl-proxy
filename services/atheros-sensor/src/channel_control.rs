@@ -7,8 +7,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ChannelControlError {
+    /// Wraps std::io::Error when the iw binary cannot be executed (not found, permission denied).
     #[error("failed to run iw: {0}")]
     Io(#[from] std::io::Error),
+    /// Carries stderr output when iw returns a non-zero exit code.
     #[error("iw set channel failed for {interface} channel {channel}: {stderr}")]
     Command {
         interface: String,
@@ -17,6 +19,8 @@ pub enum ChannelControlError {
     },
 }
 
+/// Shells out to `iw dev <iface> set channel <n>` synchronously, blocking briefly until
+/// the command completes. Fails fast on non-zero exit, returning stderr in the error.
 pub fn set_channel(interface: &str, channel: u8) -> Result<(), ChannelControlError> {
     let output = Command::new("iw")
         .arg("dev")

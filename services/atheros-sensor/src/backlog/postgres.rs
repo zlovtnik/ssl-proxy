@@ -49,6 +49,8 @@ impl PostgresBacklog {
         Ok(Self { pool })
     }
 
+    /// Checks out a connection from the pool, logging diagnostics at debug level on success
+    /// and error level on failure. The operation parameter identifies the caller for tracing.
     async fn client(&self, operation: &'static str) -> Result<Client, BacklogError> {
         let before = self.pool.status();
         match self.pool.get().await {
@@ -85,6 +87,9 @@ impl PostgresBacklog {
         }
     }
 
+    /// Looks up device_id and username by MAC address. Uses to_regclass existence check to
+    /// avoid errors on fresh deployments before migrations run. Queries both mac_id (exact)
+    /// and lower(mac_hint) (normalized fallback) to handle case-insensitive MAC lookups.
     pub async fn lookup_device_by_mac(
         &self,
         mac: &str,
@@ -127,6 +132,9 @@ impl PostgresBacklog {
         Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1))))
     }
 
+    /// Checks if a wireless network is authorized for the given location. This method is
+    /// #[allow(dead_code)] because authorization now goes through list_authorized_wireless_networks
+    /// plus the in-memory AuthorizedNetworkCache for performance.
     #[allow(dead_code)]
     pub async fn is_authorized_wireless_network(
         &self,
@@ -238,6 +246,8 @@ impl PostgresBacklog {
         self.pool.status()
     }
 
+    /// Emits pool diagnostics (max_size, size, available, waiting) alongside the Postgres error
+    /// so that connection exhaustion is visible at the same log line as the failure.
     fn log_postgres_error(&self, operation: &'static str, source: &tokio_postgres::Error) {
         let status = self.pool.status();
         let db_error = source.as_db_error();

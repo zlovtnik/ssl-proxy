@@ -4,6 +4,11 @@
 //! JSON payloads only when stream_name == "wireless.audit". All other streams get zero/null
 //! values, allowing the same table schema to handle multiple event types without bloat.
 
+/// Projection layer for wireless-specific columns in sync_scan_ingest. All fields default to
+/// zero/false/None when stream_name != "wireless.audit". Maps to Postgres columns: source_mac,
+/// bssid, destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data, retry,
+/// power_save, protected, security_flags, wps_device_name, wps_manufacturer, wps_model_name,
+/// device_fingerprint, handshake_captured.
 #[derive(Clone, Debug, Default)]
 pub(super) struct WirelessIngestColumns {
     pub(super) source_mac: Option<String>,
@@ -26,6 +31,9 @@ pub(super) struct WirelessIngestColumns {
 }
 
 impl WirelessIngestColumns {
+    /// Extracts wireless columns from JSON payload only when stream_name == "wireless.audit".
+    /// All other streams get default (zero/null) values. The destination_bssid field falls back
+    /// to bssid when not present.
     pub(super) fn from_payload(stream_name: &str, payload: &serde_json::Value) -> Self {
         if stream_name != "wireless.audit" {
             return Self::default();

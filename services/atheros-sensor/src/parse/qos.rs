@@ -1,5 +1,9 @@
+//! QoS Control field parsing; only relevant for subtype 0x8 (QoS data); note the WDS offset adjustment.
+
 use crate::model::QosLayer;
 
+/// Parses QoS Control field from QoS data frames (subtype 0x8); adjusts offset +6 bytes when both DS bits set (WDS).
+/// Extracts TID (traffic identifier), EOSP (end of service period), ACK policy, and A-MSDU present flag.
 pub(super) fn parse_qos_control(
     frame_type: u8,
     subtype: u8,
@@ -29,6 +33,7 @@ pub(super) fn parse_qos_control(
     })
 }
 
+/// Maps the 2-bit ACK policy field to a human-readable label.
 fn ack_policy_label(policy: u8) -> &'static str {
     match policy {
         0 => "normal",

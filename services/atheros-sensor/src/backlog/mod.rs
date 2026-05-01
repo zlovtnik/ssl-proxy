@@ -9,7 +9,10 @@ mod postgres;
 mod store;
 mod wireless_columns;
 
+#[doc(inline)]
 pub use postgres::PostgresBacklog;
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use store::{AuthorizedWirelessNetwork, BacklogEntry, IngestRecord};
+#[doc(inline)]
 pub use store::{BacklogError, BacklogStore};

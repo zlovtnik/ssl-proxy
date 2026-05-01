@@ -9,13 +9,17 @@ mod bandwidth;
 mod layer;
 mod window;
 
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use bandwidth::TrafficBucketError;
+#[doc(inline)]
 pub use bandwidth::{
     TrafficBucket, WirelessBandwidthEvent, BANDWIDTH_SUBJECT, DEFAULT_BANDWIDTH_WINDOW_SECS,
     EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
 };
+#[doc(inline)]
 pub use layer::AuditLayer;
+#[doc(inline)]
 pub use window::{AuditWindow, SharedAuditWindow};
 
 #[cfg(test)]

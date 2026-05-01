@@ -1,11 +1,23 @@
+//! Tag accumulation utilities for WiFi frame classification.
+//!
+//! Tags are accumulated into a Vec<String> during frame parsing to classify both structural
+//! properties (direction, signal strength) and threat indicators (Karma attacks, evil twins,
+//! deauth frames). Structural tags describe normal frame characteristics; threat tags flag
+//! suspicious patterns requiring security review.
+
 use crate::model::WifiFrame;
 
+/// Pushes a tag into the vector only if it does not already exist, ensuring deduplication.
+/// No-op if the tag is already present.
 pub(super) fn push_tag(tags: &mut Vec<String>, tag: &str) {
     if !tags.iter().any(|existing| existing == tag) {
         tags.push(tag.to_string());
     }
 }
 
+/// Returns true if bit 2 of the first octet is set, indicating a locally administered MAC
+/// address. This is the primary indicator of MAC randomization used by modern devices for
+/// privacy. Format expected: colon-separated hex string (e.g., "02:00:00:00:00:00").
 pub(super) fn is_locally_administered_mac(mac: &str) -> bool {
     mac.get(..2)
         .and_then(|octet| u8::from_str_radix(octet, 16).ok())
@@ -13,6 +25,11 @@ pub(super) fn is_locally_administered_mac(mac: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns a direction tag based on the ToDS and FromDS bits in the 802.11 frame control field.
+/// - (0,0) => "direction:intra_bss" (ad-hoc or direct client-to-client)
+/// - (1,0) => "direction:to_ds" (client sending to AP)
+/// - (0,1) => "direction:from_ds" (AP sending to client)
+/// - (1,1) => "direction:wds" (wireless distribution system bridge)
 pub(super) fn data_direction_tag(frame_control: u16) -> &'static str {
     let to_ds = frame_control & (1 << 8) != 0;
     let from_ds = frame_control & (1 << 9) != 0;
@@ -24,6 +41,10 @@ pub(super) fn data_direction_tag(frame_control: u16) -> &'static str {
     }
 }
 
+/// Tags probe responses sent to locally administered (randomized) MAC addresses as potential
+/// Karma attack indicators. Karma APs respond to probe requests from randomized MACs, which
+/// legitimate APs typically ignore. Adds both "threat:karma_probe_response" and
+/// "identity:randomized_mac" tags when detected.
 pub(super) fn tag_probe_response_destination(
     destination_mac: Option<&str>,
     tags: &mut Vec<String>,
@@ -34,6 +55,12 @@ pub(super) fn tag_probe_response_destination(
     }
 }
 
+/// Applies all threat and audit tags to a parsed frame. Executed after structural tags are
+/// applied. Checks performed in order:
+/// 1. SSID contains suspicious keywords ("setup", "wifi", "spectrumsetup") => potential_evil_twin
+/// 2. Probe response to randomized MAC => randomized_mac_target
+/// 3. Deauth or disassociation frame => deauth_frame
+/// 4. Signal strength tier (strong/medium/weak/very_weak) based on dBm
 pub(super) fn add_audit_threat_tags(frame: &WifiFrame, tags: &mut Vec<String>) {
     if let Some(ssid) = frame.ssid.as_deref() {
         let ssid_lower = ssid.to_ascii_lowercase();

@@ -83,6 +83,9 @@ pub struct ClientInventory {
 }
 
 impl ClientInventory {
+    /// Observes a frame and updates client profile. The excessive_probing flag latches to true
+    /// once a client sends ≥20 probe requests within any 60-second window and is never reset
+    /// to false within the same session (inventory flush required to clear).
     pub fn observe(&mut self, entry: &AuditEntry) {
         let Some(source_mac) = entry.source_mac.as_deref().map(normalize_mac) else {
             return;
@@ -160,6 +163,9 @@ pub struct SignalTracker {
 }
 
 impl SignalTracker {
+    /// Observes a frame and returns true when the signal delta exceeds threshold. Returns true
+    /// on the second observation of a BSSID when the delta exceeds threshold; the first
+    /// observation has no baseline to compare against.
     pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> bool {
         if threshold <= 0 {
             return false;
@@ -197,6 +203,10 @@ pub struct RogueApTracker {
 }
 
 impl RogueApTracker {
+    /// Observes a beacon or probe response and returns a RogueApAlert when any of four detection
+    /// reasons fire: open_authorized_ssid (known SSID with no encryption), ssid_typosquat
+    /// (edit distance ≤2 from known SSID), bssid_spoofing (BSSID changed SSID mapping), or
+    /// channel_conflict (same BSSID seen on multiple channels).
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -289,6 +299,10 @@ pub struct DeauthFloodTracker {
 }
 
 impl DeauthFloodTracker {
+    /// Observes a deauth or disassociation frame and returns a DeauthFloodAlert when the frame
+    /// count exceeds threshold within window_secs. Uses a sliding window that retains timestamps
+    /// and a separate Instant-based cooldown clock (wall-time, not frame timestamps) to suppress
+    /// repeat alerts for cooldown_secs after firing.
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -376,6 +390,9 @@ impl AuthorizedNetworkCache {
         Ok(())
     }
 
+    /// Checks if a network is authorized using three-field AND logic: location_id, SSID, and
+    /// BSSID. A None field on the stored entry acts as a wildcard (matches any value). At least
+    /// one of SSID or BSSID must be non-None on the stored entry to match.
     pub fn is_authorized(
         &self,
         ssid: Option<&str>,
@@ -438,6 +455,9 @@ fn normalize_mac(value: &str) -> String {
 
 /// Levenshtein distance with early exit: returns limit+1 when any row minimum exceeds
 /// limit, avoiding full DP computation for strings that cannot possibly match.
+/// Levenshtein distance with early-exit optimization. Returns limit+1 when the length
+/// difference exceeds limit or any row minimum exceeds limit, avoiding full DP computation.
+/// The limit of 2 distinguishes most typosquats (one character substitution or insertion).
 fn edit_distance_limited(left: &str, right: &str, limit: usize) -> usize {
     if left.len().abs_diff(right.len()) > limit {
         return limit + 1;

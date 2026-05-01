@@ -70,6 +70,9 @@ struct NatsEndpoint {
     password: Option<String>,
 }
 
+/// Spawns the audit window config subscriber with automatic reconnect loop. Any error from
+/// run_subscriber_once logs a warning and retries after 5 seconds indefinitely, allowing
+/// transient NATS restarts without restarting the sensor process.
 pub fn spawn_audit_window_config_subscriber(
     config: SyncConfig,
     location_id: String,
@@ -87,6 +90,9 @@ pub fn spawn_audit_window_config_subscriber(
     });
 }
 
+/// Spawns the authorized network config subscriber with automatic reconnect loop. Only bumps
+/// a generation counter; the actual reload happens lazily in process_packet when the generation
+/// changes, avoiding blocking the subscriber task on Postgres queries.
 pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation: Arc<AtomicU64>) {
     tokio::spawn(async move {
         loop {
@@ -100,6 +106,9 @@ pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation
     });
 }
 
+/// Spawns the sensor config subscriber with automatic reconnect loop. Channel and BPF filter
+/// updates take effect immediately via set_channel and capture_control.apply_filter. The
+/// log_idle_secs and mac_device_lookup_enabled fields require a sensor restart to take effect.
 pub fn spawn_sensor_config_subscriber(
     config: SyncConfig,
     location_id: String,
@@ -425,6 +434,9 @@ where
     }
 }
 
+/// Parses audit window config JSON and returns a new AuditWindow. When enabled is false,
+/// returns a window with "__disabled__" as the days string, which never matches any weekday,
+/// effectively disabling the audit window.
 fn parse_audit_window_update(
     payload: &str,
     current_location_id: &str,
@@ -470,6 +482,9 @@ fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTi
 /// Parses nats://[user:pass@]host:port into address and credentials; uses raw TCP
 /// (no TLS) to avoid heavyweight async-nats dependency for simple SUB connections.
 /// Credentials are percent-decoded; callers must percent-encode special chars in userinfo.
+/// Parses nats://[user:pass@]host:port URLs into address and credentials. Handles three forms:
+/// nats://host:port, nats://host (port defaults to 4222), and nats://user:pass@host:port.
+/// Credentials are percent-decoded; callers must percent-encode special chars (@ :) in userinfo.
 fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
     let trimmed = nats_url.trim();
     let authority = trimmed

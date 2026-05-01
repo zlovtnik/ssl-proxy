@@ -27,16 +27,22 @@ mod radiotap;
 mod tags;
 mod text;
 
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use frame::ParseError;
+#[doc(inline)]
 pub use frame::{attach_context, decode_frame, to_audit_entry};
+#[doc(inline)]
 pub use handshake::HandshakeMonitor;
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use identity::{IdentityCache, ResolvedIdentity};
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use ie::{
     IEIterator, InformationElement, SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2, SECURITY_WPA,
     SECURITY_WPA3, SECURITY_WPS,
 };
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use radiotap::{strip_radiotap, RadiotapMetadata};
