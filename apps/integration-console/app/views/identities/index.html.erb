@@ -9,7 +9,7 @@
   <%= link_to "Inventory JSON", inventory_identities_path(@inventory_query_parameters.merge(format: :json)) %>
 </p>
 
-<%= svelte_props_tag("identities-svelte-root", initial: {}) %>
+<%= svelte_props_tag("identities-svelte-root", initial: { filters: parsed_grid_filters }) %>
 <div id="identities-svelte-root"></div>
 <%= svelte_bundle_tags(:identities) %>
 

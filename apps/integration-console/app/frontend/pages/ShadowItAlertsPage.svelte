@@ -14,5 +14,5 @@
 </script>
 
 <div class="mb-4">
-  <ShadowItAlertsFilter onFilterChange={handleFilterChange} />
+  <ShadowItAlertsFilter onFilterChange={handleFilterChange} initialFilters={initial.filters || []} />
 </div>

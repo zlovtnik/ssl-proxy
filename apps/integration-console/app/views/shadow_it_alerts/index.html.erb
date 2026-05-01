@@ -3,7 +3,7 @@
 
 <h1>Shadow IT Alerts</h1>
 
-<%= svelte_props_tag("shadow-it-alerts-svelte-root", initial: {}) %>
+<%= svelte_props_tag("shadow-it-alerts-svelte-root", initial: { filters: parsed_grid_filters }) %>
 <div id="shadow-it-alerts-svelte-root"></div>
 <%= svelte_bundle_tags(:shadow_it_alerts) %>
 

@@ -14,5 +14,5 @@
 </script>
 
 <div class="mb-4">
-  <IdentitiesFilter onFilterChange={handleFilterChange} />
+  <IdentitiesFilter onFilterChange={handleFilterChange} initialFilters={initial.filters || []} />
 </div>

@@ -11,10 +11,23 @@ class ShadowItAlertsController < ApplicationController
     "resolved_at" => :resolved_at
   }.freeze
 
+  FILTERS = {
+    "source_mac" => :source_mac,
+    "destination_bssid" => :destination_bssid,
+    "ssid" => :ssid,
+    "sensor_id" => :sensor_id,
+    "location_id" => :location_id,
+    "reason" => :reason,
+    "signal_dbm" => { column: :signal_dbm, type: :number },
+    "last_occurred_at" => { column: :last_occurred_at, type: :date },
+    "resolved_at" => { column: :resolved_at, type: :date }
+  }.freeze
+
   def index
     @query = params[:q].to_s.strip
     @shadow_it_alerts = ShadowItAlert.recent
     @shadow_it_alerts = @shadow_it_alerts.search(@query) if @query.present?
+    @shadow_it_alerts = apply_grid_filters(@shadow_it_alerts, FILTERS)
     @shadow_it_alerts = apply_sort(@shadow_it_alerts, SORTS, default_sort: :last_occurred_at)
     @shadow_it_alerts = paginate(@shadow_it_alerts)
   end

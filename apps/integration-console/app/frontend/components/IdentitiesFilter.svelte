@@ -1,7 +1,7 @@
 <script>
   import QueryBuilder from "./QueryBuilder.svelte"
 
-  let { onFilterChange = () => {} } = $props()
+  let { onFilterChange = () => {}, initialFilters = [] } = $props()
 
   const fields = [
     { key: "source_mac", label: "MAC", type: "select" },
@@ -23,4 +23,4 @@
   }
 </script>
 
-<QueryBuilder {fields} onChange={handleChange} onFetchValues={fetchDistinctValues} />
+<QueryBuilder {fields} filters={initialFilters} onChange={handleChange} onFetchValues={fetchDistinctValues} />
