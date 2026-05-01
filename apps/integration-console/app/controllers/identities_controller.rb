@@ -9,6 +9,24 @@ class IdentitiesController < ApplicationController
     "signal_dbm" => :signal_dbm
   }.freeze
 
+  FILTERS = {
+    "source_mac" => :source_mac,
+    "location_id" => :location_id,
+    "ssid" => :ssid,
+    "destination_bssid" => :destination_bssid,
+    "registered_username" => :registered_username,
+    "display_name" => :display_name,
+    "ip_addresses" => :ip_addresses,
+    "hostnames" => :hostnames,
+    "services" => :services,
+    "dns_names" => :dns_names,
+    "frame_count" => { column: :frame_count, type: :number },
+    "protected_frame_count" => { column: :protected_frame_count, type: :number },
+    "open_frame_count" => { column: :open_frame_count, type: :number },
+    "first_occurred_at" => { column: :first_occurred_at, type: :date },
+    "last_occurred_at" => { column: :last_occurred_at, type: :date }
+  }.freeze
+
   def index
     @query = params[:q].to_s.strip
     @inventory_query_parameters = @query.present? ? { q: @query } : {}
@@ -22,10 +40,11 @@ class IdentitiesController < ApplicationController
     @query = params[:q].to_s.strip
     scope = WirelessDeviceInventory.recent
     scope = scope.search(@query) if @query.present?
+    scope = apply_grid_filters(scope, FILTERS)
 
     respond_to do |format|
       format.json do
-        data = Rails.cache.fetch(inventory_cache_key(@query), expires_in: IntegrationConsole::CacheTtl.inventory) do
+        data = Rails.cache.fetch(inventory_cache_key(@query, parsed_grid_filters), expires_in: IntegrationConsole::CacheTtl.inventory) do
           scope.limit(500).to_a
         end
         render_cached_json(data, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
@@ -167,8 +186,9 @@ class IdentitiesController < ApplicationController
     }
   end
 
-  def inventory_cache_key(query)
-    "inventory:#{Digest::SHA1.hexdigest(query.to_s.strip.downcase)}"
+  def inventory_cache_key(query, filters)
+    filter_hash = Digest::SHA1.hexdigest(filters.to_json)
+    "inventory:#{Digest::SHA1.hexdigest(query.to_s.strip.downcase)}:#{filter_hash}"
   end
 
   def inventory_csv(scope)
