@@ -55,6 +55,14 @@ pub struct RfLayer {
     pub antenna_id: Option<u8>,
     pub raw_len: usize,
     pub signal_status: String,
+    #[serde(default)]
+    pub vht_known: Option<u16>,
+    #[serde(default)]
+    pub vht_flags: Option<u8>,
+    #[serde(default)]
+    pub vht_bandwidth: Option<u8>,
+    #[serde(default)]
+    pub he_data: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -164,6 +172,10 @@ pub struct WifiFrame {
     pub channel_flags: Option<u16>,
     pub data_rate_kbps: Option<u32>,
     pub antenna_id: Option<u8>,
+    pub vht_known: Option<u16>,
+    pub vht_flags: Option<u8>,
+    pub vht_bandwidth: Option<u8>,
+    pub he_data: Option<Vec<u8>>,
     pub sequence_number: Option<u16>,
     pub fragment_number: Option<u8>,
     pub channel_number: Option<u16>,
@@ -179,6 +191,7 @@ pub struct WifiFrame {
     pub from_ds: bool,
     pub raw_len: usize,
     pub raw_frame: Option<String>,
+    pub band: String,
     pub tags: Vec<String>,
     pub security_flags: u32,
     pub wps_device_name: Option<String>,
@@ -187,6 +200,7 @@ pub struct WifiFrame {
     pub device_fingerprint: Option<String>,
     pub handshake_captured: bool,
     pub eapol_key_message: Option<u8>,
+    pub pmkid: Option<String>,
     pub username_hint: Option<String>,
     pub identity_source_hint: Option<String>,
     pub qos_tid: Option<u8>,
@@ -267,6 +281,8 @@ pub struct AuditEntry {
     pub location_id: String,
     pub interface: String,
     pub channel: u8,
+    #[serde(default = "default_band")]
+    pub band: String,
     pub frame_type: Option<String>,
     pub bssid: Option<String>,
     pub destination_bssid: Option<String>,
@@ -283,6 +299,10 @@ pub struct AuditEntry {
     pub channel_flags: Option<u16>,
     pub data_rate_kbps: Option<u32>,
     pub antenna_id: Option<u8>,
+    pub vht_known: Option<u16>,
+    pub vht_flags: Option<u8>,
+    pub vht_bandwidth: Option<u8>,
+    pub he_data: Option<Vec<u8>>,
     pub sequence_number: Option<u16>,
     pub fragment_number: Option<u8>,
     pub channel_number: Option<u16>,
@@ -364,6 +384,8 @@ pub struct AuditEntry {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HandshakeAlert {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub observed_at: String,
     pub sensor_id: String,
     pub location_id: String,
@@ -371,6 +393,7 @@ pub struct HandshakeAlert {
     pub bssid: String,
     pub client_mac: String,
     pub signal_dbm: Option<i8>,
+    pub pmkid: Option<String>,
 }
 
 fn default_identity_source() -> String {
@@ -379,6 +402,10 @@ fn default_identity_source() -> String {
 
 fn default_schema_version() -> u32 {
     1
+}
+
+fn default_band() -> String {
+    "unknown".to_string()
 }
 
 fn serialize_option_as_null<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>

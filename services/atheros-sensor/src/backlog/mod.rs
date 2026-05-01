@@ -5,5 +5,5 @@ mod wireless_columns;
 
 pub use postgres::PostgresBacklog;
 #[allow(unused_imports)]
-pub use store::{BacklogEntry, IngestRecord};
+pub use store::{AuthorizedWirelessNetwork, BacklogEntry, IngestRecord};
 pub use store::{BacklogError, BacklogStore};

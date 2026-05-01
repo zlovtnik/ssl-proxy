@@ -4,7 +4,10 @@ use crate::model::{
     ApplicationLayer, DhcpLayer, DnsLayer, Ipv4Layer, LlcSnapLayer, SsdpLayer, TransportLayer,
 };
 
-use super::eapol::data_payload_offset;
+use super::{
+    eapol::data_payload_offset,
+    text::{sanitize_text, utf8_text},
+};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct PayloadAnalysis {
@@ -119,10 +122,20 @@ fn parse_ipv4(bytes: &[u8]) -> Option<Ipv4Layer> {
     }
     let total_len = u16::from_be_bytes([*bytes.get(2)?, *bytes.get(3)?]);
     Some(Ipv4Layer {
-        src_ip: Ipv4Addr::new(*bytes.get(12)?, *bytes.get(13)?, *bytes.get(14)?, *bytes.get(15)?)
-            .to_string(),
-        dst_ip: Ipv4Addr::new(*bytes.get(16)?, *bytes.get(17)?, *bytes.get(18)?, *bytes.get(19)?)
-            .to_string(),
+        src_ip: Ipv4Addr::new(
+            *bytes.get(12)?,
+            *bytes.get(13)?,
+            *bytes.get(14)?,
+            *bytes.get(15)?,
+        )
+        .to_string(),
+        dst_ip: Ipv4Addr::new(
+            *bytes.get(16)?,
+            *bytes.get(17)?,
+            *bytes.get(18)?,
+            *bytes.get(19)?,
+        )
+        .to_string(),
         ttl: *bytes.get(8)?,
         protocol: *bytes.get(9)?,
         protocol_name: ip_protocol_name(*bytes.get(9)?).to_string(),
@@ -271,7 +284,9 @@ fn parse_ssdp(bytes: &[u8]) -> Option<SsdpLayer> {
             continue;
         };
         let name = name.trim().to_ascii_uppercase();
-        let value = value.trim().to_string();
+        let Some(value) = sanitize_text(value) else {
+            continue;
+        };
         match name.as_str() {
             "ST" | "NT" => st = Some(value),
             "MX" => mx = Some(value),
@@ -311,7 +326,8 @@ fn parse_dhcp(bytes: &[u8]) -> Option<DhcpLayer> {
         match option {
             53 => message_type = value.first().copied(),
             50 if value.len() == 4 => {
-                requested_ip = Some(Ipv4Addr::new(value[0], value[1], value[2], value[3]).to_string())
+                requested_ip =
+                    Some(Ipv4Addr::new(value[0], value[1], value[2], value[3]).to_string())
             }
             12 => hostname = text_option(value),
             60 => vendor_class = text_option(value),
@@ -385,7 +401,7 @@ fn decode_dns_name(bytes: &[u8], offset: usize) -> Option<(String, usize)> {
             break;
         }
         let label = bytes.get(cursor..cursor + len)?;
-        labels.push(std::str::from_utf8(label).ok()?.to_string());
+        labels.push(utf8_text(label)?);
         cursor += len;
     }
     Some((labels.join("."), end_offset.unwrap_or(cursor)))
@@ -440,10 +456,5 @@ fn ethertype_name(ethertype: u16) -> &'static str {
 }
 
 fn text_option(bytes: &[u8]) -> Option<String> {
-    let value = std::str::from_utf8(bytes).ok()?.trim_matches(char::from(0)).trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    utf8_text(bytes)
 }

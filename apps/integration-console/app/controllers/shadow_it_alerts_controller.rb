@@ -1,6 +1,6 @@
 class ShadowItAlertsController < ApplicationController
   SORTS = {
-    "observed_at" => :observed_at,
+    "last_occurred_at" => :last_occurred_at,
     "source_mac" => :source_mac,
     "destination_bssid" => :destination_bssid,
     "ssid" => :ssid,
@@ -15,7 +15,7 @@ class ShadowItAlertsController < ApplicationController
     @query = params[:q].to_s.strip
     @shadow_it_alerts = ShadowItAlert.recent
     @shadow_it_alerts = @shadow_it_alerts.search(@query) if @query.present?
-    @shadow_it_alerts = apply_sort(@shadow_it_alerts, SORTS, default_sort: :observed_at)
+    @shadow_it_alerts = apply_sort(@shadow_it_alerts, SORTS, default_sort: :last_occurred_at)
     @shadow_it_alerts = paginate(@shadow_it_alerts)
   end
 end

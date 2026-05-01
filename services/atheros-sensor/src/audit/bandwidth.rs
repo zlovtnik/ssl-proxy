@@ -12,6 +12,8 @@ pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WirelessBandwidthEvent {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub event_type: String,
     pub window_start: String,
     pub window_end: String,
@@ -32,6 +34,10 @@ pub struct WirelessBandwidthEvent {
     pub threshold_exceeded: bool,
 }
 
+fn default_schema_version() -> u32 {
+    1
+}
+
 #[derive(Debug, Error)]
 pub enum TrafficBucketError {
     #[error("invalid observed_at timestamp {observed_at:?}: {source}")]
@@ -50,6 +56,7 @@ struct TrafficKey {
     source_mac: String,
     destination_bssid: String,
     ssid: Option<String>,
+    external_bssid: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -78,7 +85,15 @@ impl TrafficBucket {
         }
     }
 
-    pub fn observe_raw(&mut self, bytes: u64, observed_at: DateTime<Utc>) -> Vec<WirelessBandwidthEvent> {
+    pub fn observe_raw(
+        &mut self,
+        bytes: u64,
+        observed_at: DateTime<Utc>,
+        sensor_id: &str,
+        location_id: &str,
+        interface: &str,
+        channel: u8,
+    ) -> Vec<WirelessBandwidthEvent> {
         let flushed = self.flush_if_elapsed(observed_at);
 
         if self.window_start.is_none() {
@@ -87,13 +102,14 @@ impl TrafficBucket {
 
         // Count raw bytes against unknown bucket for unsupported frames
         let key = TrafficKey {
-            sensor_id: "unknown".to_string(),
-            location_id: "unknown".to_string(),
-            interface: "unknown".to_string(),
-            channel: 0,
+            sensor_id: sensor_id.to_string(),
+            location_id: location_id.to_string(),
+            interface: interface.to_string(),
+            channel,
             source_mac: "unknown".to_string(),
             destination_bssid: "unknown".to_string(),
             ssid: None,
+            external_bssid: true,
         };
 
         let counters = self.entries.entry(key).or_default();
@@ -106,6 +122,7 @@ impl TrafficBucket {
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
+        external_bssid: bool,
     ) -> Result<Vec<WirelessBandwidthEvent>, TrafficBucketError> {
         let observed_at = DateTime::parse_from_rfc3339(&entry.observed_at).map_err(|source| {
             TrafficBucketError::InvalidObservedAt {
@@ -142,6 +159,7 @@ impl TrafficBucket {
             source_mac,
             destination_bssid,
             ssid: entry.ssid.clone(),
+            external_bssid,
         };
         let counters = self.entries.entry(key).or_default();
         counters.bytes = counters.bytes.saturating_add(entry.raw_len as u64);
@@ -190,9 +208,10 @@ impl TrafficBucket {
         let mut events = Vec::with_capacity(self.entries.len());
         for (key, counters) in self.entries.drain() {
             events.push(WirelessBandwidthEvent {
+                schema_version: 1,
                 event_type: "wireless_bandwidth_window".to_string(),
-                window_start: window_start.to_rfc3339(),
-                window_end: window_end.to_rfc3339(),
+                window_start: ssl_proxy::time::rfc3339_from_utc(window_start),
+                window_end: ssl_proxy::time::rfc3339_from_utc(window_end),
                 sensor_id: key.sensor_id,
                 location_id: key.location_id,
                 interface: key.interface,
@@ -206,8 +225,9 @@ impl TrafficBucket {
                 more_data_count: counters.more_data_count,
                 power_save_count: counters.power_save_count,
                 strongest_signal_dbm: counters.strongest_signal_dbm,
-                external_bssid: false,
-                threshold_exceeded: false,
+                external_bssid: key.external_bssid,
+                threshold_exceeded: key.external_bssid
+                    && counters.bytes > EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
             });
         }
         events

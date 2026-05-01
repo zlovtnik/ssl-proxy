@@ -23,4 +23,18 @@ class PaginationPartialTest < ActionView::TestCase
     assert_includes rendered, "aria-disabled=\"true\""
     assert_includes rendered, "Page 1 of 2"
   end
+
+  test "renders unknown total pagination from window flags" do
+    @current_page = 2
+    @total_pages = nil
+    @has_previous_page = true
+    @has_next_page = true
+
+    render partial: "shared/pagination"
+
+    assert_includes rendered, "Prev"
+    assert_includes rendered, "Next"
+    assert_includes rendered, "Page 2"
+    assert_not_includes rendered, "Page 2 of"
+  end
 end

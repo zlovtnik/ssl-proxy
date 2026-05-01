@@ -3,6 +3,7 @@ require "digest/sha1"
 class ApplicationController < ActionController::Base
   include Paginatable
   include Sortable
+  include GridFilterable
 
   rescue_from ActiveRecord::StatementInvalid, with: :render_query_error
   rescue_from ExportStore::Error, with: :render_export_store_error

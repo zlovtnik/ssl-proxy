@@ -163,7 +163,8 @@ flowchart TD
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| WireGuard VPN | 443 | UDP | External obfuscated tunnel endpoint |
+| WireGuard VPN | 443 | UDP | Plain iPhone/direct tunnel endpoint |
+| WireGuard Relay | 51820 | UDP | Obfuscated Mac/shim tunnel endpoint |
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
 | Explicit Proxy | 3000 | TCP | Legacy opt-in listener, disabled by default |
@@ -215,6 +216,8 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 
 3. **WireGuard Client Configuration:**
    Build and run the bundled Linux `wg-obfs-shim`, then import `config/peer1/peer1-obfuscated.conf.example` into the WireGuard client. The profile endpoint `127.0.0.1:51821` is local to the client machine; configure the real remote server endpoint separately in `config/client/wg-obfs-shim.env.example`. Do not combine this with a separate manual HTTP proxy on the client.
+
+   For the Mac profile, import `config/peer2/peer2-obfuscated.conf.example` instead. It uses the same local shim contract, but the server relay listens on UDP `51820` while the plain iPhone path remains on UDP `443`.
 
    Verify the service locally:
    ```bash

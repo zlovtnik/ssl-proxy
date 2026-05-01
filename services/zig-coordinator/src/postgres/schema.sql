@@ -25,6 +25,93 @@ begin
 end;
 $$;
 
+create or replace function coordinator.record_scan_request(
+  p_request jsonb,
+  p_payload jsonb,
+  p_payload_sha256 text
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_stream_name text := p_request->>'stream_name';
+  v_dedupe_key text := p_request->>'dedupe_key';
+  v_payload_ref text := p_request->>'payload_ref';
+  v_observed_at timestamptz := (p_request->>'observed_at')::timestamptz;
+  v_recorded boolean := false;
+begin
+  if v_stream_name is distinct from 'proxy.events' then
+    return jsonb_build_object(
+      'recorded', false,
+      'reason', 'unsupported_stream',
+      'stream_name', v_stream_name
+    );
+  end if;
+
+  if nullif(v_dedupe_key, '') is null then
+    raise exception 'scan request missing dedupe_key';
+  end if;
+  if nullif(v_payload_ref, '') is null then
+    raise exception 'scan request missing payload_ref';
+  end if;
+
+  insert into sync_scan_ingest (
+    dedupe_key,
+    stream_name,
+    observed_at,
+    payload_ref,
+    payload,
+    payload_sha256,
+    status,
+    attempt_count,
+    last_error,
+    producer,
+    event_kind,
+    created_at,
+    updated_at
+  )
+  values (
+    v_dedupe_key,
+    v_stream_name,
+    v_observed_at,
+    v_payload_ref,
+    p_payload,
+    p_payload_sha256,
+    'pending',
+    0,
+    null,
+    'ssl-proxy',
+    nullif(p_payload->>'type', ''),
+    now(),
+    now()
+  )
+  on conflict (dedupe_key)
+  do update set
+    observed_at = excluded.observed_at,
+    payload_ref = excluded.payload_ref,
+    payload = coalesce(excluded.payload, sync_scan_ingest.payload),
+    payload_sha256 = excluded.payload_sha256,
+    producer = excluded.producer,
+    event_kind = coalesce(excluded.event_kind, sync_scan_ingest.event_kind),
+    status = case
+      when sync_scan_ingest.status in ('pending', 'failed') then 'pending'
+      else sync_scan_ingest.status
+    end,
+    last_error = case
+      when sync_scan_ingest.status in ('pending', 'failed') then null
+      else sync_scan_ingest.last_error
+    end,
+    updated_at = now()
+  returning true into v_recorded;
+
+  return jsonb_build_object(
+    'recorded', coalesce(v_recorded, false),
+    'dedupe_key', v_dedupe_key,
+    'stream_name', v_stream_name
+  );
+end;
+$$;
+
 create or replace function coordinator.process_ingest_ledger(
   p_stream_names text[],
   p_max_attempts integer,
@@ -224,16 +311,11 @@ as $$
     where stream_name = 'wireless.audit'
       and observed_at >= now() - interval '60 seconds'
       and source_mac is not null
+      and lower(source_mac) ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
       and signal_dbm >= -50
   ),
   candidates as (
-    select distinct on (source_mac, destination_bssid, coalesce(location_id, ''))
-      md5(
-        source_mac || '|' ||
-        coalesce(destination_bssid, '') || '|' ||
-        coalesce(location_id, '') || '|' ||
-        date_trunc('minute', observed_at)::text
-      ) as dedupe_key,
+    select distinct on (source_mac)
       observed_at,
       source_mac,
       destination_bssid,
@@ -260,26 +342,25 @@ as $$
       and not exists (
         select 1
           from devices d
-         where d.mac_hint is not null
-           and lower(d.mac_hint) = w.source_mac
+         where d.mac_id = w.source_mac
            and d.last_seen >= now() - interval '5 minutes'
       )
       and not exists (
         select 1
           from sync_scan_ingest proxy
-          join devices d on d.device_id = proxy.payload->>'device_id'
+          join devices d on d.mac_id = lower(coalesce(proxy.payload->>'mac_id', proxy.payload->>'device_id'))
          where proxy.stream_name = 'proxy.events'
            and proxy.observed_at >= now() - interval '5 minutes'
-           and d.mac_hint is not null
-           and lower(d.mac_hint) = w.source_mac
+           and d.mac_id = w.source_mac
       )
-    order by source_mac, destination_bssid, coalesce(location_id, ''), observed_at desc
+    order by source_mac, observed_at desc
   ),
   inserted as (
-    insert into shadow_it_alerts (
-      dedupe_key,
-      observed_at,
+    insert into shadow_it_alerts as target (
       source_mac,
+      first_occurred_at,
+      last_occurred_at,
+      occurrence_count,
       destination_bssid,
       ssid,
       sensor_id,
@@ -291,9 +372,10 @@ as $$
       updated_at
     )
     select
-      dedupe_key,
-      observed_at,
       source_mac,
+      observed_at,
+      observed_at,
+      1,
       destination_bssid,
       ssid,
       sensor_id,
@@ -304,13 +386,26 @@ as $$
       now(),
       now()
     from candidates
-    on conflict (dedupe_key) do nothing
+    on conflict (source_mac) do update
+      set last_occurred_at = greatest(target.last_occurred_at, excluded.last_occurred_at),
+          occurrence_count = target.occurrence_count + 1,
+          destination_bssid = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.destination_bssid else target.destination_bssid end,
+          ssid = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.ssid else target.ssid end,
+          sensor_id = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.sensor_id else target.sensor_id end,
+          location_id = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.location_id else target.location_id end,
+          signal_dbm = case when excluded.last_occurred_at >= target.last_occurred_at then excluded.signal_dbm else target.signal_dbm end,
+          reason = excluded.reason,
+          evidence = excluded.evidence,
+          resolved_at = null,
+          updated_at = now()
     returning *
   )
   select jsonb_build_object(
            'event_type', 'shadow_device',
-           'observed_at', observed_at,
+           'first_occurred_at', first_occurred_at,
+           'last_occurred_at', last_occurred_at,
            'source_mac', source_mac,
+           'occurrence_count', occurrence_count,
            'destination_bssid', destination_bssid,
            'ssid', ssid,
            'sensor_id', sensor_id,

@@ -79,6 +79,43 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "lab", JSON.parse(response.body).fetch("locationId")
   end
 
+  test "index applies grid filters" do
+    insert_sync_ingest(
+      dedupe_key: "audit-filter-match",
+      observed_at: 1.minute.ago,
+      payload: {
+        "sensor_id" => "sensor-1",
+        "location_id" => "lab",
+        "frame_subtype" => "beacon",
+        "ssid" => "CorpWiFi",
+        "signal_dbm" => -42
+      }
+    )
+    insert_sync_ingest(
+      dedupe_key: "audit-filter-miss",
+      observed_at: Time.current,
+      payload: {
+        "sensor_id" => "sensor-2",
+        "location_id" => "lab",
+        "frame_subtype" => "beacon",
+        "ssid" => "GuestWiFi",
+        "signal_dbm" => -83
+      }
+    )
+
+    filters = [
+      { field: "ssid", operator: "contains", value: "corp", conjunction: "AND" },
+      { field: "signal_dbm", operator: "greater_than", value: "-50", conjunction: "AND" }
+    ].to_json
+
+    get audit_logs_url(format: :json, filters: filters)
+
+    assert_response :success
+    payload = JSON.parse(response.body)
+    assert_equal ["audit-filter-match"], payload.fetch("rows").map { |row| row["dedupe_key"] }
+    assert_equal 2, payload.fetch("filters").length
+  end
+
   test "show renders rf metadata when present" do
     insert_sync_ingest(
       dedupe_key: "audit-rf",
@@ -338,8 +375,9 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     )
 
     captured_csv = nil
-    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, filename: nil, &block) {
       captured_csv = block.call
+      assert_equal "audit-logs.csv", filename
       "http://minio.test/audit.csv"
     }) do
       get export_audit_logs_url(format: :csv)
@@ -374,7 +412,8 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     )
 
     captured_csv = nil
-    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, &block) {
+    ExportStore.stub(:fetch_or_generate, ->(key:, ttl:, filename:, &block) {
+      assert_equal "audit-logs.csv", filename
       captured_csv = block.call
       "http://minio.test/audit.csv"
     }) do

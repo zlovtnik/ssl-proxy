@@ -4,14 +4,16 @@ use tracing::{Event, Subscriber};
 use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 
 use super::SharedAuditWindow;
+use crate::config::AuditLayerStream;
 
 pub struct AuditLayer {
     window: SharedAuditWindow,
+    stream: AuditLayerStream,
 }
 
 impl AuditLayer {
-    pub fn new(window: SharedAuditWindow) -> Self {
-        Self { window }
+    pub fn new(window: SharedAuditWindow, stream: AuditLayerStream) -> Self {
+        Self { window, stream }
     }
 }
 
@@ -20,6 +22,9 @@ where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        if let AuditLayerStream::Off = self.stream {
+            return;
+        }
         let now = Utc::now();
         let active = self
             .window
@@ -31,16 +36,19 @@ where
         }
         let mut visitor = EventVisitor::default();
         event.record(&mut visitor);
-        eprintln!(
-            "{}",
-            json!({
-                "type": "audit_trace",
-                "time": now.to_rfc3339(),
-                "target": event.metadata().target(),
-                "level": event.metadata().level().as_str(),
-                "fields": visitor.fields,
-            })
-        );
+        let line = json!({
+            "type": "audit_trace",
+            "time": ssl_proxy::time::rfc3339_from_utc(now),
+            "target": event.metadata().target(),
+            "level": event.metadata().level().as_str(),
+            "fields": visitor.fields,
+        })
+        .to_string();
+        match self.stream {
+            AuditLayerStream::Off => {}
+            AuditLayerStream::Stdout => println!("{line}"),
+            AuditLayerStream::Stderr => eprintln!("{line}"),
+        }
     }
 }
 

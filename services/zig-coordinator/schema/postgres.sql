@@ -30,6 +30,9 @@ create table if not exists sync_scan_ingest (
   last_error text,
   producer text not null default 'unknown',
   event_kind text,
+  sensor_id text,
+  location_id text,
+  username text,
   schema_version integer not null default 1,
   frame_type text,
   source_mac text,
@@ -134,6 +137,9 @@ create extension if not exists pg_trgm;
 
 alter table sync_batch add column if not exists created_at timestamptz not null default now();
 alter table sync_batch add column if not exists updated_at timestamptz not null default now();
+alter table sync_scan_ingest add column if not exists sensor_id text;
+alter table sync_scan_ingest add column if not exists location_id text;
+alter table sync_scan_ingest add column if not exists username text;
 alter table sync_scan_ingest add column if not exists source_mac text;
 alter table sync_scan_ingest add column if not exists bssid text;
 alter table sync_scan_ingest add column if not exists destination_bssid text;
@@ -239,7 +245,7 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'fk_sync_error_batch_id') then
     alter table sync_error add constraint fk_sync_error_batch_id foreign key (batch_id) references sync_batch(batch_id);
   end if;
-end $$;
+end $$ ;
 
 create unique index if not exists sync_batch_dedupe_idx on sync_batch (dedupe_key);
 create index if not exists idx_sync_job_stream_name on sync_job (stream_name);
@@ -287,21 +293,14 @@ create table if not exists authorized_wireless_networks (
   )
 );
 
-create unique index if not exists authorized_wireless_networks_match_idx
-  on authorized_wireless_networks (
-    coalesce(lower(ssid), ''),
-    coalesce(lower(bssid), ''),
-    coalesce(location_id, '')
-  );
-
 create index if not exists authorized_wireless_networks_enabled_idx
   on authorized_wireless_networks (enabled, location_id);
 
 create table if not exists shadow_it_alerts (
-  alert_id bigserial primary key,
-  dedupe_key text not null unique,
-  observed_at timestamptz not null,
-  source_mac text not null,
+  source_mac text primary key,
+  first_occurred_at timestamptz not null,
+  last_occurred_at timestamptz not null,
+  occurrence_count bigint not null default 1,
   destination_bssid text,
   ssid text,
   sensor_id text,
@@ -311,35 +310,39 @@ create table if not exists shadow_it_alerts (
   evidence jsonb not null default '{}'::jsonb,
   resolved_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint shadow_it_alerts_source_mac_format_chk check (source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$')
 );
 
 create index if not exists shadow_it_alerts_open_idx
-  on shadow_it_alerts (observed_at desc)
+  on shadow_it_alerts (last_occurred_at desc)
   where resolved_at is null;
 
-create index if not exists shadow_it_alerts_source_idx
-  on shadow_it_alerts (lower(source_mac), observed_at desc);
-
 create table if not exists devices (
-  device_id text primary key,
+  mac_id text primary key,
   wg_pubkey text,
   claim_token_hash text,
   display_name text,
   username text,
   hostname text,
   os_hint text,
-  mac_hint text,
+  mac_hint text not null,
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
-  notes text
+  notes text,
+  constraint devices_mac_id_format_chk check (
+    mac_id ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+    and lower(mac_hint) = mac_id
+  )
 );
 
-create index if not exists devices_mac_hint_idx on devices (lower(mac_hint));
 create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
 create index if not exists devices_username_idx on devices (username, last_seen desc);
 
-create or replace view v_wireless_audit_with_devices as
+
+drop view if exists v_wireless_audit_with_devices;
+
+create view v_wireless_audit_with_devices as
 select
   ssi.dedupe_key,
   ssi.observed_at,
@@ -385,10 +388,10 @@ select
   coalesce(ssi.retry::text, ssi.payload->>'retry') as retry,
   coalesce(ssi.power_save::text, ssi.payload->>'power_save') as power_save,
   coalesce(ssi.protected::text, ssi.payload->>'protected') as protected,
-  ssi.payload->>'location_id' as location_id,
-  ssi.payload->>'sensor_id' as sensor_id,
+  coalesce(ssi.location_id, ssi.payload->>'location_id') as location_id,
+  coalesce(ssi.sensor_id, ssi.payload->>'sensor_id') as sensor_id,
   ssi.payload->>'identity_source' as identity_source,
-  ssi.payload->>'username' as username,
+  coalesce(ssi.username, ssi.payload->>'username') as username,
   ssi.payload->'tags' as tags,
   ssi.security_flags,
   ssi.wps_device_name,
@@ -396,7 +399,7 @@ select
   ssi.wps_model_name,
   ssi.device_fingerprint,
   ssi.handshake_captured,
-  coalesce(d_src.device_id, d_bssid.device_id) as device_id,
+  coalesce(d_src.mac_id, d_bssid.mac_id) as device_id,
   coalesce(d_src.display_name, d_bssid.display_name) as display_name,
   coalesce(d_src.username, d_bssid.username) as registered_username,
   coalesce(d_src.os_hint, d_bssid.os_hint) as os_hint,
@@ -408,44 +411,6 @@ left join devices d_bssid
   on lower(d_bssid.mac_hint) = lower(coalesce(ssi.bssid, ssi.payload->>'bssid'))
 where ssi.stream_name = 'wireless.audit';
 
-do $$
-begin
-  if exists (
-    select 1
-    from pg_indexes
-    where schemaname = current_schema()
-      and indexname = 'ssi_wireless_ssid_idx'
-      and indexdef not ilike '%(ssid,%'
-  ) then
-    drop index ssi_wireless_ssid_idx;
-  end if;
-end $$;
-
-do $$
-begin
-  if exists (
-    select 1
-    from pg_indexes
-    where schemaname = current_schema()
-      and indexname = 'ssi_wireless_source_mac_idx'
-      and indexdef not ilike '%lower(source_mac)%'
-  ) then
-    drop index ssi_wireless_source_mac_idx;
-  end if;
-end $$;
-
-do $$
-begin
-  if exists (
-    select 1
-    from pg_indexes
-    where schemaname = current_schema()
-      and indexname = 'ssi_wireless_bssid_idx'
-      and indexdef not ilike '%lower(bssid)%'
-  ) then
-    drop index ssi_wireless_bssid_idx;
-  end if;
-end $$;
 
 create index if not exists ssi_wireless_ssid_idx
   on sync_scan_ingest (ssid, observed_at desc)
@@ -531,13 +496,16 @@ create index if not exists ssi_pending_observed_idx
   on sync_scan_ingest (observed_at asc)
   where status in ('pending', 'failed');
 
-create or replace view v_wireless_threats as
+drop view if exists v_wireless_threats;
+
+create view v_wireless_threats as
 select
   observed_at,
   coalesce(ssid, payload->>'ssid') as ssid,
   coalesce(bssid, payload->>'bssid') as bssid,
   coalesce(destination_bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
   coalesce(source_mac, payload->>'source_mac') as source_mac,
+  coalesce(sensor_id, payload->>'sensor_id') as sensor_id,
   payload->>'transmitter_mac' as transmitter_mac,
   payload->>'receiver_mac' as receiver_mac,
   payload->>'frame_subtype' as frame_subtype,
@@ -551,9 +519,9 @@ select
   coalesce(retry::text, payload->>'retry') as retry,
   coalesce(power_save::text, payload->>'power_save') as power_save,
   coalesce(protected::text, payload->>'protected') as protected,
-  payload->>'location_id' as location_id,
+  coalesce(location_id, payload->>'location_id') as location_id,
   payload->>'identity_source' as identity_source,
-  payload->>'username' as username,
+  coalesce(username, payload->>'username') as username,
   payload->'tags' as tags,
   security_flags,
   wps_device_name,
@@ -621,38 +589,96 @@ window
   session_window as (partition by session_key order by observed_at);
 
 create or replace view v_wireless_device_inventory as
-select
-  md5(coalesce(lower(source_mac), '') || '|' || coalesce(location_id, '')) as inventory_key,
-  lower(source_mac) as source_mac,
-  max(location_id) as location_id,
-  min(observed_at) as first_seen,
-  max(observed_at) as last_seen,
-  max(ssid) as ssid,
-  max(destination_bssid) as destination_bssid,
-  string_agg(distinct src_ip, ', ') filter (where src_ip is not null) as ip_addresses,
-  string_agg(distinct hostname, ', ') filter (where hostname is not null) as hostnames,
-  string_agg(distinct app_protocol, ', ') filter (where app_protocol is not null) as services,
-  string_agg(distinct dns_query_name, ', ') filter (where dns_query_name is not null) as dns_names,
-  count(*) as frame_count,
-  sum(case when protected then 1 else 0 end) as protected_frame_count,
-  sum(case when not protected then 1 else 0 end) as open_frame_count
-from (
+with recent_ingest as materialized (
+  select *
+  from sync_scan_ingest
+  where stream_name = 'wireless.audit'
+    and coalesce(source_mac, payload->>'source_mac') is not null
+  order by observed_at desc
+  limit 20000
+),
+base as (
   select
+    dedupe_key,
     observed_at,
-    coalesce(source_mac, payload->>'source_mac') as source_mac,
-    payload->>'location_id' as location_id,
-    coalesce(ssid, payload->>'ssid') as ssid,
+    lower(coalesce(source_mac, payload->>'source_mac')) as source_mac,
+    coalesce(bssid, payload->>'bssid') as bssid,
     coalesce(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
+    coalesce(ssid, payload->>'ssid') as ssid,
+    coalesce(signal_dbm, nullif(payload->>'signal_dbm', '')::integer) as signal_dbm,
+    coalesce(location_id, payload->>'location_id') as location_id,
+    coalesce(sensor_id, payload->>'sensor_id') as sensor_id,
+    coalesce(username, payload->>'username') as username,
     coalesce(src_ip, payload->>'src_ip') as src_ip,
+    coalesce(dst_ip, payload->>'dst_ip') as dst_ip,
     coalesce(dhcp_hostname, mdns_name, payload->>'dhcp_hostname', payload->>'mdns_name') as hostname,
     coalesce(app_protocol, payload->>'app_protocol') as app_protocol,
     coalesce(dns_query_name, payload->>'dns_query_name') as dns_query_name,
-    coalesce(protected, false) as protected
-  from sync_scan_ingest
-  where stream_name = 'wireless.audit'
-) inventory
-where source_mac is not null
-group by lower(source_mac), location_id;
+    coalesce(protected, false) as protected,
+    wps_device_name,
+    wps_manufacturer,
+    wps_model_name,
+    device_fingerprint
+  from recent_ingest
+),
+latest as (
+  select *
+  from (
+    select base.*, row_number() over (partition by source_mac order by observed_at desc, dedupe_key desc) as row_number
+    from base
+  ) ranked
+  where row_number = 1
+),
+rollup as (
+  select
+    source_mac,
+    min(observed_at) as first_occurred_at,
+    max(observed_at) as last_occurred_at,
+    count(*)::bigint as occurrence_count,
+    string_agg(distinct src_ip, ', ') filter (where src_ip is not null) as ip_addresses,
+    string_agg(distinct hostname, ', ') filter (where hostname is not null) as hostnames,
+    string_agg(distinct app_protocol, ', ') filter (where app_protocol is not null) as services,
+    string_agg(distinct dns_query_name, ', ') filter (where dns_query_name is not null) as dns_names,
+    sum(case when protected then 1 else 0 end)::bigint as protected_frame_count,
+    sum(case when not protected then 1 else 0 end)::bigint as open_frame_count
+  from base
+  group by source_mac
+)
+select
+  rollup.source_mac as inventory_key,
+  rollup.source_mac,
+  rollup.first_occurred_at,
+  rollup.last_occurred_at,
+  rollup.first_occurred_at as first_seen,
+  rollup.last_occurred_at as last_seen,
+  rollup.last_occurred_at as observed_at,
+  rollup.occurrence_count,
+  rollup.occurrence_count as frame_count,
+  latest.location_id,
+  latest.sensor_id,
+  latest.bssid,
+  latest.destination_bssid,
+  latest.ssid,
+  latest.signal_dbm::text as signal_dbm,
+  latest.username,
+  rollup.ip_addresses,
+  rollup.hostnames,
+  rollup.services,
+  rollup.dns_names,
+  rollup.protected_frame_count,
+  rollup.open_frame_count,
+  latest.wps_device_name,
+  latest.wps_manufacturer,
+  latest.wps_model_name,
+  latest.device_fingerprint,
+  devices.mac_id as device_id,
+  devices.display_name,
+  devices.username as registered_username,
+  devices.os_hint,
+  coalesce(devices.hostname, latest.hostname) as hostname
+from rollup
+join latest on latest.source_mac = rollup.source_mac
+left join devices on devices.mac_id = rollup.source_mac;
 
 create or replace view v_wireless_anomalies as
 select
@@ -677,12 +703,129 @@ where timeline.large_frame
    or timeline.mixed_encryption
    or timeline.dedupe_or_replay_suspect;
 
+create or replace view v_sync_plane_health as
+with ingest_status as (
+  select
+    status,
+    count(*)::bigint as row_count
+  from sync_scan_ingest
+  group by status
+),
+wireless_ingest_status as (
+  select
+    status,
+    count(*)::bigint as row_count
+  from sync_scan_ingest
+  where stream_name = 'wireless.audit'
+  group by status
+),
+ingest_time as (
+  select
+    count(*) filter (where stream_name = 'wireless.audit' and observed_at >= now() - interval '24 hours')::bigint as wireless_events_24h_count,
+    max(observed_at) filter (where stream_name = 'wireless.audit') as wireless_last_observed_at
+  from sync_scan_ingest
+),
+batch_status as (
+  select
+    status,
+    count(*)::bigint as row_count
+  from sync_batch
+  group by status
+),
+job_batch_rollup as (
+  select
+    job.job_id,
+    job.status as stored_status,
+    job.created_at,
+    count(batch.batch_id)::bigint as batch_count,
+    count(batch.batch_id) filter (where batch.status in ('pending', 'processing', 'dispatched'))::bigint as open_batch_count,
+    count(batch.batch_id) filter (where batch.status = 'failed')::bigint as failed_batch_count,
+    count(batch.batch_id) filter (where batch.status = 'completed')::bigint as completed_batch_count
+  from sync_job job
+  left join sync_batch batch on batch.job_id = job.job_id
+  group by job.job_id, job.status, job.created_at
+),
+job_effective_status as (
+  select
+    case
+      when open_batch_count > 0 then stored_status
+      when failed_batch_count > 0 then 'failed'
+      when completed_batch_count > 0 then 'completed'
+      when stored_status in ('pending', 'running') and created_at < now() - interval '5 minutes' then 'orphaned'
+      else stored_status
+    end as effective_status,
+    stored_status,
+    count(*)::bigint as row_count
+  from job_batch_rollup
+  group by
+    case
+      when open_batch_count > 0 then stored_status
+      when failed_batch_count > 0 then 'failed'
+      when completed_batch_count > 0 then 'completed'
+      when stored_status in ('pending', 'running') and created_at < now() - interval '5 minutes' then 'orphaned'
+      else stored_status
+    end,
+    stored_status
+),
+backlog_status as (
+  select
+    status,
+    count(*)::bigint as row_count
+  from audit_backlog
+  group by status
+),
+shadow_status as (
+  select
+    count(*) filter (where resolved_at is null)::bigint as open_alert_count,
+    max(last_occurred_at) filter (where resolved_at is null) as last_open_alert_at
+  from shadow_it_alerts
+)
+select
+  now() as measured_at,
+  coalesce((select wireless_events_24h_count from ingest_time), 0)::bigint as wireless_events_24h_count,
+  (select wireless_last_observed_at from ingest_time) as wireless_last_observed_at,
+  coalesce((select row_count from wireless_ingest_status where status = 'pending'), 0)::bigint as wireless_ingest_pending_count,
+  coalesce((select row_count from wireless_ingest_status where status = 'processing'), 0)::bigint as wireless_ingest_processing_count,
+  coalesce((select row_count from wireless_ingest_status where status = 'batched'), 0)::bigint as wireless_ingest_batched_count,
+  coalesce((select row_count from wireless_ingest_status where status = 'failed'), 0)::bigint as wireless_ingest_failed_count,
+  coalesce((select sum(row_count) from wireless_ingest_status), 0)::bigint as wireless_ingest_total_count,
+  coalesce((select row_count from ingest_status where status = 'pending'), 0)::bigint as ingest_pending_count,
+  coalesce((select row_count from ingest_status where status = 'processing'), 0)::bigint as ingest_processing_count,
+  coalesce((select row_count from ingest_status where status = 'batched'), 0)::bigint as ingest_batched_count,
+  coalesce((select row_count from ingest_status where status = 'failed'), 0)::bigint as ingest_failed_count,
+  coalesce((select sum(row_count) from ingest_status), 0)::bigint as ingest_total_count,
+  coalesce((select row_count from batch_status where status = 'pending'), 0)::bigint as batch_pending_count,
+  coalesce((select row_count from batch_status where status = 'processing'), 0)::bigint as batch_processing_count,
+  coalesce((select row_count from batch_status where status = 'dispatched'), 0)::bigint as batch_dispatched_count,
+  coalesce((select row_count from batch_status where status = 'completed'), 0)::bigint as batch_completed_count,
+  coalesce((select row_count from batch_status where status = 'failed'), 0)::bigint as batch_failed_count,
+  coalesce((select sum(row_count) from batch_status), 0)::bigint as batch_total_count,
+  coalesce((select sum(row_count) from job_effective_status where stored_status = 'pending'), 0)::bigint as job_stored_pending_count,
+  coalesce((select sum(row_count) from job_effective_status where stored_status = 'running'), 0)::bigint as job_stored_running_count,
+  coalesce((select sum(row_count) from job_effective_status where stored_status = 'completed'), 0)::bigint as job_stored_completed_count,
+  coalesce((select sum(row_count) from job_effective_status where stored_status = 'failed'), 0)::bigint as job_stored_failed_count,
+  coalesce((select sum(row_count) from job_effective_status), 0)::bigint as job_total_count,
+  coalesce((select sum(row_count) from job_effective_status where effective_status = 'pending'), 0)::bigint as job_effective_pending_count,
+  coalesce((select sum(row_count) from job_effective_status where effective_status = 'running'), 0)::bigint as job_effective_running_count,
+  coalesce((select sum(row_count) from job_effective_status where effective_status = 'completed'), 0)::bigint as job_effective_completed_count,
+  coalesce((select sum(row_count) from job_effective_status where effective_status = 'failed'), 0)::bigint as job_effective_failed_count,
+  coalesce((select sum(row_count) from job_effective_status where effective_status = 'orphaned'), 0)::bigint as job_orphaned_count,
+  coalesce((select row_count from backlog_status where status = 'pending'), 0)::bigint as backlog_pending_count,
+  coalesce((select sum(row_count) from backlog_status where status in ('sync_failed', 'failed')), 0)::bigint as backlog_failed_count,
+  coalesce((select open_alert_count from shadow_status), 0)::bigint as open_shadow_it_alert_count,
+  (select last_open_alert_at from shadow_status) as last_shadow_it_alert_at,
+  (select cursor_value from sync_cursor where stream_name = 'wireless.audit') as wireless_cursor_value,
+  (select updated_at from sync_cursor where stream_name = 'wireless.audit') as wireless_cursor_updated_at;
+
 create or replace view v_shadow_it_alerts as
 select
-  alert_id,
-  dedupe_key,
-  observed_at,
+  source_mac as alert_id,
+  source_mac as dedupe_key,
   source_mac,
+  first_occurred_at,
+  last_occurred_at,
+  last_occurred_at as observed_at,
+  occurrence_count,
   destination_bssid,
   ssid,
   sensor_id,
@@ -694,4 +837,4 @@ select
   created_at,
   updated_at
 from shadow_it_alerts
-order by observed_at desc;
+order by last_occurred_at desc;

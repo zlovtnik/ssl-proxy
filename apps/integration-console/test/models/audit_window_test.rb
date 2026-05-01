@@ -17,7 +17,7 @@ class AuditWindowTest < ActiveSupport::TestCase
   end
 
   test "rejects unsupported days" do
-    window = AuditWindow.new(location_id: "lab", timezone: "UTC", days: "weekday")
+    window = AuditWindow.new(location_id: "lab", timezone: "America/New_York", days: "weekday")
 
     assert_not window.valid?
   end

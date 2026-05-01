@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
-  import { toQueryString, updateHistory, paramsFromLocation } from "../lib/url"
+  import { serializeFilters, toQueryString, updateHistory, paramsFromLocation } from "../lib/url"
 
   export let initial = {}
 
@@ -13,19 +13,21 @@
   let sortKey = initial.sortKey || "event_count"
   let sortDirection = initial.sortDirection || "desc"
   let lastRefreshedAt = initial.lastRefreshedAt || null
+  let filters = initial.filters || []
   let loading = false
   const endpoints = initial.endpoints || {}
 
   const columns = [
     { key: "location_id", label: "Location", sortable: true, width: "w-48" },
-    { key: "event_count", label: "Events", sortable: true, width: "w-32" },
-    { key: "avg_signal_dbm", label: "Average Signal dBm", sortable: true, width: "w-40", format: (value) => formatSignal(value) },
-    { key: "unique_devices", label: "Devices", sortable: true, width: "w-32", hiddenBelow: "md" },
-    { key: "last_seen_at", label: "Last Seen", sortable: true, width: "w-40", hiddenBelow: "lg", format: (value) => value || "" }
+    { key: "event_count", label: "Events", sortable: true, width: "w-32", filterType: "number" },
+    { key: "avg_signal_dbm", label: "Average Signal dBm", sortable: true, width: "w-40", format: (value) => formatSignal(value), filterType: "number" },
+    { key: "unique_devices", label: "Devices", sortable: true, width: "w-32", hiddenBelow: "md", filterType: "number" },
+    { key: "last_seen_at", label: "Last Seen", sortable: true, width: "w-40", hiddenBelow: "lg", format: (value) => value || "", filterType: "date" }
   ]
 
   onMount(() => {
-    const next = paramsFromLocation({ sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    filters = next.filters || []
     sortKey = next.sort || "event_count"
     sortDirection = next.direction || "desc"
     currentPage = next.page
@@ -37,6 +39,7 @@
   function state() {
     return {
       sort: sortKey,
+      filters: serializeFilters(filters) || undefined,
       direction: sortDirection,
       page: currentPage,
       per_page: perPage
@@ -55,8 +58,15 @@
     fetchPage(true)
   }
 
+  function handleFiltersChange(nextFilters) {
+    filters = nextFilters
+    currentPage = 1
+    fetchPage(true)
+  }
+
   function handlePopState() {
-    const next = paramsFromLocation({ sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    const next = paramsFromLocation({ filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    filters = next.filters || []
     sortKey = next.sort || "event_count"
     sortDirection = next.direction || "desc"
     currentPage = next.page
@@ -76,6 +86,7 @@
 
     const payload = await response.json()
     rows = payload.rows || []
+    filters = payload.filters || filters
     visualLocations = payload.visualLocations || []
     totalCount = payload.totalCount || 0
     currentPage = payload.currentPage || currentPage
@@ -104,9 +115,9 @@
 </script>
 
 <div>
-  <h1 class="mb-4 text-2xl font-bold text-[#c8e6c8]">Logical Heatmap</h1>
+  <h1 class="mb-4 text-2xl font-bold text-(--color-text)">Logical Heatmap</h1>
   {#if lastRefreshedAt}
-    <p class="mb-3 text-sm text-[#6b9e6b]">Last refreshed: {lastRefreshedAt}</p>
+    <p class="mb-3 text-sm text-(--color-text-muted)">Last refreshed: {lastRefreshedAt}</p>
   {/if}
 
   <DataGrid
@@ -118,24 +129,26 @@
     {sortKey}
     {sortDirection}
     {loading}
+    {filters}
     onSort={handleSort}
     onPageChange={handlePageChange}
+    onFiltersChange={handleFiltersChange}
     rowKey={(row) => row.location_id}
   />
 
   <section class="mt-5">
-    <h2 class="mb-3 text-lg font-semibold text-[#86efac]">Signal Strength</h2>
+    <h2 class="mb-3 text-lg font-semibold text-(--color-accent-vivid)">Signal Strength</h2>
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
       {#each visualLocations.slice(0, 200) as location}
-        <a class={`group relative block rounded-lg border border-[#1f3320] p-3 text-[#0d130d] ${bucketClass(location.avg_signal_dbm)}`} href={auditUrl(location)}>
+        <a class={`group relative block rounded-lg border border-(--color-border-muted) p-3 ${bucketClass(location.avg_signal_dbm)}`} href={auditUrl(location)}>
           <span class="block truncate font-semibold">{location.location_id}</span>
           <span class="block text-xs">{formatSignal(location.avg_signal_dbm)} dBm</span>
-          <span class="pointer-events-none absolute left-2 right-2 top-full z-20 mt-1 hidden rounded border border-[#1f6b1f] bg-[#111a11] p-2 text-xs text-[#c8e6c8] shadow-xl group-hover:block group-focus:block">
+          <span class="pointer-events-none absolute left-2 right-2 top-full z-20 mt-1 hidden rounded border border-(--color-border-strong) bg-(--color-surface) p-2 text-xs text-(--color-text) shadow-xl group-hover:block group-focus:block">
             {location.event_count} events, {formatSignal(location.avg_signal_dbm)} dBm average
           </span>
         </a>
       {:else}
-        <div class="rounded-lg border border-[#1f3320] bg-[#111a11] p-4 text-[#4d7a4d]">No heatmap data found.</div>
+        <div class="rounded-lg border border-(--color-border-muted) bg-(--color-surface) p-4 text-(--color-text-faint)">No heatmap data found.</div>
       {/each}
     </div>
   </section>

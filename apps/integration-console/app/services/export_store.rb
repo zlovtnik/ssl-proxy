@@ -12,8 +12,8 @@ class ExportStore
     "#{EXPORT_PREFIX}/#{type}/#{digest}.csv"
   end
 
-  def self.fetch_or_generate(key:, ttl:, &block)
-    new.fetch_or_generate(key: key, ttl: ttl, &block)
+  def self.fetch_or_generate(key:, ttl:, filename: nil, &block)
+    new.fetch_or_generate(key: key, ttl: ttl, filename: filename, &block)
   end
 
   def initialize(client: Aws::S3::Client.new, presigner: nil, bucket: IntegrationConsole::Minio.bucket)
@@ -22,13 +22,13 @@ class ExportStore
     @bucket = bucket
   end
 
-  def fetch_or_generate(key:, ttl:)
+  def fetch_or_generate(key:, ttl:, filename: nil)
     cleanup_stale_exports
-    return presigned_url(key, ttl: ttl) if fresh?(key, ttl: ttl)
+    return presigned_url(key, ttl: ttl, filename: filename) if fresh?(key, ttl: ttl)
 
     body = yield
-    put(key, body)
-    presigned_url(key, ttl: ttl)
+    put(key, body, filename: filename)
+    presigned_url(key, ttl: ttl, filename: filename)
   rescue Aws::Errors::ServiceError => error
     raise Error, error.message
   end
@@ -40,12 +40,18 @@ class ExportStore
     false
   end
 
-  def put(key, body)
-    @client.put_object(bucket: @bucket, key: key, body: body, content_type: CONTENT_TYPE)
+  def put(key, body, filename: nil)
+    options = { bucket: @bucket, key: key, body: body, content_type: CONTENT_TYPE }
+    options[:content_disposition] = attachment_disposition(filename) if filename.present?
+
+    @client.put_object(**options)
   end
 
-  def presigned_url(key, ttl:)
-    @presigner.presigned_url(:get_object, bucket: @bucket, key: key, expires_in: ttl.to_i)
+  def presigned_url(key, ttl:, filename: nil)
+    options = { bucket: @bucket, key: key, expires_in: ttl.to_i }
+    options[:response_content_disposition] = attachment_disposition(filename) if filename.present?
+
+    @presigner.presigned_url(:get_object, **options)
   end
 
   def cleanup_stale_exports
@@ -76,5 +82,10 @@ class ExportStore
         quiet: true
       }
     )
+  end
+
+  def attachment_disposition(filename)
+    safe_name = filename.to_s.gsub(/[^A-Za-z0-9._-]/, "_")
+    %(attachment; filename="#{safe_name}")
   end
 end

@@ -16,7 +16,7 @@ Bundler.require(*Rails.groups)
 module IntegrationConsole
   class Application < Rails::Application
     config.load_defaults 7.2
-    config.time_zone = "UTC"
+    config.time_zone = "Eastern Time (US & Canada)"
     config.eager_load_paths << Rails.root.join("app/services")
     config.active_job.queue_adapter = :async
     config.generators.system_tests = nil

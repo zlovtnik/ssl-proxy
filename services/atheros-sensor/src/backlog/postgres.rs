@@ -2,12 +2,13 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
+use sha2::{Digest, Sha256};
 use tokio_postgres::{Config as PostgresConfig, NoTls};
 use tracing::{debug, error, info, warn};
 
 use super::{
     pool_diag::database_target,
-    store::{BacklogEntry, BacklogError, BacklogStore, IngestRecord},
+    store::{AuthorizedWirelessNetwork, BacklogEntry, BacklogError, BacklogStore, IngestRecord},
     wireless_columns::WirelessIngestColumns,
 };
 
@@ -99,9 +100,9 @@ impl PostgresBacklog {
         let normalized_mac = mac.trim().to_ascii_lowercase();
         let row = match client
             .query_opt(
-                "select device_id, username
+                "select mac_id, username
                    from devices
-                  where lower(mac_hint) = $1
+                  where mac_id = $1 or lower(mac_hint) = $1
                   limit 1",
                 &[&normalized_mac],
             )
@@ -117,6 +118,7 @@ impl PostgresBacklog {
         Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1))))
     }
 
+    #[allow(dead_code)]
     pub async fn is_authorized_wireless_network(
         &self,
         ssid: Option<&str>,
@@ -177,6 +179,56 @@ impl PostgresBacklog {
         Ok(row.get::<_, bool>(0))
     }
 
+    pub async fn list_authorized_wireless_networks(
+        &self,
+    ) -> Result<Vec<AuthorizedWirelessNetwork>, BacklogError> {
+        let operation = "list_authorized_wireless_networks";
+        let client = self.client(operation).await?;
+        let table_exists = match client
+            .query_one(
+                "select to_regclass('public.authorized_wireless_networks') is not null",
+                &[],
+            )
+            .await
+        {
+            Ok(row) => row.get::<_, bool>(0),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        if !table_exists {
+            return Ok(Vec::new());
+        }
+        let rows = match client
+            .query(
+                "select ssid, lower(bssid), location_id
+                   from authorized_wireless_networks
+                  where enabled",
+                &[],
+            )
+            .await
+        {
+            Ok(rows) => rows,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| AuthorizedWirelessNetwork {
+                ssid: row.get::<_, Option<String>>(0),
+                bssid: row.get::<_, Option<String>>(1),
+                location_id: row.get::<_, Option<String>>(2),
+            })
+            .collect())
+    }
+
+    pub fn pool_status(&self) -> deadpool_postgres::Status {
+        self.pool.status()
+    }
+
     fn log_postgres_error(&self, operation: &'static str, source: &tokio_postgres::Error) {
         let status = self.pool.status();
         let db_error = source.as_db_error();
@@ -208,7 +260,31 @@ impl BacklogStore for PostgresBacklog {
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
-        let payload: serde_json::Value =
+        fn sanitize_json_value(value: &mut serde_json::Value) {
+            use serde_json::Value;
+            match value {
+                Value::String(s) => {
+                    *s = s
+                        .chars()
+                        .filter(|c| !c.is_control() || c.is_whitespace())
+                        .filter(|&c| c != '\0')
+                        .collect();
+                }
+                Value::Array(arr) => {
+                    for v in arr.iter_mut() {
+                        sanitize_json_value(v);
+                    }
+                }
+                Value::Object(obj) => {
+                    for (_, v) in obj.iter_mut() {
+                        sanitize_json_value(v);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut payload: serde_json::Value =
             serde_json::from_str(record.payload).map_err(|source| {
                 BacklogError::InvalidIngestPayload {
                     operation,
@@ -216,6 +292,18 @@ impl BacklogStore for PostgresBacklog {
                     source,
                 }
             })?;
+
+        sanitize_json_value(&mut payload);
+        let payload_sha256 = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&payload).map_err(|source| {
+                BacklogError::InvalidIngestPayload {
+                    operation,
+                    dedupe_key: record.dedupe_key.to_string(),
+                    source,
+                }
+            })?)
+        );
         let payload_json = tokio_postgres::types::Json(&payload);
         let wireless = WirelessIngestColumns::from_payload(record.stream_name, &payload);
         let rows_affected = match client
@@ -261,7 +349,7 @@ impl BacklogStore for PostgresBacklog {
                     &record.observed_at,
                     &record.payload_ref,
                     &payload_json,
-                    &record.payload_sha256,
+                    &payload_sha256,
                     &record.producer,
                     &record.event_kind,
                     &wireless.source_mac,
@@ -405,5 +493,35 @@ impl BacklogStore for PostgresBacklog {
             );
         }
         Ok(())
+    }
+
+    async fn prune_stale(
+        &self,
+        max_attempts: i32,
+        max_age_hours: i64,
+    ) -> Result<u64, BacklogError> {
+        let operation = "prune_stale";
+        let client = self.client(operation).await?;
+        let rows_affected = match client
+            .execute(
+                "delete from audit_backlog
+                  where status = 'pending'
+                    and (attempt_count >= $1
+                         or created_at < now() - ($2::text || ' hours')::interval)",
+                &[&max_attempts, &max_age_hours],
+            )
+            .await
+        {
+            Ok(rows_affected) => rows_affected,
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                return Err(BacklogError::Postgres { operation, source });
+            }
+        };
+        info!(
+            rows_affected,
+            max_attempts, max_age_hours, "pruned stale wireless audit backlog rows"
+        );
+        Ok(rows_affected)
     }
 }

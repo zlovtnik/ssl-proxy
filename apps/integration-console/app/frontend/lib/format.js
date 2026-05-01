@@ -4,7 +4,17 @@ export function formatTime(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
 
-  return date.toISOString().slice(0, 19).replace("T", " ")
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "short"
+  }).format(date)
 }
 
 export function shortFingerprint(value) {
@@ -30,4 +40,3 @@ export function searchUrl(baseUrl, query) {
   url.searchParams.set("q", query)
   return url.toString()
 }
-

@@ -103,7 +103,9 @@ fn parse_handshake(value: &str) -> Option<String> {
     if epoch <= 0 {
         return None;
     }
-    Some(Utc.timestamp_opt(epoch, 0).single()?.to_rfc3339())
+    Some(crate::time::rfc3339_from_utc(
+        Utc.timestamp_opt(epoch, 0).single()?,
+    ))
 }
 
 pub async fn reverse_ptr_lookup(state: &SharedState, peer_ip: &str) -> Option<String> {

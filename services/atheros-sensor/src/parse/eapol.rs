@@ -1,5 +1,7 @@
 use crate::model::WifiFrame;
 
+use super::text::utf8_text;
+
 pub(super) const LLC_SNAP_EAPOL_PREFIX: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7,6 +9,7 @@ pub(super) struct EapolKeyObservation {
     pub(super) message: u8,
     pub(super) bssid: String,
     pub(super) client_mac: String,
+    pub(super) pmkid: Option<String>,
 }
 
 pub(super) fn extract_eap_identity(
@@ -89,6 +92,27 @@ pub(super) fn extract_eapol_key_message(
     }
 }
 
+pub(super) fn extract_pmkid(
+    frame_type: u8,
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<String> {
+    if extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes)? != 1 {
+        return None;
+    }
+    let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
+    let eapol = frame_bytes.get(payload_offset + 8..)?;
+    if eapol.len() < 99 {
+        return None;
+    }
+    let key_data_len_offset = 97usize;
+    let key_data_len =
+        u16::from_be_bytes([eapol[key_data_len_offset], eapol[key_data_len_offset + 1]]) as usize;
+    let key_data = eapol.get(key_data_len_offset + 2..key_data_len_offset + 2 + key_data_len)?;
+    find_pmkid_in_key_data(key_data)
+}
+
 pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObservation> {
     let message = frame.eapol_key_message?;
     let bssid = frame.bssid.clone()?;
@@ -106,10 +130,35 @@ pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObserva
         message,
         bssid,
         client_mac,
+        pmkid: frame.pmkid.clone(),
     })
 }
 
-pub(super) fn data_payload_offset(frame_control: u16, subtype: u8, frame_bytes: &[u8]) -> Option<usize> {
+fn find_pmkid_in_key_data(key_data: &[u8]) -> Option<String> {
+    let mut offset = 0usize;
+    while offset + 2 <= key_data.len() {
+        let descriptor_type = key_data[offset];
+        let len = key_data[offset + 1] as usize;
+        offset += 2;
+        let data = key_data.get(offset..offset + len)?;
+        if descriptor_type == 0xdd && data.len() >= 20 && data[0..4] == [0x00, 0x0f, 0xac, 0x04] {
+            return Some(
+                data[4..20]
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+            );
+        }
+        offset += len;
+    }
+    None
+}
+
+pub(super) fn data_payload_offset(
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<usize> {
     let to_ds = frame_control & (1 << 8) != 0;
     let from_ds = frame_control & (1 << 9) != 0;
 
@@ -133,11 +182,5 @@ pub(super) fn data_payload_offset(frame_control: u16, subtype: u8, frame_bytes: 
 }
 
 fn normalize_identity(bytes: &[u8]) -> Option<String> {
-    let value = std::str::from_utf8(bytes).ok()?;
-    let value = value.trim_matches(char::from(0)).trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    utf8_text(bytes)
 }

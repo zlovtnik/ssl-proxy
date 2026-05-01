@@ -270,6 +270,45 @@ impl SyncPublisher {
         }
     }
 
+    pub fn try_enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        self.record(subject, payload);
+        self.record_attempt();
+
+        if self.config.nats_url.is_none() {
+            let error = "sync publisher disabled".to_string();
+            self.record_error(error.clone());
+            return Err(error);
+        }
+
+        let message = PublishQueueMessage {
+            subject: subject.to_string(),
+            payload: payload.to_string(),
+            response_tx: None,
+        };
+        let publish_tx = self.queue_sender()?;
+
+        match self.enqueue_with_timeout(&publish_tx, message) {
+            Ok(()) => Ok(()),
+            Err(EnqueueError::Timeout) => {
+                self.counters
+                    .enqueue_timeouts_total
+                    .fetch_add(1, Ordering::Relaxed);
+                self.record_error(ENQUEUE_TIMEOUT_ERROR.to_string());
+                debug!(
+                    %subject,
+                    timeout_ms = self.config.enqueue_timeout.as_millis(),
+                    "sync publisher enqueue timed out; caller should apply backpressure"
+                );
+                Err(ENQUEUE_TIMEOUT_ERROR.to_string())
+            }
+            Err(EnqueueError::Closed) => {
+                let error = "sync publisher queue closed".to_string();
+                self.record_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
     pub async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
         self.record(subject, payload);
         self.record_attempt();
@@ -436,7 +475,7 @@ impl SyncPublisher {
             .health
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        health.last_attempt_at = Some(chrono::Utc::now().to_rfc3339());
+        health.last_attempt_at = Some(crate::time::now_rfc3339());
     }
 
     fn queue_sender(&self) -> Result<PublishQueueSender, String> {
@@ -503,8 +542,8 @@ impl SyncPublisher {
 fn write_spool_envelope(spool_dir: &Path, subject: &str, payload: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(spool_dir)
         .map_err(|error| format!("create sync publish spool {}: {error}", spool_dir.display()))?;
-    let created_at = chrono::Utc::now().to_rfc3339();
-    let token = chrono::Utc::now().format("%Y%m%dT%H%M%S%fZ").to_string();
+    let created_at = crate::time::now_rfc3339();
+    let token = crate::time::file_token_now();
     let id = uuid::Uuid::new_v4().simple();
     let tmp_path = spool_dir.join(format!("{token}-{id}.tmp"));
     let final_path = spool_dir.join(format!("{token}-{id}.json"));
@@ -684,7 +723,7 @@ async fn publish_with_session(
             let mut snapshot = health
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            snapshot.last_publish_at = Some(chrono::Utc::now().to_rfc3339());
+            snapshot.last_publish_at = Some(crate::time::now_rfc3339());
             snapshot.last_error = None;
             debug!(
                 %subject,
@@ -1051,7 +1090,7 @@ mod tests {
     use super::{
         count_spool_pending, drain_spooled_messages, parse_nats_endpoint, read_spool_envelope,
         write_spool_envelope, NatsPublishSession, SyncPublisher, SyncPublisherConfig,
-        SyncPublisherHealth,
+        SyncPublisherHealth, ENQUEUE_TIMEOUT_ERROR,
     };
     use crate::{
         config::Config,
@@ -1132,6 +1171,34 @@ mod tests {
         assert_eq!(snapshot.queue_depth, 1);
         assert_eq!(snapshot.spool_pending, 1);
         assert_eq!(snapshot.spooled_total, 1);
+        assert_eq!(snapshot.enqueue_timeouts_total, 1);
+        publisher.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn try_enqueue_message_reports_timeout_without_spooling() {
+        let spool = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.sync.nats_url = Some("nats://127.0.0.1:4222".to_string());
+        config.sync.publish_enqueue_timeout_ms = 1;
+        config.sync.publish_spool_dir = spool.path().display().to_string();
+        let publisher = SyncPublisher::new(&config.sync);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        *publisher.publish_tx.lock().unwrap() = Some(tx);
+
+        publisher
+            .try_enqueue_message("wireless.audit", "{}")
+            .unwrap();
+        let error = publisher
+            .try_enqueue_message("wireless.audit", "{}")
+            .unwrap_err();
+
+        assert_eq!(error, ENQUEUE_TIMEOUT_ERROR);
+        assert_eq!(count_spool_pending(spool.path()), 0);
+        let snapshot = publisher.health_snapshot();
+        assert_eq!(snapshot.queue_capacity, 1);
+        assert_eq!(snapshot.queue_depth, 1);
+        assert_eq!(snapshot.spooled_total, 0);
         assert_eq!(snapshot.enqueue_timeouts_total, 1);
         publisher.shutdown().await;
     }

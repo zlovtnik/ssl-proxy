@@ -16,7 +16,7 @@ LOG_TAIL_LINES="${UP_READY_LOG_TAIL_LINES:-200}"
 QR_TYPE="${UP_READY_QR_TYPE:-ansiutf8}"
 QR_MARGIN="${UP_READY_QR_MARGIN:-0}"
 
-RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_TS="$(TZ="${TZ:-America/New_York}" date +%Y-%m-%dT%H:%M:%S%z)"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 LAST_FAILED_CHECK=""
 LAST_FAILURE_CLASS=""
@@ -52,7 +52,6 @@ fail() {
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
-profile_obfuscation_mismatch::wg_obfuscation_enabled=true::iPhone/linux-direct mode cannot use obfuscated ingress::Use WG_OBFUSCATION_ENABLED=false and recreate::auto
 docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Treat in-container health as authoritative::auto
@@ -118,14 +117,36 @@ require_command() {
 
 require_profile_mode() {
     case "$PROFILE_MODE" in
-        iphone|linux-shim|linux-direct) ;;
+        iphone|linux-shim|linux-direct|mac) ;;
         *)
             cat >&2 <<'EOF_MODE'
 [up-ready][ERROR] PROFILE_MODE is required.
-Allowed values: iphone | linux-shim | linux-direct
-Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
+Allowed values: iphone | linux-shim | linux-direct | mac
+Example: make up-ready PROFILE_MODE=mac SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.53
 EOF_MODE
             exit 1
+            ;;
+    esac
+}
+
+apply_profile_runtime_env() {
+    case "$PROFILE_MODE" in
+        iphone|linux-direct)
+            export WG_OBFUSCATION_ENABLED=false
+            export WG_PORT=443
+            export WG_INTERNAL_PORT=51820
+            ;;
+        linux-shim)
+            export WG_OBFUSCATION_ENABLED=true
+            export WG_PORT=443
+            export WG_INTERNAL_PORT=51820
+            export WG_OBFUSCATION_KEY="${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}"
+            ;;
+        mac)
+            export WG_OBFUSCATION_ENABLED=true
+            export WG_PORT=51820
+            export WG_INTERNAL_PORT=443
+            export WG_OBFUSCATION_KEY="${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}"
             ;;
     esac
 }
@@ -193,7 +214,7 @@ runtime_obfuscation_value() {
 
 desired_obfuscation_value() {
     case "$PROFILE_MODE" in
-        linux-shim) printf 'true' ;;
+        linux-shim|mac) printf 'true' ;;
         iphone|linux-direct) printf 'false' ;;
     esac
 }
@@ -489,8 +510,9 @@ auto_fix() {
         profile_obfuscation_mismatch)
             local desired
             desired="$(desired_obfuscation_value)"
+            apply_profile_runtime_env
             step S09 "auto_fix[$class]: recreate with WG_OBFUSCATION_ENABLED=$desired"
-            if WG_OBFUSCATION_ENABLED="$desired" compose up -d --no-build --force-recreate; then
+            if compose up -d --no-build --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -535,6 +557,7 @@ preflight() {
 
 main() {
     preflight
+    apply_profile_runtime_env
 
     if ! compose_up; then
         diagnostics

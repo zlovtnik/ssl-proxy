@@ -1,3 +1,4 @@
+mod time;
 mod worker;
 
 use async_nats::jetstream::{
@@ -71,7 +72,9 @@ fn main() {
     let outcome = match mode.as_str() {
         "run" => run(),
         "healthcheck" => healthcheck("healthcheck"),
-        other => Err(format!("unknown mode: {other}. expected run or healthcheck")),
+        other => Err(format!(
+            "unknown mode: {other}. expected run or healthcheck"
+        )),
     };
 
     if let Err(error) = outcome {
@@ -105,12 +108,7 @@ async fn run_loop(config: RunConfig, started: Instant) -> Result<(), String> {
     let stream = jetstream
         .get_stream(config.audit_stream_name.clone())
         .await
-        .map_err(|error| {
-            format!(
-                "get JetStream stream {}: {error}",
-                config.audit_stream_name
-            )
-        })?;
+        .map_err(|error| format!("get JetStream stream {}: {error}", config.audit_stream_name))?;
     let consumer = ensure_load_consumer(&stream, &config).await?;
     let mut messages = consumer
         .messages()
@@ -210,7 +208,9 @@ async fn handle_load_message(
         }
     };
 
-    let result = worker::handle_load(load);
+    let result = tokio::task::spawn_blocking(move || worker::handle_load(load))
+        .await
+        .map_err(|error| format!("oracle load task panicked: {error}"))?;
     let batch_id = result.batch_id.clone();
     let status = result.status.clone();
 
@@ -233,9 +233,19 @@ async fn handle_load_message(
         .ack()
         .await
         .map_err(|error| format!("ack sync.oracle.load message for batch {batch_id}: {error}"))?;
-    println!(
-        "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status={status}"
-    );
+
+    if status == "success" {
+        println!(
+            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status=success"
+        );
+    } else {
+        eprintln!(
+            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status={status} error_class={} retryable={} error=\"{}\"",
+            result.error_class,
+            result.retryable,
+            escape_for_log(&result.error_text)
+        );
+    }
 
     Ok(())
 }
@@ -243,8 +253,9 @@ async fn handle_load_message(
 async fn wait_for_shutdown_signal() -> Result<&'static str, String> {
     #[cfg(unix)]
     {
-        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .map_err(|error| format!("register SIGTERM handler: {error}"))?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .map_err(|error| format!("register SIGTERM handler: {error}"))?;
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
                 result.map_err(|error| format!("wait for SIGINT: {error}"))?;
@@ -256,7 +267,9 @@ async fn wait_for_shutdown_signal() -> Result<&'static str, String> {
 
     #[cfg(not(unix))]
     {
-        tokio::signal::ctrl_c().await.map_err(|error| format!("wait for SIGINT: {error}"))?;
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|error| format!("wait for SIGINT: {error}"))?;
         Ok("SIGINT")
     }
 }
@@ -305,6 +318,17 @@ fn healthcheck(mode: &str) -> Result<(), String> {
     .map_err(|error| {
         eprintln!(
             "service={SERVICE_NAME} event=healthcheck status=error mode={mode} duration_ms={} failed_step=check_secret_file error=\"{}\"",
+            started.elapsed().as_millis(),
+            escape_for_log(&error)
+        );
+        error
+    })?;
+    run_healthcheck_step("check_oracle_connection", || {
+        worker::check_oracle_connection_from_env()
+    })
+    .map_err(|error| {
+        eprintln!(
+            "service={SERVICE_NAME} event=healthcheck status=error mode={mode} duration_ms={} failed_step=check_oracle_connection error=\"{}\"",
             started.elapsed().as_millis(),
             escape_for_log(&error)
         );
@@ -366,7 +390,10 @@ fn check_wallet(tns_admin: &str) -> Result<(), String> {
     for file in ["tnsnames.ora", "sqlnet.ora", "cwallet.sso"] {
         let candidate = dir.join(file);
         if !candidate.is_file() {
-            return Err(format!("missing Oracle wallet artifact: {}", candidate.display()));
+            return Err(format!(
+                "missing Oracle wallet artifact: {}",
+                candidate.display()
+            ));
         }
     }
 
@@ -374,7 +401,10 @@ fn check_wallet(tns_admin: &str) -> Result<(), String> {
 }
 
 fn check_oracle_libs(ld_library_path: &str) -> Result<(), String> {
-    for dir in ld_library_path.split(':').filter(|entry| !entry.trim().is_empty()) {
+    for dir in ld_library_path
+        .split(':')
+        .filter(|entry| !entry.trim().is_empty())
+    {
         let path = Path::new(dir);
         if !path.is_dir() {
             continue;

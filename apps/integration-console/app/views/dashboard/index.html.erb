@@ -3,68 +3,22 @@
 
 <h1>Integration Console</h1>
 
-<script type="application/json" id="dashboard-cards-svelte-root-props"><%= json_escape({ initial: @dashboard_cards_payload }.to_json) %></script>
-<div id="dashboard-cards-svelte-root"></div>
-<%= svelte_bundle_tags(:dashboard_cards) %>
+<%= svelte_bundle_tags :dashboard_cards %>
 
-<noscript>
-  <section class="grid grid-3">
-    <div class="metric"><div>Active Sensors</div><div class="value" data-animate-morph="true"><%= @active_sensors %></div></div>
-    <div class="metric"><div>Stale Sensors</div><div class="value" data-animate-morph="true"><%= @stale_sensors %></div></div>
-    <div class="metric"><div>Backlog Pending / Failed</div><div class="value" data-animate-morph="true"><%= @pending_backlog %> / <%= @failed_backlog %></div></div>
-  </section>
-</noscript>
+<div id="dashboard-cards-svelte-root"></div>
+<%= svelte_props_tag "dashboard-cards-svelte-root", { initial: @dashboard_cards_payload || { endpoint: health_cards_path(format: :json) } } %>
 
 <section class="grid grid-3 section-spaced">
-  <div
-    class="panel"
-    data-controller="svelte"
-    data-svelte-component-value="LiveFeed"
-    data-svelte-props-value="<%= { recentUrl: recent_audit_logs_path }.to_json %>"
-  ></div>
-  <div class="panel">
-    <h2>NATS Throughput</h2>
-    <% (@recent_samples || []).each do |subject, count| %>
-      <p><strong><%= subject %></strong>: <%= count %> events in 5 minutes</p>
-    <% end %>
-  </div>
-  <div class="panel">
-    <h2>Recent Alerts</h2>
-    <% (@recent_alerts || []).each do |alert| %>
-      <p class="<%= status_class(alert.severity) %>"><%= alert.message %></p>
-    <% end %>
-  </div>
+  <div id="live-feed-panel-svelte-root"></div>
+  <%= svelte_props_tag "live-feed-panel-svelte-root", { initial: { recentUrl: recent_audit_logs_path(format: :json) } } %>
+  <div id="nats-throughput-svelte-root"></div>
+  <%= svelte_props_tag "nats-throughput-svelte-root", { initial: { endpoint: health_nats_samples_path(format: :json) } } %>
+  <div id="recent-alerts-svelte-root"></div>
+  <%= svelte_props_tag "recent-alerts-svelte-root", { initial: { endpoint: health_recent_alerts_path(format: :json) } } %>
 </section>
 
-<section class="table-wrap section-spaced">
-  <h2>Sensors</h2>
-  <table>
-    <thead>
-      <tr>
-        <th><%= sort_link_to "Sensor", :sensor_id %></th>
-        <th><%= sort_link_to "Location", :location_id %></th>
-        <th><%= sort_link_to "Last Seen", :last_seen_at %></th>
-        <th><%= sort_link_to "Signal", :last_signal_dbm %></th>
-        <th><%= sort_link_to "Status", :status %></th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (@sensors || []).any? %>
-        <% @sensors.each do |sensor| %>
-          <tr>
-            <td><%= sensor.sensor_id %></td>
-            <td><%= sensor.location_id %></td>
-            <td><%= sensor.last_seen_at %></td>
-            <td><%= sensor.last_signal_dbm %></td>
-            <td class="<%= status_class(sensor.status) %>"><%= sensor.status %></td>
-          </tr>
-        <% end %>
-      <% else %>
-        <tr>
-          <td colspan="5" class="empty-state">No sensors found.</td>
-        </tr>
-      <% end %>
-    </tbody>
-  </table>
-  <%= render "shared/pagination" %>
-</section>
+<div id="sync-health-svelte-root"></div>
+<%= svelte_props_tag "sync-health-svelte-root", { initial: { endpoint: health_sync_data_path(format: :json) } } %>
+
+<div id="sensors-panel-svelte-root"></div>
+<%= svelte_props_tag "sensors-panel-svelte-root", { initial: { endpoint: health_sensors_path(format: :json) } } %>

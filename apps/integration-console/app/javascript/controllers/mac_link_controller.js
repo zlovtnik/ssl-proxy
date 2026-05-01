@@ -1,10 +1,12 @@
 import { Controller } from "@hotwired/stimulus"
 
 const MAC_RE = /^(?:[0-9a-fA-F]{2}|[xX]{2})(?::(?:[0-9a-fA-F]{2}|[xX]{2})){5}$/
+const HOVER_DELAY_MS = 350
 
 export default class extends Controller {
   static values = {
     inventoryUrl: String,
+    summaryUrl: String,
     recentAuditLogsUrl: String,
     auditLogsUrl: String,
     identitiesUrl: String,
@@ -56,7 +58,7 @@ export default class extends Controller {
 
       chip.addEventListener("mouseenter", () => this.show(mac, cell))
       chip.addEventListener("mouseleave", () => this.scheduleHide())
-      chip.addEventListener("focus", () => this.show(mac, cell))
+      chip.addEventListener("focus", () => this.showNow(mac, cell))
       chip.addEventListener("blur", () => this.scheduleHide())
     })
   }
@@ -65,7 +67,13 @@ export default class extends Controller {
     window.clearTimeout(this.hideTimer)
     window.clearTimeout(this.showTimer)
 
-    this.showTimer = window.setTimeout(() => this._show(mac, anchor), 120)
+    this.showTimer = window.setTimeout(() => this._show(mac, anchor), HOVER_DELAY_MS)
+  }
+
+  showNow(mac, anchor) {
+    window.clearTimeout(this.hideTimer)
+    window.clearTimeout(this.showTimer)
+    this._show(mac, anchor)
   }
 
   async _show(mac, anchor) {
@@ -88,25 +96,30 @@ export default class extends Controller {
     this.positionCard(card, anchor)
 
     try {
-      let devices, auditLogs
+      let devices, auditLogs, registry
       if (this.fetchCache.has(mac)) {
-        ;({ devices, auditLogs } = this.fetchCache.get(mac))
+        ;({ devices, auditLogs, registry } = this.fetchCache.get(mac))
+      } else if (this.hasSummaryUrlValue) {
+        const payload = await this.fetchSummary(this.summaryUrlValue, mac)
+        devices = payload.inventory ? [payload.inventory] : []
+        auditLogs = payload.recentAuditLogs || []
+        registry = payload.device
+        this.fetchCache.set(mac, { devices, auditLogs, registry })
+        this.evictCache()
       } else {
         ;[devices, auditLogs] = await Promise.all([
           this.fetchJson(this.inventoryUrlValue, mac),
           this.fetchJson(this.recentAuditLogsUrlValue, mac)
         ])
         this.fetchCache.set(mac, { devices, auditLogs })
-        if (this.fetchCache.size > 50) {
-          this.fetchCache.delete(this.fetchCache.keys().next().value)
-        }
+        this.evictCache()
       }
 
       const device = this.findDevice(devices, mac)
       const summary = this.auditSummary(auditLogs)
 
       if (this.card !== card) return
-      card.innerHTML = this.filledHTML(mac, device, summary)
+      card.innerHTML = this.filledHTML(mac, device, summary, registry)
       this.bindCardLinks(card, mac)
       this.positionCard(card, anchor)
     } catch {
@@ -130,6 +143,22 @@ export default class extends Controller {
 
     const data = await response.json()
     return Array.isArray(data) ? data : []
+  }
+
+  async fetchSummary(baseUrl, mac) {
+    const url = new URL(baseUrl, window.location.origin)
+    url.searchParams.set("q", this.searchQuery(mac))
+
+    const response = await fetch(url, { headers: { accept: "application/json" } })
+    if (!response.ok) throw new Error("MAC lookup failed")
+
+    return response.json()
+  }
+
+  evictCache() {
+    if (this.fetchCache.size > 50) {
+      this.fetchCache.delete(this.fetchCache.keys().next().value)
+    }
   }
 
   findDevice(devices, mac) {
@@ -188,12 +217,15 @@ export default class extends Controller {
 <div class="mhc-loading">Loading...</div>`
   }
 
-  filledHTML(mac, device, summary) {
+  filledHTML(mac, device, summary, registry = null) {
     const frames = device?.frame_count ?? summary.count ?? "-"
     const firstSeen = this.formatTime(device?.first_seen || summary.firstSeen)
     const lastSeen = this.formatTime(device?.last_seen || summary.lastSeen)
     const signal = summary.signal || "-"
     const ssid = device?.ssid ? `<span class="mhc-badge">${this.escape(device.ssid)}</span>` : ""
+    const registryLabel = registry?.display_name || registry?.username
+      ? `<div class="mhc-detail">${this.escape(registry.display_name || "Known device")}${registry.username ? ` / ${this.escape(registry.username)}` : ""}</div>`
+      : ""
     const services = device?.services ? `<div class="mhc-detail">${this.escape(device.services)}</div>` : ""
     const ips = device?.ip_addresses ? `<div class="mhc-detail">${this.escape(device.ip_addresses)}</div>` : ""
 
@@ -207,7 +239,7 @@ export default class extends Controller {
   <div class="mhc-stat"><span class="mhc-val">${this.escape(signal)}</span><span class="mhc-lbl">signal</span></div>
   <div class="mhc-stat"><span class="mhc-val">${this.escape(device?.protected_frame_count ?? "-")}</span><span class="mhc-lbl">encrypted</span></div>
 </div>
-${ips}${services}
+${registryLabel}${ips}${services}
 <div class="mhc-times">First: ${firstSeen}<br>Last: ${lastSeen}</div>
 ${this.linksHTML()}`
   }
@@ -276,7 +308,16 @@ ${this.linksHTML()}`
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return "-"
 
-    return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZoneName: "short"
+    }).format(date)
   }
 
   escape(value) {

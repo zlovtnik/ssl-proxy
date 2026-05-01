@@ -29,6 +29,28 @@ class AuditLogsController < ApplicationController
     "handshake_captured" => "handshake_captured"
   }.freeze
 
+  FILTERS = {
+    "observed_at" => { column: "observed_at", type: :date },
+    "sensor_id" => "sensor_id",
+    "location_id" => "location_id",
+    "frame_type" => "frame_type",
+    "frame_subtype" => "frame_subtype",
+    "ssid" => "ssid",
+    "source_mac" => "source_mac",
+    "bssid" => "bssid",
+    "destination_bssid" => "destination_bssid",
+    "signal_dbm" => { column: "signal_dbm", type: :number },
+    "channel_number" => { column: "channel_number", type: :number },
+    "app_protocol" => "app_protocol",
+    "src_ip" => "src_ip",
+    "dst_ip" => "dst_ip",
+    "raw_len" => { column: "raw_len", type: :number },
+    "frame_control_flags" => { column: "frame_control_flags", type: :number },
+    "security_flags" => { column: "security_flags", type: :number },
+    "device_fingerprint" => "device_fingerprint",
+    "handshake_captured" => { column: "handshake_captured", type: :boolean }
+  }.freeze
+
   def index
     @query = params[:q].to_s.strip
     @location_id = params[:location_id].to_s.strip
@@ -86,7 +108,7 @@ class AuditLogsController < ApplicationController
     scope = scope.limit(EXPORT_MAX_ROWS)
 
     key = ExportStore.key_for(type: "audit", query: export_query_key, sort: @sort, direction: @direction)
-    url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL) do
+    url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL, filename: "audit-logs.csv") do
       audit_logs_csv(scope)
     end
 
@@ -99,6 +121,7 @@ class AuditLogsController < ApplicationController
     scope = AuditLog.recent
     scope = scope.search(@query) if @query.present?
     scope = scope.where(location_id: @location_id) if @location_id.present?
+    scope = apply_grid_filters(scope, FILTERS)
     scope
   end
 
@@ -204,6 +227,7 @@ class AuditLogsController < ApplicationController
       sortKey: @sort,
       sortDirection: @direction,
       query: @query,
+      filters: parsed_grid_filters,
       locationId: @location_id,
       fullMacs: helpers.full_macs_enabled?,
       endpoints: {
@@ -213,6 +237,7 @@ class AuditLogsController < ApplicationController
       },
       macOptions: {
         inventoryUrl: inventory_identities_path(format: :json),
+        macSummaryUrl: mac_summary_identities_path(format: :json),
         recentAuditLogsUrl: recent_audit_logs_path(format: :json),
         auditLogsUrl: audit_logs_path,
         identitiesUrl: identities_path,

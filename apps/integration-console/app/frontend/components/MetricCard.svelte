@@ -1,5 +1,6 @@
 <script>
   import { icons } from "../lib/icons"
+  import SkeletonCard from "./SkeletonCard.svelte"
 
   export let label = ""
   export let value = ""
@@ -12,17 +13,17 @@
   export let sparkline = []
 
   $: statusClass = {
-    ok: "border-l-[#4ade80]",
-    warn: "border-l-[#fbbf24]",
-    alert: "border-l-[#f87171]",
-    neutral: "border-l-[#4d7a4d]"
-  }[status] || "border-l-[#4d7a4d]"
+    ok: "border-l-(--color-accent-vivid)",
+    warn: "border-l-(--color-accent)",
+    alert: "border-l-(--color-danger-text)",
+    neutral: "border-l-(--color-border)"
+  }[status] || "border-l-(--color-border)"
 
   $: trendClass = {
-    up: "text-[#4ade80]",
-    down: "text-[#f87171]",
-    flat: "text-[#6b9e6b]"
-  }[trend] || "text-[#6b9e6b]"
+    up: "text-(--color-accent-vivid)",
+    down: "text-(--color-danger-text)",
+    flat: "text-(--color-text-muted)"
+  }[trend] || "text-(--color-text-muted)"
 
   $: path = sparklinePath(sparkline)
   $: iconPaths = icons[icon] || []
@@ -47,21 +48,33 @@
   }
 </script>
 
-<article class={`rounded-lg border border-[#1f3320] border-l-4 ${statusClass} bg-[#111a11] p-4`}>
+{#if loading}
+  <SkeletonCard>
+    <svelte:fragment slot="label">
+      <div class="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">{label}</div>
+    </svelte:fragment>
+    <svelte:fragment slot="icon">
+      {#if iconPaths.length}
+        <svg class="h-8 w-8 shrink-0 text-(--color-accent-vivid)" viewBox="0 0 24 24" aria-hidden="true">
+          {#each iconPaths as d}
+            <path {d} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          {/each}
+        </svg>
+      {/if}
+    </svelte:fragment>
+  </SkeletonCard>
+{:else}
+<article class={`rounded-lg border border-(--color-border-muted) border-l-4 ${statusClass} bg-(--color-surface) p-4`}>
   <div class="flex items-start justify-between gap-3">
     <div>
-      <div class="text-xs font-semibold uppercase tracking-wide text-[#6b9e6b]">{label}</div>
-      {#if loading}
-        <div class="mt-3 h-8 w-24 animate-pulse rounded bg-[#1f3320]"></div>
-      {:else}
-        <div class="mt-2 text-3xl font-bold text-[#4ade80]">{value}</div>
-      {/if}
+      <div class="text-xs font-semibold uppercase tracking-wide text-(--color-text-muted)">{label}</div>
+      <div class="mt-2 text-3xl font-bold text-(--color-accent-vivid)">{value}</div>
       {#if subValue}
-        <div class="mt-1 text-sm text-[#a3d9a3]">{subValue}</div>
+        <div class="mt-1 text-sm text-(--color-text-muted)">{subValue}</div>
       {/if}
     </div>
     {#if iconPaths.length}
-      <svg class="h-8 w-8 shrink-0 text-[#86efac]" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="h-8 w-8 shrink-0 text-(--color-accent-vivid)" viewBox="0 0 24 24" aria-hidden="true">
         {#each iconPaths as d}
           <path {d} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         {/each}
@@ -77,8 +90,9 @@
   {/if}
 
   {#if path}
-    <svg class="mt-3 h-8 w-full text-[#4ade80]" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="mt-3 h-8 w-full text-(--color-accent-vivid)" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
       <path d={path} fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" />
     </svg>
   {/if}
 </article>
+{/if}

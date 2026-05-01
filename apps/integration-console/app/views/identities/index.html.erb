@@ -1,12 +1,12 @@
 <% content_for :title, "Identities" %>
 <% content_for :turbo_cache_control, "no-cache" %>
 
-<h1>Identity Viewer</h1>
+<h1>MAC Identity Inventory</h1>
 
 <p>
-  <%= link_to "Inventory CSV", inventory_identities_path(request.query_parameters.merge(format: :csv)) %>
+  <%= link_to "Inventory CSV", inventory_identities_path(@inventory_query_parameters.merge(format: :csv)) %>
   |
-  <%= link_to "Inventory JSON", inventory_identities_path(request.query_parameters.merge(format: :json)) %>
+  <%= link_to "Inventory JSON", inventory_identities_path(@inventory_query_parameters.merge(format: :json)) %>
 </p>
 
 <%= form_with url: identities_path, method: :get do |form| %>
@@ -18,6 +18,7 @@
   class="table-wrap"
   data-controller="mac-link"
   data-mac-link-inventory-url-value="<%= inventory_identities_path(format: :json) %>"
+  data-mac-link-summary-url-value="<%= mac_summary_identities_path(format: :json) %>"
   data-mac-link-recent-audit-logs-url-value="<%= recent_audit_logs_path %>"
   data-mac-link-audit-logs-url-value="<%= audit_logs_path %>"
   data-mac-link-identities-url-value="<%= identities_path %>"
@@ -26,29 +27,31 @@
   <table>
     <thead>
       <tr>
-        <th><%= sort_link_to "Observed", :observed_at %></th>
-        <th><%= sort_link_to "Source MAC", :source_mac %></th>
-        <th><%= sort_link_to "BSSID", :bssid %></th>
-        <th><%= sort_link_to "Dest BSSID", :destination_bssid %></th>
-        <th><%= sort_link_to "SSID", :ssid %></th>
-        <th><%= sort_link_to "Signal", :signal_dbm %></th>
-        <th><%= sort_link_to "Username", :username %></th>
-        <th><%= sort_link_to "Registered", :registered_username %></th>
-        <th><%= sort_link_to "Device", :display_name %></th>
-        <th><%= sort_link_to "WPS", :wps_device_name %></th>
-        <th><%= sort_link_to "Fingerprint", :device_fingerprint %></th>
+        <th><%= sort_link_to "Last Occurred", :last_occurred_at %></th>
+        <th>MAC</th>
+        <th>BSSID</th>
+        <th>Dest BSSID</th>
+        <th>SSID</th>
+        <th>Signal</th>
+        <th>Location</th>
+        <th>Username</th>
+        <th>Registered</th>
+        <th>Device</th>
+        <th>WPS</th>
+        <th>Fingerprint</th>
       </tr>
     </thead>
     <tbody>
       <% if @identities.any? %>
         <% @identities.each do |identity| %>
           <tr>
-            <td><%= identity.observed_at %></td>
+            <td><%= identity.last_occurred_at %></td>
             <td><%= identity.source_mac %></td>
             <td><%= identity.bssid %></td>
             <td><%= identity.destination_bssid %></td>
             <td><%= identity.ssid %></td>
             <td><%= identity.signal_dbm %></td>
+            <td><%= identity.location_id %></td>
             <td><%= identity.username %></td>
             <td><%= identity.registered_username %></td>
             <td><%= identity.display_name || identity.device_id %></td>
@@ -58,7 +61,7 @@
         <% end %>
       <% else %>
         <tr>
-          <td colspan="11" class="empty-state">No identities found.</td>
+          <td colspan="12" class="empty-state">No identities found.</td>
         </tr>
       <% end %>
     </tbody>

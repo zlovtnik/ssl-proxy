@@ -2,7 +2,7 @@ class CreateAuditWindows < ActiveRecord::Migration[7.2]
   def change
     create_table :audit_windows do |t|
       t.string :location_id, null: false
-      t.string :timezone, null: false, default: "UTC"
+      t.string :timezone, null: false, default: "America/New_York"
       t.string :days
       t.time :start_time
       t.time :end_time

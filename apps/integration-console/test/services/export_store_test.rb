@@ -18,8 +18,8 @@ class ExportStoreTest < ActiveSupport::TestCase
       OpenStruct.new(last_modified: object.last_modified)
     end
 
-    def put_object(bucket:, key:, body:, content_type:)
-      @put_objects << { key: key, body: body, content_type: content_type }
+    def put_object(bucket:, key:, body:, content_type:, content_disposition: nil)
+      @put_objects << { key: key, body: body, content_type: content_type, content_disposition: content_disposition }
       @objects[key] = FakeObject.new(key: key, last_modified: Time.current)
     end
 
@@ -41,8 +41,9 @@ class ExportStoreTest < ActiveSupport::TestCase
   end
 
   class FakePresigner
-    def presigned_url(_operation, bucket:, key:, expires_in:)
-      "http://minio.test/#{bucket}/#{key}?ttl=#{expires_in}"
+    def presigned_url(_operation, bucket:, key:, expires_in:, response_content_disposition: nil)
+      suffix = response_content_disposition ? "&disposition=#{response_content_disposition}" : ""
+      "http://minio.test/#{bucket}/#{key}?ttl=#{expires_in}#{suffix}"
     end
   end
 
@@ -76,5 +77,15 @@ class ExportStoreTest < ActiveSupport::TestCase
     assert_equal "exports/audit/new.csv", client.put_objects.first.fetch(:key)
     assert_equal "new,csv\n", client.put_objects.first.fetch(:body)
     assert_equal "text/csv", client.put_objects.first.fetch(:content_type)
+  end
+
+  test "adds attachment disposition for named exports" do
+    client = FakeClient.new
+    store = ExportStore.new(client: client, presigner: FakePresigner.new, bucket: "exports")
+
+    url = store.fetch_or_generate(key: "exports/audit/new.csv", ttl: 5.minutes, filename: "audit logs.csv") { "csv\n" }
+
+    assert_includes url, "attachment; filename=\"audit_logs.csv\""
+    assert_equal "attachment; filename=\"audit_logs.csv\"", client.put_objects.first.fetch(:content_disposition)
   end
 end

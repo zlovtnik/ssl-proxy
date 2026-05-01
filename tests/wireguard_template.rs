@@ -13,6 +13,12 @@ fn wireguard_template_redirects_tcp_and_drops_udp_443_when_enabled() {
         "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport __WG_PUBLIC_PORT__ -j ACCEPT"
     ));
     assert!(template.contains(
+        "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT"
+    ));
+    assert!(template.contains(
+        "if [ \"__WG_PUBLIC_PORT__\" != \"443\" ]; then iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT; fi"
+    ));
+    assert!(template.contains(
         "iptables -t nat -A PREROUTING -i %i -p tcp --dport 443 -j REDIRECT --to-port 3001"
     ));
     assert!(template.contains(
@@ -24,4 +30,9 @@ fn wireguard_template_redirects_tcp_and_drops_udp_443_when_enabled() {
     assert!(template.contains(
         "iptables -D INPUT -i __WG_WAN_INTERFACE__ -p udp --dport __WG_PUBLIC_PORT__ -j ACCEPT"
     ));
+    assert!(template.contains(
+        "if [ \"__WG_PUBLIC_PORT__\" != \"443\" ]; then iptables -D INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT; fi"
+    ));
+    assert!(template.contains("[Peer]\nPublicKey = __WG_PEER1_PUBLIC_KEY__"));
+    assert!(template.contains("[Peer]\nPublicKey = __WG_PEER2_PUBLIC_KEY__"));
 }

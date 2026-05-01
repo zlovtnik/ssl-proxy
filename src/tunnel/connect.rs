@@ -89,7 +89,7 @@ pub async fn handle(
                 "type": "verdict_change", "host": hostname,
                 "prev_verdict": prev, "next_verdict": next,
                 "attempt_count": attempts, "frequency_hz": (freq_hz * 100.0).round() / 100.0,
-                "time": chrono::Utc::now().to_rfc3339(),
+                "time": crate::time::now_rfc3339(),
             });
             let _ = state.events_tx.send(vc.to_string());
         }

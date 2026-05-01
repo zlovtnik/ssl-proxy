@@ -52,7 +52,13 @@ pub fn parse_payload_ref(payload_ref: &str) -> Option<ParsedPayloadRef<'_>> {
 pub fn should_publish_scan_request(event: &str) -> bool {
     matches!(
         event,
-        "block" | "http_proxied" | "http_error" | "tunnel_open" | "tunnel_close"
+        "block"
+            | "http_blocked"
+            | "session.blocked"
+            | "http_proxied"
+            | "http_error"
+            | "tunnel_open"
+            | "tunnel_close"
     )
 }
 
@@ -80,6 +86,8 @@ mod tests {
     #[test]
     fn publish_filter_allows_only_sink_events() {
         assert!(should_publish_scan_request("block"));
+        assert!(should_publish_scan_request("http_blocked"));
+        assert!(should_publish_scan_request("session.blocked"));
         assert!(should_publish_scan_request("http_proxied"));
         assert!(should_publish_scan_request("http_error"));
         assert!(should_publish_scan_request("tunnel_open"));

@@ -627,7 +627,7 @@ impl AppState {
         peer_ip: &str,
     ) -> Option<DeviceClaim> {
         let ttl = Duration::from_secs(self.config.runtime.device_claim_ttl_secs);
-        let now = chrono::Utc::now();
+        let now = crate::time::now_eastern();
         let claim = DeviceClaim {
             device_id: device_id.to_string(),
             wg_pubkey: wg_pubkey.to_string(),
@@ -783,8 +783,8 @@ mod tests {
             hostname: None,
             os_hint: None,
             mac_hint: None,
-            first_seen: chrono::Utc::now().to_rfc3339(),
-            last_seen: chrono::Utc::now().to_rfc3339(),
+            first_seen: crate::time::now_rfc3339(),
+            last_seen: crate::time::now_rfc3339(),
             notes: None,
         };
         state.upsert_device(device);

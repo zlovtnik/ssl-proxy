@@ -4,6 +4,8 @@ const WPS_ATTR_DEVICE_NAME: u16 = 0x1011;
 const WPS_ATTR_MANUFACTURER: u16 = 0x1021;
 const WPS_ATTR_MODEL_NAME: u16 = 0x1023;
 
+use super::text::utf8_text;
+
 pub const SECURITY_WPA: u32 = 0x01;
 pub const SECURITY_RSN_WPA2: u32 = 0x02;
 pub const SECURITY_WPA3: u32 = 0x04;
@@ -81,7 +83,7 @@ pub(super) fn extract_ssid(frame_type: u8, subtype: u8, frame_bytes: &[u8]) -> O
     let ie_offset = ie_start_offset(frame_type, subtype)?;
     IEIterator::new(frame_bytes, ie_offset)
         .find(|element| element.id == 0)
-        .and_then(|element| String::from_utf8(element.data.to_vec()).ok())
+        .and_then(|element| utf8_text(element.data))
 }
 
 pub(super) fn extract_ie_metadata(frame_type: u8, subtype: u8, frame_bytes: &[u8]) -> IEMetadata {
@@ -180,13 +182,5 @@ fn parse_wps_attributes(mut data: &[u8], metadata: &mut IEMetadata) {
 }
 
 fn parse_wps_string(value: &[u8]) -> Option<String> {
-    let value = std::str::from_utf8(value)
-        .ok()?
-        .trim_matches(char::from(0))
-        .trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    utf8_text(value)
 }

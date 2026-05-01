@@ -10,6 +10,7 @@ mod ie;
 mod qos;
 mod radiotap;
 mod tags;
+mod text;
 
 #[allow(unused_imports)]
 pub use frame::ParseError;
