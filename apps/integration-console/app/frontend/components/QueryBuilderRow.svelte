@@ -1,9 +1,5 @@
 <script>
-  export let filter = {}
-  export let fields = []
-  export let removable = false
-  export let onChange = () => {}
-  export let onRemove = () => {}
+  let { filter = {}, fields = [], removable = false, onChange = () => {}, onRemove = () => {} } = $props()
 
   const defaultOperators = {
     text: [
