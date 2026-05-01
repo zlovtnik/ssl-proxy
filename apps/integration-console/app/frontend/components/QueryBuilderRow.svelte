@@ -38,10 +38,10 @@
     ]
   }
 
-  $: selectedField = fields.find((field) => field.key === filter.field) || fields[0] || {}
-  $: operators = normalizeOperators(selectedField.operators || defaultOperators[selectedField.type] || defaultOperators.text)
-  $: selectedOperator = operators.find((operator) => operator.key === filter.operator) || operators[0] || {}
-  $: valueHidden = ["is_empty", "is_not_empty"].includes(selectedOperator.key)
+  const selectedField = $derived(fields.find((field) => field.key === filter.field) || fields[0] || {})
+  const operators = $derived(normalizeOperators(selectedField.operators || defaultOperators[selectedField.type] || defaultOperators.text))
+  const selectedOperator = $derived(operators.find((operator) => operator.key === filter.operator) || operators[0] || {})
+  const valueHidden = $derived(["is_empty", "is_not_empty"].includes(selectedOperator.key))
 
   function normalizeOperators(operators) {
     return operators.map((operator) => typeof operator === "string" ? { key: operator, label: operator } : operator)
@@ -67,7 +67,7 @@
     class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-bg) px-3 py-2 text-sm text-(--color-text) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
     value={filter.field}
     aria-label="Filter field"
-    on:change={(event) => patch({ field: event.currentTarget.value })}
+    onchange={(event) => patch({ field: event.currentTarget.value })}
   >
     {#each fields as field}
       <option value={field.key}>{field.label}</option>
@@ -80,7 +80,7 @@
     class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-bg) px-3 py-2 text-sm text-(--color-text) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
     value={filter.operator}
     aria-label="Filter operator"
-    on:change={(event) => patch({ operator: event.currentTarget.value })}
+    onchange={(event) => patch({ operator: event.currentTarget.value })}
   >
     {#each operators as operator}
       <option value={operator.key}>{operator.label}</option>
@@ -96,7 +96,7 @@
       class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-bg) px-3 py-2 text-sm text-(--color-text) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
       value={filter.value}
       aria-label="Filter value"
-      on:change={(event) => patch({ value: event.currentTarget.value })}
+      onchange={(event) => patch({ value: event.currentTarget.value })}
     >
       <option value="">Any</option>
       {#each selectedField.options || [] as option}
@@ -110,7 +110,7 @@
       class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-bg) px-3 py-2 text-sm text-(--color-text) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
       value={filter.value}
       aria-label="Filter value"
-      on:change={(event) => patch({ value: event.currentTarget.value })}
+      onchange={(event) => patch({ value: event.currentTarget.value })}
     >
       <option value="">Any</option>
       <option value="true">True</option>
@@ -125,7 +125,7 @@
       value={filter.value}
       aria-label="Filter value"
       placeholder="Value"
-      on:input={(event) => patch({ value: event.currentTarget.value })}
+      oninput={(event) => patch({ value: event.currentTarget.value })}
     />
   {/if}
 
@@ -134,7 +134,7 @@
     class="min-h-9 rounded-md border border-(--color-border-muted) px-2 text-lg font-semibold text-(--color-danger-text) disabled:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
     aria-label="Remove filter"
     disabled={!removable}
-    on:click={onRemove}
+    onclick={onRemove}
   >
     &times;
   </button>
