@@ -1,1 +1,2 @@
-/* Placeholder file for Vite manifest compatibility */
+@import "tailwindcss";
+@import "../styles/svelte.css";
