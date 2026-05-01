@@ -106,7 +106,8 @@
             {#each columns as column}
               <td class={cellClasses(column)}>
                 {#if column.component}
-                  <svelte:component this={column.component} value={row[column.key]} row={row} {...(column.componentProps ? column.componentProps(row[column.key], row) : {})} />
+                  {@const Component = column.component}
+                  <Component value={row[column.key]} row={row} {...(column.componentProps ? column.componentProps(row[column.key], row) : {})} />
                 {:else if column.href}
                   <a class="text-(--color-accent-vivid) underline-offset-2 hover:underline" href={column.href(row)}>{cellValue(column, row)}</a>
                 {:else}
