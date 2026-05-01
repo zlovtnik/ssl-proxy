@@ -1,133 +1,119 @@
 <script>
-  import QueryBuilderRow from "./QueryBuilderRow.svelte"
+  import CommandPaletteSearch from "./CommandPaletteSearch.svelte"
   import { serializeFilters, toApiParams } from "../lib/url"
 
-  export let fields = []
-  export let filters = []
-  export let onChange = () => {}
+  let { fields = [], filters = [], onChange = () => {} } = $props()
 
-  let rows = []
-  let nextId = 1
+  let activeFilters = $state([])
+  let nextId = $state(1)
 
-  $: if (rows.length === 0 && fields.length > 0) {
-    rows = normalizeRows(filters.length ? filters : [blankFilter()])
-    emit(false)
-  }
+  $effect(() => {
+    if (filters.length && activeFilters.length === 0) {
+      activeFilters = normalizeFilters(filters)
+    }
+  })
 
   export function apiParams() {
-    return toApiParams(compactRows(rows))
+    return toApiParams(compactFilters(activeFilters))
   }
 
-  function normalizeRows(nextFilters) {
+  function normalizeFilters(nextFilters) {
     return nextFilters.map((filter) => ({
       id: filter.id || nextId++,
-      field: filter.field || fields[0]?.key || "",
-      operator: filter.operator || firstOperator(filter.field || fields[0]?.key),
+      field: filter.field,
+      operator: filter.operator,
       value: filter.value ?? "",
       conjunction: filter.conjunction === "OR" ? "OR" : "AND"
     }))
   }
 
-  function blankFilter() {
-    return {
+  function handleSearch(query) {
+    const newFilter = {
       id: nextId++,
-      field: fields[0]?.key || "",
-      operator: firstOperator(fields[0]?.key),
-      value: "",
+      field: query.field.key,
+      operator: query.operator,
+      value: query.value,
       conjunction: "AND"
     }
-  }
-
-  function firstOperator(fieldKey) {
-    const field = fields.find((item) => item.key === fieldKey) || fields[0] || {}
-    const operators = field.operators || []
-    const operator = operators[0]
-    if (typeof operator === "string") return operator
-    return operator?.key || "contains"
-  }
-
-  function updateRow(index, filter) {
-    rows = rows.map((row, rowIndex) => rowIndex === index ? { ...filter, id: row.id } : row)
+    activeFilters = [...activeFilters, newFilter]
     emit()
   }
 
-  function addRow() {
-    rows = [...rows, blankFilter()]
+  function removeFilter(id) {
+    activeFilters = activeFilters.filter(f => f.id !== id)
     emit()
   }
 
-  function removeRow(index) {
-    rows = rows.filter((_, rowIndex) => rowIndex !== index)
-    if (rows.length === 0) rows = [blankFilter()]
-    emit()
-  }
-
-  function toggleConjunction(index) {
-    rows = rows.map((row, rowIndex) => rowIndex === index ? { ...row, conjunction: row.conjunction === "OR" ? "AND" : "OR" } : row)
+  function toggleConjunction(id) {
+    activeFilters = activeFilters.map(f => 
+      f.id === id ? { ...f, conjunction: f.conjunction === "OR" ? "AND" : "OR" } : f
+    )
     emit()
   }
 
   function clearAll() {
-    rows = [blankFilter()]
+    activeFilters = []
     emit()
   }
 
-  function compactRows(nextRows) {
-    return nextRows.map(({ field, operator, value, conjunction }) => ({ field, operator, value, conjunction }))
+  function compactFilters(nextFilters) {
+    return nextFilters.map(({ field, operator, value, conjunction }) => ({ field, operator, value, conjunction }))
   }
 
-  function emit(notify = true) {
-    if (!notify) return
-    const compacted = compactRows(rows)
+  function getFieldLabel(fieldKey) {
+    return fields.find(f => f.key === fieldKey)?.label || fieldKey
+  }
+
+  function emit() {
+    const compacted = compactFilters(activeFilters)
     onChange(compacted, {
-      serialized: serializeFilters(rows),
+      serialized: serializeFilters(activeFilters),
       apiParams: toApiParams(compacted)
     })
   }
 </script>
 
 <div class="query-builder mb-4 rounded-lg border border-(--color-border-muted) bg-(--color-surface) p-3">
-  <div class="mb-2 flex items-center justify-between gap-3">
-    <div class="text-xs font-semibold uppercase tracking-wide text-(--color-accent-vivid)">Filters</div>
-    <div class="sr-only" aria-live="polite">{rows.length} filter rows</div>
+  <div class="mb-3">
+    <CommandPaletteSearch {fields} onSearch={handleSearch} />
   </div>
 
-  <div class="grid gap-2">
-    {#each rows as row, index (row.id)}
-      {#if index > 0}
-        <button
-          type="button"
-          class={row.conjunction === "OR" ? "query-conjunction query-conjunction-or" : "query-conjunction query-conjunction-and"}
-          aria-label={`Toggle conjunction before filter ${index + 1}`}
-          on:click={() => toggleConjunction(index)}
-        >
-          {row.conjunction}
-        </button>
-      {/if}
-      <QueryBuilderRow
-        filter={row}
-        {fields}
-        removable={rows.length > 1}
-        onChange={(filter) => updateRow(index, filter)}
-        onRemove={() => removeRow(index)}
-      />
-    {/each}
-  </div>
+  {#if activeFilters.length > 0}
+    <div class="mb-2 flex items-center justify-between gap-3">
+      <div class="text-xs font-semibold uppercase tracking-wide text-(--color-accent-vivid)">Active Filters</div>
+      <button
+        type="button"
+        class="text-xs font-semibold text-(--color-text-muted) hover:text-(--color-danger-text)"
+        onclick={clearAll}
+      >
+        Clear all
+      </button>
+    </div>
 
-  <div class="mt-3 flex flex-wrap gap-2">
-    <button
-      type="button"
-      class="min-h-9 rounded-md border border-(--color-border-strong) bg-(--color-bg) px-3 py-2 text-sm font-semibold text-(--color-accent-vivid) hover:bg-(--color-accent-surface) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
-      on:click={addRow}
-    >
-      + Add filter
-    </button>
-    <button
-      type="button"
-      class="min-h-9 rounded-md border border-(--color-border-muted) bg-(--color-bg) px-3 py-2 text-sm font-semibold text-(--color-text-muted) hover:bg-(--color-accent-surface) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)"
-      on:click={clearAll}
-    >
-      Clear all
-    </button>
-  </div>
+    <div class="flex flex-wrap gap-2">
+      {#each activeFilters as filter, index (filter.id)}
+        {#if index > 0}
+          <button
+            type="button"
+            class="rounded px-2 py-1 text-xs font-semibold {filter.conjunction === 'OR' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}"
+            onclick={() => toggleConjunction(filter.id)}
+          >
+            {filter.conjunction}
+          </button>
+        {/if}
+        <div class="inline-flex items-center gap-2 rounded-md border border-(--color-border-muted) bg-(--color-bg) px-3 py-1.5 text-sm">
+          <span class="font-semibold text-(--color-accent-vivid)">{getFieldLabel(filter.field)}</span>
+          <span class="text-(--color-text-muted)">{filter.operator}</span>
+          <span class="font-medium">{filter.value}</span>
+          <button
+            type="button"
+            class="ml-1 text-lg leading-none text-(--color-danger-text) hover:text-(--color-danger-text-hover)"
+            onclick={() => removeFilter(filter.id)}
+          >
+            ×
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
 </div>

@@ -1,24 +1,27 @@
 <script>
   import QueryBuilder from "./QueryBuilder.svelte"
 
-  export let columns = []
-  export let rows = []
-  export let totalCount = 0
-  export let currentPage = 1
-  export let perPage = 50
-  export let sortKey = ""
-  export let sortDirection = "desc"
-  export let loading = false
-  export let filters = []
-  export let filterFields = []
-  export let onSort = () => {}
-  export let onPageChange = () => {}
-  export let onFiltersChange = () => {}
-  export let rowKey = (row, index) => row.id || row.dedupe_key || row.location_id || index
+  let { 
+    columns = [], 
+    rows = [], 
+    totalCount = 0, 
+    currentPage = 1, 
+    perPage = 50, 
+    sortKey = "", 
+    sortDirection = "desc", 
+    loading = false, 
+    filters = [], 
+    filterFields = [], 
+    onSort = () => {}, 
+    onPageChange = () => {}, 
+    onFiltersChange = () => {}, 
+    rowKey = (row, index) => row.id || row.dedupe_key || row.location_id || index 
+  } = $props()
+  
   const paginationBtnClass = "rounded-md border border-(--color-border-strong) bg-(--color-surface) px-3 py-2 font-semibold text-(--color-accent-vivid) disabled:cursor-not-allowed disabled:border-(--color-border-muted) disabled:text-(--color-text-faint)"
 
-  $: totalPages = Math.max(Math.ceil(Number(totalCount || 0) / Number(perPage || 1)), 1)
-  $: gridFilterFields = filterFields.length ? filterFields : columnsToFilterFields(columns)
+  const totalPages = $derived(Math.max(Math.ceil(Number(totalCount || 0) / Number(perPage || 1)), 1))
+  const gridFilterFields = $derived(filterFields.length ? filterFields : columnsToFilterFields(columns))
 
   function headerClasses(column) {
     return [
@@ -83,7 +86,7 @@
                     "inline-flex w-full items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide hover:text-(--color-accent-vivid) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)",
                     sortKey === column.key ? "text-(--color-accent-vivid) underline" : "text-(--color-accent-text)"
                   ].join(" ")}
-                  on:click={() => onSort(column.key)}
+                  onclick={() => onSort(column.key)}
                 >
                   <span class="truncate">{column.label}</span>
                   {#if sortKey === column.key}
@@ -134,7 +137,7 @@
         class={paginationBtnClass}
         disabled={currentPage <= 1 || loading}
         aria-label="Previous page"
-        on:click={() => onPageChange(currentPage - 1)}
+        onclick={() => onPageChange(currentPage - 1)}
       >
         Prev
       </button>
@@ -144,7 +147,7 @@
         class={paginationBtnClass}
         disabled={currentPage >= totalPages || loading}
         aria-label="Next page"
-        on:click={() => onPageChange(currentPage + 1)}
+        onclick={() => onPageChange(currentPage + 1)}
       >
         Next
       </button>
