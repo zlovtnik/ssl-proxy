@@ -40,7 +40,7 @@ class ShadowItAlertsController < ApplicationController
     
     if allowed_fields.include?(field)
       values = Rails.cache.fetch("shadow_it_alerts:distinct:#{field}", expires_in: 60.seconds) do
-        ShadowItAlert.where.not(field => nil).distinct.pluck(field).compact.sort.take(100)
+        ShadowItAlert.where.not(field => nil).distinct.order(field).limit(100).pluck(field)
       end
       render json: values
     else

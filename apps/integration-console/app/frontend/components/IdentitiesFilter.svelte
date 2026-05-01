@@ -13,6 +13,8 @@
   ]
 
   async function fetchDistinctValues(fieldKey) {
+    const field = fields.find(f => f.key === fieldKey)
+    if (!field || field.type !== "select") return []
     const response = await fetch(`/identities/distinct_values?field=${fieldKey}`)
     if (!response.ok) return []
     return await response.json()

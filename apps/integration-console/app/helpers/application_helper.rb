@@ -40,7 +40,7 @@ module ApplicationHelper
     # Only include stylesheet if it exists
     begin
       tags << vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload")
-    rescue StandardError
+    rescue ViteRuby::MissingEntrypointError
       # CSS file doesn't exist, skip it
     end
     

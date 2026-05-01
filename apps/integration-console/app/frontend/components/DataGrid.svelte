@@ -26,7 +26,7 @@
   function headerClasses(column) {
     return [
       "sticky top-0 z-10 border-b-2 border-(--color-border-strong) bg-(--color-accent-surface) px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-(--color-accent-vivid)",
-      column.minWidth || "",
+      column.minWidth || column.width || "",
       hiddenClass(column.hiddenBelow)
     ].filter(Boolean).join(" ")
   }
@@ -34,7 +34,7 @@
   function cellClasses(column) {
     return [
       "border-b border-(--color-border-muted) px-3 py-2 align-top text-sm text-(--color-text)",
-      column.minWidth || "",
+      column.minWidth || column.width || "",
       hiddenClass(column.hiddenBelow)
     ].filter(Boolean).join(" ")
   }

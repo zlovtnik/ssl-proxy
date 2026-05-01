@@ -6,10 +6,12 @@
 
   let activeFilters = $state([])
   let nextId = $state(1)
+  let seeded = $state(false)
 
   $effect(() => {
-    if (filters.length && activeFilters.length === 0) {
+    if (filters.length && !seeded) {
       activeFilters = normalizeFilters(filters)
+      seeded = true
     }
   })
 
@@ -109,8 +111,9 @@
             type="button"
             class="ml-1 text-lg leading-none text-(--color-danger-text) hover:text-(--color-danger-text-hover)"
             onclick={() => removeFilter(filter.id)}
+            aria-label="Remove filter"
           >
-            ×
+            x
           </button>
         </div>
       {/each}

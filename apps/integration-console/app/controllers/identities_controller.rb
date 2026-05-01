@@ -47,7 +47,8 @@ class IdentitiesController < ApplicationController
 
     respond_to do |format|
       format.json do
-        data = Rails.cache.fetch(inventory_cache_key(@query, parsed_grid_filters), expires_in: IntegrationConsole::CacheTtl.inventory) do
+        inventory_cache_key = inventory_cache_key(@query, parsed_grid_filters)
+        data = Rails.cache.fetch(inventory_cache_key, expires_in: IntegrationConsole::CacheTtl.inventory) do
           scope.limit(500).to_a
         end
         render_cached_json(data, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)

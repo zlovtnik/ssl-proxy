@@ -4,12 +4,14 @@
   export let initial = {}
 
   function handleFilterChange(filters, meta) {
+    const url = new URL(window.location)
     if (meta?.serialized) {
-      const url = new URL(window.location)
       url.searchParams.set('filters', meta.serialized)
-      url.searchParams.delete('page')
-      window.location.href = url.toString()
+    } else {
+      url.searchParams.delete('filters')
     }
+    url.searchParams.delete('page')
+    window.location.href = url.toString()
   }
 </script>
 

@@ -134,7 +134,7 @@
     {#if activeQuery.field}
       <span class="pill field-pill">
         {activeQuery.field.label}
-        <button onclick={reset}>×</button>
+        <button onclick={reset}>x</button>
       </span>
     {/if}
 
