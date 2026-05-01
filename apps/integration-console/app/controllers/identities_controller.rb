@@ -32,6 +32,7 @@ class IdentitiesController < ApplicationController
     @inventory_query_parameters = @query.present? ? { q: @query } : {}
     @identities = WirelessDeviceInventory.recent
     @identities = @identities.search(@query) if @query.present?
+    @identities = apply_grid_filters(@identities, FILTERS)
     @identities = apply_identity_sort(@identities)
     @identities = paginate_window(@identities)
   end
