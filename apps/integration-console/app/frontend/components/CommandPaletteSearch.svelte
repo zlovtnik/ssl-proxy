@@ -7,6 +7,7 @@
   let step = $state('field') // 'field' | 'operator' | 'value'
   let isOpen = $state(false)
   let searchInput = $state('')
+  let inputRef = $state(null)
 
   const defaultOperators = {
     text: [
@@ -32,9 +33,9 @@
   }
 
   const filteredFields = $derived(
-    safeFields.filter(f => 
-      f.label.toLowerCase().includes(searchInput.toLowerCase())
-    )
+    searchInput.trim() === ''
+      ? safeFields
+      : safeFields.filter(f => f.label.toLowerCase().includes(searchInput.toLowerCase()))
   )
 
   const availableOperators = $derived(
@@ -104,6 +105,7 @@
       <button onclick={commitSearch} class="commit-btn">Search</button>
     {:else}
       <input
+        bind:this={inputRef}
         type="text"
         bind:value={searchInput}
         placeholder={step === 'field' ? 'Search fields...' : 'Select operator...'}
@@ -114,8 +116,8 @@
     {/if}
   </div>
 
-  {#if isOpen}
-    <div class="dropdown">
+  {#if isOpen && step !== 'value'}
+    <div class="dropdown" style="left: {activeQuery.field ? inputRef?.offsetLeft || 0 : 0}px;">
       {#if step === 'field'}
         {#each filteredFields as field}
           <button class="dropdown-item" onclick={() => selectField(field)}>
@@ -210,8 +212,6 @@
   .dropdown {
     position: absolute;
     top: calc(100% + 4px);
-    left: 0;
-    right: 0;
     background: var(--color-bg, white);
     border: 1px solid var(--color-control-border, #ddd);
     border-radius: 6px;
@@ -219,6 +219,9 @@
     max-height: 300px;
     overflow-y: auto;
     z-index: 100;
+    min-width: 200px;
+    width: max-content;
+    max-width: 400px;
   }
 
   .dropdown-item {
