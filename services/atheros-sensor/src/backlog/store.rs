@@ -1,3 +1,18 @@
+//! BacklogStore trait contract for persistence abstraction.
+//!
+//! Defines the interface for recording ingested events, saving pending retries, and managing
+//! backlog lifecycle. This trait exists for testability (mock implementations) and swap-ability
+//! (Postgres, in-memory, or future stores) without coupling the pipeline to a specific backend.
+//!
+//! # Type notes
+//!
+//! [`BacklogEntry`]: a row in the `audit_backlog` fallback table; used when the primary
+//! publish path fails and the event must be retried later.
+//!
+//! [`IngestRecord`]: a row written to the `sync_scan_ingest` ledger on every successful
+//! publish attempt; it is the authoritative record that an event was handed off to the
+//! sync pipeline, distinct from the backlog which only exists for failed deliveries.
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -33,22 +48,29 @@ pub struct IngestRecord<'a> {
 
 #[derive(Debug, Error)]
 pub enum BacklogError {
+    /// Fired when a Postgres query or command fails after the connection is established.
     #[error("postgres {operation} failed: {source}")]
     Postgres {
         operation: &'static str,
         #[source]
         source: tokio_postgres::Error,
     },
+    /// Fired when the deadpool connection pool cannot check out a connection (pool exhausted
+    /// or timed out), distinct from a query-level failure.
     #[error("postgres pool checkout for {operation} failed: {source}")]
     Pool {
         operation: &'static str,
         #[source]
         source: deadpool_postgres::PoolError,
     },
+    /// Fired when the DATABASE_URL string cannot be parsed as a valid Postgres connection string.
     #[error("invalid postgres database url: {0}")]
     InvalidDatabaseUrl(String),
+    /// Fired when deadpool fails to build the connection pool from the parsed config.
     #[error("failed to build postgres connection pool: {0}")]
     PoolBuild(String),
+    /// Fired when a backlog payload cannot be deserialized into the expected JSON shape
+    /// during an ingest ledger write.
     #[error("invalid ingest payload for {operation} dedupe_key={dedupe_key}: {source}")]
     InvalidIngestPayload {
         operation: &'static str,

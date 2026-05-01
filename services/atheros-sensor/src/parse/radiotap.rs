@@ -1,3 +1,13 @@
+//! Radiotap header parsing for 802.11 physical-layer metadata.
+//!
+//! strip_radiotap validates the radiotap header, walks the present-word bitmap to locate
+//! each field, and returns a RadiotapMetadata alongside the remaining 802.11 frame bytes.
+//!
+//! [`RadiotapMetadata`]: physical-layer fields extracted from the radiotap header;
+//! `signal_present` is `true` only when the radiotap present-word bit 5 (dBm signal) was
+//! set, distinguishing a genuine zero-dBm reading from a stripped or absent signal field —
+//! the `signal_status` string in `RfLayer` is derived from this flag.
+
 use super::frame::ParseError;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -16,6 +26,8 @@ pub struct RadiotapMetadata {
     pub signal_present: bool,
 }
 
+/// Walks the extended present-word bitmap (bit 31 set means another word follows) and
+/// skips vendor namespace fields (bit 30) by reading the 2-byte length at offset +4.
 pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseError> {
     if bytes.len() < 8 {
         return Err(ParseError::MissingRadiotap);

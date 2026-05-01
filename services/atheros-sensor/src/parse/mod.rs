@@ -1,3 +1,18 @@
+//! Parse pipeline for raw 802.11 radiotap captures.
+//!
+//! Each frame passes through a fixed sequence of sub-modules:
+//! radiotap strips the radiotap header and extracts RF metadata (signal, frequency, data rate);
+//! frame decodes the 802.11 MAC header, frame type, subtype, and control flags;
+//! addresses resolves addr1–addr4 to named roles (bssid, source, destination, transmitter,
+//! receiver) based on the DS-bit combination;
+//! ie parses Information Elements from management frames (SSID, RSN, WPS, vendor IEs) and
+//! computes security_flags;
+//! eapol detects EAPOL key frames and extracts the PMKID for handshake capture;
+//! qos extracts QoS TID, EOSP, and ack-policy from QoS data frames;
+//! decap strips LLC/SNAP and decapsulates the payload into IP/transport/application layers;
+//! correlation builds session_key, retransmit_key, frame_fingerprint, and adjacent_mac_hint;
+//! tags applies anomaly and threat tags (large_frame, mixed_encryption, dedupe_or_replay_suspect).
+
 mod addresses;
 mod channel;
 mod correlation;

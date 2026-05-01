@@ -1,3 +1,16 @@
+//! Correlation key generation for deduplication and session tracking.
+//!
+//! Three keys are produced per frame:
+//! session_key identifies a client–AP pair as "source_mac|bssid" (falling back to
+//! destination_mac when no bssid is present), used to group frames into logical sessions;
+//! retransmit_key is "transmitter|receiver|seq|frag" and identifies duplicate or retransmitted
+//! frames for dedup detection;
+//! frame_fingerprint is a SHA-256 hash over a pipe-delimited string of normalized frame_control,
+//! subtype, and all five MAC address roles, concatenated with the raw frame bytes, producing a
+//! content-addressed identity for exact-match replay detection.
+//! adjacent_mac_hint scans all five address fields for MAC pairs that share the first five octets
+//! and differ in the last by 1–4, a common indicator of AP/client interface adjacency.
+
 use sha2::{Digest, Sha256};
 
 use super::addresses::MacAddresses;

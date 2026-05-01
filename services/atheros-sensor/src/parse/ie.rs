@@ -1,3 +1,19 @@
+//! 802.11 Information Element parsing for management frame metadata.
+//!
+//! IEIterator walks the IE region of a management frame as a zero-copy iterator, stopping
+//! cleanly on truncation. Only management frames (type 0) with subtypes 0, 4, 5, 8 carry IEs;
+//! all others return an empty IEMetadata. RSN (IE 48) is parsed to set SECURITY_RSN_WPA2;
+//! AKM suite types 8 and 9 (OUI 00:0f:ac) additionally set SECURITY_WPA3; the RSN capabilities
+//! field bit 6 sets SECURITY_PMF_REQUIRED. Vendor IEs (IE 221) with OUI 00:50:f2 are dispatched
+//! by type: type 1 sets SECURITY_WPA, type 4 sets SECURITY_WPS and triggers WPS attribute
+//! extraction (device name 0x1011, manufacturer 0x1021, model name 0x1023).
+//! device_fingerprint is a FNV-1a hash over the sequence of IE IDs seen in the frame,
+//! providing a stable hardware fingerprint that survives firmware updates.
+//!
+//! [`IEMetadata`]: the parsed output of a management frame's IE region; `device_fingerprint`
+//! is a FNV-1a hash computed over the ordered sequence of IE IDs only — not over IE data —
+//! so it remains stable across firmware updates that change IE payloads but not IE presence.
+
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const WPS_ATTR_DEVICE_NAME: u16 = 0x1011;

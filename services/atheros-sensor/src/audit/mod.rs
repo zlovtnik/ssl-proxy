@@ -1,3 +1,10 @@
+//! Audit subsystem for compliance monitoring of wireless traffic.
+//!
+//! This module implements a three-piece architecture: (1) bandwidth bucketing that aggregates
+//! protected data frames into time-windowed summaries, (2) a tracing_subscriber layer that
+//! mirrors log events to stdout/stderr during active audit windows, and (3) a schedule gate
+//! that filters audit activity by timezone, weekday, and time range.
+
 mod bandwidth;
 mod layer;
 mod window;

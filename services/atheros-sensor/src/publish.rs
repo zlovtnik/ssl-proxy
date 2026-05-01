@@ -23,12 +23,19 @@ pub const HANDSHAKE_ALERT_SUBJECT: &str = "wifi.alert.handshake";
 
 #[derive(Debug, Error)]
 pub enum PublishError {
+    /// Fired when `serde_json::to_string` fails to serialize an `AuditEntry` or alert struct.
     #[error("serialize audit entry: {0}")]
     Serialize(#[from] serde_json::Error),
+    /// Fired when both the NATS enqueue and the Postgres backlog fallback fail, leaving the
+    /// event with no durable storage path.
     #[error("backlog persistence failed: {0}")]
     Backlog(#[from] BacklogError),
+    /// Fired when the NATS publish fails and no fallback path is available (e.g. invalid
+    /// `observed_at` timestamp rejected before any side effects).
     #[error("publish failed: {0}")]
     Publish(String),
+    /// Fired when the NATS publish fails but the entry was successfully queued in the
+    /// in-memory LRU backlog; the pipeline continues without data loss.
     #[error("publish failed and audit entry queued in memory: {0}")]
     Queued(String),
 }
@@ -77,6 +84,11 @@ const MEMORY_BACKLOG_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 type MemoryBacklogEntry = (String, String, String);
 pub type SharedPublishState = Arc<Mutex<PublishState>>;
 
+/// Mutable publish state shared across the pipeline via [`SharedPublishState`].
+///
+/// `circuit_breaker` is `None` when the Postgres backlog is healthy (circuit closed) and
+/// `Some(Instant)` recording when the breaker opened; it resets to `None` after
+/// `CIRCUIT_BREAKER_TIMEOUT` elapses and a probe write succeeds.
 pub struct PublishState {
     circuit_breaker: Option<Instant>,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
@@ -132,10 +144,10 @@ struct PreparedPublish {
     payload_sha256: String,
 }
 
-/// Publishes an audit entry and persists failed publishes to durable backlog.
-///
-/// Returns [`PublishError::Queued`] when the publish failed and the entry could
-/// only be retained in the in-memory backlog.
+/// Two-phase write: first records to sync_scan_ingest (the primary ledger), then enqueues
+/// to NATS. Ingest-ledger-first ordering ensures durability even if NATS publish fails.
+/// Returns PublishError::Queued when publish fails but entry is retained in memory backlog;
+/// this is not a pipeline error and processing continues.
 pub async fn publish_entry(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,
@@ -365,6 +377,8 @@ fn queue_in_memory_after_backlog_failure(
     );
 }
 
+/// Flushes memory backlog to Postgres; on save_pending failure, re-opens the circuit
+/// breaker and re-queues the failed entry plus all remaining entries back into memory.
 pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &dyn BacklogStore) {
     let memory_entries = state.lock().unwrap().drain_memory_backlog();
     if !memory_entries.is_empty() {
@@ -402,6 +416,9 @@ fn close_postgres_circuit_breaker(state: &SharedPublishState) {
     }
 }
 
+/// Retries pending backlog entries that fall within the audit window; skips entries
+/// outside the window. Ingest ledger failure keeps the entry in audit_backlog for
+/// future retry, preventing data loss when the primary ledger is unavailable.
 pub async fn reconcile_backlog(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,

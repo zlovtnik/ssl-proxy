@@ -1,3 +1,9 @@
+//! Projection layer for wireless-specific columns in sync_scan_ingest.
+//!
+//! Extracts wireless audit fields (MAC addresses, SSID, signal strength, frame flags) from
+//! JSON payloads only when stream_name == "wireless.audit". All other streams get zero/null
+//! values, allowing the same table schema to handle multiple event types without bloat.
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct WirelessIngestColumns {
     pub(super) source_mac: Option<String>,

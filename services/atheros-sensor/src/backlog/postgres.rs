@@ -1,3 +1,10 @@
+//! Postgres backlog implementation with intentional connection limits.
+//!
+//! Pool is capped at max 2 connections to avoid overwhelming the database during high-volume
+//! wireless capture. The sync_scan_ingest table is the primary ledger for all ingested events
+//! with wireless-specific columns for fast querying. The audit_backlog table is the fallback
+//! store for events that fail to publish to NATS, enabling retry and eventual consistency.
+
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -17,6 +24,8 @@ pub struct PostgresBacklog {
 }
 
 impl PostgresBacklog {
+    /// Initializes a connection pool with max_size=2 to avoid overwhelming the database
+    /// during high-volume wireless capture; this is a low-contention sensor workload.
     pub async fn connect(database_url: &str) -> Result<Self, BacklogError> {
         let config = PostgresConfig::from_str(database_url)
             .map_err(|error| BacklogError::InvalidDatabaseUrl(error.to_string()))?;
@@ -257,6 +266,10 @@ impl PostgresBacklog {
 
 #[async_trait]
 impl BacklogStore for PostgresBacklog {
+    /// Writes or updates a row in sync_scan_ingest with upsert-on-conflict behavior:
+    /// on dedupe_key collision, all wireless columns and payload fields are updated.
+    /// Strips control characters (except whitespace) and null bytes from JSON strings
+    /// via sanitize_json_value to prevent Postgres TEXT encoding errors.
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
@@ -495,6 +508,8 @@ impl BacklogStore for PostgresBacklog {
         Ok(())
     }
 
+    /// Deletes pending backlog rows that have either exceeded max_attempts retries
+    /// or are older than max_age_hours, preventing unbounded growth of stale entries.
     async fn prune_stale(
         &self,
         max_attempts: i32,

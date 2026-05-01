@@ -1,3 +1,22 @@
+//! 4-way WPA2 handshake state machine with dedup and optional file export.
+//!
+//! HandshakeMonitor tracks per-(bssid, client_mac) state using a bitmask of the four EAPOL
+//! key messages seen. A handshake is considered complete when all four bits are set (0x0f).
+//! A 60-second dedup window (HANDSHAKE_DUP_WINDOW) prevents the same pair from generating
+//! repeated alerts during retransmission storms; on suppression the state is reset so the
+//! next genuine handshake can be captured. When ATH_SENSOR_EXPORT_HANDSHAKES is enabled,
+//! the complete frame bundle (base64 raw frames + PMKID) is written as a JSON file to
+//! SYNC_OUTBOX_DIR/handshakes/ via spawn_blocking, keeping the export off the async hot path.
+//!
+//! # Type notes
+//!
+//! [`HandshakeMonitor`]: the top-level tracker; holds per-pair [`HandshakeState`] entries
+//! and a separate `last_alerts` map for dedup suppression.
+//!
+//! [`HandshakeState`]: `messages` is a bitmask where bit N (0-indexed) represents EAPOL
+//! key message N+1 — bit 0 = message 1, bit 1 = message 2, bit 2 = message 3, bit 3 =
+//! message 4; all four bits set (`0x0f`) means the full 4-way handshake has been captured.
+
 use std::{
     collections::HashMap,
     fs,
@@ -53,6 +72,10 @@ impl HandshakeMonitor {
             .retain(|_, last| now.saturating_duration_since(*last) <= ttl);
     }
 
+    /// Accumulates EAPOL key messages into a per-pair bitmask (bit N = message N+1);
+    /// fires alert when all four bits are set (0x0f). A 60-second dedup window suppresses
+    /// repeat alerts; on suppression the state is reset. When export_dir is Some, spawns
+    /// a blocking task to write the handshake bundle JSON to SYNC_OUTBOX_DIR/handshakes/.
     pub fn observe(
         &mut self,
         frame: &mut WifiFrame,

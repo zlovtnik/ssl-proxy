@@ -1,3 +1,36 @@
+//! Per-frame stateful detectors for wireless threat detection.
+//!
+//! Six detectors run against every decoded frame, all held in PipelineState:
+//! ClientInventory tracks probe requests, channel history, and excessive-probing flags per MAC;
+//! SignalTracker fires a signal_anomaly tag when a BSSID's signal jumps beyond the configured
+//! dBm delta, indicating a possible AP impersonation or physical movement event;
+//! RogueApTracker checks beacons and probe responses for open authorized SSIDs, SSID typosquats
+//! (edit distance ≤ 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
+//! DeauthFloodTracker counts deauthentication and disassociation frames per BSSID in a sliding
+//! window and fires an alert when the threshold is exceeded, with a cooldown to suppress repeats;
+//! AuthorizedNetworkCache holds the Postgres-backed list of known SSIDs/BSSIDs and is
+//! invalidated by the NATS generation counter when the console pushes a config change;
+//! evil-twin detection runs through IdentityCache (in parse/) which correlates adjacent MACs
+//! and session keys to surface impersonation across frames.
+//!
+//! # Type notes
+//!
+//! [`ClientInventory`] / [`ClientProfile`]: per-MAC observation state; `excessive_probing`
+//! latches to `true` once a client sends ≥ 20 probe requests within any 60-second window
+//! and is never reset to `false` within the same session (inventory flush required).
+//!
+//! [`RogueApTracker`]: fires [`RogueApAlert`] for beacons/probe-responses that match rogue
+//! heuristics; the per-key `recent_alerts` map enforces a 60-second cooldown so a single
+//! misbehaving AP cannot produce an unbounded alert storm.
+//!
+//! [`DeauthFloodTracker`]: maintains two independent clocks per BSSID — a sliding
+//! `chrono::DateTime` window that counts frames within `window_secs`, and a separate
+//! `Instant`-based cooldown that suppresses repeat alerts for `cooldown_secs` after firing.
+//!
+//! [`AuthorizedNetworkCache`]: `invalidate()` sets `loaded_at` to `None` without touching
+//! `entries`; the stale data remains readable until the next `refresh_if_needed` call
+//! successfully reloads from Postgres.
+
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -376,6 +409,8 @@ impl AuthorizedNetworkCache {
         })
     }
 
+    /// Returns true when the candidate SSID has edit distance ≤ 2 from any known SSID.
+    /// Early exit when length difference exceeds the limit (2) to skip expensive DP.
     pub fn is_typosquat(&self, ssid: &str) -> bool {
         let ssid = ssid.trim().to_ascii_lowercase();
         if ssid.is_empty() || self.is_known_ssid(&ssid) {
@@ -401,6 +436,8 @@ fn normalize_mac(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+/// Levenshtein distance with early exit: returns limit+1 when any row minimum exceeds
+/// limit, avoiding full DP computation for strings that cannot possibly match.
 fn edit_distance_limited(left: &str, right: &str, limit: usize) -> usize {
     if left.len().abs_diff(right.len()) > limit {
         return limit + 1;

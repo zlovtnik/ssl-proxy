@@ -1,3 +1,22 @@
+//! Environment-variable-only configuration model.
+//!
+//! All settings are read from environment variables at startup via AppConfig::from_env; there is
+//! no config file. Secrets support a file-fallback pattern: read_secret checks the plain variable
+//! first, then falls back to reading the path named by the _FILE variant, enabling Docker secrets
+//! mounts without exposing values in the environment. ATH_SENSOR_REQUIRE_HOST_ENDPOINTS is a
+//! deployment guard that rejects Docker service hostnames ("nats", "postgres") in NATS and
+//! DATABASE_URL, enforcing host-network-mode endpoints when the sensor runs outside Docker.
+//!
+//! # AppConfig field mutability
+//!
+//! Fields that can be updated at runtime via a NATS push (no restart required):
+//! `bpf` (BPF filter), `channel` (via `wireless.config.sensor`), and the `audit_window`
+//! schedule (via `wireless.audit.config`).
+//!
+//! All other fields — including `database_url`, `snaplen`, `pcap_timeout_ms`,
+//! `mac_device_lookup_enabled`, `log_idle_secs`, and all backlog/metrics settings — are
+//! read once at startup and require a process restart to change.
+
 use chrono::NaiveTime;
 use ssl_proxy::config::SyncConfig;
 use std::str::FromStr;
@@ -47,24 +66,35 @@ pub enum AuditLayerStream {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    /// Fired when `DATABASE_URL` is not set or is blank.
     #[error("DATABASE_URL is required")]
     MissingDatabaseUrl,
+    /// Fired when `ATH_SENSOR_CHANNEL` is set but cannot be parsed as a `u8`.
     #[error("invalid ATH_SENSOR_CHANNEL: {0}")]
     InvalidChannel(String),
+    /// Fired when `ATH_SENSOR_SNAPLEN` is set but cannot be parsed as an `i32`.
     #[error("invalid ATH_SENSOR_SNAPLEN: {0}")]
     InvalidSnaplen(String),
+    /// Fired when `ATH_SENSOR_PCAP_TIMEOUT_MS` is set but cannot be parsed as an `i32`.
     #[error("invalid ATH_SENSOR_PCAP_TIMEOUT_MS: {0}")]
     InvalidTimeout(String),
+    /// Fired when `ATH_SENSOR_LOG_IDLE_SECS` is set but cannot be parsed as a `u64`.
     #[error("invalid ATH_SENSOR_LOG_IDLE_SECS: {0}")]
     InvalidLogIdleSecs(String),
+    /// Fired when `ATH_SENSOR_METRICS_PORT` is set but cannot be parsed as a `u16`.
     #[error("invalid ATH_SENSOR_METRICS_PORT: {0}")]
     InvalidMetricsPort(String),
+    /// Fired when `AUDIT_WINDOW_START` is set but cannot be parsed as `HH:MM`.
     #[error("invalid AUDIT_WINDOW_START: {0}")]
     InvalidAuditWindowStart(String),
+    /// Fired when `AUDIT_WINDOW_END` is set but cannot be parsed as `HH:MM`.
     #[error("invalid AUDIT_WINDOW_END: {0}")]
     InvalidAuditWindowEnd(String),
+    /// Fired when `DATABASE_URL` is set but cannot be parsed as a valid Postgres connection string.
     #[error("invalid DATABASE_URL: {0}")]
     InvalidDatabaseUrl(String),
+    /// Fired when `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true` and a NATS or Postgres URL resolves
+    /// to a Docker service hostname (`nats` or `postgres`) instead of a host-reachable address.
     #[error("{variable} points at Docker service host `{host}`, but ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true requires host-reachable endpoints for host network mode; use 127.0.0.1 or another host-reachable address")]
     HostNetworkEndpoint {
         variable: &'static str,

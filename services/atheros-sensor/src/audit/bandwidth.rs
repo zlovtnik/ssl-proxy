@@ -1,3 +1,19 @@
+//! Sliding-window traffic accumulator for bandwidth monitoring.
+//!
+//! Aggregates protected WiFi data frames into time-bucketed summaries keyed by
+//! (sensor, location, interface, channel, source_mac, destination_bssid, ssid).
+//! EXTERNAL_BANDWIDTH_THRESHOLD_BYTES triggers alerts when external BSSID traffic
+//! exceeds 500 MB per window, indicating potential rogue AP or data exfiltration.
+//!
+//! [`TrafficBucket`]: accumulates frame counters for the current window; when an observation
+//! arrives whose timestamp falls at or past `window_start + window`, the old window is
+//! flushed and returned as events before the new observation is recorded — so the flush is
+//! driven by the next incoming frame, not a timer.
+//!
+//! [`WirelessBandwidthEvent`]: the flushed summary for one (source_mac, destination_bssid)
+//! pair; `external_bssid` is true when the BSSID is not in the authorized network list, and
+//! `threshold_exceeded` is the actionable field that signals a potential exfiltration event.
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
@@ -85,6 +101,9 @@ impl TrafficBucket {
         }
     }
 
+    /// Counts raw bytes for frames that cannot be parsed into structured audit entries.
+    /// Uses a fixed "unknown" key for source_mac and destination_bssid since the frame
+    /// structure is unsupported and no MAC addresses can be extracted.
     pub fn observe_raw(
         &mut self,
         bytes: u64,
@@ -119,6 +138,9 @@ impl TrafficBucket {
         flushed
     }
 
+    /// Accumulates frame counters for the current window; when the observation timestamp
+    /// reaches or exceeds window_start + window, the old window is flushed and returned
+    /// before recording the new observation — flush is driven by incoming frames, not a timer.
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -191,6 +213,8 @@ impl TrafficBucket {
         self.drain_window(window_start)
     }
 
+    /// Checks if the current observation falls at or past the window boundary; if so,
+    /// advances the window and drains all accumulated counters into events.
     fn flush_if_elapsed(&mut self, observed_at: DateTime<Utc>) -> Vec<WirelessBandwidthEvent> {
         let Some(window_start) = self.window_start else {
             self.window_start = Some(observed_at);
@@ -203,6 +227,7 @@ impl TrafficBucket {
         self.drain_window(window_start)
     }
 
+    /// Drains all accumulated counters into bandwidth events and clears the entries map.
     fn drain_window(&mut self, window_start: DateTime<Utc>) -> Vec<WirelessBandwidthEvent> {
         let window_end = window_start + self.window;
         let mut events = Vec::with_capacity(self.entries.len());

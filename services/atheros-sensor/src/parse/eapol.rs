@@ -1,3 +1,20 @@
+//! EAPOL key frame parsing for WPA2 handshake capture.
+//!
+//! Message classification uses four key_info bits from the EAPOL-Key header:
+//! message 1 = ACK set, MIC clear (AP→STA nonce);
+//! message 2 = MIC set, install clear, secure clear (STA→AP response);
+//! message 3 = ACK set, MIC set, install set (AP→STA with GTK);
+//! message 4 = MIC set, install clear, secure set (STA→AP confirmation).
+//! PMKID extraction only runs on message 1: it walks the key data TLVs looking for
+//! descriptor type 0xDD with OUI 00:0f:ac:04 and reads the 16-byte PMKID at offset 4,
+//! enabling offline pre-auth cracking detection without capturing the full 4-way handshake.
+//! EAP Identity extraction looks for EAP Response/Identity packets (code=2, type=1)
+//! in unprotected data frames, surfacing the 802.1X username hint before encryption begins.
+//!
+//! [`EapolKeyObservation`]: the output of a successful EAPOL key parse; `message` (1–4) keys
+//! the handshake state machine bitmask, `bssid` and `client_mac` together form the per-pair
+//! state key, and `pmkid` is populated only on message 1 when the AP includes it in key data.
+
 use crate::model::WifiFrame;
 
 use super::text::utf8_text;
@@ -54,6 +71,9 @@ pub(super) fn extract_eap_identity(
     normalize_identity(&eap[5..eap_packet_len])
 }
 
+/// Classifies EAPOL key message (1–4) using four key_info bits: ACK (0x0080), MIC (0x0100),
+/// Install (0x0040), Secure (0x0200). Message 1 = ACK only; 2 = MIC, no Install/Secure;
+/// 3 = ACK+MIC+Install; 4 = MIC+Secure, no Install.
 pub(super) fn extract_eapol_key_message(
     frame_type: u8,
     frame_control: u16,
@@ -92,6 +112,8 @@ pub(super) fn extract_eapol_key_message(
     }
 }
 
+/// Walks key data TLVs (descriptor type 0xDD) looking for OUI 00:0f:ac:04, then reads
+/// the 16-byte PMKID at offset 4; only runs on message 1 (ACK set, MIC clear).
 pub(super) fn extract_pmkid(
     frame_type: u8,
     frame_control: u16,

@@ -1,3 +1,9 @@
+//! Audit-window-gated tracing layer for compliance logging.
+//!
+//! This tracing_subscriber Layer mirrors log events to stdout or stderr only during active
+//! audit windows. It is not a general-purpose logger—it exists solely to capture diagnostic
+//! traces when the audit schedule gate is open, enabling time-bounded compliance monitoring.
+
 use chrono::Utc;
 use serde_json::json;
 use tracing::{Event, Subscriber};
