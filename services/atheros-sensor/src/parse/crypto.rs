@@ -68,7 +68,7 @@ fn prf_512(key: &[u8; 32], data: &[u8]) -> [u8; 64] {
         mac.update(data);
         mac.update(&[i]);
         let hash = mac.finalize().into_bytes();
-        result[i * 32..(i + 1) * 32].copy_from_slice(&hash[..20]);
+        result[(i as usize) * 32..(i as usize + 1) * 32].copy_from_slice(&hash[..20]);
         if i == 0 {
             result[20..32].copy_from_slice(&hash[..12]);
         } else {
