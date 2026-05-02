@@ -43,6 +43,10 @@ pub(super) struct WirelessIngestColumns {
     pub(super) wps_model_name: Option<String>,
     /// Device fingerprint hash (maps to `device_fingerprint` column).
     pub(super) device_fingerprint: Option<String>,
+    /// Probe request fingerprint hash (maps to `probe_fingerprint` column).
+    pub(super) probe_fingerprint: Option<String>,
+    /// Vendor name from OUI lookup (maps to `vendor_name` column).
+    pub(super) vendor_name: Option<String>,
     /// Whether a WPA handshake was captured (maps to `handshake_captured` column).
     pub(super) handshake_captured: bool,
 }
@@ -78,6 +82,8 @@ impl WirelessIngestColumns {
             wps_manufacturer: payload_string(payload, "wps_manufacturer"),
             wps_model_name: payload_string(payload, "wps_model_name"),
             device_fingerprint: payload_string(payload, "device_fingerprint"),
+            probe_fingerprint: payload_string(payload, "probe_fingerprint"),
+            vendor_name: payload_string(payload, "vendor_name"),
             handshake_captured: payload
                 .get("handshake_captured")
                 .and_then(|value| value.as_bool())

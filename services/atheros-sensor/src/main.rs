@@ -84,9 +84,6 @@ use crate::{
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 
-/// Maximum age for handshake monitor entries before cleanup.
-const HANDSHAKE_MONITOR_TTL: Duration = Duration::from_secs(10 * 60);
-
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
     let config = step("load configuration", AppConfig::from_env())?;
@@ -202,6 +199,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &mut pipeline_state,
                     &handles.stats,
                     &handles.authorized_config_generation,
+                    &handles.capture_control,
                 )
                 .instrument(span)
                 .await;
@@ -219,9 +217,10 @@ async fn run_sensor() -> Result<(), SensorError> {
                 handles.stats.lock().unwrap().log(&handles.device, &handles.config);
             }
             _ = bandwidth_flush.tick() => {
+                let ttl = Duration::from_secs(handles.config.handshake_ttl_secs);
                 pipeline_state
                     .handshake_monitor
-                    .cleanup_expired(HANDSHAKE_MONITOR_TTL);
+                    .cleanup_expired(ttl, Some(&handles.capture_control));
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
                 publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
             }
@@ -250,6 +249,7 @@ struct SensorHandles {
     device: String,
     context: SharedContext,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
+    capture_control: CaptureControl,
     backlog: Arc<PostgresBacklog>,
     publish_client: Arc<SyncPublisherClient>,
     publish_state: SharedPublishState,
@@ -440,6 +440,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         device,
         context,
         packets: packet_stream.packets,
+        capture_control: packet_stream.control,
         backlog,
         publish_client,
         publish_state,
@@ -461,6 +462,7 @@ async fn process_packet(
     pipeline: &mut PipelineState,
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
+    capture_control: &CaptureControl,
 ) -> Result<PipelineOutcome, SensorError> {
     // Always count raw bytes first, before any parsing attempts
     let packet_len = packet.data.len() as u64;
@@ -487,10 +489,14 @@ async fn process_packet(
     let handshake_export_dir = config
         .export_handshakes
         .then_some(config.sync.outbox_dir.as_str());
-    let handshake_alert =
-        pipeline
-            .handshake_monitor
-            .observe(&mut wifi_frame, context, handshake_export_dir);
+    let handshake_ttl = Duration::from_secs(config.handshake_ttl_secs);
+    let handshake_alert = pipeline.handshake_monitor.observe(
+        &mut wifi_frame,
+        context,
+        handshake_export_dir,
+        Some(capture_control),
+        handshake_ttl,
+    );
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
     let enriched: EnrichedFrame = attach_context(wifi_frame, context);
     let mut entry = to_audit_entry(enriched);

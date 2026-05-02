@@ -120,12 +120,84 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
       filterType: "number"
     },
     {
+      key: "vendor_name",
+      label: "Vendor",
+      sortable: true,
+      minWidth: "min-w-32",
+      hiddenBelow: "md"
+    },
+    {
       key: "device_fingerprint",
       label: "Fingerprint",
       sortable: true,
       minWidth: "min-w-28",
       hiddenBelow: "lg",
       format: shortFingerprint
+    },
+    {
+      key: "probe_fingerprint",
+      label: "Probe FP",
+      sortable: true,
+      minWidth: "min-w-28",
+      hiddenBelow: "lg",
+      format: shortFingerprint
+    },
+    {
+      key: "wps_device_name",
+      label: "WPS Device",
+      sortable: true,
+      minWidth: "min-w-32",
+      hiddenBelow: "lg"
+    },
+    {
+      key: "wps_manufacturer",
+      label: "WPS Mfr",
+      sortable: true,
+      minWidth: "min-w-28",
+      hiddenBelow: "lg"
+    },
+    {
+      key: "wps_model_name",
+      label: "WPS Model",
+      sortable: true,
+      minWidth: "min-w-28",
+      hiddenBelow: "lg"
+    },
+    {
+      key: "more_data",
+      label: "More Data",
+      sortable: true,
+      minWidth: "min-w-20",
+      hiddenBelow: "lg",
+      format: (value) => displayBoolean(value, "yes"),
+      filterType: "boolean"
+    },
+    {
+      key: "retry",
+      label: "Retry",
+      sortable: true,
+      minWidth: "min-w-16",
+      hiddenBelow: "lg",
+      format: (value) => displayBoolean(value, "yes"),
+      filterType: "boolean"
+    },
+    {
+      key: "power_save",
+      label: "Pwr Save",
+      sortable: true,
+      minWidth: "min-w-20",
+      hiddenBelow: "lg",
+      format: (value) => displayBoolean(value, "yes"),
+      filterType: "boolean"
+    },
+    {
+      key: "protected",
+      label: "Protected",
+      sortable: true,
+      minWidth: "min-w-20",
+      hiddenBelow: "lg",
+      format: (value) => displayBoolean(value, "yes"),
+      filterType: "boolean"
     },
     {
       key: "handshake_captured",

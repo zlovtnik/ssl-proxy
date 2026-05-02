@@ -16,12 +16,15 @@
 mod addresses;
 mod channel;
 mod correlation;
+mod crypto;
 mod decap;
+mod decrypt;
 mod eapol;
 mod frame;
 mod handshake;
 mod identity;
 mod ie;
+mod oui;
 mod qos;
 mod radiotap;
 mod tags;
@@ -43,6 +46,9 @@ pub use ie::{
     IEIterator, InformationElement, SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2, SECURITY_WPA,
     SECURITY_WPA3, SECURITY_WPS,
 };
+#[doc(inline)]
+#[allow(unused_imports)]
+pub use oui::oui_lookup;
 #[doc(inline)]
 #[allow(unused_imports)]
 pub use radiotap::{strip_radiotap, RadiotapMetadata};

@@ -48,6 +48,7 @@ pub struct AppConfig {
     pub deauth_flood_window_secs: u64,
     pub deauth_flood_cooldown_secs: u64,
     pub export_handshakes: bool,
+    pub handshake_ttl_secs: u64,
     pub authorized_network_cache_ttl_secs: u64,
     pub metrics_port: Option<u16>,
     pub shutdown_grace_secs: u64,
@@ -213,6 +214,9 @@ impl AppConfig {
                 .unwrap_or(60)
                 .max(1),
             export_handshakes: read_bool("ATH_SENSOR_EXPORT_HANDSHAKES", false),
+            handshake_ttl_secs: parse_u64("ATH_SENSOR_HANDSHAKE_TTL_SECS", 60)
+                .unwrap_or(60)
+                .max(1),
             authorized_network_cache_ttl_secs: parse_u64(
                 "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS",
                 60,

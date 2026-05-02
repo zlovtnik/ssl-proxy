@@ -27,6 +27,8 @@ pub(super) struct EapolKeyObservation {
     pub(super) bssid: String,
     pub(super) client_mac: String,
     pub(super) pmkid: Option<String>,
+    pub(super) replay_counter: Option<u64>,
+    pub(super) nonce: Option<[u8; 32]>,
 }
 
 pub(super) fn extract_eap_identity(
@@ -57,18 +59,41 @@ pub(super) fn extract_eap_identity(
     }
 
     let eap = &eapol[4..4 + eapol_len];
-    if eap[0] != 2 {
-        return None;
-    }
+    let eap_code = eap[0];
     let eap_packet_len = u16::from_be_bytes([eap[2], eap[3]]) as usize;
     if eap_packet_len < 5 || eap_packet_len > eap.len() {
         return None;
     }
-    if eap[4] != 1 {
+    let eap_type = eap[4];
+
+    match (eap_code, eap_type) {
+        (1, 1) | (2, 1) => normalize_identity(&eap[5..eap_packet_len]),
+        (2, 4) => extract_eap_md5_identity(&eap[5..eap_packet_len]),
+        (2, 52) => extract_eap_pwd_identity(&eap[5..eap_packet_len]),
+        _ => None,
+    }
+}
+
+fn extract_eap_md5_identity(type_data: &[u8]) -> Option<String> {
+    if type_data.is_empty() {
         return None;
     }
+    let value_size = type_data[0] as usize;
+    if type_data.len() < 1 + value_size {
+        return None;
+    }
+    normalize_identity(&type_data[1 + value_size..])
+}
 
-    normalize_identity(&eap[5..eap_packet_len])
+fn extract_eap_pwd_identity(type_data: &[u8]) -> Option<String> {
+    if type_data.len() < 2 {
+        return None;
+    }
+    let total_length = u16::from_be_bytes([type_data[0], type_data[1]]) as usize;
+    if type_data.len() < 2 + total_length {
+        return None;
+    }
+    normalize_identity(&type_data[2..2 + total_length])
 }
 
 /// Classifies EAPOL key message (1-4) using four key_info bits: ACK (0x0080), MIC (0x0100),
@@ -148,12 +173,73 @@ pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObserva
             .clone()
             .or_else(|| frame.destination_mac.clone())
     }?;
+    let replay_counter = extract_replay_counter(
+        frame.frame_type_raw,
+        frame.frame_control,
+        frame.frame_subtype_raw,
+        frame.raw_frame.as_ref()?.as_bytes(),
+    );
+    let nonce = extract_nonce(
+        frame.frame_type_raw,
+        frame.frame_control,
+        frame.frame_subtype_raw,
+        frame.raw_frame.as_ref()?.as_bytes(),
+    );
     Some(EapolKeyObservation {
         message,
         bssid,
         client_mac,
         pmkid: frame.pmkid.clone(),
+        replay_counter,
+        nonce,
     })
+}
+
+fn extract_replay_counter(
+    frame_type: u8,
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<u64> {
+    if frame_type != 2 {
+        return None;
+    }
+    let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
+    let eapol = frame_bytes.get(payload_offset + 8..)?;
+    if eapol.len() < 15 || eapol[1] != 3 {
+        return None;
+    }
+    let replay_bytes = eapol.get(7..15)?;
+    Some(u64::from_be_bytes([
+        replay_bytes[0],
+        replay_bytes[1],
+        replay_bytes[2],
+        replay_bytes[3],
+        replay_bytes[4],
+        replay_bytes[5],
+        replay_bytes[6],
+        replay_bytes[7],
+    ]))
+}
+
+fn extract_nonce(
+    frame_type: u8,
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<[u8; 32]> {
+    if frame_type != 2 {
+        return None;
+    }
+    let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
+    let eapol = frame_bytes.get(payload_offset + 8..)?;
+    if eapol.len() < 49 || eapol[1] != 3 {
+        return None;
+    }
+    let nonce_bytes = eapol.get(17..49)?;
+    let mut nonce = [0u8; 32];
+    nonce.copy_from_slice(nonce_bytes);
+    Some(nonce)
 }
 
 fn find_pmkid_in_key_data(key_data: &[u8]) -> Option<String> {

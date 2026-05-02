@@ -255,7 +255,7 @@ impl PostgresBacklog {
         }
         let rows = match client
             .query(
-                "select ssid, lower(bssid), location_id
+                "select ssid, lower(bssid), location_id, psk
                    from authorized_wireless_networks
                   where enabled",
                 &[],
@@ -274,6 +274,7 @@ impl PostgresBacklog {
                 ssid: row.get::<_, Option<String>>(0),
                 bssid: row.get::<_, Option<String>>(1),
                 location_id: row.get::<_, Option<String>>(2),
+                psk: row.get::<_, Option<String>>(3),
             })
             .collect())
     }
@@ -378,11 +379,11 @@ impl BacklogStore for PostgresBacklog {
                     status, attempt_count, producer, event_kind, source_mac, bssid,
                     destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data,
                     retry, power_save, protected, security_flags, wps_device_name,
-                    wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured,
-                    created_at, updated_at)
+                    wps_manufacturer, wps_model_name, device_fingerprint, probe_fingerprint,
+                    vendor_name, handshake_captured, created_at, updated_at)
                  values ($1, $2, $3, $4, $5::jsonb, $6,
                     'pending', 0, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                    $17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now())
+                    $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, now(), now())
                  on conflict (dedupe_key)
                  do update set
                     payload_ref = excluded.payload_ref,
@@ -406,6 +407,8 @@ impl BacklogStore for PostgresBacklog {
                     wps_manufacturer = excluded.wps_manufacturer,
                     wps_model_name = excluded.wps_model_name,
                     device_fingerprint = excluded.device_fingerprint,
+                    probe_fingerprint = excluded.probe_fingerprint,
+                    vendor_name = excluded.vendor_name,
                     handshake_captured = excluded.handshake_captured,
                     updated_at = now()",
                 &[
@@ -433,6 +436,8 @@ impl BacklogStore for PostgresBacklog {
                     &wireless.wps_manufacturer,
                     &wireless.wps_model_name,
                     &wireless.device_fingerprint,
+                    &wireless.probe_fingerprint,
+                    &wireless.vendor_name,
                     &wireless.handshake_captured,
                 ],
             )

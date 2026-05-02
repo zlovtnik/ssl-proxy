@@ -49,6 +49,8 @@ pub struct AuthorizedWirelessNetwork {
     pub bssid: Option<String>,
     /// Associated location identifier for this network.
     pub location_id: Option<String>,
+    /// Pre-shared key for WPA2/WPA3 decryption.
+    pub psk: Option<String>,
 }
 
 /// Authoritative sync ledger entry.
