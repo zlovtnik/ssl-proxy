@@ -27,6 +27,7 @@ Rails.application.routes.draw do
   resources :shadow_it_alerts, only: :index do
     get :distinct_values, on: :collection
   end
+  resources :network_clients, only: :index
 
   mount ActionCable.server => "/cable"
 end

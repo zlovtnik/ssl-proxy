@@ -207,6 +207,14 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
       hiddenBelow: "lg",
       format: (value) => displayBoolean(value),
       filterType: "boolean"
+    },
+    {
+      key: "tags",
+      label: "Threats",
+      sortable: false,
+      minWidth: "min-w-40",
+      hiddenBelow: "md",
+      format: (value) => Array.isArray(value) ? value.join(", ") : ""
     }
   ]
 }

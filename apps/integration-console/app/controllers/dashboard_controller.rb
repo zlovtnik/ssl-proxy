@@ -53,6 +53,24 @@ class DashboardController < ApplicationController
           sparkline: [counts[:stale_sensors]]
         },
         {
+          label: "PMF Deauth Attacks 24h",
+          value: counts[:pmf_attack_count_24h],
+          status: counts[:pmf_attack_count_24h].positive? ? "alert" : "ok",
+          trend: counts[:pmf_attack_count_24h].positive? ? "up" : "flat",
+          trendLabel: "last 24h",
+          icon: "alert",
+          sparkline: [counts[:pmf_attack_count_24h]]
+        },
+        {
+          label: "Clients in Range",
+          value: counts[:active_client_count],
+          status: "neutral",
+          trend: "flat",
+          trendLabel: "unique MACs",
+          icon: "sensor",
+          sparkline: [counts[:active_client_count]]
+        },
+        {
           label: "Backlog Pending / Failed",
           value: "#{counts[:pending_backlog]} / #{counts[:failed_backlog]}",
           subValue: "#{counts[:failed_backlog]} failed",
@@ -115,6 +133,8 @@ class DashboardController < ApplicationController
     {
       active_sensors: Sensor.active.count,
       stale_sensors: Sensor.stale.count,
+      pmf_attack_count_24h: pmf_attack_count_24h,
+      active_client_count: active_client_count,
       pending_backlog: backlog_counts[:pending_count],
       failed_backlog: backlog_counts[:failed_count],
       wireless_events_24h: sync_health.wireless_events_24h_count.to_i,
@@ -128,6 +148,21 @@ class DashboardController < ApplicationController
       job_effective_running: sync_health.job_effective_running_count.to_i,
       job_effective_completed: sync_health.job_effective_completed_count.to_i
     }
+  end
+
+  def pmf_attack_count_24h
+    AuditLog.wireless
+      .where("observed_at > ?", 24.hours.ago)
+      .where("payload->'tags' @> ?", '["threat:pmf_deauth_attack"]')
+      .count
+  end
+
+  def active_client_count
+    AuditLog.wireless
+      .where("observed_at > ?", 1.hour.ago)
+      .where.not(source_mac: nil)
+      .distinct
+      .count(:source_mac)
   end
 
   def sync_health_snapshot

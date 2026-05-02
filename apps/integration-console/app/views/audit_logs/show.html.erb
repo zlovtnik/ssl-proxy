@@ -135,6 +135,44 @@
   </section>
 <% end %>
 
+<% if @related.present? && @related.any? %>
+  <section class="table-wrap" style="margin-top: 16px;">
+    <h2>Attack Sequence Timeline</h2>
+    <p class="muted" style="margin-bottom: 8px;">Related frames with session key: <%= @audit_log.session_key %></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Observed</th>
+          <th>Subtype</th>
+          <th>Source MAC</th>
+          <th>BSSID</th>
+          <th>Threat Tags</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @related.each do |entry| %>
+          <tr>
+            <td><%= link_to entry.observed_at&.iso8601(6), audit_log_path(entry) %></td>
+            <td><%= entry.frame_subtype || entry.event_type %></td>
+            <td><%= display_mac(entry.source_mac) %></td>
+            <td><%= display_mac(entry.bssid) %></td>
+            <td>
+              <% tags = entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.start_with?("threat:") } : [] %>
+              <% if tags.any? %>
+                <% tags.each do |tag| %>
+                  <span class="<%= tag.include?("pmf_deauth") || tag.include?("harvest") ? "status-alert" : "status-warn" %>" style="margin-right: 4px; font-size: 11px;">[<%= tag %>]</span>
+                <% end %>
+              <% else %>
+                <span class="muted">—</span>
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
 <section class="panel raw-frame-panel" style="margin-top: 16px;">
   <h2>Raw Frame</h2>
   <% if @audit_log.raw_frame.blank? %>

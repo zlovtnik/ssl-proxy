@@ -14,8 +14,8 @@ mod window;
 pub use bandwidth::TrafficBucketError;
 #[doc(inline)]
 pub use bandwidth::{
-    TrafficBucket, WirelessBandwidthEvent, BANDWIDTH_SUBJECT, DEFAULT_BANDWIDTH_WINDOW_SECS,
-    EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
+    FrameSizeHistogram, TrafficBucket, WirelessBandwidthEvent, BANDWIDTH_SUBJECT,
+    DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
 };
 #[doc(inline)]
 pub use layer::AuditLayer;

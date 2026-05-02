@@ -1084,6 +1084,13 @@ mod tests {
             strongest_signal_dbm: Some(-42),
             external_bssid: true,
             threshold_exceeded: false,
+            frame_size_histogram: crate::audit::FrameSizeHistogram {
+                under_100: 0,
+                range_100_500: 1,
+                range_500_1000: 1,
+                range_1000_1500: 0,
+            },
+            inter_arrival_p50_ms: Some(500),
         };
 
         publish_bandwidth_event(&publisher, &event).await.unwrap();

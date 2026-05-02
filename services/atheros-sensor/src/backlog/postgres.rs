@@ -8,6 +8,7 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
 use sha2::{Digest, Sha256};
 use tokio_postgres::{Config as PostgresConfig, NoTls};
@@ -277,6 +278,77 @@ impl PostgresBacklog {
                 psk: row.get::<_, Option<String>>(3),
             })
             .collect())
+    }
+
+    /// Upserts a network_clients row linking a client MAC to a network BSSID via probe request
+    /// correlation. Increments probe_count and updates last_seen on conflict.
+    pub async fn upsert_network_client(
+        &self,
+        bssid: &str,
+        client_mac: &str,
+        ssid: Option<&str>,
+    ) -> Result<(), BacklogError> {
+        let operation = "upsert_network_client";
+        let client = self.client(operation).await?;
+        match client
+            .execute(
+                "insert into network_clients (bssid, client_mac, ssid, first_seen, last_seen, probe_count)
+                 values ($1, $2, $3, now(), now(), 1)
+                 on conflict (bssid, client_mac)
+                 do update set last_seen = now(), probe_count = network_clients.probe_count + 1, ssid = coalesce($3, network_clients.ssid)",
+                &[&bssid, &client_mac, &ssid],
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                Err(BacklogError::Postgres { operation, source })
+            }
+        }
+    }
+
+    /// Upserts network_clients row for ALL probed SSIDs (not just authorized networks).
+    /// Used for batched flush from probe accumulator. Looks up known_bssid from
+    /// authorized_wireless_networks if SSID matches.
+    pub async fn upsert_network_client_all_probes(
+        &self,
+        ssid: &str,
+        client_mac: &str,
+        _ssid_hint: Option<&str>,
+        first_seen: DateTime<Utc>,
+        last_seen: DateTime<Utc>,
+        probe_count: u32,
+    ) -> Result<(), BacklogError> {
+        let operation = "upsert_network_client_all_probes";
+        let client = self.client(operation).await?;
+        match client
+            .execute(
+                "insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
+                 values (
+                   $1, $2,
+                   (select bssid from authorized_wireless_networks where lower(ssid) = lower($1) and enabled limit 1),
+                   $3, $4, $5
+                 )
+                 on conflict (ssid, client_mac)
+                 do update set
+                   last_seen = excluded.last_seen,
+                   probe_count = network_clients.probe_count + excluded.probe_count,
+                   known_bssid = coalesce(
+                     excluded.known_bssid,
+                     network_clients.known_bssid,
+                     (select bssid from authorized_wireless_networks where lower(ssid) = lower($1) and enabled limit 1)
+                   )",
+                &[&ssid, &client_mac, &first_seen, &last_seen, &(probe_count as i32)],
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                Err(BacklogError::Postgres { operation, source })
+            }
+        }
     }
 
     /// Returns the current connection pool status for monitoring and diagnostics.

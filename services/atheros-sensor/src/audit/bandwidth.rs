@@ -27,6 +27,14 @@ pub const DEFAULT_BANDWIDTH_WINDOW_SECS: i64 = 60;
 pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FrameSizeHistogram {
+    pub under_100: u64,
+    pub range_100_500: u64,
+    pub range_500_1000: u64,
+    pub range_1000_1500: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WirelessBandwidthEvent {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -48,6 +56,8 @@ pub struct WirelessBandwidthEvent {
     pub strongest_signal_dbm: Option<i8>,
     pub external_bssid: bool,
     pub threshold_exceeded: bool,
+    pub frame_size_histogram: FrameSizeHistogram,
+    pub inter_arrival_p50_ms: Option<u64>,
 }
 
 fn default_schema_version() -> u32 {
@@ -83,6 +93,8 @@ struct TrafficCounters {
     more_data_count: u64,
     power_save_count: u64,
     strongest_signal_dbm: Option<i8>,
+    histogram: [u64; 4],
+    arrival_times_ms: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -203,6 +215,15 @@ impl TrafficBucket {
                     .unwrap_or(signal),
             );
         }
+        let size = entry.raw_len as u64;
+        match size {
+            0..=99 => counters.histogram[0] += 1,
+            100..=499 => counters.histogram[1] += 1,
+            500..=999 => counters.histogram[2] += 1,
+            1000..=1499 => counters.histogram[3] += 1,
+            _ => {}
+        }
+        counters.arrival_times_ms.push(observed_at.timestamp_millis());
         Ok(flushed)
     }
 
@@ -232,6 +253,7 @@ impl TrafficBucket {
         let window_end = window_start + self.window;
         let mut events = Vec::with_capacity(self.entries.len());
         for (key, counters) in self.entries.drain() {
+            let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
             events.push(WirelessBandwidthEvent {
                 schema_version: 1,
                 event_type: "wireless_bandwidth_window".to_string(),
@@ -253,6 +275,13 @@ impl TrafficBucket {
                 external_bssid: key.external_bssid,
                 threshold_exceeded: key.external_bssid
                     && counters.bytes > EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
+                frame_size_histogram: FrameSizeHistogram {
+                    under_100: counters.histogram[0],
+                    range_100_500: counters.histogram[1],
+                    range_500_1000: counters.histogram[2],
+                    range_1000_1500: counters.histogram[3],
+                },
+                inter_arrival_p50_ms,
             });
         }
         events
@@ -269,4 +298,13 @@ fn is_bandwidth_candidate(entry: &AuditEntry) -> bool {
 
 fn normalize_mac(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+fn calculate_p50_inter_arrival(times_ms: &[i64]) -> Option<u64> {
+    if times_ms.len() < 2 {
+        return None;
+    }
+    let mut intervals: Vec<i64> = times_ms.windows(2).map(|w| w[1] - w[0]).collect();
+    intervals.sort_unstable();
+    Some(intervals[intervals.len() / 2] as u64)
 }

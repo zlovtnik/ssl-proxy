@@ -52,6 +52,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{DateTime, Utc};
 use lru::LruCache;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -67,7 +68,7 @@ use crate::{
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, RogueApTracker, SignalTracker,
+        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker,
         CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT, ROGUE_AP_SUBJECT,
     },
     device::{detect, read_mac_address},
@@ -225,9 +226,24 @@ async fn run_sensor() -> Result<(), SensorError> {
                 publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
             }
             _ = inventory_flush.tick() => {
+                // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
                 if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_SUBJECT, &snapshot).await {
                     warn!(%error, "client inventory publish failed");
+                }
+
+                // Flush accumulated probe observations to database
+                for ((ssid, client_mac), obs) in pipeline_state.probe_accumulator.drain() {
+                    if let Err(error) = handles.backlog.upsert_network_client_all_probes(
+                        &ssid,
+                        &client_mac,
+                        obs.ssid.as_deref(),
+                        obs.first_seen,
+                        obs.last_seen,
+                        obs.probe_count,
+                    ).await {
+                        warn!(%error, ssid, client_mac, "network client batch upsert failed");
+                    }
                 }
             }
             _ = backlog_prune.tick() => {
@@ -272,12 +288,27 @@ struct PipelineState {
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
+    pmf_attack_tracker: PmfAttackTracker,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
+    probe_accumulator: HashMap<(String, String), ProbeObservation>,
+}
+
+#[derive(Clone)]
+struct ProbeObservation {
+    ssid: Option<String>,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    probe_count: u32,
 }
 
 impl PipelineState {
     fn new(config: &AppConfig) -> Self {
+        let pmf_reconnect_window_ms = std::env::var("ATH_SENSOR_PMF_RECONNECT_WINDOW_MS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(3000);
+
         Self {
             identity_cache: IdentityCache::default(),
             handshake_monitor: HandshakeMonitor::default(),
@@ -292,8 +323,10 @@ impl PipelineState {
             signal_tracker: SignalTracker::default(),
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
+            pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
             authorized_network_cache: AuthorizedNetworkCache::default(),
             seen_authorized_config_generation: 0,
+            probe_accumulator: HashMap::new(),
         }
     }
 }
@@ -538,6 +571,33 @@ async fn process_packet(
         entry.tags.push("threat:unauthorized_bssid".to_string());
     }
     pipeline.client_inventory.observe(&entry);
+    
+    // Accumulate probe observations for batched flush
+    if entry.frame_subtype == "probe_request" {
+        if let (Some(client_mac), Some(ssid)) = (
+            entry.source_mac.as_deref().map(|m| m.trim().to_ascii_lowercase()),
+            entry.ssid.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        ) {
+            let observed_at = chrono::DateTime::parse_from_rfc3339(&entry.observed_at)
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(chrono::Utc::now);
+            
+            let key = (ssid.to_string(), client_mac.clone());
+            pipeline.probe_accumulator
+                .entry(key)
+                .and_modify(|obs| {
+                    obs.last_seen = observed_at;
+                    obs.probe_count = obs.probe_count.saturating_add(1);
+                })
+                .or_insert_with(|| ProbeObservation {
+                    ssid: Some(ssid.to_string()),
+                    first_seen: observed_at,
+                    last_seen: observed_at,
+                    probe_count: 1,
+                });
+        }
+    }
     if pipeline
         .signal_tracker
         .observe(&entry, config.signal_anomaly_dbm_delta)
@@ -577,6 +637,9 @@ async fn process_packet(
             warn!(%error, "deauth flood alert publish failed");
         }
     }
+    let mut pmf_tags = Vec::new();
+    pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
+    entry.tags.extend(pmf_tags);
     if config.mac_device_lookup_enabled {
         if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
             let cache_key = mac.to_ascii_lowercase();

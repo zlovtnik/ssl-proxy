@@ -67,6 +67,13 @@ class AuditLogsController < ApplicationController
 
   def show
     @audit_log = AuditLog.wireless.find(params[:id])
+    if @audit_log.session_key.present?
+      @related = AuditLog.wireless
+        .where(session_key: @audit_log.session_key)
+        .where("observed_at > ?", 24.hours.ago)
+        .order(observed_at: :asc)
+        .limit(50)
+    end
   end
 
   def recent
@@ -213,7 +220,8 @@ class AuditLogsController < ApplicationController
       security_label: entry.compact_security_label,
       device_fingerprint: entry.device_fingerprint,
       wps_device_name: entry.wps_device_name,
-      handshake_captured: entry.handshake_captured
+      handshake_captured: entry.handshake_captured,
+      tags: entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.start_with?("threat:") } : []
     }
   end
 
