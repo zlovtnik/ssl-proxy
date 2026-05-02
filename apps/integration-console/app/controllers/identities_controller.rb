@@ -80,7 +80,7 @@ class IdentitiesController < ApplicationController
     
     if allowed_fields.include?(field)
       values = Rails.cache.fetch("identities:distinct:#{field}", expires_in: 60.seconds) do
-        WirelessDeviceInventory.where.not(field => nil).distinct.pluck(field).compact.sort.take(100)
+        WirelessDeviceInventory.where.not(field => nil).distinct.order(field).limit(100).pluck(field).compact
       end
       render json: values
     else

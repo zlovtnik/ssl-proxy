@@ -205,6 +205,8 @@ mod tests {
             columns.device_fingerprint.as_deref(),
             Some("0123456789abcdef")
         );
+        assert_eq!(columns.probe_fingerprint, None);
+        assert_eq!(columns.vendor_name, None);
         assert!(columns.handshake_captured);
     }
 }

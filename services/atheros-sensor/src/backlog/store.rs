@@ -41,7 +41,7 @@ pub struct BacklogEntry {
 /// Represents an authorized wireless network configuration used to validate
 /// device claims against known network identities. Loaded from the
 /// `authorized_wireless_networks` table.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct AuthorizedWirelessNetwork {
     /// Network SSID (Service Set Identifier).
     pub ssid: Option<String>,
@@ -51,6 +51,17 @@ pub struct AuthorizedWirelessNetwork {
     pub location_id: Option<String>,
     /// Pre-shared key for WPA2/WPA3 decryption.
     pub psk: Option<String>,
+}
+
+impl std::fmt::Debug for AuthorizedWirelessNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthorizedWirelessNetwork")
+            .field("ssid", &self.ssid)
+            .field("bssid", &self.bssid)
+            .field("location_id", &self.location_id)
+            .field("psk", &self.psk.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Authoritative sync ledger entry.

@@ -11,7 +11,7 @@
 //! providing a stable hardware fingerprint that survives firmware updates.
 //!
 //! [`IEMetadata`]: the parsed output of a management frame's IE region; `device_fingerprint`
-//! is a FNV-1a hash computed over the ordered sequence of IE IDs only — not over IE data —
+//! is a FNV-1a hash computed over the ordered sequence of IE IDs only - not over IE data -
 //! so it remains stable across firmware updates that change IE payloads but not IE presence.
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;

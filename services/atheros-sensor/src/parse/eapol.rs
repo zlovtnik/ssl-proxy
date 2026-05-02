@@ -173,18 +173,25 @@ pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObserva
             .clone()
             .or_else(|| frame.destination_mac.clone())
     }?;
-    let replay_counter = extract_replay_counter(
-        frame.frame_type_raw,
-        frame.frame_control,
-        frame.frame_subtype_raw,
-        frame.raw_frame.as_ref()?.as_bytes(),
-    );
-    let nonce = extract_nonce(
-        frame.frame_type_raw,
-        frame.frame_control,
-        frame.frame_subtype_raw,
-        frame.raw_frame.as_ref()?.as_bytes(),
-    );
+    let raw_frame_bytes = frame.raw_frame.as_ref().and_then(|raw| {
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw.as_bytes()).ok()
+    });
+    let replay_counter = raw_frame_bytes.as_ref().and_then(|bytes| {
+        extract_replay_counter(
+            frame.frame_type_raw,
+            frame.frame_control,
+            frame.frame_subtype_raw,
+            bytes,
+        )
+    });
+    let nonce = raw_frame_bytes.as_ref().and_then(|bytes| {
+        extract_nonce(
+            frame.frame_type_raw,
+            frame.frame_control,
+            frame.frame_subtype_raw,
+            bytes,
+        )
+    });
     Some(EapolKeyObservation {
         message,
         bssid,

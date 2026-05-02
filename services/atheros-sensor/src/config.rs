@@ -14,7 +14,7 @@
 //! schedule (via `wireless.audit.config`).
 //!
 //! All other fields - including `database_url`, `snaplen`, `pcap_timeout_ms`,
-//! `mac_device_lookup_enabled`, `log_idle_secs`, and all backlog/metrics settings — are
+//! `mac_device_lookup_enabled`, `log_idle_secs`, and all backlog/metrics settings - are
 //! read once at startup and require a process restart to change.
 
 use chrono::NaiveTime;
@@ -493,6 +493,7 @@ mod tests {
             "ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS",
             "ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS",
             "ATH_SENSOR_EXPORT_HANDSHAKES",
+            "ATH_SENSOR_HANDSHAKE_TTL_SECS",
             "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS",
             "ATH_SENSOR_METRICS_PORT",
             "ATH_SENSOR_SHUTDOWN_GRACE_SECS",

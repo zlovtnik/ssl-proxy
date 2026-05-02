@@ -88,6 +88,10 @@ fn find_matching_psk(
     networks: &[AuthorizedWirelessNetwork],
 ) -> Option<String> {
     for network in networks {
+        if network.psk.is_none() {
+            continue;
+        }
+        
         let ssid_match = match (&network.ssid, ssid) {
             (Some(net_ssid), Some(frame_ssid)) => {
                 net_ssid.to_lowercase() == frame_ssid.to_lowercase()

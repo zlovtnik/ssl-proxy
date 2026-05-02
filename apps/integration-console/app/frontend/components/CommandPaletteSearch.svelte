@@ -106,8 +106,12 @@
     isOpen = false
   }
 
+  function isEmptyValue(value) {
+    return value === null || value === undefined || value === ''
+  }
+
   function commitSearch() {
-    if (activeQuery.field && activeQuery.operator && activeQuery.value) {
+    if (activeQuery.field && activeQuery.operator && !isEmptyValue(activeQuery.value)) {
       onSearch({ ...activeQuery })
       reset()
     }
@@ -164,7 +168,7 @@
           class="value-input"
         />
       {/if}
-      <button onclick={commitSearch} class="commit-btn" disabled={!activeQuery.value}>Search</button>
+      <button onclick={commitSearch} class="commit-btn" disabled={isEmptyValue(activeQuery.value)}>Search</button>
     {:else}
       <input
         bind:this={inputRef}

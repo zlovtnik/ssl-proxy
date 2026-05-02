@@ -198,7 +198,7 @@ impl HandshakeMonitor {
                 }
             }
             
-            let should_export_partial = msg_idx == 1 && (was_messages & 0x02) == 0 && !state.partial_exported;
+            let should_export_partial = msg_idx == 1 && (was_messages & 0x01) != 0 && (was_messages & 0x02) == 0 && !state.partial_exported;
             if should_export_partial {
                 state.partial_exported = true;
             }
@@ -227,12 +227,11 @@ impl HandshakeMonitor {
             return None;
         }
 
-        if self
-            .last_alerts
-            .get(&key)
-            .is_some_and(|last| now.saturating_duration_since(*last) < ttl)
-        {
-            return None;
+        if let Some(last) = self.last_alerts.get_mut(&key) {
+            if now.saturating_duration_since(*last) < ttl {
+                *last = now;
+                return None;
+            }
         }
         
         self.pinned_pairs.remove(&key);

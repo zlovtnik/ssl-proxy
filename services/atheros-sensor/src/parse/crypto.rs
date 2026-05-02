@@ -68,11 +68,11 @@ fn prf_512(key: &[u8; 32], data: &[u8]) -> [u8; 64] {
         mac.update(data);
         mac.update(&[i]);
         let hash = mac.finalize().into_bytes();
-        result[(i as usize) * 32..(i as usize + 1) * 32].copy_from_slice(&hash[..20]);
-        if i == 0 {
-            result[20..32].copy_from_slice(&hash[..12]);
-        } else {
-            result[52..64].copy_from_slice(&hash[..12]);
+        let offset = (i as usize) * 32;
+        result[offset..offset + 20].copy_from_slice(&hash[..20]);
+        if offset + 20 < 64 {
+            let remaining = (64 - offset - 20).min(12);
+            result[offset + 20..offset + 20 + remaining].copy_from_slice(&hash[..remaining]);
         }
     }
     result
@@ -130,11 +130,11 @@ fn build_aad(mpdu_header: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     
-    let mut aad = Vec::with_capacity(22);
+    let mut aad = Vec::with_capacity(24);
     let fc = u16::from_le_bytes([mpdu_header[0], mpdu_header[1]]);
     let fc_masked = fc & 0x8fcf;
     aad.extend_from_slice(&fc_masked.to_le_bytes());
-    aad.extend_from_slice(&mpdu_header[4..22]);
+    aad.extend_from_slice(&mpdu_header[4..24]);
     
     Some(aad)
 }
@@ -145,26 +145,17 @@ fn build_nonce(mpdu_header: &[u8], pn: &[u8; 6]) -> Option<[u8; 13]> {
     }
     
     let mut nonce = [0u8; 13];
-    nonce[0] = 0x00;
     
     let fc = u16::from_le_bytes([mpdu_header[0], mpdu_header[1]]);
-    let to_ds = fc & (1 << 8) != 0;
-    let from_ds = fc & (1 << 9) != 0;
+    let qos_present = (fc >> 4) & 0x0f == 8;
     
-    let source_mac = match (to_ds, from_ds) {
-        (false, false) => &mpdu_header[10..16],
-        (true, false) => &mpdu_header[10..16],
-        (false, true) => &mpdu_header[16..22],
-        (true, true) => {
-            if mpdu_header.len() >= 30 {
-                &mpdu_header[24..30]
-            } else {
-                return None;
-            }
-        }
-    };
+    if qos_present && mpdu_header.len() >= 26 {
+        nonce[0] = mpdu_header[24] & 0x0f;
+    } else {
+        nonce[0] = 0x00;
+    }
     
-    nonce[1..7].copy_from_slice(source_mac);
+    nonce[1..7].copy_from_slice(&mpdu_header[10..16]);
     nonce[7..13].copy_from_slice(pn);
     
     Some(nonce)
