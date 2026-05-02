@@ -3,7 +3,7 @@
 use aes::Aes128;
 use ccm::{
     aead::{generic_array::GenericArray, Aead, KeyInit, Payload},
-    consts::{U2, U8},
+    consts::{U13, U8},
     Ccm,
 };
 use hmac::{Hmac, Mac};
@@ -11,7 +11,7 @@ use pbkdf2::pbkdf2_hmac;
 use sha1::Sha1;
 
 type HmacSha1 = Hmac<Sha1>;
-type Aes128Ccm = Ccm<Aes128, U8, U2>;
+type Aes128Ccm = Ccm<Aes128, U8, U13>;
 
 /// Derives PTK from PSK, SSID, nonces, and MAC addresses.
 /// Returns (KCK, KEK, TK) as three 16-byte arrays.
@@ -64,7 +64,7 @@ fn derive_pmk(psk: &str, ssid: &str) -> [u8; 32] {
 fn prf_512(key: &[u8; 32], data: &[u8]) -> [u8; 64] {
     let mut result = [0u8; 64];
     for i in 0..2 {
-        let mut mac = HmacSha1::new_from_slice(key).expect("HMAC key size");
+        let mut mac = <HmacSha1 as KeyInit>::new_from_slice(key).expect("HMAC key size");
         mac.update(data);
         mac.update(&[i]);
         let hash = mac.finalize().into_bytes();

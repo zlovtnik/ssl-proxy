@@ -1,7 +1,7 @@
 //! CCMP decryption integration for protected data frames.
 
 use crate::{
-    backlog::store::AuthorizedWirelessNetwork,
+    backlog::AuthorizedWirelessNetwork,
     model::WifiFrame,
     parse::{crypto, handshake::HandshakeMonitor},
 };
@@ -57,7 +57,7 @@ pub fn try_decrypt_frame(
     
     let (_kck, _kek, tk) = crypto::derive_ptk(
         &psk,
-        ssid.unwrap_or(""),
+        ssid.map_or("", |v| v),
         &anonce,
         &snonce,
         &bssid_bytes,
@@ -78,7 +78,7 @@ pub fn try_decrypt_frame(
         None => return false,
     };
     
-    frame.payload_visibility = "decrypted";
+    frame.payload_visibility = "decrypted".to_string();
     true
 }
 
