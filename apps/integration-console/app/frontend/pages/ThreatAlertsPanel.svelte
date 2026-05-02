@@ -5,6 +5,7 @@
 
   let alerts = []
   let endpoint = initial.endpoint || "/alerts.json"
+  let initialLoadComplete = false
 
   onMount(() => {
     fetchAlerts()
@@ -17,7 +18,10 @@
     const r = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
     if (!r?.ok) return
     const payload = await r.json()
-    alerts = payload.rows || []
+    if (!initialLoadComplete) {
+      alerts = payload.rows || []
+      initialLoadComplete = true
+    }
   }
 
   function prepend(data) {
@@ -47,7 +51,7 @@
         <span class="muted"> · {alert.sensor_id}</span>
         <span> {alert.message}</span>
         {#if alert.payload?.tags}
-          {#each (alert.payload.tags || []).filter(t => t.startsWith("threat:")) as tag}
+          {#each (Array.isArray(alert.payload.tags) ? alert.payload.tags : []).filter(t => typeof t === 'string' && t.startsWith('threat:')) as tag}
             <span class={tagClass(tag)} style="margin-left:6px;font-size:11px">[{tag}]</span>
           {/each}
         {/if}

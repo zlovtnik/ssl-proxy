@@ -69,7 +69,7 @@ class AuditLogsController < ApplicationController
     @audit_log = AuditLog.wireless.find(params[:id])
     if @audit_log.session_key.present?
       @related = AuditLog.wireless
-        .where(session_key: @audit_log.session_key)
+        .where(session_key: @audit_log.session_key, location_id: @audit_log.location_id)
         .where("observed_at > ?", 24.hours.ago)
         .order(observed_at: :asc)
         .limit(50)
@@ -221,7 +221,7 @@ class AuditLogsController < ApplicationController
       device_fingerprint: entry.device_fingerprint,
       wps_device_name: entry.wps_device_name,
       handshake_captured: entry.handshake_captured,
-      tags: entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.start_with?("threat:") } : []
+      tags: entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.is_a?(String) && t.start_with?("threat:") } : []
     }
   end
 

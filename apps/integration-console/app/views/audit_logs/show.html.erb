@@ -157,13 +157,13 @@
             <td><%= display_mac(entry.source_mac) %></td>
             <td><%= display_mac(entry.bssid) %></td>
             <td>
-              <% tags = entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.start_with?("threat:") } : [] %>
+              <% tags = entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.is_a?(String) && t.start_with?("threat:") } : [] %>
               <% if tags.any? %>
                 <% tags.each do |tag| %>
                   <span class="<%= tag.include?("pmf_deauth") || tag.include?("harvest") ? "status-alert" : "status-warn" %>" style="margin-right: 4px; font-size: 11px;">[<%= tag %>]</span>
                 <% end %>
               <% else %>
-                <span class="muted">—</span>
+                <span class="muted">--</span>
               <% end %>
             </td>
           </tr>

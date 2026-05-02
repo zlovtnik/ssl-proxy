@@ -34,6 +34,17 @@ pub struct FrameSizeHistogram {
     pub range_1000_1500: u64,
 }
 
+impl Default for FrameSizeHistogram {
+    fn default() -> Self {
+        Self {
+            under_100: 0,
+            range_100_500: 0,
+            range_500_1000: 0,
+            range_1000_1500: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WirelessBandwidthEvent {
     #[serde(default = "default_schema_version")]
@@ -56,6 +67,7 @@ pub struct WirelessBandwidthEvent {
     pub strongest_signal_dbm: Option<i8>,
     pub external_bssid: bool,
     pub threshold_exceeded: bool,
+    #[serde(default)]
     pub frame_size_histogram: FrameSizeHistogram,
     pub inter_arrival_p50_ms: Option<u64>,
 }
@@ -304,7 +316,22 @@ fn calculate_p50_inter_arrival(times_ms: &[i64]) -> Option<u64> {
     if times_ms.len() < 2 {
         return None;
     }
-    let mut intervals: Vec<i64> = times_ms.windows(2).map(|w| w[1] - w[0]).collect();
+    let mut sorted_times = times_ms.to_vec();
+    sorted_times.sort_unstable();
+    let mut intervals: Vec<u64> = sorted_times
+        .windows(2)
+        .filter_map(|w| {
+            let delta = w[1] - w[0];
+            if delta >= 0 {
+                Some(delta as u64)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if intervals.is_empty() {
+        return None;
+    }
     intervals.sort_unstable();
-    Some(intervals[intervals.len() / 2] as u64)
+    Some(intervals[intervals.len() / 2])
 }

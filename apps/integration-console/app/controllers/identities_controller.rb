@@ -54,7 +54,7 @@ class IdentitiesController < ApplicationController
         render_cached_json(data, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
       end
       format.csv do
-        key = ExportStore.key_for(type: "inventory", query: @query, sort: "last_occurred_at", direction: "desc")
+        key = ExportStore.key_for(type: "inventory", query: @query, filters: parsed_grid_filters, sort: "last_occurred_at", direction: "desc")
         url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL, filename: "wireless-inventory.csv") do
           inventory_csv(scope.limit(EXPORT_MAX_ROWS))
         end

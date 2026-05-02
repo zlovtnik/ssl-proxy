@@ -233,7 +233,8 @@ async fn run_sensor() -> Result<(), SensorError> {
                 }
 
                 // Flush accumulated probe observations to database
-                for ((ssid, client_mac), obs) in pipeline_state.probe_accumulator.drain() {
+                let probes_to_flush: Vec<_> = pipeline_state.probe_accumulator.drain().collect();
+                for ((ssid, client_mac), obs) in probes_to_flush {
                     if let Err(error) = handles.backlog.upsert_network_client_all_probes(
                         &ssid,
                         &client_mac,
@@ -242,7 +243,8 @@ async fn run_sensor() -> Result<(), SensorError> {
                         obs.last_seen,
                         obs.probe_count,
                     ).await {
-                        warn!(%error, ssid, client_mac, "network client batch upsert failed");
+                        warn!(%error, ssid, client_mac, "network client batch upsert failed; reinserting for retry");
+                        pipeline_state.probe_accumulator.insert((ssid, client_mac), obs);
                     }
                 }
             }

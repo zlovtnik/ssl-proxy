@@ -62,6 +62,7 @@
   async function selectOperator(operator) {
     activeQuery.operator = operator.key
     step = 'value'
+    searchInput = ''
     
     if (activeQuery.field?.type === 'select') {
       await loadDistinctValues()

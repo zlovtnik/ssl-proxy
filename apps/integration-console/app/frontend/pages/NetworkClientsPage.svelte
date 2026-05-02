@@ -76,7 +76,7 @@
     rows={filteredRows}
     totalCount={filteredRows.length}
     currentPage={1}
-    perPage={filteredRows.length}
+    perPage={Math.max(1, filteredRows.length)}
     sortKey=""
     sortDirection="desc"
     {loading}

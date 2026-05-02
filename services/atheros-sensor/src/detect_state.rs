@@ -44,7 +44,7 @@ use crate::parse::SECURITY_PMF_REQUIRED;
 pub const CLIENT_INVENTORY_SUBJECT: &str = "sync.scan.request";
 pub const ROGUE_AP_SUBJECT: &str = "sync.oracle.load";
 pub const DEAUTH_FLOOD_SUBJECT: &str = "sync.oracle.result";
-pub const ATTACK_SEQUENCE_SUBJECT: &str = "sync.attack.sequence";
+pub const ATTACK_SEQUENCE_SUBJECT: &str = "sync.oracle.result";
 const ROGUE_AP_ALERT_TTL: Duration = Duration::from_secs(60);
 const ATTACK_CORRELATION_WINDOW: Duration = Duration::from_secs(300);
 const ATTACK_SEQUENCE_COOLDOWN: Duration = Duration::from_secs(60);

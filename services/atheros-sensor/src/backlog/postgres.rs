@@ -256,7 +256,7 @@ impl PostgresBacklog {
         }
         let rows = match client
             .query(
-                "select ssid, lower(bssid), location_id, psk
+                "select ssid, lower(bssid), location_id, psk_ciphertext
                    from authorized_wireless_networks
                   where enabled",
                 &[],
@@ -284,7 +284,7 @@ impl PostgresBacklog {
     /// correlation. Increments probe_count and updates last_seen on conflict.
     pub async fn upsert_network_client(
         &self,
-        bssid: &str,
+        known_bssid: &str,
         client_mac: &str,
         ssid: Option<&str>,
     ) -> Result<(), BacklogError> {
@@ -292,11 +292,11 @@ impl PostgresBacklog {
         let client = self.client(operation).await?;
         match client
             .execute(
-                "insert into network_clients (bssid, client_mac, ssid, first_seen, last_seen, probe_count)
-                 values ($1, $2, $3, now(), now(), 1)
-                 on conflict (bssid, client_mac)
-                 do update set last_seen = now(), probe_count = network_clients.probe_count + 1, ssid = coalesce($3, network_clients.ssid)",
-                &[&bssid, &client_mac, &ssid],
+                "insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
+                 values ($3, $2, $1, now(), now(), 1)
+                 on conflict (ssid, client_mac)
+                 do update set last_seen = now(), probe_count = network_clients.probe_count + 1, known_bssid = coalesce($1, network_clients.known_bssid)",
+                &[&known_bssid, &client_mac, &ssid],
             )
             .await
         {

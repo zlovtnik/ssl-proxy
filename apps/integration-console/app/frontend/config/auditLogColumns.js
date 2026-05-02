@@ -116,7 +116,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
       sortable: true,
       minWidth: "min-w-28",
       hiddenBelow: "md",
-      format: (value, row) => row.security_label || "open/unknown",
+      format: (value, row) => row.security_label || row.security_flags || "open/unknown",
       filterType: "number"
     },
     {
