@@ -17,6 +17,9 @@
   <%= svelte_props_tag "recent-alerts-svelte-root", { initial: { endpoint: health_recent_alerts_path(format: :json) } } %>
 </section>
 
+<div id="threat-alerts-panel-svelte-root"></div>
+<%= svelte_props_tag "threat-alerts-panel-svelte-root", { initial: { endpoint: alerts_path(format: :json) } } %>
+
 <div id="sync-health-svelte-root"></div>
 <%= svelte_props_tag "sync-health-svelte-root", { initial: { endpoint: health_sync_data_path(format: :json) } } %>
 

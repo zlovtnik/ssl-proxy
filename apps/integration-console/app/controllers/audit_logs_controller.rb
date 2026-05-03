@@ -60,13 +60,25 @@ class AuditLogsController < ApplicationController
     @live_updates = @query.blank? && @location_id.blank? && @current_page == 1 && @sort == "observed_at" && @direction == "desc"
 
     respond_to do |format|
-      format.html { @audit_log_payload = audit_logs_payload(@audit_logs) }
+      format.html { 
+        raw_entries = @audit_logs.to_a
+        @audit_logs = raw_entries.map { |entry| AuditLogPresenter.new(entry) }
+        @audit_log_payload = audit_logs_payload(raw_entries) 
+      }
       format.json { render json: audit_logs_payload(@audit_logs) }
     end
   end
 
   def show
-    @audit_log = AuditLog.wireless.find(params[:id])
+    entry = AuditLog.wireless.find(params[:id])
+    @audit_log = AuditLogPresenter.new(entry)
+    if entry.session_key.present?
+      @related = AuditLog.wireless
+        .where(session_key: entry.session_key, location_id: entry.location_id)
+        .where("observed_at > ?", 24.hours.ago)
+        .order(observed_at: :asc)
+        .limit(50)
+    end
   end
 
   def recent
@@ -173,6 +185,7 @@ class AuditLogsController < ApplicationController
   end
 
   def live_payload(entry)
+    presenter = AuditLogPresenter.new(entry)
     {
       dedupe_key: entry.dedupe_key,
       show_url: audit_log_path(entry),
@@ -195,9 +208,9 @@ class AuditLogsController < ApplicationController
       antenna_id: entry.antenna_id,
       raw_len: entry.raw_len,
       frame_control_flags: entry.frame_control_flags,
-      frame_flags_label: entry.frame_flags_label,
+      frame_flags_label: presenter.frame_flags_label,
       more_data: entry.more_data,
-      retry: entry.retry_flag,
+      retry: entry.retry,
       power_save: entry.power_save,
       protected: entry.protected,
       payload_visibility: entry.payload_visibility,
@@ -210,10 +223,11 @@ class AuditLogsController < ApplicationController
       frame_fingerprint: entry.frame_fingerprint,
       large_frame: entry.large_frame,
       security_flags: entry.security_flags,
-      security_label: entry.compact_security_label,
+      security_label: presenter.compact_security_label,
       device_fingerprint: entry.device_fingerprint,
       wps_device_name: entry.wps_device_name,
-      handshake_captured: entry.handshake_captured
+      handshake_captured: entry.handshake_captured,
+      tags: entry.payload.is_a?(Hash) ? Array(entry.payload["tags"]).select { |t| t.is_a?(String) && t.start_with?("threat:") } : []
     }
   end
 

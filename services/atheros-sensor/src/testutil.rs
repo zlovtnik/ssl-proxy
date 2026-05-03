@@ -1,12 +1,19 @@
+//! Test fixture factories for 802.11 frames; all frames use the same AP/CLIENT/BROADCAST MAC constants; helpers are used across parse and audit tests.
+
 const LLC_SNAP_EAPOL_PREFIX: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e];
 const WPS_ATTR_DEVICE_NAME: u16 = 0x1011;
 const WPS_ATTR_MANUFACTURER: u16 = 0x1021;
 const WPS_ATTR_MODEL_NAME: u16 = 0x1023;
 
+/// Broadcast address for probe requests and beacons.
 pub(crate) const BROADCAST: [u8; 6] = [0xff; 6];
+/// Primary access point MAC used in most test frames.
 pub(crate) const AP: [u8; 6] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60];
+/// Secondary access point MAC for multi-AP test scenarios.
 pub(crate) const AP2: [u8; 6] = [0x10, 0x20, 0x30, 0x40, 0x50, 0x61];
+/// Client station MAC used in data and management frames.
 pub(crate) const CLIENT: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01];
+/// Distribution system destination MAC for WDS frames.
 pub(crate) const DISTRIBUTION_DST: [u8; 6] = [0x22, 0x33, 0x44, 0x55, 0x66, 0x77];
 
 pub(crate) fn beacon_radiotap_frame() -> Vec<u8> {
@@ -57,6 +64,8 @@ pub(crate) fn data_from_distribution_radiotap_frame(payload: Vec<u8>) -> Vec<u8>
     build_frame(0x08, 0x02, CLIENT, AP, DISTRIBUTION_DST, None, payload)
 }
 
+/// Builds a complete 802.11 frame with 10-byte minimal radiotap header (signal byte at offset 8);
+/// addr4 triggers WDS frame construction; body goes directly after the 802.11 header.
 pub(crate) fn build_frame(
     frame_control_first: u8,
     frame_control_second: u8,

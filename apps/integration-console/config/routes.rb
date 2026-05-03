@@ -20,10 +20,14 @@ Rails.application.routes.draw do
   resources :identities, only: :index do
     get :inventory, on: :collection
     get :mac_summary, on: :collection
+    get :distinct_values, on: :collection
   end
   resources :heatmap, only: :index
   resources :alerts, only: :index
-  resources :shadow_it_alerts, only: :index
+  resources :shadow_it_alerts, only: :index do
+    get :distinct_values, on: :collection
+  end
+  resources :network_clients, only: :index
 
   mount ActionCable.server => "/cable"
 end

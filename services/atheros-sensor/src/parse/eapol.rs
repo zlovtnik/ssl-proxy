@@ -1,3 +1,20 @@
+//! EAPOL key frame parsing for WPA2 handshake capture.
+//!
+//! Message classification uses four key_info bits from the EAPOL-Key header:
+//! message 1 = ACK set, MIC clear (AP-&gt;STA nonce);
+//! message 2 = MIC set, install clear, secure clear (STA-&gt;AP response);
+//! message 3 = ACK set, MIC set, install set (AP-&gt;STA with GTK);
+//! message 4 = MIC set, install clear, secure set (STA-&gt;AP confirmation).
+//! PMKID extraction only runs on message 1: it walks the key data TLVs looking for
+//! descriptor type 0xDD with OUI 00:0f:ac:04 and reads the 16-byte PMKID at offset 4,
+//! enabling offline pre-auth cracking detection without capturing the full 4-way handshake.
+//! EAP Identity extraction looks for EAP Response/Identity packets (code=2, type=1)
+//! in unprotected data frames, surfacing the 802.1X username hint before encryption begins.
+//!
+//! [`EapolKeyObservation`]: the output of a successful EAPOL key parse; `message` (1-4) keys
+//! the handshake state machine bitmask, `bssid` and `client_mac` together form the per-pair
+//! state key, and `pmkid` is populated only on message 1 when the AP includes it in key data.
+
 use crate::model::WifiFrame;
 
 use super::text::utf8_text;
@@ -10,6 +27,8 @@ pub(super) struct EapolKeyObservation {
     pub(super) bssid: String,
     pub(super) client_mac: String,
     pub(super) pmkid: Option<String>,
+    pub(super) replay_counter: Option<u64>,
+    pub(super) nonce: Option<[u8; 32]>,
 }
 
 pub(super) fn extract_eap_identity(
@@ -40,20 +59,46 @@ pub(super) fn extract_eap_identity(
     }
 
     let eap = &eapol[4..4 + eapol_len];
-    if eap[0] != 2 {
-        return None;
-    }
+    let eap_code = eap[0];
     let eap_packet_len = u16::from_be_bytes([eap[2], eap[3]]) as usize;
     if eap_packet_len < 5 || eap_packet_len > eap.len() {
         return None;
     }
-    if eap[4] != 1 {
-        return None;
-    }
+    let eap_type = eap[4];
 
-    normalize_identity(&eap[5..eap_packet_len])
+    match (eap_code, eap_type) {
+        (1, 1) | (2, 1) => normalize_identity(&eap[5..eap_packet_len]),
+        (2, 4) => extract_eap_md5_identity(&eap[5..eap_packet_len]),
+        (2, 52) => extract_eap_pwd_identity(&eap[5..eap_packet_len]),
+        _ => None,
+    }
 }
 
+fn extract_eap_md5_identity(type_data: &[u8]) -> Option<String> {
+    if type_data.is_empty() {
+        return None;
+    }
+    let value_size = type_data[0] as usize;
+    if type_data.len() < 1 + value_size {
+        return None;
+    }
+    normalize_identity(&type_data[1 + value_size..])
+}
+
+fn extract_eap_pwd_identity(type_data: &[u8]) -> Option<String> {
+    if type_data.len() < 2 {
+        return None;
+    }
+    let total_length = u16::from_be_bytes([type_data[0], type_data[1]]) as usize;
+    if type_data.len() < 2 + total_length {
+        return None;
+    }
+    normalize_identity(&type_data[2..2 + total_length])
+}
+
+/// Classifies EAPOL key message (1-4) using four key_info bits: ACK (0x0080), MIC (0x0100),
+/// Install (0x0040), Secure (0x0200). Message 1 = ACK only; 2 = MIC, no Install/Secure;
+/// 3 = ACK+MIC+Install; 4 = MIC+Secure, no Install.
 pub(super) fn extract_eapol_key_message(
     frame_type: u8,
     frame_control: u16,
@@ -92,6 +137,8 @@ pub(super) fn extract_eapol_key_message(
     }
 }
 
+/// Walks key data TLVs (descriptor type 0xDD) looking for OUI 00:0f:ac:04, then reads
+/// the 16-byte PMKID at offset 4; only runs on message 1 (ACK set, MIC clear).
 pub(super) fn extract_pmkid(
     frame_type: u8,
     frame_control: u16,
@@ -126,12 +173,80 @@ pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObserva
             .clone()
             .or_else(|| frame.destination_mac.clone())
     }?;
+    let raw_frame_bytes = frame.raw_frame.as_ref().and_then(|raw| {
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw.as_bytes()).ok()
+    });
+    let replay_counter = raw_frame_bytes.as_ref().and_then(|bytes| {
+        extract_replay_counter(
+            frame.frame_type_raw,
+            frame.frame_control,
+            frame.frame_subtype_raw,
+            bytes,
+        )
+    });
+    let nonce = raw_frame_bytes.as_ref().and_then(|bytes| {
+        extract_nonce(
+            frame.frame_type_raw,
+            frame.frame_control,
+            frame.frame_subtype_raw,
+            bytes,
+        )
+    });
     Some(EapolKeyObservation {
         message,
         bssid,
         client_mac,
         pmkid: frame.pmkid.clone(),
+        replay_counter,
+        nonce,
     })
+}
+
+fn extract_replay_counter(
+    frame_type: u8,
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<u64> {
+    if frame_type != 2 {
+        return None;
+    }
+    let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
+    let eapol = frame_bytes.get(payload_offset + 8..)?;
+    if eapol.len() < 15 || eapol[1] != 3 {
+        return None;
+    }
+    let replay_bytes = eapol.get(7..15)?;
+    Some(u64::from_be_bytes([
+        replay_bytes[0],
+        replay_bytes[1],
+        replay_bytes[2],
+        replay_bytes[3],
+        replay_bytes[4],
+        replay_bytes[5],
+        replay_bytes[6],
+        replay_bytes[7],
+    ]))
+}
+
+fn extract_nonce(
+    frame_type: u8,
+    frame_control: u16,
+    subtype: u8,
+    frame_bytes: &[u8],
+) -> Option<[u8; 32]> {
+    if frame_type != 2 {
+        return None;
+    }
+    let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
+    let eapol = frame_bytes.get(payload_offset + 8..)?;
+    if eapol.len() < 49 || eapol[1] != 3 {
+        return None;
+    }
+    let nonce_bytes = eapol.get(17..49)?;
+    let mut nonce = [0u8; 32];
+    nonce.copy_from_slice(nonce_bytes);
+    Some(nonce)
 }
 
 fn find_pmkid_in_key_data(key_data: &[u8]) -> Option<String> {

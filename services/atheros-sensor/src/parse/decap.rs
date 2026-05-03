@@ -1,3 +1,14 @@
+//! Payload decapsulation for unprotected data frames.
+//!
+//! Only runs when frame_type == 2 (data) and protected == false; all other frames return an
+//! empty PayloadAnalysis. After computing the payload offset (accounting for WDS addr4 and
+//! QoS fields), the LLC/SNAP header is validated: DSAP 0xAA, SSAP 0xAA, control 0x03 are
+//! required; anything else is treated as opaque and decap stops. For IPv4 (ethertype 0x0800)
+//! the IP header is parsed and the transport layer is dispatched by protocol number.
+//! Four application protocols are handled by UDP port: SSDP (1900), mDNS (5353),
+//! DHCP (67/68), and DNS (53). TCP is parsed for port/flag metadata only, with no
+//! application-layer decoding.
+
 use std::net::Ipv4Addr;
 
 use crate::model::{
@@ -40,6 +51,9 @@ pub(super) struct PayloadAnalysis {
     pub mdns_name: Option<String>,
 }
 
+/// Returns empty PayloadAnalysis when protected=true (ciphertext) or frame_type != 2.
+/// Validates LLC/SNAP header (DSAP 0xAA, SSAP 0xAA, control 0x03) before decap; any
+/// other values cause early return with no payload parsing.
 pub(super) fn analyze_payload(
     frame_type: u8,
     frame_control: u16,

@@ -1,3 +1,13 @@
+//! Optional Prometheus text exposition format 0.0.4 endpoint for operational observability.
+//!
+//! The server only starts when ATH_SENSOR_METRICS_PORT is set; if unset, spawn_metrics_server
+//! returns immediately with no listener. Counters (packets_seen, decoded_frames,
+//! unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures)
+//! accumulate monotonically for the lifetime of the process. Gauges (postgres_pool_available,
+//! postgres_pool_waiting) reflect the live deadpool connection state at scrape time.
+//! The HTTP server uses Hyper HTTP/1 with one tokio task per accepted connection; it binds
+//! only to 127.0.0.1 and serves a single /metrics path in Prometheus text format 0.0.4.
+
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -18,6 +28,8 @@ pub fn shared_stats() -> SharedStats {
     Arc::new(Mutex::new(CaptureStats::default()))
 }
 
+/// Spawns the metrics HTTP server on 127.0.0.1 (not 0.0.0.0) serving exactly one path:
+/// /metrics. No-op when port is None, returning immediately with no listener.
 pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, backlog: Arc<PostgresBacklog>) {
     let Some(port) = port else {
         return;
@@ -55,6 +67,9 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, backlog: Arc<
     });
 }
 
+/// Serves Prometheus text format (version 0.0.4) with counters (packets_seen, decoded_frames,
+/// unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures)
+/// and gauges (postgres_pool_available, postgres_pool_waiting).
 async fn serve_metrics(
     req: Request<hyper::body::Incoming>,
     stats: SharedStats,

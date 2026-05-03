@@ -1,3 +1,12 @@
+//! Sysfs-based wireless interface discovery.
+//!
+//! Scans /sys/class/net for entries that contain a "wireless" or "phy80211" subdirectory,
+//! then resolves the driver name via the device/driver symlink. ath9k_htc is preferred because
+//! it is the target hardware for this sensor; if multiple wireless interfaces are present and
+//! none use ath9k_htc, the lexicographically first interface is selected as a deterministic
+//! fallback. When ATH_SENSOR_DEVICE is set, the override path skips discovery entirely and
+//! validates only that the named interface exists and is wireless.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -8,18 +17,24 @@ use tracing::{info, warn};
 
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    /// Wraps std::io::Error when sysfs cannot be read during interface discovery.
     #[error("failed to read sysfs device inventory: {0}")]
     Io(#[from] std::io::Error),
+    /// Fired when no wireless interface is found under /sys/class/net.
     #[error("no wireless interface found under /sys/class/net (ath9k_htc preferred)")]
     NotFound,
+    /// Fired when ATH_SENSOR_DEVICE names an interface that exists but is not wireless.
     #[error("configured interface {0} exists but is not a wireless interface")]
     OverrideNotWireless(String),
+    /// Fired when ATH_SENSOR_DEVICE names an interface that does not exist.
     #[error("configured interface {0} was not found under /sys/class/net")]
     OverrideNotFound(String),
+    /// Fired when the interface address file is empty or missing.
     #[error("missing interface MAC address for {0}")]
     MissingMac(String),
 }
 
+/// Detects a wireless interface, preferring ATH_SENSOR_DEVICE override if set.
 pub fn detect(override_name: Option<&str>) -> Result<String, DeviceError> {
     if let Some(name) = override_name {
         return detect_interface_at(name, Path::new("/sys/class/net"));
@@ -27,6 +42,7 @@ pub fn detect(override_name: Option<&str>) -> Result<String, DeviceError> {
     detect_in(Path::new("/sys/class/net"))
 }
 
+/// Validates that the named interface exists under root and is wireless.
 fn detect_interface_at(name: &str, root: &Path) -> Result<String, DeviceError> {
     let path = root.join(name);
     if !path.exists() {
@@ -38,6 +54,9 @@ fn detect_interface_at(name: &str, root: &Path) -> Result<String, DeviceError> {
     Ok(name.to_string())
 }
 
+/// Scans /sys/class/net for wireless interfaces (those with wireless/ or phy80211/ subdirs),
+/// resolves driver names via device/driver symlink, and prefers ath9k_htc; falls back to
+/// lexicographically first interface if no ath9k_htc is found.
 pub fn detect_in(root: &Path) -> Result<String, DeviceError> {
     let mut wireless_interfaces = Vec::new();
 
@@ -92,6 +111,8 @@ fn driver_name(interface_path: &Path) -> Option<String> {
         .map(|name| name.to_string_lossy().to_string())
 }
 
+/// Reads the MAC address from /sys/class/net/<interface>/address, returning it
+/// trimmed and lowercased. Fails if the file is missing, unreadable, or empty.
 pub fn read_mac_address(interface: &str) -> Result<String, DeviceError> {
     let path = PathBuf::from("/sys/class/net")
         .join(interface)

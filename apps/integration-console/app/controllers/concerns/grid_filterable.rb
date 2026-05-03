@@ -1,6 +1,10 @@
 module GridFilterable
   extend ActiveSupport::Concern
 
+  included do
+    helper_method :parsed_grid_filters
+  end
+
   MAX_FILTERS = 10
 
   private

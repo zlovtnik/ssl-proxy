@@ -1,5 +1,19 @@
+//! Radiotap header parsing for 802.11 physical-layer metadata.
+//!
+//! strip_radiotap validates the radiotap header, walks the present-word bitmap to locate
+//! each field, and returns a RadiotapMetadata alongside the remaining 802.11 frame bytes.
+//!
+//! [`RadiotapMetadata`]: physical-layer fields extracted from the radiotap header;
+//! `signal_present` is `true` only when the radiotap present-word bit 5 (dBm signal) was
+//! set, distinguishing a genuine zero-dBm reading from a stripped or absent signal field -
+//! the `signal_status` string in `RfLayer` is derived from this flag.
+
 use super::frame::ParseError;
 
+/// Physical-layer metadata extracted from the radiotap header. The signal_present field is
+/// distinct from signal_dbm.is_some(): it is set only when the RSSI field (bit 5) was actually
+/// present in the radiotap header, not stripped by a driver. The signal_status string in
+/// RfLayer is derived from this flag.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RadiotapMetadata {
     pub tsft: Option<u64>,
@@ -16,6 +30,12 @@ pub struct RadiotapMetadata {
     pub signal_present: bool,
 }
 
+/// Walks the extended present-word bitmap (bit 31 set means another word follows) and
+/// skips vendor namespace fields (bit 30) by reading the 2-byte length at offset +4.
+/// Strips the radiotap header and returns extracted metadata alongside the remaining 802.11
+/// frame bytes. Walks the extended present-word bitmap (bit 31 set means another word follows)
+/// and skips vendor namespace fields (bit 30) by reading the 2-byte length at offset +4.
+/// Returns a zero-copy borrow of the original slice.
 pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseError> {
     if bytes.len() < 8 {
         return Err(ParseError::MissingRadiotap);
@@ -44,6 +64,8 @@ pub fn strip_radiotap(bytes: &[u8]) -> Result<(RadiotapMetadata, &[u8]), ParseEr
     Ok((metadata, &bytes[length..]))
 }
 
+/// Dispatches each present-word bit to the corresponding field parser. Bit 28 (TLV namespace)
+/// returns early rather than panicking, halting metadata parsing before variable-length fields.
 fn parse_metadata(
     bytes: &[u8],
     length: usize,
@@ -120,6 +142,8 @@ fn read_present_word(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
+/// Returns (align, size) for each radiotap field bit. Returning None halts metadata parsing,
+/// used for bit 28 (TLV namespace) to stop before variable-length fields.
 fn field_layout(bit: usize) -> Option<(usize, usize)> {
     match bit {
         0 => Some((8, 8)),

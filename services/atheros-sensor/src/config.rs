@@ -1,3 +1,22 @@
+//! Environment-variable-only configuration model.
+//!
+//! All settings are read from environment variables at startup via AppConfig::from_env; there is
+//! no config file. Secrets support a file-fallback pattern: read_secret checks the plain variable
+//! first, then falls back to reading the path named by the _FILE variant, enabling Docker secrets
+//! mounts without exposing values in the environment. ATH_SENSOR_REQUIRE_HOST_ENDPOINTS is a
+//! deployment guard that rejects Docker service hostnames ("nats", "postgres") in NATS and
+//! DATABASE_URL, enforcing host-network-mode endpoints when the sensor runs outside Docker.
+//!
+//! # AppConfig field mutability
+//!
+//! Fields that can be updated at runtime via a NATS push (no restart required):
+//! `bpf` (BPF filter), `channel` (via `wireless.config.sensor`), and the `audit_window`
+//! schedule (via `wireless.audit.config`).
+//!
+//! All other fields - including `database_url`, `snaplen`, `pcap_timeout_ms`,
+//! `mac_device_lookup_enabled`, `log_idle_secs`, and all backlog/metrics settings - are
+//! read once at startup and require a process restart to change.
+
 use chrono::NaiveTime;
 use ssl_proxy::config::SyncConfig;
 use std::str::FromStr;
@@ -29,6 +48,7 @@ pub struct AppConfig {
     pub deauth_flood_window_secs: u64,
     pub deauth_flood_cooldown_secs: u64,
     pub export_handshakes: bool,
+    pub handshake_ttl_secs: u64,
     pub authorized_network_cache_ttl_secs: u64,
     pub metrics_port: Option<u16>,
     pub shutdown_grace_secs: u64,
@@ -47,24 +67,35 @@ pub enum AuditLayerStream {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    /// Fired when `DATABASE_URL` is not set or is blank.
     #[error("DATABASE_URL is required")]
     MissingDatabaseUrl,
+    /// Fired when `ATH_SENSOR_CHANNEL` is set but cannot be parsed as a `u8`.
     #[error("invalid ATH_SENSOR_CHANNEL: {0}")]
     InvalidChannel(String),
+    /// Fired when `ATH_SENSOR_SNAPLEN` is set but cannot be parsed as an `i32`.
     #[error("invalid ATH_SENSOR_SNAPLEN: {0}")]
     InvalidSnaplen(String),
+    /// Fired when `ATH_SENSOR_PCAP_TIMEOUT_MS` is set but cannot be parsed as an `i32`.
     #[error("invalid ATH_SENSOR_PCAP_TIMEOUT_MS: {0}")]
     InvalidTimeout(String),
+    /// Fired when `ATH_SENSOR_LOG_IDLE_SECS` is set but cannot be parsed as a `u64`.
     #[error("invalid ATH_SENSOR_LOG_IDLE_SECS: {0}")]
     InvalidLogIdleSecs(String),
+    /// Fired when `ATH_SENSOR_METRICS_PORT` is set but cannot be parsed as a `u16`.
     #[error("invalid ATH_SENSOR_METRICS_PORT: {0}")]
     InvalidMetricsPort(String),
+    /// Fired when `AUDIT_WINDOW_START` is set but cannot be parsed as `HH:MM`.
     #[error("invalid AUDIT_WINDOW_START: {0}")]
     InvalidAuditWindowStart(String),
+    /// Fired when `AUDIT_WINDOW_END` is set but cannot be parsed as `HH:MM`.
     #[error("invalid AUDIT_WINDOW_END: {0}")]
     InvalidAuditWindowEnd(String),
+    /// Fired when `DATABASE_URL` is set but cannot be parsed as a valid Postgres connection string.
     #[error("invalid DATABASE_URL: {0}")]
     InvalidDatabaseUrl(String),
+    /// Fired when `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true` and a NATS or Postgres URL resolves
+    /// to a Docker service hostname (`nats` or `postgres`) instead of a host-reachable address.
     #[error("{variable} points at Docker service host `{host}`, but ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true requires host-reachable endpoints for host network mode; use 127.0.0.1 or another host-reachable address")]
     HostNetworkEndpoint {
         variable: &'static str,
@@ -183,6 +214,9 @@ impl AppConfig {
                 .unwrap_or(60)
                 .max(1),
             export_handshakes: read_bool("ATH_SENSOR_EXPORT_HANDSHAKES", false),
+            handshake_ttl_secs: parse_u64("ATH_SENSOR_HANDSHAKE_TTL_SECS", 60)
+                .unwrap_or(60)
+                .max(1),
             authorized_network_cache_ttl_secs: parse_u64(
                 "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS",
                 60,
@@ -236,7 +270,7 @@ fn reject_docker_service_host(variable: &'static str, host: &str) -> Result<(), 
     }
     Ok(())
 }
-
+//todo: doc it!
 fn nats_host(nats_url: &str) -> Option<String> {
     let trimmed = nats_url.trim();
     if trimmed.is_empty() {
@@ -274,7 +308,7 @@ fn nats_host(nats_url: &str) -> Option<String> {
         Some(host.to_string())
     }
 }
-
+//todo: doc it!
 fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
     let timezone = std::env::var("AUDIT_WINDOW_TZ")
         .ok()
@@ -310,35 +344,35 @@ fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
 
     Ok(AuditWindow::from_parts(timezone, days, start, end))
 }
-
+//todo: doc it!
 fn parse_u8(name: &str, default: u8) -> Result<u8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u8>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_i32(name: &str, default: i32) -> Result<i32, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i32>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_i64(name: &str, default: i64) -> Result<i64, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i64>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_i8(name: &str, default: i8) -> Result<i8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i8>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => {
@@ -347,7 +381,7 @@ fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
         _ => Ok(None),
     }
 }
-
+//todo: doc it!
 fn audit_layer_stream_from_env() -> AuditLayerStream {
     match std::env::var("ATH_SENSOR_AUDIT_LAYER_STREAM")
         .ok()
@@ -359,21 +393,21 @@ fn audit_layer_stream_from_env() -> AuditLayerStream {
         _ => AuditLayerStream::Off,
     }
 }
-
+//todo: doc it!
 fn parse_u64(name: &str, default: u64) -> Result<u64, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u64>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn parse_usize(name: &str, default: usize) -> Result<usize, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<usize>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-
+//todo: doc it!
 fn read_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
         Ok(value) => matches!(
@@ -383,7 +417,7 @@ fn read_bool(name: &str, default: bool) -> bool {
         Err(_) => default,
     }
 }
-
+//todo: doc it!
 fn read_secret(value_var: &str, file_var: &str) -> Option<String> {
     if let Ok(value) = std::env::var(value_var) {
         let trimmed = value.trim();
@@ -459,6 +493,7 @@ mod tests {
             "ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS",
             "ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS",
             "ATH_SENSOR_EXPORT_HANDSHAKES",
+            "ATH_SENSOR_HANDSHAKE_TTL_SECS",
             "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS",
             "ATH_SENSOR_METRICS_PORT",
             "ATH_SENSOR_SHUTDOWN_GRACE_SECS",

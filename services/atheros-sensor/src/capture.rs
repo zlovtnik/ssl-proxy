@@ -1,3 +1,12 @@
+//! Dedicated capture thread and non-blocking pcap packet stream.
+//!
+//! Spawns a single OS thread (not a Tokio task) to drive the pcap loop, since libpcap is
+//! synchronous and blocking it inside the async runtime would stall the executor. The thread
+//! polls in non-blocking mode, sleeping 10 ms on NoMorePackets/TimeoutExpired to avoid busy-spin.
+//! A CaptureControl channel allows the async runtime to push live BPF filter reloads into the
+//! thread without restarting capture. Radiotap headers (DLT_IEEE802_11_RADIO, linktype 127) are
+//! required and validated at startup; plain 802.11 or Ethernet linktypes are rejected immediately.
+
 use std::{thread, time::Duration};
 
 use chrono::Utc;
@@ -8,10 +17,14 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::model::RawPacket;
 
+//todo: doc it!
 #[derive(Debug, Error)]
 pub enum CaptureError {
+    /// Fired by libpcap for any I/O or filter compilation failure during capture setup or runtime.
     #[error("pcap error: {0}")]
     Pcap(#[from] PcapError),
+    /// Fired at startup when the interface's datalink type is not DLT_IEEE802_11_RADIO (127),
+    /// meaning monitor mode with radiotap headers is not enabled on the interface.
     #[error(
         "unsupported pcap datalink {actual}; expected DLT_IEEE802_11_RADIO (127). Enable monitor mode with radiotap headers for this interface"
     )]
@@ -32,12 +45,17 @@ impl CaptureControl {
 enum CaptureCommand {
     ApplyFilter(String),
 }
-
+//todo: doc it!
 pub struct PacketStream {
     pub packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     pub control: CaptureControl,
 }
 
+/// Spawns a dedicated OS thread to drive the pcap loop since libpcap is synchronous and
+/// blocking it inside the async runtime would stall the executor. The thread polls in
+/// non-blocking mode, sleeping 10 ms on NoMorePackets/TimeoutExpired to avoid busy-spin.
+/// CaptureControl channel allows the async runtime to push live BPF filter reloads without
+/// restarting capture.
 pub fn stream_packets(
     device: &str,
     snaplen: i32,
@@ -118,6 +136,7 @@ pub fn stream_packets(
     })
 }
 
+/// Validates that the interface datalink is DLT_IEEE802_11_RADIO (127); rejects all others.
 fn validate_radiotap_datalink(linktype: Linktype) -> Result<(), CaptureError> {
     if linktype == Linktype::IEEE802_11_RADIOTAP {
         return Ok(());

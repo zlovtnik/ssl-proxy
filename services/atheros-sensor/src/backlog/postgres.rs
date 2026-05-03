@@ -1,6 +1,14 @@
+//! Postgres backlog implementation with intentional connection limits.
+//!
+//! Pool is capped at max 2 connections to avoid overwhelming the database during high-volume
+//! wireless capture. The sync_scan_ingest table is the primary ledger for all ingested events
+//! with wireless-specific columns for fast querying. The audit_backlog table is the fallback
+//! store for events that fail to publish to NATS, enabling retry and eventual consistency.
+
 use std::str::FromStr;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, RecyclingMethod};
 use sha2::{Digest, Sha256};
 use tokio_postgres::{Config as PostgresConfig, NoTls};
@@ -12,11 +20,34 @@ use super::{
     wireless_columns::WirelessIngestColumns,
 };
 
+/// Postgres implementation of BacklogStore with intentional connection limits.
+///
+/// Maintains a connection pool capped at 2 connections to avoid overwhelming the database
+/// during high-volume wireless capture. Implements graceful degradation when tables are
+/// missing (returns empty results rather than errors) to support fresh deployments before
+/// migrations run.
+///
+/// # Tables
+///
+/// - `sync_scan_ingest`: Primary ledger for all ingested events with wireless-specific columns
+/// - `audit_backlog`: Fallback store for events that fail to publish to NATS
+/// - `devices`: Optional device registry for MAC address lookups
+/// - `authorized_wireless_networks`: Optional network authorization rules
+///
+/// # Connection Pool Sizing
+///
+/// The pool is intentionally limited to 2 connections because:
+/// - This is a low-contention sensor workload with infrequent writes
+/// - Backlog operations are not latency-critical
+/// - Prevents database overload during wireless capture bursts
+/// - Allows database resources to be shared with other services
 pub struct PostgresBacklog {
     pool: Pool,
 }
 
 impl PostgresBacklog {
+    /// Initializes a connection pool with max_size=2 to avoid overwhelming the database
+    /// during high-volume wireless capture; this is a low-contention sensor workload.
     pub async fn connect(database_url: &str) -> Result<Self, BacklogError> {
         let config = PostgresConfig::from_str(database_url)
             .map_err(|error| BacklogError::InvalidDatabaseUrl(error.to_string()))?;
@@ -40,6 +71,8 @@ impl PostgresBacklog {
         Ok(Self { pool })
     }
 
+    /// Checks out a connection from the pool, logging diagnostics at debug level on success
+    /// and error level on failure. The operation parameter identifies the caller for tracing.
     async fn client(&self, operation: &'static str) -> Result<Client, BacklogError> {
         let before = self.pool.status();
         match self.pool.get().await {
@@ -76,6 +109,9 @@ impl PostgresBacklog {
         }
     }
 
+    /// Looks up device_id and username by MAC address. Uses to_regclass existence check to
+    /// avoid errors on fresh deployments before migrations run. Queries both mac_id (exact)
+    /// and lower(mac_hint) (normalized fallback) to handle case-insensitive MAC lookups.
     pub async fn lookup_device_by_mac(
         &self,
         mac: &str,
@@ -118,6 +154,9 @@ impl PostgresBacklog {
         Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1))))
     }
 
+    /// Checks if a wireless network is authorized for the given location. This method is
+    /// #[allow(dead_code)] because authorization now goes through list_authorized_wireless_networks
+    /// plus the in-memory AuthorizedNetworkCache for performance.
     #[allow(dead_code)]
     pub async fn is_authorized_wireless_network(
         &self,
@@ -179,6 +218,21 @@ impl PostgresBacklog {
         Ok(row.get::<_, bool>(0))
     }
 
+    /// Loads all enabled authorized wireless networks from the database.
+    ///
+    /// Returns an empty vector if the `authorized_wireless_networks` table does not exist,
+    /// allowing the service to start before migrations run. The in-memory
+    /// `AuthorizedNetworkCache` uses this method to populate its cache.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `AuthorizedWirelessNetwork` entries with SSID, BSSID (normalized to
+    /// lowercase), and location_id. Only enabled networks are returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BacklogError::Postgres` on database query failures or
+    /// `BacklogError::Pool` on connection pool exhaustion.
     pub async fn list_authorized_wireless_networks(
         &self,
     ) -> Result<Vec<AuthorizedWirelessNetwork>, BacklogError> {
@@ -202,7 +256,7 @@ impl PostgresBacklog {
         }
         let rows = match client
             .query(
-                "select ssid, lower(bssid), location_id
+                "select ssid, lower(bssid), location_id, psk_ciphertext
                    from authorized_wireless_networks
                   where enabled",
                 &[],
@@ -221,14 +275,92 @@ impl PostgresBacklog {
                 ssid: row.get::<_, Option<String>>(0),
                 bssid: row.get::<_, Option<String>>(1),
                 location_id: row.get::<_, Option<String>>(2),
+                psk: row.get::<_, Option<String>>(3),
             })
             .collect())
     }
 
+    /// Upserts a network_clients row linking a client MAC to a network BSSID via probe request
+    /// correlation. Increments probe_count and updates last_seen on conflict.
+    pub async fn upsert_network_client(
+        &self,
+        known_bssid: &str,
+        client_mac: &str,
+        ssid: Option<&str>,
+    ) -> Result<(), BacklogError> {
+        let operation = "upsert_network_client";
+        let client = self.client(operation).await?;
+        match client
+            .execute(
+                "insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
+                 values ($3, $2, $1, now(), now(), 1)
+                 on conflict (ssid, client_mac)
+                 do update set last_seen = now(), probe_count = network_clients.probe_count + 1, known_bssid = coalesce($1, network_clients.known_bssid)",
+                &[&known_bssid, &client_mac, &ssid],
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                Err(BacklogError::Postgres { operation, source })
+            }
+        }
+    }
+
+    /// Upserts network_clients row for ALL probed SSIDs (not just authorized networks).
+    /// Used for batched flush from probe accumulator. Looks up known_bssid from
+    /// authorized_wireless_networks if SSID matches.
+    pub async fn upsert_network_client_all_probes(
+        &self,
+        ssid: &str,
+        client_mac: &str,
+        _ssid_hint: Option<&str>,
+        first_seen: DateTime<Utc>,
+        last_seen: DateTime<Utc>,
+        probe_count: u32,
+    ) -> Result<(), BacklogError> {
+        let operation = "upsert_network_client_all_probes";
+        let client = self.client(operation).await?;
+        match client
+            .execute(
+                "insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
+                 values (
+                   $1, $2,
+                   (select bssid from authorized_wireless_networks where lower(ssid) = lower($1) and enabled limit 1),
+                   $3, $4, $5
+                 )
+                 on conflict (ssid, client_mac)
+                 do update set
+                   last_seen = excluded.last_seen,
+                   probe_count = network_clients.probe_count + excluded.probe_count,
+                   known_bssid = coalesce(
+                     excluded.known_bssid,
+                     network_clients.known_bssid,
+                     (select bssid from authorized_wireless_networks where lower(ssid) = lower($1) and enabled limit 1)
+                   )",
+                &[&ssid, &client_mac, &first_seen, &last_seen, &(probe_count as i32)],
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(source) => {
+                self.log_postgres_error(operation, &source);
+                Err(BacklogError::Postgres { operation, source })
+            }
+        }
+    }
+
+    /// Returns the current connection pool status for monitoring and diagnostics.
+    ///
+    /// Exposes pool metrics including max_size (always 2), current size, available
+    /// connections, and waiting requests. Useful for health checks and capacity planning.
     pub fn pool_status(&self) -> deadpool_postgres::Status {
         self.pool.status()
     }
 
+    /// Emits pool diagnostics (max_size, size, available, waiting) alongside the Postgres error
+    /// so that connection exhaustion is visible at the same log line as the failure.
     fn log_postgres_error(&self, operation: &'static str, source: &tokio_postgres::Error) {
         let status = self.pool.status();
         let db_error = source.as_db_error();
@@ -257,6 +389,12 @@ impl PostgresBacklog {
 
 #[async_trait]
 impl BacklogStore for PostgresBacklog {
+    /// Postgres implementation: Writes or updates a row in sync_scan_ingest with upsert-on-conflict behavior.
+    ///
+    /// On dedupe_key collision, all wireless columns and payload fields are updated.
+    /// Strips control characters (except whitespace) and null bytes from JSON strings
+    /// via sanitize_json_value to prevent Postgres TEXT encoding errors. The payload_sha256
+    /// is computed after sanitization to ensure integrity checks match the stored payload.
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         let operation = "record_ingest";
         let client = self.client(operation).await?;
@@ -313,11 +451,11 @@ impl BacklogStore for PostgresBacklog {
                     status, attempt_count, producer, event_kind, source_mac, bssid,
                     destination_bssid, ssid, signal_dbm, raw_len, frame_control_flags, more_data,
                     retry, power_save, protected, security_flags, wps_device_name,
-                    wps_manufacturer, wps_model_name, device_fingerprint, handshake_captured,
-                    created_at, updated_at)
+                    wps_manufacturer, wps_model_name, device_fingerprint, probe_fingerprint,
+                    vendor_name, handshake_captured, created_at, updated_at)
                  values ($1, $2, $3, $4, $5::jsonb, $6,
                     'pending', 0, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                    $17, $18, $19, $20, $21, $22, $23, $24, $25, now(), now())
+                    $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, now(), now())
                  on conflict (dedupe_key)
                  do update set
                     payload_ref = excluded.payload_ref,
@@ -341,6 +479,8 @@ impl BacklogStore for PostgresBacklog {
                     wps_manufacturer = excluded.wps_manufacturer,
                     wps_model_name = excluded.wps_model_name,
                     device_fingerprint = excluded.device_fingerprint,
+                    probe_fingerprint = excluded.probe_fingerprint,
+                    vendor_name = excluded.vendor_name,
                     handshake_captured = excluded.handshake_captured,
                     updated_at = now()",
                 &[
@@ -368,6 +508,8 @@ impl BacklogStore for PostgresBacklog {
                     &wireless.wps_manufacturer,
                     &wireless.wps_model_name,
                     &wireless.device_fingerprint,
+                    &wireless.probe_fingerprint,
+                    &wireless.vendor_name,
                     &wireless.handshake_captured,
                 ],
             )
@@ -389,6 +531,10 @@ impl BacklogStore for PostgresBacklog {
         Ok(())
     }
 
+    /// Postgres implementation: Inserts or updates a row in audit_backlog with conflict handling.
+    ///
+    /// On dedupe_key collision, increments attempt_count and updates the error message.
+    /// This allows the same event to be retried multiple times with failure tracking.
     async fn save_pending(
         &self,
         dedupe_key: &str,
@@ -430,6 +576,10 @@ impl BacklogStore for PostgresBacklog {
         Ok(())
     }
 
+    /// Postgres implementation: Queries audit_backlog for pending entries, limited to 100 rows.
+    ///
+    /// Returns entries ordered by updated_at ascending (oldest first) to prioritize
+    /// long-pending events. The 100-row limit prevents memory exhaustion during retry storms.
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
         let operation = "list_pending";
         let client = self.client(operation).await?;
@@ -466,6 +616,11 @@ impl BacklogStore for PostgresBacklog {
         Ok(entries)
     }
 
+    /// Postgres implementation: Updates audit_backlog status to 'synced' and clears last_error.
+    ///
+    /// Logs a warning if no rows are matched (dedupe_key not found), which can occur if
+    /// the entry was already pruned or never existed. This is not treated as an error to
+    /// maintain idempotency.
     async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError> {
         let operation = "mark_synced";
         let client = self.client(operation).await?;
@@ -495,11 +650,23 @@ impl BacklogStore for PostgresBacklog {
         Ok(())
     }
 
+    /// Deletes pending backlog rows that have either exceeded max_attempts retries
+    /// or are older than max_age_hours, preventing unbounded growth of stale entries.
     async fn prune_stale(
         &self,
         max_attempts: i32,
         max_age_hours: i64,
     ) -> Result<u64, BacklogError> {
+        if max_attempts <= 0 {
+            return Err(BacklogError::InvalidDatabaseUrl(
+                "max_attempts must be greater than 0".to_string(),
+            ));
+        }
+        if max_age_hours < 0 {
+            return Err(BacklogError::InvalidDatabaseUrl(
+                "max_age_hours must be non-negative".to_string(),
+            ));
+        }
         let operation = "prune_stale";
         let client = self.client(operation).await?;
         let rows_affected = match client

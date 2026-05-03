@@ -1,3 +1,9 @@
+//! Audit-window-gated tracing layer for compliance logging.
+//!
+//! This tracing_subscriber Layer mirrors log events to stdout or stderr only during active
+//! audit windows. It is not a general-purpose logger—it exists solely to capture diagnostic
+//! traces when the audit schedule gate is open, enabling time-bounded compliance monitoring.
+
 use chrono::Utc;
 use serde_json::json;
 use tracing::{Event, Subscriber};
@@ -6,12 +12,15 @@ use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 use super::SharedAuditWindow;
 use crate::config::AuditLayerStream;
 
+/// Holds the audit window gate and output stream destination. The window field gates whether
+/// events are mirrored; the stream field controls the output destination (stdout, stderr, or off).
 pub struct AuditLayer {
     window: SharedAuditWindow,
     stream: AuditLayerStream,
 }
 
 impl AuditLayer {
+    /// Constructs a new AuditLayer with the given window gate and stream destination.
     pub fn new(window: SharedAuditWindow, stream: AuditLayerStream) -> Self {
         Self { window, stream }
     }
@@ -52,6 +61,8 @@ where
     }
 }
 
+/// Private tracing field visitor that collects key-value pairs into a JSON map.
+/// Used only by on_event to serialize structured log fields.
 #[derive(Default)]
 struct EventVisitor {
     fields: serde_json::Map<String, serde_json::Value>,

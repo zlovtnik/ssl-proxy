@@ -1,3 +1,15 @@
+//! Per-frame identity resolution and threat detection cache.
+//!
+//! mac_to_username is an LRU (capacity 4096) populated when an EAP Identity response is
+//! observed; subsequent frames from the same source MAC are enriched with the cached username
+//! under source "eap_identity_cache" without requiring another EAP exchange.
+//! ssid_to_bssids is an LRU that maps each SSID to the set of BSSIDs seen advertising it;
+//! when a new BSSID appears for a known SSID, a "threat:potential_evil_twin" tag is emitted
+//! and a ResolvedIdentity with source "evil_twin_detection" is returned.
+//! deauth_counts is an LRU tracking deauthentication/disassociation frame counts per BSSID
+//! within a 10-second sliding window; exceeding DEAUTH_FLOOD_THRESHOLD (5) fires a
+//! "threat:deauth_flood" tag once per window via the alerted flag.
+
 use std::{
     num::NonZeroUsize,
     time::{Duration, Instant},

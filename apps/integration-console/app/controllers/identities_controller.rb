@@ -1,6 +1,8 @@
 require "csv"
 
 class IdentitiesController < ApplicationController
+  include GridFilterable
+
   EXPORT_MAX_ROWS = 10_000
   EXPORT_CACHE_TTL = 2.minutes
 
@@ -9,11 +11,30 @@ class IdentitiesController < ApplicationController
     "signal_dbm" => :signal_dbm
   }.freeze
 
+  FILTERS = {
+    "source_mac" => :source_mac,
+    "location_id" => :location_id,
+    "ssid" => :ssid,
+    "destination_bssid" => :destination_bssid,
+    "registered_username" => :registered_username,
+    "display_name" => :display_name,
+    "ip_addresses" => :ip_addresses,
+    "hostnames" => :hostnames,
+    "services" => :services,
+    "dns_names" => :dns_names,
+    "frame_count" => { column: :frame_count, type: :number },
+    "protected_frame_count" => { column: :protected_frame_count, type: :number },
+    "open_frame_count" => { column: :open_frame_count, type: :number },
+    "first_occurred_at" => { column: :first_occurred_at, type: :date },
+    "last_occurred_at" => { column: :last_occurred_at, type: :date }
+  }.freeze
+
   def index
     @query = params[:q].to_s.strip
     @inventory_query_parameters = @query.present? ? { q: @query } : {}
     @identities = WirelessDeviceInventory.recent
     @identities = @identities.search(@query) if @query.present?
+    @identities = apply_grid_filters(@identities, FILTERS)
     @identities = apply_identity_sort(@identities)
     @identities = paginate_window(@identities)
   end
@@ -22,16 +43,18 @@ class IdentitiesController < ApplicationController
     @query = params[:q].to_s.strip
     scope = WirelessDeviceInventory.recent
     scope = scope.search(@query) if @query.present?
+    scope = apply_grid_filters(scope, FILTERS)
 
     respond_to do |format|
       format.json do
-        data = Rails.cache.fetch(inventory_cache_key(@query), expires_in: IntegrationConsole::CacheTtl.inventory) do
+        inventory_cache_key = inventory_cache_key(@query, parsed_grid_filters)
+        data = Rails.cache.fetch(inventory_cache_key, expires_in: IntegrationConsole::CacheTtl.inventory) do
           scope.limit(500).to_a
         end
         render_cached_json(data, browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
       end
       format.csv do
-        key = ExportStore.key_for(type: "inventory", query: @query, sort: "last_occurred_at", direction: "desc")
+        key = ExportStore.key_for(type: "inventory", query: @query, filters: parsed_grid_filters, sort: "last_occurred_at", direction: "desc")
         url = ExportStore.fetch_or_generate(key: key, ttl: EXPORT_CACHE_TTL, filename: "wireless-inventory.csv") do
           inventory_csv(scope.limit(EXPORT_MAX_ROWS))
         end
@@ -49,6 +72,20 @@ class IdentitiesController < ApplicationController
     end
 
     render_cached_json(mac_summary_payload(query), browser_ttl: IntegrationConsole::CacheTtl.audit_recent)
+  end
+
+  def distinct_values
+    field = params[:field].to_s
+    allowed_fields = %w[source_mac location_id ssid destination_bssid registered_username]
+    
+    if allowed_fields.include?(field)
+      values = Rails.cache.fetch("identities:distinct:#{field}", expires_in: 60.seconds) do
+        WirelessDeviceInventory.where.not(field => nil).distinct.order(field).limit(100).pluck(field).compact
+      end
+      render json: values
+    else
+      render json: [], status: :bad_request
+    end
   end
 
   private
@@ -153,8 +190,9 @@ class IdentitiesController < ApplicationController
     }
   end
 
-  def inventory_cache_key(query)
-    "inventory:#{Digest::SHA1.hexdigest(query.to_s.strip.downcase)}"
+  def inventory_cache_key(query, filters)
+    filter_hash = Digest::SHA1.hexdigest(filters.to_json)
+    "inventory:#{Digest::SHA1.hexdigest(query.to_s.strip.downcase)}:#{filter_hash}"
   end
 
   def inventory_csv(scope)

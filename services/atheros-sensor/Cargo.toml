@@ -26,6 +26,11 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_j
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json"] }
+pbkdf2 = { version = "0.12", features = ["simple"] }
+sha1 = "0.10"
+hmac = "0.12"
+aes = "0.8"
+ccm = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

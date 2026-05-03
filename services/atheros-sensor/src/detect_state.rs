@@ -1,3 +1,36 @@
+//! Per-frame stateful detectors for wireless threat detection.
+//!
+//! Six detectors run against every decoded frame, all held in PipelineState:
+//! ClientInventory tracks probe requests, channel history, and excessive-probing flags per MAC;
+//! SignalTracker fires a signal_anomaly tag when a BSSID's signal jumps beyond the configured
+//! dBm delta, indicating a possible AP impersonation or physical movement event;
+//! RogueApTracker checks beacons and probe responses for open authorized SSIDs, SSID typosquats
+//! (edit distance <= 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
+//! DeauthFloodTracker counts deauthentication and disassociation frames per BSSID in a sliding
+//! window and fires an alert when the threshold is exceeded, with a cooldown to suppress repeats;
+//! AuthorizedNetworkCache holds the Postgres-backed list of known SSIDs/BSSIDs and is
+//! invalidated by the NATS generation counter when the console pushes a config change;
+//! evil-twin detection runs through IdentityCache (in parse/) which correlates adjacent MACs
+//! and session keys to surface impersonation across frames.
+//!
+//! # Type notes
+//!
+//! [`ClientInventory`] / [`ClientProfile`]: per-MAC observation state; `excessive_probing`
+//! latches to `true` once a client sends >= 20 probe requests within any 60-second window
+//! and is never reset to `false` within the same session (inventory flush required).
+//!
+//! [`RogueApTracker`]: fires [`RogueApAlert`] for beacons/probe-responses that match rogue
+//! heuristics; the per-key `recent_alerts` map enforces a 60-second cooldown so a single
+//! misbehaving AP cannot produce an unbounded alert storm.
+//!
+//! [`DeauthFloodTracker`]: maintains two independent clocks per BSSID - a sliding
+//! `chrono::DateTime` window that counts frames within `window_secs`, and a separate
+//! `Instant`-based cooldown that suppresses repeat alerts for `cooldown_secs` after firing.
+//!
+//! [`AuthorizedNetworkCache`]: `invalidate()` sets `loaded_at` to `None` without touching
+//! `entries`; the stale data remains readable until the next `refresh_if_needed` call
+//! successfully reloads from Postgres.
+
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -6,11 +39,15 @@ use serde::Serialize;
 
 use crate::backlog::{AuthorizedWirelessNetwork, PostgresBacklog};
 use crate::model::AuditEntry;
+use crate::parse::SECURITY_PMF_REQUIRED;
 
 pub const CLIENT_INVENTORY_SUBJECT: &str = "sync.scan.request";
 pub const ROGUE_AP_SUBJECT: &str = "sync.oracle.load";
 pub const DEAUTH_FLOOD_SUBJECT: &str = "sync.oracle.result";
+pub const ATTACK_SEQUENCE_SUBJECT: &str = "sync.oracle.result";
 const ROGUE_AP_ALERT_TTL: Duration = Duration::from_secs(60);
+const ATTACK_CORRELATION_WINDOW: Duration = Duration::from_secs(300);
+const ATTACK_SEQUENCE_COOLDOWN: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ClientInventorySnapshot {
@@ -50,6 +87,42 @@ pub struct ClientInventory {
 }
 
 impl ClientInventory {
+    /// Cross-references probe request SSID against known networks and returns (bssid, client_mac, ssid)
+    /// tuple when a match is found. Returns None for non-probe frames or unmatched SSIDs.
+    pub fn link_probe_to_network(
+        &self,
+        entry: &AuditEntry,
+        authorized: &AuthorizedNetworkCache,
+    ) -> Option<(String, String, Option<String>)> {
+        if entry.frame_subtype != "probe_request" {
+            return None;
+        }
+        let client_mac = entry.source_mac.as_deref().map(normalize_mac)?;
+        let probe_ssid = entry
+            .ssid
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+
+        for network in &authorized.entries {
+            if let Some(known_ssid) = &network.ssid {
+                if known_ssid.trim().eq_ignore_ascii_case(probe_ssid) {
+                    if let Some(bssid) = &network.bssid {
+                        return Some((
+                            bssid.clone(),
+                            client_mac,
+                            Some(probe_ssid.to_string()),
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Observes a frame and updates client profile. The excessive_probing flag latches to true
+    /// once a client sends >=20 probe requests within any 60-second window and is never reset
+    /// to false within the same session (inventory flush required to clear).
     pub fn observe(&mut self, entry: &AuditEntry) {
         let Some(source_mac) = entry.source_mac.as_deref().map(normalize_mac) else {
             return;
@@ -127,6 +200,9 @@ pub struct SignalTracker {
 }
 
 impl SignalTracker {
+    /// Observes a frame and returns true when the signal delta exceeds threshold. Returns true
+    /// on the second observation of a BSSID when the delta exceeds threshold; the first
+    /// observation has no baseline to compare against.
     pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> bool {
         if threshold <= 0 {
             return false;
@@ -164,6 +240,10 @@ pub struct RogueApTracker {
 }
 
 impl RogueApTracker {
+    /// Observes a beacon or probe response and returns a RogueApAlert when any of four detection
+    /// reasons fire: open_authorized_ssid (known SSID with no encryption), ssid_typosquat
+    /// (edit distance <=2 from known SSID), bssid_spoofing (BSSID changed SSID mapping), or
+    /// channel_conflict (same BSSID seen on multiple channels).
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -256,6 +336,10 @@ pub struct DeauthFloodTracker {
 }
 
 impl DeauthFloodTracker {
+    /// Observes a deauth or disassociation frame and returns a DeauthFloodAlert when the frame
+    /// count exceeds threshold within window_secs. Uses a sliding window that retains timestamps
+    /// and a separate Instant-based cooldown clock (wall-time, not frame timestamps) to suppress
+    /// repeat alerts for cooldown_secs after firing.
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -343,6 +427,9 @@ impl AuthorizedNetworkCache {
         Ok(())
     }
 
+    /// Checks if a network is authorized using three-field AND logic: location_id, SSID, and
+    /// BSSID. A None field on the stored entry acts as a wildcard (matches any value). At least
+    /// one of SSID or BSSID must be non-None on the stored entry to match.
     pub fn is_authorized(
         &self,
         ssid: Option<&str>,
@@ -376,6 +463,8 @@ impl AuthorizedNetworkCache {
         })
     }
 
+    /// Returns true when the candidate SSID has edit distance <= 2 from any known SSID.
+    /// Early exit when length difference exceeds the limit (2) to skip expensive DP.
     pub fn is_typosquat(&self, ssid: &str) -> bool {
         let ssid = ssid.trim().to_ascii_lowercase();
         if ssid.is_empty() || self.is_known_ssid(&ssid) {
@@ -401,6 +490,11 @@ fn normalize_mac(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+/// Levenshtein distance with early exit: returns limit+1 when any row minimum exceeds
+/// limit, avoiding full DP computation for strings that cannot possibly match.
+/// Levenshtein distance with early-exit optimization. Returns limit+1 when the length
+/// difference exceeds limit or any row minimum exceeds limit, avoiding full DP computation.
+/// The limit of 2 distinguishes most typosquats (one character substitution or insertion).
 fn edit_distance_limited(left: &str, right: &str, limit: usize) -> usize {
     if left.len().abs_diff(right.len()) > limit {
         return limit + 1;
@@ -425,6 +519,181 @@ fn edit_distance_limited(left: &str, right: &str, limit: usize) -> usize {
     previous[right.len()]
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct AttackSequenceAlert {
+    pub schema_version: u32,
+    pub event_type: String,
+    pub observed_at: String,
+    pub sensor_id: String,
+    pub location_id: String,
+    pub ssid: String,
+    pub attack_chain: Vec<String>,
+    pub first_event_at: String,
+    pub last_event_at: String,
+}
+
+#[derive(Debug)]
+struct AttackEvent {
+    timestamp: DateTime<Utc>,
+    attack_type: String,
+}
+
+#[derive(Default)]
+pub struct AttackTimelineCorrelator {
+    events_by_ssid: HashMap<String, Vec<AttackEvent>>,
+    recent_alerts: HashMap<String, Instant>,
+}
+
+impl AttackTimelineCorrelator {
+    /// Records an attack event (karma_probe_response or bssid_spoofing) and returns an
+    /// AttackSequenceAlert if both attack types occurred for the same SSID within the
+    /// correlation window. Enforces a cooldown per SSID to suppress duplicate alerts.
+    pub fn observe(
+        &mut self,
+        entry: &AuditEntry,
+        attack_type: &str,
+    ) -> Option<AttackSequenceAlert> {
+        if !matches!(attack_type, "karma_probe_response" | "bssid_spoofing") {
+            return None;
+        }
+        let ssid = entry.ssid.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+        let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
+        let alert_key = ssid.to_string();
+        if let Some(last_alert) = self.recent_alerts.get(&alert_key) {
+            if last_alert.elapsed() < ATTACK_SEQUENCE_COOLDOWN {
+                return None;
+            }
+        }
+        let events = self.events_by_ssid.entry(ssid.to_string()).or_default();
+        events.push(AttackEvent {
+            timestamp: observed_at,
+            attack_type: attack_type.to_string(),
+        });
+        let cutoff = observed_at - chrono::Duration::seconds(ATTACK_CORRELATION_WINDOW.as_secs() as i64);
+        events.retain(|e| e.timestamp >= cutoff);
+        let has_karma = events.iter().any(|e| e.attack_type == "karma_probe_response");
+        let has_spoofing = events.iter().any(|e| e.attack_type == "bssid_spoofing");
+        if has_karma && has_spoofing {
+            self.recent_alerts.insert(alert_key, Instant::now());
+            let first = events.iter().map(|e| e.timestamp).min()?;
+            let last = events.iter().map(|e| e.timestamp).max()?;
+            let mut chain: Vec<_> = events.iter().map(|e| e.attack_type.clone()).collect();
+            chain.sort();
+            chain.dedup();
+            Some(AttackSequenceAlert {
+                schema_version: 1,
+                event_type: "wireless_attack_sequence".to_string(),
+                observed_at: ssl_proxy::time::rfc3339_from_utc(observed_at),
+                sensor_id: entry.sensor_id.clone(),
+                location_id: entry.location_id.clone(),
+                ssid: ssid.to_string(),
+                attack_chain: chain,
+                first_event_at: ssl_proxy::time::rfc3339_from_utc(first),
+                last_event_at: ssl_proxy::time::rfc3339_from_utc(last),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PmfAttackTracker {
+    ap_pmf_state: HashMap<String, bool>,
+    client_deauth_times: HashMap<String, DateTime<Utc>>,
+    reconnect_window_ms: i64,
+    forced_reconnects: HashMap<(String, String), DateTime<Utc>>,  // (bssid, client) -> timestamp
+}
+
+impl PmfAttackTracker {
+    pub fn new(reconnect_window_ms: i64) -> Self {
+        Self {
+            ap_pmf_state: HashMap::new(),
+            client_deauth_times: HashMap::new(),
+            reconnect_window_ms,
+            forced_reconnects: HashMap::new(),
+        }
+    }
+}
+
+impl PmfAttackTracker {
+    pub fn observe(&mut self, entry: &AuditEntry, tags: &mut Vec<String>) {
+        let observed = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
+
+        // Learn PMF state from beacons and probe responses
+        if matches!(entry.frame_subtype.as_str(), "beacon" | "probe_response") {
+            if let Some(bssid) = entry.bssid.as_deref() {
+                let pmf_required = entry.security_flags & SECURITY_PMF_REQUIRED != 0;
+                self.ap_pmf_state.insert(normalize_mac(bssid), pmf_required);
+            }
+        }
+
+        // Detect spoofed deauth/disassoc and track client deauth times
+        if matches!(entry.frame_subtype.as_str(), "deauthentication" | "disassociation") {
+            if let Some(src) = entry.source_mac.as_deref() {
+                let src_norm = normalize_mac(src);
+                
+                if let Some(&pmf_required) = self.ap_pmf_state.get(&src_norm) {
+                    if !entry.protected.unwrap_or(false) && !pmf_required {
+                        if !tags.contains(&"threat:pmf_deauth_attack".to_string()) {
+                            tags.push("threat:pmf_deauth_attack".to_string());
+                        }
+                    }
+                }
+            }
+
+            // Track deauth destination (client MAC) for reconnect correlation
+            if let Some(dst) = entry.destination_mac.as_deref() {
+                self.client_deauth_times.insert(normalize_mac(dst), observed);
+            }
+        }
+
+        // Detect forced reconnect within configurable window
+        if matches!(entry.frame_subtype.as_str(), "association_request" | "reassociation_request") {
+            if let Some(src) = entry.source_mac.as_deref() {
+                let src_norm = normalize_mac(src);
+                if let Some(&deauth_time) = self.client_deauth_times.get(&src_norm) {
+                    let delta = (observed - deauth_time).num_milliseconds();
+                    if delta >= 0 && delta <= self.reconnect_window_ms {
+                        if !tags.contains(&"threat:pmf_forced_reconnect".to_string()) {
+                            tags.push("threat:pmf_forced_reconnect".to_string());
+                        }
+                        // Track forced reconnect for handshake correlation
+                        if let Some(bssid) = entry.bssid.as_deref().or(entry.destination_bssid.as_deref()) {
+                            let key = (normalize_mac(bssid), src_norm);
+                            self.forced_reconnects.insert(key, observed);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Detect handshake harvest attack: forced reconnect + handshake within 10s
+        if entry.handshake_captured {
+            if let (Some(bssid), Some(client)) = (
+                entry.bssid.as_deref().or(entry.destination_bssid.as_deref()),
+                entry.source_mac.as_deref().or(entry.destination_mac.as_deref()),
+            ) {
+                let key = (normalize_mac(bssid), normalize_mac(client));
+                if let Some(&reconnect_time) = self.forced_reconnects.get(&key) {
+                    let delta = (observed - reconnect_time).num_milliseconds();
+                    if delta >= 0 && delta <= 10_000 {
+                        if !tags.contains(&"threat:handshake_harvest_attack".to_string()) {
+                            tags.push("threat:handshake_harvest_attack".to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Cleanup expired state
+        let ttl_ms = self.reconnect_window_ms.max(30_000);
+        let cutoff = observed - chrono::Duration::milliseconds(ttl_ms);
+        self.client_deauth_times.retain(|_, &mut time| time >= cutoff);
+        self.forced_reconnects.retain(|_, &mut time| time >= cutoff);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::edit_distance_limited;
@@ -433,5 +702,352 @@ mod tests {
     fn edit_distance_limits_typosquats() {
         assert_eq!(edit_distance_limited("corpwifi", "corp-wifi", 2), 1);
         assert!(edit_distance_limited("corpwifi", "guest", 2) > 2);
+    }
+
+    #[test]
+    fn link_probe_to_network_matches_ssid() {
+        use super::{AuthorizedNetworkCache, ClientInventory};
+        use crate::backlog::AuthorizedWirelessNetwork;
+        use crate::model::AuditEntry;
+
+        let mut cache = AuthorizedNetworkCache::default();
+        cache.entries = vec![AuthorizedWirelessNetwork {
+            ssid: Some("CorpWiFi".to_string()),
+            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            location_id: Some("loc1".to_string()),
+            psk: None,
+        }];
+
+        let inventory = ClientInventory::default();
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "probe_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.ssid = Some("CorpWiFi".to_string());
+
+        let result = inventory.link_probe_to_network(&entry, &cache);
+        assert!(result.is_some());
+        let (bssid, client_mac, ssid) = result.unwrap();
+        assert_eq!(bssid, "aa:bb:cc:dd:ee:ff");
+        assert_eq!(client_mac, "11:22:33:44:55:66");
+        assert_eq!(ssid, Some("CorpWiFi".to_string()));
+    }
+
+    #[test]
+    fn link_probe_to_network_case_insensitive() {
+        use super::{AuthorizedNetworkCache, ClientInventory};
+        use crate::backlog::AuthorizedWirelessNetwork;
+        use crate::model::AuditEntry;
+
+        let mut cache = AuthorizedNetworkCache::default();
+        cache.entries = vec![AuthorizedWirelessNetwork {
+            ssid: Some("CorpWiFi".to_string()),
+            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            location_id: Some("loc1".to_string()),
+            psk: None,
+        }];
+
+        let inventory = ClientInventory::default();
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "probe_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.ssid = Some("corpwifi".to_string());
+
+        let result = inventory.link_probe_to_network(&entry, &cache);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn link_probe_to_network_no_match() {
+        use super::{AuthorizedNetworkCache, ClientInventory};
+        use crate::backlog::AuthorizedWirelessNetwork;
+        use crate::model::AuditEntry;
+
+        let mut cache = AuthorizedNetworkCache::default();
+        cache.entries = vec![AuthorizedWirelessNetwork {
+            ssid: Some("CorpWiFi".to_string()),
+            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            location_id: Some("loc1".to_string()),
+            psk: None,
+        }];
+
+        let inventory = ClientInventory::default();
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "probe_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.ssid = Some("GuestNetwork".to_string());
+
+        let result = inventory.link_probe_to_network(&entry, &cache);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn pmf_attack_detection() {
+        use super::PmfAttackTracker;
+        use crate::model::AuditEntry;
+
+        let mut tracker = PmfAttackTracker::new(3000);
+        let mut tags = Vec::new();
+
+        // Beacon from AP with PMF not required
+        let beacon = AuditEntry {
+            schema_version: 2,
+            event_type: "wifi_management_frame".to_string(),
+            observed_at: "2024-01-01T12:00:00Z".to_string(),
+            sensor_id: "sensor1".to_string(),
+            location_id: "loc1".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            band: "2.4ghz".to_string(),
+            frame_type: Some("management".to_string()),
+            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            source_mac: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            destination_mac: Some("ff:ff:ff:ff:ff:ff".to_string()),
+            transmitter_mac: None,
+            receiver_mac: None,
+            ssid: None,
+            frame_subtype: "beacon".to_string(),
+            tsft: None,
+            signal_dbm: None,
+            noise_dbm: None,
+            frequency_mhz: None,
+            channel_flags: None,
+            data_rate_kbps: None,
+            antenna_id: None,
+            vht_known: None,
+            vht_flags: None,
+            vht_bandwidth: None,
+            he_data: None,
+            sequence_number: None,
+            fragment_number: None,
+            channel_number: None,
+            signal_status: None,
+            adjacent_mac_hint: None,
+            duration_id: None,
+            frame_control_flags: None,
+            more_data: None,
+            retry: None,
+            power_save: None,
+            protected: Some(false),
+            to_ds: None,
+            from_ds: None,
+            raw_len: 100,
+            raw_frame: None,
+            tags: vec![],
+            security_flags: 0x02,
+            wps_device_name: None,
+            wps_manufacturer: None,
+            wps_model_name: None,
+            device_fingerprint: None,
+            probe_fingerprint: None,
+            vendor_name: None,
+            handshake_captured: false,
+            qos_tid: None,
+            qos_eosp: None,
+            qos_ack_policy: None,
+            qos_ack_policy_label: None,
+            qos_amsdu: None,
+            llc_oui: None,
+            ethertype: None,
+            ethertype_name: None,
+            src_ip: None,
+            dst_ip: None,
+            ip_ttl: None,
+            ip_protocol: None,
+            ip_protocol_name: None,
+            src_port: None,
+            dst_port: None,
+            transport_protocol: None,
+            transport_length: None,
+            transport_checksum: None,
+            app_protocol: None,
+            ssdp_message_type: None,
+            ssdp_st: None,
+            ssdp_mx: None,
+            ssdp_usn: None,
+            dhcp_requested_ip: None,
+            dhcp_hostname: None,
+            dhcp_vendor_class: None,
+            dns_query_name: None,
+            mdns_name: None,
+            session_key: None,
+            retransmit_key: None,
+            frame_fingerprint: None,
+            payload_visibility: None,
+            tsft_delta_us: None,
+            wall_clock_delta_ms: None,
+            large_frame: None,
+            mixed_encryption: None,
+            dedupe_or_replay_suspect: None,
+            anomaly_reasons: vec![],
+            mac: None,
+            rf: None,
+            qos: None,
+            llc_snap: None,
+            network: None,
+            transport: None,
+            application: None,
+            correlation: None,
+            anomalies: None,
+            device_id: None,
+            username: None,
+            identity_source: "unknown".to_string(),
+            destination_bssid: None,
+        };
+        tracker.observe(&beacon, &mut tags);
+        assert!(tags.is_empty());
+
+        // Unprotected deauth from same AP BSSID
+        let mut deauth = beacon.clone();
+        deauth.frame_subtype = "deauthentication".to_string();
+        deauth.source_mac = Some("aa:bb:cc:dd:ee:ff".to_string());
+        deauth.destination_mac = Some("11:22:33:44:55:66".to_string());
+        deauth.protected = Some(false);
+        deauth.observed_at = "2024-01-01T12:00:01Z".to_string();
+        tracker.observe(&deauth, &mut tags);
+        assert!(tags.contains(&"threat:pmf_deauth_attack".to_string()));
+
+        // Client reconnects within 2 seconds
+        tags.clear();
+        let mut assoc = beacon.clone();
+        assoc.frame_subtype = "association_request".to_string();
+        assoc.source_mac = Some("11:22:33:44:55:66".to_string());
+        assoc.observed_at = "2024-01-01T12:00:02Z".to_string();
+        tracker.observe(&assoc, &mut tags);
+        assert!(tags.contains(&"threat:pmf_forced_reconnect".to_string()));
+    }
+
+    #[test]
+    fn pmf_attack_not_detected_when_pmf_required() {
+        use super::PmfAttackTracker;
+        use crate::model::AuditEntry;
+        use crate::parse::SECURITY_PMF_REQUIRED;
+
+        let mut tracker = PmfAttackTracker::new(3000);
+        let mut tags = Vec::new();
+
+        // Beacon with PMF required
+        let mut beacon = create_test_audit_entry();
+        beacon.bssid = Some("aa:bb:cc:dd:ee:ff".to_string());
+        beacon.source_mac = Some("aa:bb:cc:dd:ee:ff".to_string());
+        beacon.frame_subtype = "beacon".to_string();
+        beacon.protected = Some(false);
+        beacon.security_flags = SECURITY_PMF_REQUIRED;
+        tracker.observe(&beacon, &mut tags);
+
+        // Unprotected deauth should NOT trigger attack tag
+        let mut deauth = beacon.clone();
+        deauth.frame_subtype = "deauthentication".to_string();
+        deauth.source_mac = Some("aa:bb:cc:dd:ee:ff".to_string());
+        deauth.destination_mac = Some("11:22:33:44:55:66".to_string());
+        deauth.protected = Some(false);
+        tracker.observe(&deauth, &mut tags);
+        assert!(!tags.contains(&"threat:pmf_deauth_attack".to_string()));
+    }
+
+    fn create_test_audit_entry() -> crate::model::AuditEntry {
+        crate::model::AuditEntry {
+            schema_version: 2,
+            event_type: "wifi_management_frame".to_string(),
+            observed_at: "2024-01-01T12:00:00Z".to_string(),
+            sensor_id: "sensor1".to_string(),
+            location_id: "loc1".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            band: "2.4ghz".to_string(),
+            frame_type: Some("management".to_string()),
+            bssid: None,
+            source_mac: None,
+            destination_mac: None,
+            transmitter_mac: None,
+            receiver_mac: None,
+            ssid: None,
+            frame_subtype: "beacon".to_string(),
+            tsft: None,
+            signal_dbm: None,
+            noise_dbm: None,
+            frequency_mhz: None,
+            channel_flags: None,
+            data_rate_kbps: None,
+            antenna_id: None,
+            vht_known: None,
+            vht_flags: None,
+            vht_bandwidth: None,
+            he_data: None,
+            sequence_number: None,
+            fragment_number: None,
+            channel_number: None,
+            signal_status: None,
+            adjacent_mac_hint: None,
+            duration_id: None,
+            frame_control_flags: None,
+            more_data: None,
+            retry: None,
+            power_save: None,
+            protected: None,
+            to_ds: None,
+            from_ds: None,
+            raw_len: 100,
+            raw_frame: None,
+            tags: vec![],
+            security_flags: 0,
+            wps_device_name: None,
+            wps_manufacturer: None,
+            wps_model_name: None,
+            device_fingerprint: None,
+            probe_fingerprint: None,
+            vendor_name: None,
+            handshake_captured: false,
+            qos_tid: None,
+            qos_eosp: None,
+            qos_ack_policy: None,
+            qos_ack_policy_label: None,
+            qos_amsdu: None,
+            llc_oui: None,
+            ethertype: None,
+            ethertype_name: None,
+            src_ip: None,
+            dst_ip: None,
+            ip_ttl: None,
+            ip_protocol: None,
+            ip_protocol_name: None,
+            src_port: None,
+            dst_port: None,
+            transport_protocol: None,
+            transport_length: None,
+            transport_checksum: None,
+            app_protocol: None,
+            ssdp_message_type: None,
+            ssdp_st: None,
+            ssdp_mx: None,
+            ssdp_usn: None,
+            dhcp_requested_ip: None,
+            dhcp_hostname: None,
+            dhcp_vendor_class: None,
+            dns_query_name: None,
+            mdns_name: None,
+            session_key: None,
+            retransmit_key: None,
+            frame_fingerprint: None,
+            payload_visibility: None,
+            tsft_delta_us: None,
+            wall_clock_delta_ms: None,
+            large_frame: None,
+            mixed_encryption: None,
+            dedupe_or_replay_suspect: None,
+            anomaly_reasons: vec![],
+            mac: None,
+            rf: None,
+            qos: None,
+            llc_snap: None,
+            network: None,
+            transport: None,
+            application: None,
+            correlation: None,
+            anomalies: None,
+            device_id: None,
+            username: None,
+            identity_source: "unknown".to_string(),
+            destination_bssid: None,
+        }
     }
 }

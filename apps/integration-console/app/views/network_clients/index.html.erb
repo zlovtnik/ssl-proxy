@@ -1,0 +1,9 @@
+<% content_for :title, "Network Clients" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<h1>Network Clients</h1>
+
+<%= svelte_bundle_tags :network_clients %>
+
+<div id="network-clients-svelte-root"></div>
+<%= svelte_props_tag "network-clients-svelte-root", { initial: { endpoint: network_clients_path(format: :json) } } %>

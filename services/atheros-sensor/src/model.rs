@@ -1,3 +1,41 @@
+//! Three-tier model for wireless frame data.
+//!
+//! RawPacket is bytes off the wire with a capture timestamp, before any parsing.
+//! WifiFrame is the fully parsed and decoded representation: radiotap metadata, 802.11 MAC
+//! fields, all optional protocol layers (QoS, LLC/SNAP, IP, transport, application), correlation
+//! keys, and anomaly flags. It is the internal working type throughout the parse pipeline.
+//! AuditEntry is the serialized, published form: a flat JSON-friendly struct with all fields
+//! optional where absent, enriched with sensor_id, location_id, device identity, and tags
+//! before being written to Postgres and published to NATS.
+//!
+//! # Type notes
+//!
+//! [`AuditEntry`]: the wire-format event written to Postgres and published to NATS;
+//! `schema_version` is always 2 for frames produced by this sensor (the serde default of 1
+//! applies only when deserializing legacy payloads), and `identity_source` defaults to
+//! `"unknown"` when the field is absent from a deserialized payload.
+//!
+//! [`WifiFrame`]: the parsed intermediate that flows through the pipeline; it carries both
+//! flat convenience fields (e.g. `bssid`, `signal_dbm`) and the fully-typed nested layer
+//! structs (`mac`, `rf`, `correlation`, `anomalies`) so callers can choose their access style.
+//!
+//! [`AuditContext`]: a snapshot of sensor identity (sensor ID, location, interface, channel,
+//! regulatory domain) captured once at startup and threaded into every parse and publish call.
+//!
+//! [`MacLayer`]: the 802.11 MAC header fields serialized as a sub-object in `AuditEntry`;
+//! `adjacent_mac_hint` is non-None when two address fields share the first five octets and
+//! differ in the last by 1-4, a common AP/client interface adjacency indicator.
+//!
+//! [`RfLayer`]: the radiotap physical-layer fields serialized as a sub-object in `AuditEntry`;
+//! `signal_status` is `"present"`, `"stripped"`, or `"absent"` and reflects whether the
+//! radiotap header included a signal field at all.
+//!
+//! [`CorrelationLayer`]: deduplication and session-tracking keys serialized as a sub-object;
+//! `frame_fingerprint` is a SHA-256 content hash and `session_key` is `source_mac|bssid`.
+//!
+//! [`AnomalyLayer`]: per-frame anomaly flags serialized as a sub-object; `reasons` is the
+//! human-readable list of triggered heuristics (e.g. `"large_frame"`, `"retransmit_suspect"`).
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -157,6 +195,9 @@ pub struct WifiFrame {
     pub observed_at: DateTime<Utc>,
     pub event_type: String,
     pub frame_type: String,
+    pub frame_type_raw: u8,
+    pub frame_subtype_raw: u8,
+    pub frame_control: u16,
     pub bssid: Option<String>,
     pub destination_bssid: Option<String>,
     pub source_mac: Option<String>,
@@ -198,6 +239,8 @@ pub struct WifiFrame {
     pub wps_manufacturer: Option<String>,
     pub wps_model_name: Option<String>,
     pub device_fingerprint: Option<String>,
+    pub probe_fingerprint: Option<String>,
+    pub vendor_name: Option<String>,
     pub handshake_captured: bool,
     pub eapol_key_message: Option<u8>,
     pub pmkid: Option<String>,
@@ -325,6 +368,8 @@ pub struct AuditEntry {
     pub wps_manufacturer: Option<String>,
     pub wps_model_name: Option<String>,
     pub device_fingerprint: Option<String>,
+    pub probe_fingerprint: Option<String>,
+    pub vendor_name: Option<String>,
     #[serde(default)]
     pub handshake_captured: bool,
     pub qos_tid: Option<u8>,

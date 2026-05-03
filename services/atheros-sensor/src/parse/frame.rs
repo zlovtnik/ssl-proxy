@@ -1,3 +1,17 @@
+//! Main parse entry point and model transformation steps.
+//!
+//! decode_frame is the primary entry point: it takes a RawPacket, strips the radiotap header,
+//! validates the 802.11 frame type (control frames are rejected), then orchestrates all
+//! sub-module calls (addresses, IE metadata, EAPOL, QoS, payload decap, correlation keys,
+//! channel/band derivation) to produce a fully populated WifiFrame. Control frames (type 1)
+//! return UnsupportedControlFrame; only management (0) and data (2) frames are decoded.
+//! attach_context is the sensor enrichment step: it wraps a WifiFrame with the runtime
+//! AuditContext (sensor_id, location_id, interface, channel, reg_domain) to produce an
+//! EnrichedFrame without copying any frame data.
+//! to_audit_entry is the serialization-ready flattening step: it moves all fields from
+//! EnrichedFrame into the flat AuditEntry struct, appends channel/reg_domain/threat tags,
+//! resolves the identity_source string, and sets device_id to None pending MAC lookup.
+
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ieee80211::GenericFrame;
 use thiserror::Error;
@@ -17,6 +31,7 @@ use super::{
     decap::analyze_payload,
     eapol::{extract_eap_identity, extract_eapol_key_message, extract_pmkid},
     ie::{extract_ie_metadata, extract_ssid},
+    oui::oui_lookup,
     qos::parse_qos_control,
     radiotap::strip_radiotap,
     tags::{add_audit_threat_tags, data_direction_tag, tag_probe_response_destination},
@@ -34,6 +49,8 @@ pub enum ParseError {
     Invalid80211,
 }
 
+/// Rejects control frames (type 1), validates with GenericFrame, then builds tags in two
+/// passes: first the frame-type/flag/flow tags, then the protocol/anomaly tags after decap.
 pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let (radiotap, frame_bytes) = strip_radiotap(&packet.data)?;
     if frame_bytes.len() < 24 {
@@ -108,6 +125,13 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let destination_mac = addresses.destination_mac.clone();
     let transmitter_mac = addresses.transmitter_mac.clone();
     let receiver_mac = addresses.receiver_mac.clone();
+    
+    let vendor_name = bssid
+        .as_deref()
+        .and_then(oui_lookup)
+        .or_else(|| source_mac.as_deref().and_then(oui_lookup))
+        .map(|s| s.to_string());
+    
     let mac = MacLayer {
         frame_type: frame_type_name.clone(),
         frame_subtype: frame_subtype.clone(),
@@ -187,6 +211,9 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
             _ => "wifi_frame".to_string(),
         },
         frame_type: frame_type_name.clone(),
+        frame_type_raw: frame_type,
+        frame_subtype_raw: subtype,
+        frame_control,
         bssid,
         destination_bssid,
         source_mac,
@@ -228,6 +255,8 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         wps_manufacturer: ie_metadata.wps_manufacturer,
         wps_model_name: ie_metadata.wps_model_name,
         device_fingerprint: ie_metadata.device_fingerprint,
+        probe_fingerprint: ie_metadata.probe_fingerprint,
+        vendor_name,
         handshake_captured: false,
         eapol_key_message,
         pmkid,
@@ -387,6 +416,8 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         wps_manufacturer: frame.wps_manufacturer,
         wps_model_name: frame.wps_model_name,
         device_fingerprint: frame.device_fingerprint,
+        probe_fingerprint: frame.probe_fingerprint,
+        vendor_name: frame.vendor_name,
         handshake_captured: frame.handshake_captured,
         qos_tid: frame.qos_tid,
         qos_eosp: frame.qos_eosp,
@@ -533,6 +564,7 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use chrono::Utc;
     use serde_json::Value;
+    use std::time::Duration;
 
     use super::*;
     use crate::{
@@ -664,6 +696,10 @@ mod tests {
             frame.raw_frame.as_deref(),
             Some(expected_raw_frame.as_str())
         );
+        // Beacons should NOT have probe_fingerprint
+        assert!(frame.probe_fingerprint.is_none());
+        // But should have device_fingerprint
+        assert!(frame.device_fingerprint.is_some());
     }
 
     #[test]
@@ -688,6 +724,10 @@ mod tests {
         let frame = decode_frame(&packet).unwrap();
         assert_eq!(frame.frame_subtype, "probe_request");
         assert_eq!(frame.ssid.as_deref(), Some("CorpWiFi"));
+        // Probe requests should have probe_fingerprint
+        assert!(frame.probe_fingerprint.is_some());
+        // Should also have device_fingerprint
+        assert!(frame.device_fingerprint.is_some());
     }
 
     #[test]
@@ -1030,7 +1070,7 @@ mod tests {
                 data,
             })
             .unwrap();
-            if let Some(alert) = monitor.observe(&mut frame, &context, None) {
+            if let Some(alert) = monitor.observe(&mut frame, &context, None, None, Duration::from_secs(60)) {
                 assert!(frame.handshake_captured);
                 assert!(frame.tags.contains(&"handshake_captured".to_string()));
                 alerts.push(alert);
@@ -1046,7 +1086,7 @@ mod tests {
             data: data_to_distribution_radiotap_frame(eapol_key_payload(4)),
         })
         .unwrap();
-        assert!(monitor.observe(&mut duplicate, &context, None).is_none());
+        assert!(monitor.observe(&mut duplicate, &context, None, None, Duration::from_secs(60)).is_none());
     }
 
     #[test]

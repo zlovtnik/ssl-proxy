@@ -9,10 +9,9 @@
   <%= link_to "Inventory JSON", inventory_identities_path(@inventory_query_parameters.merge(format: :json)) %>
 </p>
 
-<%= form_with url: identities_path, method: :get do |form| %>
-  <%= form.search_field :q, value: @query, placeholder: "Search MAC, username, SSID, fingerprint, WPS" %>
-  <%= form.submit "Search" %>
-<% end %>
+<%= svelte_props_tag("identities-svelte-root", initial: { filters: parsed_grid_filters }) %>
+<div id="identities-svelte-root"></div>
+<%= svelte_bundle_tags(:identities) %>
 
 <div
   class="table-wrap"

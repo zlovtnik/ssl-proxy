@@ -1,3 +1,13 @@
+//! 802.11 address role resolution from DS bits.
+//!
+//! The To-DS and From-DS bits in the frame control field select one of four address layouts:
+//! (0,0) IBSS/management - addr1=destination, addr2=source, addr3=bssid;
+//! (1,0) STA->AP - addr1=bssid(AP), addr2=source(STA), addr3=destination;
+//! (0,1) AP->STA - addr1=destination(STA), addr2=bssid(AP), addr3=source;
+//! (1,1) WDS/mesh - addr1=receiver, addr2=transmitter, addr3=destination, addr4=source
+//! (requires 30-byte minimum frame length; no bssid is derivable in this case).
+//! Management frames (frame_type == 0) always use the (0,0) layout regardless of DS bits.
+
 use super::frame::ParseError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

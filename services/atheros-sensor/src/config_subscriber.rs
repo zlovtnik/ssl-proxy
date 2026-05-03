@@ -1,3 +1,14 @@
+//! Raw-TCP NATS subscribers for live configuration push.
+//!
+//! Implements three subscribers: audit window schedule updates, authorized network cache
+//! invalidation, and sensor config (BPF filter, channel). They speak the NATS text protocol
+//! directly over raw TCP rather than using a NATS client library to avoid pulling in a
+//! heavyweight async dependency for what is essentially three SUB connections. TLS is
+//! intentionally unsupported here; these subscribers require plain nats:// endpoints.
+//! Each subscriber runs in its own Tokio task with a reconnect loop: on any error the
+//! connection is dropped and retried after a 5-second backoff, so transient NATS restarts
+//! or network blips are recovered automatically without restarting the sensor process.
+
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -48,12 +59,20 @@ struct SensorConfigUpdate {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+/// Parsed components of a `nats://[user:pass@]host:port` URL.
+///
+/// Credentials are percent-decoded before storage; callers that embed special characters
+/// (e.g. `@`, `:`) in usernames or passwords must percent-encode them in the URL or the
+/// authority split will produce incorrect user/host boundaries.
 struct NatsEndpoint {
     address: String,
     user: Option<String>,
     password: Option<String>,
 }
 
+/// Spawns the audit window config subscriber with automatic reconnect loop. Any error from
+/// run_subscriber_once logs a warning and retries after 5 seconds indefinitely, allowing
+/// transient NATS restarts without restarting the sensor process.
 pub fn spawn_audit_window_config_subscriber(
     config: SyncConfig,
     location_id: String,
@@ -71,6 +90,9 @@ pub fn spawn_audit_window_config_subscriber(
     });
 }
 
+/// Spawns the authorized network config subscriber with automatic reconnect loop. Only bumps
+/// a generation counter; the actual reload happens lazily in process_packet when the generation
+/// changes, avoiding blocking the subscriber task on Postgres queries.
 pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation: Arc<AtomicU64>) {
     tokio::spawn(async move {
         loop {
@@ -84,6 +106,9 @@ pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation
     });
 }
 
+/// Spawns the sensor config subscriber with automatic reconnect loop. Channel and BPF filter
+/// updates take effect immediately via set_channel and capture_control.apply_filter. The
+/// log_idle_secs and mac_device_lookup_enabled fields require a sensor restart to take effect.
 pub fn spawn_sensor_config_subscriber(
     config: SyncConfig,
     location_id: String,
@@ -107,6 +132,8 @@ pub fn spawn_sensor_config_subscriber(
     });
 }
 
+/// Reconnects on any error (connection drop, parse failure, NATS -ERR) with 5-second
+/// backoff; allows transient NATS restarts without restarting the sensor process.
 async fn run_subscriber_once(
     config: &SyncConfig,
     location_id: &str,
@@ -237,6 +264,8 @@ async fn run_subscriber_once(
     }
 }
 
+/// Reconnects on any error with 5-second backoff; increments generation counter on
+/// every message to invalidate the authorized network cache in the main loop.
 async fn run_invalidation_subscriber_once(
     config: &SyncConfig,
     generation: Arc<AtomicU64>,
@@ -253,6 +282,7 @@ async fn run_invalidation_subscriber_once(
     .await
 }
 
+/// Reconnects on any error with 5-second backoff; applies BPF and channel updates live.
 async fn run_sensor_config_subscriber_once(
     config: &SyncConfig,
     current_location_id: &str,
@@ -309,7 +339,7 @@ async fn run_sensor_config_subscriber_once(
     })
     .await
 }
-
+//todo: doc it!
 async fn run_message_loop<F>(
     config: &SyncConfig,
     subject: &'static str,
@@ -404,6 +434,9 @@ where
     }
 }
 
+/// Parses audit window config JSON and returns a new AuditWindow. When enabled is false,
+/// returns a window with "__disabled__" as the days string, which never matches any weekday,
+/// effectively disabling the audit window.
 fn parse_audit_window_update(
     payload: &str,
     current_location_id: &str,
@@ -432,7 +465,7 @@ fn parse_audit_window_update(
         end,
     )))
 }
-
+//todo: doc it!
 fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTime>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -446,6 +479,12 @@ fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTi
         .map_err(|error| format!("invalid {field}: {error}"))
 }
 
+/// Parses nats://[user:pass@]host:port into address and credentials; uses raw TCP
+/// (no TLS) to avoid heavyweight async-nats dependency for simple SUB connections.
+/// Credentials are percent-decoded; callers must percent-encode special chars in userinfo.
+/// Parses nats://[user:pass@]host:port URLs into address and credentials. Handles three forms:
+/// nats://host:port, nats://host (port defaults to 4222), and nats://user:pass@host:port.
+/// Credentials are percent-decoded; callers must percent-encode special chars (@ :) in userinfo.
 fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
     let trimmed = nats_url.trim();
     let authority = trimmed
@@ -481,6 +520,7 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
     })
 }
 
+/// Decodes %XX sequences in NATS userinfo (username or password); handles @ and : chars.
 fn percent_decode_userinfo(value: &str) -> Result<String, String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -508,7 +548,7 @@ fn percent_decode_userinfo(value: &str) -> Result<String, String> {
 
     String::from_utf8(decoded).map_err(|_| "invalid UTF-8 in NATS userinfo".to_string())
 }
-
+//todo: doc it!
 fn hex_value(value: u8) -> Option<u8> {
     match value {
         b'0'..=b'9' => Some(value - b'0'),

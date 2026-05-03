@@ -1,3 +1,28 @@
+//! Single-threaded async event loop and sensor lifecycle.
+//!
+//! run_sensor drives a tokio::select! loop over five arms: incoming pcap packets, a heartbeat
+//! ticker for idle logging, a bandwidth flush interval, a client inventory flush interval, and
+//! a backlog prune interval. All mutable per-frame state lives in PipelineState, which is
+//! owned by the loop and never shared across tasks, avoiding locks on the hot path.
+//! SensorHandles bundles the shared resources that are either read-only or Arc-wrapped:
+//! the Postgres backlog, the NATS publish client, the audit window, and the authorized-network
+//! config generation counter. On SIGTERM or Ctrl-C, shutdown_flush drains the current bandwidth
+//! window, flushes the in-memory publish backlog to Postgres, then sleeps for shutdown_grace_secs
+//! to allow in-flight NATS publishes to complete before the process exits.
+//!
+//! # Type notes
+//!
+//! [`SensorHandles`]: the main loop's owned state bundle; fields are either `Clone`-cheap
+//! shared handles (`Arc`, `SharedAuditWindow`) or values consumed once at startup - nothing
+//! here is mutated per-packet.
+//!
+//! [`PipelineState`]: all per-packet mutable state (identity cache, handshake monitor,
+//! traffic bucket, detector state, authorized-network cache); constructed once in `run_sensor`
+//! and reset only by a process restart.
+//!
+//! [`CaptureStats`]: cumulative counters incremented since process startup, not windowed or
+//! reset between heartbeat log lines - use the delta between two log lines for rate calculation.
+
 mod audit;
 mod backlog;
 mod capture;
@@ -27,6 +52,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{DateTime, Utc};
 use lru::LruCache;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -42,7 +68,7 @@ use crate::{
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, RogueApTracker, SignalTracker,
+        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker,
         CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT, ROGUE_AP_SUBJECT,
     },
     device::{detect, read_mac_address},
@@ -56,9 +82,8 @@ use crate::{
     },
     stats::PipelineOutcome,
 };
-
+/// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
-const HANDSHAKE_MONITOR_TTL: Duration = Duration::from_secs(10 * 60);
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -96,6 +121,7 @@ async fn run_healthcheck() -> Result<(), SensorError> {
     Ok(())
 }
 
+/// Entry point: runs healthcheck subcommand if requested, otherwise starts the sensor.
 #[tokio::main]
 async fn main() {
     // Check for healthcheck subcommand
@@ -113,6 +139,7 @@ async fn main() {
     }
 }
 
+/// Main sensor loop: initializes resources, then processes packets until shutdown.
 async fn run_sensor() -> Result<(), SensorError> {
     let config = step("load configuration", AppConfig::from_env())?;
     let mut handles = init_sensor(&config).await?;
@@ -173,6 +200,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &mut pipeline_state,
                     &handles.stats,
                     &handles.authorized_config_generation,
+                    &handles.capture_control,
                 )
                 .instrument(span)
                 .await;
@@ -190,16 +218,34 @@ async fn run_sensor() -> Result<(), SensorError> {
                 handles.stats.lock().unwrap().log(&handles.device, &handles.config);
             }
             _ = bandwidth_flush.tick() => {
+                let ttl = Duration::from_secs(handles.config.handshake_ttl_secs);
                 pipeline_state
                     .handshake_monitor
-                    .cleanup_expired(HANDSHAKE_MONITOR_TTL);
+                    .cleanup_expired(ttl, Some(&handles.capture_control));
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
                 publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
             }
             _ = inventory_flush.tick() => {
+                // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
                 if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_SUBJECT, &snapshot).await {
                     warn!(%error, "client inventory publish failed");
+                }
+
+                // Flush accumulated probe observations to database
+                let probes_to_flush: Vec<_> = pipeline_state.probe_accumulator.drain().collect();
+                for ((ssid, client_mac), obs) in probes_to_flush {
+                    if let Err(error) = handles.backlog.upsert_network_client_all_probes(
+                        &ssid,
+                        &client_mac,
+                        obs.ssid.as_deref(),
+                        obs.first_seen,
+                        obs.last_seen,
+                        obs.probe_count,
+                    ).await {
+                        warn!(%error, ssid, client_mac, "network client batch upsert failed; reinserting for retry");
+                        pipeline_state.probe_accumulator.insert((ssid, client_mac), obs);
+                    }
                 }
             }
             _ = backlog_prune.tick() => {
@@ -213,12 +259,15 @@ async fn run_sensor() -> Result<(), SensorError> {
     Ok(())
 }
 
+/// Shared handles and resources used by the main sensor loop.
+/// All fields are either cheap-to-clone Arc wrappers or read-only references.
 struct SensorHandles {
     config: AppConfig,
     audit_window: SharedAuditWindow,
     device: String,
     context: SharedContext,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
+    capture_control: CaptureControl,
     backlog: Arc<PostgresBacklog>,
     publish_client: Arc<SyncPublisherClient>,
     publish_state: SharedPublishState,
@@ -226,8 +275,11 @@ struct SensorHandles {
     authorized_config_generation: Arc<AtomicU64>,
 }
 
+/// Thread-safe shared reference to the current audit context.
 type SharedContext = Arc<RwLock<AuditContext>>;
 
+/// Mutable per-packet state owned by the main loop.
+/// Never shared across tasks to avoid locks on the hot path.
 struct PipelineState {
     identity_cache: IdentityCache,
     handshake_monitor: HandshakeMonitor,
@@ -238,12 +290,27 @@ struct PipelineState {
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
+    pmf_attack_tracker: PmfAttackTracker,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
+    probe_accumulator: HashMap<(String, String), ProbeObservation>,
+}
+
+#[derive(Clone)]
+struct ProbeObservation {
+    ssid: Option<String>,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    probe_count: u32,
 }
 
 impl PipelineState {
     fn new(config: &AppConfig) -> Self {
+        let pmf_reconnect_window_ms = std::env::var("ATH_SENSOR_PMF_RECONNECT_WINDOW_MS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(3000);
+
         Self {
             identity_cache: IdentityCache::default(),
             handshake_monitor: HandshakeMonitor::default(),
@@ -258,12 +325,16 @@ impl PipelineState {
             signal_tracker: SignalTracker::default(),
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
+            pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
             authorized_network_cache: AuthorizedNetworkCache::default(),
             seen_authorized_config_generation: 0,
+            probe_accumulator: HashMap::new(),
         }
     }
 }
 
+/// Initializes sensor in startup order: tracing first (so all subsequent steps are logged),
+/// then device detection, then Postgres connection, then pcap capture, then config subscribers.
 async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
@@ -404,6 +475,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         device,
         context,
         packets: packet_stream.packets,
+        capture_control: packet_stream.control,
         backlog,
         publish_client,
         publish_state,
@@ -412,6 +484,9 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     })
 }
 
+/// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
+/// authorized network -> tags threats -> enriches with MAC device lookup -> observes
+/// bandwidth -> publishes to NATS and Postgres ingest ledger.
 async fn process_packet(
     packet: RawPacket,
     context: &AuditContext,
@@ -422,6 +497,7 @@ async fn process_packet(
     pipeline: &mut PipelineState,
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
+    capture_control: &CaptureControl,
 ) -> Result<PipelineOutcome, SensorError> {
     // Always count raw bytes first, before any parsing attempts
     let packet_len = packet.data.len() as u64;
@@ -448,10 +524,14 @@ async fn process_packet(
     let handshake_export_dir = config
         .export_handshakes
         .then_some(config.sync.outbox_dir.as_str());
-    let handshake_alert =
-        pipeline
-            .handshake_monitor
-            .observe(&mut wifi_frame, context, handshake_export_dir);
+    let handshake_ttl = Duration::from_secs(config.handshake_ttl_secs);
+    let handshake_alert = pipeline.handshake_monitor.observe(
+        &mut wifi_frame,
+        context,
+        handshake_export_dir,
+        Some(capture_control),
+        handshake_ttl,
+    );
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
     let enriched: EnrichedFrame = attach_context(wifi_frame, context);
     let mut entry = to_audit_entry(enriched);
@@ -493,6 +573,33 @@ async fn process_packet(
         entry.tags.push("threat:unauthorized_bssid".to_string());
     }
     pipeline.client_inventory.observe(&entry);
+    
+    // Accumulate probe observations for batched flush
+    if entry.frame_subtype == "probe_request" {
+        if let (Some(client_mac), Some(ssid)) = (
+            entry.source_mac.as_deref().map(|m| m.trim().to_ascii_lowercase()),
+            entry.ssid.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+        ) {
+            let observed_at = chrono::DateTime::parse_from_rfc3339(&entry.observed_at)
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(chrono::Utc::now);
+            
+            let key = (ssid.to_string(), client_mac.clone());
+            pipeline.probe_accumulator
+                .entry(key)
+                .and_modify(|obs| {
+                    obs.last_seen = observed_at;
+                    obs.probe_count = obs.probe_count.saturating_add(1);
+                })
+                .or_insert_with(|| ProbeObservation {
+                    ssid: Some(ssid.to_string()),
+                    first_seen: observed_at,
+                    last_seen: observed_at,
+                    probe_count: 1,
+                });
+        }
+    }
     if pipeline
         .signal_tracker
         .observe(&entry, config.signal_anomaly_dbm_delta)
@@ -532,6 +639,9 @@ async fn process_packet(
             warn!(%error, "deauth flood alert publish failed");
         }
     }
+    let mut pmf_tags = Vec::new();
+    pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
+    entry.tags.extend(pmf_tags);
     if config.mac_device_lookup_enabled {
         if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
             let cache_key = mac.to_ascii_lowercase();
@@ -628,6 +738,7 @@ async fn publish_bandwidth_events(
     }
 }
 
+/// Creates a tokio interval that ticks every N seconds, with at least 1 second minimum.
 fn interval_secs(secs: u64) -> tokio::time::Interval {
     let interval = Duration::from_secs(secs.max(1));
     let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
@@ -635,10 +746,12 @@ fn interval_secs(secs: u64) -> tokio::time::Interval {
     interval
 }
 
+/// Returns a clone of the current audit context.
 fn context_snapshot(context: &SharedContext) -> AuditContext {
     context.read().unwrap().clone()
 }
 
+/// Spawns a background task that cycles through channels 1, 6, and 11 at the configured interval.
 fn spawn_channel_hopper(
     device: String,
     bpf: String,
@@ -670,6 +783,8 @@ fn spawn_channel_hopper(
     });
 }
 
+/// Flushes bandwidth window, writes memory backlog to Postgres, then sleeps for
+/// shutdown_grace_secs to let in-flight NATS publishes drain before process exit.
 async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineState) {
     let events = pipeline_state.traffic_bucket.flush_current();
     publish_bandwidth_events(&*handles.publish_client, events).await;
@@ -677,6 +792,7 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
 
+/// Waits for SIGTERM or Ctrl-C, then returns.
 async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
@@ -694,6 +810,7 @@ async fn wait_for_shutdown_signal() {
     }
 }
 
+/// Returns a clone of the current audit window, or a default inactive window on lock failure.
 fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
     audit_window
         .read()
@@ -701,6 +818,8 @@ fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
         .unwrap_or_else(|_| AuditWindow::from_parts(None, None, None, None))
 }
 
+/// Initializes the tracing subscriber with JSON formatting and audit layer.
+/// Returns the active filter string for logging.
 fn init_tracing(
     audit_window: SharedAuditWindow,
     audit_layer_stream: config::AuditLayerStream,
@@ -733,6 +852,7 @@ fn init_tracing(
     filter_source
 }
 
+/// Creates an interval for periodic heartbeat logging, or None if disabled.
 fn capture_heartbeat(idle_secs: u64) -> Option<tokio::time::Interval> {
     if idle_secs == 0 {
         return None;
@@ -744,6 +864,7 @@ fn capture_heartbeat(idle_secs: u64) -> Option<tokio::time::Interval> {
     Some(interval)
 }
 
+/// Awaits the next tick of the heartbeat interval, or pends forever if disabled.
 async fn tick_capture_heartbeat(interval: &mut Option<tokio::time::Interval>) {
     match interval {
         Some(interval) => {
@@ -753,12 +874,14 @@ async fn tick_capture_heartbeat(interval: &mut Option<tokio::time::Interval>) {
     }
 }
 
+/// Returns a suffix string describing the configured device override, if any.
 fn configured_device_suffix(device: Option<&str>) -> String {
     device
         .map(|device| format!(" configured by ATH_SENSOR_DEVICE={device}"))
         .unwrap_or_default()
 }
 
+/// Wraps a synchronous result with a labeled error context for startup steps.
 fn step<T, E>(label: impl Display, result: Result<T, E>) -> Result<T, SensorError>
 where
     E: Display,
@@ -766,6 +889,7 @@ where
     result.map_err(|error| SensorError::step(label, error))
 }
 
+/// Wraps an async result with a labeled error context for startup steps.
 async fn step_async<T, E, F>(label: impl Display, future: F) -> Result<T, SensorError>
 where
     E: Display,

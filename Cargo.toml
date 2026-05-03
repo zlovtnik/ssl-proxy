@@ -2,6 +2,9 @@
 members = [".", "services/atheros-sensor"]
 exclude = ["services/oracle-worker"]
 
+[lints.rustdoc]
+html-tags = "allow"
+
 [package]
 name = "ssl-proxy"
 version = "0.1.0"
