@@ -60,7 +60,10 @@ class AuditLogsController < ApplicationController
     @live_updates = @query.blank? && @location_id.blank? && @current_page == 1 && @sort == "observed_at" && @direction == "desc"
 
     respond_to do |format|
-      format.html { @audit_log_payload = audit_logs_payload(@audit_logs) }
+      format.html { 
+        @audit_logs = @audit_logs.map { |entry| AuditLogPresenter.new(entry) }
+        @audit_log_payload = audit_logs_payload(@audit_logs.map(&:instance_variable_get).map { |p| p.instance_variable_get(:@entry) }) 
+      }
       format.json { render json: audit_logs_payload(@audit_logs) }
     end
   end
