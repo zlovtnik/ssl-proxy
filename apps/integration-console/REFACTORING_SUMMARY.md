@@ -2,12 +2,12 @@
 
 ## Changes Made
 
-### Step 1: Deleted Dead Code ✅
+### Step 1: Deleted Dead Code [done]
 - **Deleted**: `app/models/wireless_audit_identity.rb`
 - **Deleted**: `test/models/wireless_audit_identity_test.rb`
 - **Reason**: Both `WirelessAuditIdentity` and `WirelessDeviceInventory` pointed to the same view (`v_wireless_device_inventory`). Only `WirelessDeviceInventory` was actually used by `IdentitiesController`. The only difference was a slightly different search scope.
 
-### Step 2: Extracted AuditLogPresenter ✅
+### Step 2: Extracted AuditLogPresenter [done]
 - **Created**: `app/presenters/audit_log_presenter.rb`
 - **Moved display logic from AuditLog model**:
   - `security_labels` - Decodes security_flags bitmask into human-readable labels
@@ -22,15 +22,15 @@
   - `live_payload` method uses presenter for display methods
   - Fixed `retry` reference (was `retry_flag` in model, now just `retry`)
 
-### Step 3: Documented Promoted vs Payload-Only Columns ✅
+### Step 3: Documented Promoted vs Payload-Only Columns [done]
 - **Updated**: `app/models/audit_log.rb`
 - **Added explicit column lists**:
   - `PROMOTED_COLUMNS` - 70+ columns that exist as real table columns
   - `PAYLOAD_ONLY_FIELDS` - Fields still stored only in the jsonb payload
   
 - **Simplified `payload_value` method**:
-  - Now checks if field is in `PROMOTED_COLUMNS` and reads directly
-  - Only falls back to payload for `PAYLOAD_ONLY_FIELDS`
+  - Reads promoted columns directly from PROMOTED_COLUMNS
+  - Falls back to reading from payload for any non-promoted key
   - No more ambiguous COALESCE pattern
 
 - **Removed display methods** from model (moved to presenter)
@@ -70,7 +70,7 @@
 
 ## Files Changed
 
-```
+```text
 Deleted:
   app/models/wireless_audit_identity.rb
   test/models/wireless_audit_identity_test.rb

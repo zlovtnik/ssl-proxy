@@ -9,11 +9,13 @@ class HeatmapQuery
     "last_seen_at" => { column: "last_seen_at", type: :date }
   }.freeze
 
+  ALLOWED_SORT_COLUMNS = %w[location_id event_count avg_signal_dbm unique_devices last_seen_at].freeze
+
   def initialize(sort_expression:, direction:, first_rank:, last_rank:, filters:)
-    @sort_expression = sort_expression
-    @direction = direction
-    @first_rank = first_rank
-    @last_rank = last_rank
+    @sort_expression = validate_sort_column(sort_expression)
+    @direction = validate_direction(direction)
+    @first_rank = validate_rank(first_rank)
+    @last_rank = validate_rank(last_rank)
     @filters = filters
   end
 
@@ -89,5 +91,17 @@ class HeatmapQuery
 
   def params
     { filters: filters.to_json }
+  end
+
+  def validate_sort_column(column)
+    ALLOWED_SORT_COLUMNS.include?(column.to_s) ? column.to_s : "event_count"
+  end
+
+  def validate_direction(dir)
+    dir.to_s.upcase == "ASC" ? "ASC" : "DESC"
+  end
+
+  def validate_rank(rank)
+    [[rank.to_i, 1].max, 100_000].min
   end
 end

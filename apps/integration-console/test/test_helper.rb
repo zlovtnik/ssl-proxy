@@ -37,7 +37,8 @@ class ActiveSupport::TestCase
   def clear_sync_tables(*tables)
     tables.each do |table|
       ensure_shadow_it_alerts_table if table.to_s == "shadow_it_alerts"
-      sync_connection.execute("DELETE FROM #{table}")
+      quoted_table = sync_connection.quote_table_name(table)
+      sync_connection.execute("DELETE FROM #{quoted_table}")
     end
   end
 
