@@ -66,6 +66,7 @@ class AuditLogPresenter
            :handshake_captured, :more_data, :retry, :power_save, :protected,
            :security_flags, :raw_len, :frame_control_flags, :large_frame,
            :src_ip, :dst_ip, :src_port, :dst_port, :transport_protocol,
-           :ip_protocol_name, :payload_visibility, :raw_frame, :schema_version, :fragment_number,
+           :ip_protocol_name, :payload_visibility, :raw_frame, :schema_version,
+           :fragment_number,:username,
            to: :@entry
 end
