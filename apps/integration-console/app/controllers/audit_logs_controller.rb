@@ -61,8 +61,9 @@ class AuditLogsController < ApplicationController
 
     respond_to do |format|
       format.html { 
-        @audit_logs = @audit_logs.map { |entry| AuditLogPresenter.new(entry) }
-        @audit_log_payload = audit_logs_payload(@audit_logs.map(&:instance_variable_get).map { |p| p.instance_variable_get(:@entry) }) 
+        raw_entries = @audit_logs.to_a
+        @audit_logs = raw_entries.map { |entry| AuditLogPresenter.new(entry) }
+        @audit_log_payload = audit_logs_payload(raw_entries) 
       }
       format.json { render json: audit_logs_payload(@audit_logs) }
     end
