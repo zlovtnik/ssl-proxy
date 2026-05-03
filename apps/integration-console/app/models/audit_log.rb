@@ -1,9 +1,8 @@
-require "base64"
-
 class AuditLog < SyncRecord
   self.table_name = "sync_scan_ingest"
   self.primary_key = "dedupe_key"
 
+  # Scopes
   scope :wireless, -> { where(stream_name: "wireless.audit") }
   scope :recent, -> { wireless.where("observed_at > ?", 24.hours.ago).order(observed_at: :desc) }
   scope :search, ->(query) {
@@ -11,62 +10,41 @@ class AuditLog < SyncRecord
     sanitized.blank? ? none : where("wireless_search_tsv @@ websearch_to_tsquery('simple', ?)", sanitized)
   }
 
-  def schema_version = integer_payload_value("schema_version", default: 1)
-  def sensor_id = payload_value("sensor_id")
-  def location_id = payload_value("location_id")
-  def event_type = payload_value("event_type")
-  def channel = integer_payload_value("channel")
-  def frame_type = payload_value("frame_type")
-  def frame_subtype = payload_value("frame_subtype")
-  def source_mac = payload_value("source_mac")
-  def bssid = payload_value("bssid")
-  def destination_bssid = payload_value("destination_bssid") || bssid
-  def ssid = payload_value("ssid")
-  def tsft = payload_value("tsft")
-  def signal_dbm = payload_value("signal_dbm")
-  def frequency_mhz = payload_value("frequency_mhz")
-  def channel_number = integer_payload_value("channel_number")
-  def channel_flags = payload_value("channel_flags")
-  def data_rate_kbps = payload_value("data_rate_kbps")
-  def antenna_id = payload_value("antenna_id")
-  def fragment_number = integer_payload_value("fragment_number")
-  def signal_status = payload_value("signal_status")
-  def adjacent_mac_hint = payload_value("adjacent_mac_hint")
-  def qos_tid = integer_payload_value("qos_tid")
-  def qos_ack_policy = integer_payload_value("qos_ack_policy")
-  def qos_ack_policy_label = payload_value("qos_ack_policy_label")
-  def qos_amsdu = ActiveModel::Type::Boolean.new.cast(payload_value("qos_amsdu"))
-  def llc_oui = payload_value("llc_oui")
-  def ethertype = integer_payload_value("ethertype")
-  def ethertype_name = payload_value("ethertype_name")
-  def src_ip = payload_value("src_ip")
-  def dst_ip = payload_value("dst_ip")
-  def ip_ttl = integer_payload_value("ip_ttl")
-  def ip_protocol = integer_payload_value("ip_protocol")
-  def ip_protocol_name = payload_value("ip_protocol_name")
-  def src_port = integer_payload_value("src_port")
-  def dst_port = integer_payload_value("dst_port")
-  def transport_protocol = payload_value("transport_protocol")
-  def transport_length = integer_payload_value("transport_length")
-  def transport_checksum = integer_payload_value("transport_checksum")
-  def app_protocol = payload_value("app_protocol")
-  def ssdp_message_type = payload_value("ssdp_message_type")
-  def ssdp_st = payload_value("ssdp_st")
-  def ssdp_mx = payload_value("ssdp_mx")
-  def ssdp_usn = payload_value("ssdp_usn")
-  def dhcp_requested_ip = payload_value("dhcp_requested_ip")
-  def dhcp_hostname = payload_value("dhcp_hostname")
-  def dhcp_vendor_class = payload_value("dhcp_vendor_class")
-  def dns_query_name = payload_value("dns_query_name")
-  def mdns_name = payload_value("mdns_name")
-  def session_key = payload_value("session_key")
-  def retransmit_key = payload_value("retransmit_key")
-  def frame_fingerprint = payload_value("frame_fingerprint")
-  def payload_visibility = payload_value("payload_visibility")
-  def large_frame = ActiveModel::Type::Boolean.new.cast(payload_value("large_frame"))
-  def mixed_encryption = ActiveModel::Type::Boolean.new.cast(payload_value("mixed_encryption"))
-  def dedupe_or_replay_suspect = ActiveModel::Type::Boolean.new.cast(payload_value("dedupe_or_replay_suspect"))
-  def anomaly_reasons = Array(payload_value("anomaly_reasons")).compact
+  # Columns promoted from payload to table columns (read directly, no fallback)
+  PROMOTED_COLUMNS = %w[
+    schema_version frame_type frame_subtype source_mac bssid destination_bssid
+    ssid signal_dbm channel_number fragment_number signal_status adjacent_mac_hint
+    qos_tid qos_eosp qos_ack_policy qos_ack_policy_label qos_amsdu
+    llc_oui ethertype ethertype_name src_ip dst_ip ip_ttl ip_protocol ip_protocol_name
+    src_port dst_port transport_protocol transport_length transport_checksum
+    app_protocol ssdp_message_type ssdp_st ssdp_mx ssdp_usn
+    dhcp_requested_ip dhcp_hostname dhcp_vendor_class dns_query_name mdns_name
+    session_key retransmit_key frame_fingerprint payload_visibility
+    tsft_delta_us wall_clock_delta_ms large_frame mixed_encryption dedupe_or_replay_suspect
+    raw_len frame_control_flags more_data retry power_save protected
+    security_flags wps_device_name wps_manufacturer wps_model_name
+    device_fingerprint handshake_captured sensor_id location_id username
+  ].freeze
+
+  # Fields still in payload only (not yet promoted to columns)
+  PAYLOAD_ONLY_FIELDS = %w[
+    raw_frame tsft frequency_mhz channel_flags data_rate_kbps antenna_id
+    transmitter_mac receiver_mac noise_dbm identity_source tags
+    qos_tid_label fragment_offset ip_id ip_flags tcp_flags tcp_seq tcp_ack
+    udp_length icmp_type icmp_code arp_opcode arp_sender_ip arp_target_ip
+    dhcp_message_type dhcp_client_id dhcp_server_id
+    ssdp_server ssdp_location ssdp_nt ssdp_nts
+    mdns_type mdns_class mdns_ttl
+    anomaly_reasons event_type
+    mac rf qos llc_snap network transport application correlation anomalies
+  ].freeze
+
+  # Accessors for payload-only fields
+  PAYLOAD_ONLY_FIELDS.each do |field|
+    define_method(field) { payload_value(field) }
+  end
+
+  # Special accessors for nested payload structures (layers)
   def mac_layer = payload_value("mac")
   def rf_layer = payload_value("rf")
   def qos_layer = payload_value("qos")
@@ -76,67 +54,15 @@ class AuditLog < SyncRecord
   def application_layer = payload_value("application")
   def correlation_layer = payload_value("correlation")
   def anomalies_layer = payload_value("anomalies")
-  def username = payload_value("username")
-  def raw_frame = payload_value("raw_frame")
-  def raw_len = payload_value("raw_len").presence.to_i
-  def frame_control_flags = payload_value("frame_control_flags").presence.to_i
-  def more_data = ActiveModel::Type::Boolean.new.cast(payload_value("more_data"))
-  def retry_flag = ActiveModel::Type::Boolean.new.cast(payload_value("retry"))
-  def power_save = ActiveModel::Type::Boolean.new.cast(payload_value("power_save"))
-  def protected = ActiveModel::Type::Boolean.new.cast(payload_value("protected"))
-  def security_flags = payload_value("security_flags").presence.to_i
-  def wps_device_name = payload_value("wps_device_name")
-  def wps_manufacturer = payload_value("wps_manufacturer")
-  def wps_model_name = payload_value("wps_model_name")
-  def device_fingerprint = payload_value("device_fingerprint")
-  def handshake_captured = ActiveModel::Type::Boolean.new.cast(payload_value("handshake_captured"))
 
-  def security_labels
-    flags = security_flags
-    labels = []
-    labels << "WPA" if flags & 0x01 != 0
-    labels << "RSN/WPA2" if flags & 0x02 != 0
-    labels << "WPA3" if flags & 0x04 != 0
-    labels << "WPS" if flags & 0x08 != 0
-    labels << "PMF required" if flags & 0x10 != 0
-    labels
+  # Special handling for array fields
+  def anomaly_reasons
+    Array(payload_value("anomaly_reasons")).compact
   end
 
-  def compact_security_label
-    security_labels.presence&.join(", ")
-  end
-
-  def frame_flags_label
-    labels = []
-    labels << "more data" if more_data
-    labels << "retry" if retry_flag
-    labels << "power save" if power_save
-    labels << "protected" if protected
-    labels.presence&.join(", ")
-  end
-
-  def protocol_summary
-    [app_protocol, transport_protocol, ip_protocol_name].compact.uniq.join(" / ").presence
-  end
-
-  def raw_frame_bytes
-    return if raw_frame.blank?
-
-    Base64.strict_decode64(raw_frame)
-  rescue ArgumentError
-    nil
-  end
-
-  def raw_frame_hex_dump
-    bytes = raw_frame_bytes
-    return unless bytes
-
-    bytes.bytes.each_slice(16).with_index.map do |slice, index|
-      offset = index * 16
-      hex = slice.map { |byte| format("%02x", byte) }.join(" ")
-      ascii = slice.map { |byte| byte.between?(32, 126) ? byte.chr : "." }.join
-      format("%04x  %-47s  |%s|", offset, hex, ascii)
-    end.join("\n")
+  # Legacy field still in payload (channel vs channel_number)
+  def channel
+    payload_value("channel")&.to_i
   end
 
   # For aggregate query results
@@ -151,19 +77,12 @@ class AuditLog < SyncRecord
   private
 
   def payload_value(key)
-    # First check if we already have this attribute loaded directly from SELECT
-    if has_attribute?(key)
-      value = read_attribute(key)
-      return value unless value.nil?
+    # For promoted columns, read directly from the attribute
+    if PROMOTED_COLUMNS.include?(key)
+      return read_attribute(key)
     end
-    # Otherwise fall back to extracting from payload jsonb
+
+    # For payload-only fields, extract from jsonb
     payload.is_a?(Hash) ? payload[key] : nil
-  end
-
-  def integer_payload_value(key, default: nil)
-    value = payload_value(key)
-    return default if value.nil? || value == ""
-
-    value.to_i
   end
 end
