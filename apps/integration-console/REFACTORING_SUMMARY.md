@@ -29,7 +29,7 @@
   - `PAYLOAD_ONLY_FIELDS` - Fields still stored only in the jsonb payload
   
 - **Simplified `payload_value` method**:
-  - Reads promoted columns directly from PROMOTED_COLUMNS
+  - Reads promoted columns directly if key is in PROMOTED_COLUMNS
   - Falls back to reading from payload for any non-promoted key
   - No more ambiguous COALESCE pattern
 

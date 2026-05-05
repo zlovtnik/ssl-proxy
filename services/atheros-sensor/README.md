@@ -7,10 +7,10 @@ sync-plane used by this repository.
 ## Runtime Model
 
 - Runs on a Linux host with direct access to a monitor-capable Wi-Fi interface (AR9271 preferred).
-- Reuses the repo's NATS and Postgres stack through `SYNC_NATS_URL` and `DATABASE_URL`.
+- Uses NATS through `SYNC_NATS_URL`; the zig-coordinator owns all Postgres access.
 - Publishes the raw audit payload on subject `wireless.audit`.
 - Publishes a matching `sync.scan.request` message with `stream_name=wireless.audit`.
-- Falls back to Postgres `audit_backlog` rows when NATS is unavailable.
+- Asks the coordinator to persist `audit_backlog` rows when NATS publish paths fail.
 
 ## Environment
 
@@ -33,9 +33,6 @@ sync-plane used by this repository.
 - `ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS`
 - `ATH_SENSOR_METRICS_PORT`
 - `ATH_SENSOR_SHUTDOWN_GRACE_SECS`
-- `ATH_SENSOR_BACKLOG_MAX_ATTEMPTS`
-- `ATH_SENSOR_BACKLOG_MAX_AGE_HOURS`
-- `ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS`
 - `ATH_SENSOR_AUDIT_LAYER_STREAM`
 - `AUDIT_WINDOW_TZ`
 - `AUDIT_WINDOW_DAYS`
@@ -51,7 +48,6 @@ sync-plane used by this repository.
 - `SYNC_NATS_TLS_CLIENT_KEY_PATH`
 - `SYNC_INLINE_PAYLOAD_MAX_BYTES`
 - `SYNC_OUTBOX_DIR`
-- `DATABASE_URL`
 - `RUST_LOG`
 
 ## Logging
@@ -81,7 +77,7 @@ the default hop list.
 
 `ATH_SENSOR_METRICS_PORT` enables an OpenMetrics endpoint at `/metrics`.
 Counters include packet, decode, capture, pipeline, and MAC lookup failure
-counts; gauges include Postgres pool availability and waiter counts.
+counts.
 
 `ATH_SENSOR_AUDIT_LAYER_STREAM` defaults to `off`. Set it to `stdout` or
 `stderr` only when you want the legacy audit-trace mirror in addition to the
@@ -104,7 +100,6 @@ Additional subjects emitted by this sensor:
 1. Put the capture interface into monitor mode with [`scripts/prep_ath.sh`](/Users/rcs/git/ssl-proxy/scripts/prep_ath.sh).
 2. Point the sensor at the compose stack:
    - `SYNC_NATS_URL=nats://127.0.0.1:4222`
-   - `DATABASE_URL=postgres://sync:sync@127.0.0.1:5432/sync`
 3. Start the service directly or install the provided `systemd` unit template.
 
 Default capture filter is `type mgt or type data`. Override `ATH_SENSOR_BPF` when

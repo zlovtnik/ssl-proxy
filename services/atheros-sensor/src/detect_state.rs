@@ -8,7 +8,7 @@
 //! (edit distance <= 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
 //! DeauthFloodTracker counts deauthentication and disassociation frames per BSSID in a sliding
 //! window and fires an alert when the threshold is exceeded, with a cooldown to suppress repeats;
-//! AuthorizedNetworkCache holds the Postgres-backed list of known SSIDs/BSSIDs and is
+//! AuthorizedNetworkCache holds the NATS-backed list of known SSIDs/BSSIDs and is
 //! invalidated by the NATS generation counter when the console pushes a config change;
 //! evil-twin detection runs through IdentityCache (in parse/) which correlates adjacent MACs
 //! and session keys to surface impersonation across frames.
@@ -29,7 +29,7 @@
 //!
 //! [`AuthorizedNetworkCache`]: `invalidate()` sets `loaded_at` to `None` without touching
 //! `entries`; the stale data remains readable until the next `refresh_if_needed` call
-//! successfully reloads from Postgres.
+//! successfully reloads from the coordinator.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::backlog::{AuthorizedWirelessNetwork, PostgresBacklog};
+use crate::backlog::{AuthorizedWirelessNetwork, NatsBacklog};
 use crate::model::AuditEntry;
 use crate::parse::SECURITY_PMF_REQUIRED;
 
@@ -413,7 +413,7 @@ impl AuthorizedNetworkCache {
 
     pub async fn refresh_if_needed(
         &mut self,
-        backlog: &PostgresBacklog,
+        backlog: &NatsBacklog,
         ttl: Duration,
     ) -> Result<(), crate::backlog::BacklogError> {
         if self

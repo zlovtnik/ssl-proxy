@@ -55,7 +55,6 @@ struct SensorConfigUpdate {
     bpf: Option<String>,
     channel: Option<u8>,
     log_idle_secs: Option<u64>,
-    mac_device_lookup_enabled: Option<bool>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -92,7 +91,7 @@ pub fn spawn_audit_window_config_subscriber(
 
 /// Spawns the authorized network config subscriber with automatic reconnect loop. Only bumps
 /// a generation counter; the actual reload happens lazily in process_packet when the generation
-/// changes, avoiding blocking the subscriber task on Postgres queries.
+/// changes, avoiding blocking the subscriber task on coordinator requests.
 pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation: Arc<AtomicU64>) {
     tokio::spawn(async move {
         loop {
@@ -108,7 +107,7 @@ pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation
 
 /// Spawns the sensor config subscriber with automatic reconnect loop. Channel and BPF filter
 /// updates take effect immediately via set_channel and capture_control.apply_filter. The
-/// log_idle_secs and mac_device_lookup_enabled fields require a sensor restart to take effect.
+/// log_idle_secs requires a sensor restart to take effect.
 pub fn spawn_sensor_config_subscriber(
     config: SyncConfig,
     location_id: String,
@@ -328,11 +327,10 @@ async fn run_sensor_config_subscriber_once(
             capture_control.apply_filter(bpf.to_string());
             info!(bpf = %bpf, "sensor BPF reloaded from NATS");
         }
-        if update.log_idle_secs.is_some() || update.mac_device_lookup_enabled.is_some() {
+        if update.log_idle_secs.is_some() {
             info!(
                 log_idle_secs = ?update.log_idle_secs,
-                mac_device_lookup_enabled = ?update.mac_device_lookup_enabled,
-                "sensor config update received; restart required for these fields"
+                "sensor config update received; restart required for this field"
             );
         }
         Ok(())

@@ -6,11 +6,11 @@
 //! keys, and anomaly flags. It is the internal working type throughout the parse pipeline.
 //! AuditEntry is the serialized, published form: a flat JSON-friendly struct with all fields
 //! optional where absent, enriched with sensor_id, location_id, device identity, and tags
-//! before being written to Postgres and published to NATS.
+//! before being published to NATS.
 //!
 //! # Type notes
 //!
-//! [`AuditEntry`]: the wire-format event written to Postgres and published to NATS;
+//! [`AuditEntry`]: the wire-format event published to NATS;
 //! `schema_version` is always 2 for frames produced by this sensor (the serde default of 1
 //! applies only when deserializing legacy payloads), and `identity_source` defaults to
 //! `"unknown"` when the field is absent from a deserialized payload.

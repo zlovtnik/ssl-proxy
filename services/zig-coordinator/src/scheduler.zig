@@ -34,6 +34,11 @@ pub const Error = error{
     BatchDispatchFailed,
     ResultFetchFailed,
     AlertPublishFailed,
+    BacklogOperationFailed,
+    MacLookupFailed,
+    NetworksListFailed,
+    ProbeFlushFailed,
+    WirelessMessageFailed,
 } || db.Error;
 
 pub const Service = struct {
@@ -172,6 +177,13 @@ pub const Service = struct {
         had_work = (try self.dispatchNextBatch()) or had_work;
         had_work = (try self.handleResults()) or had_work;
         had_work = (try self.runShadowAudit()) or had_work;
+        had_work = (try self.handleBacklogSave()) or had_work;
+        had_work = (try self.handleBacklogList()) or had_work;
+        had_work = (try self.handleBacklogSynced()) or had_work;
+        had_work = (try self.handleBacklogPrune()) or had_work;
+        had_work = (try self.handleMacLookup()) or had_work;
+        had_work = (try self.handleNetworksAuthorized()) or had_work;
+        had_work = (try self.handleProbeFlush()) or had_work;
         return had_work;
     }
 
@@ -307,6 +319,233 @@ pub const Service = struct {
             had_work = true;
         }
         return had_work;
+    }
+
+    fn handleBacklogSave(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-save");
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg) |payload| {
+            self.database.saveBacklogEntry(payload) catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_save")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            logging.info()
+                .stringSafe("event", "backlog_save")
+                .stringSafe("status", "ok")
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleBacklogList(self: *Service) Error!bool {
+        const req = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-list");
+        defer if (req) |m| self.allocator.free(m);
+        if (req != null) {
+            const list = self.database.listPendingBacklog() catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_list")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            defer if (list) |l| self.allocator.free(l);
+            if (list) |payload| {
+                try self.publish("wireless.backlog.list.reply", payload, error.AlertPublishFailed);
+                logging.info()
+                    .stringSafe("event", "backlog_list")
+                    .stringSafe("status", "ok")
+                    .int("payload_bytes", payload.len)
+                    .log();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    fn handleBacklogSynced(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-synced");
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg) |payload| {
+            var parsed = std.json.parseFromSlice(
+                struct { dedupe_key: []const u8 },
+                self.allocator,
+                payload,
+                .{ .ignore_unknown_fields = true },
+            ) catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_synced")
+                    .stringSafe("status", "error")
+                    .stringSafe("error", "InvalidJson")
+                    .err(err)
+                    .log();
+                return false;
+            };
+            defer parsed.deinit();
+            self.database.markBacklogSynced(parsed.value.dedupe_key) catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_synced")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            logging.info()
+                .stringSafe("event", "backlog_synced")
+                .stringSafe("status", "ok")
+                .string("dedupe_key", parsed.value.dedupe_key)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleBacklogPrune(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-prune");
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg != null) {
+            const deleted = self.database.pruneBacklog() catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_prune")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            defer if (deleted) |d| self.allocator.free(d);
+            const count = if (deleted) |d| std.fmt.parseInt(i64, d, 10) catch 0 else 0;
+            logging.info()
+                .stringSafe("event", "backlog_prune")
+                .stringSafe("status", "ok")
+                .int("deleted_count", count)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleMacLookup(self: *Service) Error!bool {
+        const req = try self.pullWirelessMessage("WIRELESS_MAC_STREAM", "wireless-mac-lookup");
+        defer if (req) |m| self.allocator.free(m);
+        if (req) |payload| {
+            var parsed = std.json.parseFromSlice(
+                struct { mac: []const u8 },
+                self.allocator,
+                payload,
+                .{ .ignore_unknown_fields = true },
+            ) catch |err| {
+                logging.err()
+                    .stringSafe("event", "mac_lookup")
+                    .stringSafe("status", "error")
+                    .stringSafe("error", "InvalidJson")
+                    .err(err)
+                    .log();
+                return false;
+            };
+            defer parsed.deinit();
+            const result = self.database.lookupDeviceByMac(parsed.value.mac) catch |err| {
+                logging.err()
+                    .stringSafe("event", "mac_lookup")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.MacLookupFailed;
+            };
+            defer if (result) |r| self.allocator.free(r);
+            const reply = result orelse "null";
+            try self.publish("wireless.mac.lookup.reply", reply, error.AlertPublishFailed);
+            logging.info()
+                .stringSafe("event", "mac_lookup")
+                .stringSafe("status", "ok")
+                .string("mac", parsed.value.mac)
+                .boolean("found", result != null)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleNetworksAuthorized(self: *Service) Error!bool {
+        const req = try self.pullWirelessMessage("WIRELESS_NETWORKS_STREAM", "wireless-networks-authorized");
+        defer if (req) |m| self.allocator.free(m);
+        if (req != null) {
+            const list = self.database.listAuthorizedNetworks() catch |err| {
+                logging.err()
+                    .stringSafe("event", "networks_authorized")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.NetworksListFailed;
+            };
+            defer if (list) |l| self.allocator.free(l);
+            if (list) |payload| {
+                try self.publish("wireless.networks.authorized.reply", payload, error.AlertPublishFailed);
+                logging.info()
+                    .stringSafe("event", "networks_authorized")
+                    .stringSafe("status", "ok")
+                    .int("payload_bytes", payload.len)
+                    .log();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    fn handleProbeFlush(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage("WIRELESS_PROBE_STREAM", "wireless-probe-flush");
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg) |payload| {
+            self.database.flushProbeBatch(payload) catch |err| {
+                logging.err()
+                    .stringSafe("event", "probe_flush")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.ProbeFlushFailed;
+            };
+            logging.info()
+                .stringSafe("event", "probe_flush")
+                .stringSafe("status", "ok")
+                .int("payload_bytes", payload.len)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn pullWirelessMessage(self: *Service, stream: []const u8, consumer: []const u8) Error!?[]u8 {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "next",
+            stream,
+            consumer,
+            "--count",
+            "1",
+            "--raw",
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.WirelessMessageFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            if (looksLikeNoMessage(result.stderr)) return null;
+            command.logFailure("nats", result);
+            return error.WirelessMessageFailed;
+        }
+
+        const output = command.trimmedOutput(result.stdout);
+        if (output.len == 0) return null;
+        return self.allocator.dupe(u8, output) catch error.WirelessMessageFailed;
     }
 
     fn applySchema(self: *Service) Error!void {

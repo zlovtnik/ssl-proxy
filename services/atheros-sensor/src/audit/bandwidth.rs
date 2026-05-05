@@ -232,7 +232,7 @@ impl TrafficBucket {
             0..=99 => counters.histogram[0] += 1,
             100..=499 => counters.histogram[1] += 1,
             500..=999 => counters.histogram[2] += 1,
-            1000..=1499 => counters.histogram[3] += 1,
+            1000..=1500 => counters.histogram[3] += 1,
             _ => {}
         }
         counters.arrival_times_ms.push(observed_at.timestamp_millis());

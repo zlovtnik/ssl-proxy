@@ -4,6 +4,10 @@ set -eu
 NATS_URL="${SYNC_NATS_URL:-nats://nats:4222}"
 STREAM_NAME="${AUDIT_STREAM_NAME:-AUDIT_STREAM}"
 RESULT_STREAM_NAME="${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}"
+WIRELESS_BACKLOG_STREAM="${WIRELESS_BACKLOG_STREAM:-WIRELESS_BACKLOG_STREAM}"
+WIRELESS_MAC_STREAM="${WIRELESS_MAC_STREAM:-WIRELESS_MAC_STREAM}"
+WIRELESS_NETWORKS_STREAM="${WIRELESS_NETWORKS_STREAM:-WIRELESS_NETWORKS_STREAM}"
+WIRELESS_PROBE_STREAM="${WIRELESS_PROBE_STREAM:-WIRELESS_PROBE_STREAM}"
 SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
 LOAD_CONSUMER="${SYNC_LOAD_CONSUMER:-oracle-worker-load}"
 RESULT_CONSUMER="${SYNC_RESULT_CONSUMER:-zig-coordinator-result}"
@@ -11,6 +15,53 @@ SCAN_SUBJECT="${SYNC_SCAN_SUBJECT:-sync.scan.request}"
 LOAD_SUBJECT="${SYNC_LOAD_SUBJECT:-sync.oracle.load}"
 RESULT_SUBJECT="${SYNC_RESULT_SUBJECT:-sync.oracle.result}"
 SUBJECTS="${SCAN_SUBJECT},${LOAD_SUBJECT},wireless.audit,wireless.audit.config,wifi.alert.handshake,audit.wireless.bandwidth,audit.threat.shadow_device"
+
+ensure_stream() {
+  stream_name="$1"
+  subjects="$2"
+  max_age="$3"
+  if nats --server "${NATS_URL}" str info "${stream_name}" >/dev/null 2>&1; then
+    set +e
+    edit_output=$(nats --server "${NATS_URL}" str edit "${stream_name}" \
+      --subjects "${subjects}" \
+      --max-age="${max_age}" 2>&1)
+    edit_status=$?
+    set -e
+    if [ "${edit_status}" -ne 0 ]; then
+      echo "warning: stream edit failed for ${stream_name} exit_code=${edit_status}: ${edit_output}" >&2
+    fi
+  else
+    nats --server "${NATS_URL}" str add "${stream_name}" \
+      --defaults \
+      --subjects "${subjects}" \
+      --storage file \
+      --retention limits \
+      --discard old \
+      --max-msgs=-1 \
+      --max-bytes=-1 \
+      --max-age="${max_age}" \
+      --max-msg-size=-1 \
+      --dupe-window=2m \
+      --replicas 1
+  fi
+}
+
+ensure_consumer() {
+  stream_name="$1"
+  consumer_name="$2"
+  filter_subject="$3"
+  if nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" >/dev/null 2>&1; then
+    nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" >/dev/null
+  else
+    nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
+      --filter "${filter_subject}" \
+      --ack explicit \
+      --deliver all \
+      --replay instant \
+      --pull \
+      --defaults
+  fi
+}
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
   sleep 1
@@ -121,3 +172,16 @@ else
     --pull \
     --defaults
 fi
+
+ensure_stream "${WIRELESS_BACKLOG_STREAM}" "wireless.backlog.>" "720h"
+ensure_stream "${WIRELESS_MAC_STREAM}" "wireless.mac.>" "1h"
+ensure_stream "${WIRELESS_NETWORKS_STREAM}" "wireless.networks.>" "1h"
+ensure_stream "${WIRELESS_PROBE_STREAM}" "wireless.probe.>" "1h"
+
+ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-save" "wireless.backlog.save"
+ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-list" "wireless.backlog.list"
+ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-synced" "wireless.backlog.synced"
+ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-prune" "wireless.backlog.prune"
+ensure_consumer "${WIRELESS_MAC_STREAM}" "wireless-mac-lookup" "wireless.mac.lookup"
+ensure_consumer "${WIRELESS_NETWORKS_STREAM}" "wireless-networks-authorized" "wireless.networks.authorized"
+ensure_consumer "${WIRELESS_PROBE_STREAM}" "wireless-probe-flush" "wireless.probe.flush"

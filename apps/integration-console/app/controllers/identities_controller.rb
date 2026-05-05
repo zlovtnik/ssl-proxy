@@ -76,7 +76,7 @@ class IdentitiesController < ApplicationController
 
   def distinct_values
     field = params[:field].to_s
-    allowed_fields = %w[source_mac location_id ssid destination_bssid registered_username]
+    allowed_fields = FILTERS.keys.map(&:to_s)
     
     if allowed_fields.include?(field)
       values = Rails.cache.fetch("identities:distinct:#{field}", expires_in: 60.seconds) do
