@@ -235,7 +235,9 @@ impl TrafficBucket {
             1000..=1500 => counters.histogram[3] += 1,
             _ => {}
         }
-        counters.arrival_times_ms.push(observed_at.timestamp_millis());
+        counters
+            .arrival_times_ms
+            .push(observed_at.timestamp_millis());
         Ok(flushed)
     }
 

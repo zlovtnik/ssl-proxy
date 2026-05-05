@@ -68,8 +68,9 @@ use crate::{
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker,
-        CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT, ROGUE_AP_SUBJECT,
+        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker,
+        RogueApTracker, SignalTracker, CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT,
+        ROGUE_AP_SUBJECT,
     },
     device::{detect, read_mac_address},
     error::SensorError,
@@ -432,10 +433,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         packet_stream.control.clone(),
     );
     let stats = metrics::shared_stats();
-    metrics::spawn_metrics_server(
-        config.metrics_port,
-        Arc::clone(&stats),
-    );
+    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
 
     Ok(SensorHandles {
         config: config.clone(),
@@ -540,20 +538,28 @@ async fn process_packet(
         entry.tags.push("threat:unauthorized_bssid".to_string());
     }
     pipeline.client_inventory.observe(&entry);
-    
+
     // Accumulate probe observations for batched flush
     if entry.frame_subtype == "probe_request" {
         if let (Some(client_mac), Some(ssid)) = (
-            entry.source_mac.as_deref().map(|m| m.trim().to_ascii_lowercase()),
-            entry.ssid.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            entry
+                .source_mac
+                .as_deref()
+                .map(|m| m.trim().to_ascii_lowercase()),
+            entry
+                .ssid
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
         ) {
             let observed_at = chrono::DateTime::parse_from_rfc3339(&entry.observed_at)
                 .ok()
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(chrono::Utc::now);
-            
+
             let key = (ssid.to_string(), client_mac.clone());
-            pipeline.probe_accumulator
+            pipeline
+                .probe_accumulator
                 .entry(key)
                 .and_modify(|obs| {
                     obs.last_seen = observed_at;
@@ -614,9 +620,11 @@ async fn process_packet(
         let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
             cached.clone()
         } else {
-            let lookup = if pipeline.mac_lookup_error_cache.get(&cache_key).is_some_and(
-                |last| last.elapsed() < Duration::from_secs(MAC_LOOKUP_ERROR_TTL_SECS),
-            ) {
+            let lookup = if pipeline
+                .mac_lookup_error_cache
+                .get(&cache_key)
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(MAC_LOOKUP_ERROR_TTL_SECS))
+            {
                 None
             } else {
                 match backlog.lookup_device_by_mac(&cache_key).await {

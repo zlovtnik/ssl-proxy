@@ -376,10 +376,7 @@ fn circuit_breaker_is_open(
         }
 
         state.circuit_breaker = None;
-        info!(
-            dedupe_key,
-            "backlog circuit breaker probe starting"
-        );
+        info!(dedupe_key, "backlog circuit breaker probe starting");
     }
     false
 }

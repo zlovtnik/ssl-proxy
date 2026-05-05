@@ -223,6 +223,10 @@ impl SyncPublisher {
         }
     }
 
+    pub fn publish_payload_audit(&self, subject: &str, payload: &str) -> Result<(), String> {
+        self.enqueue_message(subject, payload)
+    }
+
     pub fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
         self.record(subject, payload);
         self.record_attempt();
@@ -1145,6 +1149,21 @@ mod tests {
         let messages = publisher.published_messages();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].subject, "wireless.audit");
+    }
+
+    #[test]
+    fn publish_payload_audit_records_disabled_publisher_without_network() {
+        let publisher = SyncPublisher::new(&Config::default().sync);
+
+        let error = publisher
+            .publish_payload_audit(crate::sync::PAYLOAD_AUDIT_SUBJECT, "{}")
+            .unwrap_err();
+
+        assert_eq!(error, "sync publisher disabled");
+        let messages = publisher.published_messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].subject, crate::sync::PAYLOAD_AUDIT_SUBJECT);
+        assert_eq!(messages[0].payload, "{}");
     }
 
     #[tokio::test]

@@ -150,6 +150,7 @@ enum TransparentPolicyDecision {
 struct PlaintextIdentityHints {
     client_ua: Option<String>,
     device_token: Option<String>,
+    preview: Vec<u8>,
 }
 
 /// Orchestrates handling of a single redirected TCP connection from iptables.
@@ -217,6 +218,13 @@ async fn handle_transparent_inner(
         hints.device_token.clone(),
         hints.client_ua.clone(),
     );
+    if orig_dst.port() == 80 && !hints.preview.is_empty() {
+        let audit_host = tls
+            .sni
+            .clone()
+            .unwrap_or_else(|| format!("{}:{}", orig_dst.ip(), orig_dst.port()));
+        crate::payload_audit::audit_http_preview(&hints.preview, &audit_host, &identity, &state);
+    }
     match evaluate_transparent_policy(&state, orig_dst, &tls).await {
         TransparentPolicyDecision::Block(decision) => {
             block_transparent_flow(
@@ -472,6 +480,7 @@ async fn peek_plaintext_identity_hints(
         client_ua: extract_http_header_value(&preview, "user-agent")
             .map(|value| crate::identity::truncate(&value, 512)),
         device_token: extract_http_header_value(&preview, crate::identity::DEVICE_TOKEN_HEADER),
+        preview: buf[..read].to_vec(),
     }
 }
 

@@ -94,7 +94,7 @@ impl NatsBacklog {
                 "{}",
             )
             .await?;
-        serde_json::from_str(&response).map_err(|source| BacklogError::Deserialize {
+        parse_authorized_networks_response(&response).map_err(|source| BacklogError::Deserialize {
             operation: "list_authorized_wireless_networks",
             source,
         })
@@ -259,6 +259,29 @@ impl BacklogStore for NatsBacklog {
                 source,
             })?;
         Ok(parsed.pruned)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AuthorizedNetworksResponse {
+    Wrapped {
+        #[serde(default)]
+        networks: Option<Vec<AuthorizedWirelessNetwork>>,
+    },
+    Legacy(Vec<AuthorizedWirelessNetwork>),
+}
+
+fn parse_authorized_networks_response(
+    response: &str,
+) -> Result<Vec<AuthorizedWirelessNetwork>, serde_json::Error> {
+    if response.trim().is_empty() || response.trim() == "null" {
+        return Ok(Vec::new());
+    }
+
+    match serde_json::from_str(response)? {
+        AuthorizedNetworksResponse::Wrapped { networks } => Ok(networks.unwrap_or_default()),
+        AuthorizedNetworksResponse::Legacy(networks) => Ok(networks),
     }
 }
 
@@ -567,7 +590,44 @@ async fn connect_tls(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_nats_endpoint;
+    use super::{parse_authorized_networks_response, parse_nats_endpoint};
+
+    #[test]
+    fn parses_wrapped_authorized_networks_response() {
+        let parsed = parse_authorized_networks_response(
+            r#"{"networks":[{"ssid":"Corp","bssid":"aa:bb:cc:dd:ee:ff","location_id":"hq","psk":"secret"}]}"#,
+        )
+        .expect("wrapped response should parse");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].ssid.as_deref(), Some("Corp"));
+        assert_eq!(parsed[0].bssid.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(parsed[0].location_id.as_deref(), Some("hq"));
+        assert_eq!(parsed[0].psk.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn parses_legacy_authorized_networks_array() {
+        let parsed = parse_authorized_networks_response(
+            r#"[{"ssid":"Corp","bssid":null,"location_id":null,"psk":null}]"#,
+        )
+        .expect("legacy array should parse");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].ssid.as_deref(), Some("Corp"));
+        assert_eq!(parsed[0].bssid, None);
+    }
+
+    #[test]
+    fn treats_empty_and_null_authorized_networks_responses_as_empty() {
+        assert!(parse_authorized_networks_response("").unwrap().is_empty());
+        assert!(parse_authorized_networks_response(" null ")
+            .unwrap()
+            .is_empty());
+        assert!(parse_authorized_networks_response(r#"{"networks":null}"#)
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn parses_host_with_default_port() {

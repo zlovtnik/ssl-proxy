@@ -13,6 +13,7 @@ pub mod events;
 pub mod forensic;
 pub mod identity;
 pub mod obfuscation;
+pub mod payload_audit;
 pub mod proxy;
 #[cfg(feature = "quic")]
 pub mod quic;

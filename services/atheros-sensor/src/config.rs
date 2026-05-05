@@ -538,5 +538,4 @@ mod tests {
             Some("nats")
         );
     }
-
 }
