@@ -384,7 +384,7 @@ pub const Service = struct {
                     .stringSafe("error", "InvalidJson")
                     .err(err)
                     .log();
-                return false;
+                return error.BacklogOperationFailed;
             };
             defer parsed.deinit();
             self.database.markBacklogSynced(parsed.value.dedupe_key) catch |err| {
@@ -419,6 +419,11 @@ pub const Service = struct {
             };
             defer if (deleted) |d| self.allocator.free(d);
             const count = if (deleted) |d| std.fmt.parseInt(i64, d, 10) catch 0 else 0;
+            const reply = std.fmt.allocPrint(self.allocator, "{{\"pruned\":{d}}}", .{count}) catch {
+                return error.BacklogOperationFailed;
+            };
+            defer self.allocator.free(reply);
+            try self.publish("wireless.backlog.prune.reply", reply, error.AlertPublishFailed);
             logging.info()
                 .stringSafe("event", "backlog_prune")
                 .stringSafe("status", "ok")
@@ -442,10 +447,10 @@ pub const Service = struct {
                 logging.err()
                     .stringSafe("event", "mac_lookup")
                     .stringSafe("status", "error")
-                    .stringSafe("error", "InvalidJson")
+                    .stringSafe("error", "InvalidMacLookupJson")
                     .err(err)
                     .log();
-                return false;
+                return error.MacLookupFailed;
             };
             defer parsed.deinit();
             const result = self.database.lookupDeviceByMac(parsed.value.mac) catch |err| {

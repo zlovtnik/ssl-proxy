@@ -43,7 +43,7 @@ pub enum PublishError {
     #[error("backlog persistence failed: {0}")]
     Backlog(#[from] BacklogError),
     /// Fired when the NATS publish fails and no fallback path is available (e.g. invalid
-/// `observed_at` timestamp rejected before any side effects).
+    /// `observed_at` timestamp rejected before any side effects).
     #[error("publish failed: {0}")]
     Publish(String),
     /// Fired when the NATS publish fails but the entry was successfully queued in the
@@ -108,11 +108,7 @@ pub type SharedPublishState = Arc<Mutex<PublishState>>;
 /// `circuit_breaker` is `None` when coordinator backlog publish is healthy (circuit closed) and
 /// `Some(Instant)` recording when the breaker opened; it resets to `None` after
 /// `CIRCUIT_BREAKER_TIMEOUT` elapses and a probe write succeeds.
-/// Mutable publish state shared across the pipeline via [`SharedPublishState`].
-///
-/// circuit_breaker is None when backlog publishing is healthy (circuit closed) and Some(Instant) recording
-/// when the breaker opened; it resets to None after CIRCUIT_BREAKER_TIMEOUT elapses and a probe
-/// write succeeds. memory_backlog is the LRU that absorbs entries while the breaker is open.
+/// `memory_backlog` is the LRU that absorbs entries while the breaker is open.
 pub struct PublishState {
     circuit_breaker: Option<Instant>,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
@@ -466,9 +462,6 @@ fn close_backlog_circuit_breaker(state: &SharedPublishState) {
     }
 }
 
-/// Retries pending backlog entries that fall within the audit window; skips entries
-/// outside the window. Ingest ledger failure keeps the entry in audit_backlog for
-/// future retry, preventing data loss when the coordinator is unavailable.
 /// Retries pending backlog entries that fall within the audit window; skips entries outside
 /// the window but leaves them pending. Ingest ledger failure keeps the entry in audit_backlog
 /// for future retry, preventing data loss when the primary ledger is unavailable.

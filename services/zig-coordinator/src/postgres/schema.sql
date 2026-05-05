@@ -492,11 +492,15 @@ returns void
 language plpgsql
 as $$
 begin
+  if nullif(p_payload->>'dedupe_key', '') is null then
+    raise exception 'coordinator.save_backlog_entry requires dedupe_key';
+  end if;
+
   insert into audit_backlog (dedupe_key, stream_name, payload, status, attempt_count, created_at, updated_at)
   values (
     p_payload->>'dedupe_key',
     p_payload->>'stream_name',
-    p_payload->>'payload',
+    p_payload->'payload',
     'pending',
     0,
     now(),
@@ -522,10 +526,13 @@ as $$
       'created_at', created_at
     )
   ), '[]'::jsonb)
-  from audit_backlog
-  where status = 'pending'
-  order by created_at asc
-  limit 100;
+  from (
+    select dedupe_key, stream_name, payload, attempt_count, created_at
+    from audit_backlog
+    where status = 'pending'
+    order by created_at asc
+    limit 100
+  ) pending;
 $$;
 
 create or replace function coordinator.mark_backlog_synced(p_dedupe_key text)
