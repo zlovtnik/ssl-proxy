@@ -6,13 +6,9 @@
 
   let activeFilters = $state([])
   let nextId = $state(1)
-  let seeded = $state(false)
 
   $effect(() => {
-    if (filters.length && !seeded) {
-      activeFilters = normalizeFilters(filters)
-      seeded = true
-    }
+    activeFilters = normalizeFilters(filters)
   })
 
   export function apiParams() {
@@ -20,8 +16,8 @@
   }
 
   function normalizeFilters(nextFilters) {
-    return nextFilters.map((filter) => ({
-      id: filter.id || nextId++,
+    return nextFilters.map((filter, index) => ({
+      id: filter.id || `filter-${index}-${filter.field}-${filter.operator}`,
       field: filter.field,
       operator: filter.operator,
       value: filter.value ?? "",
@@ -97,7 +93,7 @@
         {#if index > 0}
           <button
             type="button"
-            class="rounded px-2 py-1 text-xs font-semibold {filter.conjunction === 'OR' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}"
+            class={`query-conjunction ${filter.conjunction === 'OR' ? 'query-conjunction-or' : 'query-conjunction-and'}`}
             onclick={() => toggleConjunction(filter.id)}
           >
             {filter.conjunction}

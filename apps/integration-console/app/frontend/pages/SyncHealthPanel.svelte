@@ -41,10 +41,10 @@
   }
 </script>
 
-<section class="table-wrap section-spaced">
+<section class="data-table-wrap section-spaced">
   <h2>Usable Sync Data</h2>
   {#if error}<p class="status-alert">{error}</p>{/if}
-  <table>
+  <table class="data-table">
     <thead>
       <tr>
         <th>Signal</th>
@@ -75,9 +75,9 @@
   {#if fetchedAt}<p class="muted">Last fetched {new Date(fetchedAt).toLocaleString()}</p>{/if}
 </section>
 
-<section class="table-wrap section-spaced">
+<section class="data-table-wrap section-spaced">
   <h2>Important Relations</h2>
-  <table>
+  <table class="data-table">
     <thead>
       <tr>
         <th>Relation</th>

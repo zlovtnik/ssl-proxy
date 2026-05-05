@@ -1,9 +1,11 @@
 <script>
   import BacklogActions from "../components/BacklogActions.svelte"
   import DataGrid from "../components/DataGrid.svelte"
+  import GridToolbar from "../components/GridToolbar.svelte"
   import Select from "../components/Select.svelte"
   import { requestJson, errorMessages } from "../lib/api"
   import { formatTime } from "../lib/format"
+  import { columnsToFilterFields } from "../lib/grid"
   import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
@@ -30,7 +32,7 @@
   ]
 
   $: columns = [
-    { key: "dedupe_key", label: "Dedupe Key", sortable: true, width: "w-56" },
+    { key: "dedupe_key", label: "Dedupe Key", shortLabel: "Dedupe", sortable: true, size: "xl" },
     { key: "stream_name", label: "Subject", sortable: true, width: "w-36" },
     { key: "status", label: "Status", sortable: true, width: "w-28" },
     { key: "attempt_count", label: "Attempts", sortable: true, width: "w-24", filterType: "number" },
@@ -38,11 +40,12 @@
     {
       key: "__actions",
       label: "Action",
-      width: "w-24",
+      size: "action",
       component: BacklogActions,
       componentProps: (_value, row) => ({ row, onRetry: retryRow, disabled: retrying === row.id })
     }
   ]
+  $: filterFields = columnsToFilterFields(columns)
 
   function state() {
     return {
@@ -134,7 +137,6 @@
 <div>
   <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
     <h1 class="text-2xl font-bold text-(--color-text)">Backlog Manager</h1>
-    <Select label="Status" bind:value={status} options={statusOptions} onChange={handleStatusChange} />
   </div>
 
   {#if notice}
@@ -145,6 +147,17 @@
     <div class="mb-3 rounded-md border border-(--color-danger-border) bg-(--color-danger-surface) px-3 py-2 text-sm text-(--color-danger-text)" role="alert">{loadError}</div>
   {/if}
 
+  <GridToolbar
+    query=""
+    {filters}
+    fields={filterFields}
+    searchable={false}
+    onSearch={() => {}}
+    onFiltersChange={handleFiltersChange}
+  >
+    <Select slot="controls" label="Status" bind:value={status} options={statusOptions} onChange={handleStatusChange} />
+  </GridToolbar>
+
   <DataGrid
     {columns}
     {rows}
@@ -154,10 +167,8 @@
     {sortKey}
     {sortDirection}
     {loading}
-    {filters}
     onSort={handleSort}
     onPageChange={handlePageChange}
-    onFiltersChange={handleFiltersChange}
     rowKey={rowKey}
   />
 </div>

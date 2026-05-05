@@ -82,6 +82,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
     {
       key: "destination_bssid",
       label: "Dest BSSID",
+      description: "Destination BSSID",
       sortable: true,
       minWidth: "min-w-32",
       component: MacChip,
@@ -129,6 +130,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
     {
       key: "device_fingerprint",
       label: "Fingerprint",
+      shortLabel: "Device FP",
       sortable: true,
       minWidth: "min-w-28",
       hiddenBelow: "lg",
@@ -145,6 +147,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
     {
       key: "wps_device_name",
       label: "WPS Device",
+      shortLabel: "WPS Dev",
       sortable: true,
       minWidth: "min-w-32",
       hiddenBelow: "lg"
@@ -166,6 +169,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
     {
       key: "more_data",
       label: "More Data",
+      shortLabel: "More",
       sortable: true,
       minWidth: "min-w-20",
       hiddenBelow: "lg",
@@ -184,6 +188,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
     {
       key: "power_save",
       label: "Pwr Save",
+      description: "Power Save",
       sortable: true,
       minWidth: "min-w-20",
       hiddenBelow: "lg",
@@ -202,6 +207,7 @@ export function buildAuditLogColumns({ endpoints = {}, macOptions = {}, fullMacs
     {
       key: "handshake_captured",
       label: "Handshake",
+      shortLabel: "HS",
       sortable: true,
       minWidth: "min-w-20",
       hiddenBelow: "lg",

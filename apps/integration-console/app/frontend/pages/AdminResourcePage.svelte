@@ -1,9 +1,10 @@
 <script>
   import DataGrid from "../components/DataGrid.svelte"
-  import FilterBar from "../components/FilterBar.svelte"
+  import GridToolbar from "../components/GridToolbar.svelte"
   import ResourceActions from "../components/ResourceActions.svelte"
   import ResourceForm from "../components/ResourceForm.svelte"
   import { requestJson, errorMessages } from "../lib/api"
+  import { columnsToFilterFields } from "../lib/grid"
   import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
@@ -44,6 +45,7 @@
       })
     }
   ]
+  $: filterFields = columnsToFilterFields(config.columns || [])
 
   function state() {
     return {
@@ -233,9 +235,15 @@
   {/if}
 
   {#if initial.mode !== "form"}
-    {#if config.search}
-      <FilterBar query={query} onSearch={handleSearch} placeholder={config.searchPlaceholder || "Search"} />
-    {/if}
+    <GridToolbar
+      query={query}
+      {filters}
+      fields={filterFields}
+      searchable={Boolean(config.search)}
+      onSearch={handleSearch}
+      onFiltersChange={handleFiltersChange}
+      placeholder={config.searchPlaceholder || "Search"}
+    />
 
     <DataGrid
       {columns}
@@ -246,10 +254,8 @@
       {sortKey}
       {sortDirection}
       {loading}
-      {filters}
       onSort={handleSort}
       onPageChange={handlePageChange}
-      onFiltersChange={handleFiltersChange}
       rowKey={rowKey}
     />
   {/if}

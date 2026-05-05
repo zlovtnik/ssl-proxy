@@ -1,8 +1,9 @@
 <script>
   import { onDestroy, onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
-  import FilterBar from "../components/FilterBar.svelte"
+  import GridToolbar from "../components/GridToolbar.svelte"
   import { buildAuditLogColumns } from "../config/auditLogColumns"
+  import { columnsToFilterFields } from "../lib/grid"
   import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
@@ -25,6 +26,7 @@
   const macOptions = initial.macOptions || {}
   const fullMacs = Boolean(initial.fullMacs)
   const columns = buildAuditLogColumns({ endpoints, macOptions, fullMacs })
+  const filterFields = columnsToFilterFields(columns)
 
   $: exportUrl = buildExportUrl()
 
@@ -235,7 +237,14 @@
     <a class="rounded-md border border-(--color-border-strong) bg-(--color-surface) px-3 py-2 text-sm font-semibold text-(--color-accent-vivid) hover:bg-(--color-accent-surface)" href={exportUrl} on:click={handleExport}>Export CSV</a>
   </div>
 
-  <FilterBar query={query} onSearch={handleSearch} />
+  <GridToolbar
+    query={query}
+    {filters}
+    fields={filterFields}
+    onSearch={handleSearch}
+    onFiltersChange={handleFiltersChange}
+    placeholder="Search sensor, MAC, SSID, username, fingerprint, WPS"
+  />
 
   {#if loadError}
     <div class="mb-3 rounded-md border border-(--color-danger-border) bg-(--color-danger-surface) px-3 py-2 text-sm text-(--color-danger-text)" role="alert">{loadError}</div>
@@ -250,10 +259,8 @@
     {sortKey}
     {sortDirection}
     {loading}
-    {filters}
     onSort={handleSort}
     onPageChange={handlePageChange}
-    onFiltersChange={handleFiltersChange}
     rowKey={rowIdentifier}
   />
 </div>

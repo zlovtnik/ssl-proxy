@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
+  import GridToolbar from "../components/GridToolbar.svelte"
   import MacChip from "../components/MacChip.svelte"
 
   export let initial = {}
@@ -9,7 +10,8 @@
     { key: "ssid", label: "SSID", sortable: false, minWidth: "min-w-32" },
     { 
       key: "client_mac", 
-      label: "Client MAC", 
+      label: "Client MAC",
+      shortLabel: "Client",
       sortable: false, 
       minWidth: "min-w-32",
       component: MacChip,
@@ -19,7 +21,7 @@
         masked: false
       })
     },
-    { key: "known_bssid", label: "Known BSSID", sortable: false, minWidth: "min-w-32" },
+    { key: "known_bssid", label: "Known BSSID", shortLabel: "BSSID", sortable: false, minWidth: "min-w-32" },
     { key: "probe_count", label: "Probes", sortable: false, minWidth: "min-w-20" },
     { key: "first_seen", label: "First Seen", sortable: false, minWidth: "min-w-32" },
     { key: "last_seen", label: "Last Seen", sortable: false, minWidth: "min-w-32" }
@@ -29,7 +31,7 @@
   let rows = []
   let filteredRows = []
   let loading = true
-  let ssidFilter = ""
+  let query = ""
 
   onMount(fetchData)
 
@@ -45,32 +47,23 @@
   }
 
   function applyFilter() {
-    if (!ssidFilter.trim()) {
+    if (!query.trim()) {
       filteredRows = rows
     } else {
-      const term = ssidFilter.toLowerCase()
+      const term = query.toLowerCase()
       filteredRows = rows.filter(row => row.ssid?.toLowerCase().includes(term))
     }
   }
 
-  function handleFilterChange() {
+  function handleSearch(params) {
+    query = params.q || ""
     applyFilter()
   }
 </script>
 
-<section class="table-wrap section-spaced">
+<section class="section-spaced">
   <h2>Network Clients</h2>
-  <div style="margin-bottom: 16px;">
-    <label for="ssid-filter">Filter by SSID:</label>
-    <input 
-      id="ssid-filter" 
-      type="text" 
-      bind:value={ssidFilter} 
-      on:input={handleFilterChange}
-      placeholder="Enter SSID..."
-      style="margin-left: 8px; padding: 4px 8px;"
-    />
-  </div>
+  <GridToolbar query={query} fields={[]} searchable={true} placeholder="Search SSID" onSearch={handleSearch} onFiltersChange={() => {}} />
   <DataGrid
     {columns}
     rows={filteredRows}
@@ -80,11 +73,8 @@
     sortKey=""
     sortDirection="desc"
     {loading}
-    filters={[]}
-    filterFields={[]}
     onSort={() => {}}
     onPageChange={() => {}}
-    onFiltersChange={() => {}}
     rowKey={(row) => `${row.ssid}-${row.client_mac}`}
   />
 </section>
