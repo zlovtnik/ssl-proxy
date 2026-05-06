@@ -89,7 +89,11 @@
         method: "POST",
         body: { integration_run: triggerRange }
       })
-      window.location.href = payload.redirectUrl
+      if (typeof payload.redirectUrl === "string" && payload.redirectUrl.length > 0) {
+        window.location.href = payload.redirectUrl
+      } else {
+        triggerError = "Missing redirect URL in response"
+      }
     } catch (requestError) {
       triggerError = errorMessages(requestError).join(", ")
     }
@@ -97,9 +101,14 @@
 
   async function disableIntegration(row) {
     if (!window.confirm(`Disable ${row.name}?`)) return
-    await requestJson(row.delete_url, { method: "DELETE" })
-    notice = "Integration disabled."
-    await fetchPage(false)
+    try {
+      await requestJson(row.delete_url, { method: "DELETE" })
+      notice = "Integration disabled."
+      error = ""
+      await fetchPage(false)
+    } catch (requestError) {
+      error = errorMessages(requestError).join(", ")
+    }
   }
 </script>
 

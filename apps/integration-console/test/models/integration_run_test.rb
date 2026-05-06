@@ -20,6 +20,13 @@ class IntegrationRunTest < ActiveSupport::TestCase
 
     assert_equal "cancelled", run.reload.status
     assert_not_nil run.finished_at
+
+    running_run = IntegrationRun.create!(integration_config: @config, status: "running", triggered_by: "manual")
+
+    running_run.cancel!
+
+    assert_equal "cancelled", running_run.reload.status
+    assert_not_nil running_run.finished_at
   end
 
   test "rejects cancel from completed run" do

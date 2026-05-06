@@ -234,7 +234,7 @@ class IntegrationsController < ApplicationController
       sync_job_id: run.sync_job_id,
       rows_read: row_count,
       rows_written: completed_count,
-      rows_errored: batches.count { |batch| batch.status == "failed" },
+      rows_errored: batches.select { |batch| batch.status == "failed" }.sum { |batch| batch.row_count.to_i },
       batch_count: batches.length,
       show_url: integration_run_path(run)
     )
@@ -276,9 +276,9 @@ class IntegrationsController < ApplicationController
 
       nodes << { id: source_id, label: "#{config.source_type} #{config.stream_name.presence || config.slug}", type: "source", event_count_24h: stats[:event_count_24h], last_seen_at: stats[:last_seen_at] }
       nodes << { id: stream_id, label: config.stream_name.presence || "manual stream", type: "store", row_count: stats[:stream_row_count], last_seen_at: stats[:cursor_updated_at] }
-      nodes << { id: destination_id, label: config.destination_type, type: "destination", event_count_24h: stats[:completed_rows_24h], last_seen_at: stats[:last_run_at] }
+      nodes << { id: destination_id, label: config.destination_type, type: "destination", event_count_24h: stats[:completed_runs_24h], last_seen_at: stats[:last_run_at] }
       edges << { from: source_id, to: stream_id, label: "#{stats[:event_count_24h]} rows/24h", status: stats[:health] }
-      edges << { from: stream_id, to: destination_id, label: "#{stats[:completed_rows_24h]} rows/24h", status: stats[:health] }
+      edges << { from: stream_id, to: destination_id, label: "#{stats[:completed_runs_24h]} runs/24h", status: stats[:health] }
     end
 
     { nodes: nodes.uniq { |node| node[:id] }, edges: edges }
@@ -300,7 +300,7 @@ class IntegrationsController < ApplicationController
     {
       event_count_24h: event_scope.count,
       stream_row_count: event_scope.count,
-      completed_rows_24h: runs.where(status: "completed").count,
+      completed_runs_24h: runs.where(status: "completed").count,
       last_seen_at: event_scope.maximum(:observed_at),
       cursor_updated_at: cursor&.updated_at,
       last_run_at: config.integration_runs.maximum(:created_at),
@@ -310,7 +310,7 @@ class IntegrationsController < ApplicationController
     {
       event_count_24h: 0,
       stream_row_count: 0,
-      completed_rows_24h: 0,
+      completed_runs_24h: 0,
       last_seen_at: nil,
       cursor_updated_at: nil,
       last_run_at: nil,

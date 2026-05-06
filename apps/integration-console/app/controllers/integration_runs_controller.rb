@@ -18,7 +18,7 @@ class IntegrationRunsController < ApplicationController
     runs = apply_grid_filters(IntegrationRun.includes(:integration_config), FILTERS)
     runs = apply_sort(runs, SORTS, default_sort: :created_at, default_direction: :desc)
     rows = paginate(runs)
-    @integration_runs_page_payload = runs_page_payload(rows)
+    @integration_runs_page_payload = runs_page_payload(rows, sync_batches_by_job(rows))
 
     respond_to do |format|
       format.html
@@ -44,9 +44,9 @@ class IntegrationRunsController < ApplicationController
 
   private
 
-  def runs_page_payload(rows)
+  def runs_page_payload(rows, batches_by_job = {})
     {
-      rows: rows.map { |run| run_payload(run) },
+      rows: rows.map { |run| run_payload(run, batches_by_job: batches_by_job) },
       sortKey: @sort || "created_at",
       sortDirection: @direction || "desc",
       filters: parsed_grid_filters,
@@ -72,8 +72,8 @@ class IntegrationRunsController < ApplicationController
     }
   end
 
-  def run_payload(run)
-    batches = sync_batches_for(run)
+  def run_payload(run, batches_by_job: nil)
+    batches = batches_by_job ? batches_by_job.fetch(run.sync_job_id, []) : sync_batches_for(run)
     row_count = batches.sum { |batch| batch.row_count.to_i }
     run.stream_payload.merge(
       integration_name: run.integration_config.name,
@@ -82,7 +82,7 @@ class IntegrationRunsController < ApplicationController
       sync_job_id: run.sync_job_id,
       rows_read: row_count,
       rows_written: batches.select { |batch| batch.status == "completed" }.sum { |batch| batch.row_count.to_i },
-      rows_errored: batches.count { |batch| batch.status == "failed" },
+      rows_errored: batches.select { |batch| batch.status == "failed" }.sum { |batch| batch.row_count.to_i },
       batch_count: batches.length,
       batches_completed: batches.count { |batch| batch.status == "completed" },
       batches_failed: batches.count { |batch| batch.status == "failed" },
@@ -104,7 +104,7 @@ class IntegrationRunsController < ApplicationController
       to_value: batch.cursor_end,
       rows_read: batch.row_count.to_i,
       rows_written: batch.status == "completed" ? batch.row_count.to_i : 0,
-      rows_errored: batch.status == "failed" ? 1 : 0,
+      rows_errored: batch.sync_errors&.size.to_i,
       duration_ms: nil,
       error_detail: batch.last_error.presence || batch.sync_errors.map(&:error_text).join("\n").presence,
       created_at: batch.created_at,
@@ -116,7 +116,20 @@ class IntegrationRunsController < ApplicationController
     return [] if run.sync_job_id.blank?
 
     SyncBatch.includes(:sync_errors).where(job_id: run.sync_job_id).order(:batch_no).to_a
-  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished
+  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished => e
+    Rails.logger.error("Failed to fetch sync batches for job #{run.sync_job_id}: #{e.class} - #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n")) if e.backtrace.present?
     []
+  end
+
+  def sync_batches_by_job(rows)
+    job_ids = rows.map(&:sync_job_id).compact
+    return {} if job_ids.empty?
+
+    SyncBatch.includes(:sync_errors).where(job_id: job_ids).order(:batch_no).to_a.group_by(&:job_id)
+  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished => e
+    Rails.logger.error("Failed to preload sync batches: #{e.class} - #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n")) if e.backtrace.present?
+    {}
   end
 end

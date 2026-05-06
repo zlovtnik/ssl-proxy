@@ -16,7 +16,7 @@ class WirelessHeatmap < SyncRecord
     acquired = redis.set(lock_key, token, nx: true, ex: lock_ttl)
     return false unless acquired
 
-    connection.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wireless_heatmap")
+    refresh_materialized_view
     Rails.cache.delete_matched("heatmap:payload:*")
     true
   ensure
@@ -26,5 +26,23 @@ class WirelessHeatmap < SyncRecord
 
   def self.last_refreshed_at
     maximum(:last_seen_at)
+  end
+
+  def self.refresh_materialized_view
+    connection.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wireless_heatmap")
+  rescue ActiveRecord::StatementInvalid => error
+    raise unless missing_concurrent_refresh_index?(error)
+
+    Rails.logger.warn(
+      "Falling back to non-concurrent wireless heatmap refresh because the materialized view is missing its unique index"
+    )
+    connection.execute("REFRESH MATERIALIZED VIEW mv_wireless_heatmap")
+  end
+
+  def self.missing_concurrent_refresh_index?(error)
+    message = error.message
+    message.include?("cannot refresh materialized view") &&
+      message.include?("concurrently") &&
+      message.include?("unique index")
   end
 end

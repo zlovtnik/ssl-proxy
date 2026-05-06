@@ -38,6 +38,11 @@
   }
 
   async function fetchPage(push) {
+    if (!endpoints.index) {
+      error = "Configuration error: missing endpoint"
+      loading = false
+      return
+    }
     loading = true
     error = ""
     const query = { sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage }

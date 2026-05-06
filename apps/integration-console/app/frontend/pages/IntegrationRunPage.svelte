@@ -81,10 +81,17 @@
   async function rerun() {
     if (rerunError) return
     const url = run.integration_url ? `${run.integration_url}/trigger` : null
-    if (!url) return
+    if (!url) {
+      rerunError = "Integration URL is not available"
+      return
+    }
     try {
       const payload = await requestJson(url, { method: "POST", body: { integration_run: rerunRange } })
-      window.location.href = payload.redirectUrl
+      if (typeof payload.redirectUrl === "string" && payload.redirectUrl.length > 0) {
+        window.location.href = payload.redirectUrl
+      } else {
+        rerunError = "Missing redirect URL in response"
+      }
     } catch (requestError) {
       rerunError = errorMessages(requestError).join(", ")
     }
@@ -124,7 +131,7 @@
   </div>
 
   <div class="flex flex-wrap gap-2">
-    <button type="button" class="min-h-9 rounded-md border px-3 py-2 text-sm font-semibold" disabled={!run.cancel_url} on:click={cancelRun}>Cancel</button>
+    <button type="button" class="min-h-9 rounded-md border px-3 py-2 text-sm font-semibold" disabled={!endpoints.cancel} on:click={cancelRun}>Cancel</button>
     <button type="button" class="min-h-9 rounded-md border px-3 py-2 text-sm font-semibold" on:click={() => rerunOpen = true}>Re-run</button>
     <a class="min-h-9 rounded-md border px-3 py-2 text-sm font-semibold" href={`data:text/csv;charset=utf-8,${encodeURIComponent(batches.filter((row) => row.error_detail).map((row) => `${row.batch_no},"${String(row.error_detail).replaceAll('"', '""')}"`).join("\n"))}`} download={`integration-run-${run.id}-errors.csv`}>Download error log</a>
   </div>

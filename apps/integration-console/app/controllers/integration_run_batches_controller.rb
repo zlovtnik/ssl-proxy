@@ -21,7 +21,7 @@ class IntegrationRunBatchesController < ApplicationController
         to_value: batch.cursor_end,
         rows_read: batch.row_count.to_i,
         rows_written: batch.status == "completed" ? batch.row_count.to_i : 0,
-        rows_errored: batch.status == "failed" ? 1 : 0,
+        rows_errored: batch.sync_errors&.size.to_i,
         duration_ms: nil,
         error_detail: batch.last_error.presence || batch.sync_errors.map(&:error_text).join("\n").presence,
         created_at: batch.created_at,

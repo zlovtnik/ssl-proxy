@@ -63,7 +63,11 @@
     if (replayError || !replayRun) return
     try {
       const payload = await requestJson(integration.replay_url, { method: "POST", body: { integration_run: replayRange } })
-      window.location.href = payload.redirectUrl
+      if (typeof payload.redirectUrl === "string" && payload.redirectUrl.length > 0) {
+        window.location.href = payload.redirectUrl
+      } else {
+        replayError = "Missing redirect URL in response"
+      }
     } catch (error) {
       replayError = errorMessages(error).join(", ")
     }

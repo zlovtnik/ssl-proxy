@@ -8,6 +8,11 @@
   $: fields = Object.entries(schema || {})
 
   function update(key, value) {
+    const field = schema[key]
+    if (field?.type === "integer") {
+      value = value === "" ? null : Number(value)
+      if (Number.isNaN(value)) value = null
+    }
     values = { ...values, [key]: value }
     onChange(values)
   }
@@ -26,7 +31,7 @@
         </select>
       {:else if field.type === "boolean"}
         <span class="inline-flex min-h-9 items-center gap-2 rounded-md border border-(--color-control-border) bg-(--color-bg) px-3 text-sm">
-          <input type="checkbox" checked={Boolean(values[key])} on:change={(event) => update(key, event.currentTarget.checked)} />
+          <input type="checkbox" checked={values[key] ?? field.default ?? false} on:change={(event) => update(key, event.currentTarget.checked)} />
           <span>Enabled</span>
         </span>
       {:else if field.type === "password"}

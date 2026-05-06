@@ -1,16 +1,25 @@
 <script>
-  export let value = { range_type: "cursor", from_value: "", to_value: "" }
-  export let onChange = () => {}
+  let { value = { range_type: "cursor", from_value: "", to_value: "" }, onChange = () => {} } = $props()
 
-  $: rangeType = value.range_type || "cursor"
-  $: fromValue = value.from_value || ""
-  $: toValue = value.to_value || ""
-  $: error = rangeError(rangeType, fromValue, toValue)
-  $: preview = `${fromValue || "current cursor"} -> ${toValue || "now"}`
+  let rangeType = $state("cursor")
+  let fromValue = $state("")
+  let toValue = $state("")
+  let error = $derived(rangeError(rangeType, fromValue, toValue))
+  let preview = $derived(`${fromValue || "current cursor"} -> ${toValue || "now"}`)
+
+  $effect(() => {
+    rangeType = value?.range_type || "cursor"
+    fromValue = value?.from_value || ""
+    toValue = value?.to_value || ""
+  })
 
   function update(patch) {
-    value = { ...value, ...patch }
-    onChange(value, error)
+    rangeType = patch.range_type ?? rangeType
+    fromValue = patch.from_value ?? fromValue
+    toValue = patch.to_value ?? toValue
+
+    const nextValue = { range_type: rangeType, from_value: fromValue, to_value: toValue }
+    onChange(nextValue, rangeError(rangeType, fromValue, toValue))
   }
 
   function applyPreset(hours) {
@@ -34,24 +43,24 @@
   <div class="flex flex-wrap items-center gap-2">
     <label class="grid gap-1">
       <span class="text-xs font-semibold uppercase text-(--color-text-muted)">Range type</span>
-      <select class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-surface) px-3 text-sm" value={rangeType} on:change={(event) => update({ range_type: event.currentTarget.value })}>
+      <select class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-surface) px-3 text-sm" value={rangeType} onchange={(event) => update({ range_type: event.currentTarget.value })}>
         <option value="cursor">Cursor</option>
         <option value="datetime">Date</option>
       </select>
     </label>
-    <button type="button" class="min-h-8 rounded-md border border-(--color-border-muted) px-2 text-sm" on:click={() => applyPreset(1)}>Last hour</button>
-    <button type="button" class="min-h-8 rounded-md border border-(--color-border-muted) px-2 text-sm" on:click={() => applyPreset(24)}>Last 24h</button>
-    <button type="button" class="min-h-8 rounded-md border border-(--color-border-muted) px-2 text-sm" on:click={() => applyPreset(168)}>Last 7d</button>
+    <button type="button" class="min-h-8 rounded-md border border-(--color-border-muted) px-2 text-sm" onclick={() => applyPreset(1)}>Last hour</button>
+    <button type="button" class="min-h-8 rounded-md border border-(--color-border-muted) px-2 text-sm" onclick={() => applyPreset(24)}>Last 24h</button>
+    <button type="button" class="min-h-8 rounded-md border border-(--color-border-muted) px-2 text-sm" onclick={() => applyPreset(168)}>Last 7d</button>
   </div>
 
   <div class="grid gap-3 md:grid-cols-2">
     <label class="grid gap-1">
       <span class="text-xs font-semibold uppercase text-(--color-text-muted)">From</span>
-      <input class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-surface) px-3 text-sm" type={rangeType === "datetime" ? "datetime-local" : "text"} value={fromValue} placeholder="current cursor" on:input={(event) => update({ from_value: event.currentTarget.value })} />
+      <input class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-surface) px-3 text-sm" type={rangeType === "datetime" ? "datetime-local" : "text"} value={fromValue} placeholder="current cursor" oninput={(event) => update({ from_value: event.currentTarget.value })} />
     </label>
     <label class="grid gap-1">
       <span class="text-xs font-semibold uppercase text-(--color-text-muted)">To</span>
-      <input class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-surface) px-3 text-sm" type={rangeType === "datetime" ? "datetime-local" : "text"} value={toValue} placeholder="now" on:input={(event) => update({ to_value: event.currentTarget.value })} />
+      <input class="min-h-9 rounded-md border border-(--color-control-border) bg-(--color-surface) px-3 text-sm" type={rangeType === "datetime" ? "datetime-local" : "text"} value={toValue} placeholder="now" oninput={(event) => update({ to_value: event.currentTarget.value })} />
     </label>
   </div>
 

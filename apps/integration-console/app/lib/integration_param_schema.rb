@@ -46,6 +46,8 @@ module IntegrationParamSchema
   end
 
   def safe_overrides(type, params)
-    params.to_h.reject { |key, _value| sensitive_key?(type, key) }
+    params.to_h.each_with_object({}) do |(key, value), memo|
+      memo[key.to_s] = value unless sensitive_key?(type, key)
+    end
   end
 end

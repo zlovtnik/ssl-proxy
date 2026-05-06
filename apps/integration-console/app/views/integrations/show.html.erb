@@ -6,6 +6,6 @@
 <%= svelte_bundle_tags(:integration_detail) %>
 
 <noscript>
-  <h1><%= @integration_detail_payload.dig(:integration, :name) || "Integration" %></h1>
+  <h1><%= @integration_detail_payload.dig(:integration, :name).presence || "Integration" %></h1>
   <p><%= link_to "All integrations", integrations_path %></p>
 </noscript>

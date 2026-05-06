@@ -53,6 +53,13 @@ class IntegrationConfig < ApplicationRecord
     schema = IntegrationParamSchema.schema_for(source_type)
     return if schema.blank?
 
+    current_params = params.to_h
+    schema.each do |field_key, field|
+      next unless field["required"]
+
+      errors.add(:params, "#{field_key} is required for #{source_type}") if current_params[field_key].blank?
+    end
+
     params.to_h.each do |key, value|
       field = schema[key.to_s]
       if field.blank?
