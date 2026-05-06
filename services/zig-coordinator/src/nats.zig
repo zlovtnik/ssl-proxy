@@ -108,7 +108,7 @@ pub fn publish(
     switch (mode) {
         .core => try writeCorePublish(&writer.interface, subject, payload),
         .jetstream_ack => {
-            try writeAckedPublish(io, &writer.interface, subject, payload);
+            try writeAckedPublish(io, &reader.interface, &writer.interface, subject, payload);
             try waitForPublishAck(&reader.interface, &writer.interface);
         },
     }
@@ -202,7 +202,13 @@ fn writeCorePublish(writer: *std.Io.Writer, subject: []const u8, payload: []cons
     try writer.flush();
 }
 
-fn writeAckedPublish(io: std.Io, writer: *std.Io.Writer, subject: []const u8, payload: []const u8) !void {
+fn writeAckedPublish(
+    io: std.Io,
+    reader: *std.Io.Reader,
+    writer: *std.Io.Writer,
+    subject: []const u8,
+    payload: []const u8,
+) !void {
     var random: [12]u8 = undefined;
     io.random(&random);
     const random_hex = std.fmt.bytesToHex(random, .lower);
@@ -213,11 +219,40 @@ fn writeAckedPublish(io: std.Io, writer: *std.Io.Writer, subject: []const u8, pa
         .{&random_hex},
     );
 
-    try writer.print("SUB {s} 1\r\nUNSUB 1 1\r\n", .{inbox});
+    try writer.print("SUB {s} 1\r\nPING\r\n", .{inbox});
+    try writer.flush();
+    try waitForPong(reader, writer);
+
     try writer.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
     try writer.writeAll(payload);
     try writer.writeAll("\r\n");
     try writer.flush();
+}
+
+fn waitForPong(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
+    var attempts: usize = 0;
+    while (attempts < 32) : (attempts += 1) {
+        const line = try readLine(reader);
+        if (line.len == 0) continue;
+        if (std.mem.eql(u8, line, "PING")) {
+            try writer.writeAll("PONG\r\n");
+            try writer.flush();
+            continue;
+        }
+        if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
+            continue;
+        }
+        if (std.mem.eql(u8, line, "PONG")) return;
+        if (std.mem.startsWith(u8, line, "-ERR")) {
+            logPublishAckFailure("server_error", line);
+            return error.ServerError;
+        }
+
+        return error.ProtocolError;
+    }
+
+    logPublishAckFailure("subscribe_ready_timeout", "no PONG received after ACK inbox subscription");
+    return error.PublishAckFailed;
 }
 
 fn waitForPublishAck(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {

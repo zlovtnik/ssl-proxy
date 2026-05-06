@@ -960,6 +960,17 @@ pub const Service = struct {
         on_error: Error,
     ) Error!void {
         nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload, mode) catch |err| {
+            if (mode == .jetstream_ack) {
+                logging.err()
+                    .stringSafe("event", "nats_publish_failure")
+                    .string("subject", subject)
+                    .stringSafe("fallback", "cli_request")
+                    .err(err)
+                    .log();
+                try self.publishAckedWithCli(subject, payload, on_error);
+                return;
+            }
+
             if (err == error.UnsupportedNatsScheme) {
                 try self.publishWithCli(subject, payload, on_error);
                 return;
@@ -972,6 +983,43 @@ pub const Service = struct {
                 .log();
             return on_error;
         };
+    }
+
+    fn publishAckedWithCli(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "request",
+            subject,
+            payload,
+            "--timeout",
+            "5s",
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return on_error;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return on_error;
+        }
+
+        const output = command.trimmedOutput(result.stdout);
+        if (std.mem.indexOf(u8, output, "\"error\"") != null) {
+            var buffer: [1024]u8 = undefined;
+            logging.err()
+                .stringSafe("event", "jetstream_publish_ack")
+                .stringSafe("status", "error")
+                .stringSafe("reason", "cli_ack_error")
+                .string("payload", sanitizeSnippet(&buffer, output))
+                .log();
+            return on_error;
+        }
+
+        command.logOutput("nats", result.stdout);
     }
 
     fn publishWithCli(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
@@ -1032,6 +1080,22 @@ pub const Service = struct {
             .log();
     }
 };
+
+fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
+    var in_index: usize = 0;
+    var out_index: usize = 0;
+
+    while (in_index < raw.len and out_index < buffer.len) : (in_index += 1) {
+        const byte = raw[in_index];
+        buffer[out_index] = switch (byte) {
+            '\n', '\r', '\t' => ' ',
+            else => byte,
+        };
+        out_index += 1;
+    }
+
+    return std.mem.trim(u8, buffer[0..out_index], " ");
+}
 
 fn parseNatsAuthority(allocator: std.mem.Allocator, nats_url: []const u8) Error![]u8 {
     const trimmed = std.mem.trim(u8, nats_url, " \t\r\n");

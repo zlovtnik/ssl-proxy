@@ -282,7 +282,7 @@ declare
   v_lease_seconds integer := greatest(coalesce(p_dispatch_lease_seconds, 300), 1);
   v_max_attempts integer := greatest(coalesce(p_max_attempts, 5), 1);
 begin
-  with stale as (
+  with stale_dispatched as (
     select batch.batch_id
       from sync_batch batch
       join sync_job job on job.job_id = batch.job_id
@@ -296,7 +296,24 @@ begin
      order by batch.updated_at asc
      for update skip locked
   ),
-  recovered as (
+  failed_dispatch as (
+    select batch.batch_id
+      from sync_batch batch
+      join sync_job job on job.job_id = batch.job_id
+     where batch.status = 'failed'
+       and (
+             batch.last_error like 'sync.oracle.load publish failed:%'
+             or batch.last_error like 'sync.oracle.load dispatch lease expired%'
+           )
+       and job.stream_name in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+              where btrim(configured.stream_name) <> ''
+           )
+     order by batch.updated_at asc
+     for update skip locked
+  ),
+  stale_recovered as (
     update sync_batch batch
        set status = case
                       when batch.attempt_count >= v_max_attempts then 'failed'
@@ -308,12 +325,29 @@ begin
                           else 'sync.oracle.load dispatch lease expired; retrying'
                         end,
            updated_at = now()
-      from stale
-     where batch.batch_id = stale.batch_id
+      from stale_dispatched
+     where batch.batch_id = stale_dispatched.batch_id
     returning batch.job_id,
               batch.batch_id,
               batch.status,
               batch.last_error
+  ),
+  failed_dispatch_recovered as (
+    update sync_batch batch
+       set status = 'pending',
+           last_error = 'sync.oracle.load dispatch failure recovered; retrying',
+           updated_at = now()
+      from failed_dispatch
+     where batch.batch_id = failed_dispatch.batch_id
+    returning batch.job_id,
+              batch.batch_id,
+              batch.status,
+              batch.last_error
+  ),
+  recovered as (
+    select * from stale_recovered
+    union all
+    select * from failed_dispatch_recovered
   ),
   error_insert as (
     insert into sync_error (job_id, batch_id, error_class, error_text)
@@ -367,7 +401,6 @@ language plpgsql
 as $$
 declare
   v_batch_id uuid := (p_load->>'batch_id')::uuid;
-  v_max_attempts integer := greatest(coalesce(p_max_attempts, 5), 1);
   v_summary jsonb;
 begin
   if v_batch_id is null then
@@ -376,10 +409,7 @@ begin
 
   with batch_update as (
     update sync_batch batch
-       set status = case
-                      when batch.attempt_count >= v_max_attempts then 'failed'
-                      else 'pending'
-                    end,
+       set status = 'pending',
            last_error = nullif(p_error_text, ''),
            updated_at = now()
      where batch.batch_id = v_batch_id
