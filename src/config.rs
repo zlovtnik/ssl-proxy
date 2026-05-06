@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     obfuscation::{Profile, FOX_DOMAINS},
-    wg_packet_obfuscation::parse_magic_byte,
+    wg_packet_obfuscation::{parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding},
 };
 
 /// Runtime configuration grouped by subsystem.
@@ -145,6 +145,12 @@ pub struct WireGuardConfig {
     pub obfuscation_key: Vec<u8>,
     pub obfuscation_magic_byte: Option<u8>,
     pub obfuscation_session_idle_secs: u64,
+    pub obfuscation_encryption_mode: EncryptionMode,
+    pub obfuscation_padding: PacketPadding,
+    pub obfuscation_magic_position: MagicPositionMode,
+    pub obfuscation_replay_protection: bool,
+    pub obfuscation_xor_rekey_packets: Option<u64>,
+    pub obfuscation_xor_rekey_secs: Option<u64>,
 }
 
 /// Runtime-only logging and operational settings.
@@ -178,6 +184,12 @@ pub enum ConfigError {
     MissingWireGuardObfuscationKey,
     #[error("WG_OBFUSCATION_MAGIC_BYTE must be a single byte in decimal or 0xNN form; got {0:?}")]
     InvalidWireGuardObfuscationMagicByte(String),
+    #[error("WG_OBFUSCATION_ENCRYPTION_MODE must be xor or aead; got {0:?}")]
+    InvalidWireGuardObfuscationEncryptionMode(String),
+    #[error("WG_OBFUSCATION_PADDING must be none, power-of-two, or fixed-mtu:<bytes>; got {0:?}")]
+    InvalidWireGuardObfuscationPadding(String),
+    #[error("WG_OBFUSCATION_MAGIC_POSITION must be fixed or randomized; got {0:?}")]
+    InvalidWireGuardObfuscationMagicPosition(String),
     #[error(
         "WG_PORT ({public_port}) and WG_INTERNAL_PORT ({internal_port}) must differ when WG_OBFUSCATION_ENABLED=true"
     )]
@@ -356,6 +368,27 @@ impl std::fmt::Debug for WireGuardConfig {
             .field(
                 "obfuscation_session_idle_secs",
                 &self.obfuscation_session_idle_secs,
+            )
+            .field(
+                "obfuscation_encryption_mode",
+                &self.obfuscation_encryption_mode,
+            )
+            .field("obfuscation_padding", &self.obfuscation_padding)
+            .field(
+                "obfuscation_magic_position",
+                &self.obfuscation_magic_position,
+            )
+            .field(
+                "obfuscation_replay_protection",
+                &self.obfuscation_replay_protection,
+            )
+            .field(
+                "obfuscation_xor_rekey_packets",
+                &self.obfuscation_xor_rekey_packets,
+            )
+            .field(
+                "obfuscation_xor_rekey_secs",
+                &self.obfuscation_xor_rekey_secs,
             )
             .finish()
     }
@@ -584,6 +617,12 @@ impl Default for Config {
                 obfuscation_key: b"test-obfuscation-key".to_vec(),
                 obfuscation_magic_byte: Some(0xAA),
                 obfuscation_session_idle_secs: 300,
+                obfuscation_encryption_mode: EncryptionMode::Xor,
+                obfuscation_padding: PacketPadding::None,
+                obfuscation_magic_position: MagicPositionMode::Fixed,
+                obfuscation_replay_protection: false,
+                obfuscation_xor_rekey_packets: None,
+                obfuscation_xor_rekey_secs: None,
             },
             runtime: RuntimeConfig {
                 log_format: "human".to_string(),
@@ -912,7 +951,9 @@ impl WireGuardConfig {
     /// `WG_DROP_UDP_443` (defaults to `true`), `WG_OBFUSCATION_ENABLED`
     /// (defaults to `true`), `WG_OBFUSCATION_KEY` (required when obfuscation
     /// is enabled), `WG_OBFUSCATION_MAGIC_BYTE` (optional decimal or `0xNN` form),
-    /// and `WG_OBFUSCATION_SESSION_IDLE_SECS` (defaults to `300`).
+    /// `WG_OBFUSCATION_SESSION_IDLE_SECS` (defaults to `300`), and optional
+    /// framed-mode controls for encryption, padding, marker position, replay
+    /// protection, and XOR re-keying.
     ///
     /// # Examples
     ///
@@ -945,6 +986,12 @@ impl WireGuardConfig {
         if obfuscation_enabled && obfuscation_key.is_empty() {
             return Err(ConfigError::MissingWireGuardObfuscationKey);
         }
+        let obfuscation_encryption_mode =
+            read_wireguard_obfuscation_encryption_mode("WG_OBFUSCATION_ENCRYPTION_MODE")?;
+        let obfuscation_replay_protection = read_bool(
+            "WG_OBFUSCATION_REPLAY_PROTECTION",
+            matches!(obfuscation_encryption_mode, EncryptionMode::Aead),
+        );
 
         Ok(Self {
             port: read_port("WG_PORT", 443),
@@ -955,6 +1002,14 @@ impl WireGuardConfig {
             obfuscation_key: obfuscation_key.into_bytes(),
             obfuscation_magic_byte: read_magic_byte("WG_OBFUSCATION_MAGIC_BYTE")?,
             obfuscation_session_idle_secs: read_u64("WG_OBFUSCATION_SESSION_IDLE_SECS", 300).max(1),
+            obfuscation_encryption_mode,
+            obfuscation_padding: read_wireguard_obfuscation_padding("WG_OBFUSCATION_PADDING")?,
+            obfuscation_magic_position: read_wireguard_obfuscation_magic_position(
+                "WG_OBFUSCATION_MAGIC_POSITION",
+            )?,
+            obfuscation_replay_protection,
+            obfuscation_xor_rekey_packets: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS"),
+            obfuscation_xor_rekey_secs: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS"),
         })
     }
 }
@@ -1194,6 +1249,68 @@ fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
         .ok_or(ConfigError::InvalidWireGuardObfuscationMagicByte(raw))
 }
 
+fn read_optional_u64(var: &str) -> Option<u64> {
+    std::env::var(var)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn read_wireguard_obfuscation_encryption_mode(var: &str) -> Result<EncryptionMode, ConfigError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(EncryptionMode::Xor);
+    };
+
+    match raw.as_str() {
+        "xor" => Ok(EncryptionMode::Xor),
+        "aead" | "xchacha20-poly1305" | "xchacha20poly1305" => Ok(EncryptionMode::Aead),
+        _ => Err(ConfigError::InvalidWireGuardObfuscationEncryptionMode(raw)),
+    }
+}
+
+fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadding, ConfigError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(PacketPadding::None);
+    };
+
+    match raw.as_str() {
+        "none" | "off" | "false" => Ok(PacketPadding::None),
+        "power-of-two" | "power_of_two" | "pow2" => Ok(PacketPadding::PowerOfTwo),
+        _ => raw
+            .strip_prefix("fixed-mtu:")
+            .or_else(|| raw.strip_prefix("fixed_mtu:"))
+            .or_else(|| raw.strip_prefix("fixed:"))
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .map(PacketPadding::FixedMtu)
+            .ok_or(ConfigError::InvalidWireGuardObfuscationPadding(raw)),
+    }
+}
+
+fn read_wireguard_obfuscation_magic_position(var: &str) -> Result<MagicPositionMode, ConfigError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(MagicPositionMode::Fixed);
+    };
+
+    match raw.as_str() {
+        "fixed" => Ok(MagicPositionMode::Fixed),
+        "randomized" | "randomised" | "random" => Ok(MagicPositionMode::Randomized),
+        _ => Err(ConfigError::InvalidWireGuardObfuscationMagicPosition(raw)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1256,6 +1373,12 @@ mod tests {
             "WG_OBFUSCATION_KEY_FILE",
             "WG_OBFUSCATION_MAGIC_BYTE",
             "WG_OBFUSCATION_SESSION_IDLE_SECS",
+            "WG_OBFUSCATION_ENCRYPTION_MODE",
+            "WG_OBFUSCATION_PADDING",
+            "WG_OBFUSCATION_MAGIC_POSITION",
+            "WG_OBFUSCATION_REPLAY_PROTECTION",
+            "WG_OBFUSCATION_XOR_REKEY_PACKETS",
+            "WG_OBFUSCATION_XOR_REKEY_SECS",
             "SYNC_NATS_URL",
             "SYNC_NATS_CONNECT_TIMEOUT_MS",
             "SYNC_NATS_PUBLISH_TIMEOUT_MS",
@@ -1408,9 +1531,52 @@ mod tests {
         assert_eq!(result.wireguard.obfuscation_magic_byte, None);
         assert_eq!(result.wireguard.obfuscation_session_idle_secs, 300);
         assert_eq!(
+            result.wireguard.obfuscation_encryption_mode,
+            EncryptionMode::Xor
+        );
+        assert_eq!(result.wireguard.obfuscation_padding, PacketPadding::None);
+        assert_eq!(
+            result.wireguard.obfuscation_magic_position,
+            MagicPositionMode::Fixed
+        );
+        assert!(!result.wireguard.obfuscation_replay_protection);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, None);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, None);
+        assert_eq!(
             result.wireguard.obfuscation_key,
             b"test-obfuscation-key".to_vec()
         );
+    }
+
+    #[test]
+    fn wireguard_framed_obfuscation_options_are_loaded() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("WG_OBFUSCATION_ENCRYPTION_MODE", "aead");
+        std::env::set_var("WG_OBFUSCATION_PADDING", "fixed-mtu:1200");
+        std::env::set_var("WG_OBFUSCATION_MAGIC_POSITION", "randomized");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "128");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_SECS", "60");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(
+            result.wireguard.obfuscation_encryption_mode,
+            EncryptionMode::Aead
+        );
+        assert_eq!(
+            result.wireguard.obfuscation_padding,
+            PacketPadding::FixedMtu(1200)
+        );
+        assert_eq!(
+            result.wireguard.obfuscation_magic_position,
+            MagicPositionMode::Randomized
+        );
+        assert!(result.wireguard.obfuscation_replay_protection);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, Some(128));
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, Some(60));
     }
 
     #[test]
@@ -1673,6 +1839,12 @@ mod tests {
             obfuscation_key: b"super-secret".to_vec(),
             obfuscation_magic_byte: Some(0xAA),
             obfuscation_session_idle_secs: 300,
+            obfuscation_encryption_mode: EncryptionMode::Xor,
+            obfuscation_padding: PacketPadding::None,
+            obfuscation_magic_position: MagicPositionMode::Fixed,
+            obfuscation_replay_protection: false,
+            obfuscation_xor_rekey_packets: None,
+            obfuscation_xor_rekey_secs: None,
         };
 
         let rendered = format!("{config:?}");
