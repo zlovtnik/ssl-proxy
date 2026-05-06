@@ -29,14 +29,18 @@ class WirelessHeatmap < SyncRecord
   end
 
   def self.refresh_materialized_view
-    connection.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wireless_heatmap")
+    connection_pool.with_connection do |conn|
+      conn.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY #{conn.quote_table_name(table_name)}")
+    end
   rescue ActiveRecord::StatementInvalid => error
     raise unless missing_concurrent_refresh_index?(error)
 
     Rails.logger.warn(
       "Falling back to non-concurrent wireless heatmap refresh because the materialized view is missing its unique index"
     )
-    connection.execute("REFRESH MATERIALIZED VIEW mv_wireless_heatmap")
+    connection_pool.with_connection do |conn|
+      conn.execute("REFRESH MATERIALIZED VIEW #{conn.quote_table_name(table_name)}")
+    end
   end
 
   def self.missing_concurrent_refresh_index?(error)

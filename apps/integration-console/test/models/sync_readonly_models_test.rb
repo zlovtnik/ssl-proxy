@@ -5,5 +5,6 @@ class SyncReadonlyModelsTest < ActiveSupport::TestCase
     assert_raises(ActiveRecord::ReadOnlyRecord) { SyncCursor.delete_all }
     assert_raises(ActiveRecord::ReadOnlyRecord) { SyncBatch.delete_all }
     assert_raises(ActiveRecord::ReadOnlyRecord) { SyncJob.delete_all }
+    assert_raises(ActiveRecord::ReadOnlyRecord) { SyncError.delete_all }
   end
 end

@@ -98,7 +98,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_06_000400) do
     t.text "stream_name"
     t.boolean "enabled", default: true, null: false
     t.text "schedule_cron"
-    t.text "params", default: "{}", null: false
+    t.jsonb "params", default: {}, null: false
     t.jsonb "param_schema", default: {}, null: false
     t.text "cursor_field"
     t.datetime "created_at", null: false
@@ -116,13 +116,15 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_06_000400) do
     t.text "range_type", default: "cursor", null: false
     t.text "from_value"
     t.text "to_value"
-    t.text "params_snapshot", default: "{}", null: false
+    t.jsonb "params_snapshot", default: {}, null: false
     t.text "error_summary"
     t.timestamptz "started_at"
     t.timestamptz "finished_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["integration_config_id", "created_at"], name: "index_integration_runs_on_integration_config_id_and_created_at"
+    t.index ["integration_config_id", "status", "created_at"], name: "idx_on_integration_config_id_status_created_at", order: { created_at: :desc }
+    t.index ["integration_config_id", "triggered_by", "created_at"], name: "idx_on_integration_config_id_triggered_by_created_at", order: { created_at: :desc }
     t.index ["integration_config_id"], name: "index_integration_runs_on_integration_config_id"
     t.index ["status", "created_at"], name: "index_integration_runs_on_status_and_created_at"
     t.index ["sync_job_id"], name: "index_integration_runs_on_sync_job_id"

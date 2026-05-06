@@ -22,7 +22,7 @@ use crate::check_proxy_auth;
 use crate::config::Config;
 use crate::events;
 use crate::obfuscation;
-use crate::payload_redaction::redact_sensitive_data;
+use crate::payload_redaction::payload_preview_json;
 use crate::state::SharedState;
 use crate::tunnel::{
     audit_event::TunnelAuditContext, classify, dial_upstream_with_resolver, parse_host_port,
@@ -447,7 +447,7 @@ async fn handle_h3_request(
     let category = classify(&hostname, port, tls.alpn.as_deref());
     let context = TunnelAuditContext::new("quic-h3", category, None, profile)
         .with_resolution(resolved_ips.clone(), selected_ip.clone())
-        .with_tls(tls);
+        .with_tls(tls.clone());
 
     info!(
         target: "audit",
@@ -475,8 +475,12 @@ async fn handle_h3_request(
     /// Maximum bytes to capture per direction for payload preview
     const PAYLOAD_PREVIEW_LIMIT: usize = 4096;
 
-    // Only allocate payload capture buffers if explicitly enabled in configuration
-    let capture_payloads = state.config.proxy.capture_plaintext_payloads;
+    // Only allocate payload capture buffers for non-TLS tunnel bytes when explicitly enabled.
+    let capture_payloads = state.config.proxy.capture_plaintext_payloads
+        && tls.sni.is_none()
+        && tls.alpn.is_none()
+        && tls.tls_ver.is_none()
+        && tls.ja3_lite.is_none();
     let mut up_buf = if capture_payloads {
         Vec::with_capacity(PAYLOAD_PREVIEW_LIMIT)
     } else {
@@ -567,23 +571,8 @@ async fn handle_h3_request(
     let (up, down) = tokio::join!(h3_to_upstream, upstream_to_h3);
     state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
 
-    let payload_preview = capture_payloads.then(|| {
-        let mut up_redacted = up_buf.clone();
-        let mut down_redacted = down_buf.clone();
-
-        redact_sensitive_data(&mut up_redacted);
-        redact_sensitive_data(&mut down_redacted);
-
-        serde_json::json!({
-            "up": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &up_redacted),
-            "down": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &down_redacted),
-            "truncated_up": up > PAYLOAD_PREVIEW_LIMIT as u64,
-            "truncated_down": down > PAYLOAD_PREVIEW_LIMIT as u64,
-            "byte_count_up": up_buf.len(),
-            "byte_count_down": down_buf.len(),
-            "redaction": "byte",
-        })
-    });
+    let payload_preview = capture_payloads
+        .then(|| payload_preview_json(&up_buf, &down_buf, up, down, PAYLOAD_PREVIEW_LIMIT));
 
     info!(
         target: "audit",

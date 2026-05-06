@@ -1,8 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const logging = @import("logging.zig");
 const model = @import("state.zig");
 
 const MAX_ACK_PAYLOAD_BYTES = 8 * 1024;
+const NATS_CONNECT_TIMEOUT_MS = 5_000;
+const NATS_IO_TIMEOUT_MS = 5_000;
 
 pub const PublishMode = enum {
     core,
@@ -95,21 +98,26 @@ pub fn publish(
     if (endpoint.tls) return error.UnsupportedNatsScheme;
     try validateSubject(subject);
 
-    var stream = try connectEndpoint(endpoint, io);
+    var stream = try connectEndpoint(endpoint, io, timeoutMs(NATS_CONNECT_TIMEOUT_MS));
     defer stream.close(io);
+    try applySocketTimeouts(stream, NATS_IO_TIMEOUT_MS);
 
     var reader_buffer: [16 * 1024]u8 = undefined;
     var writer_buffer: [16 * 1024]u8 = undefined;
     var reader = stream.reader(io, &reader_buffer);
     var writer = stream.writer(io, &writer_buffer);
 
-    try expectInfo(&reader.interface);
+    try expectInfo(&reader);
     try writeConnect(&writer.interface, endpoint);
     switch (mode) {
-        .core => try writeCorePublish(&writer.interface, subject, payload),
+        .core => {
+            try writeCorePublish(&writer.interface, subject, payload);
+            try writePing(&writer.interface);
+            try waitForPong(&reader, &writer);
+        },
         .jetstream_ack => {
-            try writeAckedPublish(io, &reader.interface, &writer.interface, subject, payload);
-            try waitForPublishAck(&reader.interface, &writer.interface);
+            try writeAckedPublish(io, &reader, &writer, subject, payload);
+            try waitForPublishAck(&reader, &writer);
         },
     }
 }
@@ -140,9 +148,30 @@ fn parsePort(raw: []const u8) !u16 {
     return std.fmt.parseInt(u16, raw, 10) catch error.InvalidNatsUrl;
 }
 
-fn connectEndpoint(endpoint: Endpoint, io: std.Io) !std.Io.net.Stream {
+fn timeoutMs(ms: i64) std.Io.Timeout {
+    return .{
+        .duration = .{
+            .raw = std.Io.Duration.fromMilliseconds(ms),
+            .clock = .awake,
+        },
+    };
+}
+
+fn applySocketTimeouts(stream: std.Io.net.Stream, timeout_ms: i64) !void {
+    if (builtin.os.tag == .windows) return;
+
+    const timeout = std.posix.timeval{
+        .sec = @intCast(@divTrunc(timeout_ms, 1_000)),
+        .usec = @intCast(@mod(timeout_ms, 1_000) * 1_000),
+    };
+    const timeout_bytes = std.mem.asBytes(&timeout);
+    try std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, timeout_bytes);
+    try std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, timeout_bytes);
+}
+
+fn connectEndpoint(endpoint: Endpoint, io: std.Io, timeout: std.Io.Timeout) !std.Io.net.Stream {
     if (std.Io.net.IpAddress.parse(endpoint.host, endpoint.port)) |address| {
-        return address.connect(io, .{ .mode = .stream });
+        return address.connect(io, .{ .mode = .stream, .timeout = timeout });
     } else |_| {}
 
     try std.Io.net.HostName.validate(endpoint.host);
@@ -150,7 +179,7 @@ fn connectEndpoint(endpoint: Endpoint, io: std.Io) !std.Io.net.Stream {
         .{ .bytes = endpoint.host },
         io,
         endpoint.port,
-        .{ .mode = .stream },
+        .{ .mode = .stream, .timeout = timeout },
     );
 }
 
@@ -161,7 +190,7 @@ fn validateSubject(subject: []const u8) !void {
     }
 }
 
-fn expectInfo(reader: *std.Io.Reader) !void {
+fn expectInfo(reader: *std.Io.net.Stream.Reader) !void {
     const line = try readLine(reader);
     if (!std.mem.startsWith(u8, line, "INFO ")) return error.ProtocolError;
 }
@@ -202,10 +231,15 @@ fn writeCorePublish(writer: *std.Io.Writer, subject: []const u8, payload: []cons
     try writer.flush();
 }
 
+fn writePing(writer: *std.Io.Writer) !void {
+    try writer.writeAll("PING\r\n");
+    try writer.flush();
+}
+
 fn writeAckedPublish(
     io: std.Io,
-    reader: *std.Io.Reader,
-    writer: *std.Io.Writer,
+    reader: *std.Io.net.Stream.Reader,
+    writer: *std.Io.net.Stream.Writer,
     subject: []const u8,
     payload: []const u8,
 ) !void {
@@ -219,24 +253,24 @@ fn writeAckedPublish(
         .{&random_hex},
     );
 
-    try writer.print("SUB {s} 1\r\nPING\r\n", .{inbox});
-    try writer.flush();
+    try writer.interface.print("SUB {s} 1\r\nPING\r\n", .{inbox});
+    try writer.interface.flush();
     try waitForPong(reader, writer);
 
-    try writer.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
-    try writer.writeAll(payload);
-    try writer.writeAll("\r\n");
-    try writer.flush();
+    try writer.interface.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
+    try writer.interface.writeAll(payload);
+    try writer.interface.writeAll("\r\n");
+    try writer.interface.flush();
 }
 
-fn waitForPong(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
+fn waitForPong(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
         const line = try readLine(reader);
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "PING")) {
-            try writer.writeAll("PONG\r\n");
-            try writer.flush();
+            try writer.interface.writeAll("PONG\r\n");
+            try writer.interface.flush();
             continue;
         }
         if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
@@ -255,14 +289,14 @@ fn waitForPong(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
     return error.PublishAckFailed;
 }
 
-fn waitForPublishAck(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
+fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
         const line = try readLine(reader);
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "PING")) {
-            try writer.writeAll("PONG\r\n");
-            try writer.flush();
+            try writer.interface.writeAll("PONG\r\n");
+            try writer.interface.flush();
             continue;
         }
         if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
@@ -275,9 +309,9 @@ fn waitForPublishAck(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
         if (std.mem.startsWith(u8, line, "MSG ")) {
             const payload_size = try parseMessageSize(line);
             if (payload_size > MAX_ACK_PAYLOAD_BYTES) return error.PublishAckTooLarge;
-            const payload = try reader.take(payload_size);
+            const payload = try takeBytes(reader, payload_size);
             const has_error = std.mem.indexOf(u8, payload, "\"error\"") != null;
-            const terminator = try reader.takeArray(2);
+            const terminator = try takeArray2(reader);
             if (!std.mem.eql(u8, terminator, "\r\n")) return error.ProtocolError;
             if (has_error) {
                 logPublishAckFailure("ack_error", payload);
@@ -293,9 +327,24 @@ fn waitForPublishAck(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
     return error.PublishAckFailed;
 }
 
-fn readLine(reader: *std.Io.Reader) ![]const u8 {
-    const raw = try reader.takeDelimiterExclusive('\n');
+fn readLine(reader: *std.Io.net.Stream.Reader) ![]const u8 {
+    const raw = reader.interface.takeDelimiterExclusive('\n') catch |err| return mapReadError(reader, err);
     return std.mem.trim(u8, raw, " \t\r");
+}
+
+fn takeBytes(reader: *std.Io.net.Stream.Reader, size: usize) ![]const u8 {
+    return reader.interface.take(size) catch |err| mapReadError(reader, err);
+}
+
+fn takeArray2(reader: *std.Io.net.Stream.Reader) !*[2]u8 {
+    return reader.interface.takeArray(2) catch |err| mapReadError(reader, err);
+}
+
+fn mapReadError(reader: *std.Io.net.Stream.Reader, err: anyerror) anyerror {
+    if (reader.err) |read_error| {
+        if (read_error == error.Timeout) return error.Timeout;
+    }
+    return err;
 }
 
 fn parseMessageSize(line: []const u8) !usize {

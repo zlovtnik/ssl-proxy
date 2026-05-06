@@ -1,19 +1,21 @@
 require "base64"
 
 class AuditLogPresenter
+  ENTRY_DELEGATES = (
+    %i[dedupe_key observed_at channel event_count avg_signal_dbm] +
+    AuditLog::PROMOTED_COLUMNS.map(&:to_sym) +
+    AuditLog::PAYLOAD_ONLY_FIELDS.map(&:to_sym)
+  ).uniq.freeze
+
   def initialize(entry)
     @entry = entry
   end
 
   def security_labels
     flags = @entry.security_flags.to_i
-    labels = []
-    labels << "WPA" if flags & 0x01 != 0
-    labels << "RSN/WPA2" if flags & 0x02 != 0
-    labels << "WPA3" if flags & 0x04 != 0
-    labels << "WPS" if flags & 0x08 != 0
-    labels << "PMF required" if flags & 0x10 != 0
-    labels
+    AuditLog::SECURITY_FLAG_MASKS.filter_map do |label, mask|
+      label if flags & mask != 0
+    end
   end
 
   def compact_security_label
@@ -22,10 +24,10 @@ class AuditLogPresenter
 
   def frame_flags_label
     labels = []
-    labels << "more data" if @entry.more_data
-    labels << "retry" if @entry.retry
-    labels << "power save" if @entry.power_save
-    labels << "protected" if @entry.protected
+    labels << "more data" if @entry.public_send(:more_data)
+    labels << "retry" if @entry.public_send(:retry)
+    labels << "power save" if @entry.public_send(:power_save)
+    labels << "protected" if @entry.public_send(:protected)
     labels.presence&.join(", ")
   end
 
@@ -56,26 +58,6 @@ class AuditLogPresenter
       format("%04x  %-47s  |%s|", offset, hex, ascii)
     end.join("\n")
   end
-  def method_missing(method_name, ...)
-    return @entry.public_send(method_name, ...) if @entry.respond_to?(method_name)
 
-    super
-  end
-
-  def respond_to_missing?(method_name, include_private = false)
-    @entry.respond_to?(method_name, include_private) || super
-  end
-
-  # Delegate all data access methods to the entry
-  delegate :dedupe_key, :observed_at, :sensor_id, :location_id, :event_type,
-           :channel, :frame_type, :frame_subtype, :source_mac, :bssid,
-           :destination_bssid, :ssid, :signal_dbm, :channel_number,
-           :app_protocol, :session_key, :frame_fingerprint, :device_fingerprint,
-           :wps_device_name, :wps_manufacturer, :wps_model_name,
-           :handshake_captured, :more_data, :retry, :power_save, :protected,
-           :security_flags, :raw_len, :frame_control_flags, :large_frame,
-           :src_ip, :dst_ip, :src_port, :dst_port, :transport_protocol,
-           :ip_protocol_name, :payload_visibility, :raw_frame, :schema_version,
-           :fragment_number, :username,
-           to: :@entry
+  delegate(*ENTRY_DELEGATES, to: :@entry)
 end

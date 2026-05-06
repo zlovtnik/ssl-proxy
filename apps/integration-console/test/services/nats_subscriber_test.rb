@@ -22,7 +22,7 @@ class NatsSubscriberTest < ActiveSupport::TestCase
     IntegrationConfig.create!(name: "Disabled Trace", source_type: "nats", destination_type: "postgres", enabled: false, params: { subject: "wifi.alert.handshake" })
     IntegrationConfig.create!(name: "HTTP Sink", source_type: "http", destination_type: "postgres", params: { method: "POST" })
 
-    assert_equal ["sync.scan.request", "wireless.audit"], Nats::Subscriber.configured_subjects
+    assert_equal ["sync.scan.request", "wireless.audit"], Nats::Subscriber.configured_subjects.sort
   end
 
   test "subscribes once per configured subject" do
@@ -31,9 +31,9 @@ class NatsSubscriberTest < ActiveSupport::TestCase
     IntegrationConfig.create!(name: "Wireless Audit", source_type: "nats", destination_type: "postgres", params: { subject: "wireless.audit" })
     client = FakeClient.new
 
-    Nats::Subscriber.new(client: client).subscribe_configured(client)
+    Nats::Subscriber.new(client: client).subscribe_configured
 
-    assert_equal ["sync.scan.request", "wireless.audit"], client.subscriptions
+    assert_equal ["sync.scan.request", "wireless.audit"], client.subscriptions.sort
   end
 
   test "wireless audit updates sensor and throughput sample" do

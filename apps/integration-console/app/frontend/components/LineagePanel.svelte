@@ -3,16 +3,37 @@
 
   $: nodes = lineage?.nodes || []
   $: edges = lineage?.edges || []
-  $: positioned = positionNodes(nodes)
+  $: layout = positionNodes(nodes)
+  $: positioned = layout.nodes
+  $: viewBoxHeight = layout.height
 
   function positionNodes(list) {
     const xByType = { source: 80, store: 280, destination: 500 }
     const counts = {}
-    return list.map((node) => {
-      const index = counts[node.type] || 0
-      counts[node.type] = index + 1
-      return { ...node, x: xByType[node.type] || 80, y: 70 + index * 95 }
-    })
+    for (const node of list) counts[node.type] = (counts[node.type] || 0) + 1
+    const maxCount = Math.max(1, ...Object.values(counts))
+    const top = 52
+    const bottom = 52
+    const spacing = 95
+    const height = Math.max(320, top + bottom + (maxCount - 1) * spacing)
+    const placedCounts = {}
+
+    return {
+      height,
+      nodes: list.map((node) => {
+        const index = placedCounts[node.type] || 0
+        placedCounts[node.type] = index + 1
+        return { ...node, x: xByType[node.type] || 80, y: top + index * spacing }
+      })
+    }
+  }
+
+  function edgeKey(edge, index) {
+    return edge.id || `${edge.from}-${edge.to}-${edge.label || index}`
+  }
+
+  function nodeKey(item, index) {
+    return item.id || item.key || index
   }
 
   function node(id) {
@@ -30,8 +51,8 @@
   {#if nodes.length === 0}
     <div class="text-sm text-(--color-text-muted)">No enabled integrations yet.</div>
   {:else}
-    <svg class="h-72 w-full" viewBox="0 0 620 320" role="img" aria-label="Integration lineage">
-      {#each edges as edge}
+    <svg class="w-full" style={`height: ${viewBoxHeight}px`} viewBox={`0 0 620 ${viewBoxHeight}`} role="img" aria-label="Integration lineage">
+      {#each edges as edge, index (edgeKey(edge, index))}
         {@const from = node(edge.from)}
         {@const to = node(edge.to)}
         {#if from && to}
@@ -39,7 +60,7 @@
           <text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 8} text-anchor="middle" class="fill-(--color-text-muted) text-xs">{edge.label}</text>
         {/if}
       {/each}
-      {#each positioned as item}
+      {#each positioned as item, index (nodeKey(item, index))}
         {#if item.type === "source"}
           <circle cx={item.x} cy={item.y} r="38" class="fill-(--color-accent-surface) stroke-(--color-border-strong)" stroke-width="2" />
         {:else if item.type === "destination"}

@@ -74,42 +74,44 @@ class IntegrationRunsController < ApplicationController
 
   def run_payload(run, batches_by_job: nil)
     batches = batches_by_job ? batches_by_job.fetch(run.sync_job_id, []) : sync_batches_for(run)
-    row_count = batches.sum { |batch| batch.row_count.to_i }
+    row_count = 0
+    rows_written = 0
+    rows_errored = 0
+    batch_count = 0
+    batches_completed = 0
+    batches_failed = 0
+
+    batches.each do |batch|
+      rows = batch.row_count.to_i
+      row_count += rows
+      batch_count += 1
+      if batch.status == "completed"
+        rows_written += rows
+        batches_completed += 1
+      elsif batch.status == "failed"
+        rows_errored += rows
+        batches_failed += 1
+      end
+    end
+
     run.stream_payload.merge(
       integration_name: run.integration_config.name,
       integration_slug: run.integration_config.slug,
       integration_url: integration_path(run.integration_config),
       sync_job_id: run.sync_job_id,
       rows_read: row_count,
-      rows_written: batches.select { |batch| batch.status == "completed" }.sum { |batch| batch.row_count.to_i },
-      rows_errored: batches.select { |batch| batch.status == "failed" }.sum { |batch| batch.row_count.to_i },
-      batch_count: batches.length,
-      batches_completed: batches.count { |batch| batch.status == "completed" },
-      batches_failed: batches.count { |batch| batch.status == "failed" },
+      rows_written: rows_written,
+      rows_errored: rows_errored,
+      batch_count: batch_count,
+      batches_completed: batches_completed,
+      batches_failed: batches_failed,
       show_url: integration_run_path(run),
       cancel_url: run.cancellable? ? cancel_integration_run_path(run) : nil
     )
   end
 
   def batch_payloads(run)
-    sync_batches_for(run).map { |batch| batch_payload(batch) }
-  end
-
-  def batch_payload(batch)
-    {
-      id: batch.batch_id,
-      batch_no: batch.batch_no,
-      status: batch.status,
-      from_value: batch.cursor_start,
-      to_value: batch.cursor_end,
-      rows_read: batch.row_count.to_i,
-      rows_written: batch.status == "completed" ? batch.row_count.to_i : 0,
-      rows_errored: batch.sync_errors&.size.to_i,
-      duration_ms: nil,
-      error_detail: batch.last_error.presence || batch.sync_errors.map(&:error_text).join("\n").presence,
-      created_at: batch.created_at,
-      updated_at: batch.updated_at
-    }
+    sync_batches_for(run).map { |batch| SyncBatchPayload.call(batch) }
   end
 
   def sync_batches_for(run)

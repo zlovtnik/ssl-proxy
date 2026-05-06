@@ -589,4 +589,16 @@ mod tests {
         assert!(error.contains("expected filter_subject sync.oracle.load"));
         assert!(error.contains("found wireless.audit"));
     }
+
+    #[test]
+    fn validate_consumer_filter_rejects_empty_actual_filter() {
+        let error =
+            validate_consumer_filter("AUDIT_STREAM", "oracle-worker-load", "", "sync.oracle.load")
+                .unwrap_err();
+
+        assert!(error.contains("oracle-worker-load"));
+        assert!(error.contains("AUDIT_STREAM"));
+        assert!(error.contains("expected filter_subject sync.oracle.load"));
+        assert!(error.contains("found <none>"));
+    }
 }

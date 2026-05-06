@@ -20,7 +20,7 @@ use crate::{
     events::{self, EmitPayload},
     forensic::{PacketDirection, PeerIdentity},
     obfuscation,
-    payload_redaction::redact_sensitive_data,
+    payload_redaction::payload_preview_json,
     state::SharedState,
 };
 
@@ -755,40 +755,15 @@ pub(crate) fn original_dst(stream: &tokio::net::TcpStream) -> std::io::Result<So
     Ok(SocketAddr::from((ip, port)))
 }
 
-fn payload_preview_json(
-    up_buf: &[u8],
-    down_buf: &[u8],
-    bytes_up: u64,
-    bytes_down: u64,
-    limit: usize,
-) -> serde_json::Value {
-    let mut up_redacted = up_buf.to_vec();
-    let mut down_redacted = down_buf.to_vec();
-    redact_sensitive_data(&mut up_redacted);
-    redact_sensitive_data(&mut down_redacted);
-
-    serde_json::json!({
-        "up": base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &up_redacted,
-        ),
-        "down": base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &down_redacted,
-        ),
-        "truncated_up": bytes_up > limit as u64,
-        "truncated_down": bytes_down > limit as u64,
-        "byte_count_up": up_buf.len(),
-        "byte_count_down": down_buf.len(),
-        "redaction": "byte",
-    })
+fn tls_detected(tls: &TlsInfo) -> bool {
+    tls.sni.is_some() || tls.alpn.is_some() || tls.tls_ver.is_some() || tls.ja3_lite.is_some()
 }
 
 /// Proxy a client TCP stream to its original destination and record tunnel lifecycle events.
 ///
 /// This function establishes a connection to `orig_dst`, proxies bytes bidirectionally between
 /// `client` and the upstream connection, and captures up/down byte counts plus a truncated
-/// payload preview when TLS metadata is present or plaintext capture is explicitly enabled. It
+/// payload preview when plaintext capture is enabled and the flow does not look like TLS. It
 /// emits lifecycle events and host/telemetry updates in `state`, applies TCP keepalive to the
 /// client, enforces a connection timeout when dialing the upstream, and records final tunnel
 /// statistics whether the proxying completes normally or the peer closes the connection
@@ -860,7 +835,8 @@ pub(crate) async fn run_transparent(
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
 
             const PAYLOAD_PREVIEW_LIMIT: usize = 4096;
-            let capture_payloads = state.config.proxy.capture_plaintext_payloads;
+            let capture_payloads =
+                state.config.proxy.capture_plaintext_payloads && !tls_detected(&tls);
 
             let (mut client_read, mut client_write) = tokio::io::split(client);
             let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream);

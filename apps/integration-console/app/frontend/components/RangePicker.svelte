@@ -1,13 +1,19 @@
 <script>
   let { value = { range_type: "cursor", from_value: "", to_value: "" }, onChange = () => {} } = $props()
 
-  let rangeType = $state("cursor")
-  let fromValue = $state("")
-  let toValue = $state("")
+  const initialRange = () => value || { range_type: "cursor", from_value: "", to_value: "" }
+
+  let rangeType = $state(initialRange()?.range_type || "cursor")
+  let fromValue = $state(initialRange()?.from_value || "")
+  let toValue = $state(initialRange()?.to_value || "")
+  let lastSyncedValue = $state(initialRange())
   let error = $derived(rangeError(rangeType, fromValue, toValue))
   let preview = $derived(`${fromValue || "current cursor"} -> ${toValue || "now"}`)
 
   $effect(() => {
+    if (value === lastSyncedValue) return
+
+    lastSyncedValue = value
     rangeType = value?.range_type || "cursor"
     fromValue = value?.from_value || ""
     toValue = value?.to_value || ""
@@ -30,7 +36,11 @@
 
   function rangeError(type, from, to) {
     if (type !== "datetime" || !from || !to) return ""
-    return new Date(from).getTime() < new Date(to).getTime() ? "" : "From must be before To."
+    const fromTime = new Date(from).getTime()
+    const toTime = new Date(to).getTime()
+    if (Number.isNaN(fromTime)) return "Invalid From date."
+    if (Number.isNaN(toTime)) return "Invalid To date."
+    return fromTime < toTime ? "" : "From must be before To."
   }
 
   function toLocalInput(date) {

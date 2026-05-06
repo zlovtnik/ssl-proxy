@@ -15,7 +15,7 @@ class IntegrationRun < ApplicationRecord
   validates :range_type, inclusion: { in: RANGE_TYPES }
   validate :datetime_range_order
 
-  scope :recent, -> { order(created_at: :desc) }
+  scope :latest, -> { order(created_at: :desc) }
   scope :pending, -> { where(status: "pending") }
   scope :failed, -> { where(status: "failed") }
   scope :for_config, ->(id) { where(integration_config_id: id) }
@@ -31,10 +31,21 @@ class IntegrationRun < ApplicationRecord
   end
 
   def cancel!
-    raise InvalidTransitionError, "Run cannot be cancelled from #{status}" unless cancellable?
+    finished_at = Time.current
+    rows_affected = self.class.where(id: id, status: %w[pending running]).update_all(
+      status: "cancelled",
+      finished_at: finished_at,
+      updated_at: finished_at
+    )
+    raise InvalidTransitionError, "Run cannot be cancelled from #{status}" if rows_affected.zero?
 
-    update!(status: "cancelled", finished_at: Time.current)
-    broadcast_status
+    self.status = "cancelled"
+    self.finished_at = finished_at
+    begin
+      broadcast_status
+    rescue StandardError => error
+      Rails.logger.warn("Failed to broadcast integration run #{id} cancellation: #{error.class} - #{error.message}")
+    end
   end
 
   def stream_payload
@@ -53,10 +64,7 @@ class IntegrationRun < ApplicationRecord
   end
 
   def broadcast_status(batch: nil)
-    ActionCable.server.broadcast("integration_run:#{id}", {
-      run: stream_payload,
-      batch: batch
-    })
+    IntegrationRunBroadcastJob.perform_later(id, batch)
   end
 
   private

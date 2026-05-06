@@ -7,7 +7,7 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     }
 
     fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
-        if needle.is_empty() || start >= haystack.len() || needle.len() > haystack.len() {
+        if needle.is_empty() || start >= haystack.len() {
             return None;
         }
         haystack[start..]
@@ -74,6 +74,7 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     }
 
     let mut search_from = 0usize;
+    // Intentionally masks case-insensitive bearer tokens wherever they appear, not just header lines.
     while let Some(pos) = find_bytes(&lower, b"bearer ", search_from) {
         mask_range(buf, pos + "bearer ".len(), b"\r\n;& \t\"'},");
         search_from = pos + "bearer ".len();
@@ -83,7 +84,11 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
         &b"password="[..],
         &b"pass="[..],
         &b"token="[..],
+        &b"refresh_token="[..],
+        &b"id_token="[..],
         &b"secret="[..],
+        &b"client_secret="[..],
+        &b"clientsecret="[..],
         &b"api_key="[..],
         &b"apikey="[..],
     ] {
@@ -99,7 +104,11 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     for key in [
         &b"\"password\":"[..],
         &b"\"token\":"[..],
+        &b"\"refresh_token\":"[..],
+        &b"\"id_token\":"[..],
         &b"\"secret\":"[..],
+        &b"\"client_secret\":"[..],
+        &b"\"clientsecret\":"[..],
         &b"\"api_key\":"[..],
         &b"\"apikey\":"[..],
     ] {
@@ -133,6 +142,35 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     }
 }
 
+pub(crate) fn payload_preview_json(
+    up_buf: &[u8],
+    down_buf: &[u8],
+    bytes_up: u64,
+    bytes_down: u64,
+    limit: usize,
+) -> serde_json::Value {
+    let mut up_redacted = up_buf.to_vec();
+    let mut down_redacted = down_buf.to_vec();
+    redact_sensitive_data(&mut up_redacted);
+    redact_sensitive_data(&mut down_redacted);
+
+    serde_json::json!({
+        "up": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &up_redacted,
+        ),
+        "down": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &down_redacted,
+        ),
+        "truncated_up": bytes_up > limit as u64,
+        "truncated_down": bytes_down > limit as u64,
+        "byte_count_up": up_buf.len(),
+        "byte_count_down": down_buf.len(),
+        "redaction": "byte",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::redact_sensitive_data;
@@ -153,7 +191,8 @@ mod tests {
         let mut payload = br#"Proxy-Authorization: Basic pxcred
 x-auth-token: xheadervalue
 password=formpassword&token=formtoken&secret=formsecret&api_key=formapikey&apikey=formapikey2
-{"password":"json-password","token":"json-token-value","secret":false}"#
+refresh_token=formrefresh&id_token=formid&client_secret=formclient&clientsecret=formclient2
+{"password":"json-password","token":"json-token-value","refresh_token":"json-refresh","id_token":"json-id","client_secret":"json-client","secret":false}"#
             .to_vec();
         redact_sensitive_data(&mut payload);
         let redacted = String::from_utf8(payload).unwrap();
@@ -166,8 +205,15 @@ password=formpassword&token=formtoken&secret=formsecret&api_key=formapikey&apike
             "formsecret",
             "formapikey",
             "formapikey2",
+            "formrefresh",
+            "formid",
+            "formclient",
+            "formclient2",
             "json-password",
             "json-token-value",
+            "json-refresh",
+            "json-id",
+            "json-client",
             "false",
         ] {
             assert!(!redacted.contains(secret));

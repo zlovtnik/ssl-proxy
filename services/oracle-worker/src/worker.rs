@@ -7,7 +7,6 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
-    #[serde(default)]
     pub job_id: String,
     pub batch_id: String,
     pub batch_no: i32,
@@ -268,6 +267,10 @@ struct ValidatedLoad {
 }
 
 fn validate_load(load: &OracleLoad) -> Result<ValidatedLoad, String> {
+    if load.job_id.is_empty() {
+        return Err("job_id must not be empty".to_string());
+    }
+
     let target = sink_target(&load.stream_name)
         .map_err(|_| format!("unsupported stream_name {}", load.stream_name))?;
     let payload = resolve_payload(&load.payload_ref)?;

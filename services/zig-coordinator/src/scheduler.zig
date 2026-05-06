@@ -984,11 +984,10 @@ pub const Service = struct {
             "nats",
             "--server",
             self.cfg.sync_nats_url,
-            "request",
+            "pub",
+            "--jetstream",
             subject,
             payload,
-            "--timeout",
-            "5s",
         };
 
         var result = command.exec(self.allocator, self.io, &argv) catch {
@@ -1278,12 +1277,23 @@ fn streamNameIsConfigured(stream_names_csv: []const u8, stream_name: []const u8)
     return false;
 }
 
+const allowed_oracle_stream_names = [_][]const u8{
+    "proxy.events",
+};
+
+fn allowedOracleStreamName(stream_name: []const u8) bool {
+    for (allowed_oracle_stream_names) |allowed| {
+        if (std.mem.eql(u8, allowed, stream_name)) return true;
+    }
+    return false;
+}
+
 pub fn invalidOracleStreamName(stream_names_csv: []const u8, oracle_stream_names_csv: []const u8) ?[]const u8 {
     var iterator = std.mem.splitScalar(u8, oracle_stream_names_csv, ',');
     while (iterator.next()) |raw_name| {
         const stream_name = std.mem.trim(u8, raw_name, " \t\r\n");
         if (stream_name.len == 0) continue;
-        if (!std.mem.eql(u8, stream_name, "proxy.events")) return stream_name;
+        if (!allowedOracleStreamName(stream_name)) return stream_name;
         if (!streamNameIsConfigured(stream_names_csv, stream_name)) return stream_name;
     }
     return null;

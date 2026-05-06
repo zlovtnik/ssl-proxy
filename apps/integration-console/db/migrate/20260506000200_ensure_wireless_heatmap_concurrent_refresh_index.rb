@@ -1,7 +1,7 @@
 class EnsureWirelessHeatmapConcurrentRefreshIndex < ActiveRecord::Migration[7.2]
   disable_ddl_transaction!
 
-  INDEX_NAME = "mv_wireless_heatmap_location_idx"
+  INDEX_NAME = "mv_wireless_heatmap_location_idx".freeze
 
   def up
     execute <<~SQL
@@ -28,6 +28,6 @@ class EnsureWirelessHeatmapConcurrentRefreshIndex < ActiveRecord::Migration[7.2]
   end
 
   def down
-    execute "DROP INDEX CONCURRENTLY IF EXISTS #{INDEX_NAME}"
+    execute "DROP MATERIALIZED VIEW IF EXISTS mv_wireless_heatmap CASCADE"
   end
 end

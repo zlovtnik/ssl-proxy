@@ -339,6 +339,7 @@ begin
            updated_at = now()
       from failed_dispatch
      where batch.batch_id = failed_dispatch.batch_id
+       and batch.attempt_count < v_max_attempts
     returning batch.job_id,
               batch.batch_id,
               batch.status,
@@ -382,10 +383,7 @@ begin
      where job.job_id in (select job_id from recovered)
     returning job.job_id
   )
-  select (select count(*) from recovered)
-    into v_recovered_count
-    from (select count(*) from error_insert) error_count,
-         (select count(*) from job_update) job_count;
+  select count(*) into v_recovered_count from recovered;
 
   return coalesce(v_recovered_count, 0);
 end;
@@ -401,6 +399,7 @@ language plpgsql
 as $$
 declare
   v_batch_id uuid := (p_load->>'batch_id')::uuid;
+  v_max_attempts integer := greatest(coalesce(p_max_attempts, 5), 1);
   v_summary jsonb;
 begin
   if v_batch_id is null then
@@ -409,7 +408,11 @@ begin
 
   with batch_update as (
     update sync_batch batch
-       set status = 'pending',
+       set attempt_count = batch.attempt_count + 1,
+           status = case
+                      when batch.attempt_count + 1 >= v_max_attempts then 'failed'
+                      else 'pending'
+                    end,
            last_error = nullif(p_error_text, ''),
            updated_at = now()
      where batch.batch_id = v_batch_id

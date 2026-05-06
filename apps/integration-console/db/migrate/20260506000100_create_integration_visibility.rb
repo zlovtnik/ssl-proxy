@@ -8,7 +8,7 @@ class CreateIntegrationVisibility < ActiveRecord::Migration[7.2]
       t.text :stream_name
       t.boolean :enabled, null: false, default: true
       t.text :schedule_cron
-      t.text :params, null: false, default: "{}"
+      t.jsonb :params, null: false, default: {}
       t.jsonb :param_schema, null: false, default: {}
       t.text :cursor_field
 
@@ -29,7 +29,7 @@ class CreateIntegrationVisibility < ActiveRecord::Migration[7.2]
       t.text :range_type, null: false, default: "cursor"
       t.text :from_value
       t.text :to_value
-      t.text :params_snapshot, null: false, default: "{}"
+      t.jsonb :params_snapshot, null: false, default: {}
       t.text :error_summary
       t.timestamptz :started_at
       t.timestamptz :finished_at
@@ -38,6 +38,12 @@ class CreateIntegrationVisibility < ActiveRecord::Migration[7.2]
     end
 
     add_index :integration_runs, [:integration_config_id, :created_at]
+    add_index :integration_runs, [:integration_config_id, :triggered_by, :created_at],
+      name: "idx_on_integration_config_id_triggered_by_created_at",
+      order: { created_at: :desc }
+    add_index :integration_runs, [:integration_config_id, :status, :created_at],
+      name: "idx_on_integration_config_id_status_created_at",
+      order: { created_at: :desc }
     add_index :integration_runs, [:status, :created_at]
     add_index :integration_runs, :sync_job_id
     add_check_constraint :integration_runs,

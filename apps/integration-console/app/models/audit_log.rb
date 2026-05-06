@@ -14,6 +14,8 @@ class AuditLog < SyncRecord
 
   # Columns promoted from payload to table columns. If a running database has not
   # applied every promotion migration yet, fall back to the payload value.
+  # Accessors such as retry and protected can collide with Ruby keywords or
+  # visibility helpers, so callers should prefer public_send(:retry) style calls.
   PROMOTED_COLUMNS = %w[
     schema_version frame_type frame_subtype source_mac bssid destination_bssid
     ssid signal_dbm channel_number fragment_number signal_status adjacent_mac_hint
@@ -27,6 +29,22 @@ class AuditLog < SyncRecord
     raw_len frame_control_flags more_data retry power_save protected
     security_flags wps_device_name wps_manufacturer wps_model_name
     device_fingerprint handshake_captured sensor_id location_id username
+  ].freeze
+
+  SECURITY_FLAG_MASKS = {
+    "WPA" => 0x01,
+    "RSN/WPA2" => 0x02,
+    "WPA3" => 0x04,
+    "WPS" => 0x08,
+    "PMF required" => 0x10
+  }.freeze
+
+  INTEGER_PROMOTED_COLUMNS = %w[
+    raw_len frame_control_flags security_flags
+  ].freeze
+
+  BOOLEAN_PROMOTED_COLUMNS = %w[
+    more_data retry power_save protected handshake_captured large_frame dedupe_or_replay_suspect
   ].freeze
 
   PROMOTED_COLUMNS.each do |field|
@@ -78,13 +96,9 @@ class AuditLog < SyncRecord
 
   def security_labels
     flags = security_flags.to_i
-    labels = []
-    labels << "WPA" if flags & 0x01 != 0
-    labels << "RSN/WPA2" if flags & 0x02 != 0
-    labels << "WPA3" if flags & 0x04 != 0
-    labels << "WPS" if flags & 0x08 != 0
-    labels << "PMF required" if flags & 0x10 != 0
-    labels
+    SECURITY_FLAG_MASKS.filter_map do |label, mask|
+      label if flags & mask != 0
+    end
   end
 
   def frame_flags_label
@@ -150,10 +164,9 @@ class AuditLog < SyncRecord
     return true if value.nil?
     return true if value == ""
 
-    case key
-    when "raw_len", "frame_control_flags", "security_flags"
+    if INTEGER_PROMOTED_COLUMNS.include?(key)
       value.to_i.zero? && fallback.to_i.nonzero?
-    when "more_data", "retry", "power_save", "protected", "handshake_captured", "large_frame", "dedupe_or_replay_suspect"
+    elsif BOOLEAN_PROMOTED_COLUMNS.include?(key)
       value == false && ActiveModel::Type::Boolean.new.cast(fallback) == true
     else
       false

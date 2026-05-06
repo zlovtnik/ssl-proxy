@@ -170,8 +170,8 @@ class IdentitiesController < ApplicationController
       hostnames: logs.filter_map(&:dhcp_hostname).uniq.first(5).join(", "),
       services: logs.filter_map(&:app_protocol).uniq.first(5).join(", "),
       frame_count: logs.length,
-      protected_frame_count: logs.count(&:protected),
-      open_frame_count: logs.count { |entry| !entry.protected },
+      protected_frame_count: logs.count { |entry| entry.public_send(:protected) },
+      open_frame_count: logs.count { |entry| !entry.public_send(:protected) },
       signal_min: signals.min,
       signal_max: signals.max
     }

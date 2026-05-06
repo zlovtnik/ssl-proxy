@@ -28,6 +28,7 @@ class FrontendNatsSubjectSeedTest < ActiveSupport::TestCase
     raw_params = IntegrationConfig.connection.select_value(
       "SELECT params FROM integration_configs WHERE slug = #{IntegrationConfig.connection.quote("proxy-payload-audit")}"
     )
+    assert_not_nil raw_params
     assert_not_includes raw_params, "proxy.payload_audit"
   end
 

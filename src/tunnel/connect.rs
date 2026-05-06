@@ -246,6 +246,11 @@ pub async fn handle(
                     if !prefix.bytes.is_empty() {
                         if let Err(e) = upstream.write_all(&prefix.bytes).await {
                             debug!(%host, %e, "bypass tunnel prefix write failed");
+                            state.record_tunnel_close_for_peer(
+                                identity.wg_pubkey.as_deref(),
+                                prefix_up,
+                                0,
+                            );
                             context.emit_close(
                                 &state,
                                 &host,

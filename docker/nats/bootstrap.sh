@@ -52,17 +52,27 @@ ensure_consumer() {
   consumer_name="$2"
   filter_subject="$3"
 
-  nats --server "${NATS_URL}" consumer rm "${stream_name}" "${consumer_name}" -f 2>/dev/null || true
-
-  nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
-    --filter "${filter_subject}" \
-    --max-deliver=-1 \
-    --deliver=all \
-    --replay=instant \
-    --pull \
-    --ack=explicit \
-    --wait=5s \
-    --defaults
+  if nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" >/dev/null 2>&1; then
+    nats --server "${NATS_URL}" consumer edit "${stream_name}" "${consumer_name}" \
+      --filter "${filter_subject}" \
+      --max-deliver=-1 \
+      --deliver=all \
+      --replay=instant \
+      --pull \
+      --ack=explicit \
+      --wait=5s \
+      --defaults
+  else
+    nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
+      --filter "${filter_subject}" \
+      --max-deliver=-1 \
+      --deliver=all \
+      --replay=instant \
+      --pull \
+      --ack=explicit \
+      --wait=5s \
+      --defaults
+  fi
 }
 
 verify_consumer_filter() {

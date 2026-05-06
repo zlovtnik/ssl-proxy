@@ -54,6 +54,7 @@ pub struct ProxyConfig {
     pub tunnel_endpoint: Option<String>,
     pub enable_dns_lookups: bool,
     pub fail_closed_no_sni: bool,
+    /// Capture bounded payload previews only for flows that do not look like TLS.
     pub capture_plaintext_payloads: bool,
     pub forensic_sentry_enabled: bool,
     pub forensic_monitor_interface: Option<String>,

@@ -10,7 +10,7 @@ class WirelessHeatmapTest < ActiveSupport::TestCase
   class UnlockedRedis
     attr_reader :token
 
-    def set(_key, token, nx:, ex:)
+    def set(_key, token, **_options)
       @token = token
       true
     end
@@ -28,12 +28,26 @@ class WirelessHeatmapTest < ActiveSupport::TestCase
 
     def execute(statement)
       statements << statement
-      return true unless statement == "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wireless_heatmap"
+      return true unless statement == "REFRESH MATERIALIZED VIEW CONCURRENTLY \"mv_wireless_heatmap\""
 
       raise ActiveRecord::StatementInvalid, <<~MSG.squish
         PG::ObjectNotInPrerequisiteState: ERROR: cannot refresh materialized view "public.mv_wireless_heatmap" concurrently
         HINT: Create a unique index with no WHERE clause on one or more columns of the materialized view.
       MSG
+    end
+
+    def quote_table_name(name)
+      %("#{name}")
+    end
+  end
+
+  class FakeConnectionPool
+    def initialize(connection)
+      @connection = connection
+    end
+
+    def with_connection
+      yield @connection
     end
   end
 
@@ -49,13 +63,13 @@ class WirelessHeatmapTest < ActiveSupport::TestCase
   test "refresh falls back when concurrent index is missing" do
     fake_connection = MissingConcurrentIndexConnection.new
 
-    WirelessHeatmap.stub(:connection, fake_connection) do
+    WirelessHeatmap.stub(:connection_pool, FakeConnectionPool.new(fake_connection)) do
       assert_equal true, WirelessHeatmap.refresh!(redis: UnlockedRedis.new)
     end
 
     assert_equal [
-      "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wireless_heatmap",
-      "REFRESH MATERIALIZED VIEW mv_wireless_heatmap"
+      "REFRESH MATERIALIZED VIEW CONCURRENTLY \"mv_wireless_heatmap\"",
+      "REFRESH MATERIALIZED VIEW \"mv_wireless_heatmap\""
     ], fake_connection.statements
   end
 end

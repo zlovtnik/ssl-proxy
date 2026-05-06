@@ -184,8 +184,17 @@ class IntegrationsController < ApplicationController
   end
 
   def integrations_page_payload(rows)
+    last_runs_by_config = last_runs_for_integrations(rows)
+    batches_by_job_id = sync_batches_for_runs(last_runs_by_config.values.compact)
+
     {
-      rows: rows.map { |integration| integration_payload(integration) },
+      rows: rows.map do |integration|
+        integration_payload_with_run(
+          integration,
+          last_run: last_runs_by_config[integration.id],
+          batches_by_job_id: batches_by_job_id
+        )
+      end,
       summary: integrations_summary,
       schemas: IntegrationParamSchema::SCHEMAS,
       sortKey: @sort || "name",
@@ -205,10 +214,14 @@ class IntegrationsController < ApplicationController
   end
 
   def integration_detail_payload(integration, mode: "show")
+    runs = integration.persisted? ? integration.integration_runs.latest.limit(30).includes(:integration_config).to_a : []
+    batches_by_job_id = sync_batches_for_runs(runs)
+    last_run = runs.first
+
     {
       mode: mode,
-      integration: integration_payload(integration),
-      runs: integration.persisted? ? integration.integration_runs.recent.limit(30).map { |run| integration_run_payload(run) } : [],
+      integration: integration_payload_with_run(integration, last_run: last_run, batches_by_job_id: batches_by_job_id),
+      runs: runs.map { |run| integration_run_payload(run, batches_by_job_id: batches_by_job_id) },
       schemas: IntegrationParamSchema::SCHEMAS,
       lineage: integration.persisted? ? lineage_payload(integration: integration) : empty_lineage_payload,
       endpoints: {
@@ -223,7 +236,11 @@ class IntegrationsController < ApplicationController
   end
 
   def integration_payload(integration)
-    last_run = integration.persisted? ? integration.integration_runs.recent.first : nil
+    last_run = integration.persisted? ? integration.integration_runs.latest.first : nil
+    integration_payload_with_run(integration, last_run: last_run)
+  end
+
+  def integration_payload_with_run(integration, last_run: nil, batches_by_job_id: {})
     {
       id: integration.id,
       name: integration.name,
@@ -243,14 +260,25 @@ class IntegrationsController < ApplicationController
       delete_url: integration.persisted? ? integration_path(integration) : nil,
       trigger_url: integration.persisted? ? trigger_integration_path(integration) : nil,
       replay_url: integration.persisted? ? replay_integration_path(integration) : nil,
-      last_run: last_run && integration_run_payload(last_run)
+      last_run: last_run && integration_run_payload(last_run, batches_by_job_id: batches_by_job_id)
     }
   end
 
-  def integration_run_payload(run)
-    batches = sync_batches_for(run)
-    row_count = batches.sum { |batch| batch.row_count.to_i }
-    completed_count = batches.select { |batch| batch.status == "completed" }.sum { |batch| batch.row_count.to_i }
+  def integration_run_payload(run, batches_by_job_id: nil)
+    batches = batches_by_job_id ? batches_by_job_id.fetch(run.sync_job_id, []) : sync_batches_for(run)
+    row_count = 0
+    completed_count = 0
+    failed_count = 0
+
+    batches.each do |batch|
+      rows = batch.row_count.to_i
+      row_count += rows
+      if batch.status == "completed"
+        completed_count += rows
+      elsif batch.status == "failed"
+        failed_count += rows
+      end
+    end
 
     run.stream_payload.merge(
       integration_name: run.integration_config.name,
@@ -258,7 +286,7 @@ class IntegrationsController < ApplicationController
       sync_job_id: run.sync_job_id,
       rows_read: row_count,
       rows_written: completed_count,
-      rows_errored: batches.select { |batch| batch.status == "failed" }.sum { |batch| batch.row_count.to_i },
+      rows_errored: failed_count,
       batch_count: batches.length,
       show_url: integration_run_path(run)
     )
@@ -270,6 +298,29 @@ class IntegrationsController < ApplicationController
     SyncBatch.where(job_id: run.sync_job_id).order(:batch_no).to_a
   rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished
     []
+  end
+
+  def sync_batches_for_runs(runs)
+    job_ids = runs.map(&:sync_job_id).compact
+    return {} if job_ids.empty?
+
+    SyncBatch.where(job_id: job_ids).order(:batch_no).to_a.group_by(&:job_id)
+  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished
+    {}
+  end
+
+  def last_runs_for_integrations(integrations)
+    integration_ids = integrations.map(&:id).compact
+    return {} if integration_ids.empty?
+
+    IntegrationRun
+      .includes(:integration_config)
+      .where(integration_config_id: integration_ids)
+      .select("DISTINCT ON (integration_config_id) integration_runs.*")
+      .order("integration_config_id, created_at DESC")
+      .index_by(&:integration_config_id)
+  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished
+    {}
   end
 
   def integrations_summary
@@ -290,13 +341,14 @@ class IntegrationsController < ApplicationController
     configs = integration ? [integration] : IntegrationConfig.enabled.ordered.to_a
     return empty_lineage_payload if configs.empty?
 
+    aggregates = lineage_aggregates(configs)
     nodes = []
     edges = []
     configs.each do |config|
       source_id = "source-#{config.id}"
       stream_id = "stream-#{config.stream_name.presence || config.slug}"
       destination_id = "destination-#{config.id}"
-      stats = lineage_stats(config)
+      stats = lineage_stats(config, aggregates)
 
       nodes << { id: source_id, label: "#{config.source_type} #{config.stream_name.presence || config.slug}", type: "source", event_count_24h: stats[:event_count_24h], last_seen_at: stats[:last_seen_at] }
       nodes << { id: stream_id, label: config.stream_name.presence || "manual stream", type: "store", row_count: stats[:stream_row_count], last_seen_at: stats[:cursor_updated_at] }
@@ -312,25 +364,56 @@ class IntegrationsController < ApplicationController
     { nodes: [], edges: [] }
   end
 
-  def lineage_stats(config)
-    event_scope = SyncScanIngest.where("observed_at >= ?", 24.hours.ago)
-    event_scope = event_scope.where(stream_name: config.stream_name) if config.stream_name.present?
-    cursor = config.stream_name.present? ? SyncCursor.find_by(stream_name: config.stream_name) : nil
-    runs = config.integration_runs.where("created_at >= ?", 24.hours.ago)
-    total_runs = runs.count
-    failed_runs = runs.failed.count
+  def lineage_aggregates(configs)
+    since = 24.hours.ago
+    streams = configs.filter_map { |config| config.stream_name.presence }
+    event_scope = SyncScanIngest.where("observed_at >= ?", since)
+    run_counts = IntegrationRun.where("created_at >= ?", since).group(:integration_config_id, :status).count
+
+    {
+      event_counts: event_scope.group(:stream_name).count,
+      event_last_seen: event_scope.group(:stream_name).maximum(:observed_at),
+      total_event_count: event_scope.count,
+      total_event_last_seen: event_scope.maximum(:observed_at),
+      run_counts: run_counts,
+      last_run_at: IntegrationRun.where(integration_config_id: configs.map(&:id)).group(:integration_config_id).maximum(:created_at),
+      cursors: streams.empty? ? {} : SyncCursor.where(stream_name: streams).index_by(&:stream_name)
+    }
+  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished
+    nil
+  end
+
+  def lineage_stats(config, aggregates)
+    return fallback_lineage_stats unless aggregates
+
+    if config.stream_name.present?
+      event_count = aggregates[:event_counts].fetch(config.stream_name, 0)
+      last_seen_at = aggregates[:event_last_seen][config.stream_name]
+      cursor = aggregates[:cursors][config.stream_name]
+    else
+      event_count = aggregates[:total_event_count]
+      last_seen_at = aggregates[:total_event_last_seen]
+      cursor = nil
+    end
+
+    total_runs = IntegrationRun::STATUSES.sum do |status|
+      aggregates[:run_counts].fetch([config.id, status], 0)
+    end
+    failed_runs = aggregates[:run_counts].fetch([config.id, "failed"], 0)
     failure_rate = total_runs.zero? ? 0 : (failed_runs.to_f / total_runs)
 
     {
-      event_count_24h: event_scope.count,
-      stream_row_count: event_scope.count,
-      completed_runs_24h: runs.where(status: "completed").count,
-      last_seen_at: event_scope.maximum(:observed_at),
+      event_count_24h: event_count,
+      stream_row_count: event_count,
+      completed_runs_24h: aggregates[:run_counts].fetch([config.id, "completed"], 0),
+      last_seen_at: last_seen_at,
       cursor_updated_at: cursor&.updated_at,
-      last_run_at: config.integration_runs.maximum(:created_at),
+      last_run_at: aggregates[:last_run_at][config.id],
       health: failure_rate > 0.20 ? "error" : (failure_rate >= 0.05 ? "warn" : "ok")
     }
-  rescue ActiveRecord::StatementInvalid, ActiveRecord::ConnectionNotEstablished
+  end
+
+  def fallback_lineage_stats
     {
       event_count_24h: 0,
       stream_row_count: 0,

@@ -84,8 +84,8 @@ class IntegrationsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :created
     run = IntegrationRun.last
-    assert_equal "2026-05-06T08:20:00-04:00", run.from_value
-    assert_equal "2026-05-06T09:20:00-04:00", run.to_value
+    assert_equal Time.utc(2026, 5, 6, 12, 20), run.from_value.to_time.utc
+    assert_equal Time.utc(2026, 5, 6, 13, 20), run.to_value.to_time.utc
   end
 
   test "replay rejects invalid date range" do

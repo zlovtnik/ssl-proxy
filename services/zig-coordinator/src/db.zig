@@ -120,9 +120,13 @@ pub const Client = struct {
         max_attempts: u32,
         backoff_secs: u32,
     ) Error!bool {
-        const stream_names_literal = try self.sqlLiteral(stream_names_csv);
+        const normalized_stream_names = try self.normalizedCsv(stream_names_csv);
+        defer self.allocator.free(normalized_stream_names);
+        const normalized_oracle_stream_names = try self.normalizedCsv(oracle_stream_names_csv);
+        defer self.allocator.free(normalized_oracle_stream_names);
+        const stream_names_literal = try self.sqlLiteral(normalized_stream_names);
         defer self.allocator.free(stream_names_literal);
-        const oracle_stream_names_literal = try self.sqlLiteral(oracle_stream_names_csv);
+        const oracle_stream_names_literal = try self.sqlLiteral(normalized_oracle_stream_names);
         defer self.allocator.free(oracle_stream_names_literal);
         const query = try std.fmt.allocPrint(
             self.allocator,
@@ -166,7 +170,9 @@ pub const Client = struct {
         defer if (payload_literal) |literal| self.allocator.free(literal);
         const sha_literal = try self.sqlLiteral(payload_sha256);
         defer self.allocator.free(sha_literal);
-        const stream_names_literal = try self.sqlLiteral(stream_names_csv);
+        const normalized_stream_names = try self.normalizedCsv(stream_names_csv);
+        defer self.allocator.free(normalized_stream_names);
+        const stream_names_literal = try self.sqlLiteral(normalized_stream_names);
         defer self.allocator.free(stream_names_literal);
         const payload_expr = payload_literal orelse "null";
         const query = try std.fmt.allocPrint(
@@ -200,7 +206,9 @@ pub const Client = struct {
     }
 
     pub fn getNextBatch(self: *Client, oracle_stream_names_csv: []const u8) Error!?[]u8 {
-        const oracle_stream_names_literal = try self.sqlLiteral(oracle_stream_names_csv);
+        const normalized_oracle_stream_names = try self.normalizedCsv(oracle_stream_names_csv);
+        defer self.allocator.free(normalized_oracle_stream_names);
+        const oracle_stream_names_literal = try self.sqlLiteral(normalized_oracle_stream_names);
         defer self.allocator.free(oracle_stream_names_literal);
         const query = try std.fmt.allocPrint(
             self.allocator,
@@ -227,7 +235,9 @@ pub const Client = struct {
         lease_seconds: u32,
         max_attempts: u32,
     ) Error!usize {
-        const oracle_stream_names_literal = try self.sqlLiteral(oracle_stream_names_csv);
+        const normalized_oracle_stream_names = try self.normalizedCsv(oracle_stream_names_csv);
+        defer self.allocator.free(normalized_oracle_stream_names);
+        const oracle_stream_names_literal = try self.sqlLiteral(normalized_oracle_stream_names);
         defer self.allocator.free(oracle_stream_names_literal);
         const query = try std.fmt.allocPrint(
             self.allocator,
@@ -530,5 +540,22 @@ pub const Client = struct {
         try literal.append(self.allocator, '\'');
 
         return literal.toOwnedSlice(self.allocator);
+    }
+
+    fn normalizedCsv(self: *Client, raw: []const u8) Error![]u8 {
+        var normalized = try std.ArrayList(u8).initCapacity(self.allocator, raw.len);
+        defer normalized.deinit(self.allocator);
+
+        var iterator = std.mem.splitScalar(u8, raw, ',');
+        var first = true;
+        while (iterator.next()) |part| {
+            const item = std.mem.trim(u8, part, " \t\r\n");
+            if (item.len == 0) continue;
+            if (!first) try normalized.append(self.allocator, ',');
+            try normalized.appendSlice(self.allocator, item);
+            first = false;
+        }
+
+        return normalized.toOwnedSlice(self.allocator);
     }
 };

@@ -6,30 +6,32 @@
   import { requestJson, errorMessages } from "../lib/api"
   import { toQueryString, updateHistory } from "../lib/url"
 
-  export let initial = {}
+  const { initial = {} } = $props()
+  const initialValue = (key, fallback) => initial[key] ?? fallback
 
-  let rows = initial.rows || []
-  let summary = initial.summary || {}
-  let sortKey = initial.sortKey || "name"
-  let sortDirection = initial.sortDirection || "asc"
-  let currentPage = initial.currentPage || 1
-  let perPage = initial.perPage || 50
-  let totalCount = initial.totalCount || rows.length
-  let loading = false
-  let notice = ""
-  let error = ""
-  let triggerRow = null
-  let triggerRange = { range_type: "cursor", from_value: "", to_value: "" }
-  let triggerError = ""
+  let rows = $state(initialValue("rows", []))
+  let summary = $state(initialValue("summary", {}))
+  let sortKey = $state(initialValue("sortKey", "name"))
+  let sortDirection = $state(initialValue("sortDirection", "asc"))
+  let currentPage = $state(initialValue("currentPage", 1))
+  let perPage = $state(initialValue("perPage", 50))
+  let totalCount = $state(initialValue("totalCount", initialValue("rows", []).length))
+  let loading = $state(false)
+  let notice = $state("")
+  let noticeTimer = null
+  let error = $state("")
+  let triggerRow = $state(null)
+  let triggerRange = $state({ range_type: "cursor", from_value: "", to_value: "" })
+  let triggerError = $state("")
 
-  const endpoints = initial.endpoints || {}
+  const endpoints = initialValue("endpoints", {})
 
-  $: cards = [
+  const cards = $derived([
     { label: "Enabled Integrations", value: summary.total_enabled || 0, status: "neutral", icon: "backlog" },
     { label: "Runs 24h", value: summary.runs_24h || 0, status: "neutral", icon: "audit" },
     { label: "Failed 24h", value: summary.failed_24h || 0, status: summary.failed_24h > 0 ? "alert" : "ok", icon: "alert" },
     { label: "Avg Duration", value: `${summary.avg_duration_24h || 0}s`, status: "neutral", icon: "health" }
-  ]
+  ])
 
   const columns = [
     { key: "name", label: "Name", sortable: true, href: (row) => row.show_url, size: "lg" },
@@ -57,8 +59,18 @@
     fetchPage(true)
   }
 
+  function showNotice(message) {
+    if (noticeTimer) clearTimeout(noticeTimer)
+    notice = message
+    noticeTimer = setTimeout(() => {
+      notice = ""
+      noticeTimer = null
+    }, 4000)
+  }
+
   async function fetchPage(push) {
     loading = true
+    notice = ""
     error = ""
     const query = { sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage }
     if (push) updateHistory(endpoints.index, query)
@@ -77,6 +89,7 @@
   }
 
   function openTrigger(row) {
+    notice = ""
     triggerRow = row
     triggerRange = { range_type: "cursor", from_value: "", to_value: "" }
     triggerError = ""
@@ -103,9 +116,9 @@
     if (!window.confirm(`Disable ${row.name}?`)) return
     try {
       await requestJson(row.delete_url, { method: "DELETE" })
-      notice = "Integration disabled."
       error = ""
       await fetchPage(false)
+      showNotice("Integration disabled.")
     } catch (requestError) {
       error = errorMessages(requestError).join(", ")
     }
@@ -134,12 +147,12 @@
       <div class="w-full max-w-xl rounded-lg border border-(--color-border-strong) bg-(--color-surface) p-4 shadow-lg">
         <div class="mb-3 flex items-center justify-between gap-3">
           <h2 class="text-lg font-semibold">Trigger {triggerRow.name}</h2>
-          <button type="button" class="rounded-md border px-2 py-1 text-sm" on:click={() => triggerRow = null}>Close</button>
+          <button type="button" class="rounded-md border px-2 py-1 text-sm" onclick={() => triggerRow = null}>Close</button>
         </div>
         <RangePicker value={triggerRange} onChange={(value, nextError) => { triggerRange = value; triggerError = nextError }} />
         {#if triggerError}<div class="mt-3 text-sm text-(--color-danger-text)">{triggerError}</div>{/if}
         <div class="mt-4 flex justify-end">
-          <button type="button" class="min-h-9 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-semibold text-(--color-accent-vivid)" disabled={Boolean(triggerError)} on:click={submitTrigger}>Trigger run</button>
+          <button type="button" class="min-h-9 rounded-md border border-(--color-border-strong) px-3 py-2 text-sm font-semibold text-(--color-accent-vivid)" disabled={Boolean(triggerError)} onclick={submitTrigger}>Trigger run</button>
         </div>
       </div>
     </div>

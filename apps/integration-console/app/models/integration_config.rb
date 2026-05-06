@@ -76,12 +76,16 @@ class IntegrationConfig < ApplicationRecord
 
     case field["type"]
     when "integer"
-      Integer(value)
+      validate_integer_param(key, value)
     when "select"
       errors.add(:params, "#{key} must be one of #{Array(field["options"]).join(", ")}") unless Array(field["options"]).include?(value)
     when "boolean"
-      errors.add(:params, "#{key} must be true or false") unless [true, false, "true", "false", "1", "0"].include?(value)
+      errors.add(:params, "#{key} must be true or false") unless [true, false, "true", "false", "1", "0", 1, 0].include?(value)
     end
+  end
+
+  def validate_integer_param(key, value)
+    Integer(value)
   rescue ArgumentError, TypeError
     errors.add(:params, "#{key} must be an integer")
   end

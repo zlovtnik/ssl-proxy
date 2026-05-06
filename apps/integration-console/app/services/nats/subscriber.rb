@@ -18,16 +18,20 @@ module Nats
     end
 
     def run_forever
-      client = @client || NATS.connect(servers: [@url])
-      subscribe_configured(client)
+      owns_client = @client.nil?
+      @client ||= NATS.connect(servers: [@url])
+      subscribe_configured
       sleep
     ensure
-      client&.close unless @client
+      @client&.close if owns_client
+      @client = nil if owns_client
     end
 
-    def subscribe_configured(client)
+    def subscribe_configured
+      raise ArgumentError, "NATS client is required" unless @client
+
       subjects.each do |subject|
-        client.subscribe(subject) { |message| handle(subject, message) }
+        @client.subscribe(subject) { |message| handle(subject, message) }
       end
     end
 
@@ -44,7 +48,7 @@ module Nats
       elsif subject == "audit.threat.shadow_device"
         ActionCable.server.broadcast("sensor_alerts", { alert_type: "shadow_device", payload: payload })
       else
-        ActionCable.server.broadcast("sensor_health", { subject: subject, payload: payload })
+        broadcast_unhandled_subject(subject, payload, sensor_id)
       end
     end
 
@@ -58,6 +62,23 @@ module Nats
       JSON.parse(message.respond_to?(:data) ? message.data : message.to_s)
     rescue JSON::ParserError
       { "raw" => message.to_s }
+    end
+
+    def broadcast_unhandled_subject(subject, payload, sensor_id)
+      integration = integration_for_subject(subject)
+      unless integration
+        Rails.logger.info("Unhandled NATS subject #{subject} for sensor #{sensor_id.presence || "unknown"}")
+        return
+      end
+
+      Rails.logger.info("Forwarding unhandled NATS subject #{subject} for integration #{integration.slug}")
+      ActionCable.server.broadcast("integration:#{integration.slug}", { subject: subject, payload: payload })
+    end
+
+    def integration_for_subject(subject)
+      IntegrationConfig.enabled.where(source_type: "nats").find do |config|
+        config.params.to_h["subject"].to_s.strip == subject
+      end
     end
 
     def update_sensor(payload)
