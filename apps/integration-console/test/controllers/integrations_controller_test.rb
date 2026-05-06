@@ -67,6 +67,27 @@ class IntegrationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "2026-05-06T10:00:00Z", run.from_value
   end
 
+  test "trigger accepts browser datetime local values" do
+    config = IntegrationConfig.create!(name: "Wireless Sync", source_type: "nats", destination_type: "postgres", stream_name: "wireless.audit")
+    publisher = Object.new
+    def publisher.call = true
+
+    IntegrationRunPublisher.stub(:new, ->(_run) { publisher }) do
+      post trigger_integration_url(config), params: {
+        integration_run: {
+          range_type: "datetime",
+          from_value: "2026-05-06T08:20",
+          to_value: "2026-05-06T09:20"
+        }
+      }, as: :json
+    end
+
+    assert_response :created
+    run = IntegrationRun.last
+    assert_equal "2026-05-06T08:20:00-04:00", run.from_value
+    assert_equal "2026-05-06T09:20:00-04:00", run.to_value
+  end
+
   test "replay rejects invalid date range" do
     config = IntegrationConfig.create!(name: "Wireless Sync", source_type: "nats", destination_type: "postgres")
 

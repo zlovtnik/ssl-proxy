@@ -79,13 +79,11 @@ class IntegrationsController < ApplicationController
   end
 
   def trigger
-    run = build_operator_run("manual")
-    publish_run(run)
+    publish_operator_run("manual")
   end
 
   def replay
-    run = build_operator_run("replay")
-    publish_run(run)
+    publish_operator_run("replay")
   end
 
   def param_types
@@ -137,16 +135,42 @@ class IntegrationsController < ApplicationController
     run_params = params.fetch(:integration_run, {}).permit(:range_type, :from_value, :to_value, param_overrides: {}).to_h
     overrides = run_params.fetch("param_overrides", {})
     snapshot = integration.combined_params(overrides)
+    range_type = run_params["range_type"].presence || "cursor"
 
     IntegrationRun.create!(
       integration_config: integration,
       triggered_by: triggered_by,
       status: "pending",
-      range_type: run_params["range_type"].presence || "cursor",
-      from_value: run_params["from_value"].presence,
-      to_value: run_params["to_value"].presence,
+      range_type: range_type,
+      from_value: normalized_range_value(range_type, run_params["from_value"]),
+      to_value: normalized_range_value(range_type, run_params["to_value"]),
       params_snapshot: snapshot
     )
+  end
+
+  def publish_operator_run(triggered_by)
+    run = build_operator_run(triggered_by)
+    publish_run(run)
+  rescue ActiveRecord::RecordInvalid => error
+    render json: { errors: error.record.errors.full_messages, error: error.record.errors.full_messages.to_sentence }, status: :unprocessable_entity
+  end
+
+  def normalized_range_value(range_type, value)
+    value = value.to_s.strip
+    return nil if value.blank?
+    return value unless range_type == "datetime"
+    return value if iso8601_datetime?(value)
+
+    Time.zone.parse(value)&.iso8601 || value
+  rescue ArgumentError
+    value
+  end
+
+  def iso8601_datetime?(value)
+    Time.iso8601(value)
+    true
+  rescue ArgumentError
+    false
   end
 
   def publish_run(run)
