@@ -197,7 +197,16 @@ pub const Client = struct {
         }
     }
 
-    pub fn getNextBatch(self: *Client) Error!?[]u8 {
+    pub fn getNextBatch(self: *Client, oracle_stream_names_csv: []const u8) Error!?[]u8 {
+        const oracle_stream_names_literal = try self.sqlLiteral(oracle_stream_names_csv);
+        defer self.allocator.free(oracle_stream_names_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.get_next_batch(string_to_array({s}, ','))::text;",
+            .{oracle_stream_names_literal},
+        );
+        defer self.allocator.free(query);
+
         const argv = [_][]const u8{
             "psql",
             self.database_url,
@@ -205,7 +214,7 @@ pub const Client = struct {
             "ON_ERROR_STOP=1",
             "-qAt",
             "-c",
-            "select coordinator.get_next_batch()::text;",
+            query,
         };
         return self.runScalar(&argv, "psql", error.NextBatchFetchFailed, false);
     }

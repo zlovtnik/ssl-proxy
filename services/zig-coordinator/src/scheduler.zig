@@ -3,6 +3,7 @@ const command = @import("command.zig");
 const config = @import("config.zig");
 const db = @import("db.zig");
 const logging = @import("logging.zig");
+const nats = @import("nats.zig");
 
 const HEARTBEAT_INTERVAL_MS: u64 = 300 * 1000;
 const SHADOW_AUDIT_INTERVAL_MS: i64 = 10_000;
@@ -26,6 +27,7 @@ pub const Error = error{
     NatsCheckFailed,
     NatsStreamMissing,
     NatsConsumerMissing,
+    NatsConsumerFilterMismatch,
     CursorNotFound,
     ScanFetchFailed,
     ScanIngestFailed,
@@ -276,7 +278,7 @@ pub const Service = struct {
     }
 
     fn dispatchNextBatch(self: *Service) Error!bool {
-        const payload = try self.database.getNextBatch();
+        const payload = try self.database.getNextBatch(self.cfg.oracle_stream_names_csv);
         defer if (payload) |value| self.allocator.free(value);
 
         if (payload) |value| {
@@ -630,7 +632,7 @@ pub const Service = struct {
 
     fn checkNatsConsumers(self: *Service) Error!void {
         try self.checkNatsConsumer(self.cfg.audit_stream_name, self.cfg.scan_consumer);
-        try self.checkNatsConsumer(self.cfg.audit_stream_name, self.cfg.load_consumer);
+        try self.checkNatsConsumerFilter(self.cfg.audit_stream_name, self.cfg.load_consumer, self.cfg.load_subject);
         try self.checkNatsConsumer(self.cfg.result_stream_name, self.cfg.result_consumer);
         try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer);
         try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer);
@@ -664,6 +666,45 @@ pub const Service = struct {
             consumer_name,
         };
         try self.runRequiredCommand(&argv, "nats", error.NatsConsumerMissing);
+    }
+
+    fn checkNatsConsumerFilter(
+        self: *Service,
+        stream_name: []const u8,
+        consumer_name: []const u8,
+        expected_filter: []const u8,
+    ) Error!void {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "info",
+            stream_name,
+            consumer_name,
+            "--json",
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.NatsConsumerMissing;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return error.NatsConsumerMissing;
+        }
+
+        if (!consumerInfoFilterMatches(self.allocator, result.stdout, expected_filter)) {
+            logging.err()
+                .stringSafe("event", "nats_consumer_filter")
+                .stringSafe("status", "error")
+                .string("stream", stream_name)
+                .string("consumer", consumer_name)
+                .string("expected_filter", expected_filter)
+                .log();
+            return error.NatsConsumerFilterMismatch;
+        }
     }
 
     fn scanConsumerHasBacklog(self: *Service) Error!bool {
@@ -775,6 +816,22 @@ pub const Service = struct {
     }
 
     fn publish(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
+        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload) catch |err| {
+            if (err == error.UnsupportedNatsScheme) {
+                try self.publishWithCli(subject, payload, on_error);
+                return;
+            }
+
+            logging.err()
+                .stringSafe("event", "nats_publish_failure")
+                .string("subject", subject)
+                .err(err)
+                .log();
+            return on_error;
+        };
+    }
+
+    fn publishWithCli(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
         const argv = [_][]const u8{
             "nats",
             "--server",
@@ -948,6 +1005,27 @@ fn consumerInfoHasBacklog(stdout: []const u8) bool {
         labeledCountIsPositive(stdout, "Unprocessed Messages:");
 }
 
+fn consumerInfoFilterMatches(
+    allocator: std.mem.Allocator,
+    stdout: []const u8,
+    expected_filter: []const u8,
+) bool {
+    const ConsumerConfig = struct {
+        filter_subject: ?[]const u8 = null,
+    };
+    const ConsumerInfo = struct {
+        config: ConsumerConfig,
+    };
+
+    var parsed = std.json.parseFromSlice(ConsumerInfo, allocator, stdout, .{
+        .ignore_unknown_fields = true,
+    }) catch return false;
+    defer parsed.deinit();
+
+    const actual = parsed.value.config.filter_subject orelse return false;
+    return std.mem.eql(u8, actual, expected_filter);
+}
+
 fn streamNameIsConfigured(stream_names_csv: []const u8, stream_name: []const u8) bool {
     var iterator = std.mem.splitScalar(u8, stream_names_csv, ',');
     while (iterator.next()) |raw_name| {
@@ -1043,6 +1121,31 @@ test "invalidOracleStreamName rejects wireless audit Oracle dispatch" {
 test "invalidOracleStreamName rejects Oracle stream outside configured streams" {
     const invalid = invalidOracleStreamName("wireless.audit", "proxy.events").?;
     try std.testing.expectEqualStrings("proxy.events", invalid);
+}
+
+test "consumerInfoFilterMatches validates load consumer filter" {
+    const json =
+        \\{
+        \\  "name": "oracle-worker-load",
+        \\  "config": {
+        \\    "filter_subject": "sync.oracle.load"
+        \\  }
+        \\}
+    ;
+
+    try std.testing.expect(consumerInfoFilterMatches(std.testing.allocator, json, "sync.oracle.load"));
+    try std.testing.expect(!consumerInfoFilterMatches(std.testing.allocator, json, "wireless.audit"));
+}
+
+test "consumerInfoFilterMatches rejects missing filter" {
+    const json =
+        \\{
+        \\  "name": "oracle-worker-load",
+        \\  "config": {}
+        \\}
+    ;
+
+    try std.testing.expect(!consumerInfoFilterMatches(std.testing.allocator, json, "sync.oracle.load"));
 }
 
 test "resolvePayloadRef decodes inline JSON payloads" {

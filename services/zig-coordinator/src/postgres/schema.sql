@@ -267,7 +267,11 @@ begin
 end;
 $$;
 
-create or replace function coordinator.get_next_batch()
+drop function if exists coordinator.get_next_batch();
+
+create or replace function coordinator.get_next_batch(
+  p_oracle_stream_names text[]
+)
 returns jsonb
 language plpgsql
 as $$
@@ -277,7 +281,13 @@ begin
   with picked as (
     select batch.batch_id
       from sync_batch batch
+      join sync_job job on job.job_id = batch.job_id
      where batch.status = 'pending'
+       and job.stream_name in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+              where btrim(configured.stream_name) <> ''
+           )
      order by batch.batch_id
      limit 1
      for update skip locked
