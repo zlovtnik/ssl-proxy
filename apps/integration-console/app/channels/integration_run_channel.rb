@@ -14,12 +14,18 @@ class IntegrationRunChannel < ApplicationCable::Channel
   private
 
   def authorized_for_run?(run)
-    return authorize(run) if respond_to?(:authorize, true)
+    if respond_to?(:authorize, true)
+      authorize(run)
+      return true
+    end
 
     user = respond_to?(:current_user, true) ? current_user : nil
     return IntegrationRunPolicy.new(user, run).show? if defined?(IntegrationRunPolicy)
     return run.user == user if user && run.respond_to?(:user)
 
     true
+  rescue StandardError => error
+    Rails.logger.warn("IntegrationRunChannel rejected run #{run.id}: #{error.class} - #{error.message}")
+    false
   end
 end
