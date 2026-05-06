@@ -32,7 +32,9 @@ pub fn try_parse_http_preview(
     identity: &ResolvedIdentity,
     config: &PayloadAuditConfig,
 ) -> Option<PayloadAuditRecord> {
-    let preview = std::str::from_utf8(preview).ok()?;
+    let mut redacted_preview = preview.to_vec();
+    crate::payload_redaction::redact_sensitive_data(&mut redacted_preview);
+    let preview = std::str::from_utf8(&redacted_preview).ok()?;
     let mut lines = preview.lines();
     let request_line = lines.next()?.trim_end_matches('\r');
     let mut request_parts = request_line.split_whitespace();
@@ -348,6 +350,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(record.body["_raw"], "not-json");
+    }
+
+    #[test]
+    fn applies_byte_redaction_before_json_fallback() {
+        let record = try_parse_http_preview(
+            &preview(
+                "POST",
+                "/login",
+                "application/json",
+                r#"{"message":"Bearer raw-secret"}"#,
+            ),
+            "example.com",
+            &identity(),
+            &config(),
+        )
+        .unwrap();
+
+        assert_eq!(record.body["message"], "Bearer **********");
     }
 
     #[test]

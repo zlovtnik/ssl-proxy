@@ -17,16 +17,13 @@ use hyper_util::rt::TokioIo;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info};
 
-use crate::{
-    blocklist,
-    events::{self, EmitPayload},
-    obfuscation,
-    state::SharedState,
-};
+use crate::{blocklist, events, obfuscation, state::SharedState};
 
+use super::audit_event::TunnelAuditContext;
 use super::classify::{classify, is_cert_pinned_host};
 use super::dial::{dial_upstream_with_resolver, parse_host_port};
 use super::tarpit::run_tarpit;
+use super::tls::consume_tls_prefix;
 
 /// Handle an explicit HTTP CONNECT request.
 pub async fn handle(
@@ -225,6 +222,11 @@ pub async fn handle(
             match dial_upstream_with_resolver(&state, &host).await {
                 Ok((mut upstream, resolved_ips, selected_ip)) => {
                     set_keepalive(&upstream);
+                    let prefix = consume_tls_prefix(&mut client_io).await.unwrap_or_default();
+                    let context =
+                        TunnelAuditContext::bypass("bypass", category, "certificate_pinning")
+                            .with_resolution(resolved_ips.clone(), selected_ip.clone())
+                            .with_tls(prefix.tls);
                     state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
                     info!(
                         target: "audit",
@@ -238,37 +240,30 @@ pub async fn handle(
                         reason = "certificate_pinning",
                         "bypass tunnel established"
                     );
-                    events::emit(
-                        &state,
-                        "tunnel_open",
-                        &host,
-                        EmitPayload {
-                            peer_ip: identity.peer_ip.clone(),
-                            wg_pubkey: identity.wg_pubkey.clone(),
-                            device_id: identity.device_id.clone(),
-                            identity_source: identity.identity_source.clone(),
-                            peer_hostname: identity.peer_hostname.clone(),
-                            client_ua: identity.client_ua.clone(),
-                            bytes_up: 0,
-                            bytes_down: 0,
-                            status_code: None,
-                            blocked: false,
-                            obfuscation_profile: Some("none".to_string()),
-                            extra: serde_json::json!({
-                                "kind":                "bypass",
-                                "category":            category,
-                                "resolved_ips":        resolved_ips,
-                                "selected_ip":         selected_ip,
-                                "obfuscation_profile": "none",
-                                "bypass_reason":       "certificate_pinning",
-                            }),
-                        },
-                    );
+                    context.emit_open(&state, &host, &identity);
+
+                    let prefix_up = prefix.bytes.len() as u64;
+                    if !prefix.bytes.is_empty() {
+                        if let Err(e) = upstream.write_all(&prefix.bytes).await {
+                            debug!(%host, %e, "bypass tunnel prefix write failed");
+                            context.emit_close(
+                                &state,
+                                &host,
+                                &identity,
+                                prefix_up,
+                                0,
+                                start.elapsed(),
+                                None,
+                            );
+                            return;
+                        }
+                    }
 
                     let (bytes_up, bytes_down) =
                         tokio::io::copy_bidirectional(&mut client_io, &mut upstream)
                             .await
                             .unwrap_or((0, 0));
+                    let bytes_up = bytes_up + prefix_up;
                     state.record_tunnel_close_for_peer(
                         identity.wg_pubkey.as_deref(),
                         bytes_up,
@@ -288,33 +283,14 @@ pub async fn handle(
                         reason = "certificate_pinning",
                         "bypass tunnel closed"
                     );
-                    events::emit(
+                    context.emit_close(
                         &state,
-                        "tunnel_close",
                         &host,
-                        EmitPayload {
-                            peer_ip: identity.peer_ip.clone(),
-                            wg_pubkey: identity.wg_pubkey.clone(),
-                            device_id: identity.device_id.clone(),
-                            identity_source: identity.identity_source.clone(),
-                            peer_hostname: identity.peer_hostname.clone(),
-                            client_ua: identity.client_ua.clone(),
-                            bytes_up,
-                            bytes_down,
-                            status_code: None,
-                            blocked: false,
-                            obfuscation_profile: Some("none".to_string()),
-                            extra: serde_json::json!({
-                                "kind":                "bypass",
-                                "category":            category,
-                                "bytes_up":            bytes_up,
-                                "bytes_down":          bytes_down,
-                                "duration_ms":         start.elapsed().as_millis(),
-                                "selected_ip":         selected_ip,
-                                "obfuscation_profile": "none",
-                                "bypass_reason":       "certificate_pinning",
-                            }),
-                        },
+                        &identity,
+                        bytes_up,
+                        bytes_down,
+                        start.elapsed(),
+                        None,
                     );
                 }
                 Err(e) => {
@@ -399,6 +375,10 @@ pub(crate) async fn run_tunnel(
         Ok((mut upstream, resolved_ips, selected_ip)) => {
             set_keepalive(&upstream);
             let start = Instant::now();
+            let prefix = consume_tls_prefix(&mut client).await.unwrap_or_default();
+            let context = TunnelAuditContext::new("connect", category, None, profile)
+                .with_resolution(resolved_ips.clone(), selected_ip.clone())
+                .with_tls(prefix.tls);
             info!(
                 target: "audit",
                 event = "tunnel_open",
@@ -423,38 +403,30 @@ pub(crate) async fn run_tunnel(
                 );
             }
 
-            events::emit(
-                &state,
-                "tunnel_open",
-                &host,
-                EmitPayload {
-                    peer_ip: identity.peer_ip.clone(),
-                    wg_pubkey: identity.wg_pubkey.clone(),
-                    device_id: identity.device_id.clone(),
-                    identity_source: identity.identity_source.clone(),
-                    peer_hostname: identity.peer_hostname.clone(),
-                    client_ua: identity.client_ua.clone(),
-                    bytes_up: 0,
-                    bytes_down: 0,
-                    status_code: None,
-                    blocked: false,
-                    obfuscation_profile: if matches!(profile, crate::obfuscation::Profile::None) {
-                        None
-                    } else {
-                        Some(profile.as_str().to_string())
-                    },
-                    extra: serde_json::json!({
-                        "kind":             "connect",
-                        "category":         category,
-                        "resolved_ips":     resolved_ips,
-                        "selected_ip":      selected_ip,
-                        "obfuscation_profile": profile.as_str(),
-                    }),
-                },
-            );
+            context.emit_open(&state, &host, &identity);
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
+
+            let prefix_up = prefix.bytes.len() as u64;
+            if !prefix.bytes.is_empty() {
+                if let Err(e) = upstream.write_all(&prefix.bytes).await {
+                    state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), prefix_up, 0);
+                    context.emit_close(
+                        &state,
+                        &host,
+                        &identity,
+                        prefix_up,
+                        0,
+                        start.elapsed(),
+                        None,
+                    );
+                    debug!(%host, %e, "connect tunnel prefix write failed");
+                    return;
+                }
+            }
+
             match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
                 Ok((up, down)) => {
+                    let up = up + prefix_up;
                     state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
                     info!(
                         target: "audit",
@@ -467,41 +439,19 @@ pub(crate) async fn run_tunnel(
                         category,
                         "tunnel closed"
                     );
-                    events::emit(
-                        &state,
-                        "tunnel_close",
-                        &host,
-                        EmitPayload {
-                            peer_ip: identity.peer_ip.clone(),
-                            wg_pubkey: identity.wg_pubkey.clone(),
-                            device_id: identity.device_id.clone(),
-                            identity_source: identity.identity_source.clone(),
-                            peer_hostname: identity.peer_hostname.clone(),
-                            client_ua: identity.client_ua.clone(),
-                            bytes_up: up,
-                            bytes_down: down,
-                            status_code: None,
-                            blocked: false,
-                            obfuscation_profile: if matches!(
-                                profile,
-                                crate::obfuscation::Profile::None
-                            ) {
-                                None
-                            } else {
-                                Some(profile.as_str().to_string())
-                            },
-                            extra: serde_json::json!({
-                                "kind":        "connect",
-                                "category":    category,
-                                "bytes_up":    up,
-                                "bytes_down":  down,
-                                "duration_ms": start.elapsed().as_millis(),
-                            }),
-                        },
-                    );
+                    context.emit_close(&state, &host, &identity, up, down, start.elapsed(), None);
                 }
                 Err(e) => {
-                    state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), 0, 0);
+                    state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), prefix_up, 0);
+                    context.emit_close(
+                        &state,
+                        &host,
+                        &identity,
+                        prefix_up,
+                        0,
+                        start.elapsed(),
+                        None,
+                    );
                     debug!(%host, %e, "tunnel closed by peer");
                 }
             }

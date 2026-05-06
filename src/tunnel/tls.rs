@@ -5,7 +5,10 @@
 //! and audit output. They do not terminate TLS or modify the connection.
 
 use std::fmt::Write;
+use std::io;
 use std::time::{Duration, Instant};
+
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Hold parsed TLS fingerprint details for a prospective tunnel.
 ///
@@ -89,8 +92,32 @@ pub(crate) async fn peek_tls_info(stream: &mut tokio::net::TcpStream) -> TlsInfo
     }
 }
 
+/// Prefix bytes consumed from a stream that cannot be non-destructively peeked.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ConsumedTlsPrefix {
+    pub(crate) tls: TlsInfo,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Read a bounded first chunk, parse TLS metadata, and return bytes for replay.
+pub(crate) async fn consume_tls_prefix<R>(stream: &mut R) -> io::Result<ConsumedTlsPrefix>
+where
+    R: AsyncRead + Unpin,
+{
+    const MAX_PREFIX_BYTES: usize = 8192;
+    const TIMEOUT: Duration = Duration::from_millis(500);
+
+    let mut bytes = vec![0u8; MAX_PREFIX_BYTES];
+    let n = match tokio::time::timeout(TIMEOUT, stream.read(&mut bytes)).await {
+        Ok(result) => result?,
+        Err(_) => 0,
+    };
+    bytes.truncate(n);
+    let tls = parse_tls_info(&bytes);
+    Ok(ConsumedTlsPrefix { tls, bytes })
+}
+
 /// Parse ClientHello metadata from a TLS record without panicking.
-#[cfg(test)]
 pub(crate) fn parse_tls_info(buf: &[u8]) -> TlsInfo {
     match parse_tls_info_status(buf) {
         ParseTlsInfoStatus::Complete(info) => info,
@@ -312,7 +339,7 @@ fn append_joined_u8(out: &mut String, values: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_tls_info, parse_tls_info_status, ParseTlsInfoStatus};
+    use super::{consume_tls_prefix, parse_tls_info, parse_tls_info_status, ParseTlsInfoStatus};
 
     fn crafted_client_hello() -> Vec<u8> {
         let sni = b"example.com";
@@ -456,5 +483,43 @@ mod tests {
             ParseTlsInfoStatus::Incomplete
         ));
         assert_eq!(parse_tls_info(partial).sni, None);
+    }
+
+    #[tokio::test]
+    async fn consumes_tls_prefix_without_dropping_bytes() {
+        let client_hello = crafted_client_hello();
+        let (mut client, mut server) = tokio::io::duplex(16_384);
+        let expected = client_hello.clone();
+
+        let writer = tokio::spawn(async move {
+            tokio::io::AsyncWriteExt::write_all(&mut client, &client_hello)
+                .await
+                .unwrap();
+        });
+
+        let prefix = consume_tls_prefix(&mut server).await.unwrap();
+        writer.await.unwrap();
+
+        assert_eq!(prefix.bytes, expected);
+        assert_eq!(prefix.tls.sni.as_deref(), Some("example.com"));
+        assert_eq!(prefix.tls.alpn.as_deref(), Some("h2"));
+    }
+
+    #[tokio::test]
+    async fn consumes_non_tls_prefix_with_empty_metadata() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+
+        let writer = tokio::spawn(async move {
+            tokio::io::AsyncWriteExt::write_all(&mut client, b"GET / HTTP/1.1\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let prefix = consume_tls_prefix(&mut server).await.unwrap();
+        writer.await.unwrap();
+
+        assert_eq!(prefix.bytes, b"GET / HTTP/1.1\r\n\r\n");
+        assert_eq!(prefix.tls.sni, None);
+        assert_eq!(prefix.tls.ja3_lite, None);
     }
 }

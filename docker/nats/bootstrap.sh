@@ -24,6 +24,7 @@ ensure_stream() {
     set +e
     edit_output=$(nats --server "${NATS_URL}" str edit "${stream_name}" \
       --force \
+      --no-confirm \
       --subjects "${subjects}" \
       --max-age="${max_age}" 2>&1)
     edit_status=$?
@@ -58,10 +59,12 @@ ensure_consumer() {
   nats --server "${NATS_URL}" consumer "${action}" "${stream_name}" "${consumer_name}" \
     --filter "${filter_subject}" \
     --max-deliver=-1 \
-    --deliver all \
+    --deliver-all \
     --replay instant \
     --pull \
-    --wait=5s
+    --ack-policy explicit \
+    --wait=5s \
+    --no-confirm
 }
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
@@ -72,6 +75,7 @@ if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
   set +e
   edit_output=$(nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
     --force \
+    --no-confirm \
     --subjects "${SUBJECTS}" \
     --max-age=720h 2>&1)
   edit_status=$?
@@ -118,6 +122,7 @@ if nats --server "${NATS_URL}" str info "${RESULT_STREAM_NAME}" >/dev/null 2>&1;
   set +e
   result_edit_output=$(nats --server "${NATS_URL}" str edit "${RESULT_STREAM_NAME}" \
     --force \
+    --no-confirm \
     --subjects "${RESULT_SUBJECT}" \
     --max-age=720h 2>&1)
   result_edit_status=$?
