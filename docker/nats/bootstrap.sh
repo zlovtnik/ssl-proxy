@@ -24,7 +24,6 @@ ensure_stream() {
     set +e
     edit_output=$(nats --server "${NATS_URL}" str edit "${stream_name}" \
       --force \
-      --no-confirm \
       --subjects "${subjects}" \
       --max-age="${max_age}" 2>&1)
     edit_status=$?
@@ -52,11 +51,11 @@ ensure_consumer() {
   stream_name="$1"
   consumer_name="$2"
   filter_subject="$3"
-  action="add"
-  if nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" >/dev/null 2>&1; then
-    action="edit"
-  fi
-  nats --server "${NATS_URL}" consumer "${action}" "${stream_name}" "${consumer_name}" \
+
+  # Always delete and re-add: consumer edit doesn't support the flags we need
+  nats --server "${NATS_URL}" consumer rm "${stream_name}" "${consumer_name}" -f 2>/dev/null || true
+
+  nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
     --filter "${filter_subject}" \
     --max-deliver=-1 \
     --deliver-all \
@@ -75,7 +74,6 @@ if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
   set +e
   edit_output=$(nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
     --force \
-    --no-confirm \
     --subjects "${SUBJECTS}" \
     --max-age=720h 2>&1)
   edit_status=$?
@@ -122,7 +120,6 @@ if nats --server "${NATS_URL}" str info "${RESULT_STREAM_NAME}" >/dev/null 2>&1;
   set +e
   result_edit_output=$(nats --server "${NATS_URL}" str edit "${RESULT_STREAM_NAME}" \
     --force \
-    --no-confirm \
     --subjects "${RESULT_SUBJECT}" \
     --max-age=720h 2>&1)
   result_edit_status=$?
