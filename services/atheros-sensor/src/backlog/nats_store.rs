@@ -1,6 +1,13 @@
 //! NATS-backed wireless backlog and lookup store.
 
-use std::{io::Cursor, sync::Arc, time::Duration};
+use std::{
+    io::Cursor,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -18,33 +25,42 @@ use super::store::{
 };
 use crate::publish::PublishClient;
 
-const WIRELESS_AUDIT_SUBJECT: &str = "wireless.audit";
-const BACKLOG_SAVE_SUBJECT: &str = "wireless.backlog.save";
-const BACKLOG_LIST_SUBJECT: &str = "wireless.backlog.list";
-const BACKLOG_LIST_REPLY_SUBJECT: &str = "wireless.backlog.list.reply";
-const BACKLOG_SYNCED_SUBJECT: &str = "wireless.backlog.synced";
-const BACKLOG_PRUNE_SUBJECT: &str = "wireless.backlog.prune";
-const BACKLOG_PRUNE_REPLY_SUBJECT: &str = "wireless.backlog.prune.reply";
-const MAC_LOOKUP_SUBJECT: &str = "wireless.mac.lookup";
-const MAC_LOOKUP_REPLY_SUBJECT: &str = "wireless.mac.lookup.reply";
-const AUTHORIZED_NETWORKS_SUBJECT: &str = "wireless.networks.authorized";
-const AUTHORIZED_NETWORKS_REPLY_SUBJECT: &str = "wireless.networks.authorized.reply";
-const PROBE_FLUSH_SUBJECT: &str = "wireless.probe.flush";
+const WIRELESS_AUDIT_SUBJECT: &str = "sync.scan.request";
+const BACKLOG_SAVE_SUBJECT: &str = "sync.oracle.load";
+const BACKLOG_LIST_SUBJECT: &str = "sync.oracle.load";
+const BACKLOG_SYNCED_SUBJECT: &str = "sync.oracle.result";
+const BACKLOG_PRUNE_SUBJECT: &str = "sync.oracle.load";
+const MAC_LOOKUP_SUBJECT: &str = "sync.oracle.load";
+const AUTHORIZED_NETWORKS_SUBJECT: &str = "sync.oracle.load";
+const PROBE_FLUSH_SUBJECT: &str = "sync.oracle.load";
+static NEXT_INBOX_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub struct NatsBacklog {
     publisher: Arc<dyn PublishClient>,
     sync: SyncConfig,
     request_timeout: Duration,
+    tls_client_config: Option<Arc<rustls::ClientConfig>>,
+    tls_connector: Option<TlsConnector>,
 }
 
 impl NatsBacklog {
-    pub fn new(publisher: Arc<dyn PublishClient>, sync: SyncConfig) -> Self {
-        Self {
+    pub fn new(publisher: Arc<dyn PublishClient>, sync: SyncConfig) -> Result<Self, BacklogError> {
+        let tls_client_config =
+            build_tls_client_config(&sync).map_err(|message| BacklogError::Nats {
+                operation: "initialize_nats_backlog",
+                message,
+            })?;
+        let tls_connector = tls_client_config
+            .as_ref()
+            .map(|config| TlsConnector::from(Arc::clone(config)));
+        Ok(Self {
             publisher,
             sync,
             request_timeout: Duration::from_secs(5),
-        }
+            tls_client_config,
+            tls_connector,
+        })
     }
 
     pub async fn lookup_device_by_mac(
@@ -66,7 +82,6 @@ impl NatsBacklog {
             .request(
                 "lookup_device_by_mac",
                 MAC_LOOKUP_SUBJECT,
-                MAC_LOOKUP_REPLY_SUBJECT,
                 &payload,
             )
             .await?;
@@ -90,7 +105,6 @@ impl NatsBacklog {
             .request(
                 "list_authorized_wireless_networks",
                 AUTHORIZED_NETWORKS_SUBJECT,
-                AUTHORIZED_NETWORKS_REPLY_SUBJECT,
                 "{}",
             )
             .await?;
@@ -129,18 +143,19 @@ impl NatsBacklog {
         &self,
         operation: &'static str,
         subject: &'static str,
-        reply_subject: &'static str,
         payload: &str,
     ) -> Result<String, BacklogError> {
         let Some(nats_url) = self.sync.nats_url.as_deref() else {
             return Err(BacklogError::Disabled { operation });
         };
+        let reply_subject = next_inbox_subject();
         request_once(
             &self.sync,
+            self.tls_connector.as_ref(),
             nats_url,
             operation,
             subject,
-            reply_subject,
+            &reply_subject,
             payload,
             self.request_timeout,
         )
@@ -171,7 +186,31 @@ impl BacklogStore for NatsBacklog {
             event_kind = record.event_kind,
             "publishing wireless audit ingest over NATS"
         );
-        self.publish(WIRELESS_AUDIT_SUBJECT, record.payload).await
+        #[derive(Serialize)]
+        struct IngestEnvelope<'a> {
+            dedupe_key: &'a str,
+            stream_name: &'a str,
+            observed_at: chrono::DateTime<chrono::Utc>,
+            payload_ref: &'a str,
+            payload: &'a str,
+            payload_sha256: &'a str,
+            producer: &'a str,
+            event_kind: Option<&'a str>,
+        }
+        let payload = serialize(
+            "record_ingest",
+            &IngestEnvelope {
+                dedupe_key: record.dedupe_key,
+                stream_name: record.stream_name,
+                observed_at: record.observed_at,
+                payload_ref: record.payload_ref,
+                payload: record.payload,
+                payload_sha256: record.payload_sha256,
+                producer: record.producer,
+                event_kind: record.event_kind,
+            },
+        )?;
+        self.publish(WIRELESS_AUDIT_SUBJECT, &payload).await
     }
 
     async fn save_pending(
@@ -183,6 +222,7 @@ impl BacklogStore for NatsBacklog {
     ) -> Result<(), BacklogError> {
         #[derive(Serialize)]
         struct Message<'a> {
+            operation: &'static str,
             dedupe_key: &'a str,
             stream_name: &'a str,
             payload: &'a str,
@@ -191,6 +231,7 @@ impl BacklogStore for NatsBacklog {
         let payload = serialize(
             "save_pending",
             &Message {
+                operation: "save_pending",
                 dedupe_key,
                 stream_name,
                 payload,
@@ -202,12 +243,7 @@ impl BacklogStore for NatsBacklog {
 
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
         let response = self
-            .request(
-                "list_pending",
-                BACKLOG_LIST_SUBJECT,
-                BACKLOG_LIST_REPLY_SUBJECT,
-                "{}",
-            )
+            .request("list_pending", BACKLOG_LIST_SUBJECT, r#"{"operation":"list_pending"}"#)
             .await?;
         serde_json::from_str(&response).map_err(|source| BacklogError::Deserialize {
             operation: "list_pending",
@@ -218,9 +254,16 @@ impl BacklogStore for NatsBacklog {
     async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError> {
         #[derive(Serialize)]
         struct Message<'a> {
+            operation: &'static str,
             dedupe_key: &'a str,
         }
-        let payload = serialize("mark_synced", &Message { dedupe_key })?;
+        let payload = serialize(
+            "mark_synced",
+            &Message {
+                operation: "mark_synced",
+                dedupe_key,
+            },
+        )?;
         self.publish(BACKLOG_SYNCED_SUBJECT, &payload).await
     }
 
@@ -231,6 +274,7 @@ impl BacklogStore for NatsBacklog {
     ) -> Result<u64, BacklogError> {
         #[derive(Serialize)]
         struct Message {
+            operation: &'static str,
             max_attempts: i32,
             max_age_hours: i64,
         }
@@ -241,17 +285,13 @@ impl BacklogStore for NatsBacklog {
         let payload = serialize(
             "prune_stale",
             &Message {
+                operation: "prune_stale",
                 max_attempts,
                 max_age_hours,
             },
         )?;
         let response = self
-            .request(
-                "prune_stale",
-                BACKLOG_PRUNE_SUBJECT,
-                BACKLOG_PRUNE_REPLY_SUBJECT,
-                &payload,
-            )
+            .request("prune_stale", BACKLOG_PRUNE_SUBJECT, &payload)
             .await?;
         let parsed: PruneResult =
             serde_json::from_str(&response).map_err(|source| BacklogError::Deserialize {
@@ -291,6 +331,7 @@ fn serialize<T: Serialize>(operation: &'static str, value: &T) -> Result<String,
 
 async fn request_once(
     sync: &SyncConfig,
+    tls_connector: Option<&TlsConnector>,
     nats_url: &str,
     operation: &'static str,
     subject: &str,
@@ -308,9 +349,13 @@ async fn request_once(
         .map_err(|source| BacklogError::Nats {
             operation,
             message: format!("connect {}: {source}", endpoint.address),
-        })?;
+    })?;
     let stream: Box<dyn NatsStream> = if sync.tls_enabled || endpoint.tls_enabled {
-        let stream = connect_tls(sync, endpoint.host.as_str(), tcp_stream)
+        let connector = tls_connector.ok_or_else(|| BacklogError::Nats {
+            operation,
+            message: "NATS TLS connector was not initialized".to_string(),
+        })?;
+        let stream = connect_tls(connector, sync, endpoint.host.as_str(), tcp_stream)
             .await
             .map_err(|message| BacklogError::Nats { operation, message })?;
         Box::new(stream)
@@ -321,13 +366,19 @@ async fn request_once(
     let mut reader = BufReader::new(read_half);
 
     let mut line = String::new();
-    timeout(request_timeout, reader.read_line(&mut line))
+    let info_bytes = timeout(request_timeout, reader.read_line(&mut line))
         .await
         .map_err(|_| BacklogError::Timeout { operation })?
         .map_err(|source| BacklogError::Nats {
             operation,
             message: format!("read INFO: {source}"),
         })?;
+    if info_bytes == 0 || line.trim_end().is_empty() {
+        return Err(BacklogError::Nats {
+            operation,
+            message: "unexpected EOF while reading INFO".to_string(),
+        });
+    }
     if !line.starts_with("INFO ") {
         return Err(BacklogError::Nats {
             operation,
@@ -387,7 +438,7 @@ async fn request_once(
 
     loop {
         line.clear();
-        timeout(request_timeout, reader.read_line(&mut line))
+        let reply_bytes = timeout(request_timeout, reader.read_line(&mut line))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
             .map_err(|source| BacklogError::Nats {
@@ -395,6 +446,12 @@ async fn request_once(
                 message: format!("read reply: {source}"),
             })?;
         let trimmed = line.trim_end();
+        if reply_bytes == 0 || trimmed.is_empty() {
+            return Err(BacklogError::Nats {
+                operation,
+                message: "unexpected EOF while reading reply".to_string(),
+            });
+        }
         if trimmed == "PING" {
             timeout(request_timeout, write_half.write_all(b"PONG\r\n"))
                 .await
@@ -466,6 +523,11 @@ async fn request_once(
     }
 }
 
+fn next_inbox_subject() -> String {
+    let id = NEXT_INBOX_ID.fetch_add(1, Ordering::Relaxed);
+    format!("_INBOX.ssl_proxy.{}.{}", std::process::id(), id)
+}
+
 trait NatsStream: AsyncRead + AsyncWrite + Unpin + Send {}
 
 impl<T> NatsStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -529,11 +591,16 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
     })
 }
 
-async fn connect_tls(
-    sync: &SyncConfig,
-    host: &str,
-    stream: TcpStream,
-) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
+fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::ClientConfig>>, String> {
+    let tls_required = sync.tls_enabled
+        || sync
+            .nats_url
+            .as_deref()
+            .is_some_and(|url| url.trim().starts_with("tls://"));
+    if !tls_required {
+        return Ok(None);
+    }
+
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let mut roots = rustls::RootCertStore::empty();
@@ -575,7 +642,15 @@ async fn connect_tls(
         builder.with_no_client_auth()
     };
 
-    let connector = TlsConnector::from(Arc::new(client_config));
+    Ok(Some(Arc::new(client_config)))
+}
+
+async fn connect_tls(
+    connector: &TlsConnector,
+    sync: &SyncConfig,
+    host: &str,
+    stream: TcpStream,
+) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
     let server_name = sync
         .tls_server_name
         .clone()

@@ -177,13 +177,27 @@ pub const Service = struct {
         had_work = (try self.dispatchNextBatch()) or had_work;
         had_work = (try self.handleResults()) or had_work;
         had_work = (try self.runShadowAudit()) or had_work;
-        had_work = (try self.handleBacklogSave()) or had_work;
-        had_work = (try self.handleBacklogList()) or had_work;
-        had_work = (try self.handleBacklogSynced()) or had_work;
-        had_work = (try self.handleBacklogPrune()) or had_work;
-        had_work = (try self.handleMacLookup()) or had_work;
-        had_work = (try self.handleNetworksAuthorized()) or had_work;
-        had_work = (try self.handleProbeFlush()) or had_work;
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer)) {
+            had_work = (try self.handleBacklogSave()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer)) {
+            had_work = (try self.handleBacklogList()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_synced_consumer)) {
+            had_work = (try self.handleBacklogSynced()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer)) {
+            had_work = (try self.handleBacklogPrune()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_mac_stream_name, self.cfg.wireless_mac_lookup_consumer)) {
+            had_work = (try self.handleMacLookup()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer)) {
+            had_work = (try self.handleNetworksAuthorized()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_probe_stream_name, self.cfg.wireless_probe_flush_consumer)) {
+            had_work = (try self.handleProbeFlush()) or had_work;
+        }
         return had_work;
     }
 
@@ -322,7 +336,7 @@ pub const Service = struct {
     }
 
     fn handleBacklogSave(self: *Service) Error!bool {
-        const msg = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-save");
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer);
         defer if (msg) |m| self.allocator.free(m);
         if (msg) |payload| {
             self.database.saveBacklogEntry(payload) catch |err| {
@@ -343,7 +357,7 @@ pub const Service = struct {
     }
 
     fn handleBacklogList(self: *Service) Error!bool {
-        const req = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-list");
+        const req = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer);
         defer if (req) |m| self.allocator.free(m);
         if (req != null) {
             const list = self.database.listPendingBacklog() catch |err| {
@@ -356,7 +370,7 @@ pub const Service = struct {
             };
             defer if (list) |l| self.allocator.free(l);
             if (list) |payload| {
-                try self.publish("wireless.backlog.list.reply", payload, error.AlertPublishFailed);
+                try self.publish(self.cfg.wireless_backlog_list_reply_subject, payload, error.AlertPublishFailed);
                 logging.info()
                     .stringSafe("event", "backlog_list")
                     .stringSafe("status", "ok")
@@ -369,7 +383,7 @@ pub const Service = struct {
     }
 
     fn handleBacklogSynced(self: *Service) Error!bool {
-        const msg = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-synced");
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_synced_consumer);
         defer if (msg) |m| self.allocator.free(m);
         if (msg) |payload| {
             var parsed = std.json.parseFromSlice(
@@ -406,7 +420,7 @@ pub const Service = struct {
     }
 
     fn handleBacklogPrune(self: *Service) Error!bool {
-        const msg = try self.pullWirelessMessage("WIRELESS_BACKLOG_STREAM", "wireless-backlog-prune");
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer);
         defer if (msg) |m| self.allocator.free(m);
         if (msg != null) {
             const deleted = self.database.pruneBacklog() catch |err| {
@@ -423,7 +437,7 @@ pub const Service = struct {
                 return error.BacklogOperationFailed;
             };
             defer self.allocator.free(reply);
-            try self.publish("wireless.backlog.prune.reply", reply, error.AlertPublishFailed);
+            try self.publish(self.cfg.wireless_backlog_prune_reply_subject, reply, error.AlertPublishFailed);
             logging.info()
                 .stringSafe("event", "backlog_prune")
                 .stringSafe("status", "ok")
@@ -435,7 +449,7 @@ pub const Service = struct {
     }
 
     fn handleMacLookup(self: *Service) Error!bool {
-        const req = try self.pullWirelessMessage("WIRELESS_MAC_STREAM", "wireless-mac-lookup");
+        const req = try self.pullWirelessMessage(self.cfg.wireless_mac_stream_name, self.cfg.wireless_mac_lookup_consumer);
         defer if (req) |m| self.allocator.free(m);
         if (req) |payload| {
             var parsed = std.json.parseFromSlice(
@@ -463,7 +477,7 @@ pub const Service = struct {
             };
             defer if (result) |r| self.allocator.free(r);
             const reply = result orelse "null";
-            try self.publish("wireless.mac.lookup.reply", reply, error.AlertPublishFailed);
+            try self.publish(self.cfg.wireless_mac_lookup_reply_subject, reply, error.AlertPublishFailed);
             logging.info()
                 .stringSafe("event", "mac_lookup")
                 .stringSafe("status", "ok")
@@ -476,7 +490,7 @@ pub const Service = struct {
     }
 
     fn handleNetworksAuthorized(self: *Service) Error!bool {
-        const req = try self.pullWirelessMessage("WIRELESS_NETWORKS_STREAM", "wireless-networks-authorized");
+        const req = try self.pullWirelessMessage(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer);
         defer if (req) |m| self.allocator.free(m);
         if (req != null) {
             const list = self.database.listAuthorizedNetworks() catch |err| {
@@ -489,7 +503,7 @@ pub const Service = struct {
             };
             defer if (list) |l| self.allocator.free(l);
             if (list) |payload| {
-                try self.publish("wireless.networks.authorized.reply", payload, error.AlertPublishFailed);
+                try self.publish(self.cfg.wireless_networks_authorized_reply_subject, payload, error.AlertPublishFailed);
                 logging.info()
                     .stringSafe("event", "networks_authorized")
                     .stringSafe("status", "ok")
@@ -502,7 +516,7 @@ pub const Service = struct {
     }
 
     fn handleProbeFlush(self: *Service) Error!bool {
-        const msg = try self.pullWirelessMessage("WIRELESS_PROBE_STREAM", "wireless-probe-flush");
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_probe_stream_name, self.cfg.wireless_probe_flush_consumer);
         defer if (msg) |m| self.allocator.free(m);
         if (msg) |payload| {
             self.database.flushProbeBatch(payload) catch |err| {
@@ -553,6 +567,30 @@ pub const Service = struct {
         return self.allocator.dupe(u8, output) catch error.WirelessMessageFailed;
     }
 
+    fn wirelessConsumerHasBacklog(self: *Service, stream: []const u8, consumer: []const u8) Error!bool {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "info",
+            stream,
+            consumer,
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.WirelessMessageFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return error.WirelessMessageFailed;
+        }
+
+        return consumerInfoHasBacklog(result.stdout);
+    }
+
     fn applySchema(self: *Service) Error!void {
         try self.database.applySchema();
     }
@@ -584,12 +622,23 @@ pub const Service = struct {
     fn checkNatsStreams(self: *Service) Error!void {
         try self.checkNatsStream(self.cfg.audit_stream_name);
         try self.checkNatsStream(self.cfg.result_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_backlog_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_mac_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_networks_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_probe_stream_name);
     }
 
     fn checkNatsConsumers(self: *Service) Error!void {
         try self.checkNatsConsumer(self.cfg.audit_stream_name, self.cfg.scan_consumer);
         try self.checkNatsConsumer(self.cfg.audit_stream_name, self.cfg.load_consumer);
         try self.checkNatsConsumer(self.cfg.result_stream_name, self.cfg.result_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_synced_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_mac_stream_name, self.cfg.wireless_mac_lookup_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_probe_stream_name, self.cfg.wireless_probe_flush_consumer);
     }
 
     fn checkNatsStream(self: *Service, stream_name: []const u8) Error!void {

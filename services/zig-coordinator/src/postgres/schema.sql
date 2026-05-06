@@ -612,7 +612,8 @@ begin
       (v_probe->>'probe_count')::integer
     )
     on conflict (ssid, client_mac) do update
-      set last_seen = excluded.last_seen,
+      set first_seen = least(network_clients.first_seen, excluded.first_seen),
+          last_seen = greatest(network_clients.last_seen, excluded.last_seen),
           probe_count = network_clients.probe_count + excluded.probe_count,
           known_bssid = coalesce(excluded.known_bssid, network_clients.known_bssid);
     v_inserted := v_inserted + 1;

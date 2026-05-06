@@ -120,7 +120,8 @@
                 {:else if column.href}
                   <a class="text-(--color-accent-vivid) underline-offset-2 hover:underline" href={column.href(row)}>{cellValue(column, row)}</a>
                 {:else}
-                  <span class="data-grid__cell-value" title={cellValue(column, row) || ""}>{cellValue(column, row)}</span>
+                  {@const value = cellValue(column, row)}
+                  <span class="data-grid__cell-value" title={value || ""}>{value}</span>
                 {/if}
               </td>
             {/each}

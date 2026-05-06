@@ -190,10 +190,7 @@ impl HandshakeMonitor {
             if msg_idx == 0 && was_messages == 0 {
                 if let Some(channel) = frame.channel_number {
                     if let Some(control) = capture_control {
-                        let filter = format!(
-                            "type data subtype 0x08 and wlan[0] & 0x40 == 0 and channel {}",
-                            channel
-                        );
+                        let filter = pinned_handshake_filter(channel);
                         control.apply_filter(filter);
                         self.pinned_pairs.insert(key.clone(), channel as u8);
                         tracing::debug!(
@@ -286,6 +283,10 @@ impl HandshakeMonitor {
     }
 }
 
+fn pinned_handshake_filter(_channel: u16) -> String {
+    "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0".to_string()
+}
+
 fn spawn_handshake_export(
     dir: String,
     context: AuditContext,
@@ -309,6 +310,25 @@ fn spawn_handshake_export(
         handle.spawn_blocking(export);
     } else {
         std::thread::spawn(export);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_handshake_filter;
+    use pcap::{Capture, Linktype};
+
+    #[test]
+    fn pinned_handshake_filter_compiles_with_libbpf() {
+        let filter = pinned_handshake_filter(6);
+        let capture = Capture::dead(Linktype::IEEE802_11_RADIOTAP).unwrap();
+
+        assert_eq!(
+            filter,
+            "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0"
+        );
+        assert!(!filter.contains("subtype 0x08"));
+        capture.compile(&filter, true).unwrap();
     }
 }
 

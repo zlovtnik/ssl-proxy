@@ -5,13 +5,14 @@ class AddPskToAuthorizedWirelessNetworks < ActiveRecord::Migration[7.2]
     return unless column_exists?(:authorized_wireless_networks, :psk)
 
     AuthorizedWirelessNetwork.reset_column_information
-    AuthorizedWirelessNetwork
-      .unscoped
-      .where("psk IS NOT NULL AND psk_ciphertext IS NULL")
-      .find_each do |network|
-        network.psk = network.read_attribute_before_type_cast("psk")
-        network.save!(validate: false)
-      end
+    rows = AuthorizedWirelessNetwork.connection.exec_query(
+      "SELECT id, psk FROM authorized_wireless_networks WHERE psk IS NOT NULL AND psk_ciphertext IS NULL"
+    )
+    rows.each do |row|
+      network = AuthorizedWirelessNetwork.unscoped.find(row["id"])
+      network.psk = row["psk"]
+      network.save!(validate: false)
+    end
   end
   
   def down

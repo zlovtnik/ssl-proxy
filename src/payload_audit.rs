@@ -82,7 +82,7 @@ pub fn try_parse_http_preview(
         .len()
         .min(config.max_body_bytes)
         .min(body_bytes_original);
-    let truncated = body_bytes_original > config.max_body_bytes;
+    let truncated = content_length.map_or(body_bytes_available.len() > take, |cl| cl > take);
     let body_preview = std::str::from_utf8(&body_bytes_available[..take]).ok()?;
     let mut body = serde_json::from_str::<Value>(body_preview)
         .unwrap_or_else(|_| json!({ "_raw": body_preview }));

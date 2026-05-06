@@ -221,8 +221,10 @@ pub async fn publish_entry(
         return Err(PublishError::Queued(error));
     }
 
-    flush_memory_backlog(state, backlog).await;
-    close_backlog_circuit_breaker(state);
+    let drained = flush_memory_backlog(state, backlog).await;
+    if drained {
+        close_backlog_circuit_breaker(state);
+    }
 
     if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
     {
@@ -419,7 +421,10 @@ fn queue_in_memory_after_backlog_failure(
 
 /// Flushes memory backlog to the coordinator; on save_pending failure, re-opens the circuit
 /// breaker and re-queues the failed entry plus all remaining entries back into memory.
-pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &dyn BacklogStore) {
+pub(crate) async fn flush_memory_backlog(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
+) -> bool {
     let memory_entries = state.lock().unwrap().drain_memory_backlog();
     if !memory_entries.is_empty() {
         info!(
@@ -443,9 +448,10 @@ pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &d
                     .unwrap()
                     .put_memory_backlog(key, stream, payload, err);
             }
-            break;
+            return false;
         }
     }
+    true
 }
 /// Closes the backlog circuit breaker after a successful write.
 ///

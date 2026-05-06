@@ -280,7 +280,7 @@ begin
   ) then
     alter table audit_backlog
       alter column payload type jsonb
-      using to_jsonb(payload);
+      using payload::jsonb;
   end if;
 
   if not exists (select 1 from pg_constraint where conname = 'chk_audit_backlog_status') then

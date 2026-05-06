@@ -5,7 +5,6 @@
   let { fields = [], filters = [], onChange = () => {}, onFetchValues = null } = $props()
 
   let activeFilters = $state([])
-  let nextId = $state(1)
 
   $effect(() => {
     activeFilters = normalizeFilters(filters)
@@ -27,7 +26,7 @@
 
   function handleSearch(query) {
     const newFilter = {
-      id: nextId++,
+      id: `filter-${activeFilters.length}-${query.field.key}-${query.operator}`,
       field: query.field.key,
       operator: query.operator,
       value: query.value,

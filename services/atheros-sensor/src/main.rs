@@ -111,7 +111,10 @@ async fn run_healthcheck() -> Result<(), SensorError> {
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     let publish_client: Arc<dyn PublishClient> =
         Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
-    let backlog = NatsBacklog::new(Arc::clone(&publish_client), config.sync.clone());
+    let backlog = step(
+        "initialize NATS backlog",
+        NatsBacklog::new(Arc::clone(&publish_client), config.sync.clone()),
+    )?;
     let _ = step_async("request coordinator backlog list over NATS", async {
         backlog.list_pending().await
     })
@@ -383,7 +386,10 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let publish_state = PublishState::shared();
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
-    let backlog = Arc::new(NatsBacklog::new(backlog_client, config.sync.clone()));
+    let backlog = Arc::new(step(
+        "initialize NATS backlog",
+        NatsBacklog::new(backlog_client, config.sync.clone()),
+    )?);
     info!("atheros sensor NATS backlog initialized");
 
     config_subscriber::spawn_audit_window_config_subscriber(
@@ -562,6 +568,9 @@ async fn process_packet(
                 .probe_accumulator
                 .entry(key)
                 .and_modify(|obs| {
+                    if obs.known_bssid.is_none() {
+                        obs.known_bssid = entry.bssid.clone();
+                    }
                     obs.last_seen = observed_at;
                     obs.probe_count = obs.probe_count.saturating_add(1);
                 })
@@ -639,11 +648,9 @@ async fn process_packet(
                     }
                 }
             };
-            if lookup.is_some() {
-                pipeline
-                    .mac_device_cache
-                    .put(cache_key.clone(), lookup.clone());
-            }
+            pipeline
+                .mac_device_cache
+                .put(cache_key.clone(), lookup.clone());
             lookup
         };
         if let Some((device_id, username)) = lookup {
@@ -761,7 +768,7 @@ fn spawn_channel_hopper(
 async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineState) {
     let events = pipeline_state.traffic_bucket.flush_current();
     publish_bandwidth_events(&*handles.publish_client, events).await;
-    flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
+    let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
 

@@ -11,6 +11,7 @@
   export let debounceMs = 350
   export let onSearch = () => {}
   export let onFiltersChange = () => {}
+  export let onClearAll = null
   export let onFetchValues = null
 
   let timer = null
@@ -27,8 +28,13 @@
   function clearAll() {
     window.clearTimeout(timer)
     query = ""
-    onSearch({ q: "" })
-    onFiltersChange([], { serialized: "", apiParams: {} })
+    if (onClearAll) {
+      onClearAll()
+    } else if (searchable) {
+      onSearch({ q: "" })
+    } else {
+      onFiltersChange([], { serialized: "", apiParams: {} })
+    }
   }
 
   onDestroy(() => {

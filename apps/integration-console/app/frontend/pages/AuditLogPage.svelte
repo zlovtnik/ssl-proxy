@@ -92,6 +92,13 @@
     fetchPage(true)
   }
 
+  function handleClearAll() {
+    query = ""
+    filters = []
+    currentPage = 1
+    fetchPage(true)
+  }
+
   function handlePopState() {
     const next = paramsFromLocation({ q: query, filters, location_id: locationId, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
     query = next.q
@@ -243,6 +250,7 @@
     fields={filterFields}
     onSearch={handleSearch}
     onFiltersChange={handleFiltersChange}
+    onClearAll={handleClearAll}
     placeholder="Search sensor, MAC, SSID, username, fingerprint, WPS"
   />
 

@@ -63,17 +63,17 @@ fn derive_pmk(psk: &str, ssid: &str) -> [u8; 32] {
 
 fn prf_512(key: &[u8; 32], data: &[u8]) -> [u8; 64] {
     let mut result = [0u8; 64];
-    for i in 0..2 {
+    let mut offset = 0;
+    let mut counter = 1u8;
+    while offset < result.len() {
         let mut mac = <HmacSha1 as KeyInit>::new_from_slice(key).expect("HMAC key size");
         mac.update(data);
-        mac.update(&[i]);
+        mac.update(&[counter]);
         let hash = mac.finalize().into_bytes();
-        let offset = (i as usize) * 32;
-        result[offset..offset + 20].copy_from_slice(&hash[..20]);
-        if offset + 20 < 64 {
-            let remaining = (64 - offset - 20).min(12);
-            result[offset + 20..offset + 20 + remaining].copy_from_slice(&hash[..remaining]);
-        }
+        let take = (result.len() - offset).min(hash.len());
+        result[offset..offset + take].copy_from_slice(&hash[..take]);
+        offset += take;
+        counter = counter.wrapping_add(1);
     }
     result
 }
