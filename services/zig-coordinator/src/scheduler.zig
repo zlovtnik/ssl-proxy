@@ -959,18 +959,12 @@ pub const Service = struct {
         mode: nats.PublishMode,
         on_error: Error,
     ) Error!void {
-        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload, mode) catch |err| {
-            if (mode == .jetstream_ack) {
-                logging.err()
-                    .stringSafe("event", "nats_publish_failure")
-                    .string("subject", subject)
-                    .stringSafe("fallback", "cli_request")
-                    .err(err)
-                    .log();
-                try self.publishAckedWithCli(subject, payload, on_error);
-                return;
-            }
+        if (mode == .jetstream_ack) {
+            try self.publishAckedWithCli(subject, payload, on_error);
+            return;
+        }
 
+        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload, mode) catch |err| {
             if (err == error.UnsupportedNatsScheme) {
                 try self.publishWithCli(subject, payload, on_error);
                 return;
