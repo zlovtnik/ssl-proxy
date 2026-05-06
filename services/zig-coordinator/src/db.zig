@@ -10,6 +10,8 @@ pub const Error = error{
     IngestProcessFailed,
     ScanRecordFailed,
     NextBatchFetchFailed,
+    BatchDispatchRecoveryFailed,
+    BatchDispatchMarkFailed,
     ShadowAuditFailed,
     BatchResultFailed,
     BacklogOperationFailed,
@@ -217,6 +219,68 @@ pub const Client = struct {
             query,
         };
         return self.runScalar(&argv, "psql", error.NextBatchFetchFailed, false);
+    }
+
+    pub fn recoverStaleDispatchedBatches(
+        self: *Client,
+        oracle_stream_names_csv: []const u8,
+        lease_seconds: u32,
+        max_attempts: u32,
+    ) Error!usize {
+        const oracle_stream_names_literal = try self.sqlLiteral(oracle_stream_names_csv);
+        defer self.allocator.free(oracle_stream_names_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.recover_stale_dispatched_batches(string_to_array({s}, ','), {d}::integer, {d}::integer)::text;",
+            .{ oracle_stream_names_literal, lease_seconds, max_attempts },
+        );
+        defer self.allocator.free(query);
+
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        };
+        const output = self.runScalar(&argv, "psql", error.BatchDispatchRecoveryFailed, false) catch |err| return err;
+        defer if (output) |value| self.allocator.free(value);
+
+        if (output) |value| {
+            return std.fmt.parseInt(usize, value, 10) catch error.BatchDispatchRecoveryFailed;
+        }
+        return 0;
+    }
+
+    pub fn markBatchDispatchFailed(
+        self: *Client,
+        load_json: []const u8,
+        error_text: []const u8,
+        max_attempts: u32,
+    ) Error!?[]u8 {
+        const load_literal = try self.sqlLiteral(load_json);
+        defer self.allocator.free(load_literal);
+        const error_literal = try self.sqlLiteral(error_text);
+        defer self.allocator.free(error_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.mark_batch_dispatch_failed({s}::jsonb, {s}, {d}::integer)::text;",
+            .{ load_literal, error_literal, max_attempts },
+        );
+        defer self.allocator.free(query);
+
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        };
+        return self.runScalar(&argv, "psql", error.BatchDispatchMarkFailed, false);
     }
 
     pub fn generateShadowAlerts(self: *Client) Error!?[]u8 {

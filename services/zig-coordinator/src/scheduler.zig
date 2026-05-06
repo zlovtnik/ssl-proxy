@@ -20,6 +20,13 @@ const ScanRequest = struct {
     observed_at: []const u8,
 };
 
+const DispatchPayload = struct {
+    job_id: []const u8 = "",
+    batch_id: []const u8,
+    stream_name: []const u8 = "",
+    attempt: i64 = 0,
+};
+
 pub const Error = error{
     MissingDatabaseUrl,
     MissingNatsUrl,
@@ -176,6 +183,7 @@ pub const Service = struct {
             self.cfg.scan_max_attempts,
             self.cfg.scan_retry_backoff_seconds,
         )) or had_work;
+        had_work = (try self.recoverStaleDispatchedBatches()) or had_work;
         had_work = (try self.dispatchNextBatch()) or had_work;
         had_work = (try self.handleResults()) or had_work;
         had_work = (try self.runShadowAudit()) or had_work;
@@ -282,10 +290,99 @@ pub const Service = struct {
         defer if (payload) |value| self.allocator.free(value);
 
         if (payload) |value| {
-            try self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed);
+            var parsed_payload = std.json.parseFromSlice(DispatchPayload, self.allocator, value, .{
+                .ignore_unknown_fields = true,
+            }) catch null;
+            defer if (parsed_payload) |*parsed| parsed.deinit();
+
+            if (parsed_payload) |parsed| {
+                logging.info()
+                    .stringSafe("event", "batch_dispatch")
+                    .stringSafe("status", "selected")
+                    .string("batch_id", parsed.value.batch_id)
+                    .string("job_id", parsed.value.job_id)
+                    .string("stream_name", parsed.value.stream_name)
+                    .int("attempt", parsed.value.attempt)
+                    .log();
+            } else {
+                logging.info()
+                    .stringSafe("event", "batch_dispatch")
+                    .stringSafe("status", "selected")
+                    .int("payload_bytes", value.len)
+                    .log();
+            }
+
+            self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed) catch |err| {
+                var error_buffer: [128]u8 = undefined;
+                const error_text = std.fmt.bufPrint(
+                    &error_buffer,
+                    "sync.oracle.load publish failed: {s}",
+                    .{@errorName(err)},
+                ) catch "sync.oracle.load publish failed";
+                const summary = self.database.markBatchDispatchFailed(value, error_text, self.cfg.batch_max_attempts) catch |mark_err| {
+                    logging.err()
+                        .stringSafe("event", "batch_dispatch")
+                        .stringSafe("status", "mark_failed_error")
+                        .err(mark_err)
+                        .log();
+                    return err;
+                };
+                defer if (summary) |summary_json| self.allocator.free(summary_json);
+
+                if (summary) |summary_json| {
+                    logging.err()
+                        .stringSafe("event", "batch_dispatch")
+                        .stringSafe("status", "publish_failed_requeued")
+                        .string("summary", summary_json)
+                        .err(err)
+                        .log();
+                } else {
+                    logging.err()
+                        .stringSafe("event", "batch_dispatch")
+                        .stringSafe("status", "publish_failed_requeued")
+                        .err(err)
+                        .log();
+                }
+                return err;
+            };
+
+            if (parsed_payload) |parsed| {
+                logging.info()
+                    .stringSafe("event", "batch_dispatch")
+                    .stringSafe("status", "published")
+                    .string("batch_id", parsed.value.batch_id)
+                    .string("job_id", parsed.value.job_id)
+                    .string("stream_name", parsed.value.stream_name)
+                    .int("attempt", parsed.value.attempt)
+                    .log();
+            } else {
+                logging.info()
+                    .stringSafe("event", "batch_dispatch")
+                    .stringSafe("status", "published")
+                    .int("payload_bytes", value.len)
+                    .log();
+            }
             return true;
         }
         return false;
+    }
+
+    fn recoverStaleDispatchedBatches(self: *Service) Error!bool {
+        const recovered = try self.database.recoverStaleDispatchedBatches(
+            self.cfg.oracle_stream_names_csv,
+            self.cfg.batch_dispatch_lease_seconds,
+            self.cfg.batch_max_attempts,
+        );
+        if (recovered == 0) return false;
+
+        logging.info()
+            .stringSafe("event", "stale_batch_dispatch_recovery")
+            .stringSafe("status", "recovered")
+            .int("batch_count", recovered)
+            .int("lease_seconds", self.cfg.batch_dispatch_lease_seconds)
+            .int("max_attempts", self.cfg.batch_max_attempts)
+            .log();
+        return true;
     }
 
     fn handleResults(self: *Service) Error!bool {

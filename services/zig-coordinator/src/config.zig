@@ -34,6 +34,8 @@ pub const Config = struct {
     sync_outbox_dir: []const u8,
     scan_max_attempts: u32,
     scan_retry_backoff_seconds: u32,
+    batch_dispatch_lease_seconds: u32,
+    batch_max_attempts: u32,
 };
 
 pub fn load() Config {
@@ -71,6 +73,8 @@ pub fn load() Config {
         .sync_outbox_dir = envOrDefault("SYNC_OUTBOX_DIR", "/sync-outbox"),
         .scan_max_attempts = parsePositiveU32(envOrDefault("SYNC_SCAN_MAX_ATTEMPTS", "5"), 5),
         .scan_retry_backoff_seconds = parsePositiveU32(envOrDefault("SYNC_SCAN_RETRY_BACKOFF_SECONDS", "30"), 30),
+        .batch_dispatch_lease_seconds = parsePositiveU32(envOrDefault("SYNC_BATCH_DISPATCH_LEASE_SECONDS", "300"), 300),
+        .batch_max_attempts = parsePositiveU32(envOrDefault("SYNC_BATCH_MAX_ATTEMPTS", "5"), 5),
     };
 }
 
