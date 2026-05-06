@@ -12,10 +12,8 @@ fn wireguard_template_redirects_tcp_and_drops_udp_443_when_enabled() {
     assert!(template.contains(
         "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport __WG_PUBLIC_PORT__ -j ACCEPT"
     ));
-    assert!(template
-        .lines()
-        .any(|line| line.trim()
-            == "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT"));
+    assert!(template.lines().any(|line| line.trim()
+        == "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT"));
     assert!(template.contains(
         "if [ \"__WG_PUBLIC_PORT__\" != \"443\" ]; then iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT; fi"
     ));

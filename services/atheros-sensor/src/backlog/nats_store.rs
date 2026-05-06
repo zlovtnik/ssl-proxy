@@ -69,6 +69,7 @@ impl NatsBacklog {
     ) -> Result<Option<(String, Option<String>)>, BacklogError> {
         #[derive(Serialize)]
         struct Request<'a> {
+            operation: &'static str,
             mac: &'a str,
         }
         #[derive(Deserialize)]
@@ -77,13 +78,15 @@ impl NatsBacklog {
             username: Option<String>,
         }
 
-        let payload = serialize("lookup_device_by_mac", &Request { mac })?;
+        let payload = serialize(
+            "lookup_device_by_mac",
+            &Request {
+                operation: "lookup_device_by_mac",
+                mac,
+            },
+        )?;
         let response = self
-            .request(
-                "lookup_device_by_mac",
-                MAC_LOOKUP_SUBJECT,
-                &payload,
-            )
+            .request("lookup_device_by_mac", MAC_LOOKUP_SUBJECT, &payload)
             .await?;
         if response.trim() == "null" || response.trim().is_empty() {
             return Ok(None);
@@ -105,7 +108,7 @@ impl NatsBacklog {
             .request(
                 "list_authorized_wireless_networks",
                 AUTHORIZED_NETWORKS_SUBJECT,
-                "{}",
+                r#"{"operation":"list_authorized_wireless_networks"}"#,
             )
             .await?;
         parse_authorized_networks_response(&response).map_err(|source| BacklogError::Deserialize {
@@ -123,9 +126,16 @@ impl NatsBacklog {
         }
         #[derive(Serialize)]
         struct Payload<'a> {
+            operation: &'static str,
             probes: &'a [ProbeFlushObservation],
         }
-        let payload = serialize("flush_probe_batch", &Payload { probes })?;
+        let payload = serialize(
+            "flush_probe_batch",
+            &Payload {
+                operation: "flush_probe_batch",
+                probes,
+            },
+        )?;
         self.publish(PROBE_FLUSH_SUBJECT, &payload).await
     }
 
@@ -243,7 +253,11 @@ impl BacklogStore for NatsBacklog {
 
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
         let response = self
-            .request("list_pending", BACKLOG_LIST_SUBJECT, r#"{"operation":"list_pending"}"#)
+            .request(
+                "list_pending",
+                BACKLOG_LIST_SUBJECT,
+                r#"{"operation":"list_pending"}"#,
+            )
             .await?;
         serde_json::from_str(&response).map_err(|source| BacklogError::Deserialize {
             operation: "list_pending",
@@ -349,7 +363,7 @@ async fn request_once(
         .map_err(|source| BacklogError::Nats {
             operation,
             message: format!("connect {}: {source}", endpoint.address),
-    })?;
+        })?;
     let stream: Box<dyn NatsStream> = if sync.tls_enabled || endpoint.tls_enabled {
         let connector = tls_connector.ok_or_else(|| BacklogError::Nats {
             operation,

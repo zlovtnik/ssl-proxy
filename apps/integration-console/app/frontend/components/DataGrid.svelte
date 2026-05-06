@@ -85,7 +85,7 @@
 </script>
 
 <div class="data-grid-wrap">
-  <div class="relative overflow-x-auto">
+  <div class="data-grid-wrap__scroll relative">
     <table class="data-grid">
       <thead>
         <tr>

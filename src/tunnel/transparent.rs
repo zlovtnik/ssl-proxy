@@ -219,10 +219,11 @@ async fn handle_transparent_inner(
         hints.client_ua.clone(),
     );
     if orig_dst.port() == 80 && !hints.preview.is_empty() {
-        let audit_host = tls
-            .sni
-            .clone()
-            .unwrap_or_else(|| format!("{}:{}", orig_dst.ip(), orig_dst.port()));
+        let audit_host = plaintext_host_header(&hints.preview).unwrap_or_else(|| {
+            tls.sni
+                .clone()
+                .unwrap_or_else(|| format!("{}:{}", orig_dst.ip(), orig_dst.port()))
+        });
         crate::payload_audit::audit_http_preview(&hints.preview, &audit_host, &identity, &state);
     }
     match evaluate_transparent_policy(&state, orig_dst, &tls).await {
@@ -497,6 +498,20 @@ fn extract_http_header_value(preview: &str, header_name: &str) -> Option<String>
                 None
             }
         })
+}
+
+fn plaintext_host_header(preview: &[u8]) -> Option<String> {
+    let preview = std::str::from_utf8(preview).ok()?;
+    let host = extract_http_header_value(preview, "host")?;
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+    if host.starts_with('[') || host.rsplit_once(':').is_some() {
+        Some(host.to_string())
+    } else {
+        Some(format!("{host}:80"))
+    }
 }
 
 async fn block_transparent_flow(
