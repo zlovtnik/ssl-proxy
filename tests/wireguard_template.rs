@@ -7,13 +7,14 @@ fn wireguard_template_redirects_tcp_and_drops_udp_443_when_enabled() {
         env!("CARGO_MANIFEST_DIR")
     );
     let template = fs::read_to_string(path).expect("wireguard template should exist");
+    let rendered = template.replace("__WG_PUBLIC_PORT__", "443");
 
     assert!(template.contains("ListenPort = __WG_INTERNAL_PORT__"));
     assert!(template.contains(
         "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport __WG_PUBLIC_PORT__ -j ACCEPT"
     ));
-    assert!(template.lines().any(|line| line.trim()
-        == "iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT"));
+    assert!(rendered.lines().any(|line| line.trim()
+        == "PostUp = iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT"));
     assert!(template.contains(
         "if [ \"__WG_PUBLIC_PORT__\" != \"443\" ]; then iptables -A INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT; fi"
     ));

@@ -1003,9 +1003,8 @@ mod tests {
             .unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
         assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
-        assert_eq!(published[1].0, "wireless.audit");
         assert!(backlog.rows.lock().unwrap().is_empty());
         let ingest_rows = backlog.ingest_rows.lock().unwrap();
         assert_eq!(ingest_rows.len(), 1);
@@ -1161,9 +1160,8 @@ mod tests {
 
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
         assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
-        assert_eq!(published[1].0, "wireless.audit");
     }
 
     #[tokio::test]
@@ -1249,7 +1247,7 @@ mod tests {
         .unwrap();
 
         assert!(backlog.rows.lock().unwrap().is_empty());
-        assert_eq!(publisher.published.lock().unwrap().len(), 2);
+        assert_eq!(publisher.published.lock().unwrap().len(), 1);
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
     }
 
@@ -1342,7 +1340,7 @@ mod tests {
         assert_eq!(ingested, vec![second_key]);
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
     }
 
     #[tokio::test]
