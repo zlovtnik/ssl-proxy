@@ -168,7 +168,7 @@ async fn ensure_load_consumer(
     stream: &Stream,
     config: &RunConfig,
 ) -> Result<jetstream::consumer::PullConsumer, String> {
-    stream
+    let consumer = stream
         .get_or_create_consumer(
             config.load_consumer.as_str(),
             PullConsumerConfig {
@@ -184,7 +184,36 @@ async fn ensure_load_consumer(
                 "get/create pull consumer {} on stream {} (subject {}): {error}",
                 config.load_consumer, config.audit_stream_name, config.load_subject
             )
-        })
+        })?;
+
+    validate_consumer_filter(
+        &config.audit_stream_name,
+        &config.load_consumer,
+        consumer.cached_info().config.filter_subject.as_str(),
+        &config.load_subject,
+    )?;
+
+    Ok(consumer)
+}
+
+fn validate_consumer_filter(
+    stream_name: &str,
+    consumer_name: &str,
+    actual_filter: &str,
+    expected_filter: &str,
+) -> Result<(), String> {
+    if actual_filter == expected_filter {
+        return Ok(());
+    }
+
+    let actual_filter = if actual_filter.is_empty() {
+        "<none>"
+    } else {
+        actual_filter
+    };
+    Err(format!(
+        "invalid JetStream consumer {consumer_name} on stream {stream_name}: expected filter_subject {expected_filter}, found {actual_filter}; rerun nats-bootstrap or delete and recreate the durable consumer"
+    ))
 }
 
 async fn handle_load_message(
@@ -195,11 +224,7 @@ async fn handle_load_message(
     let load = match serde_json::from_slice::<worker::OracleLoad>(&message.payload) {
         Ok(load) => load,
         Err(error) => {
-            eprintln!(
-                "service={SERVICE_NAME} event=worker_load status=error classification=poison payload_bytes={} error=\"{}\"",
-                message.payload.len(),
-                escape_for_log(&format!("deserialize OracleLoad payload: {error}"))
-            );
+            log_poison_message(&message, &error);
             message
                 .ack()
                 .await
@@ -248,6 +273,34 @@ async fn handle_load_message(
     }
 
     Ok(())
+}
+
+fn log_poison_message(message: &jetstream::Message, error: &serde_json::Error) {
+    let subject = escape_for_log(message.subject.as_str());
+    let error = escape_for_log(&format!("deserialize OracleLoad payload: {error}"));
+    match message.info() {
+        Ok(info) => {
+            eprintln!(
+                "service={SERVICE_NAME} event=worker_load status=error classification=poison subject={subject} stream={} consumer={} stream_sequence={} consumer_sequence={} delivered={} pending={} payload_bytes={} error=\"{}\"",
+                escape_for_log(info.stream),
+                escape_for_log(info.consumer),
+                info.stream_sequence,
+                info.consumer_sequence,
+                info.delivered,
+                info.pending,
+                message.payload.len(),
+                error,
+            );
+        }
+        Err(info_error) => {
+            eprintln!(
+                "service={SERVICE_NAME} event=worker_load status=error classification=poison subject={subject} stream=unknown consumer=unknown stream_sequence=unknown consumer_sequence=unknown delivered=unknown pending=unknown payload_bytes={} metadata_error=\"{}\" error=\"{}\"",
+                message.payload.len(),
+                escape_for_log(&info_error.to_string()),
+                error,
+            );
+        }
+    }
 }
 
 async fn wait_for_shutdown_signal() -> Result<&'static str, String> {
@@ -489,7 +542,7 @@ fn escape_for_log(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_or_default, parse_nats_address};
+    use super::{env_or_default, parse_nats_address, validate_consumer_filter};
 
     #[test]
     fn parse_nats_address_adds_default_port() {
@@ -510,5 +563,30 @@ mod tests {
         std::env::set_var(&key, "");
         assert_eq!(env_or_default(&key, "fallback"), "fallback");
         std::env::remove_var(&key);
+    }
+
+    #[test]
+    fn validate_consumer_filter_accepts_expected_filter() {
+        assert!(validate_consumer_filter(
+            "AUDIT_STREAM",
+            "oracle-worker-load",
+            "sync.oracle.load",
+            "sync.oracle.load"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_consumer_filter_rejects_stale_filter() {
+        let error = validate_consumer_filter(
+            "AUDIT_STREAM",
+            "oracle-worker-load",
+            "wireless.audit",
+            "sync.oracle.load",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("expected filter_subject sync.oracle.load"));
+        assert!(error.contains("found wireless.audit"));
     }
 }

@@ -957,6 +957,17 @@ fn streamNameIsConfigured(stream_names_csv: []const u8, stream_name: []const u8)
     return false;
 }
 
+pub fn invalidOracleStreamName(stream_names_csv: []const u8, oracle_stream_names_csv: []const u8) ?[]const u8 {
+    var iterator = std.mem.splitScalar(u8, oracle_stream_names_csv, ',');
+    while (iterator.next()) |raw_name| {
+        const stream_name = std.mem.trim(u8, raw_name, " \t\r\n");
+        if (stream_name.len == 0) continue;
+        if (!std.mem.eql(u8, stream_name, "proxy.events")) return stream_name;
+        if (!streamNameIsConfigured(stream_names_csv, stream_name)) return stream_name;
+    }
+    return null;
+}
+
 fn labeledCountIsPositive(stdout: []const u8, label: []const u8) bool {
     var lines = std.mem.splitScalar(u8, stdout, '\n');
     while (lines.next()) |raw_line| {
@@ -1017,6 +1028,21 @@ test "streamNameIsConfigured matches trimmed CSV entries" {
     try std.testing.expect(streamNameIsConfigured("proxy.events, wireless.audit", "proxy.events"));
     try std.testing.expect(streamNameIsConfigured("proxy.events, wireless.audit", "wireless.audit"));
     try std.testing.expect(!streamNameIsConfigured("proxy.events, wireless.audit", "unknown"));
+}
+
+test "invalidOracleStreamName accepts proxy events only" {
+    try std.testing.expect(invalidOracleStreamName("proxy.events, wireless.audit", "proxy.events") == null);
+    try std.testing.expect(invalidOracleStreamName("proxy.events, wireless.audit", "") == null);
+}
+
+test "invalidOracleStreamName rejects wireless audit Oracle dispatch" {
+    const invalid = invalidOracleStreamName("proxy.events, wireless.audit", "proxy.events, wireless.audit").?;
+    try std.testing.expectEqualStrings("wireless.audit", invalid);
+}
+
+test "invalidOracleStreamName rejects Oracle stream outside configured streams" {
+    const invalid = invalidOracleStreamName("wireless.audit", "proxy.events").?;
+    try std.testing.expectEqualStrings("proxy.events", invalid);
 }
 
 test "resolvePayloadRef decodes inline JSON payloads" {

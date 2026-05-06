@@ -202,6 +202,29 @@ docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*)
 docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_job; select count(*) from sync_batch;"
 ```
 
+If `oracle-worker` logs `worker_load classification=poison` or `unsupported stream_name wireless.audit`, confirm the load durable is filtered to the load subject and that only `proxy.events` is configured for Oracle dispatch:
+
+```sh
+docker compose run --rm nats-bootstrap nats --server nats://nats:4222 consumer info AUDIT_STREAM oracle-worker-load --json
+docker compose exec -T zig-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
+docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batch batch join sync_job job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
+```
+
+Recovery path:
+
+```sh
+docker compose run --rm nats-bootstrap
+docker compose restart zig-coordinator oracle-worker
+```
+
+If the durable still shows any filter other than `sync.oracle.load`, delete and recreate it through bootstrap:
+
+```sh
+docker compose run --rm nats-bootstrap nats --server nats://nats:4222 consumer rm AUDIT_STREAM oracle-worker-load -f
+docker compose run --rm nats-bootstrap
+docker compose restart oracle-worker
+```
+
 For attribution, usernames come from the device registry. Passive wireless-only observations should remain `identity_source='unknown'` until a registered device record provides a reliable correlation such as `wg_pubkey`, claim token, hostname, or MAC hint.
 
 ### Device upsert response note

@@ -65,6 +65,20 @@ ensure_consumer() {
     --defaults
 }
 
+verify_consumer_filter() {
+  stream_name="$1"
+  consumer_name="$2"
+  expected_filter="$3"
+
+  consumer_info=$(nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" --json)
+  compact_info=$(printf '%s' "${consumer_info}" | tr -d '[:space:]')
+  if ! printf '%s' "${compact_info}" | grep -Fq "\"filter_subject\":\"${expected_filter}\""; then
+    echo "error: consumer ${consumer_name} on stream ${stream_name} does not have filter_subject=${expected_filter}" >&2
+    echo "consumer info: ${consumer_info}" >&2
+    return 1
+  fi
+}
+
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
   sleep 1
 done
@@ -144,6 +158,7 @@ fi
 ensure_consumer "${STREAM_NAME}" "${SCAN_CONSUMER}" "${SCAN_SUBJECT}"
 ensure_consumer "${STREAM_NAME}" "${LOAD_CONSUMER}" "${LOAD_SUBJECT}"
 ensure_consumer "${RESULT_STREAM_NAME}" "${RESULT_CONSUMER}" "${RESULT_SUBJECT}"
+verify_consumer_filter "${STREAM_NAME}" "${LOAD_CONSUMER}" "${LOAD_SUBJECT}"
 
 ensure_stream "${WIRELESS_BACKLOG_STREAM}" "wireless.backlog.>" "720h"
 ensure_stream "${WIRELESS_MAC_STREAM}" "wireless.mac.>" "1h"

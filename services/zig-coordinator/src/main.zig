@@ -29,6 +29,19 @@ pub fn main(init: std.process.Init) !void {
         .string("result_subject", cfg.result_subject)
         .log();
 
+    if (scheduler.invalidOracleStreamName(cfg.stream_names_csv, cfg.oracle_stream_names_csv)) |stream_name| {
+        logging.err()
+            .stringSafe("event", "config_validation")
+            .stringSafe("status", "error")
+            .stringSafe("error", "InvalidOracleStreamConfig")
+            .string("stream_name", stream_name)
+            .string("stream_names", cfg.stream_names_csv)
+            .string("oracle_stream_names", cfg.oracle_stream_names_csv)
+            .stringSafe("allowed_oracle_stream_names", "proxy.events")
+            .log();
+        return error.InvalidOracleStreamConfig;
+    }
+
     var service = try scheduler.Service.init(allocator, init.io, cfg);
     defer service.deinit();
 
