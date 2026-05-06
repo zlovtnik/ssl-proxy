@@ -36,6 +36,10 @@
   color: var(--color-text-muted);
 }
 
+.query-builder {
+  margin-top: 0.75rem;
+}
+
 .signal-bucket-0 { background-color: rgba(244, 184, 96, 0.10); color: var(--color-signal-text-light); }
 .signal-bucket-1 { background-color: rgba(244, 184, 96, 0.20); color: var(--color-signal-text-light); }
 .signal-bucket-2 { background-color: rgba(244, 184, 96, 0.30); color: var(--color-signal-text-light); }

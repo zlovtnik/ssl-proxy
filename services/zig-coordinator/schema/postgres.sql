@@ -260,7 +260,7 @@ create index if not exists sync_scan_ingest_stream_idx on sync_scan_ingest (stre
 create table if not exists audit_backlog (
   dedupe_key text primary key,
   stream_name text not null,
-  payload text not null,
+  payload jsonb not null,
   status text not null default 'pending',
   attempt_count integer not null default 0,
   last_error text,
@@ -270,6 +270,19 @@ create table if not exists audit_backlog (
 
 do $$
 begin
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'audit_backlog'
+       and column_name = 'payload'
+       and data_type <> 'jsonb'
+  ) then
+    alter table audit_backlog
+      alter column payload type jsonb
+      using payload::jsonb;
+  end if;
+
   if not exists (select 1 from pg_constraint where conname = 'chk_audit_backlog_status') then
     alter table audit_backlog add constraint chk_audit_backlog_status check (status in ('pending','synced','sync_failed','failed'));
   end if;

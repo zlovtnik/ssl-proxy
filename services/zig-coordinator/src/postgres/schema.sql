@@ -486,3 +486,138 @@ begin
   return coalesce(v_summary, jsonb_build_object('updated', false));
 end;
 $$;
+
+create or replace function coordinator.save_backlog_entry(p_payload jsonb)
+returns void
+language plpgsql
+as $$
+begin
+  if nullif(p_payload->>'dedupe_key', '') is null then
+    raise exception 'coordinator.save_backlog_entry requires dedupe_key';
+  end if;
+
+  insert into audit_backlog (dedupe_key, stream_name, payload, status, attempt_count, created_at, updated_at)
+  values (
+    p_payload->>'dedupe_key',
+    p_payload->>'stream_name',
+    p_payload->'payload',
+    'pending',
+    0,
+    now(),
+    now()
+  )
+  on conflict (dedupe_key) do update
+    set payload = excluded.payload,
+        status = 'pending',
+        updated_at = now();
+end;
+$$;
+
+create or replace function coordinator.list_pending_backlog()
+returns jsonb
+language sql
+as $$
+  select coalesce(jsonb_agg(
+    jsonb_build_object(
+      'dedupe_key', dedupe_key,
+      'stream_name', stream_name,
+      'payload', payload,
+      'attempt_count', attempt_count,
+      'created_at', created_at
+    )
+  ), '[]'::jsonb)
+  from (
+    select dedupe_key, stream_name, payload, attempt_count, created_at
+    from audit_backlog
+    where status = 'pending'
+    order by created_at asc
+    limit 100
+  ) pending;
+$$;
+
+create or replace function coordinator.mark_backlog_synced(p_dedupe_key text)
+returns void
+language sql
+as $$
+  update audit_backlog
+  set status = 'synced', updated_at = now()
+  where dedupe_key = p_dedupe_key;
+$$;
+
+create or replace function coordinator.prune_backlog()
+returns integer
+language plpgsql
+as $$
+declare
+  v_deleted integer;
+begin
+  delete from audit_backlog
+  where status = 'synced'
+    and updated_at < now() - interval '7 days';
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end;
+$$;
+
+create or replace function coordinator.lookup_device_by_mac(p_mac text)
+returns jsonb
+language sql
+as $$
+  select jsonb_build_object(
+    'device_id', mac_id,
+    'username', username,
+    'display_name', display_name,
+    'hostname', hostname
+  )
+  from devices
+  where lower(mac_id) = lower(p_mac)
+  limit 1;
+$$;
+
+create or replace function coordinator.list_authorized_networks()
+returns jsonb
+language sql
+as $$
+  select coalesce(jsonb_agg(
+    jsonb_build_object(
+      'ssid', ssid,
+      'bssid', lower(bssid),
+      'location_id', location_id,
+      'label', label,
+      'enabled', enabled
+    )
+  ), '[]'::jsonb)
+  from authorized_wireless_networks
+  where enabled;
+$$;
+
+create or replace function coordinator.flush_probe_batch(p_probes jsonb)
+returns integer
+language plpgsql
+as $$
+declare
+  v_inserted integer := 0;
+  v_probe jsonb;
+begin
+  for v_probe in select jsonb_array_elements(p_probes)
+  loop
+    insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
+    values (
+      v_probe->>'ssid',
+      v_probe->>'client_mac',
+      (select bssid from authorized_wireless_networks 
+       where lower(ssid) = lower(v_probe->>'ssid') and enabled limit 1),
+      (v_probe->>'first_seen')::timestamptz,
+      (v_probe->>'last_seen')::timestamptz,
+      (v_probe->>'probe_count')::integer
+    )
+    on conflict (ssid, client_mac) do update
+      set first_seen = least(network_clients.first_seen, excluded.first_seen),
+          last_seen = greatest(network_clients.last_seen, excluded.last_seen),
+          probe_count = network_clients.probe_count + excluded.probe_count,
+          known_bssid = coalesce(excluded.known_bssid, network_clients.known_bssid);
+    v_inserted := v_inserted + 1;
+  end loop;
+  return v_inserted;
+end;
+$$;

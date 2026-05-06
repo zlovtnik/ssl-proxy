@@ -1,10 +1,10 @@
 //! Two-tier persistence strategy for wireless audit event publishing.
 //!
-//! Implements a dual-path publish pipeline: primary path writes to sync_scan_ingest ledger
-//! then enqueues to NATS; fallback path uses audit_backlog table for retry. When Postgres
+//! Implements a dual-path publish pipeline: primary path publishes to NATS; fallback path
+//! asks the coordinator to save audit_backlog retry rows. When NATS
 //! is unavailable, a circuit breaker opens and events are queued in an in-memory LRU (128
 //! entries) until connectivity is restored. The circuit breaker closes automatically after
-//! CIRCUIT_BREAKER_TIMEOUT (10s) when a probe write succeeds.
+//! CIRCUIT_BREAKER_TIMEOUT (10s) when a coordinator publish succeeds.
 
 use lru::LruCache;
 use std::num::NonZeroUsize;
@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
 use ssl_proxy::{
     sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT},
     transport::ENQUEUE_TIMEOUT_ERROR,
@@ -33,13 +32,13 @@ pub const HANDSHAKE_ALERT_SUBJECT: &str = "wifi.alert.handshake";
 ///
 /// Covers serialization failures, backlog persistence failures, and NATS publish failures.
 /// PublishError::Queued is not a pipeline error—it signals that the entry was retained
-/// in memory or Postgres backlog for later retry.
+/// in memory or coordinator backlog for later retry.
 #[derive(Debug, Error)]
 pub enum PublishError {
     /// Fired when `serde_json::to_string` fails to serialize an `AuditEntry` or alert struct.
     #[error("serialize audit entry: {0}")]
     Serialize(#[from] serde_json::Error),
-    /// Fired when both the NATS enqueue and the Postgres backlog fallback fail, leaving the
+    /// Fired when both the NATS enqueue and the coordinator backlog fallback fail, leaving the
     /// event with no durable storage path.
     #[error("backlog persistence failed: {0}")]
     Backlog(#[from] BacklogError),
@@ -106,14 +105,10 @@ pub type SharedPublishState = Arc<Mutex<PublishState>>;
 
 /// Mutable publish state shared across the pipeline via [`SharedPublishState`].
 ///
-/// `circuit_breaker` is `None` when the Postgres backlog is healthy (circuit closed) and
+/// `circuit_breaker` is `None` when coordinator backlog publish is healthy (circuit closed) and
 /// `Some(Instant)` recording when the breaker opened; it resets to `None` after
 /// `CIRCUIT_BREAKER_TIMEOUT` elapses and a probe write succeeds.
-/// Mutable publish state shared across the pipeline via [`SharedPublishState`].
-///
-/// circuit_breaker is None when Postgres is healthy (circuit closed) and Some(Instant) recording
-/// when the breaker opened; it resets to None after CIRCUIT_BREAKER_TIMEOUT elapses and a probe
-/// write succeeds. memory_backlog is the LRU that absorbs entries while the breaker is open.
+/// `memory_backlog` is the LRU that absorbs entries while the breaker is open.
 pub struct PublishState {
     circuit_breaker: Option<Instant>,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
@@ -171,8 +166,8 @@ struct PreparedPublish {
     payload_sha256: String,
 }
 
-/// Two-phase write: first records to sync_scan_ingest (the primary ledger), then enqueues
-/// to NATS. Ingest-ledger-first ordering ensures durability even if NATS publish fails.
+/// Two-phase write: publishes the wireless audit payload through the backlog boundary, then
+/// enqueues the scan request to NATS.
 /// Returns PublishError::Queued when publish fails but entry is retained in memory backlog;
 /// this is not a pipeline error and processing continues.
 pub async fn publish_entry(
@@ -226,8 +221,10 @@ pub async fn publish_entry(
         return Err(PublishError::Queued(error));
     }
 
-    flush_memory_backlog(state, backlog).await;
-    close_postgres_circuit_breaker(state);
+    let drained = flush_memory_backlog(state, backlog).await;
+    if drained {
+        close_backlog_circuit_breaker(state);
+    }
 
     if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
     {
@@ -316,7 +313,7 @@ pub async fn publish_json<T: serde::Serialize>(
 /// Persists a failed publish attempt to the backlog store.
 ///
 /// Checks the circuit breaker state first; if open, queues in memory. Otherwise attempts
-/// to save to Postgres backlog. On backlog failure, opens the circuit breaker and queues
+/// to save to the coordinator backlog. On backlog failure, opens the circuit breaker and queues
 /// in memory. Returns PublishError::Queued when the entry is retained in memory.
 async fn persist_publish_failure(
     state: &SharedPublishState,
@@ -346,15 +343,15 @@ async fn persist_publish_failure(
     warn!(
         dedupe_key,
         publish_error = %error,
-        "publish enqueue failed; audit entry persisted to postgres backlog"
+        "publish enqueue failed; audit entry sent to coordinator backlog"
     );
     Ok(())
 }
-/// Checks if the Postgres backlog circuit breaker is open.
+/// Checks if the coordinator backlog circuit breaker is open.
 ///
 /// Returns true if the breaker is open and within the timeout window, queuing the entry
 /// in memory. Returns false if the breaker is closed or the timeout has elapsed, allowing
-/// a probe write to Postgres.
+/// a probe write to the coordinator.
 fn circuit_breaker_is_open(
     state: &SharedPublishState,
     dedupe_key: &str,
@@ -375,21 +372,18 @@ fn circuit_breaker_is_open(
                 publish_error = %error,
                 memory_backlog_entries,
                 circuit_open_for_ms = opened_at.elapsed().as_millis() as u64,
-                "postgres backlog circuit breaker open; queued audit entry in memory"
+                "backlog circuit breaker open; queued audit entry in memory"
             );
             return true;
         }
 
         state.circuit_breaker = None;
-        info!(
-            dedupe_key,
-            "postgres backlog circuit breaker probe starting"
-        );
+        info!(dedupe_key, "backlog circuit breaker probe starting");
     }
     false
 }
 
-/// Queues an entry in the in-memory LRU backlog after a Postgres failure.
+/// Queues an entry in the in-memory LRU backlog after a backlog publish failure.
 ///
 /// Opens the circuit breaker if not already open, then adds the entry to the memory backlog.
 /// Logs the circuit breaker state change and the memory queue operation.
@@ -408,7 +402,7 @@ fn queue_in_memory_after_backlog_failure(
             publish_error = %error,
             %backlog_err,
             circuit_breaker_timeout_ms = CIRCUIT_BREAKER_TIMEOUT.as_millis() as u64,
-            "postgres backlog failed; opening circuit breaker"
+            "backlog publish failed; opening circuit breaker"
         );
     }
 
@@ -421,18 +415,21 @@ fn queue_in_memory_after_backlog_failure(
     warn!(
         dedupe_key = %dedupe_key,
         memory_backlog_entries,
-        "queued audit entry in memory backlog after postgres failure"
+        "queued audit entry in memory backlog after backlog publish failure"
     );
 }
 
-/// Flushes memory backlog to Postgres; on save_pending failure, re-opens the circuit
+/// Flushes memory backlog to the coordinator; on save_pending failure, re-opens the circuit
 /// breaker and re-queues the failed entry plus all remaining entries back into memory.
-pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &dyn BacklogStore) {
+pub(crate) async fn flush_memory_backlog(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
+) -> bool {
     let memory_entries = state.lock().unwrap().drain_memory_backlog();
     if !memory_entries.is_empty() {
         info!(
             memory_backlog_entries = memory_entries.len(),
-            "flushing memory backlog to postgres"
+            "flushing memory backlog to coordinator"
         );
     }
     let mut memory_entries = memory_entries.into_iter();
@@ -442,7 +439,7 @@ pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &d
                 dedupe_key = %key,
                 stream_name = %stream,
                 %backlog_err,
-                "failed to flush memory backlog entry to postgres"
+                "failed to flush memory backlog entry to coordinator"
             );
             queue_in_memory_after_backlog_failure(state, key, payload, err, backlog_err);
             for (key, (stream, payload, err)) in memory_entries {
@@ -451,25 +448,23 @@ pub(crate) async fn flush_memory_backlog(state: &SharedPublishState, backlog: &d
                     .unwrap()
                     .put_memory_backlog(key, stream, payload, err);
             }
-            break;
+            return false;
         }
     }
+    true
 }
-/// Closes the Postgres backlog circuit breaker after a successful write.
+/// Closes the backlog circuit breaker after a successful write.
 ///
 /// Resets the circuit breaker state to None, allowing normal backlog operations to resume.
 /// Logs the state change when the breaker transitions from open to closed.
-fn close_postgres_circuit_breaker(state: &SharedPublishState) {
+fn close_backlog_circuit_breaker(state: &SharedPublishState) {
     let mut state = state.lock().unwrap();
     if state.circuit_breaker.is_some() {
         state.circuit_breaker = None;
-        tracing::info!("postgres circuit breaker closed, backlog resumed");
+        tracing::info!("backlog circuit breaker closed, backlog resumed");
     }
 }
 
-/// Retries pending backlog entries that fall within the audit window; skips entries
-/// outside the window. Ingest ledger failure keeps the entry in audit_backlog for
-/// future retry, preventing data loss when the primary ledger is unavailable.
 /// Retries pending backlog entries that fall within the audit window; skips entries outside
 /// the window but leaves them pending. Ingest ledger failure keeps the entry in audit_backlog
 /// for future retry, preventing data loss when the primary ledger is unavailable.
@@ -647,13 +642,12 @@ fn prepare_publish(
         payload_sha256: sha256_hex(payload),
     })
 }
-/// Enqueues both the scan request and audit payload to NATS.
+/// Enqueues the scan request to NATS.
 ///
-/// Publishes the scan request to SYNC_SCAN_REQUEST_SUBJECT first, then the audit payload
-/// to wireless.audit. Both use backpressure handling. Returns error on first failure.
+/// The wireless audit payload is published by `BacklogStore::record_ingest`.
 async fn enqueue_prepared_publish(
     publisher: &dyn PublishClient,
-    payload: &str,
+    _payload: &str,
     dedupe_key: &str,
     prepared: &PreparedPublish,
 ) -> Result<(), String> {
@@ -670,20 +664,6 @@ async fn enqueue_prepared_publish(
         subject = SYNC_SCAN_REQUEST_SUBJECT,
         payload_bytes = prepared.request_payload.len(),
         "queued scan request"
-    );
-    queue_publish_with_backpressure(
-        publisher,
-        "publish_audit",
-        "wireless.audit",
-        payload,
-        dedupe_key,
-    )
-    .await?;
-    debug!(
-        dedupe_key,
-        subject = "wireless.audit",
-        payload_bytes = payload.len(),
-        "queued audit payload"
     );
     Ok(())
 }
@@ -757,7 +737,7 @@ fn dedupe_key(payload: &str) -> String {
 ///
 /// Used for deduplication keys and payload integrity verification.
 fn sha256_hex(payload: &str) -> String {
-    format!("{:x}", Sha256::digest(payload.as_bytes()))
+    ssl_proxy::sha256_hex(&[payload.as_bytes()])
 }
 
 #[cfg(test)]
@@ -867,7 +847,10 @@ mod tests {
     #[async_trait]
     impl BacklogStore for FailingBacklog {
         async fn record_ingest(&self, _record: IngestRecord<'_>) -> Result<(), BacklogError> {
-            Err(BacklogError::InvalidDatabaseUrl("unavailable".to_string()))
+            Err(BacklogError::Nats {
+                operation: "record_ingest",
+                message: "unavailable".to_string(),
+            })
         }
 
         async fn save_pending(
@@ -877,7 +860,10 @@ mod tests {
             _payload: &str,
             _error: &str,
         ) -> Result<(), BacklogError> {
-            Err(BacklogError::InvalidDatabaseUrl("unavailable".to_string()))
+            Err(BacklogError::Nats {
+                operation: "save_pending",
+                message: "unavailable".to_string(),
+            })
         }
 
         async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
@@ -917,9 +903,10 @@ mod tests {
     impl BacklogStore for SelectiveIngestFailBacklog {
         async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
             if self.failing_keys.contains(record.dedupe_key) {
-                return Err(BacklogError::InvalidDatabaseUrl(
-                    "ingest ledger unavailable".to_string(),
-                ));
+                return Err(BacklogError::Nats {
+                    operation: "record_ingest",
+                    message: "ingest ledger unavailable".to_string(),
+                });
             }
 
             self.ingest_rows
@@ -1016,9 +1003,8 @@ mod tests {
             .unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
         assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
-        assert_eq!(published[1].0, "wireless.audit");
         assert!(backlog.rows.lock().unwrap().is_empty());
         let ingest_rows = backlog.ingest_rows.lock().unwrap();
         assert_eq!(ingest_rows.len(), 1);
@@ -1174,9 +1160,8 @@ mod tests {
 
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
         assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
-        assert_eq!(published[1].0, "wireless.audit");
     }
 
     #[tokio::test]
@@ -1262,7 +1247,7 @@ mod tests {
         .unwrap();
 
         assert!(backlog.rows.lock().unwrap().is_empty());
-        assert_eq!(publisher.published.lock().unwrap().len(), 2);
+        assert_eq!(publisher.published.lock().unwrap().len(), 1);
         assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
     }
 
@@ -1355,7 +1340,7 @@ mod tests {
         assert_eq!(ingested, vec![second_key]);
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
     }
 
     #[tokio::test]

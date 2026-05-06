@@ -13,6 +13,7 @@ pub mod events;
 pub mod forensic;
 pub mod identity;
 pub mod obfuscation;
+pub mod payload_audit;
 pub mod proxy;
 #[cfg(feature = "quic")]
 pub mod quic;
@@ -26,6 +27,17 @@ pub mod wg_packet_obfuscation;
 pub mod wg_relay;
 pub mod wg_shim;
 pub mod wg_stats;
+
+/// Returns the lowercase hex SHA-256 digest for one or more byte slices.
+pub fn sha256_hex(parts: &[&[u8]]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    format!("{:x}", hasher.finalize())
+}
 
 /// Compares two strings for equality in constant time.
 ///

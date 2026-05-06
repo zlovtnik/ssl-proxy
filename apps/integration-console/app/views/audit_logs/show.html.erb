@@ -11,9 +11,9 @@
   <div class="metric"><div>Subtype</div><div><%= @audit_log.frame_subtype || @audit_log.event_type || "event" %></div></div>
 </section>
 
-<section class="table-wrap" style="margin-top: 16px;">
+<section class="data-table-wrap table-wrap" style="margin-top: 16px;">
   <h2>Metadata</h2>
-  <table>
+  <table class="data-table">
     <tbody>
       <tr><th>Dedupe key</th><td><%= @audit_log.dedupe_key %></td></tr>
       <tr><th>Location</th><td><%= @audit_log.location_id %></td></tr>
@@ -41,9 +41,9 @@
   ["Model name", @audit_log.wps_model_name]
 ] %>
 <% if wps_metadata.any? { |_label, value| value.present? } %>
-  <section class="table-wrap" style="margin-top: 16px;">
+  <section class="data-table-wrap table-wrap" style="margin-top: 16px;">
     <h2>WPS Metadata</h2>
-    <table>
+    <table class="data-table">
       <tbody>
         <% wps_metadata.each do |label, value| %>
           <% if value.present? %>
@@ -58,18 +58,11 @@
 <% rf_metadata = [
   ["Signal", @audit_log.signal_dbm],
   ["Raw length", @audit_log.raw_len],
-  ["Frequency MHz", @audit_log.frequency_mhz],
-  ["Channel number", @audit_log.channel_number],
-  ["Channel flags", @audit_log.channel_flags],
-  ["Signal status", @audit_log.signal_status],
-  ["Data rate kbps", @audit_log.data_rate_kbps],
-  ["Antenna ID", @audit_log.antenna_id],
-  ["TSFT", @audit_log.tsft]
 ] %>
 <% if rf_metadata.any? { |_label, value| value.present? } %>
-  <section class="table-wrap" style="margin-top: 16px;">
+  <section class="data-table-wrap table-wrap" style="margin-top: 16px;">
     <h2>RF Metadata</h2>
-    <table>
+    <table class="data-table">
       <tbody>
         <% rf_metadata.each do |label, value| %>
           <% if value.present? %>
@@ -96,9 +89,9 @@
   ["mDNS name", @audit_log.mdns_name]
 ] %>
 <% if protocol_metadata.any? { |_label, value| value.present? } %>
-  <section class="table-wrap" style="margin-top: 16px;">
+  <section class="data-table-wrap table-wrap" style="margin-top: 16px;">
     <h2>Protocol Metadata</h2>
-    <table>
+    <table class="data-table">
       <tbody>
         <% protocol_metadata.each do |label, value| %>
           <% if value.present? %>
@@ -121,9 +114,9 @@
   ["Anomaly reasons", @audit_log.anomaly_reasons.presence&.join(", ")]
 ] %>
 <% if correlation_metadata.any? { |_label, value| value.present? } %>
-  <section class="table-wrap" style="margin-top: 16px;">
+  <section class="data-table-wrap table-wrap" style="margin-top: 16px;">
     <h2>Correlation</h2>
-    <table>
+    <table class="data-table">
       <tbody>
         <% correlation_metadata.each do |label, value| %>
           <% if value.present? %>
@@ -136,10 +129,10 @@
 <% end %>
 
 <% if @related.present? && @related.any? %>
-  <section class="table-wrap" style="margin-top: 16px;">
+  <section class="data-table-wrap table-wrap" style="margin-top: 16px;">
     <h2>Attack Sequence Timeline</h2>
     <p class="muted" style="margin-bottom: 8px;">Related frames with session key: <%= @audit_log.session_key %></p>
-    <table>
+    <table class="data-table">
       <thead>
         <tr>
           <th>Observed</th>

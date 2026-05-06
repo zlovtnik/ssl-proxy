@@ -1,5 +1,5 @@
 class NetworkClient < SyncRecord
   self.table_name = "network_clients"
 
-  scope :recent, ->(limit = 500) { order(last_seen: :desc).limit(limit) }
+  scope :recent, ->(limit = 500) { order(last_seen: :desc, client_mac: :asc, ssid: :asc).limit(limit) }
 end

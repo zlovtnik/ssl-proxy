@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const SYNC_SCAN_REQUEST_SUBJECT: &str = "sync.scan.request";
+pub const PAYLOAD_AUDIT_SUBJECT: &str = "proxy.payload_audit";
 pub const INLINE_PAYLOAD_REF_PREFIX: &str = "inline://json/";
 pub const OUTBOX_PAYLOAD_REF_PREFIX: &str = "outbox://";
 
@@ -62,11 +63,16 @@ pub fn should_publish_scan_request(event: &str) -> bool {
     )
 }
 
+pub fn should_publish_payload_audit(subject: &str) -> bool {
+    subject == PAYLOAD_AUDIT_SUBJECT
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_payload_ref, should_publish_scan_request, PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX,
-        OUTBOX_PAYLOAD_REF_PREFIX,
+        parse_payload_ref, should_publish_payload_audit, should_publish_scan_request,
+        PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX,
+        PAYLOAD_AUDIT_SUBJECT,
     };
 
     #[test]
@@ -93,5 +99,12 @@ mod tests {
         assert!(should_publish_scan_request("tunnel_open"));
         assert!(should_publish_scan_request("tunnel_close"));
         assert!(!should_publish_scan_request("stats_live"));
+    }
+
+    #[test]
+    fn payload_audit_subject_filter_matches_constant() {
+        assert_eq!(PAYLOAD_AUDIT_SUBJECT, "proxy.payload_audit");
+        assert!(should_publish_payload_audit(PAYLOAD_AUDIT_SUBJECT));
+        assert!(!should_publish_payload_audit("sync.scan.request"));
     }
 }

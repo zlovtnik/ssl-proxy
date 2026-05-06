@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
+  import GridToolbar from "../components/GridToolbar.svelte"
   import { serializeFilters, toQueryString } from "../lib/url"
 
   export let initial = {}
@@ -72,8 +73,22 @@
   }
 </script>
 
-<section class="table-wrap section-spaced">
+<section class="section-spaced">
   <h2>Sensors</h2>
+  <GridToolbar
+    query=""
+    {filters}
+    fields={[
+      { key: "sensor_id", label: "Sensor" },
+      { key: "location_id", label: "Location" },
+      { key: "last_seen_at", label: "Last Seen", type: "date" },
+      { key: "last_signal_dbm", label: "Signal", type: "number" },
+      { key: "status", label: "Status" }
+    ]}
+    searchable={false}
+    onSearch={() => {}}
+    onFiltersChange={handleFiltersChange}
+  />
   <DataGrid
     {columns}
     {rows}
@@ -83,17 +98,8 @@
     sortKey={backendToUiKey[sortKey] || sortKey}
     {sortDirection}
     {loading}
-    {filters}
-    filterFields={[
-      { key: "sensor_id", label: "Sensor" },
-      { key: "location_id", label: "Location" },
-      { key: "last_seen_at", label: "Last Seen", type: "date" },
-      { key: "last_signal_dbm", label: "Signal", type: "number" },
-      { key: "status", label: "Status" }
-    ]}
     onSort={handleSort}
     onPageChange={handlePageChange}
-    onFiltersChange={handleFiltersChange}
     rowKey={(row) => row.sensorId}
   />
 </section>

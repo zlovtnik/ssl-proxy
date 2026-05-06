@@ -243,13 +243,15 @@
   }
 
   .field-pill {
-    background: #007bff;
-    color: white;
+    background: var(--color-filter-chip);
+    color: var(--color-accent-vivid);
+    border: 1px solid var(--color-border-strong);
   }
 
   .operator-pill {
-    background: #6c757d;
-    color: white;
+    background: var(--color-filter-chip-muted);
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border-muted);
   }
 
   .pill button {
@@ -275,9 +277,9 @@
 
   .commit-btn {
     padding: 4px 12px;
-    background: #28a745;
-    color: white;
-    border: none;
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    border: 1px solid var(--color-accent);
     border-radius: 4px;
     font-size: 0.875rem;
     cursor: pointer;
@@ -285,11 +287,13 @@
   }
 
   .commit-btn:hover:not(:disabled) {
-    background: #218838;
+    background: var(--color-accent-vivid);
   }
 
   .commit-btn:disabled {
-    background: #6c757d;
+    background: var(--color-bg);
+    color: var(--color-text-faint);
+    border-color: var(--color-border-muted);
     cursor: not-allowed;
     opacity: 0.6;
   }
@@ -305,7 +309,7 @@
     background: var(--color-bg, white);
     border: 1px solid var(--color-control-border, #ddd);
     border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-popover);
     max-height: 300px;
     overflow-y: auto;
     z-index: 100;
@@ -329,7 +333,7 @@
   }
 
   .dropdown-item:hover:not(.loading):not(.empty) {
-    background: var(--color-bg-hover, #f0f0f0);
+    background: var(--color-accent-surface);
   }
 
   .dropdown-item.loading,

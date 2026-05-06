@@ -12,6 +12,10 @@ pub const Error = error{
     NextBatchFetchFailed,
     ShadowAuditFailed,
     BatchResultFailed,
+    BacklogOperationFailed,
+    MacLookupFailed,
+    NetworksListFailed,
+    ProbeFlushFailed,
 };
 
 pub const Client = struct {
@@ -243,6 +247,169 @@ pub const Client = struct {
         if (!command.isSuccess(exec_result)) {
             command.logFailure("psql", exec_result);
             return error.BatchResultFailed;
+        }
+    }
+
+    pub fn saveBacklogEntry(self: *Client, payload_json: []const u8) Error!void {
+        const literal = try self.sqlLiteral(payload_json);
+        defer self.allocator.free(literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.save_backlog_entry({s}::jsonb);",
+            .{literal},
+        );
+        defer self.allocator.free(query);
+
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+        defer argv.deinit(self.allocator);
+        try argv.appendSlice(self.allocator, &.{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        });
+
+        var result = command.exec(self.allocator, self.io, argv.items) catch {
+            return error.BacklogOperationFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("psql", result);
+            return error.BacklogOperationFailed;
+        }
+    }
+
+    pub fn listPendingBacklog(self: *Client) Error!?[]u8 {
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            "select coordinator.list_pending_backlog()::text;",
+        };
+        return self.runScalar(&argv, "psql", error.BacklogOperationFailed, false);
+    }
+
+    pub fn markBacklogSynced(self: *Client, dedupe_key: []const u8) Error!void {
+        const literal = try self.sqlLiteral(dedupe_key);
+        defer self.allocator.free(literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.mark_backlog_synced({s});",
+            .{literal},
+        );
+        defer self.allocator.free(query);
+
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+        defer argv.deinit(self.allocator);
+        try argv.appendSlice(self.allocator, &.{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        });
+
+        var result = command.exec(self.allocator, self.io, argv.items) catch {
+            return error.BacklogOperationFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("psql", result);
+            return error.BacklogOperationFailed;
+        }
+    }
+
+    pub fn pruneBacklog(self: *Client) Error!?[]u8 {
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            "select coordinator.prune_backlog()::text;",
+        };
+        return self.runScalar(&argv, "psql", error.BacklogOperationFailed, false);
+    }
+
+    pub fn lookupDeviceByMac(self: *Client, mac: []const u8) Error!?[]u8 {
+        const literal = try self.sqlLiteral(mac);
+        defer self.allocator.free(literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.lookup_device_by_mac({s})::text;",
+            .{literal},
+        );
+        defer self.allocator.free(query);
+
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+        defer argv.deinit(self.allocator);
+        try argv.appendSlice(self.allocator, &.{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        });
+
+        return self.runScalar(argv.items, "psql", error.MacLookupFailed, false);
+    }
+
+    pub fn listAuthorizedNetworks(self: *Client) Error!?[]u8 {
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            "select coordinator.list_authorized_networks()::text;",
+        };
+        return self.runScalar(&argv, "psql", error.NetworksListFailed, false);
+    }
+
+    pub fn flushProbeBatch(self: *Client, probes_json: []const u8) Error!void {
+        const literal = try self.sqlLiteral(probes_json);
+        defer self.allocator.free(literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.flush_probe_batch({s}::jsonb);",
+            .{literal},
+        );
+        defer self.allocator.free(query);
+
+        var argv = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+        defer argv.deinit(self.allocator);
+        try argv.appendSlice(self.allocator, &.{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        });
+
+        var result = command.exec(self.allocator, self.io, argv.items) catch {
+            return error.ProbeFlushFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("psql", result);
+            return error.ProbeFlushFailed;
         }
     }
 

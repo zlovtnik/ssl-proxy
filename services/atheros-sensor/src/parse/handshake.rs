@@ -94,7 +94,10 @@ impl HandshakeMonitor {
         for (key, messages, age) in stalled_pairs {
             let parts: Vec<&str> = key.split('|').collect();
             if parts.len() == 2 {
-                let msg_list: Vec<u8> = (0..4).filter(|i| messages & (1 << i) != 0).map(|i| i + 1).collect();
+                let msg_list: Vec<u8> = (0..4)
+                    .filter(|i| messages & (1 << i) != 0)
+                    .map(|i| i + 1)
+                    .collect();
                 tracing::warn!(
                     bssid = parts[0],
                     client_mac = parts[1],
@@ -104,11 +107,13 @@ impl HandshakeMonitor {
                 );
             }
         }
-        self.last_alerts.retain(|_, last| now.saturating_duration_since(*last) <= ttl);
+        self.last_alerts
+            .retain(|_, last| now.saturating_duration_since(*last) <= ttl);
         if self.pinned_pairs.is_empty() {
             return;
         }
-        self.pinned_pairs.retain(|key, _| self.states.contains_key(key));
+        self.pinned_pairs
+            .retain(|key, _| self.states.contains_key(key));
         if self.pinned_pairs.is_empty() {
             if let Some(control) = capture_control {
                 control.apply_filter("type mgt or type data".to_string());
@@ -143,7 +148,7 @@ impl HandshakeMonitor {
                 .entry(key.clone())
                 .or_insert_with(HandshakeState::new);
             let was_messages = state.messages;
-            
+
             if let Some(rc) = observation.replay_counter {
                 if let Some(prev) = state.replay_counter {
                     if rc != prev {
@@ -154,7 +159,7 @@ impl HandshakeMonitor {
                     state.replay_counter = Some(rc);
                 }
             }
-            
+
             if msg_idx == 0 {
                 if let Some(nonce) = observation.nonce {
                     state.anonce = Some(nonce);
@@ -164,7 +169,7 @@ impl HandshakeMonitor {
                     state.snonce = Some(nonce);
                 }
             }
-            
+
             state.last_seen = now;
             state.messages |= 1 << msg_idx;
             if state
@@ -181,11 +186,11 @@ impl HandshakeMonitor {
             if state.pmkid.is_none() {
                 state.pmkid = observation.pmkid.clone();
             }
-            
+
             if msg_idx == 0 && was_messages == 0 {
                 if let Some(channel) = frame.channel_number {
                     if let Some(control) = capture_control {
-                        let filter = format!("type data subtype 0x08 and wlan[0] & 0x40 == 0 and channel {}", channel);
+                        let filter = pinned_handshake_filter(channel);
                         control.apply_filter(filter);
                         self.pinned_pairs.insert(key.clone(), channel as u8);
                         tracing::debug!(
@@ -197,12 +202,15 @@ impl HandshakeMonitor {
                     }
                 }
             }
-            
-            let should_export_partial = msg_idx == 1 && (was_messages & 0x01) != 0 && (was_messages & 0x02) == 0 && !state.partial_exported;
+
+            let should_export_partial = msg_idx == 1
+                && (was_messages & 0x01) != 0
+                && (was_messages & 0x02) == 0
+                && !state.partial_exported;
             if should_export_partial {
                 state.partial_exported = true;
             }
-            
+
             (state.messages & 0x0f == 0x0f, should_export_partial)
         };
         if should_export_partial {
@@ -222,7 +230,7 @@ impl HandshakeMonitor {
                 );
             }
         }
-        
+
         if !complete {
             return None;
         }
@@ -233,7 +241,7 @@ impl HandshakeMonitor {
                 return None;
             }
         }
-        
+
         self.pinned_pairs.remove(&key);
         if self.pinned_pairs.is_empty() {
             if let Some(control) = capture_control {
@@ -248,7 +256,7 @@ impl HandshakeMonitor {
             .get(&key)
             .map(|state| (state.frames.clone(), state.pmkid.clone()))
             .unwrap_or_default();
-        
+
         frame.handshake_captured = true;
         push_tag(&mut frame.tags, "handshake_captured");
         if let Some(dir) = export_dir {
@@ -275,6 +283,10 @@ impl HandshakeMonitor {
     }
 }
 
+fn pinned_handshake_filter(_channel: u16) -> String {
+    "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0".to_string()
+}
+
 fn spawn_handshake_export(
     dir: String,
     context: AuditContext,
@@ -298,6 +310,25 @@ fn spawn_handshake_export(
         handle.spawn_blocking(export);
     } else {
         std::thread::spawn(export);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_handshake_filter;
+    use pcap::{Capture, Linktype};
+
+    #[test]
+    fn pinned_handshake_filter_compiles_with_libbpf() {
+        let filter = pinned_handshake_filter(6);
+        let capture = Capture::dead(Linktype::IEEE802_11_RADIOTAP).unwrap();
+
+        assert_eq!(
+            filter,
+            "(wlan[0] & 0x0c) == 0x08 and (wlan[0] & 0xf0) == 0x80 and (wlan[1] & 0x40) == 0"
+        );
+        assert!(!filter.contains("subtype 0x08"));
+        capture.compile(&filter, true).unwrap();
     }
 }
 

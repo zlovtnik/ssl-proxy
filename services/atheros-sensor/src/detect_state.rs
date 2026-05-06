@@ -8,7 +8,7 @@
 //! (edit distance <= 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
 //! DeauthFloodTracker counts deauthentication and disassociation frames per BSSID in a sliding
 //! window and fires an alert when the threshold is exceeded, with a cooldown to suppress repeats;
-//! AuthorizedNetworkCache holds the Postgres-backed list of known SSIDs/BSSIDs and is
+//! AuthorizedNetworkCache holds the NATS-backed list of known SSIDs/BSSIDs and is
 //! invalidated by the NATS generation counter when the console pushes a config change;
 //! evil-twin detection runs through IdentityCache (in parse/) which correlates adjacent MACs
 //! and session keys to surface impersonation across frames.
@@ -29,7 +29,7 @@
 //!
 //! [`AuthorizedNetworkCache`]: `invalidate()` sets `loaded_at` to `None` without touching
 //! `entries`; the stale data remains readable until the next `refresh_if_needed` call
-//! successfully reloads from Postgres.
+//! successfully reloads from the coordinator.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::backlog::{AuthorizedWirelessNetwork, PostgresBacklog};
+use crate::backlog::{AuthorizedWirelessNetwork, NatsBacklog};
 use crate::model::AuditEntry;
 use crate::parse::SECURITY_PMF_REQUIRED;
 
@@ -108,11 +108,7 @@ impl ClientInventory {
             if let Some(known_ssid) = &network.ssid {
                 if known_ssid.trim().eq_ignore_ascii_case(probe_ssid) {
                     if let Some(bssid) = &network.bssid {
-                        return Some((
-                            bssid.clone(),
-                            client_mac,
-                            Some(probe_ssid.to_string()),
-                        ));
+                        return Some((bssid.clone(), client_mac, Some(probe_ssid.to_string())));
                     }
                 }
             }
@@ -413,7 +409,7 @@ impl AuthorizedNetworkCache {
 
     pub async fn refresh_if_needed(
         &mut self,
-        backlog: &PostgresBacklog,
+        backlog: &NatsBacklog,
         ttl: Duration,
     ) -> Result<(), crate::backlog::BacklogError> {
         if self
@@ -556,7 +552,11 @@ impl AttackTimelineCorrelator {
         if !matches!(attack_type, "karma_probe_response" | "bssid_spoofing") {
             return None;
         }
-        let ssid = entry.ssid.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+        let ssid = entry
+            .ssid
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
         let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
         let alert_key = ssid.to_string();
         if let Some(last_alert) = self.recent_alerts.get(&alert_key) {
@@ -569,9 +569,12 @@ impl AttackTimelineCorrelator {
             timestamp: observed_at,
             attack_type: attack_type.to_string(),
         });
-        let cutoff = observed_at - chrono::Duration::seconds(ATTACK_CORRELATION_WINDOW.as_secs() as i64);
+        let cutoff =
+            observed_at - chrono::Duration::seconds(ATTACK_CORRELATION_WINDOW.as_secs() as i64);
         events.retain(|e| e.timestamp >= cutoff);
-        let has_karma = events.iter().any(|e| e.attack_type == "karma_probe_response");
+        let has_karma = events
+            .iter()
+            .any(|e| e.attack_type == "karma_probe_response");
         let has_spoofing = events.iter().any(|e| e.attack_type == "bssid_spoofing");
         if has_karma && has_spoofing {
             self.recent_alerts.insert(alert_key, Instant::now());
@@ -602,7 +605,7 @@ pub struct PmfAttackTracker {
     ap_pmf_state: HashMap<String, bool>,
     client_deauth_times: HashMap<String, DateTime<Utc>>,
     reconnect_window_ms: i64,
-    forced_reconnects: HashMap<(String, String), DateTime<Utc>>,  // (bssid, client) -> timestamp
+    forced_reconnects: HashMap<(String, String), DateTime<Utc>>, // (bssid, client) -> timestamp
 }
 
 impl PmfAttackTracker {
@@ -629,10 +632,13 @@ impl PmfAttackTracker {
         }
 
         // Detect spoofed deauth/disassoc and track client deauth times
-        if matches!(entry.frame_subtype.as_str(), "deauthentication" | "disassociation") {
+        if matches!(
+            entry.frame_subtype.as_str(),
+            "deauthentication" | "disassociation"
+        ) {
             if let Some(src) = entry.source_mac.as_deref() {
                 let src_norm = normalize_mac(src);
-                
+
                 if let Some(&pmf_required) = self.ap_pmf_state.get(&src_norm) {
                     if !entry.protected.unwrap_or(false) && !pmf_required {
                         if !tags.contains(&"threat:pmf_deauth_attack".to_string()) {
@@ -644,12 +650,16 @@ impl PmfAttackTracker {
 
             // Track deauth destination (client MAC) for reconnect correlation
             if let Some(dst) = entry.destination_mac.as_deref() {
-                self.client_deauth_times.insert(normalize_mac(dst), observed);
+                self.client_deauth_times
+                    .insert(normalize_mac(dst), observed);
             }
         }
 
         // Detect forced reconnect within configurable window
-        if matches!(entry.frame_subtype.as_str(), "association_request" | "reassociation_request") {
+        if matches!(
+            entry.frame_subtype.as_str(),
+            "association_request" | "reassociation_request"
+        ) {
             if let Some(src) = entry.source_mac.as_deref() {
                 let src_norm = normalize_mac(src);
                 if let Some(&deauth_time) = self.client_deauth_times.get(&src_norm) {
@@ -659,7 +669,11 @@ impl PmfAttackTracker {
                             tags.push("threat:pmf_forced_reconnect".to_string());
                         }
                         // Track forced reconnect for handshake correlation
-                        if let Some(bssid) = entry.bssid.as_deref().or(entry.destination_bssid.as_deref()) {
+                        if let Some(bssid) = entry
+                            .bssid
+                            .as_deref()
+                            .or(entry.destination_bssid.as_deref())
+                        {
                             let key = (normalize_mac(bssid), src_norm);
                             self.forced_reconnects.insert(key, observed);
                         }
@@ -671,8 +685,14 @@ impl PmfAttackTracker {
         // Detect handshake harvest attack: forced reconnect + handshake within 10s
         if entry.handshake_captured {
             if let (Some(bssid), Some(client)) = (
-                entry.bssid.as_deref().or(entry.destination_bssid.as_deref()),
-                entry.source_mac.as_deref().or(entry.destination_mac.as_deref()),
+                entry
+                    .bssid
+                    .as_deref()
+                    .or(entry.destination_bssid.as_deref()),
+                entry
+                    .source_mac
+                    .as_deref()
+                    .or(entry.destination_mac.as_deref()),
             ) {
                 let key = (normalize_mac(bssid), normalize_mac(client));
                 if let Some(&reconnect_time) = self.forced_reconnects.get(&key) {
@@ -689,7 +709,8 @@ impl PmfAttackTracker {
         // Cleanup expired state
         let ttl_ms = self.reconnect_window_ms.max(30_000);
         let cutoff = observed - chrono::Duration::milliseconds(ttl_ms);
-        self.client_deauth_times.retain(|_, &mut time| time >= cutoff);
+        self.client_deauth_times
+            .retain(|_, &mut time| time >= cutoff);
         self.forced_reconnects.retain(|_, &mut time| time >= cutoff);
     }
 }

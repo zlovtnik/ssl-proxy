@@ -113,19 +113,19 @@ pub(super) fn extract_ie_metadata(frame_type: u8, subtype: u8, frame_bytes: &[u8
     let mut probe_fingerprint = FNV_OFFSET_BASIS;
     let mut saw_ie = false;
     let is_probe_request = frame_type == 0 && subtype == 4;
-    
+
     for element in IEIterator::new(frame_bytes, ie_offset) {
         saw_ie = true;
         fingerprint ^= u64::from(element.id);
         fingerprint = fingerprint.wrapping_mul(FNV_PRIME);
-        
+
         if is_probe_request {
             probe_fingerprint ^= u64::from(element.id);
             probe_fingerprint = probe_fingerprint.wrapping_mul(FNV_PRIME);
         }
 
         match element.id {
-            1 | 45 | 50 | 127 => {},  // Supported Rates, HT Caps, Ext Rates, Ext Caps
+            1 | 45 | 50 | 127 => {} // Supported Rates, HT Caps, Ext Rates, Ext Caps
             48 => parse_rsn(element.data, &mut metadata),
             221 => parse_vendor_ie(element.data, &mut metadata),
             _ => {}

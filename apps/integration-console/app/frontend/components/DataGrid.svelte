@@ -1,6 +1,4 @@
 <script>
-  import QueryBuilder from "./QueryBuilder.svelte"
-
   let { 
     columns = [], 
     rows = [], 
@@ -10,33 +8,61 @@
     sortKey = "", 
     sortDirection = "desc", 
     loading = false, 
-    filters = [], 
-    filterFields = [], 
     onSort = () => {}, 
     onPageChange = () => {}, 
-    onFiltersChange = () => {}, 
     rowKey = (row, index) => row.id || row.dedupe_key || row.location_id || index 
   } = $props()
   
-  const paginationBtnClass = "rounded-md border border-(--color-border-strong) bg-(--color-surface) px-3 py-2 font-semibold text-(--color-accent-vivid) disabled:cursor-not-allowed disabled:border-(--color-border-muted) disabled:text-(--color-text-faint)"
+  const paginationBtnClass = "data-grid__page-button"
+  const widthPresets = {
+    xs: "w-16 min-w-16",
+    sm: "w-24 min-w-24",
+    md: "w-32 min-w-32",
+    lg: "w-40 min-w-40",
+    xl: "w-56 min-w-56",
+    action: "w-28 min-w-28"
+  }
+  const legacyWidths = {
+    "w-20": "sm",
+    "w-24": "sm",
+    "w-28": "sm",
+    "w-32": "md",
+    "w-36": "md",
+    "w-40": "lg",
+    "w-48": "lg",
+    "w-56": "xl",
+    "min-w-16": "xs",
+    "min-w-20": "sm",
+    "min-w-24": "sm",
+    "min-w-28": "sm",
+    "min-w-32": "md",
+    "min-w-40": "lg",
+    "min-w-48": "lg"
+  }
 
   const totalPages = $derived(Math.max(Math.ceil(Number(totalCount || 0) / Number(perPage || 1)), 1))
-  const gridFilterFields = $derived(filterFields.length ? filterFields : columnsToFilterFields(columns))
 
   function headerClasses(column) {
     return [
-      "sticky top-0 z-10 border-b-2 border-(--color-border-strong) bg-(--color-accent-surface) px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-(--color-accent-vivid)",
-      column.minWidth || column.width || "",
+      "data-grid__header",
+      columnWidth(column),
       hiddenClass(column.hiddenBelow)
     ].filter(Boolean).join(" ")
   }
 
   function cellClasses(column) {
     return [
-      "border-b border-(--color-border-muted) px-3 py-2 align-top text-sm text-(--color-text)",
-      column.minWidth || column.width || "",
+      "data-grid__cell",
+      columnWidth(column),
       hiddenClass(column.hiddenBelow)
     ].filter(Boolean).join(" ")
+  }
+
+  function columnWidth(column) {
+    if (column.size && widthPresets[column.size]) return widthPresets[column.size]
+    const legacySize = legacyWidths[column.width] || legacyWidths[column.minWidth]
+    if (legacySize) return widthPresets[legacySize]
+    return widthPresets.md
   }
 
   function hiddenClass(breakpoint) {
@@ -56,45 +82,28 @@
     return column.format ? column.format(value, row) : value
   }
 
-  function columnsToFilterFields(nextColumns) {
-    return nextColumns
-      .filter((column) => column.key && !column.key.startsWith("__"))
-      .map((column) => ({
-        key: column.filterKey || column.key,
-        label: column.label || column.key,
-        type: column.filterType || "text",
-        options: column.filterOptions
-      }))
-  }
 </script>
 
-<div>
-  {#if gridFilterFields.length}
-    <QueryBuilder fields={gridFilterFields} {filters} onChange={onFiltersChange} />
-  {/if}
-
-  <div class="relative overflow-x-auto rounded-lg border border-(--color-border-muted) bg-(--color-surface)">
-    <table class="min-w-full table-auto border-collapse">
+<div class="data-grid-wrap">
+  <div class="data-grid-wrap__scroll relative">
+    <table class="data-grid">
       <thead>
         <tr>
           {#each columns as column}
-            <th class={headerClasses(column)} scope="col" aria-sort={sortLabel(column) || undefined}>
+            <th class={headerClasses(column)} scope="col" aria-sort={sortLabel(column) || undefined} title={column.description || column.label}>
               {#if column.sortable}
                 <button
                   type="button"
-                  class={[
-                    "inline-flex w-full items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide hover:text-(--color-accent-vivid) focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-focus)",
-                    sortKey === column.key ? "text-(--color-accent-vivid) underline" : "text-(--color-accent-text)"
-                  ].join(" ")}
+                  class={sortKey === column.key ? "data-grid__sort data-grid__sort--active" : "data-grid__sort"}
                   onclick={() => onSort(column.key)}
                 >
-                  <span class="truncate">{column.label}</span>
+                  <span class="data-grid__header-label">{column.shortLabel || column.label}</span>
                   {#if sortKey === column.key}
                     <span aria-hidden="true">{#if sortDirection === "asc"}&uarr;{:else}&darr;{/if}</span>
                   {/if}
                 </button>
               {:else}
-                {column.label}
+                <span class="data-grid__header-label">{column.shortLabel || column.label}</span>
               {/if}
             </th>
           {/each}
@@ -111,14 +120,15 @@
                 {:else if column.href}
                   <a class="text-(--color-accent-vivid) underline-offset-2 hover:underline" href={column.href(row)}>{cellValue(column, row)}</a>
                 {:else}
-                  <span class="block truncate" title={cellValue(column, row) || ""}>{cellValue(column, row)}</span>
+                  {@const value = cellValue(column, row)}
+                  <span class="data-grid__cell-value" title={value || ""}>{value}</span>
                 {/if}
               </td>
             {/each}
           </tr>
         {:else}
           <tr>
-            <td class="border-b border-(--color-border-muted) px-3 py-8 text-center text-sm text-(--color-text-faint)" colspan={columns.length}>
+            <td class="data-grid__empty" colspan={columns.length}>
               No rows found.
             </td>
           </tr>
@@ -132,7 +142,7 @@
       </div>
     {/if}
 
-    <div class="flex items-center gap-3 border-t border-(--color-border-muted) bg-(--color-bg) px-3 py-3 text-sm text-(--color-text-muted)">
+    <div class="data-grid__pagination">
       <button
         type="button"
         class={paginationBtnClass}

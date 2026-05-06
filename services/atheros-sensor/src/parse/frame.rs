@@ -125,13 +125,13 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let destination_mac = addresses.destination_mac.clone();
     let transmitter_mac = addresses.transmitter_mac.clone();
     let receiver_mac = addresses.receiver_mac.clone();
-    
+
     let vendor_name = bssid
         .as_deref()
         .and_then(oui_lookup)
         .or_else(|| source_mac.as_deref().and_then(oui_lookup))
         .map(|s| s.to_string());
-    
+
     let mac = MacLayer {
         frame_type: frame_type_name.clone(),
         frame_subtype: frame_subtype.clone(),
@@ -1070,7 +1070,9 @@ mod tests {
                 data,
             })
             .unwrap();
-            if let Some(alert) = monitor.observe(&mut frame, &context, None, None, Duration::from_secs(60)) {
+            if let Some(alert) =
+                monitor.observe(&mut frame, &context, None, None, Duration::from_secs(60))
+            {
                 assert!(frame.handshake_captured);
                 assert!(frame.tags.contains(&"handshake_captured".to_string()));
                 alerts.push(alert);
@@ -1086,7 +1088,15 @@ mod tests {
             data: data_to_distribution_radiotap_frame(eapol_key_payload(4)),
         })
         .unwrap();
-        assert!(monitor.observe(&mut duplicate, &context, None, None, Duration::from_secs(60)).is_none());
+        assert!(monitor
+            .observe(
+                &mut duplicate,
+                &context,
+                None,
+                None,
+                Duration::from_secs(60)
+            )
+            .is_none());
     }
 
     #[test]

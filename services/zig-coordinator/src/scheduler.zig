@@ -34,6 +34,11 @@ pub const Error = error{
     BatchDispatchFailed,
     ResultFetchFailed,
     AlertPublishFailed,
+    BacklogOperationFailed,
+    MacLookupFailed,
+    NetworksListFailed,
+    ProbeFlushFailed,
+    WirelessMessageFailed,
 } || db.Error;
 
 pub const Service = struct {
@@ -172,6 +177,27 @@ pub const Service = struct {
         had_work = (try self.dispatchNextBatch()) or had_work;
         had_work = (try self.handleResults()) or had_work;
         had_work = (try self.runShadowAudit()) or had_work;
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer)) {
+            had_work = (try self.handleBacklogSave()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer)) {
+            had_work = (try self.handleBacklogList()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_synced_consumer)) {
+            had_work = (try self.handleBacklogSynced()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer)) {
+            had_work = (try self.handleBacklogPrune()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_mac_stream_name, self.cfg.wireless_mac_lookup_consumer)) {
+            had_work = (try self.handleMacLookup()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer)) {
+            had_work = (try self.handleNetworksAuthorized()) or had_work;
+        }
+        if (try self.wirelessConsumerHasBacklog(self.cfg.wireless_probe_stream_name, self.cfg.wireless_probe_flush_consumer)) {
+            had_work = (try self.handleProbeFlush()) or had_work;
+        }
         return had_work;
     }
 
@@ -309,6 +335,262 @@ pub const Service = struct {
         return had_work;
     }
 
+    fn handleBacklogSave(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer);
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg) |payload| {
+            self.database.saveBacklogEntry(payload) catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_save")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            logging.info()
+                .stringSafe("event", "backlog_save")
+                .stringSafe("status", "ok")
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleBacklogList(self: *Service) Error!bool {
+        const req = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer);
+        defer if (req) |m| self.allocator.free(m);
+        if (req != null) {
+            const list = self.database.listPendingBacklog() catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_list")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            defer if (list) |l| self.allocator.free(l);
+            if (list) |payload| {
+                try self.publish(self.cfg.wireless_backlog_list_reply_subject, payload, error.AlertPublishFailed);
+                logging.info()
+                    .stringSafe("event", "backlog_list")
+                    .stringSafe("status", "ok")
+                    .int("payload_bytes", payload.len)
+                    .log();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    fn handleBacklogSynced(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_synced_consumer);
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg) |payload| {
+            var parsed = std.json.parseFromSlice(
+                struct { dedupe_key: []const u8 },
+                self.allocator,
+                payload,
+                .{ .ignore_unknown_fields = true },
+            ) catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_synced")
+                    .stringSafe("status", "error")
+                    .stringSafe("error", "InvalidJson")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            defer parsed.deinit();
+            self.database.markBacklogSynced(parsed.value.dedupe_key) catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_synced")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            logging.info()
+                .stringSafe("event", "backlog_synced")
+                .stringSafe("status", "ok")
+                .string("dedupe_key", parsed.value.dedupe_key)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleBacklogPrune(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer);
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg != null) {
+            const deleted = self.database.pruneBacklog() catch |err| {
+                logging.err()
+                    .stringSafe("event", "backlog_prune")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.BacklogOperationFailed;
+            };
+            defer if (deleted) |d| self.allocator.free(d);
+            const count = if (deleted) |d| std.fmt.parseInt(i64, d, 10) catch 0 else 0;
+            const reply = std.fmt.allocPrint(self.allocator, "{{\"pruned\":{d}}}", .{count}) catch {
+                return error.BacklogOperationFailed;
+            };
+            defer self.allocator.free(reply);
+            try self.publish(self.cfg.wireless_backlog_prune_reply_subject, reply, error.AlertPublishFailed);
+            logging.info()
+                .stringSafe("event", "backlog_prune")
+                .stringSafe("status", "ok")
+                .int("deleted_count", count)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleMacLookup(self: *Service) Error!bool {
+        const req = try self.pullWirelessMessage(self.cfg.wireless_mac_stream_name, self.cfg.wireless_mac_lookup_consumer);
+        defer if (req) |m| self.allocator.free(m);
+        if (req) |payload| {
+            var parsed = std.json.parseFromSlice(
+                struct { mac: []const u8 },
+                self.allocator,
+                payload,
+                .{ .ignore_unknown_fields = true },
+            ) catch |err| {
+                logging.err()
+                    .stringSafe("event", "mac_lookup")
+                    .stringSafe("status", "error")
+                    .stringSafe("error", "InvalidMacLookupJson")
+                    .err(err)
+                    .log();
+                return error.MacLookupFailed;
+            };
+            defer parsed.deinit();
+            const result = self.database.lookupDeviceByMac(parsed.value.mac) catch |err| {
+                logging.err()
+                    .stringSafe("event", "mac_lookup")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.MacLookupFailed;
+            };
+            defer if (result) |r| self.allocator.free(r);
+            const reply = result orelse "null";
+            try self.publish(self.cfg.wireless_mac_lookup_reply_subject, reply, error.AlertPublishFailed);
+            logging.info()
+                .stringSafe("event", "mac_lookup")
+                .stringSafe("status", "ok")
+                .string("mac", parsed.value.mac)
+                .boolean("found", result != null)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn handleNetworksAuthorized(self: *Service) Error!bool {
+        const req = try self.pullWirelessMessage(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer);
+        defer if (req) |m| self.allocator.free(m);
+        if (req != null) {
+            const list = self.database.listAuthorizedNetworks() catch |err| {
+                logging.err()
+                    .stringSafe("event", "networks_authorized")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.NetworksListFailed;
+            };
+            defer if (list) |l| self.allocator.free(l);
+            if (list) |payload| {
+                try self.publish(self.cfg.wireless_networks_authorized_reply_subject, payload, error.AlertPublishFailed);
+                logging.info()
+                    .stringSafe("event", "networks_authorized")
+                    .stringSafe("status", "ok")
+                    .int("payload_bytes", payload.len)
+                    .log();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    fn handleProbeFlush(self: *Service) Error!bool {
+        const msg = try self.pullWirelessMessage(self.cfg.wireless_probe_stream_name, self.cfg.wireless_probe_flush_consumer);
+        defer if (msg) |m| self.allocator.free(m);
+        if (msg) |payload| {
+            self.database.flushProbeBatch(payload) catch |err| {
+                logging.err()
+                    .stringSafe("event", "probe_flush")
+                    .stringSafe("status", "error")
+                    .err(err)
+                    .log();
+                return error.ProbeFlushFailed;
+            };
+            logging.info()
+                .stringSafe("event", "probe_flush")
+                .stringSafe("status", "ok")
+                .int("payload_bytes", payload.len)
+                .log();
+            return true;
+        }
+        return false;
+    }
+
+    fn pullWirelessMessage(self: *Service, stream: []const u8, consumer: []const u8) Error!?[]u8 {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "next",
+            stream,
+            consumer,
+            "--count",
+            "1",
+            "--raw",
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.WirelessMessageFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            if (looksLikeNoMessage(result.stderr)) return null;
+            command.logFailure("nats", result);
+            return error.WirelessMessageFailed;
+        }
+
+        const output = command.trimmedOutput(result.stdout);
+        if (output.len == 0) return null;
+        return self.allocator.dupe(u8, output) catch error.WirelessMessageFailed;
+    }
+
+    fn wirelessConsumerHasBacklog(self: *Service, stream: []const u8, consumer: []const u8) Error!bool {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "consumer",
+            "info",
+            stream,
+            consumer,
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.WirelessMessageFailed;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return error.WirelessMessageFailed;
+        }
+
+        return consumerInfoHasBacklog(result.stdout);
+    }
+
     fn applySchema(self: *Service) Error!void {
         try self.database.applySchema();
     }
@@ -340,12 +622,23 @@ pub const Service = struct {
     fn checkNatsStreams(self: *Service) Error!void {
         try self.checkNatsStream(self.cfg.audit_stream_name);
         try self.checkNatsStream(self.cfg.result_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_backlog_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_mac_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_networks_stream_name);
+        try self.checkNatsStream(self.cfg.wireless_probe_stream_name);
     }
 
     fn checkNatsConsumers(self: *Service) Error!void {
         try self.checkNatsConsumer(self.cfg.audit_stream_name, self.cfg.scan_consumer);
         try self.checkNatsConsumer(self.cfg.audit_stream_name, self.cfg.load_consumer);
         try self.checkNatsConsumer(self.cfg.result_stream_name, self.cfg.result_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_save_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_synced_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_mac_stream_name, self.cfg.wireless_mac_lookup_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer);
+        try self.checkNatsConsumer(self.cfg.wireless_probe_stream_name, self.cfg.wireless_probe_flush_consumer);
     }
 
     fn checkNatsStream(self: *Service, stream_name: []const u8) Error!void {

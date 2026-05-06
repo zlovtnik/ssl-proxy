@@ -1,13 +1,13 @@
 //! Single-threaded async event loop and sensor lifecycle.
 //!
-//! run_sensor drives a tokio::select! loop over five arms: incoming pcap packets, a heartbeat
-//! ticker for idle logging, a bandwidth flush interval, a client inventory flush interval, and
-//! a backlog prune interval. All mutable per-frame state lives in PipelineState, which is
+//! run_sensor drives a tokio::select! loop over incoming pcap packets, a heartbeat
+//! ticker for idle logging, a bandwidth flush interval, and a client inventory flush interval.
+//! All mutable per-frame state lives in PipelineState, which is
 //! owned by the loop and never shared across tasks, avoiding locks on the hot path.
 //! SensorHandles bundles the shared resources that are either read-only or Arc-wrapped:
-//! the Postgres backlog, the NATS publish client, the audit window, and the authorized-network
+//! the NATS backlog, the NATS publish client, the audit window, and the authorized-network
 //! config generation counter. On SIGTERM or Ctrl-C, shutdown_flush drains the current bandwidth
-//! window, flushes the in-memory publish backlog to Postgres, then sleeps for shutdown_grace_secs
+//! window, flushes the in-memory publish backlog to the coordinator, then sleeps for shutdown_grace_secs
 //! to allow in-flight NATS publishes to complete before the process exits.
 //!
 //! # Type notes
@@ -63,13 +63,14 @@ use crate::{
         AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
-    backlog::{BacklogStore, PostgresBacklog},
+    backlog::{BacklogStore, NatsBacklog, ProbeFlushObservation},
     capture::{stream_packets, CaptureControl, CaptureError},
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker,
-        CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT, ROGUE_AP_SUBJECT,
+        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker,
+        RogueApTracker, SignalTracker, CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT,
+        ROGUE_AP_SUBJECT,
     },
     device::{detect, read_mac_address},
     error::SensorError,
@@ -77,13 +78,15 @@ use crate::{
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
         flush_memory_backlog, publish_bandwidth_event, publish_entry, publish_handshake_alert,
-        publish_json, reconcile_backlog, PublishClient, PublishError, PublishState,
-        SharedPublishState, SyncPublisherClient,
+        publish_json, PublishClient, PublishError, PublishState, SharedPublishState,
+        SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
+const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
+const MAC_LOOKUP_ERROR_TTL_SECS: u64 = 30;
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -104,20 +107,20 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         read_mac_address(&device),
     )?;
 
-    // Verify database connection works
-    let backlog = step_async("connect to Postgres backlog", async {
-        PostgresBacklog::connect(&config.database_url).await
-    })
-    .await?;
-    let _ = step_async("query Postgres backlog", async {
+    // Verify NATS publisher initializes
+    let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
+    let publish_client: Arc<dyn PublishClient> =
+        Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
+    let backlog = step(
+        "initialize NATS backlog",
+        NatsBacklog::new(Arc::clone(&publish_client), config.sync.clone()),
+    )?;
+    let _ = step_async("request coordinator backlog list over NATS", async {
         backlog.list_pending().await
     })
     .await?;
 
-    // Verify NATS publisher initializes
-    let _publisher = ssl_proxy::transport::SyncPublisher::new(&config.sync);
-
-    println!("Healthcheck OK: configuration valid, device accessible, database connected, publisher initialized");
+    println!("Healthcheck OK: configuration valid, device accessible, NATS publisher initialized, coordinator reachable");
     Ok(())
 }
 
@@ -147,7 +150,6 @@ async fn run_sensor() -> Result<(), SensorError> {
     let mut pipeline_state = PipelineState::new(&handles.config);
     let mut bandwidth_flush = bandwidth_flush_interval();
     let mut inventory_flush = interval_secs(handles.config.client_inventory_flush_secs);
-    let mut backlog_prune = interval_secs(6 * 60 * 60);
     let shutdown = wait_for_shutdown_signal();
     tokio::pin!(shutdown);
 
@@ -232,25 +234,23 @@ async fn run_sensor() -> Result<(), SensorError> {
                     warn!(%error, "client inventory publish failed");
                 }
 
-                // Flush accumulated probe observations to database
                 let probes_to_flush: Vec<_> = pipeline_state.probe_accumulator.drain().collect();
-                for ((ssid, client_mac), obs) in probes_to_flush {
-                    if let Err(error) = handles.backlog.upsert_network_client_all_probes(
-                        &ssid,
-                        &client_mac,
-                        obs.ssid.as_deref(),
-                        obs.first_seen,
-                        obs.last_seen,
-                        obs.probe_count,
-                    ).await {
-                        warn!(%error, ssid, client_mac, "network client batch upsert failed; reinserting for retry");
-                        pipeline_state.probe_accumulator.insert((ssid, client_mac), obs);
+                let batch = probes_to_flush
+                    .iter()
+                    .map(|((ssid, client_mac), obs)| ProbeFlushObservation {
+                        ssid: ssid.clone(),
+                        client_mac: client_mac.clone(),
+                        known_bssid: obs.known_bssid.clone(),
+                        first_seen: obs.first_seen,
+                        last_seen: obs.last_seen,
+                        probe_count: obs.probe_count,
+                    })
+                    .collect::<Vec<_>>();
+                if let Err(error) = handles.backlog.flush_probe_batch(&batch).await {
+                    warn!(%error, "probe batch publish failed; reinserting for retry");
+                    for (key, obs) in probes_to_flush {
+                        pipeline_state.probe_accumulator.insert(key, obs);
                     }
-                }
-            }
-            _ = backlog_prune.tick() => {
-                if let Err(error) = handles.backlog.prune_stale(handles.config.backlog_max_attempts, handles.config.backlog_max_age_hours).await {
-                    warn!(%error, "backlog stale prune failed");
                 }
             }
         }
@@ -268,7 +268,7 @@ struct SensorHandles {
     context: SharedContext,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     capture_control: CaptureControl,
-    backlog: Arc<PostgresBacklog>,
+    backlog: Arc<NatsBacklog>,
     publish_client: Arc<SyncPublisherClient>,
     publish_state: SharedPublishState,
     stats: metrics::SharedStats,
@@ -298,14 +298,14 @@ struct PipelineState {
 
 #[derive(Clone)]
 struct ProbeObservation {
-    ssid: Option<String>,
+    known_bssid: Option<String>,
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
     probe_count: u32,
 }
 
 impl PipelineState {
-    fn new(config: &AppConfig) -> Self {
+    fn new(_config: &AppConfig) -> Self {
         let pmf_reconnect_window_ms = std::env::var("ATH_SENSOR_PMF_RECONNECT_WINDOW_MS")
             .ok()
             .and_then(|v| v.parse::<i64>().ok())
@@ -316,7 +316,7 @@ impl PipelineState {
             handshake_monitor: HandshakeMonitor::default(),
             traffic_bucket: TrafficBucket::new(DEFAULT_BANDWIDTH_WINDOW_SECS),
             mac_device_cache: LruCache::new(
-                NonZeroUsize::new(config.mac_device_cache_size).unwrap_or_else(|| {
+                NonZeroUsize::new(MAC_DEVICE_CACHE_SIZE).unwrap_or_else(|| {
                     NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
                 }),
             ),
@@ -334,7 +334,7 @@ impl PipelineState {
 }
 
 /// Initializes sensor in startup order: tracing first (so all subsequent steps are logged),
-/// then device detection, then Postgres connection, then pcap capture, then config subscribers.
+/// then device detection, then NATS backlog, then pcap capture, then config subscribers.
 async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
@@ -383,15 +383,14 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         nats_tls_enabled = config.sync.tls_enabled,
         "atheros sensor publisher initialized"
     );
-    let backlog = Arc::new(
-        step_async("connect to Postgres backlog", async {
-            PostgresBacklog::connect(&config.database_url).await
-        })
-        .await?,
-    );
-    info!("atheros sensor postgres backlog connected");
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let publish_state = PublishState::shared();
+    let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
+    let backlog = Arc::new(step(
+        "initialize NATS backlog",
+        NatsBacklog::new(backlog_client, config.sync.clone()),
+    )?);
+    info!("atheros sensor NATS backlog initialized");
 
     config_subscriber::spawn_audit_window_config_subscriber(
         config.sync.clone(),
@@ -403,29 +402,6 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         config.sync.clone(),
         Arc::clone(&authorized_config_generation),
     );
-
-    let reconcile_window = Arc::clone(&audit_window);
-    let reconcile_backlog_store = Arc::clone(&backlog);
-    let reconcile_client = Arc::clone(&publish_client);
-    let reconcile_publish_state = Arc::clone(&publish_state);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(15));
-        info!("backlog reconciliation task started");
-        loop {
-            interval.tick().await;
-            let window = audit_window_snapshot(&reconcile_window);
-            if let Err(error) = reconcile_backlog(
-                &reconcile_publish_state,
-                &*reconcile_backlog_store,
-                &*reconcile_client,
-                &window,
-            )
-            .await
-            {
-                error!(%error, "backlog reconciliation failed");
-            }
-        }
-    });
 
     let context = Arc::new(RwLock::new(AuditContext {
         sensor_id,
@@ -463,11 +439,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         packet_stream.control.clone(),
     );
     let stats = metrics::shared_stats();
-    metrics::spawn_metrics_server(
-        config.metrics_port,
-        Arc::clone(&stats),
-        Arc::clone(&backlog),
-    );
+    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
 
     Ok(SensorHandles {
         config: config.clone(),
@@ -486,12 +458,12 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
 /// authorized network -> tags threats -> enriches with MAC device lookup -> observes
-/// bandwidth -> publishes to NATS and Postgres ingest ledger.
+/// bandwidth -> publishes to NATS.
 async fn process_packet(
     packet: RawPacket,
     context: &AuditContext,
     config: &AppConfig,
-    backlog: &PostgresBacklog,
+    backlog: &NatsBacklog,
     publish_client: &dyn PublishClient,
     publish_state: &SharedPublishState,
     pipeline: &mut PipelineState,
@@ -499,7 +471,6 @@ async fn process_packet(
     authorized_config_generation: &AtomicU64,
     capture_control: &CaptureControl,
 ) -> Result<PipelineOutcome, SensorError> {
-    // Always count raw bytes first, before any parsing attempts
     let packet_len = packet.data.len() as u64;
 
     let mut wifi_frame = match decode_frame(&packet) {
@@ -573,27 +544,38 @@ async fn process_packet(
         entry.tags.push("threat:unauthorized_bssid".to_string());
     }
     pipeline.client_inventory.observe(&entry);
-    
+
     // Accumulate probe observations for batched flush
     if entry.frame_subtype == "probe_request" {
         if let (Some(client_mac), Some(ssid)) = (
-            entry.source_mac.as_deref().map(|m| m.trim().to_ascii_lowercase()),
-            entry.ssid.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            entry
+                .source_mac
+                .as_deref()
+                .map(|m| m.trim().to_ascii_lowercase()),
+            entry
+                .ssid
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty()),
         ) {
             let observed_at = chrono::DateTime::parse_from_rfc3339(&entry.observed_at)
                 .ok()
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(chrono::Utc::now);
-            
+
             let key = (ssid.to_string(), client_mac.clone());
-            pipeline.probe_accumulator
+            pipeline
+                .probe_accumulator
                 .entry(key)
                 .and_modify(|obs| {
+                    if obs.known_bssid.is_none() {
+                        obs.known_bssid = entry.bssid.clone();
+                    }
                     obs.last_seen = observed_at;
                     obs.probe_count = obs.probe_count.saturating_add(1);
                 })
                 .or_insert_with(|| ProbeObservation {
-                    ssid: Some(ssid.to_string()),
+                    known_bssid: entry.bssid.clone(),
                     first_seen: observed_at,
                     last_seen: observed_at,
                     probe_count: 1,
@@ -642,44 +624,42 @@ async fn process_packet(
     let mut pmf_tags = Vec::new();
     pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
     entry.tags.extend(pmf_tags);
-    if config.mac_device_lookup_enabled {
-        if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
-            let cache_key = mac.to_ascii_lowercase();
-            let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
-                cached.clone()
+    if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
+        let cache_key = mac.to_ascii_lowercase();
+        let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
+            cached.clone()
+        } else {
+            let lookup = if pipeline
+                .mac_lookup_error_cache
+                .get(&cache_key)
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(MAC_LOOKUP_ERROR_TTL_SECS))
+            {
+                None
             } else {
-                let lookup = if pipeline.mac_lookup_error_cache.get(&cache_key).is_some_and(
-                    |last| last.elapsed() < Duration::from_secs(config.mac_lookup_error_ttl_secs),
-                ) {
-                    None
-                } else {
-                    match backlog.lookup_device_by_mac(&cache_key).await {
-                        Ok(lookup) => lookup,
-                        Err(error) => {
-                            stats.lock().unwrap().mac_lookup_failures += 1;
-                            pipeline
-                                .mac_lookup_error_cache
-                                .insert(cache_key.clone(), Instant::now());
-                            warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
-                            None
-                        }
+                match backlog.lookup_device_by_mac(&cache_key).await {
+                    Ok(lookup) => lookup,
+                    Err(error) => {
+                        stats.lock().unwrap().mac_lookup_failures += 1;
+                        pipeline
+                            .mac_lookup_error_cache
+                            .insert(cache_key.clone(), Instant::now());
+                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
+                        None
                     }
-                };
-                if lookup.is_some() {
-                    pipeline
-                        .mac_device_cache
-                        .put(cache_key.clone(), lookup.clone());
                 }
-                lookup
             };
-            if let Some((device_id, username)) = lookup {
-                entry.device_id = Some(device_id);
-                if entry.username.is_none() {
-                    entry.username = username;
-                }
-                if matches!(entry.identity_source.as_str(), "unknown" | "mac_observed") {
-                    entry.identity_source = "device_registry".to_string();
-                }
+            pipeline
+                .mac_device_cache
+                .put(cache_key.clone(), lookup.clone());
+            lookup
+        };
+        if let Some((device_id, username)) = lookup {
+            entry.device_id = Some(device_id);
+            if entry.username.is_none() {
+                entry.username = username;
+            }
+            if matches!(entry.identity_source.as_str(), "unknown" | "mac_observed") {
+                entry.identity_source = "device_registry".to_string();
             }
         }
     }
@@ -783,12 +763,12 @@ fn spawn_channel_hopper(
     });
 }
 
-/// Flushes bandwidth window, writes memory backlog to Postgres, then sleeps for
+/// Flushes bandwidth window, writes memory backlog to the coordinator, then sleeps for
 /// shutdown_grace_secs to let in-flight NATS publishes drain before process exit.
 async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineState) {
     let events = pipeline_state.traffic_bucket.flush_current();
     publish_bandwidth_events(&*handles.publish_client, events).await;
-    flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
+    let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
 

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_04_30_000300) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_01_000100) do
   create_schema "coordinator"
 
   # These are extensions that must be enabled in order to support this database
@@ -49,6 +49,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_04_30_000300) do
     t.text "notes"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.text "psk_ciphertext"
     t.index "COALESCE(lower(ssid), ''::text), COALESCE(lower(bssid), ''::text), COALESCE(location_id, ''::text)", name: "authorized_wireless_networks_match_idx", unique: true
     t.index ["enabled", "location_id"], name: "authorized_wireless_networks_enabled_idx"
     t.check_constraint "NULLIF(TRIM(BOTH FROM COALESCE(ssid, ''::text)), ''::text) IS NOT NULL OR NULLIF(TRIM(BOTH FROM COALESCE(bssid, ''::text)), ''::text) IS NOT NULL", name: "authorized_wireless_network_identity_chk"

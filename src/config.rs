@@ -19,6 +19,7 @@ pub struct Config {
     pub proxy: ProxyConfig,
     pub admin: AdminConfig,
     pub sync: SyncConfig,
+    pub payload_audit: PayloadAuditConfig,
     pub obfuscation: ObfuscationConfig,
     pub tls: TlsConfig,
     pub wireguard: WireGuardConfig,
@@ -95,6 +96,16 @@ pub struct SyncConfig {
     pub inline_payload_max_bytes: usize,
     pub outbox_dir: String,
     pub publish_spool_dir: String,
+}
+
+/// Browser payload audit publishing settings.
+#[derive(Clone, Debug)]
+pub struct PayloadAuditConfig {
+    pub enabled: bool,
+    pub nats_subject: String,
+    pub max_body_bytes: usize,
+    pub allowed_methods: Vec<String>,
+    pub allowed_content_types: Vec<String>,
 }
 
 /// Traffic obfuscation settings and prebuilt domain map.
@@ -207,6 +218,7 @@ impl std::fmt::Debug for Config {
             .field("proxy", &self.proxy)
             .field("admin", &self.admin)
             .field("sync", &self.sync)
+            .field("payload_audit", &self.payload_audit)
             .field("obfuscation", &self.obfuscation)
             .field("tls", &self.tls)
             .field("wireguard", &self.wireguard)
@@ -371,6 +383,7 @@ impl Config {
         let proxy = ProxyConfig::from_env()?;
         let admin = AdminConfig::from_env()?;
         let sync = SyncConfig::from_env()?;
+        let payload_audit = PayloadAuditConfig::from_env();
         let obfuscation = ObfuscationConfig::from_env();
         let tls = TlsConfig::from_env();
         let wireguard = WireGuardConfig::from_env()?;
@@ -432,6 +445,7 @@ impl Config {
             proxy,
             admin,
             sync,
+            payload_audit,
             obfuscation,
             tls,
             wireguard,
@@ -536,6 +550,13 @@ impl Default for Config {
                 publish_queue_capacity: 8_192,
                 publish_enqueue_timeout_ms: 25,
                 publish_spool_dir: "/tmp/ssl-proxy-sync-outbox/publish-spool".to_string(),
+            },
+            payload_audit: PayloadAuditConfig {
+                enabled: false,
+                nats_subject: "proxy.payload_audit".to_string(),
+                max_body_bytes: 65_536,
+                allowed_methods: vec!["POST".to_string(), "PUT".to_string(), "PATCH".to_string()],
+                allowed_content_types: vec!["application/json".to_string()],
             },
             obfuscation: ObfuscationConfig {
                 enabled: true,
@@ -787,6 +808,28 @@ impl SyncConfig {
             outbox_dir,
             publish_spool_dir,
         })
+    }
+}
+
+impl PayloadAuditConfig {
+    fn from_env() -> Self {
+        Self {
+            enabled: read_bool("PAYLOAD_AUDIT_ENABLED", false),
+            nats_subject: std::env::var("PAYLOAD_AUDIT_NATS_SUBJECT")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "proxy.payload_audit".to_string()),
+            max_body_bytes: read_usize("PAYLOAD_AUDIT_MAX_BODY_BYTES", 65_536),
+            allowed_methods: read_csv_list(
+                "PAYLOAD_AUDIT_ALLOWED_METHODS",
+                &["POST", "PUT", "PATCH"],
+            ),
+            allowed_content_types: read_csv_list(
+                "PAYLOAD_AUDIT_ALLOWED_CONTENT_TYPES",
+                &["application/json"],
+            ),
+        }
     }
 }
 
@@ -1082,6 +1125,20 @@ fn read_bool(var: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+fn read_csv_list(var: &str, default: &[&str]) -> Vec<String> {
+    std::env::var(var)
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(|part| part.trim().to_string())
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| default.iter().map(|value| (*value).to_string()).collect())
+}
+
 /// Returns a secret value taken from an environment variable or, if that is empty/missing,
 /// from a file whose path is specified by a second environment variable.
 ///
@@ -1214,6 +1271,11 @@ mod tests {
             "SYNC_PUBLISH_QUEUE_CAPACITY",
             "SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS",
             "SYNC_PUBLISH_SPOOL_DIR",
+            "PAYLOAD_AUDIT_ENABLED",
+            "PAYLOAD_AUDIT_NATS_SUBJECT",
+            "PAYLOAD_AUDIT_MAX_BODY_BYTES",
+            "PAYLOAD_AUDIT_ALLOWED_METHODS",
+            "PAYLOAD_AUDIT_ALLOWED_CONTENT_TYPES",
         ] {
             std::env::remove_var(key);
         }
@@ -1557,6 +1619,46 @@ mod tests {
             result,
             Err(ConfigError::MissingSyncNatsTlsClientKeyPath)
         ));
+    }
+
+    #[test]
+    fn payload_audit_defaults_and_env_are_loaded() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-key");
+
+        let result = Config::from_env().unwrap();
+        assert!(!result.payload_audit.enabled);
+        assert_eq!(result.payload_audit.nats_subject, "proxy.payload_audit");
+        assert_eq!(result.payload_audit.max_body_bytes, 65_536);
+        assert_eq!(
+            result.payload_audit.allowed_methods,
+            vec!["POST", "PUT", "PATCH"]
+        );
+        assert_eq!(
+            result.payload_audit.allowed_content_types,
+            vec!["application/json"]
+        );
+
+        std::env::set_var("PAYLOAD_AUDIT_ENABLED", "true");
+        std::env::set_var("PAYLOAD_AUDIT_NATS_SUBJECT", "audit.payloads");
+        std::env::set_var("PAYLOAD_AUDIT_MAX_BODY_BYTES", "1024");
+        std::env::set_var("PAYLOAD_AUDIT_ALLOWED_METHODS", "POST,DELETE");
+        std::env::set_var(
+            "PAYLOAD_AUDIT_ALLOWED_CONTENT_TYPES",
+            "application/json,text/json",
+        );
+
+        let result = Config::from_env().unwrap();
+        assert!(result.payload_audit.enabled);
+        assert_eq!(result.payload_audit.nats_subject, "audit.payloads");
+        assert_eq!(result.payload_audit.max_body_bytes, 1_024);
+        assert_eq!(result.payload_audit.allowed_methods, vec!["POST", "DELETE"]);
+        assert_eq!(
+            result.payload_audit.allowed_content_types,
+            vec!["application/json", "text/json"]
+        );
     }
 
     #[test]

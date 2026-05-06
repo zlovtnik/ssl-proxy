@@ -11,8 +11,6 @@
 //! adjacent_mac_hint scans all five address fields for MAC pairs that share the first five octets
 //! and differ in the last by 1-4, a common indicator of AP/client interface adjacency.
 
-use sha2::{Digest, Sha256};
-
 use super::addresses::MacAddresses;
 /// Detects MAC address pairs that differ only in the last octet by 1-4.
 ///
@@ -118,10 +116,7 @@ pub(super) fn frame_fingerprint(
             .and_then(normalize_mac)
             .unwrap_or("")
     );
-    let mut hasher = Sha256::new();
-    hasher.update(normalized.as_bytes());
-    hasher.update(frame_bytes);
-    format!("{:x}", hasher.finalize())
+    ssl_proxy::sha256_hex(&[normalized.as_bytes(), frame_bytes])
 }
 /// Returns `true` if two MAC addresses share the first five octets and differ
 /// in the last octet by 1-4.
