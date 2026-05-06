@@ -3,21 +3,32 @@ require "nats/client"
 
 module Nats
   class Subscriber
-    SUBJECTS = ["wireless.audit", "wifi.alert.handshake", "audit.wireless.bandwidth", "audit.threat.shadow_device", "sync.scan.request"].freeze
+    def self.configured_subjects
+      IntegrationConfig.enabled
+        .where(source_type: "nats")
+        .order(:slug)
+        .filter_map { |config| config.params.to_h["subject"].to_s.strip.presence }
+        .uniq
+    end
 
-    def initialize(url: ENV.fetch("SYNC_NATS_URL", "nats://127.0.0.1:4222"), client: nil)
+    def initialize(url: ENV.fetch("SYNC_NATS_URL", "nats://127.0.0.1:4222"), client: nil, subjects: nil)
       @url = url
       @client = client
+      @subjects = subjects
     end
 
     def run_forever
       client = @client || NATS.connect(servers: [@url])
-      SUBJECTS.each do |subject|
-        client.subscribe(subject) { |message| handle(subject, message) }
-      end
+      subscribe_configured(client)
       sleep
     ensure
       client&.close unless @client
+    end
+
+    def subscribe_configured(client)
+      subjects.each do |subject|
+        client.subscribe(subject) { |message| handle(subject, message) }
+      end
     end
 
     def handle(subject, message)
@@ -38,6 +49,10 @@ module Nats
     end
 
     private
+
+    def subjects
+      (@subjects || self.class.configured_subjects).filter_map { |subject| subject.to_s.strip.presence }.uniq
+    end
 
     def decode(message)
       JSON.parse(message.respond_to?(:data) ? message.data : message.to_s)

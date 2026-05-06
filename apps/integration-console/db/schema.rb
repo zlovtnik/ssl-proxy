@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_05_06_000300) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_06_000400) do
   create_schema "coordinator"
 
   # These are extensions that must be enabled in order to support this database

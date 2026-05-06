@@ -1,6 +1,41 @@
 require "test_helper"
 
 class NatsSubscriberTest < ActiveSupport::TestCase
+  setup do
+    IntegrationRun.delete_all
+    IntegrationConfig.delete_all
+  end
+
+  FakeClient = Struct.new(:subscriptions) do
+    def initialize
+      super([])
+    end
+
+    def subscribe(subject)
+      subscriptions << subject
+    end
+  end
+
+  test "configured subjects come from enabled nats integration params" do
+    IntegrationConfig.create!(name: "Sync Request", source_type: "nats", destination_type: "postgres", params: { subject: "sync.scan.request" })
+    IntegrationConfig.create!(name: "Wireless Audit", source_type: "nats", destination_type: "postgres", params: { subject: "wireless.audit" })
+    IntegrationConfig.create!(name: "Disabled Trace", source_type: "nats", destination_type: "postgres", enabled: false, params: { subject: "wifi.alert.handshake" })
+    IntegrationConfig.create!(name: "HTTP Sink", source_type: "http", destination_type: "postgres", params: { method: "POST" })
+
+    assert_equal ["sync.scan.request", "wireless.audit"], Nats::Subscriber.configured_subjects
+  end
+
+  test "subscribes once per configured subject" do
+    IntegrationConfig.create!(name: "Proxy Scan", source_type: "nats", destination_type: "postgres", params: { subject: "sync.scan.request" })
+    IntegrationConfig.create!(name: "Atheros Scan", source_type: "nats", destination_type: "postgres", params: { subject: "sync.scan.request" })
+    IntegrationConfig.create!(name: "Wireless Audit", source_type: "nats", destination_type: "postgres", params: { subject: "wireless.audit" })
+    client = FakeClient.new
+
+    Nats::Subscriber.new(client: client).subscribe_configured(client)
+
+    assert_equal ["sync.scan.request", "wireless.audit"], client.subscriptions
+  end
+
   test "wireless audit updates sensor and throughput sample" do
     payload = {
       sensor_id: "00:11:22:33:44:55",
