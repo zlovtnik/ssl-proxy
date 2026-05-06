@@ -50,17 +50,18 @@ ensure_consumer() {
   stream_name="$1"
   consumer_name="$2"
   filter_subject="$3"
+  action="add"
   if nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" >/dev/null 2>&1; then
-    nats --server "${NATS_URL}" consumer info "${stream_name}" "${consumer_name}" >/dev/null
-  else
-    nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
-      --filter "${filter_subject}" \
-      --ack explicit \
-      --deliver all \
-      --replay instant \
-      --pull \
-      --defaults
+    action="edit"
   fi
+  nats --server "${NATS_URL}" consumer "${action}" "${stream_name}" "${consumer_name}" \
+    --filter "${filter_subject}" \
+    --ack explicit \
+    --max-deliver=-1 \
+    --deliver all \
+    --replay instant \
+    --pull \
+    --wait=5s
 }
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
@@ -137,41 +138,9 @@ else
     --replicas 1
 fi
 
-if nats --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" >/dev/null 2>&1; then
-  nats --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" >/dev/null
-else
-  nats --server "${NATS_URL}" consumer add "${STREAM_NAME}" "${SCAN_CONSUMER}" \
-    --filter "${SCAN_SUBJECT}" \
-    --ack explicit \
-    --deliver all \
-    --replay instant \
-    --pull \
-    --defaults
-fi
-
-if nats --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${LOAD_CONSUMER}" >/dev/null 2>&1; then
-  nats --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${LOAD_CONSUMER}" >/dev/null
-else
-  nats --server "${NATS_URL}" consumer add "${STREAM_NAME}" "${LOAD_CONSUMER}" \
-    --filter "${LOAD_SUBJECT}" \
-    --ack explicit \
-    --deliver all \
-    --replay instant \
-    --pull \
-    --defaults
-fi
-
-if nats --server "${NATS_URL}" consumer info "${RESULT_STREAM_NAME}" "${RESULT_CONSUMER}" >/dev/null 2>&1; then
-  nats --server "${NATS_URL}" consumer info "${RESULT_STREAM_NAME}" "${RESULT_CONSUMER}" >/dev/null
-else
-  nats --server "${NATS_URL}" consumer add "${RESULT_STREAM_NAME}" "${RESULT_CONSUMER}" \
-    --filter "${RESULT_SUBJECT}" \
-    --ack explicit \
-    --deliver all \
-    --replay instant \
-    --pull \
-    --defaults
-fi
+ensure_consumer "${STREAM_NAME}" "${SCAN_CONSUMER}" "${SCAN_SUBJECT}"
+ensure_consumer "${STREAM_NAME}" "${LOAD_CONSUMER}" "${LOAD_SUBJECT}"
+ensure_consumer "${RESULT_STREAM_NAME}" "${RESULT_CONSUMER}" "${RESULT_SUBJECT}"
 
 ensure_stream "${WIRELESS_BACKLOG_STREAM}" "wireless.backlog.>" "720h"
 ensure_stream "${WIRELESS_MAC_STREAM}" "wireless.mac.>" "1h"
