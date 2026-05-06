@@ -2,6 +2,7 @@ module NavHelper
   ICONS = {
     health: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h4l2-6 4 12 2-6h4"/></svg>',
     audit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M5 12h14M5 19h9"/></svg>',
+    integration: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3M8 3v4M8 3H3M21 12H9m12 0-4-4m4 4-4 4"/></svg>',
     backlog: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7h12v4H6zM6 13h12v4H6z"/></svg>',
     windows: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM5 10h14"/></svg>',
     wireless: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13a10 10 0 0 1 14 0M8 16a6 6 0 0 1 8 0M11 19a2 2 0 0 1 2 0"/></svg>',

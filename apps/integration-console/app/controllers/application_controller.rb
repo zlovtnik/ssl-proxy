@@ -7,6 +7,7 @@ class ApplicationController < ActionController::Base
 
   rescue_from ActiveRecord::StatementInvalid, with: :render_query_error
   rescue_from ExportStore::Error, with: :render_export_store_error
+  rescue_from IntegrationRun::InvalidTransitionError, with: :render_invalid_transition
 
   private
 
@@ -25,6 +26,13 @@ class ApplicationController < ActionController::Base
     respond_to do |format|
       format.json { render json: { error: "Export storage is unavailable. Try again later." }, status: :service_unavailable }
       format.any { render plain: "Export storage is unavailable. Try again later.", status: :service_unavailable }
+    end
+  end
+
+  def render_invalid_transition(error)
+    respond_to do |format|
+      format.json { render json: { error: error.message }, status: :unprocessable_entity }
+      format.any { redirect_back fallback_location: integration_runs_path, alert: error.message, status: :see_other }
     end
   end
 

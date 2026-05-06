@@ -1,0 +1,11 @@
+<% content_for :title, @integration_detail_payload.dig(:integration, :name).presence || "Integration" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<%= svelte_props_tag("integration-detail-svelte-root", initial: @integration_detail_payload) %>
+<div id="integration-detail-svelte-root"></div>
+<%= svelte_bundle_tags(:integration_detail) %>
+
+<noscript>
+  <h1><%= @integration_detail_payload.dig(:integration, :name) || "Integration" %></h1>
+  <p><%= link_to "All integrations", integrations_path %></p>
+</noscript>

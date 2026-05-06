@@ -15,6 +15,22 @@ Rails.application.routes.draw do
     post :retry, on: :member
   end
   resources :audit_windows
+  resources :integrations do
+    member do
+      post :trigger
+      post :replay
+    end
+    collection do
+      get :lineage
+      get :param_types
+    end
+  end
+  resources :integration_runs, only: %i[index show] do
+    member do
+      post :cancel
+    end
+    get :batches, to: "integration_run_batches#index"
+  end
   resources :authorized_wireless_networks
   resources :devices
   resources :identities, only: :index do

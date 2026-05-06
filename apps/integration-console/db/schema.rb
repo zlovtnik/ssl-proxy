@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_05_01_000100) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_06_000100) do
   create_schema "coordinator"
 
   # These are extensions that must be enabled in order to support this database
@@ -88,6 +88,47 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_01_000100) do
     t.timestamptz "observed_at", null: false
     t.timestamptz "created_at", default: -> { "now()" }, null: false
     t.timestamptz "updated_at", default: -> { "now()" }, null: false
+  end
+
+  create_table "integration_configs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.text "name", null: false
+    t.text "slug", null: false
+    t.text "source_type", null: false
+    t.text "destination_type", null: false
+    t.text "stream_name"
+    t.boolean "enabled", default: true, null: false
+    t.text "schedule_cron"
+    t.text "params", default: "{}", null: false
+    t.jsonb "param_schema", default: {}, null: false
+    t.text "cursor_field"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["enabled"], name: "index_integration_configs_on_enabled"
+    t.index ["slug"], name: "index_integration_configs_on_slug", unique: true
+    t.check_constraint "slug ~ '^[a-z0-9-]+$'::text", name: "chk_integration_configs_slug_format"
+  end
+
+  create_table "integration_runs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "integration_config_id", null: false
+    t.uuid "sync_job_id"
+    t.text "triggered_by", default: "schedule", null: false
+    t.text "status", default: "pending", null: false
+    t.text "range_type", default: "cursor", null: false
+    t.text "from_value"
+    t.text "to_value"
+    t.text "params_snapshot", default: "{}", null: false
+    t.text "error_summary"
+    t.timestamptz "started_at"
+    t.timestamptz "finished_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["integration_config_id", "created_at"], name: "index_integration_runs_on_integration_config_id_and_created_at"
+    t.index ["integration_config_id"], name: "index_integration_runs_on_integration_config_id"
+    t.index ["status", "created_at"], name: "index_integration_runs_on_status_and_created_at"
+    t.index ["sync_job_id"], name: "index_integration_runs_on_sync_job_id"
+    t.check_constraint "range_type = ANY (ARRAY['cursor'::text, 'datetime'::text])", name: "chk_integration_runs_range_type"
+    t.check_constraint "status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])", name: "chk_integration_runs_status"
+    t.check_constraint "triggered_by = ANY (ARRAY['schedule'::text, 'manual'::text, 'replay'::text])", name: "chk_integration_runs_triggered_by"
   end
 
   create_table "nats_traffic_samples", force: :cascade do |t|
@@ -289,6 +330,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_01_000100) do
     t.check_constraint "status = ANY (ARRAY['pending'::text, 'processing'::text, 'batched'::text, 'failed'::text])", name: "chk_sync_scan_ingest_status"
   end
 
+  add_foreign_key "integration_runs", "integration_configs"
   add_foreign_key "sync_batch", "sync_job", column: "job_id", primary_key: "job_id", name: "fk_sync_batch_job_id"
   add_foreign_key "sync_error", "sync_batch", column: "batch_id", primary_key: "batch_id", name: "fk_sync_error_batch_id"
   add_foreign_key "sync_error", "sync_job", column: "job_id", primary_key: "job_id", name: "fk_sync_error_job_id"

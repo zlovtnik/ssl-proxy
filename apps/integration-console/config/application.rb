@@ -17,7 +17,9 @@ module IntegrationConsole
   class Application < Rails::Application
     config.load_defaults 7.2
     config.time_zone = "Eastern Time (US & Canada)"
+    config.autoload_paths << Rails.root.join("app/lib")
     config.eager_load_paths << Rails.root.join("app/services")
+    config.eager_load_paths << Rails.root.join("app/lib")
     config.active_job.queue_adapter = :async
     config.generators.system_tests = nil
   end

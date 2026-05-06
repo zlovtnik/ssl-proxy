@@ -7,6 +7,7 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
+    #[serde(default)]
     pub job_id: String,
     pub batch_id: String,
     pub batch_no: i32,

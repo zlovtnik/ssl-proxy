@@ -1,0 +1,10 @@
+<% content_for :title, "Integration Runs" %>
+<% content_for :turbo_cache_control, "no-cache" %>
+
+<%= svelte_props_tag("integration-runs-svelte-root", initial: @integration_runs_page_payload) %>
+<div id="integration-runs-svelte-root"></div>
+<%= svelte_bundle_tags(:integration_runs) %>
+
+<noscript>
+  <h1>Integration Runs</h1>
+</noscript>

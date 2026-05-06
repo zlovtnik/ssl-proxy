@@ -36,9 +36,15 @@ module ApplicationHelper
 
   def svelte_bundle_tags(entrypoint)
     safe_join([
-      vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload"),
+      optional_vite_stylesheet_tag(entrypoint),
       vite_javascript_tag(entrypoint.to_s, "data-turbo-track": "reload")
-    ], "\n")
+    ].compact, "\n")
+  end
+
+  def optional_vite_stylesheet_tag(entrypoint)
+    vite_stylesheet_tag(entrypoint.to_s, "data-turbo-track": "reload")
+  rescue ViteRuby::MissingEntrypointError
+    nil
   end
 
   def metric_card_status_class(status)
