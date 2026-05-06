@@ -627,9 +627,21 @@ language plpgsql
 as $$
 declare
   v_inserted integer := 0;
+  v_probes jsonb;
   v_probe jsonb;
 begin
-  for v_probe in select jsonb_array_elements(p_probes)
+  v_probes := case
+    when jsonb_typeof(p_probes) = 'array' then p_probes
+    when jsonb_typeof(p_probes) = 'object'
+      and jsonb_typeof(p_probes->'probes') = 'array' then p_probes->'probes'
+    else null
+  end;
+
+  if v_probes is null then
+    raise exception 'coordinator.flush_probe_batch requires a probe array or envelope with probes array';
+  end if;
+
+  for v_probe in select jsonb_array_elements(v_probes)
   loop
     insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
     values (
