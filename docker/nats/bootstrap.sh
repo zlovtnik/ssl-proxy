@@ -52,18 +52,17 @@ ensure_consumer() {
   consumer_name="$2"
   filter_subject="$3"
 
-  # Always delete and re-add: consumer edit doesn't support the flags we need
   nats --server "${NATS_URL}" consumer rm "${stream_name}" "${consumer_name}" -f 2>/dev/null || true
 
   nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
     --filter "${filter_subject}" \
     --max-deliver=-1 \
-    --deliver-all \
-    --replay instant \
+    --deliver=all \
+    --replay=instant \
     --pull \
-    --ack-policy explicit \
+    --ack=explicit \
     --wait=5s \
-    --no-confirm
+    --defaults
 }
 
 until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
