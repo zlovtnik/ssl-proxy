@@ -26,13 +26,13 @@ use super::store::{
 use crate::publish::PublishClient;
 
 const WIRELESS_AUDIT_SUBJECT: &str = "sync.scan.request";
-const BACKLOG_SAVE_SUBJECT: &str = "sync.oracle.load";
-const BACKLOG_LIST_SUBJECT: &str = "sync.oracle.load";
-const BACKLOG_SYNCED_SUBJECT: &str = "sync.oracle.result";
-const BACKLOG_PRUNE_SUBJECT: &str = "sync.oracle.load";
-const MAC_LOOKUP_SUBJECT: &str = "sync.oracle.load";
-const AUTHORIZED_NETWORKS_SUBJECT: &str = "sync.oracle.load";
-const PROBE_FLUSH_SUBJECT: &str = "sync.oracle.load";
+const BACKLOG_SAVE_SUBJECT: &str = "wireless.backlog.save";
+const BACKLOG_LIST_SUBJECT: &str = "wireless.backlog.list";
+const BACKLOG_SYNCED_SUBJECT: &str = "wireless.backlog.synced";
+const BACKLOG_PRUNE_SUBJECT: &str = "wireless.backlog.prune";
+const MAC_LOOKUP_SUBJECT: &str = "wireless.mac.lookup";
+const AUTHORIZED_NETWORKS_SUBJECT: &str = "wireless.networks.authorized";
+const PROBE_FLUSH_SUBJECT: &str = "wireless.probe.flush";
 static NEXT_INBOX_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]

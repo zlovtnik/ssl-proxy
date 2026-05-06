@@ -114,15 +114,18 @@ pub const Client = struct {
     pub fn processIngestLedger(
         self: *Client,
         stream_names_csv: []const u8,
+        oracle_stream_names_csv: []const u8,
         max_attempts: u32,
         backoff_secs: u32,
     ) Error!bool {
         const stream_names_literal = try self.sqlLiteral(stream_names_csv);
         defer self.allocator.free(stream_names_literal);
+        const oracle_stream_names_literal = try self.sqlLiteral(oracle_stream_names_csv);
+        defer self.allocator.free(oracle_stream_names_literal);
         const query = try std.fmt.allocPrint(
             self.allocator,
-            "select coordinator.process_ingest_ledger(string_to_array({s}, ','), {d}::integer, {d}::integer)::text;",
-            .{ stream_names_literal, max_attempts, backoff_secs },
+            "select coordinator.process_ingest_ledger(string_to_array({s}, ','), string_to_array({s}, ','), {d}::integer, {d}::integer)::text;",
+            .{ stream_names_literal, oracle_stream_names_literal, max_attempts, backoff_secs },
         );
         defer self.allocator.free(query);
 

@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Config = struct {
     stream_name: []const u8,
     stream_names_csv: []const u8,
+    oracle_stream_names_csv: []const u8,
     batch_size: usize,
     scan_subject: []const u8,
     load_subject: []const u8,
@@ -39,6 +40,7 @@ pub fn load() Config {
     return .{
         .stream_name = envOrDefault("SYNC_STREAM_NAME", "proxy.events"),
         .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", "proxy.events,wireless.audit"),
+        .oracle_stream_names_csv = envOrDefault("SYNC_ORACLE_STREAM_NAMES", "proxy.events"),
         .batch_size = parseBatchSize(envOrDefault("SYNC_BATCH_SIZE", "100")),
         .scan_subject = envOrDefault("SYNC_SCAN_SUBJECT", "sync.scan.request"),
         .load_subject = envOrDefault("SYNC_LOAD_SUBJECT", "sync.oracle.load"),

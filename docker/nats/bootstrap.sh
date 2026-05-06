@@ -14,7 +14,7 @@ RESULT_CONSUMER="${SYNC_RESULT_CONSUMER:-zig-coordinator-result}"
 SCAN_SUBJECT="${SYNC_SCAN_SUBJECT:-sync.scan.request}"
 LOAD_SUBJECT="${SYNC_LOAD_SUBJECT:-sync.oracle.load}"
 RESULT_SUBJECT="${SYNC_RESULT_SUBJECT:-sync.oracle.result}"
-SUBJECTS="${SCAN_SUBJECT},${LOAD_SUBJECT},wireless.audit,wireless.audit.config,wifi.alert.handshake,audit.wireless.bandwidth,audit.threat.shadow_device"
+SUBJECTS="${SCAN_SUBJECT},${LOAD_SUBJECT},wireless.audit,wireless.audit.config,wireless.config.authorized_networks,wireless.config.sensor,wireless.client.inventory,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.attack_sequence,wifi.alert.handshake,audit.wireless.bandwidth,audit.threat.shadow_device"
 
 ensure_stream() {
   stream_name="$1"

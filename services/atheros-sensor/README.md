@@ -92,6 +92,7 @@ Additional subjects emitted by this sensor:
 - `wireless.client.inventory`
 - `wireless.alert.rogue_ap`
 - `wireless.alert.deauth_flood`
+- `wireless.alert.attack_sequence`
 - `wireless.config.authorized_networks`
 - `wireless.config.sensor`
 

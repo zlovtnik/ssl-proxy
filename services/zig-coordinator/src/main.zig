@@ -21,6 +21,7 @@ pub fn main(init: std.process.Init) !void {
         .string("mode", mode)
         .string("stream_name", cfg.stream_name)
         .string("stream_names", cfg.stream_names_csv)
+        .string("oracle_stream_names", cfg.oracle_stream_names_csv)
         .string("audit_stream", cfg.audit_stream_name)
         .string("result_stream", cfg.result_stream_name)
         .string("scan_subject", cfg.scan_subject)
@@ -65,6 +66,7 @@ pub fn main(init: std.process.Init) !void {
         .string("mode", "run")
         .string("primary_stream", cfg.stream_name)
         .string("configured_streams", cfg.stream_names_csv)
+        .string("oracle_streams", cfg.oracle_stream_names_csv)
         .string("cursor", cursor)
         .fmt("subjects", "{s},{s},{s}", .{ cfg.scan_subject, cfg.load_subject, cfg.result_subject })
         .log();

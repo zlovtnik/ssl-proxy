@@ -117,8 +117,11 @@ begin
 end;
 $$;
 
+drop function if exists coordinator.process_ingest_ledger(text[], integer, integer);
+
 create or replace function coordinator.process_ingest_ledger(
   p_stream_names text[],
+  p_oracle_stream_names text[],
   p_max_attempts integer,
   p_backoff_secs integer
 )
@@ -187,6 +190,10 @@ begin
            now(),
            now()
       from next_ingest
+     where stream_name in (
+           select btrim(configured.stream_name)
+             from unnest(p_oracle_stream_names) as configured(stream_name)
+     )
     on conflict (job_id) do nothing
     returning job_id
   ),
@@ -218,6 +225,10 @@ begin
            coordinator.ensure_cursor(stream_name),
            extract(epoch from observed_at)::bigint::text
       from next_ingest
+     where stream_name in (
+           select btrim(configured.stream_name)
+             from unnest(p_oracle_stream_names) as configured(stream_name)
+     )
     on conflict (dedupe_key) do nothing
     returning dedupe_key
   ),
@@ -233,8 +244,19 @@ begin
     update sync_scan_ingest ingest
        set status = 'batched',
            updated_at = now()
-      from batch_upsert
-     where ingest.dedupe_key = batch_upsert.dedupe_key
+      from next_ingest
+     where ingest.dedupe_key = next_ingest.dedupe_key
+       and (
+             next_ingest.stream_name not in (
+               select btrim(configured.stream_name)
+                 from unnest(p_oracle_stream_names) as configured(stream_name)
+             )
+             or exists (
+               select 1
+                 from batch_upsert
+                where batch_upsert.dedupe_key = next_ingest.dedupe_key
+             )
+       )
     returning ingest.dedupe_key
   )
   select v_marked_count + v_recovered_count + count(*)

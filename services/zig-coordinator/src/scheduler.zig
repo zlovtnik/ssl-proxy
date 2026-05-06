@@ -170,6 +170,7 @@ pub const Service = struct {
         had_work = (try self.drainScanRequests()) or had_work;
         had_work = (try self.database.processIngestLedger(
             self.cfg.stream_names_csv,
+            self.cfg.oracle_stream_names_csv,
             self.cfg.scan_max_attempts,
             self.cfg.scan_retry_backoff_seconds,
         )) or had_work;
