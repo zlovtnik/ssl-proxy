@@ -33,6 +33,7 @@ pub const Error = error{
     InvalidNatsUrl,
     NatsCheckFailed,
     NatsStreamMissing,
+    NatsStreamSubjectMissing,
     NatsConsumerMissing,
     NatsConsumerFilterMismatch,
     CursorNotFound,
@@ -720,7 +721,10 @@ pub const Service = struct {
 
     fn checkNatsStreams(self: *Service) Error!void {
         try self.checkNatsStream(self.cfg.audit_stream_name);
+        try self.checkNatsStreamSubject(self.cfg.audit_stream_name, self.cfg.scan_subject);
+        try self.checkNatsStreamSubject(self.cfg.audit_stream_name, self.cfg.load_subject);
         try self.checkNatsStream(self.cfg.result_stream_name);
+        try self.checkNatsStreamSubject(self.cfg.result_stream_name, self.cfg.result_subject);
         try self.checkNatsStream(self.cfg.wireless_backlog_stream_name);
         try self.checkNatsStream(self.cfg.wireless_mac_stream_name);
         try self.checkNatsStream(self.cfg.wireless_networks_stream_name);
@@ -750,6 +754,38 @@ pub const Service = struct {
             stream_name,
         };
         try self.runRequiredCommand(&argv, "nats", error.NatsStreamMissing);
+    }
+
+    fn checkNatsStreamSubject(self: *Service, stream_name: []const u8, expected_subject: []const u8) Error!void {
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "stream",
+            "info",
+            stream_name,
+            "--json",
+        };
+
+        var result = command.exec(self.allocator, self.io, &argv) catch {
+            return error.NatsStreamMissing;
+        };
+        defer result.deinit(self.allocator);
+
+        if (!command.isSuccess(result)) {
+            command.logFailure("nats", result);
+            return error.NatsStreamMissing;
+        }
+
+        if (!streamInfoHasSubject(self.allocator, result.stdout, expected_subject)) {
+            logging.err()
+                .stringSafe("event", "nats_stream_subject")
+                .stringSafe("status", "error")
+                .string("stream", stream_name)
+                .string("expected_subject", expected_subject)
+                .log();
+            return error.NatsStreamSubjectMissing;
+        }
     }
 
     fn checkNatsConsumer(self: *Service, stream_name: []const u8, consumer_name: []const u8) Error!void {
@@ -1133,6 +1169,48 @@ fn consumerInfoFilterMatches(
     return std.mem.eql(u8, actual, expected_filter);
 }
 
+fn streamInfoHasSubject(
+    allocator: std.mem.Allocator,
+    stdout: []const u8,
+    expected_subject: []const u8,
+) bool {
+    const StreamConfig = struct {
+        subjects: []const []const u8 = &.{},
+    };
+    const StreamInfo = struct {
+        config: StreamConfig,
+    };
+
+    var parsed = std.json.parseFromSlice(StreamInfo, allocator, stdout, .{
+        .ignore_unknown_fields = true,
+    }) catch return false;
+    defer parsed.deinit();
+
+    for (parsed.value.config.subjects) |subject| {
+        if (subjectPatternMatches(subject, expected_subject)) return true;
+    }
+    return false;
+}
+
+fn subjectPatternMatches(pattern: []const u8, subject: []const u8) bool {
+    if (std.mem.eql(u8, pattern, subject)) return true;
+
+    var pattern_parts = std.mem.splitScalar(u8, pattern, '.');
+    var subject_parts = std.mem.splitScalar(u8, subject, '.');
+
+    while (pattern_parts.next()) |pattern_part| {
+        if (std.mem.eql(u8, pattern_part, ">")) {
+            return pattern_parts.next() == null and subject_parts.next() != null;
+        }
+
+        const subject_part = subject_parts.next() orelse return false;
+        if (std.mem.eql(u8, pattern_part, "*")) continue;
+        if (!std.mem.eql(u8, pattern_part, subject_part)) return false;
+    }
+
+    return subject_parts.next() == null;
+}
+
 fn streamNameIsConfigured(stream_names_csv: []const u8, stream_name: []const u8) bool {
     var iterator = std.mem.splitScalar(u8, stream_names_csv, ',');
     while (iterator.next()) |raw_name| {
@@ -1253,6 +1331,28 @@ test "consumerInfoFilterMatches rejects missing filter" {
     ;
 
     try std.testing.expect(!consumerInfoFilterMatches(std.testing.allocator, json, "sync.oracle.load"));
+}
+
+test "streamInfoHasSubject validates exact and wildcard subjects" {
+    const json =
+        \\{
+        \\  "config": {
+        \\    "subjects": ["sync.scan.request", "sync.oracle.load", "wireless.>"]
+        \\  }
+        \\}
+    ;
+
+    try std.testing.expect(streamInfoHasSubject(std.testing.allocator, json, "sync.oracle.load"));
+    try std.testing.expect(streamInfoHasSubject(std.testing.allocator, json, "wireless.audit"));
+    try std.testing.expect(!streamInfoHasSubject(std.testing.allocator, json, "sync.oracle.result"));
+}
+
+test "subjectPatternMatches follows NATS wildcard shape" {
+    try std.testing.expect(subjectPatternMatches("sync.oracle.load", "sync.oracle.load"));
+    try std.testing.expect(subjectPatternMatches("sync.*.load", "sync.oracle.load"));
+    try std.testing.expect(subjectPatternMatches("sync.>", "sync.oracle.load"));
+    try std.testing.expect(!subjectPatternMatches("sync.*.load", "sync.oracle.result"));
+    try std.testing.expect(!subjectPatternMatches("sync.>", "sync"));
 }
 
 test "resolvePayloadRef decodes inline JSON payloads" {

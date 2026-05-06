@@ -1,4 +1,5 @@
 const std = @import("std");
+const logging = @import("logging.zig");
 const model = @import("state.zig");
 
 const MAX_ACK_PAYLOAD_BYTES = 8 * 1024;
@@ -233,6 +234,7 @@ fn waitForPublishAck(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
             continue;
         }
         if (std.mem.startsWith(u8, line, "-ERR")) {
+            logPublishAckFailure("server_error", line);
             return error.ServerError;
         }
         if (std.mem.startsWith(u8, line, "MSG ")) {
@@ -242,13 +244,17 @@ fn waitForPublishAck(reader: *std.Io.Reader, writer: *std.Io.Writer) !void {
             const has_error = std.mem.indexOf(u8, payload, "\"error\"") != null;
             const terminator = try reader.takeArray(2);
             if (!std.mem.eql(u8, terminator, "\r\n")) return error.ProtocolError;
-            if (has_error) return error.PublishAckFailed;
+            if (has_error) {
+                logPublishAckFailure("ack_error", payload);
+                return error.PublishAckFailed;
+            }
             return;
         }
 
         return error.ProtocolError;
     }
 
+    logPublishAckFailure("ack_timeout", "no JetStream publish acknowledgement received");
     return error.PublishAckFailed;
 }
 
@@ -262,6 +268,33 @@ fn parseMessageSize(line: []const u8) !usize {
     const size_token = parts.first();
     if (size_token.len == 0) return error.ProtocolError;
     return std.fmt.parseInt(usize, size_token, 10) catch error.ProtocolError;
+}
+
+fn logPublishAckFailure(reason: []const u8, raw: []const u8) void {
+    var buffer: [1024]u8 = undefined;
+    const snippet = sanitizeSnippet(&buffer, raw);
+    logging.err()
+        .stringSafe("event", "jetstream_publish_ack")
+        .stringSafe("status", "error")
+        .string("reason", reason)
+        .string("payload", snippet)
+        .log();
+}
+
+fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
+    var in_index: usize = 0;
+    var out_index: usize = 0;
+
+    while (in_index < raw.len and out_index < buffer.len) : (in_index += 1) {
+        const byte = raw[in_index];
+        buffer[out_index] = switch (byte) {
+            '\n', '\r', '\t' => ' ',
+            else => byte,
+        };
+        out_index += 1;
+    }
+
+    return std.mem.trim(u8, buffer[0..out_index], " ");
 }
 
 test "parse endpoint defaults port and extracts auth" {
