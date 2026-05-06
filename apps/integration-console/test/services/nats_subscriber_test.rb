@@ -41,7 +41,10 @@ class NatsSubscriberTest < ActiveSupport::TestCase
       bssid: "10:20:30:40:50:60",
       client_mac: "aa:bb:cc:dd:ee:01",
       signal_dbm: -42,
-      observed_at: Time.current.iso8601
+      observed_at: Time.current.iso8601,
+      tags: ["threat:harvest", 123, "keep"],
+      raw_frame: "large-sensitive-frame",
+      ignored_key: "ignored"
     }.to_json
 
     assert_difference -> { SensorAlert.count }, 1 do
@@ -53,6 +56,10 @@ class NatsSubscriberTest < ActiveSupport::TestCase
     assert_equal "handshake_captured", alert.alert_type
     assert_equal "critical", alert.severity
     assert_includes alert.message, "10:20:30:40:50:60"
+    assert_equal "10:20:30:40:50:60", alert.payload.fetch("bssid")
+    assert_equal ["threat:harvest", "keep"], alert.payload.fetch("tags")
+    assert_not alert.payload.key?("raw_frame")
+    assert_not alert.payload.key?("ignored_key")
   end
 
   test "bandwidth event increments nats sample without creating sensor" do

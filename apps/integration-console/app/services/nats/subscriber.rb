@@ -77,8 +77,9 @@ module Nats
       )
       alert.severity = "critical"
       alert.message = "4-way handshake captured for BSSID #{bssid} client #{client_mac}"
+      alert.payload = SensorAlert.sanitize_payload(payload)
       alert.save!
-      ActionCable.server.broadcast("sensor_alerts", alert.as_json.merge(payload: payload))
+      ActionCable.server.broadcast("sensor_alerts", alert.as_json)
     end
   end
 end

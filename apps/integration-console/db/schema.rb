@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_05_06_000100) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_06_000300) do
   create_schema "coordinator"
 
   # These are extensions that must be enabled in order to support this database
@@ -138,6 +138,9 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_06_000100) do
     t.integer "event_count", default: 0, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.index ["sampled_at"], name: "index_nats_traffic_samples_on_sampled_at"
+    t.index ["sensor_id", "sampled_at"], name: "idx_nats_traffic_samples_sensor_sampled_at"
+    t.index ["subject", "sensor_id", "sampled_at"], name: "idx_nats_samples_subject_sensor_time", unique: true
   end
 
   create_table "sensor_alerts", force: :cascade do |t|
@@ -148,6 +151,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_06_000100) do
     t.datetime "resolved_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.jsonb "payload", default: {}, null: false
   end
 
   create_table "sensors", force: :cascade do |t|

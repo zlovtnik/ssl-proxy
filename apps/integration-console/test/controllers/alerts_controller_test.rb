@@ -33,4 +33,26 @@ class AlertsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "alert-50"
     assert_includes response.body, "Page 2 of 2"
   end
+
+  test "index json includes persisted alert payload" do
+    SensorAlert.create!(
+      sensor_id: "sensor-1",
+      alert_type: "handshake_captured",
+      severity: "critical",
+      message: "handshake alert",
+      payload: {
+        "tags" => ["threat:harvest"],
+        "bssid" => "10:20:30:40:50:60"
+      }
+    )
+
+    get alerts_url(format: :json)
+
+    assert_response :success
+    payload = JSON.parse(response.body)
+    row = payload.fetch("rows").first
+    assert_equal "handshake alert", row.fetch("message")
+    assert_equal ["threat:harvest"], row.fetch("payload").fetch("tags")
+    assert_equal "10:20:30:40:50:60", row.fetch("payload").fetch("bssid")
+  end
 end
