@@ -109,6 +109,20 @@ class AuditLogTest < ActiveSupport::TestCase
     assert_equal ["large_frame"], entry.anomaly_reasons
   end
 
+  test "promoted accessors fall back to payload when column is unavailable" do
+    entry = AuditLog.new(payload: {
+      "ethertype_name" => "ipv4",
+      "ssdp_message_type" => "M-SEARCH",
+      "retransmit_key" => "tx|rx|1|0"
+    })
+
+    entry.stub(:has_attribute?, false) do
+      assert_equal "ipv4", entry.ethertype_name
+      assert_equal "M-SEARCH", entry.ssdp_message_type
+      assert_equal "tx|rx|1|0", entry.retransmit_key
+    end
+  end
+
   test "wireless security fields prefer physical columns" do
     insert_sync_ingest(
       dedupe_key: "audit-security",

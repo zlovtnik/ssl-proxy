@@ -1,3 +1,5 @@
+require "base64"
+
 class AuditLog < SyncRecord
   self.table_name = "sync_scan_ingest"
   self.primary_key = "dedupe_key"
@@ -10,7 +12,8 @@ class AuditLog < SyncRecord
     sanitized.blank? ? none : where("wireless_search_tsv @@ websearch_to_tsquery('simple', ?)", sanitized)
   }
 
-  # Columns promoted from payload to table columns (read directly, no fallback)
+  # Columns promoted from payload to table columns. If a running database has not
+  # applied every promotion migration yet, fall back to the payload value.
   PROMOTED_COLUMNS = %w[
     schema_version frame_type frame_subtype source_mac bssid destination_bssid
     ssid signal_dbm channel_number fragment_number signal_status adjacent_mac_hint
@@ -25,6 +28,10 @@ class AuditLog < SyncRecord
     security_flags wps_device_name wps_manufacturer wps_model_name
     device_fingerprint handshake_captured sensor_id location_id username
   ].freeze
+
+  PROMOTED_COLUMNS.each do |field|
+    define_method(field) { payload_value(field) }
+  end
 
   # Fields still in payload only (not yet promoted to columns)
   PAYLOAD_ONLY_FIELDS = %w[
@@ -65,6 +72,46 @@ class AuditLog < SyncRecord
     payload_value("channel")&.to_i
   end
 
+  def security_labels
+    flags = security_flags.to_i
+    labels = []
+    labels << "WPA" if flags & 0x01 != 0
+    labels << "RSN/WPA2" if flags & 0x02 != 0
+    labels << "WPA3" if flags & 0x04 != 0
+    labels << "WPS" if flags & 0x08 != 0
+    labels << "PMF required" if flags & 0x10 != 0
+    labels
+  end
+
+  def frame_flags_label
+    labels = []
+    labels << "more data" if public_send(:more_data)
+    labels << "retry" if public_send(:retry)
+    labels << "power save" if public_send(:power_save)
+    labels << "protected" if public_send(:protected)
+    labels.presence&.join(", ")
+  end
+
+  def raw_frame_bytes
+    return if raw_frame.blank?
+
+    Base64.strict_decode64(raw_frame)
+  rescue ArgumentError
+    nil
+  end
+
+  def raw_frame_hex_dump
+    bytes = raw_frame_bytes
+    return unless bytes
+
+    bytes.bytes.each_slice(16).with_index.map do |slice, index|
+      offset = index * 16
+      hex = slice.map { |byte| format("%02x", byte) }.join(" ")
+      ascii = slice.map { |byte| byte.between?(32, 126) ? byte.chr : "." }.join
+      format("%04x  %-47s  |%s|", offset, hex, ascii)
+    end.join("\n")
+  end
+
   # For aggregate query results
   def event_count
     read_attribute(:event_count)
@@ -77,12 +124,12 @@ class AuditLog < SyncRecord
   private
 
   def payload_value(key)
-    # For promoted columns, read directly from the attribute
     if PROMOTED_COLUMNS.include?(key)
-      return read_attribute(key)
+      return read_attribute(key) if has_attribute?(key)
+
+      return payload.is_a?(Hash) ? payload[key] : nil
     end
 
-    # For payload-only fields, extract from jsonb
     payload.is_a?(Hash) ? payload[key] : nil
   end
 end

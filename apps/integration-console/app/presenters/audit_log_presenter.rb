@@ -6,7 +6,7 @@ class AuditLogPresenter
   end
 
   def security_labels
-    flags = @entry.security_flags
+    flags = @entry.security_flags.to_i
     labels = []
     labels << "WPA" if flags & 0x01 != 0
     labels << "RSN/WPA2" if flags & 0x02 != 0
@@ -56,6 +56,15 @@ class AuditLogPresenter
       format("%04x  %-47s  |%s|", offset, hex, ascii)
     end.join("\n")
   end
+  def method_missing(method_name, ...)
+    return @entry.public_send(method_name, ...) if @entry.respond_to?(method_name)
+
+    super
+  end
+
+  def respond_to_missing?(method_name, include_private = false)
+    @entry.respond_to?(method_name, include_private) || super
+  end
 
   # Delegate all data access methods to the entry
   delegate :dedupe_key, :observed_at, :sensor_id, :location_id, :event_type,
@@ -67,6 +76,6 @@ class AuditLogPresenter
            :security_flags, :raw_len, :frame_control_flags, :large_frame,
            :src_ip, :dst_ip, :src_port, :dst_port, :transport_protocol,
            :ip_protocol_name, :payload_visibility, :raw_frame, :schema_version,
-           :fragment_number,:username,
+           :fragment_number, :username,
            to: :@entry
 end

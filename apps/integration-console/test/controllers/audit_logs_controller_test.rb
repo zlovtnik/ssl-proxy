@@ -165,6 +165,8 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
         "frame_subtype" => "qos_data",
         "source_mac" => "00:11:22:33:44:55",
         "destination_bssid" => "10:20:30:40:50:60",
+        "ethertype" => 2048,
+        "ethertype_name" => "ipv4",
         "src_ip" => "192.168.1.10",
         "dst_ip" => "239.255.255.250",
         "src_port" => 49_152,
@@ -172,10 +174,16 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
         "app_protocol" => "ssdp",
         "ssdp_message_type" => "M-SEARCH",
         "ssdp_st" => "upnp:rootdevice",
+        "dhcp_hostname" => "sensor",
+        "dns_query_name" => "printer.local",
+        "mdns_name" => "_airplay._tcp.local",
         "session_key" => "00:11:22:33:44:55|10:20:30:40:50:60",
+        "retransmit_key" => "00:11:22:33:44:55|10:20:30:40:50:60|1",
         "frame_fingerprint" => "abc123",
         "payload_visibility" => "plaintext",
         "large_frame" => true,
+        "mixed_encryption" => true,
+        "dedupe_or_replay_suspect" => true,
         "anomaly_reasons" => ["large_frame"]
       }
     )
@@ -188,10 +196,18 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "239.255.255.250"
     assert_includes response.body, "ssdp"
     assert_includes response.body, "M-SEARCH"
+    assert_includes response.body, "ipv4"
+    assert_includes response.body, "upnp:rootdevice"
+    assert_includes response.body, "sensor"
+    assert_includes response.body, "printer.local"
+    assert_includes response.body, "_airplay._tcp.local"
     assert_includes response.body, "Correlation"
+    assert_includes response.body, "00:11:22:33:44:55|10:20:30:40:50:60|1"
     assert_includes response.body, "abc123"
     assert_includes response.body, "plaintext"
     assert_includes response.body, "large_frame"
+    assert_includes response.body, "Mixed encryption"
+    assert_includes response.body, "Replay suspect"
   end
 
   test "show renders raw frame base64 and hex dump" do
