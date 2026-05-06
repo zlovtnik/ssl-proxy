@@ -153,6 +153,7 @@ pub const Client = struct {
         request_json: []const u8,
         payload_json: ?[]const u8,
         payload_sha256: []const u8,
+        stream_names_csv: []const u8,
     ) Error!void {
         const request_literal = try self.sqlLiteral(request_json);
         defer self.allocator.free(request_literal);
@@ -160,11 +161,13 @@ pub const Client = struct {
         defer if (payload_literal) |literal| self.allocator.free(literal);
         const sha_literal = try self.sqlLiteral(payload_sha256);
         defer self.allocator.free(sha_literal);
+        const stream_names_literal = try self.sqlLiteral(stream_names_csv);
+        defer self.allocator.free(stream_names_literal);
         const payload_expr = payload_literal orelse "null";
         const query = try std.fmt.allocPrint(
             self.allocator,
-            "select coordinator.record_scan_request({s}::jsonb, {s}::jsonb, {s})::text;",
-            .{ request_literal, payload_expr, sha_literal },
+            "select coordinator.record_scan_request({s}::jsonb, {s}::jsonb, {s}, string_to_array({s}, ','))::text;",
+            .{ request_literal, payload_expr, sha_literal, stream_names_literal },
         );
         defer self.allocator.free(query);
 

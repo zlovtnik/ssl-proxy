@@ -9,7 +9,6 @@ const SHADOW_AUDIT_INTERVAL_MS: i64 = 10_000;
 const SHADOW_ALERT_SUBJECT = "audit.threat.shadow_device";
 const INLINE_PAYLOAD_REF_PREFIX = "inline://json/";
 const OUTBOX_PAYLOAD_REF_PREFIX = "outbox://";
-const PROXY_EVENTS_STREAM = "proxy.events";
 const MAX_SCAN_PAYLOAD_BYTES = 16 * 1024 * 1024;
 const MAX_SCAN_PAYLOAD_SQL_BYTES = 64 * 1024;
 
@@ -240,7 +239,7 @@ pub const Service = struct {
         defer parsed.deinit();
 
         const request = parsed.value;
-        if (!std.mem.eql(u8, request.stream_name, PROXY_EVENTS_STREAM)) {
+        if (!streamNameIsConfigured(self.cfg.stream_names_csv, request.stream_name)) {
             logging.info()
                 .stringSafe("event", "scan_request_ingest")
                 .stringSafe("status", "ignored")
@@ -263,7 +262,7 @@ pub const Service = struct {
 
         const payload_sha256 = sha256Hex(payload);
         const payload_for_sql: ?[]const u8 = if (payload.len <= MAX_SCAN_PAYLOAD_SQL_BYTES) payload else null;
-        try self.database.recordScanRequest(raw_json, payload_for_sql, &payload_sha256);
+        try self.database.recordScanRequest(raw_json, payload_for_sql, &payload_sha256, self.cfg.stream_names_csv);
         logging.info()
             .stringSafe("event", "scan_request_ingest")
             .stringSafe("status", "recorded")
@@ -948,6 +947,15 @@ fn consumerInfoHasBacklog(stdout: []const u8) bool {
         labeledCountIsPositive(stdout, "Unprocessed Messages:");
 }
 
+fn streamNameIsConfigured(stream_names_csv: []const u8, stream_name: []const u8) bool {
+    var iterator = std.mem.splitScalar(u8, stream_names_csv, ',');
+    while (iterator.next()) |raw_name| {
+        const configured = std.mem.trim(u8, raw_name, " \t\r\n");
+        if (std.mem.eql(u8, configured, stream_name)) return true;
+    }
+    return false;
+}
+
 fn labeledCountIsPositive(stdout: []const u8, label: []const u8) bool {
     var lines = std.mem.splitScalar(u8, stdout, '\n');
     while (lines.next()) |raw_line| {
@@ -1002,6 +1010,12 @@ fn containsAsciiCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
 test "containsAsciiCaseInsensitive matches mixed case substrings" {
     try std.testing.expect(containsAsciiCaseInsensitive("Timed Out Waiting For Message", "timed out"));
     try std.testing.expect(!containsAsciiCaseInsensitive("all good", "timeout"));
+}
+
+test "streamNameIsConfigured matches trimmed CSV entries" {
+    try std.testing.expect(streamNameIsConfigured("proxy.events, wireless.audit", "proxy.events"));
+    try std.testing.expect(streamNameIsConfigured("proxy.events, wireless.audit", "wireless.audit"));
+    try std.testing.expect(!streamNameIsConfigured("proxy.events, wireless.audit", "unknown"));
 }
 
 test "resolvePayloadRef decodes inline JSON payloads" {

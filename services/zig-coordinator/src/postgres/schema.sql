@@ -28,7 +28,8 @@ $$;
 create or replace function coordinator.record_scan_request(
   p_request jsonb,
   p_payload jsonb,
-  p_payload_sha256 text
+  p_payload_sha256 text,
+  p_stream_names text[]
 )
 returns jsonb
 language plpgsql
@@ -40,7 +41,11 @@ declare
   v_observed_at timestamptz := (p_request->>'observed_at')::timestamptz;
   v_recorded boolean := false;
 begin
-  if v_stream_name is distinct from 'proxy.events' then
+  if v_stream_name is null or not exists (
+    select 1
+      from unnest(p_stream_names) as configured(stream_name)
+     where btrim(configured.stream_name) = v_stream_name
+  ) then
     return jsonb_build_object(
       'recorded', false,
       'reason', 'unsupported_stream',
@@ -158,7 +163,10 @@ begin
        select dedupe_key
          from sync_scan_ingest
         where status in ('pending', 'failed')
-          and stream_name = any(p_stream_names)
+          and stream_name in (
+                select btrim(configured.stream_name)
+                  from unnest(p_stream_names) as configured(stream_name)
+              )
           and attempt_count < p_max_attempts
           and (
                 status = 'pending'

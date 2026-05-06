@@ -38,7 +38,7 @@ pub const Config = struct {
 pub fn load() Config {
     return .{
         .stream_name = envOrDefault("SYNC_STREAM_NAME", "proxy.events"),
-        .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", "proxy.events"),
+        .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", "proxy.events,wireless.audit"),
         .batch_size = parseBatchSize(envOrDefault("SYNC_BATCH_SIZE", "100")),
         .scan_subject = envOrDefault("SYNC_SCAN_SUBJECT", "sync.scan.request"),
         .load_subject = envOrDefault("SYNC_LOAD_SUBJECT", "sync.oracle.load"),

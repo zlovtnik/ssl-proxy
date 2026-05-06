@@ -12,12 +12,25 @@ pub const Result = struct {
     }
 };
 
+const DEFAULT_STDOUT_LIMIT = 16 * 1024 * 1024;
+const DEFAULT_STDERR_LIMIT = 64 * 1024;
+
 pub fn exec(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) !Result {
+    return execWithLimits(allocator, io, argv, DEFAULT_STDOUT_LIMIT, DEFAULT_STDERR_LIMIT);
+}
+
+pub fn execWithLimits(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    argv: []const []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) !Result {
     const run_result = std.process.run(allocator, io, .{
         .argv = argv,
         .expand_arg0 = .expand,
-        .stdout_limit = .limited(64 * 1024),
-        .stderr_limit = .limited(64 * 1024),
+        .stdout_limit = .limited(stdout_limit),
+        .stderr_limit = .limited(stderr_limit),
     }) catch |err| {
         const cmd_name = if (argv.len > 0) argv[0] else "<empty>";
         logging.err().stringSafe("event", "command_failure").string("command", cmd_name).err(err).log();
