@@ -79,6 +79,55 @@ class AuditLogsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "lab", JSON.parse(response.body).fetch("locationId")
   end
 
+  test "index json falls back to payload values when promoted columns are blank" do
+    payload = {
+      "sensor_id" => "sensor-1",
+      "ssid" => "CorpWiFi",
+      "source_mac" => "00:11:22:33:44:55",
+      "bssid" => "10:20:30:40:50:60",
+      "destination_bssid" => "10:20:30:40:50:60",
+      "signal_dbm" => -42,
+      "raw_len" => 1440,
+      "frame_control_flags" => 30984,
+      "more_data" => true,
+      "retry" => true,
+      "protected" => true
+    }
+    insert_sync_ingest(
+      dedupe_key: "audit-payload-fallback",
+      observed_at: Time.current,
+      payload: payload
+    )
+    sync_connection.execute(<<~SQL.squish)
+      UPDATE sync_scan_ingest
+      SET ssid = NULL,
+          source_mac = NULL,
+          bssid = NULL,
+          destination_bssid = NULL,
+          signal_dbm = NULL,
+          raw_len = 0,
+          frame_control_flags = 0,
+          more_data = FALSE,
+          retry = FALSE,
+          protected = FALSE
+      WHERE dedupe_key = 'audit-payload-fallback'
+    SQL
+
+    get audit_logs_url(format: :json)
+
+    assert_response :success
+    row = JSON.parse(response.body).fetch("rows").first
+    assert_equal "CorpWiFi", row["ssid"]
+    assert_equal "00:11:22:33:44:55", row["source_mac"]
+    assert_equal "XX:XX:XX:XX:44:55", row["source_mac_display"]
+    assert_equal "10:20:30:40:50:60", row["destination_bssid"]
+    assert_equal "XX:XX:XX:XX:50:60", row["destination_bssid_display"]
+    assert_equal(-42, row["signal_dbm"])
+    assert_equal 1440, row["raw_len"]
+    assert_equal 30984, row["frame_control_flags"]
+    assert_equal "more data, retry, protected", row["frame_flags_label"]
+  end
+
   test "index applies grid filters" do
     insert_sync_ingest(
       dedupe_key: "audit-filter-match",

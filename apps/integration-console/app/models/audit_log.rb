@@ -72,6 +72,10 @@ class AuditLog < SyncRecord
     payload_value("channel")&.to_i
   end
 
+  def destination_bssid
+    payload_value("destination_bssid") || bssid
+  end
+
   def security_labels
     flags = security_flags.to_i
     labels = []
@@ -125,11 +129,34 @@ class AuditLog < SyncRecord
 
   def payload_value(key)
     if PROMOTED_COLUMNS.include?(key)
-      return read_attribute(key) if has_attribute?(key)
+      return promoted_payload_value(key) unless has_attribute?(key)
 
-      return payload.is_a?(Hash) ? payload[key] : nil
+      value = read_attribute(key)
+      fallback = promoted_payload_value(key)
+      return fallback if promoted_column_placeholder?(key, value, fallback)
+
+      return value
     end
 
     payload.is_a?(Hash) ? payload[key] : nil
+  end
+
+  def promoted_payload_value(key)
+    payload.is_a?(Hash) ? payload[key] : nil
+  end
+
+  def promoted_column_placeholder?(key, value, fallback)
+    return false if fallback.nil?
+    return true if value.nil?
+    return true if value == ""
+
+    case key
+    when "raw_len", "frame_control_flags", "security_flags"
+      value.to_i.zero? && fallback.to_i.nonzero?
+    when "more_data", "retry", "power_save", "protected", "handshake_captured", "large_frame", "dedupe_or_replay_suspect"
+      value == false && ActiveModel::Type::Boolean.new.cast(fallback) == true
+    else
+      false
+    end
   end
 end
