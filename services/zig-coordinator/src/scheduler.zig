@@ -282,7 +282,7 @@ pub const Service = struct {
         defer if (payload) |value| self.allocator.free(value);
 
         if (payload) |value| {
-            try self.publish(self.cfg.load_subject, value, error.BatchDispatchFailed);
+            try self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed);
             return true;
         }
         return false;
@@ -816,7 +816,17 @@ pub const Service = struct {
     }
 
     fn publish(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
-        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload) catch |err| {
+        try self.publishWithMode(subject, payload, .core, on_error);
+    }
+
+    fn publishWithMode(
+        self: *Service,
+        subject: []const u8,
+        payload: []const u8,
+        mode: nats.PublishMode,
+        on_error: Error,
+    ) Error!void {
+        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload, mode) catch |err| {
             if (err == error.UnsupportedNatsScheme) {
                 try self.publishWithCli(subject, payload, on_error);
                 return;

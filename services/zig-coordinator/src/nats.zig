@@ -3,6 +3,11 @@ const model = @import("state.zig");
 
 const MAX_ACK_PAYLOAD_BYTES = 8 * 1024;
 
+pub const PublishMode = enum {
+    core,
+    jetstream_ack,
+};
+
 pub const Publisher = struct {
     allocator: std.mem.Allocator,
     published: std.ArrayListUnmanaged(model.Batch),
@@ -82,6 +87,7 @@ pub fn publish(
     nats_url: []const u8,
     subject: []const u8,
     payload: []const u8,
+    mode: PublishMode,
 ) !void {
     _ = allocator;
     const endpoint = try Endpoint.parse(nats_url);
@@ -98,8 +104,13 @@ pub fn publish(
 
     try expectInfo(&reader.interface);
     try writeConnect(&writer.interface, endpoint);
-    try writePublish(io, &writer.interface, subject, payload);
-    try waitForPublishAck(&reader.interface, &writer.interface);
+    switch (mode) {
+        .core => try writeCorePublish(&writer.interface, subject, payload),
+        .jetstream_ack => {
+            try writeAckedPublish(io, &writer.interface, subject, payload);
+            try waitForPublishAck(&reader.interface, &writer.interface);
+        },
+    }
 }
 
 fn parseHostPort(host_port: []const u8) !struct { []const u8, u16 } {
@@ -183,7 +194,14 @@ fn writeConnectJson(
     try writer.writeAll("}");
 }
 
-fn writePublish(io: std.Io, writer: *std.Io.Writer, subject: []const u8, payload: []const u8) !void {
+fn writeCorePublish(writer: *std.Io.Writer, subject: []const u8, payload: []const u8) !void {
+    try writer.print("PUB {s} {d}\r\n", .{ subject, payload.len });
+    try writer.writeAll(payload);
+    try writer.writeAll("\r\n");
+    try writer.flush();
+}
+
+fn writeAckedPublish(io: std.Io, writer: *std.Io.Writer, subject: []const u8, payload: []const u8) !void {
     var random: [12]u8 = undefined;
     io.random(&random);
     const random_hex = std.fmt.bytesToHex(random, .lower);
@@ -292,6 +310,16 @@ test "write connect json emits auth token" {
     try writeConnectJson(&writer, null, null, "token");
     try std.testing.expectEqualStrings(
         "{\"verbose\":false,\"pedantic\":false,\"auth_token\":\"token\"}",
+        writer.buffered(),
+    );
+}
+
+test "write core publish does not request a JetStream ack" {
+    var buffer: [256]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try writeCorePublish(&writer, "wireless.backlog.list.reply", "{\"ok\":true}");
+    try std.testing.expectEqualStrings(
+        "PUB wireless.backlog.list.reply 11\r\n{\"ok\":true}\r\n",
         writer.buffered(),
     );
 }
