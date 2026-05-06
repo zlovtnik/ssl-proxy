@@ -23,6 +23,7 @@ ensure_stream() {
   if nats --server "${NATS_URL}" str info "${stream_name}" >/dev/null 2>&1; then
     set +e
     edit_output=$(nats --server "${NATS_URL}" str edit "${stream_name}" \
+      --force \
       --subjects "${subjects}" \
       --max-age="${max_age}" 2>&1)
     edit_status=$?
@@ -56,7 +57,6 @@ ensure_consumer() {
   fi
   nats --server "${NATS_URL}" consumer "${action}" "${stream_name}" "${consumer_name}" \
     --filter "${filter_subject}" \
-    --ack explicit \
     --max-deliver=-1 \
     --deliver all \
     --replay instant \
@@ -71,6 +71,7 @@ done
 if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
   set +e
   edit_output=$(nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
+    --force \
     --subjects "${SUBJECTS}" \
     --max-age=720h 2>&1)
   edit_status=$?
@@ -116,6 +117,7 @@ fi
 if nats --server "${NATS_URL}" str info "${RESULT_STREAM_NAME}" >/dev/null 2>&1; then
   set +e
   result_edit_output=$(nats --server "${NATS_URL}" str edit "${RESULT_STREAM_NAME}" \
+    --force \
     --subjects "${RESULT_SUBJECT}" \
     --max-age=720h 2>&1)
   result_edit_status=$?
