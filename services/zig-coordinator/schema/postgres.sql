@@ -309,6 +309,25 @@ create table if not exists authorized_wireless_networks (
 create index if not exists authorized_wireless_networks_enabled_idx
   on authorized_wireless_networks (enabled, location_id);
 
+create table if not exists network_clients (
+  ssid text not null,
+  client_mac text not null,
+  known_bssid text,
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  probe_count integer not null default 1,
+  location_id text,
+  primary key (ssid, client_mac)
+);
+
+create index if not exists idx_network_clients_client_mac
+  on network_clients (client_mac);
+create index if not exists idx_network_clients_last_seen
+  on network_clients (last_seen desc);
+create index if not exists idx_network_clients_known_bssid
+  on network_clients (known_bssid)
+  where known_bssid is not null;
+
 create table if not exists shadow_it_alerts (
   source_mac text primary key,
   first_occurred_at timestamptz not null,

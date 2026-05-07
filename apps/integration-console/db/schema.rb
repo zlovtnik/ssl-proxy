@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_05_06_000400) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_07_000100) do
   create_schema "coordinator"
 
   # These are extensions that must be enabled in order to support this database
@@ -143,6 +143,19 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_06_000400) do
     t.index ["sampled_at"], name: "index_nats_traffic_samples_on_sampled_at"
     t.index ["sensor_id", "sampled_at"], name: "idx_nats_traffic_samples_sensor_sampled_at"
     t.index ["subject", "sensor_id", "sampled_at"], name: "idx_nats_samples_subject_sensor_time", unique: true
+  end
+
+  create_table "network_clients", primary_key: ["ssid", "client_mac"], force: :cascade do |t|
+    t.text "ssid", null: false
+    t.text "client_mac", null: false
+    t.text "known_bssid"
+    t.timestamptz "first_seen", default: -> { "now()" }, null: false
+    t.timestamptz "last_seen", default: -> { "now()" }, null: false
+    t.integer "probe_count", default: 1, null: false
+    t.text "location_id"
+    t.index ["client_mac"], name: "idx_network_clients_client_mac"
+    t.index ["known_bssid"], name: "idx_network_clients_known_bssid", where: "(known_bssid IS NOT NULL)"
+    t.index ["last_seen"], name: "idx_network_clients_last_seen", order: :desc
   end
 
   create_table "sensor_alerts", force: :cascade do |t|
