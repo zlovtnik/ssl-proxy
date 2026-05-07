@@ -41,6 +41,7 @@ pub const Error = error{
     ScanIngestFailed,
     PayloadResolveFailed,
     BatchDispatchFailed,
+    PublishAckSubscribeReadyTimeout,
     ResultFetchFailed,
     AlertPublishFailed,
     BacklogOperationFailed,
@@ -315,11 +316,36 @@ pub const Service = struct {
 
             self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed) catch |err| {
                 var error_buffer: [128]u8 = undefined;
-                const error_text = std.fmt.bufPrint(
-                    &error_buffer,
-                    "sync.oracle.load publish failed: {s}",
-                    .{@errorName(err)},
-                ) catch "sync.oracle.load publish failed";
+                const error_text = dispatchPublishErrorText(&error_buffer, err);
+
+                if (err == error.PublishAckSubscribeReadyTimeout) {
+                    const summary = self.database.releaseBatchDispatch(value, error_text) catch |release_err| {
+                        logging.err()
+                            .stringSafe("event", "batch_dispatch")
+                            .stringSafe("status", "release_error")
+                            .err(release_err)
+                            .log();
+                        return err;
+                    };
+                    defer if (summary) |summary_json| self.allocator.free(summary_json);
+
+                    if (summary) |summary_json| {
+                        logging.err()
+                            .stringSafe("event", "batch_dispatch")
+                            .stringSafe("status", "publish_not_attempted_requeued")
+                            .string("summary", summary_json)
+                            .err(err)
+                            .log();
+                    } else {
+                        logging.err()
+                            .stringSafe("event", "batch_dispatch")
+                            .stringSafe("status", "publish_not_attempted_requeued")
+                            .err(err)
+                            .log();
+                    }
+                    return err;
+                }
+
                 const summary = self.database.markBatchDispatchFailed(value, error_text, self.cfg.batch_max_attempts) catch |mark_err| {
                     logging.err()
                         .stringSafe("event", "batch_dispatch")
@@ -970,6 +996,7 @@ pub const Service = struct {
                 .string("subject", subject)
                 .err(err)
                 .log();
+            if (err == error.PublishAckSubscribeReadyTimeout) return error.PublishAckSubscribeReadyTimeout;
             return on_error;
         };
     }
@@ -1103,6 +1130,14 @@ fn sha256Hex(payload: []const u8) [64]u8 {
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
     return std.fmt.bytesToHex(digest, .lower);
+}
+
+fn dispatchPublishErrorText(buffer: *[128]u8, err: anyerror) []const u8 {
+    return std.fmt.bufPrint(
+        buffer,
+        "sync.oracle.load publish failed: {s}",
+        .{@errorName(err)},
+    ) catch "sync.oracle.load publish failed";
 }
 
 fn sleepUnlessShutdown(io: std.Io, shutdown: *std.atomic.Value(bool), total_ms: u64) void {
@@ -1317,6 +1352,14 @@ test "invalidOracleStreamName rejects wireless audit Oracle dispatch" {
 test "invalidOracleStreamName rejects Oracle stream outside configured streams" {
     const invalid = invalidOracleStreamName("wireless.audit", "proxy.events").?;
     try std.testing.expectEqualStrings("proxy.events", invalid);
+}
+
+test "dispatch publish error text preserves publish phase error" {
+    var buffer: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "sync.oracle.load publish failed: PublishAckSubscribeReadyTimeout",
+        dispatchPublishErrorText(&buffer, error.PublishAckSubscribeReadyTimeout),
+    );
 }
 
 test "consumerInfoFilterMatches validates load consumer filter" {

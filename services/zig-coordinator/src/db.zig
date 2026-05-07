@@ -12,6 +12,7 @@ pub const Error = error{
     NextBatchFetchFailed,
     BatchDispatchRecoveryFailed,
     BatchDispatchMarkFailed,
+    BatchDispatchReleaseFailed,
     ShadowAuditFailed,
     BatchResultFailed,
     BacklogOperationFailed,
@@ -291,6 +292,34 @@ pub const Client = struct {
             query,
         };
         return self.runScalar(&argv, "psql", error.BatchDispatchMarkFailed, false);
+    }
+
+    pub fn releaseBatchDispatch(
+        self: *Client,
+        load_json: []const u8,
+        error_text: []const u8,
+    ) Error!?[]u8 {
+        const load_literal = try self.sqlLiteral(load_json);
+        defer self.allocator.free(load_literal);
+        const error_literal = try self.sqlLiteral(error_text);
+        defer self.allocator.free(error_literal);
+        const query = try std.fmt.allocPrint(
+            self.allocator,
+            "select coordinator.release_batch_dispatch({s}::jsonb, {s})::text;",
+            .{ load_literal, error_literal },
+        );
+        defer self.allocator.free(query);
+
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            query,
+        };
+        return self.runScalar(&argv, "psql", error.BatchDispatchReleaseFailed, false);
     }
 
     pub fn generateShadowAlerts(self: *Client) Error!?[]u8 {
