@@ -603,8 +603,10 @@ test "JetStream publish round-trip when NATS_URL is set" {
     const endpoint = try Endpoint.parse(raw_url);
     if (endpoint.tls) return error.SkipZigTest;
 
+    const seed: u64 = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(std.testing.io, .awake).toNanoseconds())));
+    var prng = std.Random.DefaultPrng.init(seed);
     var random_bytes: [8]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    prng.random().bytes(&random_bytes);
     const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
 
     var stream_buffer: [64]u8 = undefined;
@@ -623,20 +625,20 @@ test "JetStream publish round-trip when NATS_URL is set" {
 
     var create_subject_buffer: [96]u8 = undefined;
     const create_subject = try std.fmt.bufPrint(&create_subject_buffer, "$JS.API.STREAM.CREATE.{s}", .{stream_name});
-    const create_response = try requestJetStreamApi(std.testing.allocator, std.Io.default(), endpoint, create_subject, create_payload, timeout_ms);
+    const create_response = try requestJetStreamApi(std.testing.allocator, std.testing.io, endpoint, create_subject, create_payload, timeout_ms);
     defer std.testing.allocator.free(create_response);
     try std.testing.expect(std.mem.indexOf(u8, create_response, "\"error\"") == null);
 
     var delete_subject_buffer: [96]u8 = undefined;
     const delete_subject = try std.fmt.bufPrint(&delete_subject_buffer, "$JS.API.STREAM.DELETE.{s}", .{stream_name});
     defer {
-        const delete_response = requestJetStreamApi(std.testing.allocator, std.Io.default(), endpoint, delete_subject, "{}", timeout_ms) catch null;
+        const delete_response = requestJetStreamApi(std.testing.allocator, std.testing.io, endpoint, delete_subject, "{}", timeout_ms) catch null;
         if (delete_response) |response| std.testing.allocator.free(response);
     }
 
-    const publish_started_ts = std.Io.Timestamp.now(std.Io.default(), .awake);
-    try publish(std.testing.allocator, std.Io.default(), raw_url, subject, payload, .jetstream_ack, timeout_ms);
-    try std.testing.expect(elapsedMs(publish_started_ts, std.Io.default()) <= timeout_ms);
+    const publish_started_ts = std.Io.Timestamp.now(std.testing.io, .awake);
+    try publish(std.testing.allocator, std.testing.io, raw_url, subject, payload, .jetstream_ack, timeout_ms);
+    try std.testing.expect(elapsedMs(publish_started_ts, std.testing.io) <= timeout_ms);
 
     const get_payload = try std.fmt.allocPrint(
         std.testing.allocator,
@@ -647,7 +649,7 @@ test "JetStream publish round-trip when NATS_URL is set" {
 
     var get_subject_buffer: [96]u8 = undefined;
     const get_subject = try std.fmt.bufPrint(&get_subject_buffer, "$JS.API.STREAM.MSG.GET.{s}", .{stream_name});
-    const get_response = try requestJetStreamApi(std.testing.allocator, std.Io.default(), endpoint, get_subject, get_payload, timeout_ms);
+    const get_response = try requestJetStreamApi(std.testing.allocator, std.testing.io, endpoint, get_subject, get_payload, timeout_ms);
     defer std.testing.allocator.free(get_response);
 
     var encoded_payload_buffer: [std.base64.standard.Encoder.calcSize(payload.len)]u8 = undefined;
