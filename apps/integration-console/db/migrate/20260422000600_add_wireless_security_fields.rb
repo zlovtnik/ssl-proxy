@@ -29,11 +29,56 @@ class AddWirelessSecurityFields < ActiveRecord::Migration[7.2]
       if_not_exists: true
 
     reversible do |dir|
-      dir.up { refresh_wireless_audit_view }
+      dir.up do
+        ensure_legacy_devices_device_id_projection
+        refresh_wireless_audit_view
+      end
     end
   end
 
   private
+
+  def ensure_legacy_devices_device_id_projection
+    execute <<~SQL
+      DO $$
+      BEGIN
+        IF to_regclass('public.devices') IS NULL THEN
+          CREATE TABLE devices (
+            device_id text PRIMARY KEY,
+            wg_pubkey text,
+            claim_token_hash text,
+            display_name text,
+            username text,
+            hostname text,
+            os_hint text,
+            mac_hint text,
+            first_seen timestamptz NOT NULL DEFAULT now(),
+            last_seen timestamptz NOT NULL DEFAULT now(),
+            notes text
+          );
+
+          CREATE INDEX IF NOT EXISTS devices_mac_hint_idx ON devices (lower(mac_hint));
+          CREATE INDEX IF NOT EXISTS devices_wg_pubkey_idx ON devices (wg_pubkey);
+          CREATE INDEX IF NOT EXISTS devices_username_idx ON devices (username, last_seen DESC);
+        ELSIF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'devices'
+            AND column_name = 'mac_id'
+        ) AND NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'devices'
+            AND column_name = 'device_id'
+        ) THEN
+          ALTER TABLE devices ADD COLUMN device_id text;
+          UPDATE devices SET device_id = mac_id WHERE device_id IS NULL;
+        END IF;
+      END $$;
+    SQL
+  end
 
   def refresh_wireless_audit_view
     execute <<~SQL
