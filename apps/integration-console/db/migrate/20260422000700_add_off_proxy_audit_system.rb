@@ -55,6 +55,8 @@ class AddOffProxyAuditSystem < ActiveRecord::Migration[7.2]
       t.timestamptz :updated_at, null: false, default: -> { "now()" }
     end
 
+    ensure_legacy_shadow_it_alerts_projection
+
     add_index :shadow_it_alerts, :dedupe_key, unique: true, if_not_exists: true
     add_index :shadow_it_alerts,
       :observed_at,
@@ -79,6 +81,8 @@ class AddOffProxyAuditSystem < ActiveRecord::Migration[7.2]
 
   def refresh_wireless_audit_view
     execute <<~SQL
+      DROP VIEW IF EXISTS v_wireless_audit_with_devices CASCADE;
+
       CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
       SELECT
         ssi.dedupe_key,
@@ -131,6 +135,8 @@ class AddOffProxyAuditSystem < ActiveRecord::Migration[7.2]
 
   def refresh_shadow_alerts_view
     execute <<~SQL
+      DROP VIEW IF EXISTS v_shadow_it_alerts CASCADE;
+
       CREATE OR REPLACE VIEW v_shadow_it_alerts AS
       SELECT
         alert_id,
@@ -149,6 +155,23 @@ class AddOffProxyAuditSystem < ActiveRecord::Migration[7.2]
         updated_at
       FROM shadow_it_alerts
       ORDER BY observed_at DESC
+    SQL
+  end
+
+  def ensure_legacy_shadow_it_alerts_projection
+    add_column :shadow_it_alerts, :alert_id, :text, if_not_exists: true
+    add_column :shadow_it_alerts, :dedupe_key, :text, if_not_exists: true
+    add_column :shadow_it_alerts, :observed_at, :timestamptz, if_not_exists: true
+
+    execute <<~SQL
+      UPDATE shadow_it_alerts
+      SET
+        alert_id = COALESCE(alert_id, source_mac),
+        dedupe_key = COALESCE(dedupe_key, source_mac),
+        observed_at = COALESCE(observed_at, last_occurred_at, first_occurred_at, created_at, now())
+      WHERE alert_id IS NULL
+         OR dedupe_key IS NULL
+         OR observed_at IS NULL
     SQL
   end
 end

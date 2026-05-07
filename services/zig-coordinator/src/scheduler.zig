@@ -965,6 +965,10 @@ pub const Service = struct {
                 try self.publishWithJetStreamCli(subject, payload, on_error);
                 return;
             }
+            if (err == error.PublishAckFailed and mode == .jetstream_ack) {
+                try self.publishWithJetStreamCli(subject, payload, on_error);
+                return;
+            }
 
             logging.err()
                 .stringSafe("event", "nats_publish_failure")
