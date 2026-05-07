@@ -164,14 +164,34 @@ class AddOffProxyAuditSystem < ActiveRecord::Migration[7.2]
     add_column :shadow_it_alerts, :observed_at, :timestamptz, if_not_exists: true
 
     execute <<~SQL
-      UPDATE shadow_it_alerts
-      SET
-        alert_id = COALESCE(alert_id, source_mac),
-        dedupe_key = COALESCE(dedupe_key, source_mac),
-        observed_at = COALESCE(observed_at, last_occurred_at, first_occurred_at, created_at, now())
-      WHERE alert_id IS NULL
-         OR dedupe_key IS NULL
-         OR observed_at IS NULL
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'shadow_it_alerts'
+            AND column_name = 'last_occurred_at'
+        ) THEN
+          UPDATE shadow_it_alerts
+          SET
+            alert_id = COALESCE(alert_id, source_mac),
+            dedupe_key = COALESCE(dedupe_key, source_mac),
+            observed_at = COALESCE(observed_at, last_occurred_at, first_occurred_at, created_at, now())
+          WHERE alert_id IS NULL
+             OR dedupe_key IS NULL
+             OR observed_at IS NULL;
+        ELSE
+          UPDATE shadow_it_alerts
+          SET
+            alert_id = COALESCE(alert_id, source_mac),
+            dedupe_key = COALESCE(dedupe_key, source_mac),
+            observed_at = COALESCE(observed_at, created_at, now())
+          WHERE alert_id IS NULL
+             OR dedupe_key IS NULL
+             OR observed_at IS NULL;
+        END IF;
+      END $$;
     SQL
   end
 end
