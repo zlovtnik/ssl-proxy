@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src ./src
+COPY benches ./benches
 COPY services/atheros-sensor ./services/atheros-sensor
 COPY Cargo.toml Cargo.lock ./
 RUN cargo build --release --workspace && cargo build --release --manifest-path services/atheros-sensor/Cargo.toml
