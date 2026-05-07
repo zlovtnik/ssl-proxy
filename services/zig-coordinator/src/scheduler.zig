@@ -990,6 +990,10 @@ pub const Service = struct {
                 try self.publishWithCli(subject, payload, on_error);
                 return;
             }
+            if (err == error.PublishAckSubscribeReadyTimeout and mode == .jetstream_ack) {
+                try self.publishWithJetStreamCli(subject, payload, on_error);
+                return;
+            }
 
             logging.err()
                 .stringSafe("event", "nats_publish_failure")
@@ -999,6 +1003,26 @@ pub const Service = struct {
             if (err == error.PublishAckSubscribeReadyTimeout) return error.PublishAckSubscribeReadyTimeout;
             return on_error;
         };
+    }
+
+    fn publishWithJetStreamCli(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
+        logging.info()
+            .stringSafe("event", "nats_publish_fallback")
+            .stringSafe("mode", "jetstream_cli")
+            .string("subject", subject)
+            .log();
+        const argv = [_][]const u8{
+            "nats",
+            "--server",
+            self.cfg.sync_nats_url,
+            "pub",
+            "--jetstream",
+            "--templates=false",
+            "--quiet",
+            subject,
+            payload,
+        };
+        try self.runRequiredCommand(&argv, "nats", on_error);
     }
 
     fn publishWithCli(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
