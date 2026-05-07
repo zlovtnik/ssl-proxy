@@ -61,9 +61,10 @@ class IntegrationRunsController < ApplicationController
   end
 
   def run_detail_payload(run)
+    batches = sync_batches_for(run)
     {
-      run: run_payload(run),
-      batches: batch_payloads(run),
+      run: run_payload(run, batches_by_job: { run.sync_job_id => batches }),
+      batches: batch_payloads(run, batches),
       endpoints: {
         index: integration_runs_path,
         cancel: cancel_integration_run_path(run),
@@ -110,8 +111,8 @@ class IntegrationRunsController < ApplicationController
     )
   end
 
-  def batch_payloads(run)
-    sync_batches_for(run).map { |batch| SyncBatchPayload.call(batch) }
+  def batch_payloads(run, batches = nil)
+    (batches || sync_batches_for(run)).map { |batch| SyncBatchPayload.call(batch) }
   end
 
   def sync_batches_for(run)

@@ -38,6 +38,12 @@ const BODY_LEN_FIELD_LEN: usize = 2;
 /// Packet confidentiality/integrity mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EncryptionMode {
+    /// XOR obfuscation.
+    ///
+    /// Legacy non-framed packets use the configured key directly as the XOR
+    /// mask. Framed XOR packets derive the mask from the in-band frame salt,
+    /// packet direction, and rekey epoch so framed mode has per-session key
+    /// diversification even when no rekey policy is configured.
     #[default]
     Xor,
     Aead,
@@ -166,6 +172,10 @@ impl PacketDirection {
 }
 
 /// Per-session encode state for framed packets.
+///
+/// The session salt is the only encoder state the decoder depends on. It is
+/// written into every framed packet header, so a peer can decode the frame
+/// without holding a matching `PacketEncodeState`.
 #[derive(Debug)]
 pub struct PacketEncodeState {
     session_salt: [u8; FRAME_SALT_LEN],
@@ -270,6 +280,8 @@ pub enum PacketDecodeError {
     EmptyPayload,
     #[error("encoded packet is too short: got {actual}, need at least {minimum}")]
     PacketTooShort { actual: usize, minimum: usize },
+    #[error("encoded packet is too large: got {actual}, maximum {maximum}")]
+    PacketTooLarge { actual: usize, maximum: usize },
     #[error("AEAD authentication failed")]
     AuthFailed,
     #[error("packet replay detected")]
@@ -288,6 +300,7 @@ impl PacketDecodeError {
             Self::MagicByteMismatch => "magic_byte_mismatch",
             Self::EmptyPayload => "empty_payload",
             Self::PacketTooShort { .. } => "packet_too_short",
+            Self::PacketTooLarge { .. } => "packet_too_large",
             Self::AuthFailed => "auth_failed",
             Self::ReplayDetected => "replay_detected",
             Self::InvalidPadding => "invalid_padding",
@@ -321,9 +334,9 @@ pub fn decode_packet(
     settings: &WgPacketObfuscation,
 ) -> Result<Vec<u8>, PacketDecodeError> {
     if packet.len() > MAX_UDP_PACKET_SIZE {
-        return Err(PacketDecodeError::PacketTooShort {
+        return Err(PacketDecodeError::PacketTooLarge {
             actual: packet.len(),
-            minimum: MAX_UDP_PACKET_SIZE,
+            maximum: MAX_UDP_PACKET_SIZE,
         });
     }
 
@@ -375,6 +388,12 @@ pub fn decode_packet_in_place(
         return Err(PacketDecodeError::PacketTooShort {
             actual: 0,
             minimum: 1,
+        });
+    }
+    if packet_len > buffer.len() {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: buffer.len(),
+            minimum: packet_len,
         });
     }
 
@@ -651,6 +670,15 @@ fn validate_marker(
     counter: u64,
     flags: u8,
 ) -> Result<(), PacketDecodeError> {
+    // Decoders treat the frame flag as the claimed wire format and require it
+    // to match local policy. Accepting a mismatch would silently validate the
+    // marker in a different position mode than the peer announced.
+    let frame_randomized = flags & FRAME_FLAG_RANDOMIZED_MAGIC != 0;
+    let settings_randomized = matches!(settings.magic_position, MagicPositionMode::Randomized);
+    if frame_randomized != settings_randomized {
+        return Err(PacketDecodeError::UnsupportedMode);
+    }
+
     let actual_position = (buffer[2] ^ marker_mask(settings, salt, counter)) as usize & 0b111;
     let expected = marker_position(settings, salt, counter, flags);
     if actual_position != expected {
@@ -688,9 +716,7 @@ fn marker_position(
     counter: u64,
     flags: u8,
 ) -> usize {
-    if flags & FRAME_FLAG_RANDOMIZED_MAGIC == 0
-        || matches!(settings.magic_position, MagicPositionMode::Fixed)
-    {
+    if flags & FRAME_FLAG_RANDOMIZED_MAGIC == 0 {
         0
     } else {
         ((settings.key[0] as u64 ^ salt[0] as u64 ^ counter) & 0b111) as usize
@@ -752,16 +778,26 @@ fn rekey_epoch(
     packet_epoch.max(time_epoch).min(u32::MAX as u64) as u32
 }
 
+/// Return the framed XOR mask.
+///
+/// This path always derives the mask from the configured key and the frame
+/// salt. Legacy non-framed XOR remains the only mode that uses the raw key
+/// bytes directly as the repeating XOR mask.
 fn framed_xor_mask(
     settings: &WgPacketObfuscation,
     salt: &[u8; FRAME_SALT_LEN],
     direction: PacketDirection,
     epoch: u32,
 ) -> Vec<u8> {
-    if settings.xor_rekey.is_some() {
-        derive_key(settings, salt, direction, epoch, b"xor").to_vec()
+    derive_key(settings, salt, direction, epoch, b"xor").to_vec()
+}
+
+pub(crate) fn cleanup_interval(idle_timeout: Duration) -> Duration {
+    let half = idle_timeout / 2;
+    if half.is_zero() {
+        Duration::from_millis(1)
     } else {
-        settings.key.clone()
+        half.min(Duration::from_secs(5))
     }
 }
 
@@ -953,6 +989,40 @@ mod tests {
     }
 
     #[test]
+    fn decode_in_place_rejects_packet_len_larger_than_buffer() {
+        let settings = test_settings(None);
+        let mut packet = vec![0u8; 4];
+
+        assert_eq!(
+            decode_packet_in_place(
+                &mut packet,
+                8,
+                &settings,
+                None,
+                PacketDirection::Bidirectional,
+            ),
+            Err(PacketDecodeError::PacketTooShort {
+                actual: 4,
+                minimum: 8
+            })
+        );
+    }
+
+    #[test]
+    fn decode_rejects_oversized_packet_as_too_large() {
+        let settings = test_settings(None);
+        let packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
+
+        assert_eq!(
+            decode_packet(&packet, &settings),
+            Err(PacketDecodeError::PacketTooLarge {
+                actual: MAX_UDP_PACKET_SIZE + 1,
+                maximum: MAX_UDP_PACKET_SIZE,
+            })
+        );
+    }
+
+    #[test]
     fn aead_round_trips_with_replay_window() {
         let settings = test_settings(Some(0xAA))
             .with_encryption_mode(EncryptionMode::Aead)
@@ -1089,6 +1159,38 @@ mod tests {
     }
 
     #[test]
+    fn randomized_magic_flag_must_match_local_position_mode() {
+        let encode_settings = test_settings(Some(0xAA))
+            .with_replay_protection(true)
+            .with_magic_position(MagicPositionMode::Randomized);
+        let decode_settings = test_settings(Some(0xAA)).with_replay_protection(true);
+        let state = fixed_state();
+        let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+        encoded[..4].copy_from_slice(b"mode");
+
+        let len = encode_packet_in_place(
+            &mut encoded,
+            4,
+            &encode_settings,
+            &state,
+            PacketDirection::Bidirectional,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            decode_packet_in_place(
+                &mut encoded,
+                len,
+                &decode_settings,
+                None,
+                PacketDirection::Bidirectional,
+            ),
+            Err(PacketDecodeError::UnsupportedMode)
+        );
+    }
+
+    #[test]
     fn padding_round_trips_and_rejects_modified_padding() {
         let settings = test_settings(Some(0xAA))
             .with_padding(PacketPadding::PowerOfTwo)
@@ -1115,6 +1217,40 @@ mod tests {
         assert_eq!(
             decode_packet(&encoded[..len], &settings),
             Err(PacketDecodeError::InvalidPadding)
+        );
+    }
+
+    #[test]
+    fn framed_xor_without_rekey_uses_salt_derived_mask() {
+        let settings = test_settings(Some(0xAA)).with_replay_protection(true);
+        let salt = *b"0123456789abcdef";
+
+        let mask = framed_xor_mask(&settings, &salt, PacketDirection::Bidirectional, 0);
+
+        assert_ne!(mask, settings.key);
+        assert_eq!(mask.len(), 32);
+    }
+
+    #[test]
+    fn framed_decode_uses_in_band_salt_without_encode_state() {
+        let settings = test_settings(Some(0xAA)).with_replay_protection(true);
+        let state = PacketEncodeState::with_salt(*b"fedcba9876543210", 0);
+        let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+        encoded[..8].copy_from_slice(b"salt-key");
+
+        let len = encode_packet_in_place(
+            &mut encoded,
+            8,
+            &settings,
+            &state,
+            PacketDirection::Bidirectional,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            decode_packet(&encoded[..len], &settings).unwrap(),
+            b"salt-key"
         );
     }
 

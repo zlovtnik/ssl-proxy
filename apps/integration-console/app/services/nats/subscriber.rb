@@ -3,6 +3,8 @@ require "nats/client"
 
 module Nats
   class Subscriber
+    INTEGRATION_CACHE_TTL = 30.seconds
+
     def self.configured_subjects
       IntegrationConfig.enabled
         .where(source_type: "nats")
@@ -15,6 +17,8 @@ module Nats
       @url = url
       @client = client
       @subjects = subjects
+      @integration_by_subject = nil
+      @integration_by_subject_expires_at = nil
     end
 
     def run_forever
@@ -33,6 +37,11 @@ module Nats
       subjects.each do |subject|
         @client.subscribe(subject) { |message| handle(subject, message) }
       end
+    end
+
+    def reset_integration_cache!
+      @integration_by_subject = nil
+      @integration_by_subject_expires_at = nil
     end
 
     def handle(subject, message)
@@ -76,9 +85,21 @@ module Nats
     end
 
     def integration_for_subject(subject)
-      IntegrationConfig.enabled.where(source_type: "nats").find do |config|
-        config.params.to_h["subject"].to_s.strip == subject
+      integration_by_subject[subject]
+    end
+
+    def integration_by_subject
+      now = Time.current
+      if @integration_by_subject && @integration_by_subject_expires_at && @integration_by_subject_expires_at > now
+        return @integration_by_subject
       end
+
+      @integration_by_subject = IntegrationConfig.enabled.where(source_type: "nats").each_with_object({}) do |config, memo|
+        subject = config.params.to_h["subject"].to_s.strip
+        memo[subject] = config if subject.present?
+      end
+      @integration_by_subject_expires_at = now + INTEGRATION_CACHE_TTL
+      @integration_by_subject
     end
 
     def update_sensor(payload)

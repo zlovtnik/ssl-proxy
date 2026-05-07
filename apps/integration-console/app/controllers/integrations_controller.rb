@@ -178,9 +178,9 @@ class IntegrationsController < ApplicationController
     run.broadcast_status
     render json: { run: integration_run_payload(run), redirectUrl: integration_run_path(run) }, status: :created
   rescue StandardError => error
-    run.update!(status: "failed", error_summary: "Publish failed: #{error.message}", finished_at: Time.current) if run&.persisted?
-    run&.broadcast_status
-    render json: { error: "Run could not be published.", run: run && integration_run_payload(run) }, status: :service_unavailable
+    mark_publish_failed(run, error)
+    broadcast_run_status(run)
+    render json: { error: "Run could not be published.", run: safe_integration_run_payload(run) }, status: :service_unavailable
   end
 
   def integrations_page_payload(rows)
@@ -292,6 +292,34 @@ class IntegrationsController < ApplicationController
     )
   end
 
+  def safe_integration_run_payload(run)
+    return nil unless run
+
+    integration_run_payload(run)
+  rescue StandardError
+    {
+      id: run.id,
+      status: run.status,
+      error_summary: run.error_summary,
+      created_at: run.created_at,
+      finished_at: run.finished_at
+    }
+  end
+
+  def mark_publish_failed(run, error)
+    return unless run&.persisted?
+
+    run.update(status: "failed", error_summary: "Publish failed: #{error.message}", finished_at: Time.current)
+  rescue StandardError => update_error
+    Rails.logger.warn("Failed to mark integration run #{run.id} failed: #{update_error.class} - #{update_error.message}")
+  end
+
+  def broadcast_run_status(run)
+    run&.broadcast_status
+  rescue StandardError => broadcast_error
+    Rails.logger.warn("Failed to broadcast integration run #{run.id} status: #{broadcast_error.class} - #{broadcast_error.message}")
+  end
+
   def sync_batches_for(run)
     return [] if run.sync_job_id.blank?
 
@@ -401,6 +429,14 @@ class IntegrationsController < ApplicationController
     end
     failed_runs = aggregates[:run_counts].fetch([config.id, "failed"], 0)
     failure_rate = total_runs.zero? ? 0 : (failed_runs.to_f / total_runs)
+    health =
+      if failure_rate > 0.20
+        "error"
+      elsif failure_rate >= 0.05
+        "warn"
+      else
+        "ok"
+      end
 
     {
       event_count_24h: event_count,
@@ -409,7 +445,7 @@ class IntegrationsController < ApplicationController
       last_seen_at: last_seen_at,
       cursor_updated_at: cursor&.updated_at,
       last_run_at: aggregates[:last_run_at][config.id],
-      health: failure_rate > 0.20 ? "error" : (failure_rate >= 0.05 ? "warn" : "ok")
+      health: health
     }
   end
 

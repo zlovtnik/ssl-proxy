@@ -1,5 +1,7 @@
 //! Shared byte-level payload redaction helpers for audit previews.
 
+use base64::{engine::general_purpose, Engine as _};
+
 /// Redact known sensitive patterns from captured payload bytes in place.
 pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     if buf.is_empty() {
@@ -84,6 +86,7 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
         &b"password="[..],
         &b"pass="[..],
         &b"token="[..],
+        &b"access_token="[..],
         &b"refresh_token="[..],
         &b"id_token="[..],
         &b"secret="[..],
@@ -102,24 +105,33 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     }
 
     for key in [
-        &b"\"password\":"[..],
-        &b"\"token\":"[..],
-        &b"\"refresh_token\":"[..],
-        &b"\"id_token\":"[..],
-        &b"\"secret\":"[..],
-        &b"\"client_secret\":"[..],
-        &b"\"clientsecret\":"[..],
-        &b"\"api_key\":"[..],
-        &b"\"apikey\":"[..],
+        &b"\"password\""[..],
+        &b"\"token\""[..],
+        &b"\"access_token\""[..],
+        &b"\"refresh_token\""[..],
+        &b"\"id_token\""[..],
+        &b"\"secret\""[..],
+        &b"\"client_secret\""[..],
+        &b"\"clientsecret\""[..],
+        &b"\"api_key\""[..],
+        &b"\"apikey\""[..],
     ] {
         let mut json_search_from = 0usize;
         while let Some(pos) = find_bytes(&lower, key, json_search_from) {
             if at_body_key_boundary(&lower, pos) {
                 let mut value_start = pos + key.len();
-                while value_start < buf.len() && matches!(buf[value_start], b' ' | b'\t') {
+                while value_start < lower.len() && matches!(lower[value_start], b' ' | b'\t') {
                     value_start += 1;
                 }
-                if value_start < buf.len() && buf[value_start] == b'"' {
+                if value_start >= lower.len() || lower[value_start] != b':' {
+                    json_search_from = pos + key.len();
+                    continue;
+                }
+                value_start += 1;
+                while value_start < lower.len() && matches!(lower[value_start], b' ' | b'\t') {
+                    value_start += 1;
+                }
+                if value_start < lower.len() && lower[value_start] == b'"' {
                     let mut idx = value_start + 1;
                     while idx < buf.len() {
                         if buf[idx] == b'\\' && idx + 1 < buf.len() {
@@ -134,7 +146,7 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
                         }
                     }
                 } else {
-                    mask_range(buf, value_start, b"\r\n,} \t");
+                    mask_range(buf, value_start, b"\r\n,}:\" \t");
                 }
             }
             json_search_from = pos + key.len();
@@ -155,14 +167,8 @@ pub(crate) fn payload_preview_json(
     redact_sensitive_data(&mut down_redacted);
 
     serde_json::json!({
-        "up": base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &up_redacted,
-        ),
-        "down": base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &down_redacted,
-        ),
+        "up": general_purpose::STANDARD.encode(&up_redacted),
+        "down": general_purpose::STANDARD.encode(&down_redacted),
         "truncated_up": bytes_up > limit as u64,
         "truncated_down": bytes_down > limit as u64,
         "byte_count_up": up_buf.len(),
@@ -191,8 +197,8 @@ mod tests {
         let mut payload = br#"Proxy-Authorization: Basic pxcred
 x-auth-token: xheadervalue
 password=formpassword&token=formtoken&secret=formsecret&api_key=formapikey&apikey=formapikey2
-refresh_token=formrefresh&id_token=formid&client_secret=formclient&clientsecret=formclient2
-{"password":"json-password","token":"json-token-value","refresh_token":"json-refresh","id_token":"json-id","client_secret":"json-client","secret":false}"#
+access_token=formaccess&refresh_token=formrefresh&id_token=formid&client_secret=formclient&clientsecret=formclient2
+{"password":"json-password","token":"json-token-value","access_token" : "json-access","refresh_token":"json-refresh","id_token":"json-id","client_secret":"json-client","secret":false}"#
             .to_vec();
         redact_sensitive_data(&mut payload);
         let redacted = String::from_utf8(payload).unwrap();
@@ -205,12 +211,14 @@ refresh_token=formrefresh&id_token=formid&client_secret=formclient&clientsecret=
             "formsecret",
             "formapikey",
             "formapikey2",
+            "formaccess",
             "formrefresh",
             "formid",
             "formclient",
             "formclient2",
             "json-password",
             "json-token-value",
+            "json-access",
             "json-refresh",
             "json-id",
             "json-client",

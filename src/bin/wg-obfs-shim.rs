@@ -35,7 +35,7 @@ Usage:
                [--drain-timeout-secs <seconds>] [--rate-limit-pps <count>]
                [--rate-limit-burst <count>] [--buffer-pool-capacity <count>]
                [--send-queue-capacity <count>] [--health-addr <host:port>]
-               [--metrics-addr <host:port>] [--encryption-mode <xor|aead>]
+               [--metrics-addr <host:port> (requires --features metrics)] [--encryption-mode <xor|aead>]
                [--padding <none|power-of-two|fixed-mtu:N>]
                [--magic-position <fixed|randomized>]
 
@@ -55,7 +55,7 @@ Environment fallbacks:
   WG_OBFS_SHIM_RATE_LIMIT_BURST
   WG_OBFS_SHIM_BUFFER_POOL_CAPACITY
   WG_OBFS_SHIM_SEND_QUEUE_CAPACITY
-  WG_OBFS_SHIM_METRICS_ADDR
+  WG_OBFS_SHIM_METRICS_ADDR (requires --features metrics)
   WG_OBFUSCATION_ENCRYPTION_MODE
   WG_OBFUSCATION_PADDING
   WG_OBFUSCATION_MAGIC_POSITION

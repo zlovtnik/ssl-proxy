@@ -7,5 +7,7 @@ class IntegrationRunBroadcastJob < ApplicationJob
       run: run.stream_payload,
       batch: batch
     })
+  rescue ActiveRecord::RecordNotFound
+    nil
   end
 end

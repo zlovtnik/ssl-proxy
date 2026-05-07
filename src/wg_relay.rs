@@ -23,8 +23,9 @@ use tracing::{info, warn};
 use crate::{
     config::WireGuardConfig,
     wg_packet_obfuscation::{
-        decode_packet_in_place, encode_packet_in_place, PacketDecodeError, PacketDirection,
-        PacketEncodeState, ReplayWindow, WgPacketObfuscation, XorRekeyPolicy, MAX_UDP_PACKET_SIZE,
+        cleanup_interval, decode_packet_in_place, encode_packet_in_place, PacketDecodeError,
+        PacketDirection, PacketEncodeState, ReplayWindow, WgPacketObfuscation, XorRekeyPolicy,
+        MAX_UDP_PACKET_SIZE,
     },
 };
 
@@ -61,6 +62,9 @@ struct RelaySession {
     upstream_socket: Arc<UdpSocket>,
     last_activity_millis: AtomicU64,
     client_to_server_replay: Mutex<ReplayWindow>,
+    // Server-to-client frames use this encoder state to choose the direction's
+    // session salt. The salt is embedded in every frame, so the client shim can
+    // derive reply keys from the frame alone without sharing this state object.
     server_to_client_encode: PacketEncodeState,
     shutdown: CancellationToken,
 }
@@ -256,55 +260,71 @@ async fn run_relay(
                     }
                 };
 
-                let framed = settings.obfuscation.uses_framed_encoding();
-                let session = if framed {
-                    match get_or_create_session(
-                        client_addr,
-                        public_socket.clone(),
-                        internal_addr,
-                        settings.clone(),
-                        sessions.clone(),
-                        shutdown.clone(),
-                        clock.clone(),
-                    )
-                    .await
+                let (session, decoded_len) = if settings.obfuscation.uses_framed_encoding() {
+                    let mut validation_buf = buf[..len].to_vec();
+                    if let Err(err) = decode_packet_in_place(
+                        &mut validation_buf,
+                        len,
+                        &settings.obfuscation,
+                        None,
+                        PacketDirection::ClientToServer,
+                    ) {
+                        log_decode_error(
+                            &mut magic_drop_notice,
+                            &mut empty_drop_notice,
+                            err,
+                            client_addr,
+                            len,
+                        );
+                        continue;
+                    }
+
+                    let session = match get_or_create_session(
+                            client_addr,
+                            public_socket.clone(),
+                            internal_addr,
+                            settings.clone(),
+                            sessions.clone(),
+                            shutdown.clone(),
+                            clock.clone(),
+                        )
+                        .await
                     {
-                        Ok(session) => Some(session),
+                        Ok(session) => session,
                         Err(err) => {
                             warn!(%client_addr, %err, "failed to create WireGuard relay session");
                             continue;
                         }
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                let decoded_len = if let Some(session) = session.as_ref() {
-                    let mut replay = session
-                        .client_to_server_replay
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner());
-                    match decode_packet_in_place(
-                        &mut buf,
-                        len,
-                        &settings.obfuscation,
-                        Some(&mut replay),
-                        PacketDirection::ClientToServer,
-                    ) {
-                        Ok(decoded_len) => decoded_len,
-                        Err(err) => {
-                            log_decode_error(
-                                &mut magic_drop_notice,
-                                &mut empty_drop_notice,
-                                err,
-                                client_addr,
-                                len,
-                            );
-                            continue;
+                    let decoded_len = {
+                        let mut replay = session
+                            .client_to_server_replay
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner());
+                        match decode_packet_in_place(
+                            &mut buf,
+                            len,
+                            &settings.obfuscation,
+                            Some(&mut replay),
+                            PacketDirection::ClientToServer,
+                        ) {
+                            Ok(decoded_len) => decoded_len,
+                            Err(err) => {
+                                log_decode_error(
+                                    &mut magic_drop_notice,
+                                    &mut empty_drop_notice,
+                                    err,
+                                    client_addr,
+                                    len,
+                                );
+                                continue;
+                            }
                         }
-                    }
+                    };
+                    (session, decoded_len)
                 } else {
-                    match decode_packet_in_place(
+                    let decoded_len = match decode_packet_in_place(
                         &mut buf,
                         len,
                         &settings.obfuscation,
@@ -322,12 +342,8 @@ async fn run_relay(
                             );
                             continue;
                         }
-                    }
-                };
-
-                let session = match session {
-                    Some(session) => session,
-                    None => match get_or_create_session(
+                    };
+                    let session = match get_or_create_session(
                         client_addr,
                         public_socket.clone(),
                         internal_addr,
@@ -343,7 +359,8 @@ async fn run_relay(
                             warn!(%client_addr, %err, "failed to create WireGuard relay session");
                             continue;
                         }
-                    },
+                    };
+                    (session, decoded_len)
                 };
 
                 session.touch(clock.now_millis());
@@ -553,15 +570,6 @@ fn remove_session_if_current(
     session: &Arc<RelaySession>,
 ) {
     let _ = sessions.remove_if(&client_addr, |_, current| Arc::ptr_eq(current, session));
-}
-
-fn cleanup_interval(idle_timeout: Duration) -> Duration {
-    let half = idle_timeout / 2;
-    if half.is_zero() {
-        Duration::from_millis(1)
-    } else {
-        half.min(Duration::from_secs(5))
-    }
 }
 
 #[cfg(test)]

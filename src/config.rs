@@ -190,6 +190,8 @@ pub enum ConfigError {
     InvalidWireGuardObfuscationPadding(String),
     #[error("WG_OBFUSCATION_MAGIC_POSITION must be fixed or randomized; got {0:?}")]
     InvalidWireGuardObfuscationMagicPosition(String),
+    #[error("{var} must be a positive integer; got {value:?}")]
+    InvalidWireGuardObfuscationXorRekeyValue { var: &'static str, value: String },
     #[error(
         "WG_PORT ({public_port}) and WG_INTERNAL_PORT ({internal_port}) must differ when WG_OBFUSCATION_ENABLED=true"
     )]
@@ -1008,8 +1010,8 @@ impl WireGuardConfig {
                 "WG_OBFUSCATION_MAGIC_POSITION",
             )?,
             obfuscation_replay_protection,
-            obfuscation_xor_rekey_packets: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS"),
-            obfuscation_xor_rekey_secs: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS"),
+            obfuscation_xor_rekey_packets: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS")?,
+            obfuscation_xor_rekey_secs: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS")?,
         })
     }
 }
@@ -1249,11 +1251,26 @@ fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
         .ok_or(ConfigError::InvalidWireGuardObfuscationMagicByte(raw))
 }
 
-fn read_optional_u64(var: &str) -> Option<u64> {
-    std::env::var(var)
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
+fn read_optional_u64(var: &'static str) -> Result<Option<u64>, ConfigError> {
+    let Some(raw) = std::env::var(var).ok() else {
+        return Ok(None);
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = value.parse::<u64>().map_err(|_| {
+        ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
+            var,
+            value: raw.clone(),
+        }
+    })?;
+    if parsed == 0 {
+        return Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue { var, value: raw });
+    }
+
+    Ok(Some(parsed))
 }
 
 fn read_wireguard_obfuscation_encryption_mode(var: &str) -> Result<EncryptionMode, ConfigError> {
@@ -1577,6 +1594,32 @@ mod tests {
         assert!(result.wireguard.obfuscation_replay_protection);
         assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, Some(128));
         assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, Some(60));
+    }
+
+    #[test]
+    fn wireguard_xor_rekey_values_must_be_positive_integers() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "0");
+
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
+                var: "WG_OBFUSCATION_XOR_REKEY_PACKETS",
+                ..
+            })
+        ));
+
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "not-a-number");
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
+                var: "WG_OBFUSCATION_XOR_REKEY_PACKETS",
+                ..
+            })
+        ));
     }
 
     #[test]

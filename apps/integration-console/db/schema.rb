@@ -98,8 +98,8 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_06_000400) do
     t.text "stream_name"
     t.boolean "enabled", default: true, null: false
     t.text "schedule_cron"
-    t.jsonb "params", default: {}, null: false
-    t.jsonb "param_schema", default: {}, null: false
+    t.jsonb "params", null: false
+    t.jsonb "param_schema", null: false
     t.text "cursor_field"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false

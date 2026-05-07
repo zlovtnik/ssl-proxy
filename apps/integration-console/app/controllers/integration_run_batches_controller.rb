@@ -1,6 +1,8 @@
 class IntegrationRunBatchesController < ApplicationController
   def index
     run = IntegrationRun.find(params[:integration_run_id])
+    return head :forbidden unless IntegrationRunChannel.authorized_for_run?(current_user, run)
+
     render json: {
       run: run.stream_payload,
       batches: batch_payloads(run)

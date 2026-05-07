@@ -23,7 +23,7 @@ class IntegrationConfig < ApplicationRecord
   end
 
   def combined_params(overrides = {})
-    params.to_h.merge(overrides.to_h.compact_blank)
+    params.to_h.merge(overrides.to_h.reject { |_, value| value.nil? })
   end
 
   private
@@ -57,7 +57,7 @@ class IntegrationConfig < ApplicationRecord
     schema.each do |field_key, field|
       next unless field["required"]
 
-      errors.add(:params, "#{field_key} is required for #{source_type}") if current_params[field_key].blank?
+      errors.add(:params, "#{field_key} is required for #{source_type}") if absent_param_value?(current_params[field_key])
     end
 
     params.to_h.each do |key, value|
@@ -72,7 +72,7 @@ class IntegrationConfig < ApplicationRecord
   end
 
   def validate_param_type(key, value, field)
-    return if value.blank?
+    return if absent_param_value?(value)
 
     case field["type"]
     when "integer"
@@ -88,5 +88,9 @@ class IntegrationConfig < ApplicationRecord
     Integer(value)
   rescue ArgumentError, TypeError
     errors.add(:params, "#{key} must be an integer")
+  end
+
+  def absent_param_value?(value)
+    value.nil? || (value.respond_to?(:empty?) && value.empty?)
   end
 end

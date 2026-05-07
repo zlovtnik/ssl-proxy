@@ -23,8 +23,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, info_span, warn, Span};
 
 use crate::wg_packet_obfuscation::{
-    decode_packet_in_place, encode_packet_in_place, PacketDecodeError, PacketDirection,
-    PacketEncodeError, PacketEncodeState, ReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
+    cleanup_interval, decode_packet_in_place, encode_packet_in_place, PacketDecodeError,
+    PacketDirection, PacketEncodeError, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
+    MAX_UDP_PACKET_SIZE,
 };
 
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:51821";
@@ -33,8 +34,6 @@ pub const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 5;
 pub const DEFAULT_BUFFER_POOL_CAPACITY: usize = 256;
 pub const DEFAULT_SEND_QUEUE_CAPACITY: usize = 128;
 pub const DEFAULT_HEALTH_ADDR: &str = "127.0.0.1:51822";
-
-const UNKNOWN_MILLIS: u64 = u64::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RateLimitConfig {
@@ -162,6 +161,7 @@ pub struct ShimMetrics {
     sessions_closed_shutdown: AtomicU64,
     rate_limited_drops: AtomicU64,
     buffer_pool_exhausted: AtomicU64,
+    buffer_pool_wait_millis_total: AtomicU64,
     send_queue_drops: AtomicU64,
 }
 
@@ -192,6 +192,8 @@ impl ShimMetrics {
                 "wg_obfs_shim_rate_limited_drops_total {}\n",
                 "# TYPE wg_obfs_shim_buffer_pool_exhausted_total counter\n",
                 "wg_obfs_shim_buffer_pool_exhausted_total {}\n",
+                "# TYPE wg_obfs_shim_buffer_pool_wait_millis_total counter\n",
+                "wg_obfs_shim_buffer_pool_wait_millis_total {}\n",
                 "# TYPE wg_obfs_shim_send_queue_drops_total counter\n",
                 "wg_obfs_shim_send_queue_drops_total {}\n",
                 "# EOF\n"
@@ -207,6 +209,7 @@ impl ShimMetrics {
             self.sessions_closed_shutdown.load(Ordering::Relaxed),
             self.rate_limited_drops.load(Ordering::Relaxed),
             self.buffer_pool_exhausted.load(Ordering::Relaxed),
+            self.buffer_pool_wait_millis_total.load(Ordering::Relaxed),
             self.send_queue_drops.load(Ordering::Relaxed),
         )
     }
@@ -362,6 +365,7 @@ impl TokenBucket {
 
 struct ShimSession {
     id: u64,
+    config: Arc<WgObfsShimConfig>,
     upstream_tx: mpsc::Sender<QueuedUpstreamPacket>,
     upstream_port: AtomicU16,
     last_activity_millis: AtomicU64,
@@ -374,20 +378,23 @@ struct ShimSession {
     last_upstream_send_millis: AtomicU64,
     last_server_reply_millis: AtomicU64,
     last_server_rtt_millis: AtomicU64,
+    last_server_rtt_known: AtomicBool,
     span: Span,
 }
 
 impl ShimSession {
     fn new(
         id: u64,
+        config: Arc<WgObfsShimConfig>,
         upstream_tx: mpsc::Sender<QueuedUpstreamPacket>,
         upstream_port: u16,
         now_millis: u64,
-        rate_limit: Option<RateLimitConfig>,
         span: Span,
     ) -> Self {
+        let rate_limit = config.rate_limit;
         Self {
             id,
+            config,
             upstream_tx,
             upstream_port: AtomicU16::new(upstream_port),
             last_activity_millis: AtomicU64::new(now_millis),
@@ -399,7 +406,8 @@ impl ShimSession {
             first_send_logged: AtomicBool::new(false),
             last_upstream_send_millis: AtomicU64::new(0),
             last_server_reply_millis: AtomicU64::new(0),
-            last_server_rtt_millis: AtomicU64::new(UNKNOWN_MILLIS),
+            last_server_rtt_millis: AtomicU64::new(0),
+            last_server_rtt_known: AtomicBool::new(false),
             span,
         }
     }
@@ -475,6 +483,7 @@ impl ShimSession {
         if last_send > 0 {
             self.last_server_rtt_millis
                 .store(now_millis.saturating_sub(last_send), Ordering::Relaxed);
+            self.last_server_rtt_known.store(true, Ordering::Release);
         }
         self.last_server_reply_millis
             .store(now_millis, Ordering::Relaxed);
@@ -486,8 +495,9 @@ impl ShimSession {
     }
 
     fn last_server_rtt_millis(&self) -> Option<u64> {
-        let value = self.last_server_rtt_millis.load(Ordering::Relaxed);
-        (value != UNKNOWN_MILLIS).then_some(value)
+        self.last_server_rtt_known
+            .load(Ordering::Acquire)
+            .then(|| self.last_server_rtt_millis.load(Ordering::Relaxed))
     }
 }
 
@@ -500,6 +510,19 @@ struct UpstreamConnection {
     socket: UdpSocket,
     server_addr: SocketAddr,
     local_port: u16,
+}
+
+#[derive(Clone)]
+struct ShimSessionContext {
+    listen_socket: Arc<UdpSocket>,
+    config_store: Arc<ArcSwap<WgObfsShimConfig>>,
+    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
+    shutdown: CancellationToken,
+    clock: Arc<ShimClock>,
+    metrics: Arc<ShimMetrics>,
+    next_session_id: Arc<AtomicU64>,
+    buffer_pool: Arc<UdpBufferPool>,
+    next_server_index: Arc<AtomicUsize>,
 }
 
 #[derive(Clone, Copy)]
@@ -573,18 +596,19 @@ pub async fn spawn_runtime(
     let buffer_pool = Arc::new(UdpBufferPool::new(config.buffer_pool_capacity()));
     let next_server_index = Arc::new(AtomicUsize::new(0));
     let config = Arc::new(ArcSwap::from_pointee(config));
-
-    let task = tokio::spawn(run_shim(
+    let context = ShimSessionContext {
         listen_socket,
-        config.clone(),
+        config_store: config.clone(),
         sessions,
         shutdown,
         clock,
-        metrics.clone(),
+        metrics: metrics.clone(),
         next_session_id,
         buffer_pool,
         next_server_index,
-    ));
+    };
+
+    let task = tokio::spawn(run_shim(context));
 
     Ok(WgObfsShimRuntime {
         local_addr,
@@ -594,21 +618,10 @@ pub async fn spawn_runtime(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_shim(
-    listen_socket: Arc<UdpSocket>,
-    config_store: Arc<ArcSwap<WgObfsShimConfig>>,
-    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
-    shutdown: CancellationToken,
-    clock: Arc<ShimClock>,
-    metrics: Arc<ShimMetrics>,
-    next_session_id: Arc<AtomicU64>,
-    buffer_pool: Arc<UdpBufferPool>,
-    next_server_index: Arc<AtomicUsize>,
-) {
-    let startup_config = config_store.load_full();
+async fn run_shim(context: ShimSessionContext) {
+    let startup_config = context.config_store.load_full();
     info!(
-        listen_addr = %listen_socket
+        listen_addr = %context.listen_socket
             .local_addr()
             .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 0))),
         server_addrs = ?startup_config.server_addrs,
@@ -620,20 +633,14 @@ async fn run_shim(
         "WireGuard obfuscation shim started"
     );
 
-    let cleanup_task = tokio::spawn(run_cleanup_loop(
-        sessions.clone(),
-        shutdown.clone(),
-        config_store.clone(),
-        clock.clone(),
-        metrics.clone(),
-    ));
+    let cleanup_task = tokio::spawn(run_cleanup_loop(context.clone()));
 
     #[cfg(feature = "metrics")]
     let metrics_task = startup_config.metrics_addr.map(|metrics_addr| {
         tokio::spawn(run_metrics_server(
             metrics_addr,
-            metrics.clone(),
-            shutdown.clone(),
+            context.metrics.clone(),
+            context.shutdown.clone(),
         ))
     });
     #[cfg(not(feature = "metrics"))]
@@ -645,23 +652,17 @@ async fn run_shim(
     }
 
     loop {
-        let Some(mut lease) = buffer_pool.lease() else {
-            metrics
-                .buffer_pool_exhausted
-                .fetch_add(1, Ordering::Relaxed);
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                _ = tokio::time::sleep(Duration::from_millis(1)) => continue,
-            }
+        let Some(mut lease) = lease_buffer_or_wait(&context, None).await else {
+            break;
         };
 
         tokio::select! {
-            _ = shutdown.cancelled() => break,
-            recv = listen_socket.recv_from(&mut lease) => {
+            _ = context.shutdown.cancelled() => break,
+            recv = context.listen_socket.recv_from(&mut lease) => {
                 let (len, client_addr) = match recv {
                     Ok(result) => result,
                     Err(err) => {
-                        if shutdown.is_cancelled() {
+                        if context.shutdown.is_cancelled() {
                             break;
                         }
                         warn!(%err, "WireGuard obfuscation shim receive failed");
@@ -669,19 +670,11 @@ async fn run_shim(
                     }
                 };
 
-                let config = config_store.load_full();
+                let config = context.config_store.load_full();
                 let session = match get_or_create_session(
                     client_addr,
-                    listen_socket.clone(),
                     config.clone(),
-                    config_store.clone(),
-                    sessions.clone(),
-                    shutdown.clone(),
-                    clock.clone(),
-                    metrics.clone(),
-                    next_session_id.clone(),
-                    buffer_pool.clone(),
-                    next_server_index.clone(),
+                    context.clone(),
                 )
                 .await
                 {
@@ -692,10 +685,10 @@ async fn run_shim(
                     }
                 };
 
-                let now = clock.now_millis();
+                let now = context.clock.now_millis();
                 session.touch(now);
                 if !session.allow_upstream_send(now) {
-                    metrics.rate_limited_drops.fetch_add(1, Ordering::Relaxed);
+                    context.metrics.rate_limited_drops.fetch_add(1, Ordering::Relaxed);
                     warn!(
                         %client_addr,
                         session_id = session.id,
@@ -708,20 +701,20 @@ async fn run_shim(
                 let encoded_len = match encode_packet_in_place(
                     &mut lease,
                     len,
-                    &config.obfuscation,
+                    &session.config.obfuscation,
                     &session.client_to_server_encode,
                     PacketDirection::ClientToServer,
                     now,
                 ) {
                     Ok(encoded_len) => encoded_len,
                     Err(err) => {
-                        metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
+                        context.metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(%client_addr, session_id = session.id, %err, "failed to encode WireGuard packet for upstream send");
                         continue;
                     }
                 };
 
-                let send_started_millis = clock.now_millis();
+                let send_started_millis = context.clock.now_millis();
                 let packet = QueuedUpstreamPacket {
                     bytes: lease[..encoded_len].to_vec(),
                     queued_at_millis: send_started_millis,
@@ -729,10 +722,10 @@ async fn run_shim(
                 match session.upstream_tx.try_send(packet) {
                     Ok(()) => {
                         session.record_upstream_send(send_started_millis);
-                        metrics.packets_client_to_server.fetch_add(1, Ordering::Relaxed);
+                        context.metrics.packets_client_to_server.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        metrics.send_queue_drops.fetch_add(1, Ordering::Relaxed);
+                        context.metrics.send_queue_drops.fetch_add(1, Ordering::Relaxed);
                         warn!(
                             %client_addr,
                             session_id = session.id,
@@ -740,7 +733,7 @@ async fn run_shim(
                         );
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        let failure_millis = clock.now_millis();
+                        let failure_millis = context.clock.now_millis();
                         warn!(
                             %client_addr,
                             session_id = session.id,
@@ -750,10 +743,10 @@ async fn run_shim(
                             "failed to queue obfuscated WireGuard packet because session upstream task is closed"
                         );
                         close_session_if_current(
-                            &sessions,
+                            &context.sessions,
                             client_addr,
                             &session,
-                            &metrics,
+                            &context.metrics,
                             SessionCloseReason::SendFailure,
                         );
                     }
@@ -768,17 +761,18 @@ async fn run_shim(
         let _ = metrics_task.await;
     }
 
-    let sessions_to_close: Vec<_> = sessions
+    let sessions_to_close: Vec<_> = context
+        .sessions
         .iter()
         .map(|entry| (*entry.key(), entry.value().clone()))
         .collect();
     let mut receiver_tasks = Vec::new();
     for (client_addr, session) in sessions_to_close {
         if close_session_if_current(
-            &sessions,
+            &context.sessions,
             client_addr,
             &session,
-            &metrics,
+            &context.metrics,
             SessionCloseReason::Shutdown,
         ) {
             if let Some(handle) = session.take_receiver_task() {
@@ -786,38 +780,39 @@ async fn run_shim(
             }
         }
     }
-    drain_receiver_tasks(receiver_tasks, config_store.load().drain_timeout).await;
+    drain_receiver_tasks(receiver_tasks, context.config_store.load().drain_timeout).await;
 
     info!("WireGuard obfuscation shim shutting down");
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn get_or_create_session(
     client_addr: SocketAddr,
-    listen_socket: Arc<UdpSocket>,
     config: Arc<WgObfsShimConfig>,
-    config_store: Arc<ArcSwap<WgObfsShimConfig>>,
-    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
-    shutdown: CancellationToken,
-    clock: Arc<ShimClock>,
-    metrics: Arc<ShimMetrics>,
-    next_session_id: Arc<AtomicU64>,
-    buffer_pool: Arc<UdpBufferPool>,
-    next_server_index: Arc<AtomicUsize>,
+    context: ShimSessionContext,
 ) -> io::Result<Arc<ShimSession>> {
-    enforce_session_limit(&sessions, config.max_sessions, &metrics, Some(client_addr))?;
-    match sessions.entry(client_addr) {
+    if let Some(existing) = context.sessions.get(&client_addr) {
+        return Ok(existing.clone());
+    }
+
+    enforce_session_limit(
+        &context.sessions,
+        config.max_sessions,
+        &context.metrics,
+        Some(client_addr),
+    )?;
+    let receiver_context = context.clone();
+    match context.sessions.entry(client_addr) {
         dashmap::mapref::entry::Entry::Occupied(existing) => Ok(existing.get().clone()),
         dashmap::mapref::entry::Entry::Vacant(vacant) => {
-            if shutdown.is_cancelled() {
+            if context.shutdown.is_cancelled() {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
                     "WireGuard shim shutdown is in progress",
                 ));
             }
 
-            let now = clock.now_millis();
-            let session_id = next_session_id.fetch_add(1, Ordering::Relaxed);
+            let now = context.clock.now_millis();
+            let session_id = context.next_session_id.fetch_add(1, Ordering::Relaxed);
             let (upstream_tx, upstream_rx) = mpsc::channel(config.send_queue_capacity());
             let span = info_span!(
                 "wg_shim_session",
@@ -826,30 +821,25 @@ async fn get_or_create_session(
             );
             let session = Arc::new(ShimSession::new(
                 session_id,
+                config.clone(),
                 upstream_tx,
                 0,
                 now,
-                config.rate_limit,
                 span.clone(),
             ));
             let session = vacant.insert(session).clone();
-            metrics.active_sessions.fetch_add(1, Ordering::Relaxed);
+            context
+                .metrics
+                .active_sessions
+                .fetch_add(1, Ordering::Relaxed);
             session.span.in_scope(|| {
                 info!("WireGuard shim session created");
             });
-            let sessions_for_task = sessions.clone();
             let handle = tokio::spawn(run_session_receiver(
                 client_addr,
                 session.clone(),
-                listen_socket,
-                config_store,
-                sessions_for_task,
-                shutdown,
-                clock,
-                metrics,
-                buffer_pool,
                 upstream_rx,
-                next_server_index,
+                receiver_context,
             ));
             session.set_receiver_task(handle);
             Ok(session)
@@ -857,21 +847,15 @@ async fn get_or_create_session(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_session_receiver(
     client_addr: SocketAddr,
     session: Arc<ShimSession>,
-    listen_socket: Arc<UdpSocket>,
-    config_store: Arc<ArcSwap<WgObfsShimConfig>>,
-    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
-    shutdown: CancellationToken,
-    clock: Arc<ShimClock>,
-    metrics: Arc<ShimMetrics>,
-    buffer_pool: Arc<UdpBufferPool>,
     mut upstream_rx: mpsc::Receiver<QueuedUpstreamPacket>,
-    next_server_index: Arc<AtomicUsize>,
+    context: ShimSessionContext,
 ) {
-    let mut connection = match connect_next_upstream(&config_store, &next_server_index).await {
+    let mut connection = match connect_next_upstream(&session.config, &context.next_server_index)
+        .await
+    {
         Ok(connection) => {
             session.set_upstream_port(connection.local_port);
             connection
@@ -879,10 +863,10 @@ async fn run_session_receiver(
         Err(err) => {
             warn!(%client_addr, session_id = session.id, %err, "failed to create initial WireGuard shim upstream socket");
             close_session_if_current(
-                &sessions,
+                &context.sessions,
                 client_addr,
                 &session,
-                &metrics,
+                &context.metrics,
                 SessionCloseReason::SendFailure,
             );
             return;
@@ -890,19 +874,12 @@ async fn run_session_receiver(
     };
 
     loop {
-        let Some(mut lease) = buffer_pool.lease() else {
-            metrics
-                .buffer_pool_exhausted
-                .fetch_add(1, Ordering::Relaxed);
-            tokio::select! {
-                _ = shutdown.cancelled() => break,
-                _ = session.shutdown.cancelled() => break,
-                _ = tokio::time::sleep(Duration::from_millis(1)) => continue,
-            }
+        let Some(mut lease) = lease_buffer_or_wait(&context, Some(&session.shutdown)).await else {
+            break;
         };
 
         tokio::select! {
-            _ = shutdown.cancelled() => break,
+            _ = context.shutdown.cancelled() => break,
             _ = session.shutdown.cancelled() => break,
             queued = upstream_rx.recv() => {
                 let Some(packet) = queued else {
@@ -913,15 +890,15 @@ async fn run_session_receiver(
                     packet,
                     &session,
                     client_addr,
-                    &config_store,
-                    &next_server_index,
-                    &clock,
+                    &session.config,
+                    &context.next_server_index,
+                    &context.clock,
                 )
                 .await
                 {
                     Ok(()) => {}
                     Err(err) => {
-                        let failure_millis = clock.now_millis();
+                        let failure_millis = context.clock.now_millis();
                         warn!(
                             %client_addr,
                             session_id = session.id,
@@ -932,10 +909,10 @@ async fn run_session_receiver(
                             "failed to send obfuscated WireGuard packet to all configured upstream servers"
                         );
                         close_session_if_current(
-                            &sessions,
+                            &context.sessions,
                             client_addr,
                             &session,
-                            &metrics,
+                            &context.metrics,
                             SessionCloseReason::SendFailure,
                         );
                         break;
@@ -957,9 +934,10 @@ async fn run_session_receiver(
                     }
                 };
 
-                let now = clock.now_millis();
+                let now = context.clock.now_millis();
                 session.touch(now);
-                let config = config_store.load_full();
+                // Server replies carry the relay encoder's salt in-band, so
+                // the shim decodes without holding the relay's encode state.
                 let decoded_len = {
                     let mut replay = session
                         .server_to_client_replay
@@ -968,23 +946,23 @@ async fn run_session_receiver(
                     match decode_packet_in_place(
                         &mut lease,
                         len,
-                        &config.obfuscation,
+                        &session.config.obfuscation,
                         Some(&mut replay),
                         PacketDirection::ServerToClient,
                     ) {
                         Ok(decoded_len) => decoded_len,
                         Err(PacketDecodeError::MagicByteMismatch) => {
-                            metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
+                            context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
                             warn!(%client_addr, session_id = session.id, packet_len = len, "dropping server reply with missing or invalid obfuscation marker");
                             continue;
                         }
                         Err(PacketDecodeError::EmptyPayload) => {
-                            metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
+                            context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
                             warn!(%client_addr, session_id = session.id, packet_len = len, "dropping server reply with empty obfuscation payload");
                             continue;
                         }
                         Err(err) => {
-                            metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
+                            context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
                             warn!(
                                 %client_addr,
                                 session_id = session.id,
@@ -999,36 +977,41 @@ async fn run_session_receiver(
                 };
                 session.record_server_reply(now);
 
-                if let Err(err) = listen_socket.send_to(&lease[..decoded_len], client_addr).await {
+                if let Err(err) = context.listen_socket.send_to(&lease[..decoded_len], client_addr).await {
                     warn!(%client_addr, session_id = session.id, %err, "failed to deliver plaintext WireGuard packet back to local client");
                     close_session_if_current(
-                        &sessions,
+                        &context.sessions,
                         client_addr,
                         &session,
-                        &metrics,
+                        &context.metrics,
                         SessionCloseReason::SendFailure,
                     );
                     break;
                 }
-                metrics.packets_server_to_client.fetch_add(1, Ordering::Relaxed);
+                context.metrics.packets_server_to_client.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
 
-    let close_reason = if shutdown.is_cancelled() {
+    let close_reason = if context.shutdown.is_cancelled() {
         SessionCloseReason::Shutdown
     } else {
         SessionCloseReason::SendFailure
     };
-    close_session_if_current(&sessions, client_addr, &session, &metrics, close_reason);
+    close_session_if_current(
+        &context.sessions,
+        client_addr,
+        &session,
+        &context.metrics,
+        close_reason,
+    );
     session.close();
 }
 
 async fn connect_next_upstream(
-    config_store: &Arc<ArcSwap<WgObfsShimConfig>>,
+    config: &WgObfsShimConfig,
     next_server_index: &AtomicUsize,
 ) -> io::Result<UpstreamConnection> {
-    let config = config_store.load_full();
     let server_count = config.server_addrs.len();
     if server_count == 0 {
         return Err(io::Error::new(
@@ -1062,12 +1045,12 @@ async fn send_with_failover(
     packet: QueuedUpstreamPacket,
     session: &ShimSession,
     client_addr: SocketAddr,
-    config_store: &Arc<ArcSwap<WgObfsShimConfig>>,
+    config: &WgObfsShimConfig,
     next_server_index: &AtomicUsize,
     clock: &ShimClock,
 ) -> io::Result<()> {
     let mut last_error = None;
-    let max_attempts = config_store.load().server_addrs.len().max(1);
+    let max_attempts = config.server_addrs.len().max(1);
     for attempt in 0..max_attempts {
         match connection.socket.send(&packet.bytes).await {
             Ok(_) => {
@@ -1084,7 +1067,7 @@ async fn send_with_failover(
                     upstream_port = connection.local_port,
                     "WireGuard shim upstream send failed; trying next configured server"
                 );
-                *connection = connect_next_upstream(config_store, next_server_index).await?;
+                *connection = connect_next_upstream(config, next_server_index).await?;
                 session.set_upstream_port(connection.local_port);
                 session.record_upstream_send(clock.now_millis());
             }
@@ -1118,21 +1101,15 @@ fn upstream_bind_addr(server_addr: SocketAddr) -> SocketAddr {
     }
 }
 
-async fn run_cleanup_loop(
-    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
-    shutdown: CancellationToken,
-    config_store: Arc<ArcSwap<WgObfsShimConfig>>,
-    clock: Arc<ShimClock>,
-    metrics: Arc<ShimMetrics>,
-) {
-    let mut interval = tokio::time::interval(config_store.load().cleanup_interval());
+async fn run_cleanup_loop(context: ShimSessionContext) {
+    let mut interval = tokio::time::interval(context.config_store.load().cleanup_interval());
     loop {
         tokio::select! {
-            _ = shutdown.cancelled() => return,
+            _ = context.shutdown.cancelled() => return,
             _ = interval.tick() => {
-                let config = config_store.load_full();
-                let now = clock.now_millis();
-                let stale_sessions: Vec<_> = sessions
+                let config = context.config_store.load_full();
+                let now = context.clock.now_millis();
+                let stale_sessions: Vec<_> = context.sessions
                     .iter()
                     .filter_map(|entry| {
                         let client_addr = *entry.key();
@@ -1143,16 +1120,58 @@ async fn run_cleanup_loop(
 
                 for (client_addr, session) in stale_sessions {
                     close_session_if_current(
-                        &sessions,
+                        &context.sessions,
                         client_addr,
                         &session,
-                        &metrics,
+                        &context.metrics,
                         SessionCloseReason::Idle,
                     );
                 }
             }
         }
     }
+}
+
+async fn lease_buffer_or_wait(
+    context: &ShimSessionContext,
+    session_shutdown: Option<&CancellationToken>,
+) -> Option<UdpBufferLease> {
+    if let Some(lease) = context.buffer_pool.lease() {
+        return Some(lease);
+    }
+
+    let mut wait_started = Instant::now();
+    loop {
+        context
+            .metrics
+            .buffer_pool_exhausted
+            .fetch_add(1, Ordering::Relaxed);
+        tokio::select! {
+            _ = context.shutdown.cancelled() => return None,
+            _ = optional_cancelled(session_shutdown) => return None,
+            _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+        }
+        record_buffer_pool_wait_since(&context.metrics, wait_started);
+        if let Some(lease) = context.buffer_pool.lease() {
+            return Some(lease);
+        }
+        wait_started = Instant::now();
+    }
+}
+
+async fn optional_cancelled(token: Option<&CancellationToken>) {
+    if let Some(token) = token {
+        token.cancelled().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
+fn record_buffer_pool_wait_since(metrics: &ShimMetrics, wait_started: Instant) {
+    let waited_millis = wait_started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    metrics
+        .buffer_pool_wait_millis_total
+        .fetch_add(waited_millis, Ordering::Relaxed);
 }
 
 fn enforce_session_limit(
@@ -1268,15 +1287,6 @@ async fn drain_receiver_tasks(mut handles: Vec<JoinHandle<()>>, drain_timeout: D
     }
 }
 
-fn cleanup_interval(idle_timeout: Duration) -> Duration {
-    let half = idle_timeout / 2;
-    if half.is_zero() {
-        Duration::from_millis(1)
-    } else {
-        half.min(Duration::from_secs(5))
-    }
-}
-
 #[cfg(feature = "metrics")]
 async fn run_metrics_server(
     metrics_addr: SocketAddr,
@@ -1336,14 +1346,23 @@ mod tests {
         WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte)
     }
 
+    fn test_shim_config() -> Arc<WgObfsShimConfig> {
+        Arc::new(WgObfsShimConfig::new(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            SocketAddr::from(([127, 0, 0, 1], 1)),
+            test_obfuscation(None),
+            Duration::from_secs(30),
+        ))
+    }
+
     fn test_session_for_limit(id: u64, last_activity_millis: u64) -> Arc<ShimSession> {
         let (upstream_tx, _upstream_rx) = mpsc::channel(1);
         Arc::new(ShimSession::new(
             id,
+            test_shim_config(),
             upstream_tx,
             0,
             last_activity_millis,
-            None,
             info_span!("test_session", session_id = id),
         ))
     }
@@ -1376,10 +1395,10 @@ mod tests {
         let (upstream_tx, _upstream_rx) = mpsc::channel(1);
         let session = ShimSession::new(
             1,
+            test_shim_config(),
             upstream_tx,
             40000,
             10,
-            None,
             info_span!("test_session", client_addr = "127.0.0.1:1"),
         );
 
@@ -1416,18 +1435,61 @@ mod tests {
         assert!(pool.lease().is_some());
     }
 
+    #[test]
+    fn buffer_pool_wait_counter_records_elapsed_millis_when_pool_empty() {
+        let pool = Arc::new(UdpBufferPool::new(1));
+        let lease = pool.lease();
+        let metrics = ShimMetrics::default();
+        let wait_started = Instant::now() - Duration::from_millis(3);
+
+        assert!(lease.is_some());
+        assert!(pool.lease().is_none());
+        record_buffer_pool_wait_since(&metrics, wait_started);
+
+        assert!(
+            metrics
+                .buffer_pool_wait_millis_total
+                .load(Ordering::Relaxed)
+                >= 3
+        );
+    }
+
+    #[test]
+    fn server_rtt_uses_explicit_known_state() {
+        let (upstream_tx, _upstream_rx) = mpsc::channel(1);
+        let session = ShimSession::new(
+            1,
+            test_shim_config(),
+            upstream_tx,
+            40000,
+            10,
+            info_span!("test_session", client_addr = "127.0.0.1:1"),
+        );
+
+        assert_eq!(session.last_server_rtt_millis(), None);
+        session.record_server_reply(10);
+        assert_eq!(session.last_server_rtt_millis(), None);
+        session.record_upstream_send(20);
+        session.record_server_reply(20);
+        assert_eq!(session.last_server_rtt_millis(), Some(0));
+    }
+
     #[cfg(feature = "metrics")]
     #[test]
     fn shim_metrics_render_openmetrics() {
         let metrics = ShimMetrics::default();
         metrics.active_sessions.store(2, Ordering::Relaxed);
         metrics.packets_client_to_server.store(3, Ordering::Relaxed);
+        metrics
+            .buffer_pool_wait_millis_total
+            .store(4, Ordering::Relaxed);
 
         let rendered = metrics.render_openmetrics();
 
         assert!(rendered.contains("wg_obfs_shim_active_sessions 2"));
         assert!(rendered
             .contains("wg_obfs_shim_packets_forwarded_total{direction=\"client_to_server\"} 3"));
+        assert!(rendered.contains("wg_obfs_shim_buffer_pool_wait_millis_total 4"));
         assert!(rendered.ends_with("# EOF\n"));
     }
 

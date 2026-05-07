@@ -11,7 +11,7 @@
   let integration = initial.integration || { enabled: true, source_type: "nats", destination_type: "postgres", params: {} }
   let runs = initial.runs || []
   let schemas = initial.schemas || {}
-  let activeTab = initial.mode === "new" ? "config" : "config"
+  let activeTab = initial.mode === "new" ? "config" : "history"
   let errors = []
   let notice = ""
   let submitting = false
@@ -48,8 +48,11 @@
       const url = integration.update_url || endpoints.create
       const method = integration.update_url ? "PATCH" : "POST"
       const payload = await requestJson(url, { method, body: { integration_config: integration } })
-      if (payload.redirectUrl) window.location.href = payload.redirectUrl
-      notice = "Integration saved."
+      if (payload.redirectUrl) {
+        window.location.href = payload.redirectUrl
+      } else {
+        notice = "Integration saved."
+      }
     } catch (error) {
       errors = errorMessages(error)
     } finally {

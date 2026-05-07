@@ -1,4 +1,15 @@
 class IntegrationRunChannel < ApplicationCable::Channel
+  def self.authorized_for_run?(user, run)
+    return IntegrationRunPolicy.new(user, run).show? if defined?(IntegrationRunPolicy)
+    return run.user == user if user && run.respond_to?(:user)
+
+    Rails.logger.warn("IntegrationRunChannel has no authorization mechanism for run #{run.id}")
+    false
+  rescue StandardError => error
+    Rails.logger.warn("IntegrationRunChannel rejected run #{run.id}: #{error.class} - #{error.message}")
+    false
+  end
+
   def subscribed
     return reject unless params[:run_id].present?
 
@@ -20,10 +31,7 @@ class IntegrationRunChannel < ApplicationCable::Channel
     end
 
     user = respond_to?(:current_user, true) ? current_user : nil
-    return IntegrationRunPolicy.new(user, run).show? if defined?(IntegrationRunPolicy)
-    return run.user == user if user && run.respond_to?(:user)
-
-    true
+    self.class.authorized_for_run?(user, run)
   rescue StandardError => error
     Rails.logger.warn("IntegrationRunChannel rejected run #{run.id}: #{error.class} - #{error.message}")
     false

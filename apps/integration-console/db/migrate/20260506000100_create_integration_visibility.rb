@@ -8,8 +8,8 @@ class CreateIntegrationVisibility < ActiveRecord::Migration[7.2]
       t.text :stream_name
       t.boolean :enabled, null: false, default: true
       t.text :schedule_cron
-      t.jsonb :params, null: false, default: {}
-      t.jsonb :param_schema, null: false, default: {}
+      t.jsonb :params, null: false
+      t.jsonb :param_schema, null: false
       t.text :cursor_field
 
       t.timestamps

@@ -1,4 +1,5 @@
 <script>
+  import { tick } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
   import MetricCard from "../components/MetricCard.svelte"
   import RangePicker from "../components/RangePicker.svelte"
@@ -23,6 +24,9 @@
   let triggerRow = $state(null)
   let triggerRange = $state({ range_type: "cursor", from_value: "", to_value: "" })
   let triggerError = $state("")
+  let triggerModal = $state(null)
+  let triggerCloseButton = $state(null)
+  let triggerOpener = $state(null)
 
   const endpoints = initialValue("endpoints", {})
 
@@ -88,11 +92,54 @@
     }
   }
 
-  function openTrigger(row) {
+  async function openTrigger(row) {
     notice = ""
+    triggerOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     triggerRow = row
     triggerRange = { range_type: "cursor", from_value: "", to_value: "" }
     triggerError = ""
+    await tick()
+    triggerCloseButton?.focus()
+  }
+
+  function closeTrigger() {
+    triggerRow = null
+    triggerError = ""
+    triggerOpener?.focus()
+    triggerOpener = null
+  }
+
+  function triggerFocusableElements() {
+    if (!triggerModal) return []
+    return Array.from(
+      triggerModal.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")
+    ).filter((element) => element instanceof HTMLElement && element.offsetParent !== null)
+  }
+
+  function handleTriggerKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault()
+      closeTrigger()
+      return
+    }
+    if (event.key !== "Tab") return
+
+    const focusable = triggerFocusableElements()
+    if (focusable.length === 0) {
+      event.preventDefault()
+      triggerModal?.focus()
+      return
+    }
+
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
   }
 
   async function submitTrigger() {
@@ -144,10 +191,18 @@
 
   {#if triggerRow}
     <div class="fixed inset-0 z-40 grid place-items-center bg-(--color-surface-scrim) p-4">
-      <div class="w-full max-w-xl rounded-lg border border-(--color-border-strong) bg-(--color-surface) p-4 shadow-lg">
+      <div
+        bind:this={triggerModal}
+        class="w-full max-w-xl rounded-lg border border-(--color-border-strong) bg-(--color-surface) p-4 shadow-lg"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="trigger-dialog-title"
+        tabindex="-1"
+        onkeydown={handleTriggerKeydown}
+      >
         <div class="mb-3 flex items-center justify-between gap-3">
-          <h2 class="text-lg font-semibold">Trigger {triggerRow.name}</h2>
-          <button type="button" class="rounded-md border px-2 py-1 text-sm" onclick={() => triggerRow = null}>Close</button>
+          <h2 id="trigger-dialog-title" class="text-lg font-semibold">Trigger {triggerRow.name}</h2>
+          <button bind:this={triggerCloseButton} type="button" class="rounded-md border px-2 py-1 text-sm" onclick={closeTrigger}>Close</button>
         </div>
         <RangePicker value={triggerRange} onChange={(value, nextError) => { triggerRange = value; triggerError = nextError }} />
         {#if triggerError}<div class="mt-3 text-sm text-(--color-danger-text)">{triggerError}</div>{/if}
