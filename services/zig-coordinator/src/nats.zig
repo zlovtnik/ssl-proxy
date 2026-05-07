@@ -112,14 +112,14 @@ pub fn publish(
         .core => {
             try writeCorePublish(&writer.interface, subject, payload);
             try writePing(&writer.interface);
-            try waitForPong(&reader, &writer);
+            try waitForPong(&reader, &writer, null);
         },
         .jetstream_ack => {
             var inbox_buffer: [64]u8 = undefined;
             const inbox = try makeAckInbox(io, &inbox_buffer);
             try writeAckSubscription(&writer.interface, inbox);
             try writePing(&writer.interface);
-            try waitForPong(&reader, &writer);
+            try waitForPong(&reader, &writer, "subscribe_ready");
             try writeAckedPublish(&writer.interface, subject, inbox, payload);
             try waitForPublishAck(&reader, &writer);
         },
@@ -258,29 +258,35 @@ fn writeAckedPublish(
     try writer.flush();
 }
 
-fn waitForPong(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
+fn waitForPong(
+    reader: *std.Io.net.Stream.Reader,
+    writer: *std.Io.net.Stream.Writer,
+    publish_ack_phase: ?[]const u8,
+) !void {
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
         const line = readLine(reader) catch |err| {
             if (err == error.Timeout) {
-                logPublishAckFailure("subscribe_ready_timeout", "timed out waiting for PONG after ACK inbox subscription");
-                return error.PublishAckFailed;
+                if (publish_ack_phase != null) {
+                    logPublishAckFailure("subscribe_ready_timeout", "timed out waiting for PONG after ACK inbox subscription");
+                    return error.PublishAckFailed;
+                }
             }
             return err;
         };
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "PING")) {
-            logPublishAckProgress("subscribe_ready", line);
+            if (publish_ack_phase) |phase| logPublishAckProgress(phase, line);
             try writer.interface.writeAll("PONG\r\n");
             try writer.interface.flush();
             continue;
         }
         if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
-            logPublishAckProgress("subscribe_ready", line);
+            if (publish_ack_phase) |phase| logPublishAckProgress(phase, line);
             continue;
         }
         if (std.mem.eql(u8, line, "PONG")) {
-            logPublishAckProgress("subscribe_ready", line);
+            if (publish_ack_phase) |phase| logPublishAckProgress(phase, line);
             return;
         }
         if (std.mem.startsWith(u8, line, "-ERR")) {
@@ -291,7 +297,9 @@ fn waitForPong(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Wri
         return error.ProtocolError;
     }
 
-    logPublishAckFailure("subscribe_ready_timeout", "no PONG received after ACK inbox subscription");
+    if (publish_ack_phase != null) {
+        logPublishAckFailure("subscribe_ready_timeout", "no PONG received after ACK inbox subscription");
+    }
     return error.PublishAckFailed;
 }
 
