@@ -4,7 +4,6 @@ const logging = @import("logging.zig");
 const model = @import("state.zig");
 
 const MAX_ACK_PAYLOAD_BYTES = 8 * 1024;
-const NATS_CONNECT_TIMEOUT_MS = 5_000;
 const NATS_IO_TIMEOUT_MS = 5_000;
 
 pub const PublishMode = enum {
@@ -98,7 +97,7 @@ pub fn publish(
     if (endpoint.tls) return error.UnsupportedNatsScheme;
     try validateSubject(subject);
 
-    var stream = try connectEndpoint(endpoint, io, timeoutMs(NATS_CONNECT_TIMEOUT_MS));
+    var stream = try connectEndpoint(endpoint, io);
     defer stream.close(io);
     try applySocketTimeouts(stream, NATS_IO_TIMEOUT_MS);
 
@@ -148,15 +147,6 @@ fn parsePort(raw: []const u8) !u16 {
     return std.fmt.parseInt(u16, raw, 10) catch error.InvalidNatsUrl;
 }
 
-fn timeoutMs(ms: i64) std.Io.Timeout {
-    return .{
-        .duration = .{
-            .raw = std.Io.Duration.fromMilliseconds(ms),
-            .clock = .awake,
-        },
-    };
-}
-
 fn applySocketTimeouts(stream: std.Io.net.Stream, timeout_ms: i64) !void {
     if (builtin.os.tag == .windows) return;
 
@@ -169,9 +159,9 @@ fn applySocketTimeouts(stream: std.Io.net.Stream, timeout_ms: i64) !void {
     try std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, timeout_bytes);
 }
 
-fn connectEndpoint(endpoint: Endpoint, io: std.Io, timeout: std.Io.Timeout) !std.Io.net.Stream {
+fn connectEndpoint(endpoint: Endpoint, io: std.Io) !std.Io.net.Stream {
     if (std.Io.net.IpAddress.parse(endpoint.host, endpoint.port)) |address| {
-        return address.connect(io, .{ .mode = .stream, .timeout = timeout });
+        return address.connect(io, .{ .mode = .stream });
     } else |_| {}
 
     try std.Io.net.HostName.validate(endpoint.host);
@@ -179,7 +169,7 @@ fn connectEndpoint(endpoint: Endpoint, io: std.Io, timeout: std.Io.Timeout) !std
         .{ .bytes = endpoint.host },
         io,
         endpoint.port,
-        .{ .mode = .stream, .timeout = timeout },
+        .{ .mode = .stream },
     );
 }
 
