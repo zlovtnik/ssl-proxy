@@ -27,6 +27,10 @@ const DispatchPayload = struct {
     attempt: i64 = 0,
 };
 
+const ReplyRequest = struct {
+    reply_subject: ?[]const u8 = null,
+};
+
 pub const Error = error{
     MissingDatabaseUrl,
     MissingNatsUrl,
@@ -456,7 +460,14 @@ pub const Service = struct {
     fn handleBacklogList(self: *Service) Error!bool {
         const req = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_list_consumer);
         defer if (req) |m| self.allocator.free(m);
-        if (req != null) {
+        if (req) |request_payload| {
+            var parsed_request = parseReplyRequest(self.allocator, request_payload);
+            defer if (parsed_request) |*parsed| parsed.deinit();
+            const reply_subject = if (parsed_request) |parsed|
+                parsed.value.reply_subject orelse self.cfg.wireless_backlog_list_reply_subject
+            else
+                self.cfg.wireless_backlog_list_reply_subject;
+
             const list = self.database.listPendingBacklog() catch |err| {
                 logging.err()
                     .stringSafe("event", "backlog_list")
@@ -467,10 +478,11 @@ pub const Service = struct {
             };
             defer if (list) |l| self.allocator.free(l);
             if (list) |payload| {
-                try self.publish(self.cfg.wireless_backlog_list_reply_subject, payload, error.AlertPublishFailed);
+                try self.publish(reply_subject, payload, error.AlertPublishFailed);
                 logging.info()
                     .stringSafe("event", "backlog_list")
                     .stringSafe("status", "ok")
+                    .string("reply_subject", reply_subject)
                     .int("payload_bytes", payload.len)
                     .log();
             }
@@ -519,7 +531,14 @@ pub const Service = struct {
     fn handleBacklogPrune(self: *Service) Error!bool {
         const msg = try self.pullWirelessMessage(self.cfg.wireless_backlog_stream_name, self.cfg.wireless_backlog_prune_consumer);
         defer if (msg) |m| self.allocator.free(m);
-        if (msg != null) {
+        if (msg) |request_payload| {
+            var parsed_request = parseReplyRequest(self.allocator, request_payload);
+            defer if (parsed_request) |*parsed| parsed.deinit();
+            const reply_subject = if (parsed_request) |parsed|
+                parsed.value.reply_subject orelse self.cfg.wireless_backlog_prune_reply_subject
+            else
+                self.cfg.wireless_backlog_prune_reply_subject;
+
             const deleted = self.database.pruneBacklog() catch |err| {
                 logging.err()
                     .stringSafe("event", "backlog_prune")
@@ -534,10 +553,11 @@ pub const Service = struct {
                 return error.BacklogOperationFailed;
             };
             defer self.allocator.free(reply);
-            try self.publish(self.cfg.wireless_backlog_prune_reply_subject, reply, error.AlertPublishFailed);
+            try self.publish(reply_subject, reply, error.AlertPublishFailed);
             logging.info()
                 .stringSafe("event", "backlog_prune")
                 .stringSafe("status", "ok")
+                .string("reply_subject", reply_subject)
                 .int("deleted_count", count)
                 .log();
             return true;
@@ -550,7 +570,10 @@ pub const Service = struct {
         defer if (req) |m| self.allocator.free(m);
         if (req) |payload| {
             var parsed = std.json.parseFromSlice(
-                struct { mac: []const u8 },
+                struct {
+                    mac: []const u8,
+                    reply_subject: ?[]const u8 = null,
+                },
                 self.allocator,
                 payload,
                 .{ .ignore_unknown_fields = true },
@@ -574,11 +597,13 @@ pub const Service = struct {
             };
             defer if (result) |r| self.allocator.free(r);
             const reply = result orelse "null";
-            try self.publish(self.cfg.wireless_mac_lookup_reply_subject, reply, error.AlertPublishFailed);
+            const reply_subject = parsed.value.reply_subject orelse self.cfg.wireless_mac_lookup_reply_subject;
+            try self.publish(reply_subject, reply, error.AlertPublishFailed);
             logging.info()
                 .stringSafe("event", "mac_lookup")
                 .stringSafe("status", "ok")
                 .string("mac", parsed.value.mac)
+                .string("reply_subject", reply_subject)
                 .boolean("found", result != null)
                 .log();
             return true;
@@ -589,7 +614,14 @@ pub const Service = struct {
     fn handleNetworksAuthorized(self: *Service) Error!bool {
         const req = try self.pullWirelessMessage(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer);
         defer if (req) |m| self.allocator.free(m);
-        if (req != null) {
+        if (req) |request_payload| {
+            var parsed_request = parseReplyRequest(self.allocator, request_payload);
+            defer if (parsed_request) |*parsed| parsed.deinit();
+            const reply_subject = if (parsed_request) |parsed|
+                parsed.value.reply_subject orelse self.cfg.wireless_networks_authorized_reply_subject
+            else
+                self.cfg.wireless_networks_authorized_reply_subject;
+
             const list = self.database.listAuthorizedNetworks() catch |err| {
                 logging.err()
                     .stringSafe("event", "networks_authorized")
@@ -600,10 +632,11 @@ pub const Service = struct {
             };
             defer if (list) |l| self.allocator.free(l);
             if (list) |payload| {
-                try self.publish(self.cfg.wireless_networks_authorized_reply_subject, payload, error.AlertPublishFailed);
+                try self.publish(reply_subject, payload, error.AlertPublishFailed);
                 logging.info()
                     .stringSafe("event", "networks_authorized")
                     .stringSafe("status", "ok")
+                    .string("reply_subject", reply_subject)
                     .int("payload_bytes", payload.len)
                     .log();
             }
@@ -1072,6 +1105,12 @@ fn parseNatsAuthority(allocator: std.mem.Allocator, nats_url: []const u8) Error!
     return std.fmt.allocPrint(allocator, "{s}:4222", .{authority}) catch error.InvalidNatsUrl;
 }
 
+fn parseReplyRequest(allocator: std.mem.Allocator, payload: []const u8) ?std.json.Parsed(ReplyRequest) {
+    return std.json.parseFromSlice(ReplyRequest, allocator, payload, .{
+        .ignore_unknown_fields = true,
+    }) catch null;
+}
+
 fn resolvePayloadRef(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -1327,6 +1366,20 @@ fn containsAsciiCaseInsensitive(haystack: []const u8, needle: []const u8) bool {
 test "containsAsciiCaseInsensitive matches mixed case substrings" {
     try std.testing.expect(containsAsciiCaseInsensitive("Timed Out Waiting For Message", "timed out"));
     try std.testing.expect(!containsAsciiCaseInsensitive("all good", "timeout"));
+}
+
+test "parseReplyRequest reads optional reply subject" {
+    var parsed = parseReplyRequest(std.testing.allocator, "{\"operation\":\"list_pending\",\"reply_subject\":\"_INBOX.test.1\"}").?;
+    defer parsed.deinit();
+
+    try std.testing.expectEqualStrings("_INBOX.test.1", parsed.value.reply_subject.?);
+}
+
+test "parseReplyRequest tolerates legacy request payloads" {
+    var parsed = parseReplyRequest(std.testing.allocator, "{\"operation\":\"list_pending\"}").?;
+    defer parsed.deinit();
+
+    try std.testing.expect(parsed.value.reply_subject == null);
 }
 
 test "streamNameIsConfigured matches trimmed CSV entries" {

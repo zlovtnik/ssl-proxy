@@ -11,6 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use ssl_proxy::config::SyncConfig;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -159,6 +160,7 @@ impl NatsBacklog {
             return Err(BacklogError::Disabled { operation });
         };
         let reply_subject = next_inbox_subject();
+        let payload = payload_with_reply_subject(operation, payload, &reply_subject)?;
         request_once(
             &self.sync,
             self.tls_connector.as_ref(),
@@ -166,7 +168,7 @@ impl NatsBacklog {
             operation,
             subject,
             &reply_subject,
-            payload,
+            &payload,
             self.request_timeout,
         )
         .await
@@ -343,6 +345,22 @@ fn serialize<T: Serialize>(operation: &'static str, value: &T) -> Result<String,
     serde_json::to_string(value).map_err(|source| BacklogError::Serialize { operation, source })
 }
 
+fn payload_with_reply_subject(
+    operation: &'static str,
+    payload: &str,
+    reply_subject: &str,
+) -> Result<String, BacklogError> {
+    let mut object: Map<String, Value> = serde_json::from_str(payload)
+        .map_err(|source| BacklogError::Serialize { operation, source })?;
+
+    object.insert(
+        "reply_subject".to_string(),
+        Value::String(reply_subject.to_string()),
+    );
+
+    serde_json::to_string(&object).map_err(|source| BacklogError::Serialize { operation, source })
+}
+
 async fn request_once(
     sync: &SyncConfig,
     tls_connector: Option<&TlsConnector>,
@@ -417,7 +435,7 @@ async fn request_once(
             message: format!("subscribe reply subject: {source}"),
         })?;
 
-    let publish_command = format!("PUB {subject} {reply_subject} {}\r\n", payload.len());
+    let publish_command = format!("PUB {subject} {}\r\n", payload.len());
     timeout(
         request_timeout,
         write_half.write_all(publish_command.as_bytes()),
@@ -679,7 +697,9 @@ async fn connect_tls(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_authorized_networks_response, parse_nats_endpoint};
+    use super::{
+        parse_authorized_networks_response, parse_nats_endpoint, payload_with_reply_subject,
+    };
 
     #[test]
     fn parses_wrapped_authorized_networks_response() {
@@ -716,6 +736,29 @@ mod tests {
         assert!(parse_authorized_networks_response(r#"{"networks":null}"#)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn adds_reply_subject_to_request_payload() {
+        let payload = payload_with_reply_subject(
+            "list_pending",
+            r#"{"operation":"list_pending"}"#,
+            "_INBOX.x",
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        assert_eq!(parsed["operation"], "list_pending");
+        assert_eq!(parsed["reply_subject"], "_INBOX.x");
+    }
+
+    #[test]
+    fn rejects_non_object_request_payloads() {
+        let error = payload_with_reply_subject("list_pending", r#"[]"#, "_INBOX.x").unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("invalid type: sequence, expected a map"));
     }
 
     #[test]
