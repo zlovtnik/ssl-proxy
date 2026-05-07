@@ -56,12 +56,10 @@ ensure_consumer() {
     nats --server "${NATS_URL}" consumer edit "${stream_name}" "${consumer_name}" \
       --filter "${filter_subject}" \
       --max-deliver=-1 \
-      --deliver=all \
-      --replay=instant \
-      --pull \
-      --ack=explicit \
       --wait=5s \
-      --defaults
+      --max-pending=1000 \
+      --max-waiting=512 \
+      --force
   else
     nats --server "${NATS_URL}" consumer add "${stream_name}" "${consumer_name}" \
       --filter "${filter_subject}" \

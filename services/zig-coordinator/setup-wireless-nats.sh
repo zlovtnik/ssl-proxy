@@ -41,14 +41,24 @@ ensure_consumer() {
   if nats --server "$NATS_SERVER" consumer info "$stream" "$consumer" >/dev/null 2>&1; then
     action="edit"
   fi
-  nats --server "$NATS_SERVER" consumer "$action" "$stream" "$consumer" \
-    --filter "$filter" \
-    --ack explicit \
-    --pull \
-    --deliver all \
-    --max-deliver=-1 \
-    --replay instant \
-    --wait=5s
+  if [ "$action" = "edit" ]; then
+    nats --server "$NATS_SERVER" consumer edit "$stream" "$consumer" \
+      --filter "$filter" \
+      --max-deliver=-1 \
+      --wait=5s \
+      --max-pending=1000 \
+      --max-waiting=512 \
+      --force
+  else
+    nats --server "$NATS_SERVER" consumer add "$stream" "$consumer" \
+      --filter "$filter" \
+      --ack explicit \
+      --pull \
+      --deliver all \
+      --max-deliver=-1 \
+      --replay instant \
+      --wait=5s
+  fi
 }
 
 # Create WIRELESS_BACKLOG_STREAM
