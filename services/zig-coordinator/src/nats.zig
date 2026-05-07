@@ -115,7 +115,12 @@ pub fn publish(
             try waitForPong(&reader, &writer);
         },
         .jetstream_ack => {
-            try writeAckedPublish(io, &reader, &writer, subject, payload);
+            var inbox_buffer: [64]u8 = undefined;
+            const inbox = try makeAckInbox(io, &inbox_buffer);
+            try writeAckSubscription(&writer.interface, inbox);
+            try writePing(&writer.interface);
+            try waitForPong(&reader, &writer);
+            try writeAckedPublish(&writer.interface, subject, inbox, payload);
             try waitForPublishAck(&reader, &writer);
         },
     }
@@ -226,45 +231,58 @@ fn writePing(writer: *std.Io.Writer) !void {
     try writer.flush();
 }
 
-fn writeAckedPublish(
-    io: std.Io,
-    reader: *std.Io.net.Stream.Reader,
-    writer: *std.Io.net.Stream.Writer,
-    subject: []const u8,
-    payload: []const u8,
-) !void {
+fn makeAckInbox(io: std.Io, buffer: []u8) ![]const u8 {
     var random: [12]u8 = undefined;
     io.random(&random);
     const random_hex = std.fmt.bytesToHex(random, .lower);
-    var inbox_buffer: [64]u8 = undefined;
-    const inbox = try std.fmt.bufPrint(
-        &inbox_buffer,
+    return std.fmt.bufPrint(
+        buffer,
         "_INBOX.zig-coordinator.{s}",
         .{&random_hex},
     );
+}
 
-    _ = reader;
-    try writer.interface.print("SUB {s} 1\r\n", .{inbox});
-    try writer.interface.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
-    try writer.interface.writeAll(payload);
-    try writer.interface.writeAll("\r\n");
-    try writer.interface.flush();
+fn writeAckSubscription(writer: *std.Io.Writer, inbox: []const u8) !void {
+    try writer.print("SUB {s} 1\r\n", .{inbox});
+}
+
+fn writeAckedPublish(
+    writer: *std.Io.Writer,
+    subject: []const u8,
+    inbox: []const u8,
+    payload: []const u8,
+) !void {
+    try writer.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
+    try writer.writeAll(payload);
+    try writer.writeAll("\r\n");
+    try writer.flush();
 }
 
 fn waitForPong(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
-        const line = try readLine(reader);
+        const line = readLine(reader) catch |err| {
+            if (err == error.Timeout) {
+                logPublishAckFailure("subscribe_ready_timeout", "timed out waiting for PONG after ACK inbox subscription");
+                return error.PublishAckFailed;
+            }
+            return err;
+        };
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "PING")) {
+            logPublishAckProgress("subscribe_ready", line);
             try writer.interface.writeAll("PONG\r\n");
             try writer.interface.flush();
             continue;
         }
         if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
+            logPublishAckProgress("subscribe_ready", line);
             continue;
         }
-        if (std.mem.eql(u8, line, "PONG")) return;
+        if (std.mem.eql(u8, line, "PONG")) {
+            logPublishAckProgress("subscribe_ready", line);
+            return;
+        }
         if (std.mem.startsWith(u8, line, "-ERR")) {
             logPublishAckFailure("server_error", line);
             return error.ServerError;
@@ -280,14 +298,22 @@ fn waitForPong(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Wri
 fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
-        const line = try readLine(reader);
+        const line = readLine(reader) catch |err| {
+            if (err == error.Timeout) {
+                logPublishAckFailure("ack_timeout", "timed out waiting for JetStream publish acknowledgement");
+                return error.PublishAckFailed;
+            }
+            return err;
+        };
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "PING")) {
+            logPublishAckProgress("publish_ack", line);
             try writer.interface.writeAll("PONG\r\n");
             try writer.interface.flush();
             continue;
         }
         if (std.mem.eql(u8, line, "+OK") or std.mem.eql(u8, line, "PONG") or std.mem.startsWith(u8, line, "INFO ")) {
+            logPublishAckProgress("publish_ack", line);
             continue;
         }
         if (std.mem.startsWith(u8, line, "-ERR")) {
@@ -295,6 +321,7 @@ fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stre
             return error.ServerError;
         }
         if (std.mem.startsWith(u8, line, "MSG ")) {
+            logPublishAckProgress("publish_ack", line);
             const payload_size = try parseMessageSize(line);
             if (payload_size > MAX_ACK_PAYLOAD_BYTES) return error.PublishAckTooLarge;
             const payload = try takeBytes(reader, payload_size);
@@ -349,6 +376,17 @@ fn logPublishAckFailure(reason: []const u8, raw: []const u8) void {
         .stringSafe("event", "jetstream_publish_ack")
         .stringSafe("status", "error")
         .string("reason", reason)
+        .string("payload", snippet)
+        .log();
+}
+
+fn logPublishAckProgress(phase: []const u8, raw: []const u8) void {
+    var buffer: [1024]u8 = undefined;
+    const snippet = sanitizeSnippet(&buffer, raw);
+    logging.debug()
+        .stringSafe("event", "jetstream_publish_ack")
+        .stringSafe("status", "observed")
+        .string("phase", phase)
         .string("payload", snippet)
         .log();
 }
@@ -425,6 +463,21 @@ test "write core publish does not request a JetStream ack" {
     try writeCorePublish(&writer, "wireless.backlog.list.reply", "{\"ok\":true}");
     try std.testing.expectEqualStrings(
         "PUB wireless.backlog.list.reply 11\r\n{\"ok\":true}\r\n",
+        writer.buffered(),
+    );
+}
+
+test "write ack subscription and publish use explicit inbox reply" {
+    var buffer: [512]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try writeAckSubscription(&writer, "_INBOX.zig-coordinator.abc123");
+    try writePing(&writer);
+    try writeAckedPublish(&writer, "sync.oracle.load", "_INBOX.zig-coordinator.abc123", "{\"batch_id\":\"b\"}");
+    try std.testing.expectEqualStrings(
+        "SUB _INBOX.zig-coordinator.abc123 1\r\n" ++
+            "PING\r\n" ++
+            "PUB sync.oracle.load _INBOX.zig-coordinator.abc123 16\r\n" ++
+            "{\"batch_id\":\"b\"}\r\n",
         writer.buffered(),
     );
 }
