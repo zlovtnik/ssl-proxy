@@ -100,6 +100,7 @@ class AddWirelessParserExpansionFields < ActiveRecord::Migration[7.2]
 
   def refresh_wireless_audit_view
     execute <<~SQL
+      DROP VIEW IF EXISTS v_wireless_audit_with_devices CASCADE;
       CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
       SELECT
         ssi.dedupe_key,
@@ -286,6 +287,7 @@ class AddWirelessParserExpansionFields < ActiveRecord::Migration[7.2]
 
   def refresh_legacy_wireless_audit_view
     execute <<~SQL
+      DROP VIEW IF EXISTS v_wireless_audit_with_devices CASCADE;
       CREATE OR REPLACE VIEW v_wireless_audit_with_devices AS
       SELECT
         ssi.dedupe_key,
