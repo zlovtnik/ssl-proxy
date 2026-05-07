@@ -173,6 +173,7 @@ class AddWirelessParserExpansionFields < ActiveRecord::Migration[7.2]
 
   def refresh_wireless_session_timeline_view
     execute <<~SQL
+      DROP VIEW IF EXISTS v_wireless_session_timeline CASCADE;
       CREATE OR REPLACE VIEW v_wireless_session_timeline AS
       WITH base AS (
         SELECT
@@ -212,7 +213,7 @@ class AddWirelessParserExpansionFields < ActiveRecord::Migration[7.2]
           WHEN lag(observed_at) OVER session_window IS NOT NULL
             THEN ROUND(EXTRACT(EPOCH FROM (observed_at - lag(observed_at) OVER session_window)) * 1000)
         END AS wall_clock_delta_ms,
-        (COUNT(DISTINCT CASE WHEN protected THEN 'protected' ELSE 'open' END) OVER session_partition) > 1 AS mixed_encryption
+        (COUNT(CASE WHEN protected THEN 'protected' ELSE 'open' END) OVER session_partition) > 1 AS mixed_encryption
       FROM base
       WINDOW
         session_partition AS (PARTITION BY session_key),
@@ -222,6 +223,7 @@ class AddWirelessParserExpansionFields < ActiveRecord::Migration[7.2]
 
   def refresh_wireless_device_inventory_view
     execute <<~SQL
+      DROP VIEW IF EXISTS v_wireless_device_inventory CASCADE;
       CREATE OR REPLACE VIEW v_wireless_device_inventory AS
       SELECT
         md5(COALESCE(lower(source_mac), '') || '|' || COALESCE(location_id, '')) AS inventory_key,
