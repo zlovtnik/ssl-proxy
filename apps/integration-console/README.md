@@ -19,7 +19,10 @@ Rails management interface for the wireless sensor sync plane.
 - `MINIO_ENDPOINT` points at the S3-compatible export cache. In Compose this defaults to `http://minio:9000`.
 - `MINIO_ACCESS_KEY_ID` and `MINIO_SECRET_ACCESS_KEY` authenticate to MinIO.
 - `MINIO_BUCKET` stores cached CSV exports. Defaults to `integration-console-exports`.
-- `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY`, `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY`, and `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` configure Rails encrypted attributes. Development and test use deterministic local defaults when these are unset; production-like environments must set all three explicitly.
+- `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY`, `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY`,
+  and `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` configure Rails encrypted
+  attributes. Development and test use deterministic local defaults when these are
+  unset; production-like environments must set all three explicitly.
 - Compose development stacks must set `ADMIN_API_KEY` explicitly before starting admin endpoints.
 
 The root Compose stack includes a MinIO service and one-shot `minio-init`
