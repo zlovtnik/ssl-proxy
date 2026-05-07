@@ -243,10 +243,8 @@ fn writeAckedPublish(
         .{&random_hex},
     );
 
-    try writer.interface.print("SUB {s} 1\r\nPING\r\n", .{inbox});
-    try writer.interface.flush();
-    try waitForPong(reader, writer);
-
+    _ = reader;
+    try writer.interface.print("SUB {s} 1\r\n", .{inbox});
     try writer.interface.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
     try writer.interface.writeAll(payload);
     try writer.interface.writeAll("\r\n");
@@ -289,7 +287,7 @@ fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stre
             try writer.interface.flush();
             continue;
         }
-        if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
+        if (std.mem.eql(u8, line, "+OK") or std.mem.eql(u8, line, "PONG") or std.mem.startsWith(u8, line, "INFO ")) {
             continue;
         }
         if (std.mem.startsWith(u8, line, "-ERR")) {
