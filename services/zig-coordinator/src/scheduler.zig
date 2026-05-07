@@ -1023,7 +1023,6 @@ pub const Service = struct {
             "--server",
             self.cfg.sync_nats_url,
             "pub",
-            "--quiet",
             subject,
             payload,
         };
