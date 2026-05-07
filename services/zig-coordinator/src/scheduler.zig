@@ -41,7 +41,6 @@ pub const Error = error{
     ScanIngestFailed,
     PayloadResolveFailed,
     BatchDispatchFailed,
-    PublishAckSubscribeReadyTimeout,
     ResultFetchFailed,
     AlertPublishFailed,
     BacklogOperationFailed,
@@ -317,34 +316,6 @@ pub const Service = struct {
             self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed) catch |err| {
                 var error_buffer: [128]u8 = undefined;
                 const error_text = dispatchPublishErrorText(&error_buffer, err);
-
-                if (err == error.PublishAckSubscribeReadyTimeout) {
-                    const summary = self.database.releaseBatchDispatch(value, error_text) catch |release_err| {
-                        logging.err()
-                            .stringSafe("event", "batch_dispatch")
-                            .stringSafe("status", "release_error")
-                            .err(release_err)
-                            .log();
-                        return err;
-                    };
-                    defer if (summary) |summary_json| self.allocator.free(summary_json);
-
-                    if (summary) |summary_json| {
-                        logging.err()
-                            .stringSafe("event", "batch_dispatch")
-                            .stringSafe("status", "publish_not_attempted_requeued")
-                            .string("summary", summary_json)
-                            .err(err)
-                            .log();
-                    } else {
-                        logging.err()
-                            .stringSafe("event", "batch_dispatch")
-                            .stringSafe("status", "publish_not_attempted_requeued")
-                            .err(err)
-                            .log();
-                    }
-                    return err;
-                }
 
                 const summary = self.database.markBatchDispatchFailed(value, error_text, self.cfg.batch_max_attempts) catch |mark_err| {
                     logging.err()
@@ -985,12 +956,12 @@ pub const Service = struct {
         mode: nats.PublishMode,
         on_error: Error,
     ) Error!void {
-        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload, mode) catch |err| {
+        nats.publish(self.allocator, self.io, self.cfg.sync_nats_url, subject, payload, mode, self.cfg.nats_publish_timeout_ms) catch |err| {
             if (err == error.UnsupportedNatsScheme and mode == .core) {
                 try self.publishWithCli(subject, payload, on_error);
                 return;
             }
-            if (err == error.PublishAckSubscribeReadyTimeout and mode == .jetstream_ack) {
+            if (err == error.UnsupportedNatsScheme and mode == .jetstream_ack) {
                 try self.publishWithJetStreamCli(subject, payload, on_error);
                 return;
             }
@@ -1000,7 +971,6 @@ pub const Service = struct {
                 .string("subject", subject)
                 .err(err)
                 .log();
-            if (err == error.PublishAckSubscribeReadyTimeout) return error.PublishAckSubscribeReadyTimeout;
             return on_error;
         };
     }
@@ -1016,8 +986,6 @@ pub const Service = struct {
             "--server",
             self.cfg.sync_nats_url,
             "pub",
-            "--jetstream",
-            "--templates=false",
             "--quiet",
             subject,
             payload,
@@ -1381,8 +1349,8 @@ test "invalidOracleStreamName rejects Oracle stream outside configured streams" 
 test "dispatch publish error text preserves publish phase error" {
     var buffer: [128]u8 = undefined;
     try std.testing.expectEqualStrings(
-        "sync.oracle.load publish failed: PublishAckSubscribeReadyTimeout",
-        dispatchPublishErrorText(&buffer, error.PublishAckSubscribeReadyTimeout),
+        "sync.oracle.load publish failed: PublishAckFailed",
+        dispatchPublishErrorText(&buffer, error.PublishAckFailed),
     );
 }
 

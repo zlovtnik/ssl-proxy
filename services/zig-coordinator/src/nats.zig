@@ -4,9 +4,7 @@ const logging = @import("logging.zig");
 const model = @import("state.zig");
 
 const MAX_ACK_PAYLOAD_BYTES = 8 * 1024;
-const NATS_IO_TIMEOUT_MS = 5_000;
-const JETSTREAM_ACK_SUBSCRIBE_READY_ATTEMPTS = 3;
-const JETSTREAM_ACK_SUBSCRIBE_RETRY_DELAY_MS = 100;
+const NATS_IO_TIMEOUT_MS = 10_000;
 
 pub const PublishMode = enum {
     core,
@@ -93,15 +91,17 @@ pub fn publish(
     subject: []const u8,
     payload: []const u8,
     mode: PublishMode,
+    timeout_ms: u32,
 ) !void {
     _ = allocator;
+    const effective_timeout_ms = if (timeout_ms == 0) NATS_IO_TIMEOUT_MS else timeout_ms;
     const endpoint = try Endpoint.parse(nats_url);
     if (endpoint.tls) return error.UnsupportedNatsScheme;
     try validateSubject(subject);
 
     switch (mode) {
-        .core => try publishCore(io, endpoint, subject, payload),
-        .jetstream_ack => try publishJetStreamAckWithRetry(io, endpoint, subject, payload),
+        .core => try publishCore(io, endpoint, subject, payload, effective_timeout_ms),
+        .jetstream_ack => try publishJetStreamAckOnce(io, endpoint, subject, payload, effective_timeout_ms),
     }
 }
 
@@ -110,10 +110,11 @@ fn publishCore(
     endpoint: Endpoint,
     subject: []const u8,
     payload: []const u8,
+    timeout_ms: u32,
 ) !void {
     var stream = try connectEndpoint(endpoint, io);
     defer stream.close(io);
-    try applySocketTimeouts(stream, NATS_IO_TIMEOUT_MS);
+    try applySocketTimeouts(stream, timeout_ms);
 
     var reader_buffer: [16 * 1024]u8 = undefined;
     var writer_buffer: [16 * 1024]u8 = undefined;
@@ -124,39 +125,7 @@ fn publishCore(
     try writeConnect(&writer.interface, endpoint);
     try writeCorePublish(&writer.interface, subject, payload);
     try writePing(&writer.interface);
-    try waitForPong(&reader, &writer, null);
-}
-
-fn publishJetStreamAckWithRetry(
-    io: std.Io,
-    endpoint: Endpoint,
-    subject: []const u8,
-    payload: []const u8,
-) !void {
-    var attempt: usize = 1;
-    while (attempt <= JETSTREAM_ACK_SUBSCRIBE_READY_ATTEMPTS) : (attempt += 1) {
-        publishJetStreamAckOnce(io, endpoint, subject, payload) catch |err| {
-            if (err == error.PublishAckSubscribeReadyTimeout and attempt < JETSTREAM_ACK_SUBSCRIBE_READY_ATTEMPTS) {
-                logging.info()
-                    .stringSafe("event", "jetstream_publish_ack")
-                    .stringSafe("status", "retry")
-                    .stringSafe("reason", "subscribe_ready_timeout")
-                    .int("attempt", attempt)
-                    .int("max_attempts", JETSTREAM_ACK_SUBSCRIBE_READY_ATTEMPTS)
-                    .log();
-                std.Io.sleep(
-                    io,
-                    std.Io.Duration.fromMilliseconds(JETSTREAM_ACK_SUBSCRIBE_RETRY_DELAY_MS),
-                    .awake,
-                ) catch {};
-                continue;
-            }
-            return err;
-        };
-        return;
-    }
-
-    return error.PublishAckSubscribeReadyTimeout;
+    try waitForPong(&reader, &writer);
 }
 
 fn publishJetStreamAckOnce(
@@ -164,10 +133,11 @@ fn publishJetStreamAckOnce(
     endpoint: Endpoint,
     subject: []const u8,
     payload: []const u8,
+    timeout_ms: u32,
 ) !void {
     var stream = try connectEndpoint(endpoint, io);
     defer stream.close(io);
-    try applySocketTimeouts(stream, NATS_IO_TIMEOUT_MS);
+    try applySocketTimeouts(stream, timeout_ms);
 
     var reader_buffer: [16 * 1024]u8 = undefined;
     var writer_buffer: [16 * 1024]u8 = undefined;
@@ -180,10 +150,8 @@ fn publishJetStreamAckOnce(
     var inbox_buffer: [64]u8 = undefined;
     const inbox = try makeAckInbox(io, &inbox_buffer);
     try writeAckSubscription(&writer.interface, inbox);
-    try writePing(&writer.interface);
-    try waitForPong(&reader, &writer, "subscribe_ready");
     try writeAckedPublish(&writer.interface, subject, inbox, payload);
-    try waitForPublishAck(&reader, &writer);
+    try waitForPublishAck(io, &reader, &writer, timeout_ms);
 }
 
 fn parseHostPort(host_port: []const u8) !struct { []const u8, u16 } {
@@ -212,7 +180,7 @@ fn parsePort(raw: []const u8) !u16 {
     return std.fmt.parseInt(u16, raw, 10) catch error.InvalidNatsUrl;
 }
 
-fn applySocketTimeouts(stream: std.Io.net.Stream, timeout_ms: i64) !void {
+fn applySocketTimeouts(stream: std.Io.net.Stream, timeout_ms: u32) !void {
     if (builtin.os.tag == .windows) return;
 
     const timeout = std.posix.timeval{
@@ -318,34 +286,20 @@ fn writeAckedPublish(
     try writer.flush();
 }
 
-fn waitForPong(
-    reader: *std.Io.net.Stream.Reader,
-    writer: *std.Io.net.Stream.Writer,
-    publish_ack_phase: ?[]const u8,
-) !void {
+fn waitForPong(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
-        const line = readLine(reader) catch |err| {
-            if (err == error.Timeout) {
-                if (publish_ack_phase != null) {
-                    logPublishAckFailure("subscribe_ready_timeout", "timed out waiting for PONG after ACK inbox subscription");
-                }
-            }
-            return mapPongReadError(err, publish_ack_phase);
-        };
+        const line = readLine(reader) catch |err| return err;
         if (line.len == 0) continue;
         if (std.mem.eql(u8, line, "PING")) {
-            if (publish_ack_phase) |phase| logPublishAckProgress(phase, line);
             try writer.interface.writeAll("PONG\r\n");
             try writer.interface.flush();
             continue;
         }
         if (std.mem.eql(u8, line, "+OK") or std.mem.startsWith(u8, line, "INFO ")) {
-            if (publish_ack_phase) |phase| logPublishAckProgress(phase, line);
             continue;
         }
         if (std.mem.eql(u8, line, "PONG")) {
-            if (publish_ack_phase) |phase| logPublishAckProgress(phase, line);
             return;
         }
         if (std.mem.startsWith(u8, line, "-ERR")) {
@@ -356,21 +310,23 @@ fn waitForPong(
         return error.ProtocolError;
     }
 
-    if (publish_ack_phase != null) {
-        logPublishAckFailure("subscribe_ready_timeout", "no PONG received after ACK inbox subscription");
-        return error.PublishAckSubscribeReadyTimeout;
-    }
     return error.PublishAckFailed;
 }
 
-fn mapPongReadError(err: anyerror, publish_ack_phase: ?[]const u8) anyerror {
-    if (err == error.Timeout and publish_ack_phase != null) return error.PublishAckSubscribeReadyTimeout;
-    return err;
-}
-
-fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stream.Writer) !void {
+fn waitForPublishAck(
+    io: std.Io,
+    reader: *std.Io.net.Stream.Reader,
+    writer: *std.Io.net.Stream.Writer,
+    timeout_ms: u32,
+) !void {
+    const start_ts = std.Io.Timestamp.now(io, .awake);
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
+        if (elapsedMs(start_ts, io) >= timeout_ms) {
+            logPublishAckFailure("ack_timeout", "timed out waiting for JetStream publish acknowledgement");
+            return error.PublishAckFailed;
+        }
+
         const line = readLine(reader) catch |err| {
             if (err == error.Timeout) {
                 logPublishAckFailure("ack_timeout", "timed out waiting for JetStream publish acknowledgement");
@@ -405,6 +361,7 @@ fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stre
                 logPublishAckFailure("ack_error", payload);
                 return error.PublishAckFailed;
             }
+            logPublishAckSuccess(attempts + 1);
             return;
         }
 
@@ -413,6 +370,12 @@ fn waitForPublishAck(reader: *std.Io.net.Stream.Reader, writer: *std.Io.net.Stre
 
     logPublishAckFailure("ack_timeout", "no JetStream publish acknowledgement received");
     return error.PublishAckFailed;
+}
+
+fn elapsedMs(start_ts: std.Io.Timestamp, io: std.Io) u32 {
+    const elapsed_ms = start_ts.untilNow(io, .awake).toMilliseconds();
+    if (elapsed_ms <= 0) return 0;
+    return @intCast(@min(elapsed_ms, std.math.maxInt(u32)));
 }
 
 fn readLine(reader: *std.Io.net.Stream.Reader) ![]const u8 {
@@ -464,6 +427,15 @@ fn logPublishAckProgress(phase: []const u8, raw: []const u8) void {
         .log();
 }
 
+fn logPublishAckSuccess(attempts: usize) void {
+    logging.debug()
+        .stringSafe("event", "jetstream_publish_ack")
+        .stringSafe("status", "ok")
+        .stringSafe("phase", "publish_ack")
+        .int("attempts", attempts)
+        .log();
+}
+
 fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
     var in_index: usize = 0;
     var out_index: usize = 0;
@@ -478,6 +450,74 @@ fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
     }
 
     return std.mem.trim(u8, buffer[0..out_index], " ");
+}
+
+fn requestJetStreamApi(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    endpoint: Endpoint,
+    api_subject: []const u8,
+    payload: []const u8,
+    timeout_ms: u32,
+) ![]u8 {
+    var stream = try connectEndpoint(endpoint, io);
+    defer stream.close(io);
+    try applySocketTimeouts(stream, timeout_ms);
+
+    var reader_buffer: [16 * 1024]u8 = undefined;
+    var writer_buffer: [16 * 1024]u8 = undefined;
+    var reader = stream.reader(io, &reader_buffer);
+    var writer = stream.writer(io, &writer_buffer);
+
+    try expectInfo(&reader);
+    try writeConnect(&writer.interface, endpoint);
+
+    var inbox_buffer: [64]u8 = undefined;
+    const inbox = try makeAckInbox(io, &inbox_buffer);
+    try writeAckSubscription(&writer.interface, inbox);
+    try writeAckedPublish(&writer.interface, api_subject, inbox, payload);
+
+    return readMessagePayloadAlloc(allocator, io, &reader, &writer, timeout_ms);
+}
+
+fn readMessagePayloadAlloc(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    reader: *std.Io.net.Stream.Reader,
+    writer: *std.Io.net.Stream.Writer,
+    timeout_ms: u32,
+) ![]u8 {
+    const start_ts = std.Io.Timestamp.now(io, .awake);
+    var attempts: usize = 0;
+    while (attempts < 32) : (attempts += 1) {
+        if (elapsedMs(start_ts, io) >= timeout_ms) return error.Timeout;
+
+        const line = try readLine(reader);
+        if (line.len == 0) continue;
+        if (std.mem.eql(u8, line, "PING")) {
+            try writer.interface.writeAll("PONG\r\n");
+            try writer.interface.flush();
+            continue;
+        }
+        if (std.mem.eql(u8, line, "+OK") or std.mem.eql(u8, line, "PONG") or std.mem.startsWith(u8, line, "INFO ")) {
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "-ERR")) return error.ServerError;
+        if (std.mem.startsWith(u8, line, "MSG ")) {
+            const payload_size = try parseMessageSize(line);
+            if (payload_size > MAX_ACK_PAYLOAD_BYTES) return error.PublishAckTooLarge;
+            const message = try takeBytes(reader, payload_size);
+            const owned = try allocator.dupe(u8, message);
+            errdefer allocator.free(owned);
+            const terminator = try takeArray2(reader);
+            if (!std.mem.eql(u8, terminator, "\r\n")) return error.ProtocolError;
+            return owned;
+        }
+
+        return error.ProtocolError;
+    }
+
+    return error.Timeout;
 }
 
 test "parse endpoint defaults port and extracts auth" {
@@ -544,23 +584,74 @@ test "write ack subscription and publish use explicit inbox reply" {
     var buffer: [512]u8 = undefined;
     var writer = std.Io.Writer.fixed(&buffer);
     try writeAckSubscription(&writer, "_INBOX.zig-coordinator.abc123");
-    try writePing(&writer);
     try writeAckedPublish(&writer, "sync.oracle.load", "_INBOX.zig-coordinator.abc123", "{\"batch_id\":\"b\"}");
     try std.testing.expectEqualStrings(
         "SUB _INBOX.zig-coordinator.abc123 1\r\n" ++
-            "PING\r\n" ++
             "PUB sync.oracle.load _INBOX.zig-coordinator.abc123 16\r\n" ++
             "{\"batch_id\":\"b\"}\r\n",
         writer.buffered(),
     );
 }
 
-test "subscribe-ready timeout maps to distinct pre-publish error" {
-    try std.testing.expect(mapPongReadError(error.Timeout, "subscribe_ready") == error.PublishAckSubscribeReadyTimeout);
-    try std.testing.expect(mapPongReadError(error.Timeout, null) == error.Timeout);
-}
-
 test "parse message size uses final token" {
     try std.testing.expectEqual(@as(usize, 42), try parseMessageSize("MSG _INBOX.x 1 42"));
     try std.testing.expectEqual(@as(usize, 42), try parseMessageSize("MSG _INBOX.x 1 reply.to 42"));
+}
+
+test "JetStream publish round-trip when NATS_URL is set" {
+    const raw_url = if (std.c.getenv("NATS_URL")) |value| std.mem.span(value) else return error.SkipZigTest;
+    const endpoint = try Endpoint.parse(raw_url);
+    if (endpoint.tls) return error.SkipZigTest;
+
+    var random_bytes: [8]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
+
+    var stream_buffer: [64]u8 = undefined;
+    const stream_name = try std.fmt.bufPrint(&stream_buffer, "NATS_RELIABILITY_TEST_{s}", .{&random_hex});
+    var subject_buffer: [96]u8 = undefined;
+    const subject = try std.fmt.bufPrint(&subject_buffer, "nats.reliability.test.{s}", .{&random_hex});
+    const payload = "{\"ok\":true}";
+    const timeout_ms: u32 = 2_000;
+
+    const create_payload = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"name\":\"{s}\",\"subjects\":[\"{s}\"],\"storage\":\"memory\",\"retention\":\"limits\",\"max_msgs\":100}}",
+        .{ stream_name, subject },
+    );
+    defer std.testing.allocator.free(create_payload);
+
+    var create_subject_buffer: [96]u8 = undefined;
+    const create_subject = try std.fmt.bufPrint(&create_subject_buffer, "$JS.API.STREAM.CREATE.{s}", .{stream_name});
+    const create_response = try requestJetStreamApi(std.testing.allocator, std.Io.default(), endpoint, create_subject, create_payload, timeout_ms);
+    defer std.testing.allocator.free(create_response);
+    try std.testing.expect(std.mem.indexOf(u8, create_response, "\"error\"") == null);
+
+    var delete_subject_buffer: [96]u8 = undefined;
+    const delete_subject = try std.fmt.bufPrint(&delete_subject_buffer, "$JS.API.STREAM.DELETE.{s}", .{stream_name});
+    defer {
+        const delete_response = requestJetStreamApi(std.testing.allocator, std.Io.default(), endpoint, delete_subject, "{}", timeout_ms) catch null;
+        if (delete_response) |response| std.testing.allocator.free(response);
+    }
+
+    const publish_started_ts = std.Io.Timestamp.now(std.Io.default(), .awake);
+    try publish(std.testing.allocator, std.Io.default(), raw_url, subject, payload, .jetstream_ack, timeout_ms);
+    try std.testing.expect(elapsedMs(publish_started_ts, std.Io.default()) <= timeout_ms);
+
+    const get_payload = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"last_by_subj\":\"{s}\"}}",
+        .{subject},
+    );
+    defer std.testing.allocator.free(get_payload);
+
+    var get_subject_buffer: [96]u8 = undefined;
+    const get_subject = try std.fmt.bufPrint(&get_subject_buffer, "$JS.API.STREAM.MSG.GET.{s}", .{stream_name});
+    const get_response = try requestJetStreamApi(std.testing.allocator, std.Io.default(), endpoint, get_subject, get_payload, timeout_ms);
+    defer std.testing.allocator.free(get_response);
+
+    var encoded_payload_buffer: [std.base64.standard.Encoder.calcSize(payload.len)]u8 = undefined;
+    const encoded_payload = std.base64.standard.Encoder.encode(&encoded_payload_buffer, payload);
+    try std.testing.expect(std.mem.indexOf(u8, get_response, subject) != null);
+    try std.testing.expect(std.mem.indexOf(u8, get_response, encoded_payload) != null);
 }

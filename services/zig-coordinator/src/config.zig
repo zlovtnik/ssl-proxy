@@ -36,6 +36,7 @@ pub const Config = struct {
     scan_retry_backoff_seconds: u32,
     batch_dispatch_lease_seconds: u32,
     batch_max_attempts: u32,
+    nats_publish_timeout_ms: u32,
 };
 
 pub fn load() Config {
@@ -75,6 +76,7 @@ pub fn load() Config {
         .scan_retry_backoff_seconds = parsePositiveU32(envOrDefault("SYNC_SCAN_RETRY_BACKOFF_SECONDS", "30"), 30),
         .batch_dispatch_lease_seconds = parsePositiveU32(envOrDefault("SYNC_BATCH_DISPATCH_LEASE_SECONDS", "300"), 300),
         .batch_max_attempts = parsePositiveU32(envOrDefault("SYNC_BATCH_MAX_ATTEMPTS", "5"), 5),
+        .nats_publish_timeout_ms = parsePositiveU32(envOrDefault("NATS_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
     };
 }
 
