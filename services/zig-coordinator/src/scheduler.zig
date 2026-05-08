@@ -1034,6 +1034,12 @@ pub const Service = struct {
     }
 
     fn publishWithCli(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {
+        logging.info()
+            .stringSafe("event", "nats_publish_fallback")
+            .stringSafe("mode", "cli")
+            .string("subject", subject)
+            .log();
+
         const argv = [_][]const u8{
             "nats",
             "--server",
