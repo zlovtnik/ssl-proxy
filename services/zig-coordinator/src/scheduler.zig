@@ -994,6 +994,10 @@ pub const Service = struct {
                 try self.publishWithCli(subject, payload, on_error);
                 return;
             }
+            if (err == error.PublishAckFailed and mode == .core) {
+                try self.publishWithCli(subject, payload, on_error);
+                return;
+            }
             if (err == error.UnsupportedNatsScheme and mode == .jetstream_ack) {
                 try self.publishWithJetStreamCli(subject, payload, on_error);
                 return;
