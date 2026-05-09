@@ -290,6 +290,13 @@ fn handle_validated_load(
     validated: ValidatedLoad,
     sink: &mut dyn ProxyEventSink,
 ) -> OracleResult {
+    eprintln!(
+        "service=oracle-worker event=batch_insert_start batch_id={} proxy_event_count={} blocked_event_count={}",
+        load.batch_id,
+        validated.rows.len(),
+        validated.blocked_rows.len(),
+    );
+
     let row_count =
         match sink.insert_proxy_events(&load.batch_id, &validated.rows, &validated.blocked_rows) {
             Ok(row_count) => row_count,

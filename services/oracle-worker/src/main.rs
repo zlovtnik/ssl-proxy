@@ -233,11 +233,26 @@ async fn handle_load_message(
         }
     };
 
+    println!(
+        "service={SERVICE_NAME} event=batch_received batch_id={} batch_no={} stream_name={} payload_ref={} cursor_start={} cursor_end={} attempt={} payload_bytes={}",
+        load.batch_id,
+        load.batch_no,
+        load.stream_name,
+        load.payload_ref,
+        load.cursor_start,
+        load.cursor_end,
+        load.attempt,
+        message.payload.len(),
+    );
+
+    let batch_started = Instant::now();
     let result = tokio::task::spawn_blocking(move || worker::handle_load(load))
         .await
         .map_err(|error| format!("oracle load task panicked: {error}"))?;
     let batch_id = result.batch_id.clone();
     let status = result.status.clone();
+    let batch_duration_ms = batch_started.elapsed().as_millis();
+    let row_count = result.row_count;
 
     let payload = serde_json::to_vec(&result)
         .map_err(|error| format!("serialize OracleResult for batch {batch_id}: {error}"))?;
@@ -261,11 +276,11 @@ async fn handle_load_message(
 
     if status == "success" {
         println!(
-            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status=success"
+            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status=success row_count={row_count} duration_ms={batch_duration_ms}"
         );
     } else {
         eprintln!(
-            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status={status} error_class={} retryable={} error=\"{}\"",
+            "service={SERVICE_NAME} event=worker_load status=ok batch_id={batch_id} result_status={status} row_count={row_count} duration_ms={batch_duration_ms} error_class={} retryable={} error=\"{}\"",
             result.error_class,
             result.retryable,
             escape_for_log(&result.error_text)
