@@ -177,6 +177,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -207,6 +209,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -219,12 +223,29 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
 
+  integration-console-db-setup:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: "no"
+    command: ["bin/rails", "db:migrate"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
+
   integration-console-heatmap-refresh:
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -244,6 +265,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -359,12 +382,18 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   minio-init:
     image: minio/mc:latest
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
     restart: "no"
     entrypoint: ["sh", "-lc"]
     command:
