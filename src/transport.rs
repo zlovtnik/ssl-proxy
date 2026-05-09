@@ -219,7 +219,20 @@ impl SyncPublisher {
         };
 
         if let Err(error) = self.enqueue_message(SYNC_SCAN_REQUEST_SUBJECT, &payload) {
-            warn!(%error, "dropping scan request");
+            warn!(
+                %error,
+                dedupe_key = request.dedupe_key,
+                stream_name = request.stream_name,
+                "sync publisher failed to enqueue scan request — event may not reach Oracle"
+            );
+        } else {
+            debug!(
+                target: "sync",
+                dedupe_key = request.dedupe_key,
+                stream_name = request.stream_name,
+                payload_ref = request.payload_ref,
+                "scan request enqueued for NATS publish"
+            );
         }
     }
 

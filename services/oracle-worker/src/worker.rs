@@ -256,6 +256,30 @@ pub fn handle_load_with_sink(load: OracleLoad, sink: &mut dyn ProxyEventSink) ->
             return failure_result(load.job_id, load.batch_id, error_class, error);
         }
     };
+
+    if !validated.rows.is_empty() {
+        let event_types: Vec<&str> = validated
+            .rows
+            .iter()
+            .map(|r| r.event_type.as_str())
+            .collect();
+        let mut event_summary: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for et in &event_types {
+            *event_summary.entry(et).or_insert(0) += 1;
+        }
+        let summary: Vec<String> = event_summary
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        eprintln!(
+            "service=oracle-worker event=batch_validate batch_id={} stream_name={} total_rows={} event_types=\"{}\"",
+            load.batch_id,
+            load.stream_name,
+            validated.rows.len(),
+            summary.join(" ")
+        );
+    }
+
     handle_validated_load(load, validated, sink)
 }
 

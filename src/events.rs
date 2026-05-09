@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tracing::error;
+use tracing::{debug, error, info};
 
 use crate::state::SharedState;
 
@@ -201,11 +201,20 @@ pub(crate) fn emit_serializable<T>(
         }
     };
 
-    let _ = state.events_tx.send(raw.clone());
+    if state.events_tx.send(raw.clone()).is_err() {
+        error!(event_name = event, %host, "events broadcast channel full — event lost from dashboard");
+    }
 
     if !crate::sync::should_publish_scan_request(event) {
         return;
     }
+
+    debug!(
+        target: "sync",
+        event_name = event,
+        %host,
+        "proxy event qualifies for sync plane — preparing scan request"
+    );
 
     let dedupe_key = format!(
         "{:x}",
@@ -226,6 +235,12 @@ pub(crate) fn emit_serializable<T>(
             payload_ref,
             observed_at,
         });
+    info!(
+        target: "sync",
+        event_name = event,
+        %host,
+        "published scan request to sync.scan.request for oracle ingest"
+    );
 }
 
 #[cfg(test)]
