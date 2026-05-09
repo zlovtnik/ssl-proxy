@@ -356,8 +356,8 @@ services:
       timeout: 5s
       retries: 5
     ports:
-      - "127.0.0.1:4222:4222"
-      - "127.0.0.1:8222:8222"
+      - "4222:4222"
+      - "8222:8222"
     volumes:
       - nats-data:/data
 
