@@ -435,7 +435,10 @@ impl AppState {
             break;
         }
 
-        *self.dashboard_event_queue.lock().unwrap() = remaining;
+        let mut queue = self.dashboard_event_queue.lock().unwrap();
+        let mut new_queue = std::mem::take(&mut *queue);
+        remaining.append(&mut new_queue);
+        *queue = remaining;
     }
 
     #[allow(dead_code)]

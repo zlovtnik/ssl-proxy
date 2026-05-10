@@ -30,11 +30,11 @@
 <% else %>
   <%= svelte_props_tag("identities-svelte-root", initial: {
     rows: [],
-    totalCount: 0,
-    currentPage: 1,
-    perPage: 50,
-    sortKey: "last_occurred_at",
-    sortDirection: "desc",
+    totalCount: @total_count,
+    currentPage: @current_page,
+    perPage: @per_page,
+    sortKey: @sort,
+    sortDirection: @direction,
     query: @query,
     filters: parsed_grid_filters,
     endpoints: {

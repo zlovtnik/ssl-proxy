@@ -62,7 +62,7 @@
   --color-accent-vivid: #f7ca88;
   --color-accent-surface: rgba(244, 184, 96, 0.14);
   --color-accent-surface-strong: rgba(244, 184, 96, 0.22);
-  --color-on-accent: #ffffff;
+  --color-on-accent: rgba(0, 0, 0, 0.87);
   --color-danger: var(--palette-blushed-brick);
   --color-danger-text: #d93025;
   --color-danger-surface: #fce8e6;

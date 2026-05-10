@@ -852,6 +852,7 @@ fn spawn_channel_hopper(
     stats: metrics::SharedStats,
 ) {
     tokio::spawn(async move {
+        let mut last_applied_filter = bpf.clone();
         let channels = [1_u8, 6, 11];
         let mut index = 0usize;
         let mut interval = tokio::time::interval(Duration::from_millis(interval_ms.max(100)));
@@ -866,14 +867,14 @@ fn spawn_channel_hopper(
                     }
                     stats.lock().unwrap().channel_hop_count += 1;
 
-                    // Only re-apply BPF if the filter string has changed since last apply.
                     let needs_apply = current_filter
                         .read()
-                        .map(|f| *f != bpf)
+                        .map(|f| *f != last_applied_filter)
                         .unwrap_or(true);
                     if needs_apply {
                         if let Ok(filter) = current_filter.read() {
                             capture_control.apply_filter(filter.clone());
+                            last_applied_filter = filter.clone();
                         }
                     }
                     info!(interface = %device, channel, "wireless capture channel hopped");

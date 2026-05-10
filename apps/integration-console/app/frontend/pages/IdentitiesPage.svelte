@@ -126,15 +126,20 @@
     if (push) updateHistory(endpoints.index, state())
 
     const url = `${endpoints.index}.json?${toQueryString(state())}`
-    const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null)
-    loading = false
+    const response = await fetch(url, { headers: { accept: "application/json" } }).catch((err) => {
+      loading = false
+      loadError = `Network error: ${err?.message || "request failed"}`
+      return null
+    })
     if (response?.status === 304) return
     if (!response?.ok) {
       loadError = await errorMessage(response)
+      loading = false
       return
     }
 
     const payload = await response.json()
+    loading = false
     loadError = ""
     rows = payload.rows || []
     filters = payload.filters || filters

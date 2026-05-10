@@ -1,34 +1,45 @@
 <script>
-  import { onMount } from "svelte"
+  import { onMount, onDestroy } from "svelte"
 
   let theme = "dark"
+  let mediaQuery
 
   onMount(() => {
-    // Check for saved theme preference or default to dark
-    const savedTheme = localStorage.getItem("theme") || "dark"
-    setTheme(savedTheme)
+    const savedTheme = localStorage.getItem("theme")
+    if (savedTheme) {
+      setTheme(savedTheme, true)
+    } else {
+      const systemTheme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
+      setTheme(systemTheme, false)
+    }
 
-    // Listen for system theme changes
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)")
+    mediaQuery = window.matchMedia("(prefers-color-scheme: light)")
     mediaQuery.addEventListener("change", handleSystemThemeChange)
   })
 
-  function setTheme(newTheme) {
+  onDestroy(() => {
+    if (mediaQuery) {
+      mediaQuery.removeEventListener("change", handleSystemThemeChange)
+    }
+  })
+
+  function setTheme(newTheme, persist = false) {
     theme = newTheme
     document.documentElement.setAttribute("data-theme", theme)
-    localStorage.setItem("theme", theme)
+    if (persist) {
+      localStorage.setItem("theme", theme)
+    }
   }
 
   function toggleTheme() {
     const newTheme = theme === "dark" ? "light" : "dark"
-    setTheme(newTheme)
+    setTheme(newTheme, true)
   }
 
   function handleSystemThemeChange(event) {
-    // Only auto-switch if no explicit preference is saved
     if (!localStorage.getItem("theme")) {
       const newTheme = event.matches ? "light" : "dark"
-      setTheme(newTheme)
+      setTheme(newTheme, false)
     }
   }
 </script>

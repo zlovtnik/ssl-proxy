@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy, onMount } from "svelte"
+  import { onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
   import GridToolbar from "../components/GridToolbar.svelte"
   import ThemeSwitcher from "../components/ThemeSwitcher.svelte"
@@ -43,7 +43,7 @@
   ]
   const filterFields = columnsToFilterFields(columns)
 
-  $: exportUrl = buildExportUrl()
+  $: exportUrl = buildExportUrl(query, filters, sortKey, sortDirection, currentPage, perPage)
 
   onMount(() => {
     const next = paramsFromLocation({ q: query, filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
@@ -60,10 +60,6 @@
     return () => {
       window.removeEventListener("popstate", handlePopState)
     }
-  })
-
-  onDestroy(() => {
-    window.removeEventListener("popstate", handlePopState)
   })
 
   function state() {
@@ -119,21 +115,35 @@
     fetchPage(false)
   }
 
+  let activeFetchId = 0
+
   async function fetchPage(push) {
+    const requestId = ++activeFetchId
     loading = true
-    if (push) updateHistory(endpoints.index, state())
 
     const url = `${endpoints.index}.json?${toQueryString(state())}`
-    const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null)
-    loading = false
-    if (response?.status === 304) return
+    const response = await fetch(url, { headers: { accept: "application/json" } }).catch((err) => {
+      if (requestId === activeFetchId) {
+        loadError = `Network error: ${err?.message || "request failed"}`
+        loading = false
+      }
+      return null
+    })
+
+    if (requestId !== activeFetchId) return
+    if (response?.status === 304) {
+      loading = false
+      return
+    }
     if (!response?.ok) {
       loadError = await errorMessage(response)
+      loading = false
       return
     }
 
     const payload = await response.json()
-    loadError = ""
+    if (requestId !== activeFetchId) return
+
     rows = payload.rows || []
     filters = payload.filters || filters
     totalCount = payload.totalCount || 0
@@ -141,11 +151,22 @@
     perPage = payload.perPage || perPage
     sortKey = payload.sortKey || sortKey
     sortDirection = payload.sortDirection || sortDirection
+    loadError = ""
+
+    if (push) updateHistory(endpoints.index, state())
+    loading = false
   }
 
-  function buildExportUrl() {
+  function buildExportUrl(q, filters, sort, direction, page, per_page) {
     if (!endpoints.export) return null
-    return `${endpoints.export}?${toQueryString(state())}`
+    return `${endpoints.export}?${toQueryString({
+      q,
+      filters: serializeFilters(filters) || undefined,
+      sort,
+      direction,
+      page,
+      per_page,
+    })}`
   }
 
   async function errorMessage(response) {

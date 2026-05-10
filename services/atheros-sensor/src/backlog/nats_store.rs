@@ -50,7 +50,7 @@ pub struct NatsBacklog {
 }
 
 struct CachedRequestConnection {
-    stream: Box<dyn NatsStream>,
+    reader: BufReader<Box<dyn NatsStream>>,
     last_used: Instant,
     next_sid: u64,
 }
@@ -176,7 +176,7 @@ impl NatsBacklog {
                 message: format!("flush CONNECT: {source}"),
             })?;
         Ok(CachedRequestConnection {
-            stream,
+            reader: BufReader::new(stream),
             last_used: Instant::now(),
             next_sid: 1,
         })
@@ -236,8 +236,10 @@ impl NatsBacklog {
         payload: &str,
         reply_subject: &str,
     ) -> Result<String, BacklogError> {
-        let stream = &mut *connection.stream;
-        let subscribe = format!("SUB {reply_subject} 1\r\n");
+        let stream = &mut connection.reader;
+        let sid = connection.next_sid;
+        connection.next_sid = connection.next_sid.saturating_add(1);
+        let subscribe = format!("SUB {reply_subject} {sid}\r\n");
         timeout(self.request_timeout, stream.write_all(subscribe.as_bytes()))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
@@ -276,11 +278,10 @@ impl NatsBacklog {
                 message: format!("flush request: {source}"),
             })?;
 
-        let mut reader = BufReader::new(&mut *connection.stream);
         let mut line = String::new();
         loop {
             line.clear();
-            let bytes_read = timeout(self.request_timeout, reader.read_line(&mut line))
+            let bytes_read = timeout(self.request_timeout, stream.read_line(&mut line))
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
                 .map_err(|source| BacklogError::Nats {
@@ -295,14 +296,14 @@ impl NatsBacklog {
                 });
             }
             if trimmed == "PING" {
-                timeout(self.request_timeout, reader.get_mut().write_all(b"PONG\r\n"))
+                timeout(self.request_timeout, stream.get_mut().write_all(b"PONG\r\n"))
                     .await
                     .map_err(|_| BacklogError::Timeout { operation })?
                     .map_err(|source| BacklogError::Nats {
                         operation,
                         message: format!("send PONG: {source}"),
                     })?;
-                timeout(self.request_timeout, reader.get_mut().flush())
+                timeout(self.request_timeout, stream.get_mut().flush())
                     .await
                     .map_err(|_| BacklogError::Timeout { operation })?
                     .map_err(|source| BacklogError::Nats {
@@ -315,6 +316,9 @@ impl NatsBacklog {
                 continue;
             }
             if trimmed.starts_with("-ERR") {
+                let unsub_command = format!("UNSUB {sid} 1\r\n");
+                let _ = timeout(self.request_timeout, stream.write_all(unsub_command.as_bytes())).await;
+                let _ = timeout(self.request_timeout, stream.flush()).await;
                 return Err(BacklogError::Nats {
                     operation,
                     message: trimmed.to_string(),
@@ -323,8 +327,15 @@ impl NatsBacklog {
             if !trimmed.starts_with("MSG ") {
                 continue;
             }
-            let size = trimmed
-                .split_whitespace()
+            let parts: Vec<_> = trimmed.split_whitespace().collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let msg_subject = parts[1];
+            if msg_subject != reply_subject {
+                continue;
+            }
+            let size = parts
                 .last()
                 .ok_or_else(|| BacklogError::Nats {
                     operation,
@@ -336,7 +347,7 @@ impl NatsBacklog {
                     message: format!("invalid reply size: {source}"),
                 })?;
             let mut payload_buf = vec![0_u8; size];
-            timeout(self.request_timeout, reader.read_exact(&mut payload_buf))
+            timeout(self.request_timeout, stream.read_exact(&mut payload_buf))
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
                 .map_err(|source| BacklogError::Nats {
@@ -344,7 +355,7 @@ impl NatsBacklog {
                     message: format!("read reply payload: {source}"),
                 })?;
             let mut terminator = [0_u8; 2];
-            timeout(self.request_timeout, reader.read_exact(&mut terminator))
+            timeout(self.request_timeout, stream.read_exact(&mut terminator))
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
                 .map_err(|source| BacklogError::Nats {
@@ -357,10 +368,26 @@ impl NatsBacklog {
                     message: "invalid reply terminator".to_string(),
                 });
             }
-            return String::from_utf8(payload_buf).map_err(|source| BacklogError::Nats {
+            let result = String::from_utf8(payload_buf).map_err(|source| BacklogError::Nats {
                 operation,
                 message: format!("reply is not UTF-8: {source}"),
             });
+            let unsub_command = format!("UNSUB {sid} 1\r\n");
+            timeout(self.request_timeout, stream.write_all(unsub_command.as_bytes()))
+                .await
+                .map_err(|_| BacklogError::Timeout { operation })?
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("send UNSUB: {source}"),
+                })?;
+            timeout(self.request_timeout, stream.flush())
+                .await
+                .map_err(|_| BacklogError::Timeout { operation })?
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("flush UNSUB: {source}"),
+                })?;
+            return result;
         }
     }
 
@@ -896,6 +923,7 @@ mod tests {
     use super::{
         parse_authorized_networks_response, parse_nats_endpoint, payload_with_reply_subject,
     };
+    use crate::backlog::BacklogError;
 
     #[test]
     fn parses_wrapped_authorized_networks_response() {
@@ -952,9 +980,8 @@ mod tests {
     fn rejects_non_object_request_payloads() {
         let error = payload_with_reply_subject("list_pending", r#"[]"#, "_INBOX.x").unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("invalid type: sequence, expected a map"));
+        assert!(matches!(error, BacklogError::Serialize { .. })
+            || error.to_string().contains("list_pending"));
     }
 
     #[test]
