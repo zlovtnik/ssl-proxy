@@ -1333,12 +1333,14 @@ mod tests {
     #[tokio::test]
     async fn flush_memory_backlog_opens_circuit_breaker_when_save_pending_fails() {
         let state = test_state();
+        let payload = "{\"event_type\":\"wifi_management_frame\"}".to_string();
+        let error = "nats unavailable".to_string();
 
         state.lock().unwrap().put_memory_backlog(
             "dedupe-1".to_string(),
             "wireless.audit".to_string(),
-            "{\"event_type\":\"wifi_management_frame\"}".to_string(),
-            "nats unavailable".to_string(),
+            &payload,
+            &error,
         );
 
         flush_memory_backlog(&state, &FailingBacklog).await;
