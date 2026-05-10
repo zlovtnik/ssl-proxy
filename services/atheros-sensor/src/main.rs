@@ -77,9 +77,9 @@ use crate::{
     model::{AuditContext, EnrichedFrame, RawPacket},
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
-        flush_memory_backlog, publish_bandwidth_event, publish_entry, publish_handshake_alert,
-        publish_json, PublishClient, PublishError, PublishState, SharedPublishState,
-        SyncPublisherClient,
+        flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
+        publish_entry, publish_handshake_alert, publish_json, PublishClient, PublishError,
+        PublishState, SharedPublishState, SyncPublisherClient, replay_journal,
     },
     stats::PipelineOutcome,
 };
@@ -326,7 +326,9 @@ impl PipelineState {
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
-            authorized_network_cache: AuthorizedNetworkCache::default(),
+            authorized_network_cache: AuthorizedNetworkCache::new(
+                _config.authorized_network_cache_backoff_ms,
+            ),
             seen_authorized_config_generation: 0,
             probe_accumulator: HashMap::new(),
         }
@@ -384,12 +386,26 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         "atheros sensor publisher initialized"
     );
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
-    let publish_state = PublishState::shared();
+    let publish_state = PublishState::shared_with_config(
+        config.memory_backlog_size,
+        config.publish_journal_path.clone(),
+    );
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
     let backlog = Arc::new(step(
         "initialize NATS backlog",
         NatsBacklog::new(backlog_client, config.sync.clone()),
     )?);
+    backlog.clone().spawn_health_check();
+    // Replay journal entries from previous outages
+    match replay_journal(&publish_state, &*backlog).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(replayed = count, "recovered publish journal entries");
+            }
+        }
+        Err(error) => warn!(%error, "publish journal replay failed; entries remain in journal for retry"),
+    }
+
     info!("atheros sensor NATS backlog initialized");
 
     config_subscriber::spawn_audit_window_config_subscriber(
@@ -438,6 +454,19 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         Arc::clone(&context),
         packet_stream.control.clone(),
     );
+    // Spawn periodic memory backlog flush timer
+    let flush_state = Arc::clone(&publish_state);
+    let flush_backlog = Arc::clone(&backlog);
+    let flush_interval = Duration::from_secs(config.memory_backlog_flush_interval_secs);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(flush_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            periodic_memory_backlog_flush(&flush_state, &*flush_backlog).await;
+        }
+    });
+
     let stats = metrics::shared_stats();
     metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
 

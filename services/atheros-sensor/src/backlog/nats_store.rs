@@ -3,10 +3,10 @@
 use std::{
     io::Cursor,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -41,8 +41,18 @@ pub struct NatsBacklog {
     publisher: Arc<dyn PublishClient>,
     sync: SyncConfig,
     request_timeout: Duration,
+    request_connection_ttl: Duration,
     tls_client_config: Option<Arc<rustls::ClientConfig>>,
     tls_connector: Option<TlsConnector>,
+    request_connection: Arc<Mutex<Option<CachedRequestConnection>>>,
+    health_status: Arc<AtomicBool>,
+    connection_generation: Arc<AtomicU64>,
+}
+
+struct CachedRequestConnection {
+    stream: Box<dyn NatsStream>,
+    last_used: Instant,
+    next_sid: u64,
 }
 
 impl NatsBacklog {
@@ -59,9 +69,412 @@ impl NatsBacklog {
             publisher,
             sync,
             request_timeout: Duration::from_secs(5),
+            request_connection_ttl: Duration::from_secs(10),
             tls_client_config,
             tls_connector,
+            request_connection: Arc::new(Mutex::new(None)),
+            health_status: Arc::new(AtomicBool::new(true)),
+            connection_generation: Arc::new(AtomicU64::new(0)),
         })
+    }
+
+    pub fn spawn_health_check(self: Arc<Self>) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                self.health_probe().await;
+            }
+        });
+    }
+
+    pub fn is_healthy(&self) -> bool {
+        self.health_status.load(Ordering::Relaxed)
+    }
+
+    async fn health_probe(&self) {
+        let result = self.ping_nats().await;
+        let healthy = result.is_ok();
+        self.health_status.store(healthy, Ordering::Relaxed);
+        if healthy {
+            self.connection_generation.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn should_skip_request(&self) -> bool {
+        !self.health_status.load(Ordering::Relaxed)
+    }
+
+    async fn connect_request_connection(
+        &self,
+        operation: &'static str,
+    ) -> Result<CachedRequestConnection, BacklogError> {
+        let nats_url = self.sync.nats_url.as_deref().ok_or_else(|| BacklogError::Disabled {
+            operation,
+        })?;
+        let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
+            operation,
+            message: source,
+        })?;
+        let tcp_stream = timeout(self.request_timeout, TcpStream::connect(&endpoint.address))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("connect {}: {source}", endpoint.address),
+            })?;
+        let mut stream: Box<dyn NatsStream> = if self.sync.tls_enabled || endpoint.tls_enabled {
+            let connector = self.tls_connector.as_ref().ok_or_else(|| BacklogError::Nats {
+                operation,
+                message: "NATS TLS connector was not initialized".to_string(),
+            })?;
+            let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
+                .await
+                .map_err(|message| BacklogError::Nats { operation, message })?;
+            Box::new(tls_stream)
+        } else {
+            Box::new(tcp_stream)
+        };
+        let mut reader = BufReader::new(&mut *stream);
+        let mut info_line = String::new();
+        timeout(self.request_timeout, reader.read_line(&mut info_line))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("read INFO: {source}"),
+            })?;
+        if !info_line.starts_with("INFO ") {
+            return Err(BacklogError::Nats {
+                operation,
+                message: format!("expected NATS INFO banner, got: {}", info_line.trim_end()),
+            });
+        }
+
+        let connect_options = serde_json::json!({
+            "lang": "rust",
+            "version": env!("CARGO_PKG_VERSION"),
+            "verbose": false,
+            "pedantic": false,
+            "user": self.sync.username.as_deref(),
+            "pass": self.sync.password.as_deref(),
+        });
+        let command = format!("CONNECT {connect_options}\r\n");
+        timeout(self.request_timeout, stream.write_all(command.as_bytes()))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("send CONNECT: {source}"),
+            })?;
+        timeout(self.request_timeout, stream.flush())
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("flush CONNECT: {source}"),
+            })?;
+        Ok(CachedRequestConnection {
+            stream,
+            last_used: Instant::now(),
+            next_sid: 1,
+        })
+    }
+
+    async fn request_with_cached_connection(
+        &self,
+        operation: &'static str,
+        subject: &'static str,
+        payload: &str,
+        reply_subject: &str,
+    ) -> Result<String, BacklogError> {
+        if self.should_skip_request() {
+            return Err(BacklogError::Nats {
+                operation,
+                message: "skipping request because NATS connection is unhealthy".to_string(),
+            });
+        }
+
+        let maybe_connection = self.request_connection.lock().unwrap().take();
+
+        let mut connection = if let Some(conn) = maybe_connection {
+            if conn.last_used.elapsed() < self.request_connection_ttl {
+                conn
+            } else {
+                self.connection_generation.fetch_add(1, Ordering::Relaxed);
+                self.connect_request_connection(operation).await?
+            }
+        } else {
+            self.connect_request_connection(operation).await?
+        };
+
+        let result = self
+            .perform_request_over_connection(&mut connection, operation, subject, payload, reply_subject)
+            .await;
+        let mut guard = self.request_connection.lock().unwrap();
+        match result {
+            Ok(response) => {
+                connection.last_used = Instant::now();
+                guard.replace(connection);
+                self.health_status.store(true, Ordering::Relaxed);
+                Ok(response)
+            }
+            Err(err) => {
+                self.health_status.store(false, Ordering::Relaxed);
+                guard.take();
+                Err(err)
+            }
+        }
+    }
+
+    async fn perform_request_over_connection(
+        &self,
+        connection: &mut CachedRequestConnection,
+        operation: &'static str,
+        subject: &'static str,
+        payload: &str,
+        reply_subject: &str,
+    ) -> Result<String, BacklogError> {
+        let stream = &mut *connection.stream;
+        let subscribe = format!("SUB {reply_subject} 1\r\n");
+        timeout(self.request_timeout, stream.write_all(subscribe.as_bytes()))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("subscribe reply subject: {source}"),
+            })?;
+
+        let publish_command = format!("PUB {subject} {}\r\n", payload.len());
+        timeout(self.request_timeout, stream.write_all(publish_command.as_bytes()))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("send PUB header: {source}"),
+            })?;
+        timeout(self.request_timeout, stream.write_all(payload.as_bytes()))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("send PUB payload: {source}"),
+            })?;
+        timeout(self.request_timeout, stream.write_all(b"\r\n"))
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("finish PUB payload: {source}"),
+            })?;
+        timeout(self.request_timeout, stream.flush())
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("flush request: {source}"),
+            })?;
+
+        let mut reader = BufReader::new(&mut *connection.stream);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let bytes_read = timeout(self.request_timeout, reader.read_line(&mut line))
+                .await
+                .map_err(|_| BacklogError::Timeout { operation })?
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("read reply: {source}"),
+                })?;
+            let trimmed = line.trim_end();
+            if bytes_read == 0 || trimmed.is_empty() {
+                return Err(BacklogError::Nats {
+                    operation,
+                    message: "unexpected EOF while reading reply".to_string(),
+                });
+            }
+            if trimmed == "PING" {
+                timeout(self.request_timeout, reader.get_mut().write_all(b"PONG\r\n"))
+                    .await
+                    .map_err(|_| BacklogError::Timeout { operation })?
+                    .map_err(|source| BacklogError::Nats {
+                        operation,
+                        message: format!("send PONG: {source}"),
+                    })?;
+                timeout(self.request_timeout, reader.get_mut().flush())
+                    .await
+                    .map_err(|_| BacklogError::Timeout { operation })?
+                    .map_err(|source| BacklogError::Nats {
+                        operation,
+                        message: format!("flush PONG: {source}"),
+                    })?;
+                continue;
+            }
+            if trimmed.starts_with("+OK") || trimmed.starts_with("INFO ") {
+                continue;
+            }
+            if trimmed.starts_with("-ERR") {
+                return Err(BacklogError::Nats {
+                    operation,
+                    message: trimmed.to_string(),
+                });
+            }
+            if !trimmed.starts_with("MSG ") {
+                continue;
+            }
+            let size = trimmed
+                .split_whitespace()
+                .last()
+                .ok_or_else(|| BacklogError::Nats {
+                    operation,
+                    message: format!("missing reply size: {trimmed}"),
+                })?
+                .parse::<usize>()
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("invalid reply size: {source}"),
+                })?;
+            let mut payload_buf = vec![0_u8; size];
+            timeout(self.request_timeout, reader.read_exact(&mut payload_buf))
+                .await
+                .map_err(|_| BacklogError::Timeout { operation })?
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("read reply payload: {source}"),
+                })?;
+            let mut terminator = [0_u8; 2];
+            timeout(self.request_timeout, reader.read_exact(&mut terminator))
+                .await
+                .map_err(|_| BacklogError::Timeout { operation })?
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("read reply terminator: {source}"),
+                })?;
+            if terminator != *b"\r\n" {
+                return Err(BacklogError::Nats {
+                    operation,
+                    message: "invalid reply terminator".to_string(),
+                });
+            }
+            return String::from_utf8(payload_buf).map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("reply is not UTF-8: {source}"),
+            });
+        }
+    }
+
+    async fn ping_nats(&self) -> Result<(), BacklogError> {
+        let nats_url = self.sync.nats_url.as_deref().ok_or_else(|| BacklogError::Disabled {
+            operation: "nats_health_check",
+        })?;
+        let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
+            operation: "nats_health_check",
+            message: source,
+        })?;
+        let tcp_stream = timeout(self.request_timeout, TcpStream::connect(&endpoint.address))
+            .await
+            .map_err(|_| BacklogError::Timeout {
+                operation: "nats_health_check",
+            })?
+            .map_err(|source| BacklogError::Nats {
+                operation: "nats_health_check",
+                message: format!("connect {}: {source}", endpoint.address),
+            })?;
+        let mut stream: Box<dyn NatsStream> = if self.sync.tls_enabled || endpoint.tls_enabled {
+            let connector = self.tls_connector.as_ref().ok_or_else(|| BacklogError::Nats {
+                operation: "nats_health_check",
+                message: "NATS TLS connector was not initialized".to_string(),
+            })?;
+            let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
+                .await
+                .map_err(|message| BacklogError::Nats {
+                    operation: "nats_health_check",
+                    message,
+                })?;
+            Box::new(tls_stream)
+        } else {
+            Box::new(tcp_stream)
+        };
+        let mut info_line = String::new();
+        {
+            let mut reader = BufReader::new(&mut *stream);
+            timeout(self.request_timeout, reader.read_line(&mut info_line))
+                .await
+                .map_err(|_| BacklogError::Timeout {
+                    operation: "nats_health_check",
+                })?
+                .map_err(|source| BacklogError::Nats {
+                    operation: "nats_health_check",
+                    message: format!("read INFO: {source}"),
+                })?;
+        }
+        if !info_line.starts_with("INFO ") {
+            return Err(BacklogError::Nats {
+                operation: "nats_health_check",
+                message: format!("expected NATS INFO banner, got: {}", info_line.trim_end()),
+            });
+        }
+        let connect_options = serde_json::json!({
+            "lang": "rust",
+            "version": env!("CARGO_PKG_VERSION"),
+            "verbose": false,
+            "pedantic": false,
+            "user": self.sync.username.as_deref(),
+            "pass": self.sync.password.as_deref(),
+        });
+        let command = format!("CONNECT {connect_options}\r\nPING\r\n");
+        timeout(self.request_timeout, stream.write_all(command.as_bytes()))
+            .await
+            .map_err(|_| BacklogError::Timeout {
+                operation: "nats_health_check",
+            })?
+            .map_err(|source| BacklogError::Nats {
+                operation: "nats_health_check",
+                message: format!("send CONNECT/PING: {source}"),
+            })?;
+        timeout(self.request_timeout, stream.flush())
+            .await
+            .map_err(|_| BacklogError::Timeout {
+                operation: "nats_health_check",
+            })?
+            .map_err(|source| BacklogError::Nats {
+                operation: "nats_health_check",
+                message: format!("flush CONNECT/PING: {source}"),
+            })?;
+        let mut reader = BufReader::new(&mut *stream);
+        let mut pong_line = String::new();
+        timeout(self.request_timeout, reader.read_line(&mut pong_line))
+            .await
+            .map_err(|_| BacklogError::Timeout {
+                operation: "nats_health_check",
+            })?
+            .map_err(|source| BacklogError::Nats {
+                operation: "nats_health_check",
+                message: format!("read PONG: {source}"),
+            })?;
+        if pong_line.trim() != "PONG" {
+            return Err(BacklogError::Nats {
+                operation: "nats_health_check",
+                message: format!("unexpected health check response: {}", pong_line.trim_end()),
+            });
+        }
+        Ok(())
+    }
+
+    async fn request(
+        &self,
+        operation: &'static str,
+        subject: &'static str,
+        payload: &str,
+    ) -> Result<String, BacklogError> {
+        let Some(_nats_url) = self.sync.nats_url.as_deref() else {
+            return Err(BacklogError::Disabled { operation });
+        };
+        let reply_subject = next_inbox_subject();
+        let payload = payload_with_reply_subject(operation, payload, &reply_subject)?;
+        self.request_with_cached_connection(operation, subject, &payload, &reply_subject)
+            .await
     }
 
     pub async fn lookup_device_by_mac(
@@ -150,29 +563,6 @@ impl NatsBacklog {
             })
     }
 
-    async fn request(
-        &self,
-        operation: &'static str,
-        subject: &'static str,
-        payload: &str,
-    ) -> Result<String, BacklogError> {
-        let Some(nats_url) = self.sync.nats_url.as_deref() else {
-            return Err(BacklogError::Disabled { operation });
-        };
-        let reply_subject = next_inbox_subject();
-        let payload = payload_with_reply_subject(operation, payload, &reply_subject)?;
-        request_once(
-            &self.sync,
-            self.tls_connector.as_ref(),
-            nats_url,
-            operation,
-            subject,
-            &reply_subject,
-            &payload,
-            self.request_timeout,
-        )
-        .await
-    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -359,200 +749,6 @@ fn payload_with_reply_subject(
     );
 
     serde_json::to_string(&object).map_err(|source| BacklogError::Serialize { operation, source })
-}
-
-async fn request_once(
-    sync: &SyncConfig,
-    tls_connector: Option<&TlsConnector>,
-    nats_url: &str,
-    operation: &'static str,
-    subject: &str,
-    reply_subject: &str,
-    payload: &str,
-    request_timeout: Duration,
-) -> Result<String, BacklogError> {
-    let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
-        operation,
-        message: source,
-    })?;
-    let tcp_stream = timeout(request_timeout, TcpStream::connect(&endpoint.address))
-        .await
-        .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("connect {}: {source}", endpoint.address),
-        })?;
-    let stream: Box<dyn NatsStream> = if sync.tls_enabled || endpoint.tls_enabled {
-        let connector = tls_connector.ok_or_else(|| BacklogError::Nats {
-            operation,
-            message: "NATS TLS connector was not initialized".to_string(),
-        })?;
-        let stream = connect_tls(connector, sync, endpoint.host.as_str(), tcp_stream)
-            .await
-            .map_err(|message| BacklogError::Nats { operation, message })?;
-        Box::new(stream)
-    } else {
-        Box::new(tcp_stream)
-    };
-    let (read_half, mut write_half) = tokio::io::split(stream);
-    let mut reader = BufReader::new(read_half);
-
-    let mut line = String::new();
-    let info_bytes = timeout(request_timeout, reader.read_line(&mut line))
-        .await
-        .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("read INFO: {source}"),
-        })?;
-    if info_bytes == 0 || line.trim_end().is_empty() {
-        return Err(BacklogError::Nats {
-            operation,
-            message: "unexpected EOF while reading INFO".to_string(),
-        });
-    }
-    if !line.starts_with("INFO ") {
-        return Err(BacklogError::Nats {
-            operation,
-            message: format!("expected NATS INFO banner, got: {}", line.trim_end()),
-        });
-    }
-
-    let connect_options = serde_json::json!({
-        "lang": "rust",
-        "version": env!("CARGO_PKG_VERSION"),
-        "verbose": false,
-        "pedantic": false,
-        "user": sync.username.as_deref(),
-        "pass": sync.password.as_deref(),
-    });
-    let command = format!("CONNECT {connect_options}\r\nSUB {reply_subject} 1\r\n");
-    timeout(request_timeout, write_half.write_all(command.as_bytes()))
-        .await
-        .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("subscribe reply subject: {source}"),
-        })?;
-
-    let publish_command = format!("PUB {subject} {}\r\n", payload.len());
-    timeout(
-        request_timeout,
-        write_half.write_all(publish_command.as_bytes()),
-    )
-    .await
-    .map_err(|_| BacklogError::Timeout { operation })?
-    .map_err(|source| BacklogError::Nats {
-        operation,
-        message: format!("send PUB header: {source}"),
-    })?;
-    timeout(request_timeout, write_half.write_all(payload.as_bytes()))
-        .await
-        .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("send PUB payload: {source}"),
-        })?;
-    timeout(request_timeout, write_half.write_all(b"\r\n"))
-        .await
-        .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("finish PUB payload: {source}"),
-        })?;
-    timeout(request_timeout, write_half.flush())
-        .await
-        .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("flush request: {source}"),
-        })?;
-
-    loop {
-        line.clear();
-        let reply_bytes = timeout(request_timeout, reader.read_line(&mut line))
-            .await
-            .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
-                operation,
-                message: format!("read reply: {source}"),
-            })?;
-        let trimmed = line.trim_end();
-        if reply_bytes == 0 || trimmed.is_empty() {
-            return Err(BacklogError::Nats {
-                operation,
-                message: "unexpected EOF while reading reply".to_string(),
-            });
-        }
-        if trimmed == "PING" {
-            timeout(request_timeout, write_half.write_all(b"PONG\r\n"))
-                .await
-                .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
-                    operation,
-                    message: format!("send PONG: {source}"),
-                })?;
-            timeout(request_timeout, write_half.flush())
-                .await
-                .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
-                    operation,
-                    message: format!("flush PONG: {source}"),
-                })?;
-            continue;
-        }
-        if trimmed.starts_with("+OK") || trimmed.starts_with("INFO ") {
-            continue;
-        }
-        if trimmed.starts_with("-ERR") {
-            return Err(BacklogError::Nats {
-                operation,
-                message: trimmed.to_string(),
-            });
-        }
-        if !trimmed.starts_with("MSG ") {
-            continue;
-        }
-
-        let size = trimmed
-            .split_whitespace()
-            .last()
-            .ok_or_else(|| BacklogError::Nats {
-                operation,
-                message: format!("missing reply size: {trimmed}"),
-            })?
-            .parse::<usize>()
-            .map_err(|source| BacklogError::Nats {
-                operation,
-                message: format!("invalid reply size: {source}"),
-            })?;
-        let mut payload = vec![0_u8; size];
-        timeout(request_timeout, reader.read_exact(&mut payload))
-            .await
-            .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
-                operation,
-                message: format!("read reply payload: {source}"),
-            })?;
-        let mut terminator = [0_u8; 2];
-        timeout(request_timeout, reader.read_exact(&mut terminator))
-            .await
-            .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
-                operation,
-                message: format!("read reply terminator: {source}"),
-            })?;
-        if terminator != *b"\r\n" {
-            return Err(BacklogError::Nats {
-                operation,
-                message: "invalid reply terminator".to_string(),
-            });
-        }
-        return String::from_utf8(payload).map_err(|source| BacklogError::Nats {
-            operation,
-            message: format!("reply is not UTF-8: {source}"),
-        });
-    }
 }
 
 fn next_inbox_subject() -> String {

@@ -20,6 +20,8 @@
 use chrono::NaiveTime;
 use ssl_proxy::config::SyncConfig;
 use thiserror::Error;
+use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 use crate::audit::AuditWindow;
 
@@ -48,6 +50,12 @@ pub struct AppConfig {
     pub metrics_port: Option<u16>,
     pub shutdown_grace_secs: u64,
     pub audit_layer_stream: AuditLayerStream,
+    pub memory_backlog_size: NonZeroUsize,
+    pub memory_backlog_flush_interval_secs: u64,
+    pub publish_journal_path: Option<PathBuf>,
+    pub circuit_breaker_initial_timeout_ms: u64,
+    pub circuit_breaker_max_timeout_ms: u64,
+    pub authorized_network_cache_backoff_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,29 +67,20 @@ pub enum AuditLayerStream {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    /// Fired when `ATH_SENSOR_CHANNEL` is set but cannot be parsed as a `u8`.
     #[error("invalid ATH_SENSOR_CHANNEL: {0}")]
     InvalidChannel(String),
-    /// Fired when `ATH_SENSOR_SNAPLEN` is set but cannot be parsed as an `i32`.
     #[error("invalid ATH_SENSOR_SNAPLEN: {0}")]
     InvalidSnaplen(String),
-    /// Fired when `ATH_SENSOR_PCAP_TIMEOUT_MS` is set but cannot be parsed as an `i32`.
     #[error("invalid ATH_SENSOR_PCAP_TIMEOUT_MS: {0}")]
     InvalidTimeout(String),
-    /// Fired when `ATH_SENSOR_LOG_IDLE_SECS` is set but cannot be parsed as a `u64`.
     #[error("invalid ATH_SENSOR_LOG_IDLE_SECS: {0}")]
     InvalidLogIdleSecs(String),
-    /// Fired when `ATH_SENSOR_METRICS_PORT` is set but cannot be parsed as a `u16`.
     #[error("invalid ATH_SENSOR_METRICS_PORT: {0}")]
     InvalidMetricsPort(String),
-    /// Fired when `AUDIT_WINDOW_START` is set but cannot be parsed as `HH:MM`.
     #[error("invalid AUDIT_WINDOW_START: {0}")]
     InvalidAuditWindowStart(String),
-    /// Fired when `AUDIT_WINDOW_END` is set but cannot be parsed as `HH:MM`.
     #[error("invalid AUDIT_WINDOW_END: {0}")]
     InvalidAuditWindowEnd(String),
-    /// Fired when `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true` and a NATS URL resolves
-    /// to a Docker service hostname (`nats`) instead of a host-reachable address.
     #[error("{variable} points at Docker service host `{host}`, but ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true requires host-reachable endpoints for host network mode; use 127.0.0.1 or another host-reachable address")]
     HostNetworkEndpoint {
         variable: &'static str,
@@ -140,6 +139,17 @@ impl AppConfig {
         if read_bool("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", false) {
             validate_host_network_endpoints(sync.nats_url.as_deref())?;
         }
+
+        let memory_backlog_size_val = parse_usize("ATH_SENSOR_MEMORY_BACKLOG_SIZE", 1024)
+            .unwrap_or(1024).max(64);
+        let memory_backlog_size = NonZeroUsize::new(memory_backlog_size_val)
+            .unwrap_or_else(|| NonZeroUsize::new(1024).unwrap());
+
+        let publish_journal_path_env = std::env::var("ATH_SENSOR_PUBLISH_JOURNAL_PATH")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
 
         Ok(Self {
             device_override: std::env::var("ATH_SENSOR_DEVICE")
@@ -204,6 +214,20 @@ impl AppConfig {
                 .unwrap_or(5)
                 .max(1),
             audit_layer_stream: audit_layer_stream_from_env(),
+            memory_backlog_size,
+            memory_backlog_flush_interval_secs: parse_u64(
+                "ATH_SENSOR_MEMORY_BACKLOG_FLUSH_INTERVAL_SECS", 30
+            ).unwrap_or(30),
+            publish_journal_path: publish_journal_path_env,
+            circuit_breaker_initial_timeout_ms: parse_u64(
+                "ATH_SENSOR_CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS", 10_000
+            ).unwrap_or(10_000),
+            circuit_breaker_max_timeout_ms: parse_u64(
+                "ATH_SENSOR_CIRCUIT_BREAKER_MAX_TIMEOUT_MS", 320_000
+            ).unwrap_or(320_000),
+            authorized_network_cache_backoff_ms: parse_u64(
+                "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_BACKOFF_MS", 30_000
+            ).unwrap_or(30_000),
         })
     }
 }
@@ -224,7 +248,7 @@ fn reject_docker_service_host(variable: &'static str, host: &str) -> Result<(), 
     }
     Ok(())
 }
-//todo: doc it!
+
 fn nats_host(nats_url: &str) -> Option<String> {
     let trimmed = nats_url.trim();
     if trimmed.is_empty() {
@@ -262,7 +286,7 @@ fn nats_host(nats_url: &str) -> Option<String> {
         Some(host.to_string())
     }
 }
-//todo: doc it!
+
 fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
     let timezone = std::env::var("AUDIT_WINDOW_TZ")
         .ok()
@@ -298,28 +322,28 @@ fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
 
     Ok(AuditWindow::from_parts(timezone, days, start, end))
 }
-//todo: doc it!
+
 fn parse_u8(name: &str, default: u8) -> Result<u8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u8>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-//todo: doc it!
+
 fn parse_i32(name: &str, default: i32) -> Result<i32, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i32>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-//todo: doc it!
+
 fn parse_i8(name: &str, default: i8) -> Result<i8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i8>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-//todo: doc it!
+
 fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => {
@@ -328,7 +352,7 @@ fn parse_optional_u16(name: &str) -> Result<Option<u16>, String> {
         _ => Ok(None),
     }
 }
-//todo: doc it!
+
 fn audit_layer_stream_from_env() -> AuditLayerStream {
     match std::env::var("ATH_SENSOR_AUDIT_LAYER_STREAM")
         .ok()
@@ -340,21 +364,21 @@ fn audit_layer_stream_from_env() -> AuditLayerStream {
         _ => AuditLayerStream::Off,
     }
 }
-//todo: doc it!
+
 fn parse_u64(name: &str, default: u64) -> Result<u64, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<u64>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-//todo: doc it!
+
 fn parse_usize(name: &str, default: usize) -> Result<usize, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<usize>().map_err(|_| value),
         _ => Ok(default),
     }
 }
-//todo: doc it!
+
 fn read_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
         Ok(value) => matches!(
@@ -364,7 +388,7 @@ fn read_bool(name: &str, default: bool) -> bool {
         Err(_) => default,
     }
 }
-//todo: doc it!
+
 fn read_secret(value_var: &str, file_var: &str) -> Option<String> {
     if let Ok(value) = std::env::var(value_var) {
         let trimmed = value.trim();

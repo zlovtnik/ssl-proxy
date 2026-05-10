@@ -395,16 +395,43 @@ impl DeauthFloodTracker {
     }
 }
 
-#[derive(Default)]
 pub struct AuthorizedNetworkCache {
     entries: Vec<AuthorizedWirelessNetwork>,
     loaded_at: Option<Instant>,
+    last_failure: Option<Instant>,
+    failure_count: u32,
+    backoff_ms: u64,
+}
+
+impl Default for AuthorizedNetworkCache {
+    fn default() -> Self {
+        Self::new(30_000)
+    }
 }
 
 impl AuthorizedNetworkCache {
+    pub fn new(backoff_ms: u64) -> Self {
+        Self {
+            entries: Vec::new(),
+            loaded_at: None,
+            last_failure: None,
+            failure_count: 0,
+            backoff_ms: backoff_ms.max(1),
+        }
+    }
+
     #[allow(dead_code)]
     pub fn invalidate(&mut self) {
         self.loaded_at = None;
+    }
+
+    fn failure_backoff(&self) -> Duration {
+        if self.failure_count == 0 {
+            return Duration::from_secs(0);
+        }
+        let exponent = self.failure_count.saturating_sub(1).min(63);
+        let multiplier = 1u64.checked_shl(exponent).unwrap_or(u64::MAX);
+        Duration::from_millis(self.backoff_ms.saturating_mul(multiplier).min(300_000))
     }
 
     pub async fn refresh_if_needed(
@@ -418,9 +445,41 @@ impl AuthorizedNetworkCache {
         {
             return Ok(());
         }
-        self.entries = backlog.list_authorized_wireless_networks().await?;
-        self.loaded_at = Some(Instant::now());
-        Ok(())
+
+        if let Some(last_failure) = self.last_failure {
+            let backoff = self.failure_backoff();
+            if last_failure.elapsed() < backoff {
+                if self.loaded_at.is_some() {
+                    return Ok(());
+                }
+                return Err(crate::backlog::BacklogError::Nats {
+                    operation: "refresh_if_needed",
+                    message: format!(
+                        "previous authorized network refresh failed; retry backoff {}ms",
+                        backoff.as_millis()
+                    ),
+                });
+            }
+        }
+
+        match backlog.list_authorized_wireless_networks().await {
+            Ok(entries) => {
+                self.entries = entries;
+                self.loaded_at = Some(Instant::now());
+                self.last_failure = None;
+                self.failure_count = 0;
+                Ok(())
+            }
+            Err(err) => {
+                self.last_failure = Some(Instant::now());
+                self.failure_count = self.failure_count.saturating_add(1);
+                if self.loaded_at.is_some() {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     /// Checks if a network is authorized using three-field AND logic: location_id, SSID, and
