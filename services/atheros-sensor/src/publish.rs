@@ -1203,6 +1203,8 @@ mod tests {
                 range_1000_1500: 0,
             },
             inter_arrival_p50_ms: Some(500),
+            wall_clock_delta_ms: None,
+            window_is_partial: false,
         };
 
         publish_bandwidth_event(&publisher, &event).await.unwrap();
