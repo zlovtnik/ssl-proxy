@@ -58,7 +58,7 @@ struct RunConfig {
     result_subject: String,
     load_consumer: String,
     oracle_worker_parallelism: usize,
-    oracle_pool: Arc<r2d2::Pool<OracleConnectionManager>>,
+    oracle_pool: Option<Arc<r2d2::Pool<OracleConnectionManager>>>,
 }
 
 impl RunConfig {
@@ -70,7 +70,7 @@ impl RunConfig {
             result_subject: env_or_default("SYNC_RESULT_SUBJECT", DEFAULT_SYNC_RESULT_SUBJECT),
             load_consumer: env_or_default("SYNC_LOAD_CONSUMER", DEFAULT_SYNC_LOAD_CONSUMER),
             oracle_worker_parallelism: env_or_default_usize("ORACLE_WORKER_PARALLELISM", DEFAULT_ORACLE_WORKER_PARALLELISM),
-            oracle_pool: Arc::new(r2d2::Pool::new(OracleConnectionManager::new("", "", "")).unwrap()), // Placeholder
+            oracle_pool: None,
         })
     }
 }
@@ -114,7 +114,7 @@ fn run() -> Result<(), String> {
         .build(manager)
         .map_err(|error| format!("create Oracle connection pool: {error}"))?;
     let config = RunConfig {
-        oracle_pool: Arc::new(pool),
+        oracle_pool: Some(Arc::new(pool)),
         ..config
     };
 
@@ -288,7 +288,7 @@ async fn handle_load_message(
     );
 
     let batch_started = Instant::now();
-    let oracle_pool = Arc::clone(&config.oracle_pool);
+    let oracle_pool = Arc::clone(config.oracle_pool.as_ref().unwrap());
     let result = tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &oracle_pool))
         .await
         .map_err(|error| format!("oracle load task panicked: {error}"))?;
