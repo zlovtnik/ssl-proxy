@@ -31,6 +31,10 @@ const ReplyRequest = struct {
     reply_subject: ?[]const u8 = null,
 };
 
+const BatchResult = struct {
+    items: [][]const u8,
+};
+
 pub const Error = error{
     MissingDatabaseUrl,
     MissingNatsUrl,
@@ -187,6 +191,7 @@ pub const Service = struct {
             self.cfg.oracle_stream_names_csv,
             self.cfg.scan_max_attempts,
             self.cfg.scan_retry_backoff_seconds,
+            self.cfg.ingest_batch_size,
         )) or had_work;
         had_work = (try self.recoverStaleDispatchedBatches()) or had_work;
         had_work = (try self.dispatchNextBatch()) or had_work;
@@ -218,25 +223,17 @@ pub const Service = struct {
 
     fn drainScanRequests(self: *Service) Error!bool {
         var had_work = false;
-        var pulls: usize = 0;
-        while (pulls < 50) : (pulls += 1) {
-            if (!(try self.scanConsumerHasBacklog())) break;
+        while (true) {
+            const batch = try self.pullScanBatch(self.cfg.scan_fetch_count);
+            if (batch.items.len == 0) break;
 
-            const output = try self.pullScanMessage();
-            defer if (output) |value| self.allocator.free(value);
-            if (output == null) break;
-
-            var iterator = std.mem.splitScalar(u8, output.?, '\n');
-            while (iterator.next()) |raw_line| {
-                const line = std.mem.trim(u8, raw_line, " \t\r\n");
-                if (line.len == 0) continue;
-
-                if (try self.recordScanRequest(line)) {
+            for (batch.items) |raw_line| {
+                if (try self.recordScanRequest(raw_line)) {
                     had_work = true;
                 }
             }
+            self.allocator.free(batch.items);
         }
-
         return had_work;
     }
 
@@ -389,24 +386,16 @@ pub const Service = struct {
 
     fn handleResults(self: *Service) Error!bool {
         var had_work = false;
-        var pulls: usize = 0;
-        while (pulls < 50) : (pulls += 1) {
-            if (!(try self.resultConsumerHasBacklog())) break;
+        while (true) {
+            const batch = try self.pullResultBatch(self.cfg.result_fetch_count);
+            if (batch.items.len == 0) break;
 
-            const output = try self.pullResultMessage();
-            defer if (output) |value| self.allocator.free(value);
-            if (output == null) break;
-
-            var iterator = std.mem.splitScalar(u8, output.?, '\n');
-            while (iterator.next()) |raw_line| {
-                const line = std.mem.trim(u8, raw_line, " \t\r\n");
-                if (line.len == 0) continue;
-
-                try self.database.processBatchResult(line);
+            for (batch.items) |raw_line| {
+                try self.database.processBatchResult(raw_line);
                 had_work = true;
             }
+            self.allocator.free(batch.items);
         }
-
         return had_work;
     }
 
@@ -870,31 +859,10 @@ pub const Service = struct {
         }
     }
 
-    fn scanConsumerHasBacklog(self: *Service) Error!bool {
-        const argv = [_][]const u8{
-            "nats",
-            "--server",
-            self.cfg.sync_nats_url,
-            "consumer",
-            "info",
-            self.cfg.audit_stream_name,
-            self.cfg.scan_consumer,
-        };
+    fn pullScanBatch(self: *Service, count: usize) Error!BatchResult {
+        const count_str = try std.fmt.allocPrint(self.allocator, "{d}", .{count});
+        defer self.allocator.free(count_str);
 
-        var result = command.exec(self.allocator, self.io, &argv) catch {
-            return error.ScanFetchFailed;
-        };
-        defer result.deinit(self.allocator);
-
-        if (!command.isSuccess(result)) {
-            command.logFailure("nats", result);
-            return error.ScanFetchFailed;
-        }
-
-        return consumerInfoHasBacklog(result.stdout);
-    }
-
-    fn pullScanMessage(self: *Service) Error!?[]u8 {
         const argv = [_][]const u8{
             "nats",
             "--server",
@@ -904,51 +872,16 @@ pub const Service = struct {
             self.cfg.audit_stream_name,
             self.cfg.scan_consumer,
             "--count",
-            "1",
+            count_str,
             "--raw",
         };
-
-        var result = command.exec(self.allocator, self.io, &argv) catch {
-            return error.ScanFetchFailed;
-        };
-        defer result.deinit(self.allocator);
-
-        if (!command.isSuccess(result)) {
-            if (looksLikeNoMessage(result.stderr)) return null;
-            command.logFailure("nats", result);
-            return error.ScanFetchFailed;
-        }
-
-        const output = command.trimmedOutput(result.stdout);
-        if (output.len == 0) return null;
-        return self.allocator.dupe(u8, output) catch error.ScanFetchFailed;
+        return self.pullNatsMessages(&argv);
     }
 
-    fn resultConsumerHasBacklog(self: *Service) Error!bool {
-        const argv = [_][]const u8{
-            "nats",
-            "--server",
-            self.cfg.sync_nats_url,
-            "consumer",
-            "info",
-            self.cfg.result_stream_name,
-            self.cfg.result_consumer,
-        };
+    fn pullResultBatch(self: *Service, count: usize) Error!BatchResult {
+        const count_str = try std.fmt.allocPrint(self.allocator, "{d}", .{count});
+        defer self.allocator.free(count_str);
 
-        var result = command.exec(self.allocator, self.io, &argv) catch {
-            return error.ResultFetchFailed;
-        };
-        defer result.deinit(self.allocator);
-
-        if (!command.isSuccess(result)) {
-            command.logFailure("nats", result);
-            return error.ResultFetchFailed;
-        }
-
-        return consumerInfoHasBacklog(result.stdout);
-    }
-
-    fn pullResultMessage(self: *Service) Error!?[]u8 {
         const argv = [_][]const u8{
             "nats",
             "--server",
@@ -958,24 +891,53 @@ pub const Service = struct {
             self.cfg.result_stream_name,
             self.cfg.result_consumer,
             "--count",
-            "1",
+            count_str,
             "--raw",
         };
+        return self.pullNatsMessages(&argv);
+    }
 
-        var result = command.exec(self.allocator, self.io, &argv) catch {
-            return error.ResultFetchFailed;
+    fn pullNatsMessages(self: *Service, argv: []const []const u8) Error!BatchResult {
+        var result = command.exec(self.allocator, self.io, argv) catch {
+            return BatchResult{ .items = &.{} };
         };
         defer result.deinit(self.allocator);
 
         if (!command.isSuccess(result)) {
-            if (looksLikeNoMessage(result.stderr)) return null;
+            if (looksLikeNoMessage(result.stderr)) return BatchResult{ .items = &.{} };
             command.logFailure("nats", result);
-            return error.ResultFetchFailed;
+            return BatchResult{ .items = &.{} };
         }
 
         const output = command.trimmedOutput(result.stdout);
-        if (output.len == 0) return null;
-        return self.allocator.dupe(u8, output) catch error.ResultFetchFailed;
+        if (output.len == 0) return BatchResult{ .items = &.{} };
+
+        var line_count: usize = 0;
+        {
+            var iter = std.mem.splitScalar(u8, output, '\n');
+            while (iter.next()) |line| {
+                if (std.mem.trim(u8, line, " \t\r\n").len > 0) line_count += 1;
+            }
+        }
+
+        if (line_count == 0) return BatchResult{ .items = &.{} };
+
+        var items = try self.allocator.alloc([]const u8, line_count);
+        errdefer {
+            for (items) |item| self.allocator.free(item);
+            self.allocator.free(items);
+        }
+
+        var idx: usize = 0;
+        var iter = std.mem.splitScalar(u8, output, '\n');
+        while (iter.next()) |raw_line| {
+            const line = std.mem.trim(u8, raw_line, " \t\r\n");
+            if (line.len == 0) continue;
+            items[idx] = try self.allocator.dupe(u8, line);
+            idx += 1;
+        }
+
+        return BatchResult{ .items = items[0..idx] };
     }
 
     fn publish(self: *Service, subject: []const u8, payload: []const u8, on_error: Error) Error!void {

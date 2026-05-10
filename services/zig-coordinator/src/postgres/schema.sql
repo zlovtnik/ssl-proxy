@@ -123,7 +123,8 @@ create or replace function coordinator.process_ingest_ledger(
   p_stream_names text[],
   p_oracle_stream_names text[],
   p_max_attempts integer,
-  p_backoff_secs integer
+  p_backoff_secs integer,
+  p_batch_size integer default 200
 )
 returns integer
 language plpgsql
@@ -131,6 +132,7 @@ as $$
 declare
   v_marked_count integer := 0;
   v_recovered_count integer := 0;
+  v_limit integer := greatest(coalesce(p_batch_size, 200), 1);
 begin
   update sync_scan_ingest ingest
      set status = 'batched',
@@ -162,7 +164,7 @@ begin
            attempt_count = attempt_count + 1,
            updated_at = now(),
            last_error = null
-     where dedupe_key = (
+     where dedupe_key in (
        select dedupe_key
          from sync_scan_ingest
         where status in ('pending', 'failed')
@@ -176,7 +178,7 @@ begin
                 or observed_at <= now() - make_interval(secs => (greatest(attempt_count, 1) * p_backoff_secs))
               )
         order by observed_at asc
-        limit 1
+        limit v_limit
         for update skip locked
      )
     returning *

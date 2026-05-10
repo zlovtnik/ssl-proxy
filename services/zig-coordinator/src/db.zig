@@ -120,6 +120,7 @@ pub const Client = struct {
         oracle_stream_names_csv: []const u8,
         max_attempts: u32,
         backoff_secs: u32,
+        ingest_batch_size: u32,
     ) Error!bool {
         const normalized_stream_names = try self.normalizedCsv(stream_names_csv);
         defer self.allocator.free(normalized_stream_names);
@@ -129,10 +130,11 @@ pub const Client = struct {
         defer self.allocator.free(stream_names_literal);
         const oracle_stream_names_literal = try self.sqlLiteral(normalized_oracle_stream_names);
         defer self.allocator.free(oracle_stream_names_literal);
+        const batch_size = @max(ingest_batch_size, 1);
         const query = try std.fmt.allocPrint(
             self.allocator,
-            "select coordinator.process_ingest_ledger(string_to_array({s}, ','), string_to_array({s}, ','), {d}::integer, {d}::integer)::text;",
-            .{ stream_names_literal, oracle_stream_names_literal, max_attempts, backoff_secs },
+            "select coordinator.process_ingest_ledger(string_to_array({s}, ','), string_to_array({s}, ','), {d}::integer, {d}::integer, {d}::integer)::text;",
+            .{ stream_names_literal, oracle_stream_names_literal, max_attempts, backoff_secs, batch_size },
         );
         defer self.allocator.free(query);
 

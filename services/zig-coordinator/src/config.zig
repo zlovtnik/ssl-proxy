@@ -37,6 +37,12 @@ pub const Config = struct {
     batch_dispatch_lease_seconds: u32,
     batch_max_attempts: u32,
     nats_publish_timeout_ms: u32,
+
+    // Batch tuning knobs for high-throughput consumption
+    scan_fetch_count: usize,
+    result_fetch_count: usize,
+    ingest_batch_size: u32,
+    dispatch_batch_size: u32,
 };
 
 pub fn load() Config {
@@ -77,6 +83,12 @@ pub fn load() Config {
         .batch_dispatch_lease_seconds = parsePositiveU32(envOrDefault("SYNC_BATCH_DISPATCH_LEASE_SECONDS", "300"), 300),
         .batch_max_attempts = parsePositiveU32(envOrDefault("SYNC_BATCH_MAX_ATTEMPTS", "5"), 5),
         .nats_publish_timeout_ms = parsePositiveU32(envOrDefault("NATS_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
+
+        // Batch tuning (env overridable)
+        .scan_fetch_count = parsePositiveUsize(envOrDefault("SYNC_SCAN_FETCH_COUNT", "200"), 200),
+        .result_fetch_count = parsePositiveUsize(envOrDefault("SYNC_RESULT_FETCH_COUNT", "200"), 200),
+        .ingest_batch_size = parsePositiveU32(envOrDefault("SYNC_INGEST_BATCH_SIZE", "200"), 200),
+        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "5"), 5),
     };
 }
 
@@ -96,5 +108,10 @@ fn parseBatchSize(value: []const u8) usize {
 
 fn parsePositiveU32(value: []const u8, default_value: u32) u32 {
     const parsed = std.fmt.parseInt(u32, value, 10) catch return default_value;
+    return if (parsed == 0) default_value else parsed;
+}
+
+fn parsePositiveUsize(value: []const u8, default_value: usize) usize {
+    const parsed = std.fmt.parseInt(usize, value, 10) catch return default_value;
     return if (parsed == 0) default_value else parsed;
 }
