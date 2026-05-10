@@ -461,8 +461,20 @@ fn parse_audit_window_update(
             None,
         )));
     }
-    let start = parse_time(update.start_time.as_deref(), "start_time")?;
-    let end = parse_time(update.end_time.as_deref(), "end_time")?;
+    let start = match parse_time(update.start_time.as_deref(), "start_time") {
+        Ok(time) => time,
+        Err(error) => {
+            warn!(%error, start_time = ?update.start_time, "invalid audit window start_time; keeping previous window state");
+            return Ok(None);
+        }
+    };
+    let end = match parse_time(update.end_time.as_deref(), "end_time") {
+        Ok(time) => time,
+        Err(error) => {
+            warn!(%error, end_time = ?update.end_time, "invalid audit window end_time; keeping previous window state");
+            return Ok(None);
+        }
+    };
     Ok(Some(AuditWindow::from_parts(
         update.timezone,
         update.days,
@@ -470,7 +482,9 @@ fn parse_audit_window_update(
         end,
     )))
 }
-//todo: doc it!
+/// Parses a time string in %H:%M:%S or %H:%M format, also accepting single-digit hour
+/// variants (%k:%M:%S, %k:%M) so that values like "9:00" don't silently fail.
+/// Returns `Ok(None)` when the value is absent or empty, `Err` on parse failure.
 fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTime>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -480,8 +494,10 @@ fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTi
     }
     NaiveTime::parse_from_str(value, "%H:%M:%S")
         .or_else(|_| NaiveTime::parse_from_str(value, "%H:%M"))
+        .or_else(|_| NaiveTime::parse_from_str(value, "%k:%M:%S"))
+        .or_else(|_| NaiveTime::parse_from_str(value, "%k:%M"))
         .map(Some)
-        .map_err(|error| format!("invalid {field}: {error}"))
+        .map_err(|_| format!("invalid {field} value={value:?}: expected HH:MM or HH:MM:SS"))
 }
 
 /// Parses nats://[user:pass@]host:port into address and credentials; uses raw TCP

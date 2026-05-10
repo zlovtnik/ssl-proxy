@@ -46,7 +46,7 @@ use std::{
     future,
     num::NonZeroUsize,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
     },
     time::{Duration, Instant},
@@ -192,6 +192,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     interface = %context.interface
                 );
 
+                let observed_at = packet.observed_at;
                 let result = process_packet(
                     packet,
                     &context,
@@ -208,7 +209,15 @@ async fn run_sensor() -> Result<(), SensorError> {
                 .await;
 
                 match result {
-                    Ok(PipelineOutcome::DecodedFrame) => handles.stats.lock().unwrap().decoded_frames += 1,
+                    Ok(PipelineOutcome::DecodedFrame) => {
+                        let mut stats = handles.stats.lock().unwrap();
+                        stats.decoded_frames += 1;
+                        let lag_ms = (Utc::now() - observed_at)
+                            .num_milliseconds()
+                            .max(0) as u64;
+                        stats.lag_total_ms = stats.lag_total_ms.saturating_add(lag_ms);
+                        stats.lag_count += 1;
+                    }
                     Ok(PipelineOutcome::UnsupportedFrame) => handles.stats.lock().unwrap().unsupported_frames += 1,
                     Err(error) => {
                         handles.stats.lock().unwrap().pipeline_errors += 1;
@@ -285,7 +294,7 @@ struct PipelineState {
     handshake_monitor: HandshakeMonitor,
     traffic_bucket: TrafficBucket,
     mac_device_cache: LruCache<String, Option<(String, Option<String>)>>,
-    mac_lookup_error_cache: HashMap<String, Instant>,
+    mac_lookup_error_cache: LruCache<String, Instant>,
     client_inventory: ClientInventory,
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
@@ -320,7 +329,11 @@ impl PipelineState {
                     NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
                 }),
             ),
-            mac_lookup_error_cache: HashMap::new(),
+            mac_lookup_error_cache: LruCache::new(
+                NonZeroUsize::new(MAC_DEVICE_CACHE_SIZE).unwrap_or_else(|| {
+                    NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
+                }),
+            ),
             client_inventory: ClientInventory::default(),
             signal_tracker: SignalTracker::default(),
             rogue_ap_tracker: RogueApTracker::default(),
@@ -340,7 +353,7 @@ impl PipelineState {
 async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
-    let log_filter = init_tracing(Arc::clone(&audit_window), config.audit_layer_stream);
+    let (log_filter, _audit_window_active) = init_tracing(Arc::clone(&audit_window), config.audit_layer_stream);
     info!(
         rust_log = %log_filter,
         default_rust_log = DEFAULT_RUST_LOG,
@@ -619,6 +632,30 @@ async fn process_packet(
                 });
         }
     }
+
+    // Backpressure guard for probe accumulator: if the map exceeds 8192 entries,
+    // drain and flush immediately rather than waiting for the next inventory_flush tick.
+    const MAX_PROBE_ACCUMULATOR_SIZE: usize = 8192;
+    if pipeline.probe_accumulator.len() > MAX_PROBE_ACCUMULATOR_SIZE {
+        let probes_to_flush: Vec<_> = pipeline.probe_accumulator.drain().collect();
+        let batch = probes_to_flush
+            .iter()
+            .map(|((ssid, client_mac), obs)| ProbeFlushObservation {
+                ssid: ssid.clone(),
+                client_mac: client_mac.clone(),
+                known_bssid: obs.known_bssid.clone(),
+                first_seen: obs.first_seen,
+                last_seen: obs.last_seen,
+                probe_count: obs.probe_count,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = backlog.flush_probe_batch(&batch).await {
+            warn!(%error, "probe batch early flush failed; reinserting for retry");
+            for (key, obs) in probes_to_flush {
+                pipeline.probe_accumulator.insert(key, obs);
+            }
+        }
+    }
     if pipeline
         .signal_tracker
         .observe(&entry, config.signal_anomaly_dbm_delta)
@@ -661,7 +698,23 @@ async fn process_packet(
     let mut pmf_tags = Vec::new();
     pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
     entry.tags.extend(pmf_tags);
-    if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
+    // Backpressure guard: if the memory backlog is >80% full, skip the MAC device lookup
+    // (which adds async I/O per packet) to prevent the backlog from growing further.
+    let backlog_pct = {
+        let ps = publish_state.lock().unwrap();
+        let capacity = ps.memory_backlog_capacity().get();
+        if capacity > 0 {
+            ps.memory_backlog_len() * 100 / capacity
+        } else {
+            0
+        }
+    };
+    let skip_mac_lookup = backlog_pct > 80;
+    if skip_mac_lookup {
+        if entry.identity_source == "unknown" || entry.identity_source == "mac_observed" {
+            entry.identity_source = "mac_lookup_skipped_backpressure".to_string();
+        }
+    } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
         let cache_key = mac.to_ascii_lowercase();
         let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
             cached.clone()
@@ -679,7 +732,7 @@ async fn process_packet(
                         stats.lock().unwrap().mac_lookup_failures += 1;
                         pipeline
                             .mac_lookup_error_cache
-                            .insert(cache_key.clone(), Instant::now());
+                            .put(cache_key.clone(), Instant::now());
                         warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
                         None
                     }
@@ -699,7 +752,7 @@ async fn process_packet(
                 entry.identity_source = "device_registry".to_string();
             }
         }
-    }
+    } // end of skip_mac_lookup else block
     let bandwidth_events = match pipeline.traffic_bucket.observe(&entry, external_bssid) {
         Ok(events) => events,
         Err(error) => {
@@ -856,7 +909,26 @@ fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
 fn init_tracing(
     audit_window: SharedAuditWindow,
     audit_layer_stream: config::AuditLayerStream,
-) -> String {
+) -> (String, Arc<AtomicBool>) {
+    let audit_window_active = Arc::new(AtomicBool::new(true));
+
+    // Spawn a background watcher that refreshes the audit window active snapshot every 5 seconds
+    // so the AuditLayer does not need to acquire a read lock on every on_event() call.
+    let watcher_active = Arc::clone(&audit_window_active);
+    let watcher_window = Arc::clone(&audit_window);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let active = watcher_window
+                .read()
+                .map(|w| w.is_active_at(chrono::Utc::now()))
+                .unwrap_or(true);
+            watcher_active.store(active, Ordering::Release);
+        }
+    });
+
     let (filter, filter_source) = match std::env::var("RUST_LOG") {
         Ok(value) if !value.trim().is_empty() => match EnvFilter::try_new(value.trim()) {
             Ok(filter) => (filter, value.trim().to_string()),
@@ -879,10 +951,10 @@ fn init_tracing(
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer().json())
-        .with(AuditLayer::new(audit_window, audit_layer_stream))
+        .with(AuditLayer::new(Arc::clone(&audit_window_active), audit_layer_stream))
         .init();
 
-    filter_source
+    (filter_source, audit_window_active)
 }
 
 /// Creates an interval for periodic heartbeat logging, or None if disabled.

@@ -213,6 +213,10 @@ impl PublishState {
     pub fn memory_backlog_len(&self) -> usize {
         self.memory_backlog.len()
     }
+
+    pub fn memory_backlog_capacity(&self) -> NonZeroUsize {
+        self.memory_backlog_capacity
+    }
 }
 
 struct PreparedPublish {

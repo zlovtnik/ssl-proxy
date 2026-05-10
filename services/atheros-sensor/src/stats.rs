@@ -18,11 +18,19 @@ pub(crate) struct CaptureStats {
     pub(crate) mac_lookup_failures: u64,
     /// Number of successful channel hops since process startup.
     pub(crate) channel_hop_count: u64,
+    /// Cumulative milliseconds of (now - observed_at) for decoded frames, used to compute
+    /// average publish lag. Reset to 0 after each heartbeat log.
+    pub(crate) lag_total_ms: u64,
+    /// Number of decoded frames contributing to lag_total_ms. Reset to 0 after each heartbeat log.
+    pub(crate) lag_count: u64,
 }
 
 impl CaptureStats {
     /// Logs all counters at info level; called on every heartbeat tick.
-    pub(crate) fn log(&self, device: &str, config: &AppConfig) {
+    /// Computes publish_lag_ms as the average (Utc::now() - observed_at) across decoded frames
+    /// since the last heartbeat.
+    pub(crate) fn log(&mut self, device: &str, config: &AppConfig) {
+        let publish_lag_ms = self.lag_total_ms / self.lag_count.max(1);
         info!(
             interface = %device,
             channel = config.channel,
@@ -35,8 +43,11 @@ impl CaptureStats {
             pipeline_errors = self.pipeline_errors,
             mac_lookup_failures = self.mac_lookup_failures,
             channel_hop_count = self.channel_hop_count,
+            publish_lag_ms = publish_lag_ms,
             "atheros sensor capture heartbeat"
         );
+        self.lag_total_ms = 0;
+        self.lag_count = 0;
     }
 }
 
