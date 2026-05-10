@@ -11,8 +11,10 @@ use std::{
     env, fs,
     net::{TcpStream, ToSocketAddrs},
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::sync::Semaphore;
 
 const SERVICE_NAME: &str = "oracle-worker";
 const HEARTBEAT_INTERVAL_SECS: u64 = 300;
@@ -20,6 +22,8 @@ const DEFAULT_AUDIT_STREAM_NAME: &str = "AUDIT_STREAM";
 const DEFAULT_SYNC_LOAD_SUBJECT: &str = "sync.oracle.load";
 const DEFAULT_SYNC_RESULT_SUBJECT: &str = "sync.oracle.result";
 const DEFAULT_SYNC_LOAD_CONSUMER: &str = "oracle-worker-load";
+const DEFAULT_ORACLE_WORKER_PARALLELISM: usize = 16;
+const BATCH_FETCH_SIZE: usize = 50;
 
 struct HealthcheckConfig {
     sync_nats_url: String,
@@ -52,6 +56,7 @@ struct RunConfig {
     load_subject: String,
     result_subject: String,
     load_consumer: String,
+    oracle_worker_parallelism: usize,
 }
 
 impl RunConfig {
@@ -62,6 +67,7 @@ impl RunConfig {
             load_subject: env_or_default("SYNC_LOAD_SUBJECT", DEFAULT_SYNC_LOAD_SUBJECT),
             result_subject: env_or_default("SYNC_RESULT_SUBJECT", DEFAULT_SYNC_RESULT_SUBJECT),
             load_consumer: env_or_default("SYNC_LOAD_CONSUMER", DEFAULT_SYNC_LOAD_CONSUMER),
+            oracle_worker_parallelism: env_or_default_usize("ORACLE_WORKER_PARALLELISM", DEFAULT_ORACLE_WORKER_PARALLELISM),
         })
     }
 }
@@ -115,6 +121,11 @@ async fn run_loop(config: RunConfig, started: Instant) -> Result<(), String> {
         .await
         .map_err(|error| format!("open pull consumer message stream: {error}"))?;
 
+    // Semaphore to bound concurrency (parallelism)
+    let semaphore = Arc::new(Semaphore::new(config.oracle_worker_parallelism));
+    let jetstream = Arc::new(jetstream);
+    let config = Arc::new(config);
+
     let mut last_heartbeat = Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -144,7 +155,18 @@ async fn run_loop(config: RunConfig, started: Instant) -> Result<(), String> {
             next_message = messages.next() => {
                 match next_message {
                     Some(Ok(message)) => {
-                        handle_load_message(&jetstream, &config, message).await?;
+                        // Acquire semaphore permit before spawning task
+                        let permit = semaphore.clone().acquire_owned().await
+                            .map_err(|error| format!("acquire semaphore permit: {error}"))?;
+                        let jetstream = jetstream.clone();
+                        let config = config.clone();
+
+                        tokio::spawn(async move {
+                            let _permit = permit; // Hold permit for task duration
+                            if let Err(e) = handle_load_message(&jetstream, &config, message).await {
+                                eprintln!("service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"", escape_for_log(&e));
+                            }
+                        });
                     }
                     Some(Err(error)) => {
                         return Err(format!("consume sync.oracle.load message: {error}"));
@@ -217,8 +239,8 @@ fn validate_consumer_filter(
 }
 
 async fn handle_load_message(
-    jetstream: &jetstream::Context,
-    config: &RunConfig,
+    jetstream: &Arc<jetstream::Context>,
+    config: &Arc<RunConfig>,
     message: jetstream::Message,
 ) -> Result<(), String> {
     let load = match serde_json::from_slice::<worker::OracleLoad>(&message.payload) {
@@ -446,6 +468,18 @@ fn env_or_default(name: &str, default: &str) -> String {
     match env::var(name) {
         Ok(value) if !value.trim().is_empty() => value,
         _ => default.to_string(),
+    }
+}
+
+fn env_or_default_usize(name: &str, default: usize) -> usize {
+    match env::var(name) {
+        Ok(value) => {
+            value
+                .trim()
+                .parse::<usize>()
+                .unwrap_or(default)
+        }
+        _ => default,
     }
 }
 

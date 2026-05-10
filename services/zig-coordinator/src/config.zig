@@ -85,10 +85,11 @@ pub fn load() Config {
         .nats_publish_timeout_ms = parsePositiveU32(envOrDefault("NATS_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
 
         // Batch tuning (env overridable)
+        // Increased from 200→200 (scan), 200→200 (result), 200→200 (ingest), 5→200 (dispatch)
         .scan_fetch_count = parsePositiveUsize(envOrDefault("SYNC_SCAN_FETCH_COUNT", "200"), 200),
         .result_fetch_count = parsePositiveUsize(envOrDefault("SYNC_RESULT_FETCH_COUNT", "200"), 200),
         .ingest_batch_size = parsePositiveU32(envOrDefault("SYNC_INGEST_BATCH_SIZE", "200"), 200),
-        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "5"), 5),
+        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "200"), 200),
     };
 }
 
