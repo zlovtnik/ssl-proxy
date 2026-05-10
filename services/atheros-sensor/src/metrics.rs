@@ -64,8 +64,8 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats) {
 }
 
 /// Serves Prometheus text format (version 0.0.4) with counters (packets_seen, decoded_frames,
-/// unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures)
-/// and returns 404 for all other paths.
+/// unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures,
+/// channel_hop_count) and returns 404 for all other paths.
 async fn serve_metrics(
     req: Request<hyper::body::Incoming>,
     stats: SharedStats,
@@ -83,7 +83,8 @@ async fn serve_metrics(
          # TYPE atheros_audit_window_drops counter\natheros_audit_window_drops {}\n\
          # TYPE atheros_capture_errors counter\natheros_capture_errors {}\n\
          # TYPE atheros_pipeline_errors counter\natheros_pipeline_errors {}\n\
-         # TYPE atheros_mac_lookup_failures counter\natheros_mac_lookup_failures {}\n",
+         # TYPE atheros_mac_lookup_failures counter\natheros_mac_lookup_failures {}\n\
+         # TYPE atheros_channel_hop_count counter\natheros_channel_hop_count {}\n",
         stats.packets_seen,
         stats.decoded_frames,
         stats.unsupported_frames,
@@ -91,6 +92,7 @@ async fn serve_metrics(
         stats.capture_errors,
         stats.pipeline_errors,
         stats.mac_lookup_failures,
+        stats.channel_hop_count,
     );
     Ok(Response::builder()
         .header("content-type", "text/plain; version=0.0.4")

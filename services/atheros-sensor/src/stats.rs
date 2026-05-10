@@ -16,6 +16,8 @@ pub(crate) struct CaptureStats {
     /// Post-decode failures in the processing pipeline.
     pub(crate) pipeline_errors: u64,
     pub(crate) mac_lookup_failures: u64,
+    /// Number of successful channel hops since process startup.
+    pub(crate) channel_hop_count: u64,
 }
 
 impl CaptureStats {
@@ -32,6 +34,7 @@ impl CaptureStats {
             capture_errors = self.capture_errors,
             pipeline_errors = self.pipeline_errors,
             mac_lookup_failures = self.mac_lookup_failures,
+            channel_hop_count = self.channel_hop_count,
             "atheros sensor capture heartbeat"
         );
     }

@@ -113,6 +113,7 @@ pub fn spawn_sensor_config_subscriber(
     location_id: String,
     context: Arc<RwLock<AuditContext>>,
     capture_control: CaptureControl,
+    current_filter: Arc<RwLock<String>>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -121,6 +122,7 @@ pub fn spawn_sensor_config_subscriber(
                 &location_id,
                 Arc::clone(&context),
                 capture_control.clone(),
+                Arc::clone(&current_filter),
             )
             .await
             {
@@ -287,6 +289,7 @@ async fn run_sensor_config_subscriber_once(
     current_location_id: &str,
     context: Arc<RwLock<AuditContext>>,
     capture_control: CaptureControl,
+    current_filter: Arc<RwLock<String>>,
 ) -> Result<(), String> {
     run_message_loop(config, SENSOR_CONFIG_SUBJECT, |payload| {
         let update: SensorConfigUpdate =
@@ -324,6 +327,10 @@ async fn run_sensor_config_subscriber_once(
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            // Update the shared filter state so the hopper knows it changed.
+            if let Ok(mut filter) = current_filter.write() {
+                *filter = bpf.to_string();
+            }
             capture_control.apply_filter(bpf.to_string());
             info!(bpf = %bpf, "sensor BPF reloaded from NATS");
         }

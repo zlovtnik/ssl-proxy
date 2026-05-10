@@ -439,6 +439,14 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         pcap_timeout_ms = config.pcap_timeout_ms,
         "atheros sensor pcap capture opened"
     );
+
+    let stats = metrics::shared_stats();
+    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
+
+    // Shared filter state: tracks the last-applied BPF so the hopper can skip
+    // re-applying when the filter hasn't changed.
+    let current_filter: Arc<RwLock<String>> = Arc::new(RwLock::new(config.bpf.clone()));
+
     if config.channel_hop_enabled {
         spawn_channel_hopper(
             device.clone(),
@@ -446,6 +454,8 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             config.channel_hop_interval_ms,
             Arc::clone(&context),
             packet_stream.control.clone(),
+            Arc::clone(&current_filter),
+            Arc::clone(&stats),
         );
     }
     config_subscriber::spawn_sensor_config_subscriber(
@@ -453,6 +463,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         config.location_id.clone(),
         Arc::clone(&context),
         packet_stream.control.clone(),
+        current_filter,
     );
     // Spawn periodic memory backlog flush timer
     let flush_state = Arc::clone(&publish_state);
@@ -466,9 +477,6 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             periodic_memory_backlog_flush(&flush_state, &*flush_backlog).await;
         }
     });
-
-    let stats = metrics::shared_stats();
-    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
 
     Ok(SensorHandles {
         config: config.clone(),
@@ -761,12 +769,17 @@ fn context_snapshot(context: &SharedContext) -> AuditContext {
 }
 
 /// Spawns a background task that cycles through channels 1, 6, and 11 at the configured interval.
+/// Only re-applies the BPF filter when the filter string has actually changed (detected via the
+/// shared `current_filter`). The default BPF `type mgt or type data` is channel-agnostic, so
+/// there is no need to re-compile it on every hop.
 fn spawn_channel_hopper(
     device: String,
     bpf: String,
     interval_ms: u64,
     context: SharedContext,
     capture_control: CaptureControl,
+    current_filter: Arc<RwLock<String>>,
+    stats: metrics::SharedStats,
 ) {
     tokio::spawn(async move {
         let channels = [1_u8, 6, 11];
@@ -781,7 +794,18 @@ fn spawn_channel_hopper(
                     if let Ok(mut context) = context.write() {
                         context.channel = channel;
                     }
-                    capture_control.apply_filter(bpf.clone());
+                    stats.lock().unwrap().channel_hop_count += 1;
+
+                    // Only re-apply BPF if the filter string has changed since last apply.
+                    let needs_apply = current_filter
+                        .read()
+                        .map(|f| *f != bpf)
+                        .unwrap_or(true);
+                    if needs_apply {
+                        if let Ok(filter) = current_filter.read() {
+                            capture_control.apply_filter(filter.clone());
+                        }
+                    }
                     info!(interface = %device, channel, "wireless capture channel hopped");
                 }
                 Err(error) => {
