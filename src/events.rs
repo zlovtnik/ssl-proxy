@@ -202,7 +202,9 @@ pub(crate) fn emit_serializable<T>(
     };
 
     if state.events_tx.send(raw.clone()).is_err() {
-        error!(event_name = event, %host, "events broadcast channel full — event lost from dashboard");
+        state.queue_dashboard_event(&raw, event, host);
+    } else {
+        state.flush_dashboard_event_queue();
     }
 
     if !crate::sync::should_publish_scan_request(event) {
@@ -461,5 +463,68 @@ mod tests {
                 .expect("inline payload should resolve"),
             raw
         );
+    }
+
+    #[tokio::test]
+    async fn emit_serializable_queues_dashboard_event_when_no_subscriber() {
+        let state = create_test_state().await;
+        assert_eq!(state.dashboard_event_queue_len(), 0);
+
+        emit_serializable(
+            &state,
+            "tunnel_open",
+            "example.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            None,
+            false,
+            None,
+            serde_json::json!({ "kind": "connect" }),
+        );
+
+        assert_eq!(state.dashboard_event_queue_len(), 1);
+
+        let mut rx = state.events_tx.subscribe();
+        state.flush_dashboard_event_queue();
+
+        assert_eq!(state.dashboard_event_queue_len(), 0);
+        let raw = rx.try_recv().expect("queued dashboard event should be delivered");
+        assert!(raw.contains("\"type\":\"tunnel_open\"") || raw.contains("\"type\": \"tunnel_open\""));
+    }
+
+    #[tokio::test]
+    async fn flush_dashboard_event_queue_drops_event_after_retry_limit() {
+        let state = create_test_state().await;
+
+        emit_serializable(
+            &state,
+            "tunnel_open",
+            "example.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            None,
+            false,
+            None,
+            serde_json::json!({ "kind": "connect" }),
+        );
+
+        assert_eq!(state.dashboard_event_queue_len(), 1);
+        for _ in 0..crate::state::DASHBOARD_EVENT_MAX_RETRY_ATTEMPTS {
+            state.flush_dashboard_event_queue();
+        }
+
+        assert_eq!(state.dashboard_event_queue_len(), 0);
     }
 }
