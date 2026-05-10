@@ -20,12 +20,12 @@
     searchPlaceholder: "Search MAC, device, owner, hostname, OS",
     emptyRecord: { display_name: "", username: "", hostname: "", os_hint: "", mac_hint: "", notes: "" },
     columns: [
-      { key: "display_name", label: "Device", sortable: true, width: "w-36" },
-      { key: "username", label: "Owner", sortable: true, width: "w-32" },
-      { key: "mac_hint", label: "MAC", sortable: true, width: "w-36" },
-      { key: "hostname", label: "Hostname", sortable: true, width: "w-32" },
-      { key: "os_hint", label: "OS", sortable: true, width: "w-28" },
-      { key: "last_seen", label: "Last Occurred", shortLabel: "Last Seen", sortable: true, width: "w-36", format: formatTime, filterType: "date" }
+      { key: "display_name", label: "Device", sortable: true, size: "md" },
+      { key: "username", label: "Owner", sortable: true, size: "md" },
+      { key: "mac_hint", label: "MAC", sortable: true, size: "md" },
+      { key: "hostname", label: "Hostname", sortable: true, size: "md" },
+      { key: "os_hint", label: "OS", sortable: true, size: "sm" },
+      { key: "last_seen", label: "Last Occurred", shortLabel: "Last Seen", sortable: true, size: "md", format: formatTime, filterType: "date" }
     ],
     fields: [
       { key: "display_name", label: "Device", placeholder: "Lobby printer" },

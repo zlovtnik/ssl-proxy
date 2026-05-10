@@ -1,19 +1,33 @@
 <script>
-  import { onMount } from "svelte"
+  import { onDestroy, onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
   import GridToolbar from "../components/GridToolbar.svelte"
   import MacChip from "../components/MacChip.svelte"
+  import { columnsToFilterFields } from "../lib/grid"
+  import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
 
   export let initial = {}
 
+  let rows = initial.rows || []
+  let totalCount = initial.totalCount || 0
+  let currentPage = initial.currentPage || 1
+  let perPage = initial.perPage || 50
+  let sortKey = initial.sortKey || "last_seen"
+  let sortDirection = initial.sortDirection || "desc"
+  let query = initial.query || ""
+  let filters = initial.filters || []
+  let loading = false
+  let loadError = ""
+
+  const endpoints = initial.endpoints || {}
   const columns = [
-    { key: "ssid", label: "SSID", sortable: false, minWidth: "min-w-32" },
-    { 
-      key: "client_mac", 
+    { key: "ssid", label: "SSID", size: "md", sortable: true },
+    {
+      key: "client_mac",
       label: "Client MAC",
       shortLabel: "Client",
-      sortable: false, 
-      minWidth: "min-w-32",
+      size: "md",
+      sortable: true,
       component: MacChip,
       componentProps: (value) => ({
         mac: value,
@@ -21,60 +35,156 @@
         masked: false
       })
     },
-    { key: "known_bssid", label: "Known BSSID", shortLabel: "BSSID", sortable: false, minWidth: "min-w-32" },
-    { key: "probe_count", label: "Probes", sortable: false, minWidth: "min-w-20" },
-    { key: "first_seen", label: "First Seen", sortable: false, minWidth: "min-w-32" },
-    { key: "last_seen", label: "Last Seen", sortable: false, minWidth: "min-w-32" }
+    { key: "known_bssid", label: "Known BSSID", shortLabel: "BSSID", size: "md", sortable: true },
+    { key: "probe_count", label: "Probes", size: "sm", sortable: true },
+    { key: "first_seen", label: "First Seen", size: "md", sortable: true },
+    { key: "last_seen", label: "Last Seen", size: "md", sortable: true }
   ]
+  const filterFields = columnsToFilterFields(columns)
 
-  let endpoint = initial.endpoint || "/network_clients.json"
-  let rows = []
-  let filteredRows = []
-  let loading = true
-  let query = ""
+  $: exportUrl = buildExportUrl()
 
-  onMount(fetchData)
+  onMount(() => {
+    const next = paramsFromLocation({ q: query, filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    query = next.q
+    filters = next.filters || []
+    sortKey = next.sort || "last_seen"
+    sortDirection = next.direction || "desc"
+    currentPage = next.page
+    perPage = next.per_page
 
-  async function fetchData() {
-    loading = true
-    const r = await fetch(endpoint, { headers: { accept: "application/json" } }).catch(() => null)
-    loading = false
-    if (!r?.ok) return
+    window.addEventListener("popstate", handlePopState)
+    fetchPage(false)
 
-    const payload = await r.json().catch(() => ({}))
-    rows = payload.rows || []
-    applyFilter()
+    return () => {
+      window.removeEventListener("popstate", handlePopState)
+    }
+  })
+
+  onDestroy(() => {
+    window.removeEventListener("popstate", handlePopState)
+  })
+
+  function state() {
+    return {
+      q: query,
+      filters: serializeFilters(filters) || undefined,
+      sort: sortKey,
+      direction: sortDirection,
+      page: currentPage,
+      per_page: perPage
+    }
   }
 
-  function applyFilter() {
-    if (!query.trim()) {
-      filteredRows = rows
-    } else {
-      const term = query.toLowerCase()
-      filteredRows = rows.filter(row => row.ssid?.toLowerCase().includes(term))
-    }
+  function handleSort(key) {
+    sortDirection = sortKey === key && sortDirection === "asc" ? "desc" : "asc"
+    sortKey = key
+    currentPage = 1
+    fetchPage(true)
+  }
+
+  function handlePageChange(page) {
+    currentPage = page
+    fetchPage(true)
   }
 
   function handleSearch(params) {
     query = params.q || ""
-    applyFilter()
+    currentPage = 1
+    fetchPage(true)
+  }
+
+  function handleFiltersChange(nextFilters) {
+    filters = nextFilters
+    currentPage = 1
+    fetchPage(true)
+  }
+
+  function handleClearAll() {
+    query = ""
+    filters = []
+    currentPage = 1
+    fetchPage(true)
+  }
+
+  function handlePopState() {
+    const next = paramsFromLocation({ q: query, filters, sort: sortKey, direction: sortDirection, page: currentPage, per_page: perPage })
+    query = next.q
+    filters = next.filters || []
+    sortKey = next.sort || "last_seen"
+    sortDirection = next.direction || "desc"
+    currentPage = next.page
+    perPage = next.per_page
+    fetchPage(false)
+  }
+
+  async function fetchPage(push) {
+    loading = true
+    if (push) updateHistory(endpoints.index, state())
+
+    const url = `${endpoints.index}.json?${toQueryString(state())}`
+    const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null)
+    loading = false
+    if (response?.status === 304) return
+    if (!response?.ok) {
+      loadError = await errorMessage(response)
+      return
+    }
+
+    const payload = await response.json()
+    loadError = ""
+    rows = payload.rows || []
+    filters = payload.filters || filters
+    totalCount = payload.totalCount || 0
+    currentPage = payload.currentPage || currentPage
+    perPage = payload.perPage || perPage
+    sortKey = payload.sortKey || sortKey
+    sortDirection = payload.sortDirection || sortDirection
+  }
+
+  function buildExportUrl() {
+    if (!endpoints.export) return null
+    return `${endpoints.export}?${toQueryString(state())}`
+  }
+
+  async function errorMessage(response) {
+    try {
+      const json = await response.json()
+      return json.error || `HTTP ${response.status}`
+    } catch {
+      return `HTTP ${response.status}`
+    }
   }
 </script>
 
 <section class="section-spaced">
   <h2>Network Clients</h2>
-  <GridToolbar query={query} fields={[]} searchable={true} placeholder="Search SSID" onSearch={handleSearch} onFiltersChange={() => {}} />
+  <GridToolbar
+    query={query}
+    fields={filterFields}
+    searchable={true}
+    placeholder="Search SSID, MAC, or BSSID"
+    onSearch={handleSearch}
+    onFiltersChange={handleFiltersChange}
+    onClearAll={handleClearAll}
+    {exportUrl}
+  />
   <DataGrid
     {columns}
-    rows={filteredRows}
-    totalCount={filteredRows.length}
-    currentPage={1}
-    perPage={Math.max(1, filteredRows.length)}
-    sortKey=""
-    sortDirection="desc"
+    {rows}
+    {totalCount}
+    {currentPage}
+    {perPage}
+    {sortKey}
+    {sortDirection}
     {loading}
-    onSort={() => {}}
-    onPageChange={() => {}}
+    onSort={handleSort}
+    onPageChange={handlePageChange}
     rowKey={(row) => `${row.ssid}-${row.client_mac}`}
   />
+  {#if loadError}
+    <div class="notification is-danger">
+      <p><strong>Error loading network clients:</strong> {loadError}</p>
+    </div>
+  {/if}
 </section>

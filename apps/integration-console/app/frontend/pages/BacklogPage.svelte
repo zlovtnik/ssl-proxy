@@ -33,10 +33,10 @@
 
   $: columns = [
     { key: "dedupe_key", label: "Dedupe Key", shortLabel: "Dedupe", sortable: true, size: "xl" },
-    { key: "stream_name", label: "Subject", sortable: true, width: "w-36" },
-    { key: "status", label: "Status", sortable: true, width: "w-28" },
-    { key: "attempt_count", label: "Attempts", sortable: true, width: "w-24", filterType: "number" },
-    { key: "updated_at", label: "Updated", sortable: true, width: "w-36", format: formatTime, filterType: "date" },
+    { key: "stream_name", label: "Subject", sortable: true, size: "md" },
+    { key: "status", label: "Status", sortable: true, size: "sm" },
+    { key: "attempt_count", label: "Attempts", sortable: true, size: "sm", filterType: "number" },
+    { key: "updated_at", label: "Updated", sortable: true, size: "md", format: formatTime, filterType: "date" },
     {
       key: "__actions",
       label: "Action",

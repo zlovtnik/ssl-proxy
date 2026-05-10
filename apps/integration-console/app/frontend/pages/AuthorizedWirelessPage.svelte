@@ -18,12 +18,12 @@
     defaultDirection: "asc",
     emptyRecord: { enabled: true, ssid: "", bssid: "", location_id: "", label: "", notes: "" },
     columns: [
-      { key: "enabled", label: "Enabled", sortable: true, width: "w-20", format: (value) => displayBoolean(value, "yes") || "no", filterType: "boolean" },
-      { key: "location_id", label: "Location", sortable: true, width: "w-28", format: (value) => value || "any" },
-      { key: "ssid", label: "SSID", sortable: true, width: "w-32", format: (value) => value || "any" },
-      { key: "bssid", label: "BSSID", sortable: true, width: "w-36", format: (value) => value || "any" },
-      { key: "label", label: "Label", sortable: true, width: "w-36" },
-      { key: "updated_at", label: "Updated", sortable: true, width: "w-36", format: formatTime, filterType: "date" }
+      { key: "enabled", label: "Enabled", sortable: true, size: "sm", format: (value) => displayBoolean(value, "yes") || "no", filterType: "boolean" },
+      { key: "location_id", label: "Location", sortable: true, size: "sm", format: (value) => value || "any" },
+      { key: "ssid", label: "SSID", sortable: true, size: "md", format: (value) => value || "any" },
+      { key: "bssid", label: "BSSID", sortable: true, size: "md", format: (value) => value || "any" },
+      { key: "label", label: "Label", sortable: true, size: "md" },
+      { key: "updated_at", label: "Updated", sortable: true, size: "md", format: formatTime, filterType: "date" }
     ],
     fields: [
       { key: "ssid", label: "SSID", placeholder: "CorpWiFi" },

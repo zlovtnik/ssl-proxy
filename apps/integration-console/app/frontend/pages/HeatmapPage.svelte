@@ -20,11 +20,11 @@
   const endpoints = initial.endpoints || {}
 
   const columns = [
-    { key: "location_id", label: "Location", sortable: true, width: "w-48" },
-    { key: "event_count", label: "Events", sortable: true, width: "w-32", filterType: "number" },
-    { key: "avg_signal_dbm", label: "Average Signal dBm", shortLabel: "Avg Signal", description: "Average Signal dBm", sortable: true, width: "w-40", format: (value) => formatSignal(value), filterType: "number" },
-    { key: "unique_devices", label: "Devices", sortable: true, width: "w-32", hiddenBelow: "md", filterType: "number" },
-    { key: "last_seen_at", label: "Last Seen", sortable: true, width: "w-40", hiddenBelow: "lg", format: (value) => value || "", filterType: "date" }
+    { key: "location_id", label: "Location", sortable: true, size: "lg" },
+    { key: "event_count", label: "Events", sortable: true, size: "md", filterType: "number" },
+    { key: "avg_signal_dbm", label: "Average Signal dBm", shortLabel: "Avg Signal", description: "Average Signal dBm", sortable: true, size: "lg", format: (value) => formatSignal(value), filterType: "number" },
+    { key: "unique_devices", label: "Devices", sortable: true, size: "md", hiddenBelow: "md", filterType: "number" },
+    { key: "last_seen_at", label: "Last Seen", sortable: true, size: "lg", hiddenBelow: "lg", format: (value) => value || "", filterType: "date" }
   ]
   const filterFields = columnsToFilterFields(columns)
 

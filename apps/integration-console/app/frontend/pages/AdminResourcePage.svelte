@@ -35,7 +35,7 @@
     {
       key: "__actions",
       label: "Actions",
-      width: "w-40",
+      size: "lg",
       component: ResourceActions,
       componentProps: (_value, row) => ({
         row,
