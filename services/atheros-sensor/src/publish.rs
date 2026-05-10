@@ -320,7 +320,9 @@ pub async fn publish_bandwidth_event(
     publisher: &dyn PublishClient,
     event: &WirelessBandwidthEvent,
 ) -> Result<(), PublishError> {
-    let payload = serde_json::to_string(event)?;
+    let mut event = event.clone();
+    event.published_at = Some(ssl_proxy::time::now_rfc3339());
+    let payload = serde_json::to_string(&event)?;
     let key = sha256_hex(&payload);
     queue_publish_with_backpressure(
         publisher,
@@ -1209,6 +1211,7 @@ mod tests {
             inter_arrival_p50_ms: Some(500),
             wall_clock_delta_ms: None,
             window_is_partial: false,
+            published_at: None,
         };
 
         publish_bandwidth_event(&publisher, &event).await.unwrap();

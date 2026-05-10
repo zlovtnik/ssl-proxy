@@ -19,6 +19,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
+use crate::publish::{CircuitBreakerState, SharedPublishState};
 use crate::stats::CaptureStats;
 
 pub type SharedStats = Arc<Mutex<CaptureStats>>;
@@ -29,7 +30,7 @@ pub fn shared_stats() -> SharedStats {
 
 /// Spawns the metrics HTTP server on 127.0.0.1 (not 0.0.0.0) serving exactly one path:
 /// /metrics. No-op when port is None, returning immediately with no listener.
-pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats) {
+pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, publish_state: SharedPublishState) {
     let Some(port) = port else {
         return;
     };
@@ -52,9 +53,12 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats) {
                 }
             };
             let stats = Arc::clone(&stats);
+            let ps = Arc::clone(&publish_state);
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
-                let service = service_fn(move |req| serve_metrics(req, Arc::clone(&stats)));
+                let service = service_fn(move |req| {
+                    serve_metrics(req, Arc::clone(&stats), Arc::clone(&ps))
+                });
                 if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
                     warn!(%error, "metrics connection failed");
                 }
@@ -65,10 +69,12 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats) {
 
 /// Serves Prometheus text format (version 0.0.4) with counters (packets_seen, decoded_frames,
 /// unsupported_frames, audit_window_drops, capture_errors, pipeline_errors, mac_lookup_failures,
-/// channel_hop_count) and returns 404 for all other paths.
+/// channel_hop_count), gauges (bandwidth_window_lag_ms, memory_backlog_len, circuit_breaker_state),
+/// and counter (channel_hops_total) and returns 404 for all other paths.
 async fn serve_metrics(
     req: Request<hyper::body::Incoming>,
     stats: SharedStats,
+    publish_state: SharedPublishState,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     if req.uri().path() != "/metrics" {
         let mut response = Response::new(Full::from(Bytes::from_static(b"not found\n")));
@@ -76,6 +82,15 @@ async fn serve_metrics(
         return Ok(response);
     }
     let stats = stats.lock().unwrap().clone();
+    let cb_state = match publish_state.lock().unwrap().circuit_breaker_state {
+        CircuitBreakerState::Closed => 0,
+        CircuitBreakerState::HalfOpen => 1,
+        CircuitBreakerState::Open => 2,
+    };
+    let lag_line = match stats.bandwidth_window_lag_ms {
+        Some(ms) => format!("atheros_bandwidth_window_lag_ms {ms}\n"),
+        None => String::new(),
+    };
     let body = format!(
         "# TYPE atheros_packets_seen counter\natheros_packets_seen {}\n\
          # TYPE atheros_decoded_frames counter\natheros_decoded_frames {}\n\
@@ -84,7 +99,12 @@ async fn serve_metrics(
          # TYPE atheros_capture_errors counter\natheros_capture_errors {}\n\
          # TYPE atheros_pipeline_errors counter\natheros_pipeline_errors {}\n\
          # TYPE atheros_mac_lookup_failures counter\natheros_mac_lookup_failures {}\n\
-         # TYPE atheros_channel_hop_count counter\natheros_channel_hop_count {}\n",
+         # TYPE atheros_channel_hop_count counter\natheros_channel_hop_count {}\n\
+         # TYPE atheros_channel_hops_total counter\natheros_channel_hops_total {}\n\
+         # TYPE atheros_bandwidth_window_lag_ms gauge\n\
+         {}\
+         # TYPE atheros_memory_backlog_len gauge\natheros_memory_backlog_len {}\n\
+         # TYPE atheros_circuit_breaker_state gauge\natheros_circuit_breaker_state {}\n",
         stats.packets_seen,
         stats.decoded_frames,
         stats.unsupported_frames,
@@ -93,6 +113,10 @@ async fn serve_metrics(
         stats.pipeline_errors,
         stats.mac_lookup_failures,
         stats.channel_hop_count,
+        stats.channel_hop_count,
+        lag_line,
+        stats.memory_backlog_len,
+        cb_state,
     );
     Ok(Response::builder()
         .header("content-type", "text/plain; version=0.0.4")

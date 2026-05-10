@@ -234,6 +234,23 @@ async fn run_sensor() -> Result<(), SensorError> {
                     .handshake_monitor
                     .cleanup_expired(ttl, Some(&handles.capture_control));
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
+                // Compute median (publish_time - window_end) across bandwidth events.
+                let now = Utc::now();
+                let mut lags: Vec<u64> = bandwidth_events
+                    .iter()
+                    .filter_map(|e| {
+                        let window_end = chrono::DateTime::parse_from_rfc3339(&e.window_end).ok()?;
+                        let lag = (now - window_end.with_timezone(&chrono::Utc)).num_milliseconds().max(0) as u64;
+                        Some(lag)
+                    })
+                    .collect();
+                lags.sort_unstable();
+                let median_lag = lags.get(lags.len() / 2).copied();
+                {
+                    let mut stats = handles.stats.lock().unwrap();
+                    stats.bandwidth_window_lag_ms = median_lag;
+                    stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
+                }
                 publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
             }
             _ = inventory_flush.tick() => {
@@ -454,7 +471,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     );
 
     let stats = metrics::shared_stats();
-    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
+    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats), Arc::clone(&publish_state));
 
     // Shared filter state: tracks the last-applied BPF so the hopper can skip
     // re-applying when the filter hasn't changed.
@@ -873,6 +890,22 @@ fn spawn_channel_hopper(
 /// shutdown_grace_secs to let in-flight NATS publishes drain before process exit.
 async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineState) {
     let events = pipeline_state.traffic_bucket.flush_current();
+    let now = Utc::now();
+    let mut lags: Vec<u64> = events
+        .iter()
+        .filter_map(|e| {
+            let window_end = chrono::DateTime::parse_from_rfc3339(&e.window_end).ok()?;
+            let lag = (now - window_end.with_timezone(&chrono::Utc)).num_milliseconds().max(0) as u64;
+            Some(lag)
+        })
+        .collect();
+    lags.sort_unstable();
+    let median_lag = lags.get(lags.len() / 2).copied();
+    {
+        let mut stats = handles.stats.lock().unwrap();
+        stats.bandwidth_window_lag_ms = median_lag;
+        stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
+    }
     publish_bandwidth_events(&*handles.publish_client, events).await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;

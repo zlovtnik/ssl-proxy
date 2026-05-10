@@ -86,6 +86,11 @@ pub struct WirelessBandwidthEvent {
     /// windows occur during idle periods and at shutdown.
     #[serde(default)]
     pub window_is_partial: bool,
+    /// RFC3339 wall-clock timestamp at the moment this event was serialized
+    /// and enqueued for publish. Allows downstream consumers to compute
+    /// `published_at - window_end` as a drift metric per event.
+    #[serde(default)]
+    pub published_at: Option<String>,
 }
 
 fn default_schema_version() -> u32 {
@@ -359,6 +364,7 @@ impl TrafficBucket {
                 inter_arrival_p50_ms,
                 wall_clock_delta_ms: Some(wall_clock_delta_ms),
                 window_is_partial,
+                published_at: None,
             });
         }
         events

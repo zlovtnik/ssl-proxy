@@ -23,6 +23,12 @@ pub(crate) struct CaptureStats {
     pub(crate) lag_total_ms: u64,
     /// Number of decoded frames contributing to lag_total_ms. Reset to 0 after each heartbeat log.
     pub(crate) lag_count: u64,
+    /// Median (publish_time - window_end) in milliseconds across the last bandwidth flush cycle.
+    /// Gauge, replaced each flush. None when no bandwidth events were flushed.
+    pub(crate) bandwidth_window_lag_ms: Option<u64>,
+    /// Snapshot of the memory backlog length at the last bandwidth flush. Gauge, updated
+    /// each flush cycle. Exposed as `atheros_memory_backlog_len`.
+    pub(crate) memory_backlog_len: usize,
 }
 
 impl CaptureStats {
