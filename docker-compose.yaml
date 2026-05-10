@@ -350,6 +350,9 @@ services:
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     restart: unless-stopped
+    sysctls:
+      - vm.overcommit_memory=1
+      - net.core.somaxconn=1024
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8222/varz >/dev/null"]
       interval: 10s
@@ -364,6 +367,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    sysctls:
+      - vm.overcommit_memory=1
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -373,6 +378,8 @@ services:
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    sysctls:
+      - vm.overcommit_memory=1
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-administrador}

@@ -344,7 +344,13 @@ async fn run_sensor_config_subscriber_once(
     })
     .await
 }
-//todo: doc it!
+/// Runs a NATS subscriber over raw TCP for the given subject, calling `on_payload` for each message.
+///
+/// TLS is intentionally **unsupported**: if the NATS URL starts with `tls://` or `config.tls_enabled`
+/// is true, the function returns an error immediately. This avoids pulling in the heavyweight
+/// `async-nats` crate dependency — the sensor only needs three simple SUB connections, and raw TCP
+/// with the NATS text protocol keeps the binary lean. Callers implement the reconnect loop;
+/// this function returns `Err` on any connection, protocol, or payload processing error.
 async fn run_message_loop<F>(
     config: &SyncConfig,
     subject: &'static str,
@@ -482,9 +488,11 @@ fn parse_audit_window_update(
         end,
     )))
 }
-/// Parses a time string in %H:%M:%S or %H:%M format, also accepting single-digit hour
-/// variants (%k:%M:%S, %k:%M) so that values like "9:00" don't silently fail.
-/// Returns `Ok(None)` when the value is absent or empty, `Err` on parse failure.
+/// Parses a time string into a `NaiveTime`, accepting `%H:%M:%S`, `%H:%M`, `%k:%M:%S`, and `%k:%M`
+/// formats. The `%k` variants allow single-digit hours (e.g. `"9:00"`) without a leading zero.
+///
+/// Returns `Ok(None)` when `value` is `None` or empty. Returns `Err` with the field name on
+/// complete parse failure (none of the four format strings matched).
 fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTime>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -569,7 +577,11 @@ fn percent_decode_userinfo(value: &str) -> Result<String, String> {
 
     String::from_utf8(decoded).map_err(|_| "invalid UTF-8 in NATS userinfo".to_string())
 }
-//todo: doc it!
+/// Converts an ASCII hex digit byte to its numeric value.
+///
+/// Accepts `0-9`, `a-f`, and `A-F`. Returns `None` for any other byte. This is the inner
+/// helper of [`percent_decode_userinfo`], used to decode `%XX` percent-encoded sequences in
+/// NATS URL userinfo fields.
 fn hex_value(value: u8) -> Option<u8> {
     match value {
         b'0'..=b'9' => Some(value - b'0'),

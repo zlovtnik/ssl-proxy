@@ -17,10 +17,11 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::model::RawPacket;
 
-//todo: doc it!
 #[derive(Debug, Error)]
 pub enum CaptureError {
     /// Fired by libpcap for any I/O or filter compilation failure during capture setup or runtime.
+    /// Also emitted when `blocking_send` on the packet channel fails (e.g. the receiver has been
+    /// dropped), which causes the capture thread to terminate.
     #[error("pcap error: {0}")]
     Pcap(#[from] PcapError),
     /// Fired at startup when the interface's datalink type is not DLT_IEEE802_11_RADIO (127),
@@ -45,7 +46,13 @@ impl CaptureControl {
 enum CaptureCommand {
     ApplyFilter(String),
 }
-//todo: doc it!
+/// A bounded channel of captured 802.11 frames and a control handle for live BPF filter reloads.
+///
+/// The `packets` receiver is backed by an `mpsc::channel(64)` — a 64-slot capacity that serves as
+/// the effective backpressure limit before the pcap capture thread blocks. When all 64 slots are
+/// full, the capture thread's `blocking_send` call blocks, pausing the pcap loop until the async
+/// receiver drains. This prevents unbounded memory growth during processing backlogs and ensures
+/// the capture thread does not outrun the consumer.
 pub struct PacketStream {
     pub packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     pub control: CaptureControl,
