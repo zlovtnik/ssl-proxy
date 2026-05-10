@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte"
   import DataGrid from "../components/DataGrid.svelte"
   import GridToolbar from "../components/GridToolbar.svelte"
+  import ThemeSwitcher from "../components/ThemeSwitcher.svelte"
   import MacChip from "../components/MacChip.svelte"
   import { columnsToFilterFields } from "../lib/grid"
   import { paramsFromLocation, serializeFilters, toQueryString, updateHistory } from "../lib/url"
@@ -158,7 +159,10 @@
 </script>
 
 <section class="section-spaced">
-  <h2>Network Clients</h2>
+  <div class="flex items-center justify-between gap-3 mb-4">
+    <h2>Network Clients</h2>
+    <ThemeSwitcher />
+  </div>
   <GridToolbar
     query={query}
     fields={filterFields}
