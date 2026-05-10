@@ -288,82 +288,91 @@ pub const Service = struct {
     }
 
     fn dispatchNextBatch(self: *Service) Error!bool {
-        const payload = try self.database.getNextBatch(self.cfg.oracle_stream_names_csv);
-        defer if (payload) |value| self.allocator.free(value);
+        var had_work = false;
+        var dispatched: usize = 0;
+        const max_dispatch: usize = 16;
 
-        if (payload) |value| {
-            var parsed_payload = std.json.parseFromSlice(DispatchPayload, self.allocator, value, .{
-                .ignore_unknown_fields = true,
-            }) catch null;
-            defer if (parsed_payload) |*parsed| parsed.deinit();
+        while (dispatched < max_dispatch) {
+            const payload = try self.database.getNextBatch(self.cfg.oracle_stream_names_csv);
+            defer if (payload) |value| self.allocator.free(value);
 
-            if (parsed_payload) |parsed| {
-                logging.info()
-                    .stringSafe("event", "batch_dispatch")
-                    .stringSafe("status", "selected")
-                    .string("batch_id", parsed.value.batch_id)
-                    .string("job_id", parsed.value.job_id)
-                    .string("stream_name", parsed.value.stream_name)
-                    .int("attempt", parsed.value.attempt)
-                    .log();
-            } else {
-                logging.info()
-                    .stringSafe("event", "batch_dispatch")
-                    .stringSafe("status", "selected")
-                    .int("payload_bytes", value.len)
-                    .log();
-            }
+            if (payload) |value| {
+                var parsed_payload = std.json.parseFromSlice(DispatchPayload, self.allocator, value, .{
+                    .ignore_unknown_fields = true,
+                }) catch null;
+                defer if (parsed_payload) |*parsed| parsed.deinit();
 
-            self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed) catch |err| {
-                var error_buffer: [128]u8 = undefined;
-                const error_text = dispatchPublishErrorText(&error_buffer, err);
-
-                const summary = self.database.markBatchDispatchFailed(value, error_text, self.cfg.batch_max_attempts) catch |mark_err| {
-                    logging.err()
+                if (parsed_payload) |parsed| {
+                    logging.info()
                         .stringSafe("event", "batch_dispatch")
-                        .stringSafe("status", "mark_failed_error")
-                        .err(mark_err)
-                        .log();
-                    return err;
-                };
-                defer if (summary) |summary_json| self.allocator.free(summary_json);
-
-                if (summary) |summary_json| {
-                    logging.err()
-                        .stringSafe("event", "batch_dispatch")
-                        .stringSafe("status", "publish_failed_requeued")
-                        .string("summary", summary_json)
-                        .err(err)
+                        .stringSafe("status", "selected")
+                        .string("batch_id", parsed.value.batch_id)
+                        .string("job_id", parsed.value.job_id)
+                        .string("stream_name", parsed.value.stream_name)
+                        .int("attempt", parsed.value.attempt)
                         .log();
                 } else {
-                    logging.err()
+                    logging.info()
                         .stringSafe("event", "batch_dispatch")
-                        .stringSafe("status", "publish_failed_requeued")
-                        .err(err)
+                        .stringSafe("status", "selected")
+                        .int("payload_bytes", value.len)
                         .log();
                 }
-                return err;
-            };
 
-            if (parsed_payload) |parsed| {
-                logging.info()
-                    .stringSafe("event", "batch_dispatch")
-                    .stringSafe("status", "published")
-                    .string("batch_id", parsed.value.batch_id)
-                    .string("job_id", parsed.value.job_id)
-                    .string("stream_name", parsed.value.stream_name)
-                    .int("attempt", parsed.value.attempt)
-                    .log();
+                self.publishWithMode(self.cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed) catch |err| {
+                    var error_buffer: [128]u8 = undefined;
+                    const error_text = dispatchPublishErrorText(&error_buffer, err);
+
+                    const summary = self.database.markBatchDispatchFailed(value, error_text, self.cfg.batch_max_attempts) catch |mark_err| {
+                        logging.err()
+                            .stringSafe("event", "batch_dispatch")
+                            .stringSafe("status", "mark_failed_error")
+                            .err(mark_err)
+                            .log();
+                        return err;
+                    };
+                    defer if (summary) |summary_json| self.allocator.free(summary_json);
+
+                    if (summary) |summary_json| {
+                        logging.err()
+                            .stringSafe("event", "batch_dispatch")
+                            .stringSafe("status", "publish_failed_requeued")
+                            .string("summary", summary_json)
+                            .err(err)
+                            .log();
+                    } else {
+                        logging.err()
+                            .stringSafe("event", "batch_dispatch")
+                            .stringSafe("status", "publish_failed_requeued")
+                            .err(err)
+                            .log();
+                    }
+                    return err;
+                };
+
+                if (parsed_payload) |parsed| {
+                    logging.info()
+                        .stringSafe("event", "batch_dispatch")
+                        .stringSafe("status", "published")
+                        .string("batch_id", parsed.value.batch_id)
+                        .string("job_id", parsed.value.job_id)
+                        .string("stream_name", parsed.value.stream_name)
+                        .int("attempt", parsed.value.attempt)
+                        .log();
+                } else {
+                    logging.info()
+                        .stringSafe("event", "batch_dispatch")
+                        .stringSafe("status", "published")
+                        .int("payload_bytes", value.len)
+                        .log();
+                }
+                dispatched += 1;
+                had_work = true;
             } else {
-                logging.info()
-                    .stringSafe("event", "batch_dispatch")
-                    .stringSafe("status", "published")
-                    .int("payload_bytes", value.len)
-                    .log();
+                break;
             }
-            return true;
         }
-        return false;
+        return had_work;
     }
 
     fn recoverStaleDispatchedBatches(self: *Service) Error!bool {

@@ -1,9 +1,10 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, Utc};
 use oracle::{sql_type::ToSql, Connection};
+use r2d2_oracle::OracleConnectionManager;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, env, fs, path::PathBuf};
+use std::{collections::HashSet, env, fs, ops::Deref, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
@@ -175,8 +176,24 @@ pub struct BlockedEventInsert {
     pub asn_org: Option<String>,
 }
 
+pub enum OracleConnection {
+    Direct(Connection),
+    Pooled(r2d2::PooledConnection<OracleConnectionManager>),
+}
+
+impl std::ops::Deref for OracleConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            OracleConnection::Direct(ref conn) => conn,
+            OracleConnection::Pooled(ref conn) => conn.deref(),
+        }
+    }
+}
+
 pub struct OracleProxyEventSink {
-    connection: Connection,
+    connection: OracleConnection,
 }
 
 pub fn classify_oracle_error(message: &str) -> OracleErrorClass {
@@ -239,6 +256,24 @@ pub fn handle_load(load: OracleLoad) -> OracleResult {
         }
     };
     let mut sink = match OracleProxyEventSink::connect_from_env() {
+        Ok(sink) => sink,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
+    handle_validated_load(load, validated, &mut sink)
+}
+
+pub fn handle_load_with_pool(load: OracleLoad, pool: &r2d2::Pool<OracleConnectionManager>) -> OracleResult {
+    let validated = match validate_load(&load) {
+        Ok(validated) => validated,
+        Err(error) => {
+            let error_class = classify_oracle_error(&error);
+            return failure_result(load.job_id, load.batch_id, error_class, error);
+        }
+    };
+    let mut sink = match OracleProxyEventSink::connect_from_pool(pool) {
         Ok(sink) => sink,
         Err(error) => {
             let error_class = classify_oracle_error(&error);
@@ -563,9 +598,26 @@ impl OracleProxyEventSink {
         let password = fs::read_to_string(&password_file)
             .map_err(|error| format!("read Oracle password file {password_file}: {error}"))?;
         let password = password.trim_end_matches(['\r', '\n']);
+        let start = std::time::Instant::now();
         let connection = Connection::connect(user.as_str(), password, connect_string.as_str())
             .map_err(|error| format!("connect Oracle {connect_string}: {error}"))?;
-        Ok(Self { connection })
+        let duration_ms = start.elapsed().as_millis();
+        eprintln!(
+            "service=oracle-worker event=connection_acquired pool=false duration_ms={}",
+            duration_ms
+        );
+        Ok(Self { connection: OracleConnection::Direct(connection) })
+    }
+
+    pub fn connect_from_pool(pool: &r2d2::Pool<OracleConnectionManager>) -> Result<Self, String> {
+        let start = std::time::Instant::now();
+        let connection = pool.get().map_err(|error| format!("get Oracle connection from pool: {error}"))?;
+        let duration_ms = start.elapsed().as_millis();
+        eprintln!(
+            "service=oracle-worker event=connection_acquired pool=true duration_ms={}",
+            duration_ms
+        );
+        Ok(Self { connection: OracleConnection::Pooled(connection) })
     }
 
     pub fn ping(&self) -> Result<(), String> {

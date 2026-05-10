@@ -7,6 +7,7 @@ use async_nats::jetstream::{
     stream::Stream,
 };
 use futures::StreamExt;
+use r2d2_oracle::OracleConnectionManager;
 use std::{
     env, fs,
     net::{TcpStream, ToSocketAddrs},
@@ -22,7 +23,7 @@ const DEFAULT_AUDIT_STREAM_NAME: &str = "AUDIT_STREAM";
 const DEFAULT_SYNC_LOAD_SUBJECT: &str = "sync.oracle.load";
 const DEFAULT_SYNC_RESULT_SUBJECT: &str = "sync.oracle.result";
 const DEFAULT_SYNC_LOAD_CONSUMER: &str = "oracle-worker-load";
-const DEFAULT_ORACLE_WORKER_PARALLELISM: usize = 16;
+const DEFAULT_ORACLE_WORKER_PARALLELISM: usize = 32;
 const BATCH_FETCH_SIZE: usize = 50;
 
 struct HealthcheckConfig {
@@ -57,6 +58,7 @@ struct RunConfig {
     result_subject: String,
     load_consumer: String,
     oracle_worker_parallelism: usize,
+    oracle_pool: Arc<r2d2::Pool<OracleConnectionManager>>,
 }
 
 impl RunConfig {
@@ -68,6 +70,7 @@ impl RunConfig {
             result_subject: env_or_default("SYNC_RESULT_SUBJECT", DEFAULT_SYNC_RESULT_SUBJECT),
             load_consumer: env_or_default("SYNC_LOAD_CONSUMER", DEFAULT_SYNC_LOAD_CONSUMER),
             oracle_worker_parallelism: env_or_default_usize("ORACLE_WORKER_PARALLELISM", DEFAULT_ORACLE_WORKER_PARALLELISM),
+            oracle_pool: Arc::new(r2d2::Pool::new(OracleConnectionManager::new("", "", "")).unwrap()), // Placeholder
         })
     }
 }
@@ -97,6 +100,23 @@ fn run() -> Result<(), String> {
     healthcheck("run")?;
     println!("service={SERVICE_NAME} event=ready mode=run status=ok");
     let config = RunConfig::load()?;
+
+    // Create Oracle connection pool
+    let connect_string = required_env("ORACLE_CONN")?;
+    let user = required_env("ORACLE_USER")?;
+    let password_file = required_env("ORACLE_PASS_FILE")?;
+    let password = fs::read_to_string(&password_file)
+        .map_err(|error| format!("read Oracle password file {password_file}: {error}"))?;
+    let password = password.trim_end_matches(['\r', '\n']);
+    let manager = OracleConnectionManager::new(&user, &password, &connect_string);
+    let pool = r2d2::Pool::builder()
+        .max_size(config.oracle_worker_parallelism as u32)
+        .build(manager)
+        .map_err(|error| format!("create Oracle connection pool: {error}"))?;
+    let config = RunConfig {
+        oracle_pool: Arc::new(pool),
+        ..config
+    };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -268,7 +288,8 @@ async fn handle_load_message(
     );
 
     let batch_started = Instant::now();
-    let result = tokio::task::spawn_blocking(move || worker::handle_load(load))
+    let oracle_pool = Arc::clone(&config.oracle_pool);
+    let result = tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &oracle_pool))
         .await
         .map_err(|error| format!("oracle load task panicked: {error}"))?;
     let batch_id = result.batch_id.clone();
