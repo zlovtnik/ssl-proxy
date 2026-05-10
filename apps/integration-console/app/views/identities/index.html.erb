@@ -9,61 +9,38 @@
   <%= link_to "Inventory JSON", inventory_identities_path(@inventory_query_parameters.merge(format: :json)) %>
 </p>
 
-<%= svelte_props_tag("identities-svelte-root", initial: { filters: parsed_grid_filters }) %>
+<% if @identities.any? %>
+  <%= svelte_props_tag("identities-svelte-root", initial: {
+    rows: @identities.as_json(
+      only: %i[source_mac bssid destination_bssid ssid signal_dbm location_id username registered_username
+               display_name device_id wps_device_name wps_model_name device_fingerprint
+               first_occurred_at last_occurred_at]
+    ),
+    totalCount: @total_count,
+    currentPage: @current_page,
+    perPage: @per_page,
+    sortKey: @sort,
+    sortDirection: @direction,
+    query: @query,
+    filters: parsed_grid_filters,
+    endpoints: {
+      index: identities_path
+    }
+  }) %>
+<% else %>
+  <%= svelte_props_tag("identities-svelte-root", initial: {
+    rows: [],
+    totalCount: 0,
+    currentPage: 1,
+    perPage: 50,
+    sortKey: "last_occurred_at",
+    sortDirection: "desc",
+    query: @query,
+    filters: parsed_grid_filters,
+    endpoints: {
+      index: identities_path
+    }
+  }) %>
+<% end %>
 <div id="identities-svelte-root"></div>
 <%= svelte_bundle_tags(:identities) %>
-
-<div
-  class="data-table-wrap table-wrap"
-  data-controller="mac-link"
-  data-mac-link-inventory-url-value="<%= inventory_identities_path(format: :json) %>"
-  data-mac-link-summary-url-value="<%= mac_summary_identities_path(format: :json) %>"
-  data-mac-link-recent-audit-logs-url-value="<%= recent_audit_logs_path %>"
-  data-mac-link-audit-logs-url-value="<%= audit_logs_path %>"
-  data-mac-link-identities-url-value="<%= identities_path %>"
-  data-mac-link-shadow-it-url-value="<%= shadow_it_alerts_path %>"
->
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th><%= sort_link_to "Last Occurred", :last_occurred_at %></th>
-        <th>MAC</th>
-        <th>BSSID</th>
-        <th>Dest BSSID</th>
-        <th>SSID</th>
-        <th>Signal</th>
-        <th>Location</th>
-        <th>Username</th>
-        <th>Registered</th>
-        <th>Device</th>
-        <th>WPS</th>
-        <th>Fingerprint</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if @identities.any? %>
-        <% @identities.each do |identity| %>
-          <tr>
-            <td><%= identity.last_occurred_at %></td>
-            <td><%= identity.source_mac %></td>
-            <td><%= identity.bssid %></td>
-            <td><%= identity.destination_bssid %></td>
-            <td><%= identity.ssid %></td>
-            <td><%= identity.signal_dbm %></td>
-            <td><%= identity.location_id %></td>
-            <td><%= identity.username %></td>
-            <td><%= identity.registered_username %></td>
-            <td><%= identity.display_name || identity.device_id %></td>
-            <td><%= identity.wps_device_name || identity.wps_model_name %></td>
-            <td><%= identity.device_fingerprint&.first(12) %></td>
-          </tr>
-        <% end %>
-      <% else %>
-        <tr>
-          <td colspan="12" class="empty-state">No identities found.</td>
-        </tr>
-      <% end %>
-    </tbody>
-  </table>
-  <%= render "shared/pagination" %>
-</div>

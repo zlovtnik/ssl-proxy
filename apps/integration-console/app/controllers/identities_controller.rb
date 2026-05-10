@@ -7,8 +7,15 @@ class IdentitiesController < ApplicationController
   EXPORT_CACHE_TTL = 2.minutes
 
   SORTS = {
-    "last_occurred_at" => :last_occurred_at,
-    "signal_dbm" => :signal_dbm
+    "source_mac" => :source_mac,
+    "destination_bssid" => :destination_bssid,
+    "ssid" => :ssid,
+    "location_id" => :location_id,
+    "registered_username" => :registered_username,
+    "display_name" => :display_name,
+    "signal_dbm" => :signal_dbm,
+    "first_occurred_at" => :first_occurred_at,
+    "last_occurred_at" => :last_occurred_at
   }.freeze
 
   FILTERS = {
@@ -31,12 +38,38 @@ class IdentitiesController < ApplicationController
 
   def index
     @query = params[:q].to_s.strip
+    scope = WirelessDeviceInventory.recent
+    scope = scope.search(@query) if @query.present?
+    scope = apply_grid_filters(scope, FILTERS)
+    scope = apply_sort(scope, SORTS, default_sort: :last_occurred_at)
+    @identities = paginate(scope)
+
     @inventory_query_parameters = @query.present? ? { q: @query } : {}
-    @identities = WirelessDeviceInventory.recent
-    @identities = @identities.search(@query) if @query.present?
-    @identities = apply_grid_filters(@identities, FILTERS)
-    @identities = apply_identity_sort(@identities)
-    @identities = paginate_window(@identities)
+
+    respond_to do |format|
+      format.html {
+        @identities = @identities.to_a
+      }
+      format.json {
+        render json: {
+          rows: @identities.as_json(
+            only: %i[source_mac bssid destination_bssid ssid signal_dbm location_id username registered_username
+                     display_name device_id wps_device_name wps_model_name device_fingerprint
+                     first_occurred_at last_occurred_at]
+          ),
+          totalCount: @total_count,
+          currentPage: @current_page,
+          perPage: @per_page,
+          sortKey: @sort,
+          sortDirection: @direction,
+          filters: parsed_grid_filters,
+          query: @query,
+          endpoints: {
+            index: identities_path
+          }
+        }
+      }
+    end
   end
 
   def inventory
@@ -89,16 +122,6 @@ class IdentitiesController < ApplicationController
   end
 
   private
-
-  def apply_identity_sort(scope)
-    if SORTS.key?(params[:sort].to_s)
-      apply_sort(scope, SORTS, default_sort: :last_occurred_at)
-    else
-      @sort = "last_occurred_at"
-      @direction = "desc"
-      scope.reorder(last_occurred_at: :desc)
-    end
-  end
 
   def mac_summary_payload(query)
     normalized = Device.normalize_mac(query)
