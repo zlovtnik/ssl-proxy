@@ -455,10 +455,8 @@ mod tests {
 
     #[tokio::test]
     async fn traffic_bucket_flushes_protected_data_frames_by_bssid() {
-        // Use virtual time so wall clock advances deterministically.
-        tokio::time::pause();
-
-        let mut bucket = TrafficBucket::new(60);
+        // Use a short window (1 second) so wall clock advances quickly with real time.
+        let mut bucket = TrafficBucket::new(1);
         let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
 
         // First observation at t=0 — opens window, no flush.
@@ -467,18 +465,18 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        // Second observation at t=30 — too soon for 60s wall-clock window.
+        // Second observation just after (t=0.1s simulated) — too soon for 1s wall-clock window.
         assert!(bucket
-            .observe(&bandwidth_entry(base, 30, 125, -47), false)
+            .observe(&bandwidth_entry(base, 0, 125, -47), false)
             .unwrap()
             .is_empty());
 
-        // Advance wall clock by 61 seconds to cross the window boundary.
-        tokio::time::advance(tokio::time::Duration::from_secs(61)).await;
+        // Wait real time for wall clock to cross the 1s window.
+        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
 
-        // Third observation at t=61 (frame-time) — wall clock has elapsed 61s, so flush.
+        // Third observation — wall clock has elapsed >1s, so flush.
         let events = bucket
-            .observe(&bandwidth_entry(base, 61, 75, -60), false)
+            .observe(&bandwidth_entry(base, 2, 75, -60), false)
             .unwrap();
 
         assert_eq!(events.len(), 1);
@@ -496,7 +494,7 @@ mod tests {
         // wall_clock_delta_ms should be present and non-negative.
         assert!(events[0].wall_clock_delta_ms.is_some());
 
-        // Timer-triggered flush for remaining entries (the observation at t=61).
+        // Timer-triggered flush for remaining entries (the observation at t=2).
         let remaining = bucket.flush_current();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].bytes, 75);
