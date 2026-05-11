@@ -157,7 +157,7 @@ services:
       - SYNC_OUTBOX_DIR=/sync-outbox
       - TNS_ADMIN=/app/wallet
       - LD_LIBRARY_PATH=/app/lib
-      - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
+      - ORACLE_CONN=${ORACLE_CONN:-nmainerc_tp}
       - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
       - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
     healthcheck:

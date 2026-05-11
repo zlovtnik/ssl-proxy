@@ -6,6 +6,17 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, env, fs, ops::Deref, path::PathBuf};
 
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut msg = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        msg.push_str(" | caused by: ");
+        msg.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    msg
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OracleLoad {
     pub job_id: String,
@@ -600,7 +611,7 @@ impl OracleProxyEventSink {
         let password = password.trim_end_matches(['\r', '\n']);
         let start = std::time::Instant::now();
         let connection = Connection::connect(user.as_str(), password, connect_string.as_str())
-            .map_err(|error| format!("connect Oracle {connect_string}: {error}"))?;
+            .map_err(|error| format!("connect Oracle {connect_string}: {}", error_chain(&error)))?;
         let duration_ms = start.elapsed().as_millis();
         eprintln!(
             "service=oracle-worker event=connection_acquired pool=false duration_ms={}",
@@ -611,7 +622,13 @@ impl OracleProxyEventSink {
 
     pub fn connect_from_pool(pool: &r2d2::Pool<OracleConnectionManager>) -> Result<Self, String> {
         let start = std::time::Instant::now();
-        let connection = pool.get().map_err(|error| format!("get Oracle connection from pool: {error}"))?;
+        let connection = pool.get().map_err(|error| format!(
+            "get Oracle connection from pool (pool_size={} idle={} state={:?}): {}",
+            pool.max_size(),
+            pool.state().idle_connections,
+            pool.state(),
+            error_chain(&error)
+        ))?;
         let duration_ms = start.elapsed().as_millis();
         eprintln!(
             "service=oracle-worker event=connection_acquired pool=true duration_ms={}",
@@ -623,7 +640,7 @@ impl OracleProxyEventSink {
     pub fn ping(&self) -> Result<(), String> {
         self.connection
             .ping()
-            .map_err(|error| format!("ping Oracle: {error}"))
+            .map_err(|error| format!("ping Oracle: {}", error_chain(&error)))
     }
 }
 
@@ -742,7 +759,7 @@ fn insert_event_batch_transaction(
         let mut batch = connection
             .batch(INSERT_SQL, rows.len())
             .build()
-            .map_err(|error| format!("prepare proxy_events batch insert: {error}"))?;
+            .map_err(|error| format!("prepare proxy_events batch insert: {}", error_chain(&error)))?;
 
         for (index, row) in rows.iter().enumerate() {
             let params: [&dyn ToSql; 22] = [
@@ -771,16 +788,16 @@ fn insert_event_batch_transaction(
             ];
             batch
                 .append_row(&params)
-                .map_err(|error| format!("append proxy_events row host={}: {error}", row.host))?;
+                .map_err(|error| format!("append proxy_events row host={}: {}", row.host, error_chain(&error)))?;
         }
         batch
             .execute()
-            .map_err(|error| format!("execute proxy_events batch insert: {error}"))?;
+            .map_err(|error| format!("execute proxy_events batch insert: {}", error_chain(&error)))?;
     }
     upsert_blocked_events_transaction(connection, blocked_rows, &existing_row_sequences)?;
     connection
         .commit()
-        .map_err(|error| format!("commit proxy_events batch: {error}"))?;
+        .map_err(|error| format!("commit proxy_events batch: {}", error_chain(&error)))?;
     Ok(rows.len() as u64)
 }
 
@@ -794,12 +811,12 @@ fn existing_proxy_row_sequences(
             "select row_sequence from proxy_events where batch_id = :1",
             &[&batch_id],
         )
-        .map_err(|error| format!("query existing proxy_events batch rows: {error}"))?;
+        .map_err(|error| format!("query existing proxy_events batch rows: {}", error_chain(&error)))?;
     for row_result in rows {
-        let row = row_result.map_err(|error| format!("read existing proxy_events row: {error}"))?;
+        let row = row_result.map_err(|error| format!("read existing proxy_events row: {}", error_chain(&error)))?;
         let row_sequence: i64 = row
             .get(0)
-            .map_err(|error| format!("read existing proxy_events row_sequence: {error}"))?;
+            .map_err(|error| format!("read existing proxy_events row_sequence: {}", error_chain(&error)))?;
         existing.insert(row_sequence);
     }
     Ok(existing)
@@ -928,7 +945,7 @@ fn upsert_blocked_events_transaction(
         ];
         connection
             .execute(UPSERT_SQL, &params)
-            .map_err(|error| format!("upsert blocked_events row host={}: {error}", row.host))?;
+            .map_err(|error| format!("upsert blocked_events row host={}: {}", row.host, error_chain(&error)))?;
     }
 
     Ok(())
