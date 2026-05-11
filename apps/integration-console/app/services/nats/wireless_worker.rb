@@ -179,7 +179,12 @@ module Nats
     end
 
     def reply(msg, payload, config)
-      reply_subject = msg.reply || config[:replies_to]
+      # The Rust sensor embeds its reply inbox in the JSON payload rather than
+      # using the NATS protocol-level reply field. Re-parse the original message
+      # data to find it, since handlers may build a brand-new response hash.
+      original = decode(msg.data) rescue {}
+      embedded_reply = original.is_a?(Hash) ? original["reply_subject"] : nil
+      reply_subject = embedded_reply || msg.reply || config[:replies_to]
       return unless reply_subject
 
       body = payload.is_a?(String) ? payload : JSON.generate(payload)
