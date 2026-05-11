@@ -222,6 +222,12 @@ services:
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   integration-console-db-setup:
     depends_on:

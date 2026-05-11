@@ -13,20 +13,24 @@ module Nats
         .uniq
     end
 
-    def initialize(url: ENV.fetch("SYNC_NATS_URL", "nats://127.0.0.1:4222"), client: nil, subjects: nil)
+    def initialize(url: ENV.fetch("SYNC_NATS_URL", "nats://127.0.0.1:4222"), client: nil, subjects: nil, run_wireless_worker: true)
       @url = url
       @client = client
       @subjects = subjects
       @integration_by_subject = nil
       @integration_by_subject_expires_at = nil
+      @run_wireless_worker = run_wireless_worker
+      @wireless_worker = nil
     end
 
     def run_forever
       owns_client = @client.nil?
       @client ||= NATS.connect(servers: [@url])
       subscribe_configured
+      start_wireless_worker if @run_wireless_worker
       sleep
     ensure
+      @wireless_worker&.stop
       @client&.close if owns_client
       @client = nil if owns_client
     end
@@ -137,6 +141,15 @@ module Nats
       alert.payload = SensorAlert.sanitize_payload(payload)
       alert.save!
       ActionCable.server.broadcast("sensor_alerts", alert.as_json)
+    end
+
+    def start_wireless_worker
+      return if @wireless_worker
+      return unless @client
+
+      @wireless_worker = WirelessWorker.new(client: @client)
+      Thread.new { @wireless_worker.run_forever }.tap { |t| t.daemon = true }
+      Rails.logger.info("[Subscriber] Wireless worker thread started")
     end
   end
 end

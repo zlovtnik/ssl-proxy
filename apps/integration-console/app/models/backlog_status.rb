@@ -4,6 +4,7 @@ class BacklogStatus < SyncRecord
 
   scope :pending, -> { where(status: "pending") }
   scope :failed, -> { where(status: "sync_failed").or(where(status: "failed")) }
+  scope :ordered_by_updated, -> { order(updated_at: :asc) }
 
   def self.pending_count = pending.count
   def self.failed_count = failed.count

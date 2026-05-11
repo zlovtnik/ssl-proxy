@@ -115,12 +115,18 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         "initialize NATS backlog",
         NatsBacklog::new(Arc::clone(&publish_client), config.sync.clone()),
     )?;
-    let _ = step_async("request coordinator backlog list over NATS", async {
+    match step_async("request coordinator backlog list over NATS", async {
         backlog.list_pending().await
     })
-    .await?;
+    .await
+    {
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("Healthcheck WARNING: coordinator backlog list failed (sensor is degraded but operational): {}", error);
+        }
+    }
 
-    println!("Healthcheck OK: configuration valid, device accessible, NATS publisher initialized, coordinator reachable");
+    println!("Healthcheck OK: configuration valid, device accessible, NATS publisher initialized");
     Ok(())
 }
 

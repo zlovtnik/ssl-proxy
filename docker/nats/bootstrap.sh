@@ -8,24 +8,33 @@ WIRELESS_BACKLOG_STREAM="${WIRELESS_BACKLOG_STREAM:-WIRELESS_BACKLOG_STREAM}"
 WIRELESS_MAC_STREAM="${WIRELESS_MAC_STREAM:-WIRELESS_MAC_STREAM}"
 WIRELESS_NETWORKS_STREAM="${WIRELESS_NETWORKS_STREAM:-WIRELESS_NETWORKS_STREAM}"
 WIRELESS_PROBE_STREAM="${WIRELESS_PROBE_STREAM:-WIRELESS_PROBE_STREAM}"
+WIRELESS_BANDWIDTH_STREAM="${WIRELESS_BANDWIDTH_STREAM:-WIRELESS_BANDWIDTH_STREAM}"
+WIRELESS_ALERT_STREAM="${WIRELESS_ALERT_STREAM:-WIRELESS_ALERT_STREAM}"
 SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
 LOAD_CONSUMER="${SYNC_LOAD_CONSUMER:-oracle-worker-load}"
 RESULT_CONSUMER="${SYNC_RESULT_CONSUMER:-zig-coordinator-result}"
 SCAN_SUBJECT="${SYNC_SCAN_SUBJECT:-sync.scan.request}"
 LOAD_SUBJECT="${SYNC_LOAD_SUBJECT:-sync.oracle.load}"
 RESULT_SUBJECT="${SYNC_RESULT_SUBJECT:-sync.oracle.result}"
-SUBJECTS="${SCAN_SUBJECT},${LOAD_SUBJECT},wireless.audit,wireless.audit.config,wireless.config.authorized_networks,wireless.config.sensor,wireless.client.inventory,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.attack_sequence,wifi.alert.handshake,audit.wireless.bandwidth,audit.threat.shadow_device"
+AUDIT_SUBJECTS="${SCAN_SUBJECT},${LOAD_SUBJECT},wireless.audit,wireless.audit.config,wireless.config.authorized_networks,wireless.config.sensor,wireless.client.inventory,audit.threat.shadow_device"
+BANDWIDTH_SUBJECTS="audit.wireless.bandwidth"
+ALERT_SUBJECTS="wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.attack_sequence,wifi.alert.handshake"
 
 ensure_stream() {
   stream_name="$1"
   subjects="$2"
   max_age="$3"
+  dupe_window="${4:-2m}"
+  max_msgs="${5:--1}"
+
   if nats --server "${NATS_URL}" str info "${stream_name}" >/dev/null 2>&1; then
     set +e
     edit_output=$(nats --server "${NATS_URL}" str edit "${stream_name}" \
       --force \
       --subjects "${subjects}" \
-      --max-age="${max_age}" 2>&1)
+      --max-age="${max_age}" \
+      --dupe-window="${dupe_window}" \
+      --max-msgs="${max_msgs}" 2>&1)
     edit_status=$?
     set -e
     if [ "${edit_status}" -ne 0 ]; then
@@ -38,11 +47,11 @@ ensure_stream() {
       --storage file \
       --retention limits \
       --discard old \
-      --max-msgs=-1 \
+      --max-msgs="${max_msgs}" \
       --max-bytes=-1 \
       --max-age="${max_age}" \
       --max-msg-size=-1 \
-      --dupe-window=2m \
+      --dupe-window="${dupe_window}" \
       --replicas 1
   fi
 }
@@ -91,11 +100,15 @@ until nats --server "${NATS_URL}" str ls >/dev/null 2>&1; do
   sleep 1
 done
 
+# ── AUDIT_STREAM ───────────────────────────────────────────────────────────
+# Holds sync-plane subjects and general audit traffic. Alert and bandwidth
+# subjects have been moved to dedicated streams for independent retention.
+
 if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
   set +e
   edit_output=$(nats --server "${NATS_URL}" str edit "${STREAM_NAME}" \
     --force \
-    --subjects "${SUBJECTS}" \
+    --subjects "${AUDIT_SUBJECTS}" \
     --max-age=720h 2>&1)
   edit_status=$?
   set -e
@@ -115,7 +128,7 @@ if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
     fi
     old_ifs="${IFS}"
     IFS=","
-    for subject in ${SUBJECTS}; do
+    for subject in ${AUDIT_SUBJECTS}; do
       if ! printf '%s\n' "${stream_info}" | grep -Fq "\"${subject}\""; then
         echo "warning: stream ${STREAM_NAME} subjects missing ${subject}" >&2
       fi
@@ -125,7 +138,7 @@ if nats --server "${NATS_URL}" str info "${STREAM_NAME}" >/dev/null 2>&1; then
 else
   nats --server "${NATS_URL}" str add "${STREAM_NAME}" \
     --defaults \
-    --subjects "${SUBJECTS}" \
+    --subjects "${AUDIT_SUBJECTS}" \
     --storage file \
     --retention limits \
     --discard old \
@@ -136,6 +149,8 @@ else
     --dupe-window=2m \
     --replicas 1
 fi
+
+# ── ORACLE_RESULT_STREAM ───────────────────────────────────────────────────
 
 if nats --server "${NATS_URL}" str info "${RESULT_STREAM_NAME}" >/dev/null 2>&1; then
   set +e
@@ -163,15 +178,45 @@ else
     --replicas 1
 fi
 
+# ── Sync-plane consumers (main stream) ─────────────────────────────────────
+
 ensure_consumer "${STREAM_NAME}" "${SCAN_CONSUMER}" "${SCAN_SUBJECT}"
 ensure_consumer "${STREAM_NAME}" "${LOAD_CONSUMER}" "${LOAD_SUBJECT}"
 ensure_consumer "${RESULT_STREAM_NAME}" "${RESULT_CONSUMER}" "${RESULT_SUBJECT}"
 verify_consumer_filter "${STREAM_NAME}" "${LOAD_CONSUMER}" "${LOAD_SUBJECT}"
 
-ensure_stream "${WIRELESS_BACKLOG_STREAM}" "wireless.backlog.>" "720h"
-ensure_stream "${WIRELESS_MAC_STREAM}" "wireless.mac.>" "1h"
-ensure_stream "${WIRELESS_NETWORKS_STREAM}" "wireless.networks.>" "1h"
-ensure_stream "${WIRELESS_PROBE_STREAM}" "wireless.probe.>" "1h"
+# ── Wireless backlog stream ────────────────────────────────────────────────
+
+ensure_stream "${WIRELESS_BACKLOG_STREAM}" "wireless.backlog.>" "720h" "2m" "-1"
+
+# ── Wireless MAC lookup stream ─────────────────────────────────────────────
+# Request/reply stream for device registry lookups. dupe-window=0s prevents
+# dropped requests when the same MAC is looked up within a short window.
+
+ensure_stream "${WIRELESS_MAC_STREAM}" "wireless.mac.>" "720h" "0s" "-1"
+
+# ── Wireless networks stream ───────────────────────────────────────────────
+# Key-value store for current authorized network config. max-msgs=1 keeps
+# only the latest push. dupe-window=0s prevents request/reply dedup.
+# max-age=720h ensures the record survives extended sensor uptime.
+
+ensure_stream "${WIRELESS_NETWORKS_STREAM}" "wireless.networks.>" "720h" "0s" "1"
+
+# ── Wireless probe stream ──────────────────────────────────────────────────
+
+ensure_stream "${WIRELESS_PROBE_STREAM}" "wireless.probe.>" "1h" "2m" "-1"
+
+# ── Wireless bandwidth stream ──────────────────────────────────────────────
+# Dedicated stream for audit.wireless.bandwidth with shorter retention (7 days).
+
+ensure_stream "${WIRELESS_BANDWIDTH_STREAM}" "${BANDWIDTH_SUBJECTS}" "168h" "2m" "-1"
+
+# ── Wireless alert stream ──────────────────────────────────────────────────
+# Dedicated stream for all wireless security alerts, queryable independently.
+
+ensure_stream "${WIRELESS_ALERT_STREAM}" "${ALERT_SUBJECTS}" "720h" "2m" "-1"
+
+# ── Wireless backlog consumers ─────────────────────────────────────────────
 
 ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-save" "wireless.backlog.save"
 ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-list" "wireless.backlog.list"
@@ -180,3 +225,8 @@ ensure_consumer "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-prune" "wireless.
 ensure_consumer "${WIRELESS_MAC_STREAM}" "wireless-mac-lookup" "wireless.mac.lookup"
 ensure_consumer "${WIRELESS_NETWORKS_STREAM}" "wireless-networks-authorized" "wireless.networks.authorized"
 ensure_consumer "${WIRELESS_PROBE_STREAM}" "wireless-probe-flush" "wireless.probe.flush"
+
+# ── Verify critical wireless request/reply consumer filters ────────────────
+
+verify_consumer_filter "${WIRELESS_BACKLOG_STREAM}" "wireless-backlog-list" "wireless.backlog.list"
+verify_consumer_filter "${WIRELESS_NETWORKS_STREAM}" "wireless-networks-authorized" "wireless.networks.authorized"
