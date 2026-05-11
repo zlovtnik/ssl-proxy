@@ -613,6 +613,8 @@ pub const Service = struct {
         const req = try self.pullWirelessMessage(self.cfg.wireless_networks_stream_name, self.cfg.wireless_networks_authorized_consumer);
         defer if (req) |m| self.allocator.free(m);
         if (req) |request_payload| {
+            const start_ts = std.Io.Timestamp.now(self.io, .awake);
+
             var parsed_request = parseReplyRequest(self.allocator, request_payload);
             defer if (parsed_request) |*parsed| parsed.deinit();
             const reply_subject = if (parsed_request) |parsed|
@@ -620,22 +622,40 @@ pub const Service = struct {
             else
                 self.cfg.wireless_networks_authorized_reply_subject;
 
+            logging.info()
+                .stringSafe("event", "networks_authorized_request")
+                .stringSafe("status", "received")
+                .string("reply_subject", reply_subject)
+                .log();
+
             const list = self.database.listAuthorizedNetworks() catch |err| {
                 logging.err()
                     .stringSafe("event", "networks_authorized")
                     .stringSafe("status", "error")
+                    .string("reply_subject", reply_subject)
+                    .int("duration_ms", elapsedMs(start_ts, self.io))
                     .err(err)
                     .log();
                 return error.NetworksListFailed;
             };
             defer if (list) |l| self.allocator.free(l);
             if (list) |payload| {
+                const network_count = countNetworkEntries(payload);
                 try self.publish(reply_subject, payload, error.AlertPublishFailed);
                 logging.info()
                     .stringSafe("event", "networks_authorized")
                     .stringSafe("status", "ok")
                     .string("reply_subject", reply_subject)
                     .int("payload_bytes", payload.len)
+                    .int("network_count", network_count)
+                    .int("duration_ms", elapsedMs(start_ts, self.io))
+                    .log();
+            } else {
+                logging.info()
+                    .stringSafe("event", "networks_authorized")
+                    .stringSafe("status", "empty")
+                    .string("reply_subject", reply_subject)
+                    .int("duration_ms", elapsedMs(start_ts, self.io))
                     .log();
             }
             return true;
@@ -1321,6 +1341,18 @@ fn labeledCountIsPositive(stdout: []const u8, label: []const u8) bool {
     }
 
     return false;
+}
+
+fn countNetworkEntries(payload: []const u8) usize {
+    var count: usize = 0;
+    var index: usize = 0;
+    while (index + 6 <= payload.len) : (index += 1) {
+        if (std.mem.eql(u8, payload[index .. index + 6], "\"ssid\"")) {
+            count += 1;
+            index += 5;
+        }
+    }
+    return count;
 }
 
 fn containsAsciiCaseInsensitive(haystack: []const u8, needle: []const u8) bool {

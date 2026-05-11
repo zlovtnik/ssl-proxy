@@ -594,15 +594,18 @@ async fn process_packet(
         pipeline.authorized_network_cache.invalidate();
         pipeline.seen_authorized_config_generation = latest_generation;
     }
-    if let Err(error) = pipeline
+    let refresh_result = pipeline
         .authorized_network_cache
         .refresh_if_needed(
             backlog,
             Duration::from_secs(config.authorized_network_cache_ttl_secs),
         )
-        .await
-    {
-        warn!(%error, "authorized wireless network cache refresh failed");
+        .await;
+    if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
+        warn!(
+            error = %refresh_result.as_ref().unwrap_err(),
+            "authorized wireless network cache refresh failed"
+        );
     }
     let authorized = pipeline.authorized_network_cache.is_authorized(
         entry.ssid.as_deref(),

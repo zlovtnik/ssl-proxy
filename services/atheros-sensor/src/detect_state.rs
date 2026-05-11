@@ -401,6 +401,7 @@ pub struct AuthorizedNetworkCache {
     last_failure: Option<Instant>,
     failure_count: u32,
     backoff_ms: u64,
+    last_logged_failure_count: u32,
 }
 
 impl Default for AuthorizedNetworkCache {
@@ -417,6 +418,7 @@ impl AuthorizedNetworkCache {
             last_failure: None,
             failure_count: 0,
             backoff_ms: backoff_ms.max(1),
+            last_logged_failure_count: 0,
         }
     }
 
@@ -432,6 +434,21 @@ impl AuthorizedNetworkCache {
         let exponent = self.failure_count.saturating_sub(1).min(63);
         let multiplier = 1u64.checked_shl(exponent).unwrap_or(u64::MAX);
         Duration::from_millis(self.backoff_ms.saturating_mul(multiplier).min(300_000))
+    }
+
+    /// Returns true when the caller should emit a log for this failure.
+    /// True only on first failure, backoff escalation, or recovery (failure_count resets).
+    pub fn should_log_failure(&mut self, is_failure: bool) -> bool {
+        if is_failure {
+            if self.failure_count != self.last_logged_failure_count {
+                self.last_logged_failure_count = self.failure_count;
+                return true;
+            }
+            return false;
+        }
+        // Recovery: logged externally via info-level on success
+        self.last_logged_failure_count = 0;
+        false
     }
 
     pub async fn refresh_if_needed(
