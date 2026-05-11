@@ -148,7 +148,7 @@ module Nats
       return unless @client
 
       @wireless_worker = WirelessWorker.new(client: @client)
-      Thread.new { @wireless_worker.run_forever }.tap { |t| t.daemon = true }
+      Thread.new { @wireless_worker.run_forever }
       Rails.logger.info("[Subscriber] Wireless worker thread started")
     end
   end
