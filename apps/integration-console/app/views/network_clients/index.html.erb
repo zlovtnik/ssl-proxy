@@ -1,6 +1,0 @@
-<% content_for :title, "Network Clients" %>
-<% content_for :turbo_cache_control, "no-cache" %>
-
-<%= svelte_props_tag "network-clients-svelte-root", initial: @network_clients_payload %>
-<div id="network-clients-svelte-root"></div>
-<%= svelte_bundle_tags :network_clients %>
