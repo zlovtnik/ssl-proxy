@@ -111,6 +111,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_NATS_TOPOLOGY_FILE=/app/docker/nats/topology.manifest
       - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit}
@@ -126,6 +127,7 @@ services:
       - SYNC_OUTBOX_DIR=/sync-outbox
     volumes:
       - sync-outbox:/sync-outbox
+      - ./docker/nats:/app/docker/nats:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -428,6 +430,7 @@ services:
     environment:
       <<: *ath_sensor_env
       SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
+      SYNC_NATS_TOPOLOGY_FILE: /config/topology.manifest
       AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       SYNC_RESULT_STREAM_NAME: ${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
       SYNC_SCAN_SUBJECT: ${SYNC_SCAN_SUBJECT:-sync.scan.request}

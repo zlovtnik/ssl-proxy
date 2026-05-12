@@ -1,0 +1,21 @@
+# kind|key|env_vars|default_name|subjects|max_age|dupe_window|max_msgs
+stream|audit|AUDIT_STREAM_NAME|AUDIT_STREAM|${SYNC_SCAN_SUBJECT:-sync.scan.request},${SYNC_LOAD_SUBJECT:-sync.oracle.load},wireless.audit,wireless.audit.config,wireless.config.authorized_networks,wireless.config.sensor,wireless.client.inventory,audit.threat.shadow_device|720h|2m|-1
+stream|result|SYNC_RESULT_STREAM_NAME|ORACLE_RESULT_STREAM|${SYNC_RESULT_SUBJECT:-sync.oracle.result}|720h|2m|-1
+stream|wireless_backlog|WIRELESS_BACKLOG_STREAM_NAME,WIRELESS_BACKLOG_STREAM|WIRELESS_BACKLOG_STREAM|wireless.backlog.>|720h|2m|-1
+stream|wireless_mac|WIRELESS_MAC_STREAM_NAME,WIRELESS_MAC_STREAM|WIRELESS_MAC_STREAM|wireless.mac.>|720h|0s|-1
+stream|wireless_networks|WIRELESS_NETWORKS_STREAM_NAME,WIRELESS_NETWORKS_STREAM|WIRELESS_NETWORKS_STREAM|wireless.networks.>|720h|0s|1
+stream|wireless_probe|WIRELESS_PROBE_STREAM_NAME,WIRELESS_PROBE_STREAM|WIRELESS_PROBE_STREAM|wireless.probe.>|1h|2m|-1
+stream|wireless_bandwidth|WIRELESS_BANDWIDTH_STREAM_NAME,WIRELESS_BANDWIDTH_STREAM|WIRELESS_BANDWIDTH_STREAM|audit.wireless.bandwidth|168h|2m|-1
+stream|wireless_alert|WIRELESS_ALERT_STREAM_NAME,WIRELESS_ALERT_STREAM|WIRELESS_ALERT_STREAM|wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.attack_sequence,wifi.alert.handshake|720h|2m|-1
+
+# kind|key|stream_key|env_vars|default_name|filter_subject
+consumer|scan|audit|SYNC_SCAN_CONSUMER|zig-coordinator-scan|${SYNC_SCAN_SUBJECT:-sync.scan.request}
+consumer|load|audit|SYNC_LOAD_CONSUMER|oracle-worker-load|${SYNC_LOAD_SUBJECT:-sync.oracle.load}
+consumer|result|result|SYNC_RESULT_CONSUMER|zig-coordinator-result|${SYNC_RESULT_SUBJECT:-sync.oracle.result}
+consumer|wireless_backlog_save|wireless_backlog|WIRELESS_BACKLOG_SAVE_CONSUMER|wireless-backlog-save|wireless.backlog.save
+consumer|wireless_backlog_list|wireless_backlog|WIRELESS_BACKLOG_LIST_CONSUMER|wireless-backlog-list|wireless.backlog.list
+consumer|wireless_backlog_synced|wireless_backlog|WIRELESS_BACKLOG_SYNCED_CONSUMER|wireless-backlog-synced|wireless.backlog.synced
+consumer|wireless_backlog_prune|wireless_backlog|WIRELESS_BACKLOG_PRUNE_CONSUMER|wireless-backlog-prune|wireless.backlog.prune
+consumer|wireless_mac_lookup|wireless_mac|WIRELESS_MAC_LOOKUP_CONSUMER|wireless-mac-lookup|wireless.mac.lookup
+consumer|wireless_networks_authorized|wireless_networks|WIRELESS_NETWORKS_AUTHORIZED_CONSUMER|wireless-networks-authorized|wireless.networks.authorized
+consumer|wireless_probe_flush|wireless_probe|WIRELESS_PROBE_FLUSH_CONSUMER|wireless-probe-flush|wireless.probe.flush

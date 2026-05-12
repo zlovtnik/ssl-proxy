@@ -36,5 +36,6 @@ COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /u
 COPY --from=natsbox /usr/local/bin/nats /usr/local/bin/nats
 COPY services/zig-coordinator/schema ./schema
 COPY services/zig-coordinator/src/postgres ./src/postgres
+COPY docker/nats ./docker/nats
 ENV SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]
