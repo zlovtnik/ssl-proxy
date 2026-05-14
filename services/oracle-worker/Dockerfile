@@ -8,6 +8,8 @@ FROM debian:bookworm-slim
 ENV TZ=America/New_York
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        cmake \
+        make \
         tzdata \
         libaio1 \
     && rm -rf /var/lib/apt/lists/*
