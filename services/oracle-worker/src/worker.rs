@@ -4,7 +4,7 @@ use oracle::{sql_type::ToSql, Connection};
 use r2d2_oracle::OracleConnectionManager;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, env, fs, ops::Deref, path::PathBuf};
+use std::{collections::HashSet, env, fs, path::PathBuf};
 
 fn error_chain(error: &dyn std::error::Error) -> String {
     let mut msg = error.to_string();
@@ -652,8 +652,17 @@ impl ProxyEventSink for OracleProxyEventSink {
         blocked_rows: &[BlockedEventInsert],
     ) -> Result<u64, String> {
         let result = insert_event_batch_transaction(&self.connection, batch_id, rows, blocked_rows);
-        if result.is_err() {
+        if let Err(error) = result {
             let _ = self.connection.rollback();
+            if is_proxy_events_batch_row_duplicate(&error) {
+                let retry_result =
+                    insert_event_batch_transaction(&self.connection, batch_id, rows, blocked_rows);
+                if retry_result.is_err() {
+                    let _ = self.connection.rollback();
+                }
+                return retry_result;
+            }
+            return Err(error);
         }
         result
     }
@@ -666,35 +675,7 @@ fn insert_event_batch_transaction(
     blocked_rows: &[BlockedEventInsert],
 ) -> Result<u64, String> {
     const INSERT_SQL: &str = r#"
-        merge into proxy_events pe
-        using (
-            select
-                :1 as batch_id,
-                :2 as row_sequence,
-                :3 as event_time,
-                :4 as event_type,
-                :5 as host,
-                :6 as peer_ip,
-                :7 as wg_pubkey,
-                :8 as device_id,
-                :9 as identity_source,
-                :10 as peer_hostname,
-                :11 as client_ua,
-                :12 as bytes_up,
-                :13 as bytes_down,
-                :14 as status_code,
-                :15 as blocked,
-                :16 as obfuscation_profile,
-                :17 as correlation_id,
-                :18 as parent_event_id,
-                :19 as event_sequence,
-                :20 as duration_ms,
-                :21 as reason,
-                :22 as raw_json
-            from dual
-        ) src
-        on (pe.batch_id = src.batch_id and pe.row_sequence = src.row_sequence)
-        when not matched then insert (
+        insert into proxy_events (
             batch_id,
             row_sequence,
             event_time,
@@ -718,53 +699,49 @@ fn insert_event_batch_transaction(
             reason,
             raw_json
         ) values (
-            src.batch_id,
-            src.row_sequence,
-            src.event_time,
-            src.event_type,
-            src.host,
-            src.peer_ip,
-            src.wg_pubkey,
-            src.device_id,
-            src.identity_source,
-            src.peer_hostname,
-            src.client_ua,
-            src.bytes_up,
-            src.bytes_down,
-            src.status_code,
-            src.blocked,
-            src.obfuscation_profile,
-            src.correlation_id,
-            src.parent_event_id,
-            src.event_sequence,
-            src.duration_ms,
-            src.reason,
-            src.raw_json
+            :1,
+            :2,
+            :3,
+            :4,
+            :5,
+            :6,
+            :7,
+            :8,
+            :9,
+            :10,
+            :11,
+            :12,
+            :13,
+            :14,
+            :15,
+            :16,
+            :17,
+            :18,
+            :19,
+            :20,
+            :21,
+            :22
         )
     "#;
 
     let existing_row_sequences = existing_proxy_row_sequences(connection, batch_id)?;
+    let pending_rows = pending_proxy_event_rows(rows.len(), &existing_row_sequences)?;
 
-    if !rows.is_empty() {
-        let row_sequences = (1..=rows.len())
-            .map(|index| {
-                i64::try_from(index)
-                    .map_err(|_| "proxy_events row_sequence exceeds i64".to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    if !pending_rows.is_empty() {
         let identity_sources = rows
             .iter()
             .map(|row| normalized_identity_source(row.identity_source.as_deref()))
             .collect::<Vec<_>>();
         let mut batch = connection
-            .batch(INSERT_SQL, rows.len())
+            .batch(INSERT_SQL, pending_rows.len())
             .build()
             .map_err(|error| format!("prepare proxy_events batch insert: {}", error_chain(&error)))?;
 
-        for (index, row) in rows.iter().enumerate() {
+        for (index, row_sequence) in pending_rows {
+            let row = &rows[index];
             let params: [&dyn ToSql; 22] = [
                 &batch_id,
-                &row_sequences[index],
+                &row_sequence,
                 &row.event_time,
                 &row.event_type,
                 &row.host,
@@ -799,6 +776,29 @@ fn insert_event_batch_transaction(
         .commit()
         .map_err(|error| format!("commit proxy_events batch: {}", error_chain(&error)))?;
     Ok(rows.len() as u64)
+}
+
+fn pending_proxy_event_rows(
+    row_count: usize,
+    existing_row_sequences: &HashSet<i64>,
+) -> Result<Vec<(usize, i64)>, String> {
+    let mut pending = Vec::with_capacity(row_count);
+    for index in 0..row_count {
+        let row_number = index
+            .checked_add(1)
+            .ok_or_else(|| "proxy_events row_sequence exceeds i64".to_string())?;
+        let row_sequence = i64::try_from(row_number)
+            .map_err(|_| "proxy_events row_sequence exceeds i64".to_string())?;
+        if !existing_row_sequences.contains(&row_sequence) {
+            pending.push((index, row_sequence));
+        }
+    }
+    Ok(pending)
+}
+
+fn is_proxy_events_batch_row_duplicate(message: &str) -> bool {
+    let normalized = message.to_ascii_uppercase();
+    normalized.contains("ORA-00001") && normalized.contains("PROXY_EVENTS_BATCH_ROW_IDX")
 }
 
 fn existing_proxy_row_sequences(
@@ -1004,12 +1004,14 @@ fn failure_result(
 mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use std::{
+        collections::HashSet,
         sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        checksum, classify_oracle_error, handle_load_with_sink, normalized_identity_source,
+        checksum, classify_oracle_error, handle_load_with_sink,
+        is_proxy_events_batch_row_duplicate, normalized_identity_source, pending_proxy_event_rows,
         proxy_event_rows_from_payload, resolve_payload, sink_target, BlockedEventInsert,
         OracleErrorClass, OracleLoad, ProxyEventInsert, ProxyEventSink, SinkTarget,
     };
@@ -1227,6 +1229,46 @@ mod tests {
             classify_oracle_error("unique constraint violated"),
             OracleErrorClass::Permanent
         );
+    }
+
+    #[test]
+    fn pending_proxy_event_rows_includes_all_rows_when_batch_is_new() {
+        let existing = HashSet::new();
+
+        assert_eq!(
+            pending_proxy_event_rows(3, &existing).unwrap(),
+            vec![(0, 1), (1, 2), (2, 3)]
+        );
+    }
+
+    #[test]
+    fn pending_proxy_event_rows_skips_fully_inserted_batch() {
+        let existing = HashSet::from([1, 2, 3]);
+
+        assert!(pending_proxy_event_rows(3, &existing).unwrap().is_empty());
+    }
+
+    #[test]
+    fn pending_proxy_event_rows_keeps_only_missing_retry_rows() {
+        let existing = HashSet::from([1, 3]);
+
+        assert_eq!(
+            pending_proxy_event_rows(4, &existing).unwrap(),
+            vec![(1, 2), (3, 4)]
+        );
+    }
+
+    #[test]
+    fn detects_proxy_events_batch_row_duplicate_error() {
+        assert!(is_proxy_events_batch_row_duplicate(
+            "OCI Error: ORA-00001: unique constraint (USCIS_APP.PROXY_EVENTS_BATCH_ROW_IDX) violated"
+        ));
+        assert!(!is_proxy_events_batch_row_duplicate(
+            "OCI Error: ORA-00001: unique constraint (USCIS_APP.OTHER_IDX) violated"
+        ));
+        assert!(!is_proxy_events_batch_row_duplicate(
+            "OCI Error: ORA-00060: deadlock detected while waiting for resource"
+        ));
     }
 
     #[test]
