@@ -87,7 +87,7 @@ fn parseHostPort(host_port: []const u8) !struct { []const u8, u16 } {
         const close = std.mem.indexOfScalar(u8, host_port, ']') orelse return error.InvalidRedpandaUrl;
         const host = host_port[1..close];
         if (host.len == 0) return error.InvalidRedpandaUrl;
-        if (close + 1 == host_port.len) return .{ host, 4222 };
+        if (close + 1 == host_port.len) return .{ host, 9092 };
         if (host_port[close + 1] != ':') return error.InvalidRedpandaUrl;
         return .{ host, try parsePort(host_port[close + 2 ..]) };
     }
@@ -98,7 +98,7 @@ fn parseHostPort(host_port: []const u8) !struct { []const u8, u16 } {
         return .{ host, try parsePort(host_port[separator + 1 ..]) };
     }
 
-    return .{ host_port, 4222 };
+    return .{ host_port, 9092 };
 }
 
 fn parsePort(raw: []const u8) !u16 {
@@ -107,9 +107,9 @@ fn parsePort(raw: []const u8) !u16 {
 }
 
 test "parse endpoint defaults port and extracts auth" {
-    const endpoint = try Endpoint.parse("redpanda://user:pass@redpanda:4222");
+    const endpoint = try Endpoint.parse("redpanda://user:pass@redpanda:9092");
     try std.testing.expectEqualStrings("redpanda", endpoint.host);
-    try std.testing.expectEqual(@as(u16, 4222), endpoint.port);
+    try std.testing.expectEqual(@as(u16, 9092), endpoint.port);
     try std.testing.expectEqualStrings("user", endpoint.user.?);
     try std.testing.expectEqualStrings("pass", endpoint.pass.?);
     try std.testing.expect(endpoint.token == null);
@@ -127,6 +127,6 @@ test "parse endpoint treats bare userinfo as token" {
 test "parse endpoint handles implicit port and tls scheme" {
     const endpoint = try Endpoint.parse("tls://redpanda.internal");
     try std.testing.expectEqualStrings("redpanda.internal", endpoint.host);
-    try std.testing.expectEqual(@as(u16, 4222), endpoint.port);
+    try std.testing.expectEqual(@as(u16, 9092), endpoint.port);
     try std.testing.expect(endpoint.tls);
 }

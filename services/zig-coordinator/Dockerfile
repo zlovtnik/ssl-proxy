@@ -1,4 +1,4 @@
-FROM redpandaio/redpanda-box:0.16.0 AS redpandabox
+FROM redpandadata/redpanda:latest AS redpanda-tools
 
 FROM alpine:3.20 AS builder
 ARG ZIG_VERSION=0.16.0
@@ -33,7 +33,7 @@ RUN apk add --no-cache \
         tzdata
 WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
-COPY --from=redpandabox /usr/local/bin/redpanda /usr/local/bin/redpanda
+COPY --from=redpanda-tools /usr/bin/rpk /usr/local/bin/rpk
 COPY services/zig-coordinator/schema ./schema
 COPY services/zig-coordinator/src/postgres ./src/postgres
 COPY docker/redpanda ./docker/redpanda

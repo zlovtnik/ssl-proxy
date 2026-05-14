@@ -513,13 +513,13 @@ mod tests {
     fn host_endpoint_validation_accepts_loopback_endpoints() {
         let _env = test_env();
         std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
-        std::env::set_var("SYNC_REDPANDA_BOOTSTRAP_SERVERS", "redpanda://127.0.0.1:4222");
+        std::env::set_var("SYNC_REDPANDA_BOOTSTRAP_SERVERS", "127.0.0.1:9092");
 
         let config = AppConfig::from_env().unwrap();
 
         assert_eq!(
             config.sync.redpanda_bootstrap_servers.as_deref(),
-            Some("redpanda://127.0.0.1:4222")
+            Some("127.0.0.1:9092")
         );
         assert_eq!(config.sync.publish_timeout_ms, 2_000);
     }
@@ -598,7 +598,7 @@ mod tests {
     fn host_endpoint_validation_rejects_redpanda_service_host() {
         let _env = test_env();
         std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
-        std::env::set_var("SYNC_REDPANDA_BOOTSTRAP_SERVERS", "redpanda://redpanda:4222");
+        std::env::set_var("SYNC_REDPANDA_BOOTSTRAP_SERVERS", "redpanda:9092");
 
         let error = match AppConfig::from_env() {
             Ok(_) => panic!("expected host-network endpoint validation to reject Redpanda host"),
@@ -617,7 +617,7 @@ mod tests {
     #[test]
     fn redpanda_host_extracts_host_with_userinfo() {
         assert_eq!(
-            redpanda_host("redpanda://user:pass@redpanda:4222").as_deref(),
+            redpanda_host("redpanda://user:pass@redpanda:9092").as_deref(),
             Some("redpanda")
         );
     }

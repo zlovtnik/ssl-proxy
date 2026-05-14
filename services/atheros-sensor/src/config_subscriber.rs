@@ -512,7 +512,7 @@ fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTi
 /// (no TLS) to avoid heavyweight rdkafka dependency for simple SUB connections.
 /// Credentials are percent-decoded; callers must percent-encode special chars in userinfo.
 /// Parses redpanda://[user:pass@]host:port URLs into address and credentials. Handles three forms:
-/// redpanda://host:port, redpanda://host (port defaults to 4222), and redpanda://user:pass@host:port.
+/// redpanda://host:port, redpanda://host (port defaults to 9092), and redpanda://user:pass@host:port.
 /// Credentials are percent-decoded; callers must percent-encode special chars (@ :) in userinfo.
 fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaEndpoint, String> {
     let trimmed = redpanda_bootstrap_servers.trim();
@@ -540,7 +540,7 @@ fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaE
     let address = if host_port.contains(':') {
         host_port.to_string()
     } else {
-        format!("{host_port}:4222")
+        format!("{host_port}:9092")
     };
     Ok(RedpandaEndpoint {
         address,
@@ -626,9 +626,9 @@ mod tests {
     #[test]
     fn parses_redpanda_endpoint_with_userinfo() {
         assert_eq!(
-            parse_redpanda_endpoint("redpanda://user:pass@127.0.0.1:4222").unwrap(),
+            parse_redpanda_endpoint("redpanda://user:pass@127.0.0.1:9092").unwrap(),
             RedpandaEndpoint {
-                address: "127.0.0.1:4222".to_string(),
+                address: "127.0.0.1:9092".to_string(),
                 user: Some("user".to_string()),
                 password: Some("pass".to_string())
             }
@@ -638,9 +638,9 @@ mod tests {
     #[test]
     fn parses_redpanda_endpoint_with_percent_encoded_userinfo() {
         assert_eq!(
-            parse_redpanda_endpoint("redpanda://user%40example:p%40ss%3Aword@127.0.0.1:4222").unwrap(),
+            parse_redpanda_endpoint("redpanda://user%40example:p%40ss%3Aword@127.0.0.1:9092").unwrap(),
             RedpandaEndpoint {
-                address: "127.0.0.1:4222".to_string(),
+                address: "127.0.0.1:9092".to_string(),
                 user: Some("user@example".to_string()),
                 password: Some("p@ss:word".to_string())
             }
@@ -649,6 +649,6 @@ mod tests {
 
     #[test]
     fn rejects_invalid_percent_encoded_userinfo() {
-        assert!(parse_redpanda_endpoint("redpanda://user:%zz@127.0.0.1:4222").is_err());
+        assert!(parse_redpanda_endpoint("redpanda://user:%zz@127.0.0.1:9092").is_err());
     }
 }

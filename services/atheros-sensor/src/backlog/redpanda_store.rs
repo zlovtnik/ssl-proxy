@@ -869,7 +869,7 @@ fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaE
     let address = if has_port {
         host_port.to_string()
     } else {
-        format!("{host_port}:4222")
+        format!("{host_port}:9092")
     };
     let host = if host_port.starts_with('[') {
         let end = host_port
@@ -1053,7 +1053,7 @@ mod tests {
     #[test]
     fn parses_host_with_default_port() {
         let endpoint = parse_redpanda_endpoint("redpanda://redpanda.internal").unwrap();
-        assert_eq!(endpoint.address, "redpanda.internal:4222");
+        assert_eq!(endpoint.address, "redpanda.internal:9092");
         assert_eq!(endpoint.host, "redpanda.internal");
         assert!(!endpoint.tls_enabled);
     }
@@ -1069,7 +1069,7 @@ mod tests {
     #[test]
     fn parses_bracketed_ipv6_without_port() {
         let endpoint = parse_redpanda_endpoint("redpanda://[::1]").unwrap();
-        assert_eq!(endpoint.address, "[::1]:4222");
+        assert_eq!(endpoint.address, "[::1]:9092");
         assert_eq!(endpoint.host, "::1");
     }
 

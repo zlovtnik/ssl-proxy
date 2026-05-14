@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn parse_redpanda_defaults_port() {
         let endpoint = parse_redpanda_endpoint("redpanda://localhost").unwrap();
-        assert_eq!(endpoint.address, "localhost:4222");
+        assert_eq!(endpoint.address, "localhost:9092");
         assert_eq!(endpoint.host, "localhost");
         assert!(!endpoint.tls_enabled);
     }
@@ -877,7 +877,7 @@ mod tests {
     async fn enqueue_message_spools_when_queue_stays_full() {
         let spool = tempfile::tempdir().unwrap();
         let mut config = Config::default();
-        config.sync.redpanda_bootstrap_servers = Some("redpanda://127.0.0.1:4222".to_string());
+        config.sync.redpanda_bootstrap_servers = Some("127.0.0.1:9092".to_string());
         config.sync.publish_enqueue_timeout_ms = 1;
         config.sync.publish_spool_dir = spool.path().display().to_string();
         let publisher = SyncPublisher::new(&config.sync);
@@ -905,7 +905,7 @@ mod tests {
     async fn try_enqueue_message_reports_timeout_without_spooling() {
         let spool = tempfile::tempdir().unwrap();
         let mut config = Config::default();
-        config.sync.redpanda_bootstrap_servers = Some("redpanda://127.0.0.1:4222".to_string());
+        config.sync.redpanda_bootstrap_servers = Some("127.0.0.1:9092".to_string());
         config.sync.publish_enqueue_timeout_ms = 1;
         config.sync.publish_spool_dir = spool.path().display().to_string();
         let publisher = SyncPublisher::new(&config.sync);
@@ -977,7 +977,7 @@ mod tests {
             stream: Box::new(client),
         };
         let config = SyncPublisherConfig {
-            redpanda_bootstrap_servers: Some("redpanda://127.0.0.1:4222".to_string()),
+            redpanda_bootstrap_servers: Some("127.0.0.1:9092".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
             queue_capacity: 8_192,
@@ -1032,7 +1032,7 @@ mod tests {
             stream: Box::new(client),
         };
         let config = SyncPublisherConfig {
-            redpanda_bootstrap_servers: Some("redpanda://127.0.0.1:4222".to_string()),
+            redpanda_bootstrap_servers: Some("127.0.0.1:9092".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
             queue_capacity: 8_192,
@@ -1083,7 +1083,7 @@ mod tests {
             stream: Box::new(client),
         };
         let config = SyncPublisherConfig {
-            redpanda_bootstrap_servers: Some("redpanda://127.0.0.1:4222".to_string()),
+            redpanda_bootstrap_servers: Some("127.0.0.1:9092".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
             queue_capacity: 8_192,
@@ -1134,7 +1134,7 @@ mod tests {
             stream: Box::new(client),
         };
         let config = SyncPublisherConfig {
-            redpanda_bootstrap_servers: Some("redpanda://127.0.0.1:4222".to_string()),
+            redpanda_bootstrap_servers: Some("127.0.0.1:9092".to_string()),
             connect_timeout: Duration::from_secs(1),
             publish_timeout: Duration::from_secs(1),
             queue_capacity: 8_192,

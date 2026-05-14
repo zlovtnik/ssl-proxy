@@ -43,7 +43,7 @@ admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but
 coordinator_unhealthy::zig-coordinator unhealthy::Coordinator failed health or dependency checks::Inspect zig-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/schema access::manual
 worker_unhealthy::oracle-worker unhealthy::Worker failed Oracle or Redpanda preflight::Inspect oracle-worker logs and wallet/lib/secret mounts::manual
 postgres_unavailable::postgres unhealthy|Postgres unavailable::Postgres dependency unavailable::Ensure postgres is healthy and DATABASE_URL points to postgres:5432::manual
-redpanda_unavailable::redpanda unhealthy|Redpanda unavailable::Redpanda dependency unavailable::Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:4222::manual
+redpanda_unavailable::redpanda unhealthy|Redpanda unavailable::Redpanda dependency unavailable::Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:9092::manual
 worker_wallet_missing::missing Oracle wallet artifact|wallet directory missing|no libclntsh|missing Oracle password file::Worker Oracle assets are missing::Mount wallet lib and secrets into oracle-worker only::manual
 rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages::Builder Rust toolchain too old for locked dependencies::Bump the builder Rust image (or pin compatible crate versions) and rebuild::manual
 schema_apply_failed::psql failed::Coordinator could not apply or validate the sync schema::Check DATABASE_URL and Postgres readiness::manual

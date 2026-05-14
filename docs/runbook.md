@@ -172,7 +172,7 @@ All views are optimized for ADB columnar storage.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
-- `redpanda-bootstrap` must complete successfully before `zig-coordinator` is healthy. It creates `AUDIT_STREAM` for `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, wireless alert/config topics, plus `ORACLE_RESULT_STREAM` for `sync.oracle.result`. Durable pull consumers are `zig-coordinator-scan`, `oracle-worker-load`, and `zig-coordinator-result`. `SYNC_STREAM_NAMES` controls accepted scan ingest streams; `SYNC_ORACLE_STREAM_NAMES` controls which of those streams are dispatched to `oracle-worker` and defaults to `proxy.events`.
+- `redpanda-init` must complete successfully before `zig-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the services at runtime: `zig-coordinator-scan`, `oracle-worker-load`, and `zig-coordinator-result`.
 - `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
 ### 8. Wireless Audit Minute Cleanup
@@ -195,17 +195,17 @@ scripts/sync-status.sh
 Manual checks:
 
 ```sh
-docker compose run --rm redpanda-bootstrap redpanda --server redpanda://redpanda:4222 stream info AUDIT_STREAM
-docker compose run --rm redpanda-bootstrap redpanda --server redpanda://redpanda:4222 consumer info AUDIT_STREAM zig-coordinator-scan
-docker compose run --rm redpanda-bootstrap redpanda --server redpanda://redpanda:4222 consumer info AUDIT_STREAM oracle-worker-load
+docker compose run --rm redpanda-init rpk topic describe sync.scan.request --brokers redpanda:9092
+docker compose run --rm redpanda-init rpk topic describe sync.oracle.load --brokers redpanda:9092
+docker compose run --rm redpanda-init rpk group describe zig-coordinator-scan --brokers redpanda:9092
 docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_scan_ingest group by status"
 docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_job; select count(*) from sync_batch;"
 ```
 
-If `oracle-worker` logs `worker_load classification=poison` or `unsupported stream_name wireless.audit`, confirm the load durable is filtered to the load topic and that only `proxy.events` is configured for Oracle dispatch:
+If `oracle-worker` logs `worker_load classification=poison` or `unsupported stream_name wireless.audit`, confirm the worker is subscribed to the load topic and that only `proxy.events` is configured for Oracle dispatch:
 
 ```sh
-docker compose run --rm redpanda-bootstrap redpanda --server redpanda://redpanda:4222 consumer info AUDIT_STREAM oracle-worker-load --json
+docker compose run --rm redpanda-init rpk group describe oracle-worker-load --brokers redpanda:9092
 docker compose exec -T zig-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
 docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batch batch join sync_job job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
 ```
@@ -213,15 +213,14 @@ docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name,
 Recovery path:
 
 ```sh
-docker compose run --rm redpanda-bootstrap
+docker compose run --rm redpanda-init
 docker compose restart zig-coordinator oracle-worker
 ```
 
-If the durable still shows any filter other than `sync.oracle.load`, delete and recreate it through bootstrap:
+If the consumer group offset is stuck after a poison load message, reset it after the bad row is addressed:
 
 ```sh
-docker compose run --rm redpanda-bootstrap redpanda --server redpanda://redpanda:4222 consumer rm AUDIT_STREAM oracle-worker-load -f
-docker compose run --rm redpanda-bootstrap
+docker compose run --rm redpanda-init rpk group offset-delete oracle-worker-load --topics sync.oracle.load --brokers redpanda:9092
 docker compose restart oracle-worker
 ```
 

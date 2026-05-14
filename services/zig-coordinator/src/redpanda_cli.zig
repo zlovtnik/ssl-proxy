@@ -17,7 +17,7 @@ pub fn parseRedpandaAuthority(allocator: std.mem.Allocator, redpanda_url: []cons
         return allocator.dupe(u8, authority) catch error.InvalidRedpandaUrl;
     }
 
-    return std.fmt.allocPrint(allocator, "{s}:4222", .{authority}) catch error.InvalidRedpandaUrl;
+    return std.fmt.allocPrint(allocator, "{s}:9092", .{authority}) catch error.InvalidRedpandaUrl;
 }
 
 pub fn looksLikeNoMessage(stderr: []const u8) bool {

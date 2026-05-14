@@ -1,27 +1,31 @@
 #!/usr/bin/env sh
 set -eu
 
-STREAM_NAME="${AUDIT_STREAM_NAME:-AUDIT_STREAM}"
+SCAN_TOPIC="${SYNC_SCAN_TOPIC:-sync.scan.request}"
 SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
 DATABASE_URL="${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}"
-Redpanda_URL="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://redpanda:4222}"
+REDPANDA_BROKERS="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-ssl-proxy}"
-Redpanda_IMAGE="${Redpanda_BOX_IMAGE:-redpandaio/redpanda-box:0.16.0}"
+REDPANDA_IMAGE="${REDPANDA_IMAGE:-redpandadata/redpanda:latest}"
 
 echo "== compose services =="
-docker compose ps redpanda postgres redpanda-bootstrap zig-coordinator atheros-sensor
+docker compose ps redpanda postgres redpanda-init zig-coordinator atheros-sensor
 
 echo
-echo "== redpanda redpanda =="
-docker compose exec -T redpanda wget -qO- http://127.0.0.1:8222/jsz || true
+echo "== redpanda cluster =="
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint rpk "${REDPANDA_IMAGE}" cluster info --brokers "${REDPANDA_BROKERS}" || true
 
 echo
-echo "== redpanda stream =="
-docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint redpanda "${Redpanda_IMAGE}" --server "${Redpanda_URL}" stream info "${STREAM_NAME}" --no-select || true
+echo "== redpanda topics =="
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint rpk "${REDPANDA_IMAGE}" topic list --brokers "${REDPANDA_BROKERS}" || true
 
 echo
-echo "== redpanda scan consumer =="
-docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint redpanda "${Redpanda_IMAGE}" --server "${Redpanda_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" --no-select || true
+echo "== redpanda scan topic =="
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint rpk "${REDPANDA_IMAGE}" topic describe "${SCAN_TOPIC}" --brokers "${REDPANDA_BROKERS}" || true
+
+echo
+echo "== redpanda scan consumer group =="
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint rpk "${REDPANDA_IMAGE}" group describe "${SCAN_CONSUMER}" --brokers "${REDPANDA_BROKERS}" || true
 
 echo
 echo "== postgres sync counts =="

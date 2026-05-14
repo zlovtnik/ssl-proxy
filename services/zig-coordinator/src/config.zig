@@ -57,7 +57,7 @@ pub fn load() Config {
         .result_topic = envOrDefault("SYNC_RESULT_TOPIC", "sync.oracle.result"),
         .database_url = envOrDefault("DATABASE_URL", ""),
         .sync_redpanda_url = envOrDefault("SYNC_REDPANDA_BOOTSTRAP_SERVERS", ""),
-        .redpanda_topic_manifest_file = envOrDefault("SYNC_REDPANDA_TOPIC_MANIFEST", "/app/docker/redpanda/topic_manifest.manifest"),
+        .redpanda_topic_manifest_file = envOrDefault("SYNC_REDPANDA_TOPIC_MANIFEST", "/app/docker/redpanda/topics.manifest"),
         .sync_schema_file = envOrDefault("SYNC_SCHEMA_FILE", "/app/src/postgres/schema.sql"),
         .audit_stream_name = envOrDefault("AUDIT_STREAM_NAME", "AUDIT_STREAM"),
         .result_stream_name = envOrDefault("SYNC_RESULT_STREAM_NAME", "ORACLE_RESULT_STREAM"),
@@ -84,7 +84,7 @@ pub fn load() Config {
         .scan_retry_backoff_seconds = parsePositiveU32(envOrDefault("SYNC_SCAN_RETRY_BACKOFF_SECONDS", "30"), 30),
         .batch_dispatch_lease_seconds = parsePositiveU32(envOrDefault("SYNC_BATCH_DISPATCH_LEASE_SECONDS", "300"), 300),
         .batch_max_attempts = parsePositiveU32(envOrDefault("SYNC_BATCH_MAX_ATTEMPTS", "5"), 5),
-        .redpanda_publish_timeout_ms = parsePositiveU32(envOrDefault("Redpanda_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
+        .redpanda_publish_timeout_ms = parsePositiveU32(envOrDefault("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
 
         // Batch tuning (env overridable)
         // Increased from 200→200 (scan), 200→200 (result), 200→200 (ingest), 5→200 (dispatch)

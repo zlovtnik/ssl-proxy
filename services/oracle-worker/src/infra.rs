@@ -112,6 +112,6 @@ mod tests {
 
     #[test]
     fn parse_redpanda_address_rejects_tls_urls() {
-        assert!(parse_redpanda_address("tls://redpanda.local:4222").is_err());
+        assert!(parse_redpanda_address("tls://redpanda.local:9092").is_err());
     }
 }
