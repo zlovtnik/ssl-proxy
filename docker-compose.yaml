@@ -1,11 +1,11 @@
 x-ath-sensor-env: &ath_sensor_env
-  SYNC_NATS_URL: nats://127.0.0.1:4222
+  SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda://127.0.0.1:19092
   DATABASE_URL: postgres://sync:sync@127.0.0.1:5432/sync
 
 services:
   ssl-proxy:
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -77,7 +77,7 @@ services:
       - EXPLICIT_PROXY_ENABLED=false
       # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
       - ADMIN_API_KEY=macaco
-      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_OUTBOX_DIR=/sync-outbox
 
     ports:
@@ -98,9 +98,9 @@ services:
 
   zig-coordinator:
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
-      nats-bootstrap:
+      redpanda-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -110,21 +110,24 @@ services:
     restart: unless-stopped
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
       - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
       - SYNC_STREAM_NAME=proxy.events
-      - SYNC_STREAM_NAMES=proxy.events
+      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit}
+      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
-      - SYNC_SCAN_SUBJECT=${SYNC_SCAN_SUBJECT:-sync.scan.request}
-      - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
-      - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
+      - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
+      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
+      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
       - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
       - SYNC_OUTBOX_DIR=/sync-outbox
     volumes:
       - sync-outbox:/sync-outbox
+      - ./docker/redpanda:/app/docker/redpanda:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
       interval: 30s
@@ -134,9 +137,9 @@ services:
 
   oracle-worker:
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
-      nats-bootstrap:
+      redpanda-init:
         condition: service_completed_successfully
     build:
       context: .
@@ -148,15 +151,15 @@ services:
       - ./secrets:/run/secrets:ro
       - sync-outbox:/sync-outbox
     environment:
-      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
-      - SYNC_LOAD_SUBJECT=${SYNC_LOAD_SUBJECT:-sync.oracle.load}
-      - SYNC_RESULT_SUBJECT=${SYNC_RESULT_SUBJECT:-sync.oracle.result}
+      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
+      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_OUTBOX_DIR=/sync-outbox
       - TNS_ADMIN=/app/wallet
       - LD_LIBRARY_PATH=/app/lib
-      - ORACLE_CONN=${ORACLE_CONN:-mainerc_tp}
+      - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
       - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
       - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
     healthcheck:
@@ -168,13 +171,15 @@ services:
 
   integration-console-web:
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      integration-console-db-setup:
         condition: service_completed_successfully
     build:
       context: .
@@ -186,37 +191,60 @@ services:
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
-      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY=${INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY:-60}
       - INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT=${INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT:-10}
       - INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD=${INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD:-15}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-minioadmin}
-      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
     ports:
       - "3003:3000"
 
   integration-console-worker:
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: unless-stopped
-    command: ["bin/rails", "runner", "Nats::Subscriber.new.run_forever"]
+    command: ["bin/rails", "runner", "Redpanda::Subscriber.new.run_forever"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
-      - SYNC_NATS_URL=${SYNC_NATS_URL:-nats://nats:4222}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  integration-console-db-setup:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+    restart: "no"
+    command: ["bin/rails", "db:migrate"]
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
 
   integration-console-heatmap-refresh:
     depends_on:
@@ -224,6 +252,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -243,6 +273,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -258,9 +290,9 @@ services:
 
   atheros-sensor:
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
-      nats-bootstrap:
+      redpanda-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -282,7 +314,9 @@ services:
       - sync-outbox:/sync-outbox
     environment:
       <<: *ath_sensor_env
-      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://127.0.0.1:4222}
+      # The sensor runs in host networking for capture, so Docker service DNS
+      # names such as redpanda are not reachable from this container.
+      SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://127.0.0.1:19092}
       DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
       ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
       ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
@@ -303,6 +337,7 @@ services:
       ATH_SENSOR_SHUTDOWN_GRACE_SECS: ${ATH_SENSOR_SHUTDOWN_GRACE_SECS:-5}
       ATH_SENSOR_BACKLOG_MAX_ATTEMPTS: ${ATH_SENSOR_BACKLOG_MAX_ATTEMPTS:-10}
       ATH_SENSOR_BACKLOG_MAX_AGE_HOURS: ${ATH_SENSOR_BACKLOG_MAX_AGE_HOURS:-72}
+      ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS: ${ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS:-10000}
       ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS: ${ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS:-30}
       ATH_SENSOR_AUDIT_LAYER_STREAM: ${ATH_SENSOR_AUDIT_LAYER_STREAM:-off}
       SYNC_OUTBOX_DIR: /sync-outbox
@@ -322,24 +357,43 @@ services:
           cpus: '0.25'
           memory: 256M
 
-  nats:
-    image: nats:2.10-alpine
-    command: ["-js", "-sd", "/data", "-m", "8222"]
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 1G
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - INTERNAL://0.0.0.0:9092,HOST://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - INTERNAL://redpanda:9092,HOST://127.0.0.1:19092
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8222/varz >/dev/null"]
+      test: ["CMD-SHELL", "rpk cluster info --brokers 127.0.0.1:9092 >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
-      - "127.0.0.1:4222:4222"
-      - "127.0.0.1:8222:8222"
+      - "9092:9092"
+      - "127.0.0.1:19092:19092"
+      - "9644:9644"
     volumes:
-      - nats-data:/data
+      - redpanda-data:/data
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    sysctls:
+      - net.core.somaxconn=1024
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -349,21 +403,29 @@ services:
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    sysctls:
+      - net.core.somaxconn=1024
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-administrador}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   minio-init:
     image: minio/mc:latest
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
     restart: "no"
     entrypoint: ["sh", "-lc"]
     command:
@@ -373,29 +435,22 @@ services:
         done
         mc mb --ignore-existing "local/$$MINIO_BUCKET"
     environment:
-      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-minioadmin}
-      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minioadmin}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
 
-  nats-bootstrap:
-    image: natsio/nats-box:0.16.0
+  redpanda-init:
+    image: redpandadata/redpanda:latest
     depends_on:
-      nats:
+      redpanda:
         condition: service_healthy
     restart: "no"
     environment:
       <<: *ath_sensor_env
-      SYNC_NATS_URL: ${SYNC_NATS_URL:-nats://nats:4222}
-      AUDIT_STREAM_NAME: ${AUDIT_STREAM_NAME:-AUDIT_STREAM}
-      SYNC_RESULT_STREAM_NAME: ${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
-      SYNC_SCAN_SUBJECT: ${SYNC_SCAN_SUBJECT:-sync.scan.request}
-      SYNC_SCAN_CONSUMER: ${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
-      SYNC_LOAD_SUBJECT: ${SYNC_LOAD_SUBJECT:-sync.oracle.load}
-      SYNC_LOAD_CONSUMER: ${SYNC_LOAD_CONSUMER:-oracle-worker-load}
-      SYNC_RESULT_SUBJECT: ${SYNC_RESULT_SUBJECT:-sync.oracle.result}
-      SYNC_RESULT_CONSUMER: ${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      SYNC_REDPANDA_TOPIC_MANIFEST: /config/topics.manifest
     volumes:
-      - ./docker/nats:/config:ro
+      - ./docker/redpanda:/config:ro
     entrypoint: ["sh"]
     command: ["/config/bootstrap.sh"]
 
@@ -419,7 +474,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
 volumes:
-  nats-data:
+  redpanda-data:
   postgres-data:
   sync-outbox:
   minio-data:

@@ -21,12 +21,26 @@ pub fn main(init: std.process.Init) !void {
         .string("mode", mode)
         .string("stream_name", cfg.stream_name)
         .string("stream_names", cfg.stream_names_csv)
+        .string("oracle_stream_names", cfg.oracle_stream_names_csv)
         .string("audit_stream", cfg.audit_stream_name)
         .string("result_stream", cfg.result_stream_name)
-        .string("scan_subject", cfg.scan_subject)
-        .string("load_subject", cfg.load_subject)
-        .string("result_subject", cfg.result_subject)
+        .string("scan_topic", cfg.scan_topic)
+        .string("load_topic", cfg.load_topic)
+        .string("result_topic", cfg.result_topic)
         .log();
+
+    if (scheduler.invalidOracleStreamName(cfg.stream_names_csv, cfg.oracle_stream_names_csv)) |stream_name| {
+        logging.err()
+            .stringSafe("event", "config_validation")
+            .stringSafe("status", "error")
+            .stringSafe("error", "InvalidOracleStreamConfig")
+            .string("stream_name", stream_name)
+            .string("stream_names", cfg.stream_names_csv)
+            .string("oracle_stream_names", cfg.oracle_stream_names_csv)
+            .stringSafe("allowed_oracle_stream_names", "proxy.events")
+            .log();
+        return error.InvalidOracleStreamConfig;
+    }
 
     var service = try scheduler.Service.init(allocator, init.io, cfg);
     defer service.deinit();
@@ -65,8 +79,9 @@ pub fn main(init: std.process.Init) !void {
         .string("mode", "run")
         .string("primary_stream", cfg.stream_name)
         .string("configured_streams", cfg.stream_names_csv)
+        .string("oracle_streams", cfg.oracle_stream_names_csv)
         .string("cursor", cursor)
-        .fmt("subjects", "{s},{s},{s}", .{ cfg.scan_subject, cfg.load_subject, cfg.result_subject })
+        .fmt("topics", "{s},{s},{s}", .{ cfg.scan_topic, cfg.load_topic, cfg.result_topic })
         .log();
 
     installSignalHandlers();

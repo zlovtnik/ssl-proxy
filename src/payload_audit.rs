@@ -32,7 +32,9 @@ pub fn try_parse_http_preview(
     identity: &ResolvedIdentity,
     config: &PayloadAuditConfig,
 ) -> Option<PayloadAuditRecord> {
-    let preview = std::str::from_utf8(preview).ok()?;
+    let mut redacted_preview = preview.to_vec();
+    crate::payload_redaction::redact_sensitive_data(&mut redacted_preview);
+    let preview = std::str::from_utf8(&redacted_preview).ok()?;
     let mut lines = preview.lines();
     let request_line = lines.next()?.trim_end_matches('\r');
     let mut request_parts = request_line.split_whitespace();
@@ -130,7 +132,7 @@ pub fn audit_http_preview(
 
     match state
         .publisher
-        .publish_payload_audit(&state.config.payload_audit.nats_subject, &json)
+        .publish_payload_audit(&state.config.payload_audit.redpanda_topic, &json)
     {
         Ok(()) => {
             debug!(host, "payload audit record enqueued");
@@ -243,7 +245,7 @@ mod tests {
     fn config() -> PayloadAuditConfig {
         PayloadAuditConfig {
             enabled: true,
-            nats_subject: "proxy.payload_audit".to_string(),
+            redpanda_topic: "proxy.payload_audit".to_string(),
             max_body_bytes: 65_536,
             allowed_methods: vec!["POST".to_string(), "PUT".to_string(), "PATCH".to_string()],
             allowed_content_types: vec!["application/json".to_string()],
@@ -348,6 +350,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(record.body["_raw"], "not-json");
+    }
+
+    #[test]
+    fn applies_byte_redaction_before_json_fallback() {
+        let record = try_parse_http_preview(
+            &preview(
+                "POST",
+                "/login",
+                "application/json",
+                r#"{"message":"Bearer raw-secret"}"#,
+            ),
+            "example.com",
+            &identity(),
+            &config(),
+        )
+        .unwrap();
+
+        assert_eq!(record.body["message"], "Bearer **********");
     }
 
     #[test]

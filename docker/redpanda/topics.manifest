@@ -1,0 +1,27 @@
+# topic|partitions|replicas|retention.ms|retention.bytes
+sync.scan.request|3|1|2592000000|-1
+sync.oracle.load|3|1|2592000000|-1
+sync.oracle.result|3|1|2592000000|-1
+proxy.payload_audit|3|1|2592000000|-1
+wireless.audit|3|1|2592000000|-1
+wireless.audit.config|1|1|2592000000|-1
+wireless.config.authorized_networks|1|1|2592000000|-1
+wireless.config.sensor|1|1|2592000000|-1
+wireless.client.inventory|3|1|2592000000|-1
+audit.threat.shadow_device|3|1|2592000000|-1
+wireless.backlog.save|3|1|2592000000|-1
+wireless.backlog.list|3|1|2592000000|-1
+wireless.backlog.synced|3|1|2592000000|-1
+wireless.backlog.prune|3|1|2592000000|-1
+wireless.backlog.list.reply|3|1|300000|-1
+wireless.backlog.prune.reply|3|1|300000|-1
+wireless.mac.lookup|3|1|2592000000|-1
+wireless.mac.lookup.reply|3|1|300000|-1
+wireless.networks.authorized|3|1|2592000000|-1
+wireless.networks.authorized.reply|3|1|300000|-1
+wireless.probe.flush|3|1|3600000|-1
+audit.wireless.bandwidth|3|1|604800000|-1
+wireless.alert.rogue_ap|3|1|2592000000|-1
+wireless.alert.deauth_flood|3|1|2592000000|-1
+wireless.alert.attack_sequence|3|1|2592000000|-1
+wifi.alert.handshake|3|1|2592000000|-1

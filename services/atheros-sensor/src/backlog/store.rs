@@ -1,4 +1,4 @@
-//! BacklogStore trait contract for wireless NATS persistence.
+//! BacklogStore trait contract for wireless Redpanda persistence.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -46,8 +46,8 @@ pub struct IngestRecord<'a> {
 
 #[derive(Debug, Error)]
 pub enum BacklogError {
-    #[error("nats {operation} failed: {message}")]
-    Nats {
+    #[error("redpanda {operation} failed: {message}")]
+    Redpanda {
         operation: &'static str,
         message: String,
     },
@@ -63,9 +63,11 @@ pub enum BacklogError {
         #[source]
         source: serde_json::Error,
     },
-    #[error("nats request {operation} timed out")]
+    #[error("redpanda request {operation} timed out")]
     Timeout { operation: &'static str },
-    #[error("nats request {operation} unsupported when SYNC_NATS_URL is unset")]
+    #[error(
+        "redpanda request {operation} unsupported when SYNC_REDPANDA_BOOTSTRAP_SERVERS is unset"
+    )]
     Disabled { operation: &'static str },
 }
 

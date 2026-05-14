@@ -1,4 +1,4 @@
-FROM natsio/nats-box:0.16.0 AS natsbox
+FROM redpandadata/redpanda:latest AS redpanda-tools
 
 FROM alpine:3.20 AS builder
 ARG ZIG_VERSION=0.16.0
@@ -27,14 +27,19 @@ RUN zig build -Doptimize=ReleaseSafe
 FROM alpine:3.20
 ENV TZ=America/New_York
 RUN apk add --no-cache \
+        bash \
         ca-certificates \
         netcat-openbsd \
         postgresql-client \
         tzdata
 WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
-COPY --from=natsbox /usr/local/bin/nats /usr/local/bin/nats
+COPY --from=redpanda-tools /opt/redpanda/libexec/rpk /usr/local/bin/rpk
+RUN rpk --version
+COPY services/zig-coordinator/bin/redpanda /usr/local/bin/redpanda
+RUN chmod +x /usr/local/bin/redpanda && redpanda --compat-version
 COPY services/zig-coordinator/schema ./schema
 COPY services/zig-coordinator/src/postgres ./src/postgres
+COPY docker/redpanda ./docker/redpanda
 ENV SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]

@@ -20,14 +20,15 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn payload_audit_publishes_redacted_record_to_nats() {
+    #[ignore = "requires a running Redpanda broker"]
+    async fn payload_audit_publishes_redacted_record_to_redpanda() {
         let body = r#"{"username":"alice","password":"secret"}"#;
         let preview = format!(
             "POST /login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         );
-        let (nats_url, server_task) = spawn_mock_nats().await;
-        let state = create_state(nats_url).await;
+        let (redpanda_bootstrap_servers, server_task) = spawn_mock_redpanda().await;
+        let state = create_state(redpanda_bootstrap_servers).await;
         let identity = ResolvedIdentity {
             peer_ip: Some("10.0.0.2".to_string()),
             wg_pubkey: Some("pubkey".to_string()),
@@ -46,11 +47,11 @@ mod tests {
 
         let published = tokio::time::timeout(std::time::Duration::from_secs(2), server_task)
             .await
-            .expect("mock NATS should receive publish")
-            .expect("mock NATS task should complete");
+            .expect("mock Redpanda should receive publish")
+            .expect("mock Redpanda task should complete");
         state.publisher.shutdown().await;
 
-        assert_eq!(published.subject, "proxy.payload_audit");
+        assert_eq!(published.topic, "proxy.payload_audit");
         let record: PayloadAuditRecord = serde_json::from_str(&published.payload).unwrap();
         assert_eq!(record.body["password"], "[REDACTED]");
         assert_eq!(record.body_bytes_original, body.len());
@@ -58,14 +59,14 @@ mod tests {
         assert_eq!(body_value["body"]["username"], "alice");
     }
 
-    async fn create_state(nats_url: String) -> ssl_proxy::state::SharedState {
+    async fn create_state(redpanda_bootstrap_servers: String) -> ssl_proxy::state::SharedState {
         let (stats_tx, _) = broadcast::channel(16);
         let (events_tx, _) = broadcast::channel(16);
         let resolver = TokioAsyncResolver::tokio_from_system_conf()
             .expect("system resolver should initialize");
         let mut config = Config::default();
         config.payload_audit.enabled = true;
-        config.sync.nats_url = Some(nats_url);
+        config.sync.redpanda_bootstrap_servers = Some(redpanda_bootstrap_servers);
 
         AppState::new(
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
@@ -78,11 +79,11 @@ mod tests {
     }
 
     struct PublishedFrame {
-        subject: String,
+        topic: String,
         payload: String,
     }
 
-    async fn spawn_mock_nats() -> (String, tokio::task::JoinHandle<PublishedFrame>) {
+    async fn spawn_mock_redpanda() -> (String, tokio::task::JoinHandle<PublishedFrame>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move {
@@ -118,7 +119,7 @@ mod tests {
             }
         });
 
-        (format!("nats://{address}"), task)
+        (format!("redpanda://{address}"), task)
     }
 
     fn parse_pub_frame(bytes: &[u8]) -> Option<PublishedFrame> {
@@ -132,7 +133,7 @@ mod tests {
         if parts.next()? != "PUB" {
             return None;
         }
-        let subject = parts.next()?.to_string();
+        let topic = parts.next()?.to_string();
         let _reply_to = parts.next()?;
         let payload_len = parts.next()?.parse::<usize>().ok()?;
         let payload_start = header_end + 2;
@@ -143,6 +144,6 @@ mod tests {
         let payload = std::str::from_utf8(&bytes[payload_start..payload_end])
             .ok()?
             .to_string();
-        Some(PublishedFrame { subject, payload })
+        Some(PublishedFrame { topic, payload })
     }
 }

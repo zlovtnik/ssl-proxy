@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tracing::error;
+use tracing::{debug, error, info};
 
 use crate::state::SharedState;
 
@@ -201,11 +201,22 @@ pub(crate) fn emit_serializable<T>(
         }
     };
 
-    let _ = state.events_tx.send(raw.clone());
+    if state.events_tx.send(raw.clone()).is_err() {
+        state.queue_dashboard_event(&raw, event, host);
+    } else {
+        state.flush_dashboard_event_queue();
+    }
 
     if !crate::sync::should_publish_scan_request(event) {
         return;
     }
+
+    debug!(
+        target: "sync",
+        event_name = event,
+        %host,
+        "proxy event qualifies for sync plane — preparing scan request"
+    );
 
     let dedupe_key = format!(
         "{:x}",
@@ -226,6 +237,12 @@ pub(crate) fn emit_serializable<T>(
             payload_ref,
             observed_at,
         });
+    info!(
+        target: "sync",
+        event_name = event,
+        %host,
+        "published scan request to sync.scan.request for oracle ingest"
+    );
 }
 
 #[cfg(test)]
@@ -446,5 +463,68 @@ mod tests {
                 .expect("inline payload should resolve"),
             raw
         );
+    }
+
+    #[tokio::test]
+    async fn emit_serializable_queues_dashboard_event_when_no_subscriber() {
+        let state = create_test_state().await;
+        assert_eq!(state.dashboard_event_queue_len(), 0);
+
+        emit_serializable(
+            &state,
+            "tunnel_open",
+            "example.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            None,
+            false,
+            None,
+            serde_json::json!({ "kind": "connect" }),
+        );
+
+        assert_eq!(state.dashboard_event_queue_len(), 1);
+
+        let mut rx = state.events_tx.subscribe();
+        state.flush_dashboard_event_queue();
+
+        assert_eq!(state.dashboard_event_queue_len(), 0);
+        let raw = rx.try_recv().expect("queued dashboard event should be delivered");
+        assert!(raw.contains("\"type\":\"tunnel_open\"") || raw.contains("\"type\": \"tunnel_open\""));
+    }
+
+    #[tokio::test]
+    async fn flush_dashboard_event_queue_drops_event_after_retry_limit() {
+        let state = create_test_state().await;
+
+        emit_serializable(
+            &state,
+            "tunnel_open",
+            "example.com",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            None,
+            false,
+            None,
+            serde_json::json!({ "kind": "connect" }),
+        );
+
+        assert_eq!(state.dashboard_event_queue_len(), 1);
+        for _ in 0..crate::state::DASHBOARD_EVENT_MAX_RETRY_ATTEMPTS {
+            state.flush_dashboard_event_queue();
+        }
+
+        assert_eq!(state.dashboard_event_queue_len(), 0);
     }
 }

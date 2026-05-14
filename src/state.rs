@@ -4,7 +4,7 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use serde::Serialize;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::blocklist::SEED;
 
@@ -130,6 +130,16 @@ pub struct BandwidthCursor {
 pub struct WgPeersSnapshot {
     pub inventory: HashMap<String, WgPeerSnapshot>,
     pub pubkey_by_ip: HashMap<String, String>,
+}
+
+const DASHBOARD_EVENT_QUEUE_CAPACITY: usize = 1024;
+pub(crate) const DASHBOARD_EVENT_MAX_RETRY_ATTEMPTS: u8 = 3;
+
+struct DashboardEventRetry {
+    raw: String,
+    event_name: String,
+    host: String,
+    attempt_count: u8,
 }
 
 impl Default for PeerCounters {
@@ -288,6 +298,7 @@ pub struct AppState {
     pub resolver: hickory_resolver::TokioAsyncResolver,
     pub stats_tx: broadcast::Sender<String>,
     pub events_tx: broadcast::Sender<String>,
+    dashboard_event_queue: Mutex<VecDeque<DashboardEventRetry>>,
     pub bytes_up: AtomicU64,
     pub bytes_down: AtomicU64,
     pub active_tunnels: AtomicU64,
@@ -356,12 +367,78 @@ impl AppState {
             ptr_cache: DashMap::new(),
             publisher: std::sync::Arc::new(crate::transport::SyncPublisher::new(&config.sync)),
             forensic: crate::forensic::ForensicState::new(config.proxy.forensic_sentry_enabled),
+            dashboard_event_queue: Mutex::new(VecDeque::with_capacity(DASHBOARD_EVENT_QUEUE_CAPACITY)),
             config,
 
             last_bytes_up: AtomicU64::new(0),
             last_bytes_down: AtomicU64::new(0),
             last_sample_instant: Mutex::new(Instant::now()),
         })
+    }
+
+    pub fn dashboard_event_queue_len(&self) -> usize {
+        self.dashboard_event_queue.lock().unwrap().len()
+    }
+
+    pub fn queue_dashboard_event(&self, raw: &str, event_name: &str, host: &str) {
+        let mut queue = self.dashboard_event_queue.lock().unwrap();
+        if queue.len() >= DASHBOARD_EVENT_QUEUE_CAPACITY {
+            if let Some(dropped) = queue.pop_front() {
+                warn!(
+                    dropped_event_name = %dropped.event_name,
+                    dropped_host = %dropped.host,
+                    "dashboard event retry queue full; dropping oldest queued event"
+                );
+            }
+        }
+
+        queue.push_back(DashboardEventRetry {
+            raw: raw.to_string(),
+            event_name: event_name.to_string(),
+            host: host.to_string(),
+            attempt_count: 0,
+        });
+
+        warn!(
+            event_name = event_name,
+            %host,
+            queue_len = queue.len(),
+            "dashboard event broadcast failed; queued for retry"
+        );
+    }
+
+    pub fn flush_dashboard_event_queue(&self) {
+        let mut pending = std::mem::take(&mut *self.dashboard_event_queue.lock().unwrap());
+        if pending.is_empty() {
+            return;
+        }
+
+        let mut remaining = VecDeque::with_capacity(pending.len());
+        while let Some(mut event) = pending.pop_front() {
+            if self.events_tx.send(event.raw.clone()).is_ok() {
+                continue;
+            }
+
+            event.attempt_count = event.attempt_count.saturating_add(1);
+            if event.attempt_count >= DASHBOARD_EVENT_MAX_RETRY_ATTEMPTS {
+                error!(
+                    event_name = %event.event_name,
+                    host = %event.host,
+                    attempt_count = event.attempt_count,
+                    "dashboard event delivery failed after retry limit; event dropped"
+                );
+            } else {
+                remaining.push_back(event);
+            }
+
+            remaining.append(&mut pending);
+            break;
+        }
+
+        let mut queue = self.dashboard_event_queue.lock().unwrap();
+        let mut new_queue = std::mem::take(&mut *queue);
+        remaining.append(&mut new_queue);
+        *queue = remaining;
     }
 
     #[allow(dead_code)]

@@ -5,10 +5,10 @@
 //! All mutable per-frame state lives in PipelineState, which is
 //! owned by the loop and never shared across tasks, avoiding locks on the hot path.
 //! SensorHandles bundles the shared resources that are either read-only or Arc-wrapped:
-//! the NATS backlog, the NATS publish client, the audit window, and the authorized-network
+//! the Redpanda backlog, the Redpanda publish client, the audit window, and the authorized-network
 //! config generation counter. On SIGTERM or Ctrl-C, shutdown_flush drains the current bandwidth
 //! window, flushes the in-memory publish backlog to the coordinator, then sleeps for shutdown_grace_secs
-//! to allow in-flight NATS publishes to complete before the process exits.
+//! to allow in-flight Redpanda publishes to complete before the process exits.
 //!
 //! # Type notes
 //!
@@ -46,7 +46,7 @@ use std::{
     future,
     num::NonZeroUsize,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
     },
     time::{Duration, Instant},
@@ -63,30 +63,29 @@ use crate::{
         AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
-    backlog::{BacklogStore, NatsBacklog, ProbeFlushObservation},
+    backlog::{BacklogStore, ProbeFlushObservation, RedpandaBacklog},
     capture::{stream_packets, CaptureControl, CaptureError},
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker,
-        RogueApTracker, SignalTracker, CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT,
-        ROGUE_AP_SUBJECT,
+        AuthorizationStatus, AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker,
+        PmfAttackTracker, RogueApTracker, SignalTracker, CLIENT_INVENTORY_TOPIC,
+        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
     model::{AuditContext, EnrichedFrame, RawPacket},
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
-        flush_memory_backlog, publish_bandwidth_event, publish_entry, publish_handshake_alert,
-        publish_json, PublishClient, PublishError, PublishState, SharedPublishState,
-        SyncPublisherClient,
+        flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
+        publish_entry, publish_handshake_alert, publish_json, replay_journal, PublishClient,
+        PublishError, PublishState, SharedPublishState, SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
-const MAC_LOOKUP_ERROR_TTL_SECS: u64 = 30;
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -107,20 +106,32 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         read_mac_address(&device),
     )?;
 
-    // Verify NATS publisher initializes
+    // Verify Redpanda publisher initializes
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     let publish_client: Arc<dyn PublishClient> =
         Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let backlog = step(
-        "initialize NATS backlog",
-        NatsBacklog::new(Arc::clone(&publish_client), config.sync.clone()),
+        "initialize Redpanda backlog",
+        RedpandaBacklog::new(
+            Arc::clone(&publish_client),
+            config.sync.clone(),
+            Duration::from_millis(config.redpanda_request_timeout_ms),
+        ),
     )?;
-    let _ = step_async("request coordinator backlog list over NATS", async {
+    match step_async("request coordinator backlog list over Redpanda", async {
         backlog.list_pending().await
     })
-    .await?;
+    .await
+    {
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("Healthcheck WARNING: coordinator backlog list failed (sensor is degraded but operational): {}", error);
+        }
+    }
 
-    println!("Healthcheck OK: configuration valid, device accessible, NATS publisher initialized, coordinator reachable");
+    println!(
+        "Healthcheck OK: configuration valid, device accessible, Redpanda publisher initialized"
+    );
     Ok(())
 }
 
@@ -192,6 +203,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     interface = %context.interface
                 );
 
+                let observed_at = packet.observed_at;
                 let result = process_packet(
                     packet,
                     &context,
@@ -208,7 +220,15 @@ async fn run_sensor() -> Result<(), SensorError> {
                 .await;
 
                 match result {
-                    Ok(PipelineOutcome::DecodedFrame) => handles.stats.lock().unwrap().decoded_frames += 1,
+                    Ok(PipelineOutcome::DecodedFrame) => {
+                        let mut stats = handles.stats.lock().unwrap();
+                        stats.decoded_frames += 1;
+                        let lag_ms = (Utc::now() - observed_at)
+                            .num_milliseconds()
+                            .max(0) as u64;
+                        stats.lag_total_ms = stats.lag_total_ms.saturating_add(lag_ms);
+                        stats.lag_count += 1;
+                    }
                     Ok(PipelineOutcome::UnsupportedFrame) => handles.stats.lock().unwrap().unsupported_frames += 1,
                     Err(error) => {
                         handles.stats.lock().unwrap().pipeline_errors += 1;
@@ -225,12 +245,29 @@ async fn run_sensor() -> Result<(), SensorError> {
                     .handshake_monitor
                     .cleanup_expired(ttl, Some(&handles.capture_control));
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
+                // Compute median (publish_time - window_end) across bandwidth events.
+                let now = Utc::now();
+                let mut lags: Vec<u64> = bandwidth_events
+                    .iter()
+                    .filter_map(|e| {
+                        let window_end = chrono::DateTime::parse_from_rfc3339(&e.window_end).ok()?;
+                        let lag = (now - window_end.with_timezone(&chrono::Utc)).num_milliseconds().max(0) as u64;
+                        Some(lag)
+                    })
+                    .collect();
+                lags.sort_unstable();
+                let median_lag = lags.get(lags.len() / 2).copied();
+                {
+                    let mut stats = handles.stats.lock().unwrap();
+                    stats.bandwidth_window_lag_ms = median_lag;
+                    stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
+                }
                 publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
             }
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
-                if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_SUBJECT, &snapshot).await {
+                if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &snapshot).await {
                     warn!(%error, "client inventory publish failed");
                 }
 
@@ -268,7 +305,7 @@ struct SensorHandles {
     context: SharedContext,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     capture_control: CaptureControl,
-    backlog: Arc<NatsBacklog>,
+    backlog: Arc<RedpandaBacklog>,
     publish_client: Arc<SyncPublisherClient>,
     publish_state: SharedPublishState,
     stats: metrics::SharedStats,
@@ -285,7 +322,7 @@ struct PipelineState {
     handshake_monitor: HandshakeMonitor,
     traffic_bucket: TrafficBucket,
     mac_device_cache: LruCache<String, Option<(String, Option<String>)>>,
-    mac_lookup_error_cache: HashMap<String, Instant>,
+    mac_lookup_error_cache: LruCache<String, Instant>,
     client_inventory: ClientInventory,
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
@@ -320,25 +357,104 @@ impl PipelineState {
                     NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
                 }),
             ),
-            mac_lookup_error_cache: HashMap::new(),
+            mac_lookup_error_cache: LruCache::new(
+                NonZeroUsize::new(MAC_DEVICE_CACHE_SIZE).unwrap_or_else(|| {
+                    NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
+                }),
+            ),
             client_inventory: ClientInventory::default(),
             signal_tracker: SignalTracker::default(),
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
-            authorized_network_cache: AuthorizedNetworkCache::default(),
+            authorized_network_cache: AuthorizedNetworkCache::new(
+                _config.authorized_network_cache_backoff_ms,
+            ),
             seen_authorized_config_generation: 0,
             probe_accumulator: HashMap::new(),
         }
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum MacLookupCacheDecision {
+    UseCached(Option<(String, Option<String>)>),
+    SkipRecentFailure,
+    Fetch,
+}
+
+fn cached_mac_lookup(
+    pipeline: &mut PipelineState,
+    cache_key: &str,
+    error_ttl: Duration,
+) -> MacLookupCacheDecision {
+    mac_lookup_cache_decision(
+        &mut pipeline.mac_device_cache,
+        &mut pipeline.mac_lookup_error_cache,
+        cache_key,
+        error_ttl,
+    )
+}
+
+fn mac_lookup_cache_decision(
+    device_cache: &mut LruCache<String, Option<(String, Option<String>)>>,
+    error_cache: &mut LruCache<String, Instant>,
+    cache_key: &str,
+    error_ttl: Duration,
+) -> MacLookupCacheDecision {
+    if let Some(cached) = device_cache.get(cache_key) {
+        return MacLookupCacheDecision::UseCached(cached.clone());
+    }
+    if error_cache
+        .get(cache_key)
+        .is_some_and(|last| last.elapsed() < error_ttl)
+    {
+        return MacLookupCacheDecision::SkipRecentFailure;
+    }
+    MacLookupCacheDecision::Fetch
+}
+
+fn remember_mac_lookup_success(
+    pipeline: &mut PipelineState,
+    cache_key: String,
+    lookup: Option<(String, Option<String>)>,
+) {
+    remember_mac_lookup_success_in_caches(
+        &mut pipeline.mac_device_cache,
+        &mut pipeline.mac_lookup_error_cache,
+        cache_key,
+        lookup,
+    );
+}
+
+fn remember_mac_lookup_failure(pipeline: &mut PipelineState, cache_key: String) {
+    remember_mac_lookup_failure_in_cache(&mut pipeline.mac_lookup_error_cache, cache_key);
+}
+
+fn remember_mac_lookup_success_in_caches(
+    device_cache: &mut LruCache<String, Option<(String, Option<String>)>>,
+    error_cache: &mut LruCache<String, Instant>,
+    cache_key: String,
+    lookup: Option<(String, Option<String>)>,
+) {
+    error_cache.pop(&cache_key);
+    device_cache.put(cache_key, lookup);
+}
+
+fn remember_mac_lookup_failure_in_cache(
+    error_cache: &mut LruCache<String, Instant>,
+    cache_key: String,
+) {
+    error_cache.put(cache_key, Instant::now());
+}
+
 /// Initializes sensor in startup order: tracing first (so all subsequent steps are logged),
-/// then device detection, then NATS backlog, then pcap capture, then config subscribers.
+/// then device detection, then Redpanda backlog, then pcap capture, then config subscribers.
 async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
-    let log_filter = init_tracing(Arc::clone(&audit_window), config.audit_layer_stream);
+    let (log_filter, _audit_window_active) =
+        init_tracing(Arc::clone(&audit_window), config.audit_layer_stream);
     info!(
         rust_log = %log_filter,
         default_rust_log = DEFAULT_RUST_LOG,
@@ -371,26 +487,56 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         snaplen = config.snaplen,
         pcap_timeout_ms = config.pcap_timeout_ms,
         log_idle_secs = config.log_idle_secs,
-        nats_configured = config.sync.nats_url.is_some(),
-        nats_tls_enabled = config.sync.tls_enabled,
+        redpanda_configured = config.sync.redpanda_bootstrap_servers.is_some(),
+        redpanda_tls_enabled = config
+            .sync
+            .security_protocol
+            .as_deref()
+            .map(|protocol| protocol.to_ascii_uppercase().contains("SSL"))
+            .unwrap_or(false),
         audit_window = ?audit_window_snapshot(&audit_window),
         "atheros sensor starting"
     );
 
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     info!(
-        nats_configured = config.sync.nats_url.is_some(),
-        nats_tls_enabled = config.sync.tls_enabled,
+        redpanda_configured = config.sync.redpanda_bootstrap_servers.is_some(),
+        redpanda_tls_enabled = config
+            .sync
+            .security_protocol
+            .as_deref()
+            .map(|protocol| protocol.to_ascii_uppercase().contains("SSL"))
+            .unwrap_or(false),
         "atheros sensor publisher initialized"
     );
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
-    let publish_state = PublishState::shared();
+    let publish_state = PublishState::shared_with_config(
+        config.memory_backlog_size,
+        config.publish_journal_path.clone(),
+    );
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
     let backlog = Arc::new(step(
-        "initialize NATS backlog",
-        NatsBacklog::new(backlog_client, config.sync.clone()),
+        "initialize Redpanda backlog",
+        RedpandaBacklog::new(
+            backlog_client,
+            config.sync.clone(),
+            Duration::from_millis(config.redpanda_request_timeout_ms),
+        ),
     )?);
-    info!("atheros sensor NATS backlog initialized");
+    backlog.clone().spawn_health_check();
+    // Replay journal entries from previous outages
+    match replay_journal(&publish_state, &*backlog).await {
+        Ok(count) => {
+            if count > 0 {
+                info!(replayed = count, "recovered publish journal entries");
+            }
+        }
+        Err(error) => {
+            warn!(%error, "publish journal replay failed; entries remain in journal for retry")
+        }
+    }
+
+    info!("atheros sensor Redpanda backlog initialized");
 
     config_subscriber::spawn_audit_window_config_subscriber(
         config.sync.clone(),
@@ -423,6 +569,18 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         pcap_timeout_ms = config.pcap_timeout_ms,
         "atheros sensor pcap capture opened"
     );
+
+    let stats = metrics::shared_stats();
+    metrics::spawn_metrics_server(
+        config.metrics_port,
+        Arc::clone(&stats),
+        Arc::clone(&publish_state),
+    );
+
+    // Shared filter state: tracks the last-applied BPF so the hopper can skip
+    // re-applying when the filter hasn't changed.
+    let current_filter: Arc<RwLock<String>> = Arc::new(RwLock::new(config.bpf.clone()));
+
     if config.channel_hop_enabled {
         spawn_channel_hopper(
             device.clone(),
@@ -430,6 +588,8 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             config.channel_hop_interval_ms,
             Arc::clone(&context),
             packet_stream.control.clone(),
+            Arc::clone(&current_filter),
+            Arc::clone(&stats),
         );
     }
     config_subscriber::spawn_sensor_config_subscriber(
@@ -437,9 +597,20 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         config.location_id.clone(),
         Arc::clone(&context),
         packet_stream.control.clone(),
+        current_filter,
     );
-    let stats = metrics::shared_stats();
-    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats));
+    // Spawn periodic memory backlog flush timer
+    let flush_state = Arc::clone(&publish_state);
+    let flush_backlog = Arc::clone(&backlog);
+    let flush_interval = Duration::from_secs(config.memory_backlog_flush_interval_secs);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(flush_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            periodic_memory_backlog_flush(&flush_state, &*flush_backlog).await;
+        }
+    });
 
     Ok(SensorHandles {
         config: config.clone(),
@@ -458,12 +629,12 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
 /// authorized network -> tags threats -> enriches with MAC device lookup -> observes
-/// bandwidth -> publishes to NATS.
+/// bandwidth -> publishes to Redpanda.
 async fn process_packet(
     packet: RawPacket,
     context: &AuditContext,
     config: &AppConfig,
-    backlog: &NatsBacklog,
+    backlog: &RedpandaBacklog,
     publish_client: &dyn PublishClient,
     publish_state: &SharedPublishState,
     pipeline: &mut PipelineState,
@@ -521,17 +692,20 @@ async fn process_packet(
         pipeline.authorized_network_cache.invalidate();
         pipeline.seen_authorized_config_generation = latest_generation;
     }
-    if let Err(error) = pipeline
+    let refresh_result = pipeline
         .authorized_network_cache
         .refresh_if_needed(
             backlog,
             Duration::from_secs(config.authorized_network_cache_ttl_secs),
         )
-        .await
-    {
-        warn!(%error, "authorized wireless network cache refresh failed");
+        .await;
+    if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
+        warn!(
+            error = %refresh_result.as_ref().unwrap_err(),
+            "authorized wireless network cache refresh failed"
+        );
     }
-    let authorized = pipeline.authorized_network_cache.is_authorized(
+    let authorization_status = pipeline.authorized_network_cache.authorization_status(
         entry.ssid.as_deref(),
         entry
             .bssid
@@ -539,9 +713,13 @@ async fn process_packet(
             .or(entry.destination_bssid.as_deref()),
         &entry.location_id,
     );
-    let external_bssid = !authorized;
-    if entry.ssid.is_some() && external_bssid {
+    let external_bssid = authorization_status == AuthorizationStatus::Unauthorized;
+    if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unauthorized {
         entry.tags.push("threat:unauthorized_bssid".to_string());
+    } else if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unknown {
+        entry
+            .tags
+            .push("enrichment:authorized_network_unknown".to_string());
     }
     pipeline.client_inventory.observe(&entry);
 
@@ -582,6 +760,30 @@ async fn process_packet(
                 });
         }
     }
+
+    // Backpressure guard for probe accumulator: if the map exceeds 8192 entries,
+    // drain and flush immediately rather than waiting for the next inventory_flush tick.
+    const MAX_PROBE_ACCUMULATOR_SIZE: usize = 8192;
+    if pipeline.probe_accumulator.len() > MAX_PROBE_ACCUMULATOR_SIZE {
+        let probes_to_flush: Vec<_> = pipeline.probe_accumulator.drain().collect();
+        let batch = probes_to_flush
+            .iter()
+            .map(|((ssid, client_mac), obs)| ProbeFlushObservation {
+                ssid: ssid.clone(),
+                client_mac: client_mac.clone(),
+                known_bssid: obs.known_bssid.clone(),
+                first_seen: obs.first_seen,
+                last_seen: obs.last_seen,
+                probe_count: obs.probe_count,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = backlog.flush_probe_batch(&batch).await {
+            warn!(%error, "probe batch early flush failed; reinserting for retry");
+            for (key, obs) in probes_to_flush {
+                pipeline.probe_accumulator.insert(key, obs);
+            }
+        }
+    }
     if pipeline
         .signal_tracker
         .observe(&entry, config.signal_anomaly_dbm_delta)
@@ -596,7 +798,7 @@ async fn process_packet(
         if let Err(error) = publish_json(
             publish_client,
             "publish_rogue_ap_alert",
-            ROGUE_AP_SUBJECT,
+            ROGUE_AP_TOPIC,
             &alert,
         )
         .await
@@ -613,7 +815,7 @@ async fn process_packet(
         if let Err(error) = publish_json(
             publish_client,
             "publish_deauth_flood_alert",
-            DEAUTH_FLOOD_SUBJECT,
+            DEAUTH_FLOOD_TOPIC,
             &alert,
         )
         .await
@@ -624,34 +826,47 @@ async fn process_packet(
     let mut pmf_tags = Vec::new();
     pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
     entry.tags.extend(pmf_tags);
-    if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
-        let cache_key = mac.to_ascii_lowercase();
-        let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
-            cached.clone()
+    // Backpressure guard: if the memory backlog is >80% full, skip the MAC device lookup
+    // (which adds async I/O per packet) to prevent the backlog from growing further.
+    let backlog_pct = {
+        let ps = publish_state.lock().unwrap();
+        let capacity = ps.memory_backlog_capacity().get();
+        if capacity > 0 {
+            ps.memory_backlog_len() * 100 / capacity
         } else {
-            let lookup = if pipeline
-                .mac_lookup_error_cache
-                .get(&cache_key)
-                .is_some_and(|last| last.elapsed() < Duration::from_secs(MAC_LOOKUP_ERROR_TTL_SECS))
-            {
-                None
+            0
+        }
+    };
+    let skip_mac_lookup = backlog_pct > 80 || !config.mac_device_lookup_enabled;
+    if skip_mac_lookup {
+        if entry.identity_source == "unknown" || entry.identity_source == "mac_observed" {
+            entry.identity_source = if config.mac_device_lookup_enabled {
+                "mac_lookup_skipped_backpressure".to_string()
             } else {
-                match backlog.lookup_device_by_mac(&cache_key).await {
-                    Ok(lookup) => lookup,
-                    Err(error) => {
-                        stats.lock().unwrap().mac_lookup_failures += 1;
-                        pipeline
-                            .mac_lookup_error_cache
-                            .insert(cache_key.clone(), Instant::now());
-                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
-                        None
-                    }
-                }
+                "mac_lookup_disabled".to_string()
             };
-            pipeline
-                .mac_device_cache
-                .put(cache_key.clone(), lookup.clone());
-            lookup
+        }
+    } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
+        let cache_key = mac.to_ascii_lowercase();
+        let lookup = match cached_mac_lookup(
+            pipeline,
+            &cache_key,
+            Duration::from_secs(config.mac_lookup_error_ttl_secs),
+        ) {
+            MacLookupCacheDecision::UseCached(lookup) => lookup,
+            MacLookupCacheDecision::SkipRecentFailure => None,
+            MacLookupCacheDecision::Fetch => match backlog.lookup_device_by_mac(&cache_key).await {
+                Ok(lookup) => {
+                    remember_mac_lookup_success(pipeline, cache_key.clone(), lookup.clone());
+                    lookup
+                }
+                Err(error) => {
+                    stats.lock().unwrap().mac_lookup_failures += 1;
+                    remember_mac_lookup_failure(pipeline, cache_key.clone());
+                    warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
+                    None
+                }
+            },
         };
         if let Some((device_id, username)) = lookup {
             entry.device_id = Some(device_id);
@@ -662,7 +877,7 @@ async fn process_packet(
                 entry.identity_source = "device_registry".to_string();
             }
         }
-    }
+    } // end of skip_mac_lookup else block
     let bandwidth_events = match pipeline.traffic_bucket.observe(&entry, external_bssid) {
         Ok(events) => events,
         Err(error) => {
@@ -732,14 +947,20 @@ fn context_snapshot(context: &SharedContext) -> AuditContext {
 }
 
 /// Spawns a background task that cycles through channels 1, 6, and 11 at the configured interval.
+/// Only re-applies the BPF filter when the filter string has actually changed (detected via the
+/// shared `current_filter`). The default BPF `type mgt or type data` is channel-agnostic, so
+/// there is no need to re-compile it on every hop.
 fn spawn_channel_hopper(
     device: String,
     bpf: String,
     interval_ms: u64,
     context: SharedContext,
     capture_control: CaptureControl,
+    current_filter: Arc<RwLock<String>>,
+    stats: metrics::SharedStats,
 ) {
     tokio::spawn(async move {
+        let mut last_applied_filter = bpf.clone();
         let channels = [1_u8, 6, 11];
         let mut index = 0usize;
         let mut interval = tokio::time::interval(Duration::from_millis(interval_ms.max(100)));
@@ -752,7 +973,18 @@ fn spawn_channel_hopper(
                     if let Ok(mut context) = context.write() {
                         context.channel = channel;
                     }
-                    capture_control.apply_filter(bpf.clone());
+                    stats.lock().unwrap().channel_hop_count += 1;
+
+                    let needs_apply = current_filter
+                        .read()
+                        .map(|f| *f != last_applied_filter)
+                        .unwrap_or(true);
+                    if needs_apply {
+                        if let Ok(filter) = current_filter.read() {
+                            capture_control.apply_filter(filter.clone());
+                            last_applied_filter = filter.clone();
+                        }
+                    }
                     info!(interface = %device, channel, "wireless capture channel hopped");
                 }
                 Err(error) => {
@@ -764,9 +996,27 @@ fn spawn_channel_hopper(
 }
 
 /// Flushes bandwidth window, writes memory backlog to the coordinator, then sleeps for
-/// shutdown_grace_secs to let in-flight NATS publishes drain before process exit.
+/// shutdown_grace_secs to let in-flight Redpanda publishes drain before process exit.
 async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineState) {
     let events = pipeline_state.traffic_bucket.flush_current();
+    let now = Utc::now();
+    let mut lags: Vec<u64> = events
+        .iter()
+        .filter_map(|e| {
+            let window_end = chrono::DateTime::parse_from_rfc3339(&e.window_end).ok()?;
+            let lag = (now - window_end.with_timezone(&chrono::Utc))
+                .num_milliseconds()
+                .max(0) as u64;
+            Some(lag)
+        })
+        .collect();
+    lags.sort_unstable();
+    let median_lag = lags.get(lags.len() / 2).copied();
+    {
+        let mut stats = handles.stats.lock().unwrap();
+        stats.bandwidth_window_lag_ms = median_lag;
+        stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
+    }
     publish_bandwidth_events(&*handles.publish_client, events).await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
@@ -803,7 +1053,26 @@ fn audit_window_snapshot(audit_window: &SharedAuditWindow) -> AuditWindow {
 fn init_tracing(
     audit_window: SharedAuditWindow,
     audit_layer_stream: config::AuditLayerStream,
-) -> String {
+) -> (String, Arc<AtomicBool>) {
+    let audit_window_active = Arc::new(AtomicBool::new(true));
+
+    // Spawn a background watcher that refreshes the audit window active snapshot every 5 seconds
+    // so the AuditLayer does not need to acquire a read lock on every on_event() call.
+    let watcher_active = Arc::clone(&audit_window_active);
+    let watcher_window = Arc::clone(&audit_window);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let active = watcher_window
+                .read()
+                .map(|w| w.is_active_at(chrono::Utc::now()))
+                .unwrap_or(true);
+            watcher_active.store(active, Ordering::Release);
+        }
+    });
+
     let (filter, filter_source) = match std::env::var("RUST_LOG") {
         Ok(value) if !value.trim().is_empty() => match EnvFilter::try_new(value.trim()) {
             Ok(filter) => (filter, value.trim().to_string()),
@@ -826,10 +1095,13 @@ fn init_tracing(
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer().json())
-        .with(AuditLayer::new(audit_window, audit_layer_stream))
+        .with(AuditLayer::new(
+            Arc::clone(&audit_window_active),
+            audit_layer_stream,
+        ))
         .init();
 
-    filter_source
+    (filter_source, audit_window_active)
 }
 
 /// Creates an interval for periodic heartbeat logging, or None if disabled.
@@ -878,4 +1150,55 @@ where
     future
         .await
         .map_err(|error| SensorError::step(label, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_lookup_failure_suppresses_retry_without_caching_miss() {
+        let mut device_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut error_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let cache_key = "aa:bb:cc:dd:ee:ff".to_string();
+
+        remember_mac_lookup_failure_in_cache(&mut error_cache, cache_key.clone());
+
+        assert_eq!(
+            mac_lookup_cache_decision(
+                &mut device_cache,
+                &mut error_cache,
+                &cache_key,
+                Duration::from_secs(30),
+            ),
+            MacLookupCacheDecision::SkipRecentFailure
+        );
+        assert!(device_cache.get(&cache_key).is_none());
+    }
+
+    #[test]
+    fn mac_lookup_success_caches_none_and_clears_error_backoff() {
+        let mut device_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut error_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let cache_key = "aa:bb:cc:dd:ee:ff".to_string();
+        remember_mac_lookup_failure_in_cache(&mut error_cache, cache_key.clone());
+
+        remember_mac_lookup_success_in_caches(
+            &mut device_cache,
+            &mut error_cache,
+            cache_key.clone(),
+            None,
+        );
+
+        assert_eq!(
+            mac_lookup_cache_decision(
+                &mut device_cache,
+                &mut error_cache,
+                &cache_key,
+                Duration::from_secs(30),
+            ),
+            MacLookupCacheDecision::UseCached(None)
+        );
+        assert!(error_cache.get(&cache_key).is_none());
+    }
 }

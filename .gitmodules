@@ -1,0 +1,3 @@
+[submodule "apps/integration-console"]
+	path = apps/integration-console
+	url = https://github.com/zlovtnik/integration-console

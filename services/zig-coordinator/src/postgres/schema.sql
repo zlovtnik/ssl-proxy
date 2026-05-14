@@ -28,7 +28,8 @@ $$;
 create or replace function coordinator.record_scan_request(
   p_request jsonb,
   p_payload jsonb,
-  p_payload_sha256 text
+  p_payload_sha256 text,
+  p_stream_names text[]
 )
 returns jsonb
 language plpgsql
@@ -40,7 +41,11 @@ declare
   v_observed_at timestamptz := (p_request->>'observed_at')::timestamptz;
   v_recorded boolean := false;
 begin
-  if v_stream_name is distinct from 'proxy.events' then
+  if v_stream_name is null or not exists (
+    select 1
+      from unnest(p_stream_names) as configured(stream_name)
+     where btrim(configured.stream_name) = v_stream_name
+  ) then
     return jsonb_build_object(
       'recorded', false,
       'reason', 'unsupported_stream',
@@ -112,10 +117,14 @@ begin
 end;
 $$;
 
+drop function if exists coordinator.process_ingest_ledger(text[], integer, integer);
+
 create or replace function coordinator.process_ingest_ledger(
   p_stream_names text[],
+  p_oracle_stream_names text[],
   p_max_attempts integer,
-  p_backoff_secs integer
+  p_backoff_secs integer,
+  p_batch_size integer default 200
 )
 returns integer
 language plpgsql
@@ -123,6 +132,9 @@ as $$
 declare
   v_marked_count integer := 0;
   v_recovered_count integer := 0;
+  v_batched_count integer := 0;
+  v_limit integer := greatest(coalesce(p_batch_size, 200), 1);
+  v_processed_dedupe_keys text[] := array[]::text[];
 begin
   update sync_scan_ingest ingest
      set status = 'batched',
@@ -154,90 +166,374 @@ begin
            attempt_count = attempt_count + 1,
            updated_at = now(),
            last_error = null
-     where dedupe_key = (
+     where dedupe_key in (
        select dedupe_key
          from sync_scan_ingest
         where status in ('pending', 'failed')
-          and stream_name = any(p_stream_names)
+          and stream_name in (
+                select btrim(configured.stream_name)
+                  from unnest(p_stream_names) as configured(stream_name)
+              )
           and attempt_count < p_max_attempts
           and (
                 status = 'pending'
                 or observed_at <= now() - make_interval(secs => (greatest(attempt_count, 1) * p_backoff_secs))
               )
         order by observed_at asc
-        limit 1
+        limit v_limit
         for update skip locked
      )
-    returning *
-  ),
-  job_upsert as (
-    insert into sync_job (job_id, stream_name, status, attempt_count, created_at, started_at)
-    select sync_stable_uuid(dedupe_key || ':job'),
-           stream_name,
-           'pending',
-           0,
-           now(),
-           now()
-      from next_ingest
-    on conflict (job_id) do nothing
-    returning job_id
-  ),
-  batch_upsert as (
-    insert into sync_batch (
-      batch_id,
-      job_id,
-      batch_no,
-      payload_ref,
-      status,
-      row_count,
-      checksum,
-      attempt_count,
-      last_error,
-      dedupe_key,
-      cursor_start,
-      cursor_end
-    )
-    select sync_stable_uuid(dedupe_key || ':batch'),
-           sync_stable_uuid(dedupe_key || ':job'),
-           0,
-           payload_ref,
-           'pending',
-           1,
-           payload_sha256,
-           0,
-           null,
-           dedupe_key,
-           coordinator.ensure_cursor(stream_name),
-           extract(epoch from observed_at)::bigint::text
-      from next_ingest
-    on conflict (dedupe_key) do nothing
     returning dedupe_key
-  ),
-  cursor_upsert as (
-    insert into sync_cursor (stream_name, cursor_value, updated_at)
-    select stream_name, extract(epoch from observed_at)::bigint::text, now()
-      from next_ingest
-    on conflict (stream_name)
-    do update set cursor_value = excluded.cursor_value, updated_at = now()
-    returning stream_name
-  ),
-  mark_batched as (
-    update sync_scan_ingest ingest
-       set status = 'batched',
-           updated_at = now()
-      from batch_upsert
-     where ingest.dedupe_key = batch_upsert.dedupe_key
-    returning ingest.dedupe_key
   )
-  select v_marked_count + v_recovered_count + count(*)
-    into v_marked_count
-    from mark_batched;
+  select coalesce(array_agg(dedupe_key), array[]::text[])
+    into v_processed_dedupe_keys
+    from next_ingest;
 
-  return v_marked_count;
+  insert into sync_cursor (stream_name, cursor_value, updated_at)
+  select distinct stream_name, '0', now()
+    from sync_scan_ingest
+   where dedupe_key = any(v_processed_dedupe_keys)
+  on conflict (stream_name) do nothing;
+
+  insert into sync_job (job_id, stream_name, status, attempt_count, created_at, started_at)
+  select sync_stable_uuid(dedupe_key || ':job'),
+         stream_name,
+         'pending',
+         0,
+         now(),
+         now()
+    from sync_scan_ingest
+   where dedupe_key = any(v_processed_dedupe_keys)
+     and stream_name in (
+           select btrim(configured.stream_name)
+             from unnest(p_oracle_stream_names) as configured(stream_name)
+     )
+  on conflict (job_id) do nothing;
+
+  insert into sync_batch (
+    batch_id,
+    job_id,
+    batch_no,
+    payload_ref,
+    status,
+    row_count,
+    checksum,
+    attempt_count,
+    last_error,
+    dedupe_key,
+    cursor_start,
+    cursor_end
+  )
+  select sync_stable_uuid(ingest.dedupe_key || ':batch'),
+         sync_stable_uuid(ingest.dedupe_key || ':job'),
+         0,
+         ingest.payload_ref,
+         'pending',
+         1,
+         ingest.payload_sha256,
+         0,
+         null,
+         ingest.dedupe_key,
+         cursor.cursor_value,
+         extract(epoch from ingest.observed_at)::bigint::text
+    from sync_scan_ingest ingest
+    join sync_cursor cursor on cursor.stream_name = ingest.stream_name
+   where ingest.dedupe_key = any(v_processed_dedupe_keys)
+     and ingest.stream_name in (
+           select btrim(configured.stream_name)
+             from unnest(p_oracle_stream_names) as configured(stream_name)
+     )
+  on conflict (dedupe_key) do nothing;
+
+  insert into sync_cursor (stream_name, cursor_value, updated_at)
+  select distinct on (stream_name)
+         stream_name,
+         extract(epoch from observed_at)::bigint::text,
+         now()
+    from sync_scan_ingest
+   where dedupe_key = any(v_processed_dedupe_keys)
+   order by stream_name, observed_at desc
+  on conflict (stream_name)
+  do update set cursor_value = excluded.cursor_value, updated_at = now();
+
+  update sync_scan_ingest ingest
+     set status = 'batched',
+         updated_at = now()
+   where ingest.dedupe_key = any(v_processed_dedupe_keys)
+     and (
+           ingest.stream_name not in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+           )
+           or exists (
+             select 1
+               from sync_batch batch
+              where batch.dedupe_key = ingest.dedupe_key
+           )
+     );
+  get diagnostics v_batched_count = row_count;
+
+  return v_marked_count + v_recovered_count + v_batched_count;
 end;
 $$;
 
-create or replace function coordinator.get_next_batch()
+drop function if exists coordinator.get_next_batch();
+
+create or replace function coordinator.recover_stale_dispatched_batches(
+  p_oracle_stream_names text[],
+  p_dispatch_lease_seconds integer,
+  p_max_attempts integer
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_recovered_count integer := 0;
+  v_lease_seconds integer := greatest(coalesce(p_dispatch_lease_seconds, 300), 1);
+  v_max_attempts integer := greatest(coalesce(p_max_attempts, 5), 1);
+begin
+  with stale_dispatched as (
+    select batch.batch_id
+      from sync_batch batch
+      join sync_job job on job.job_id = batch.job_id
+     where batch.status = 'dispatched'
+       and batch.updated_at < now() - make_interval(secs => v_lease_seconds)
+       and job.stream_name in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+              where btrim(configured.stream_name) <> ''
+           )
+     order by batch.updated_at asc
+     for update skip locked
+  ),
+  failed_dispatch as (
+    select batch.batch_id
+      from sync_batch batch
+      join sync_job job on job.job_id = batch.job_id
+     where batch.status = 'failed'
+       and (
+             batch.last_error like 'sync.oracle.load publish failed:%'
+             or batch.last_error like 'sync.oracle.load dispatch lease expired%'
+           )
+       and job.stream_name in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+              where btrim(configured.stream_name) <> ''
+           )
+     order by batch.updated_at asc
+     for update skip locked
+  ),
+  stale_recovered as (
+    update sync_batch batch
+       set status = case
+                      when batch.attempt_count >= v_max_attempts then 'failed'
+                      else 'pending'
+                    end,
+           last_error = case
+                          when batch.attempt_count >= v_max_attempts
+                          then 'sync.oracle.load dispatch lease expired'
+                          else 'sync.oracle.load dispatch lease expired; retrying'
+                        end,
+           updated_at = now()
+      from stale_dispatched
+     where batch.batch_id = stale_dispatched.batch_id
+    returning batch.job_id,
+              batch.batch_id,
+              batch.status,
+              batch.last_error
+  ),
+  failed_dispatch_recovered as (
+    update sync_batch batch
+       set status = 'pending',
+           last_error = 'sync.oracle.load dispatch failure recovered; retrying',
+           updated_at = now()
+      from failed_dispatch
+     where batch.batch_id = failed_dispatch.batch_id
+       and batch.attempt_count < v_max_attempts
+    returning batch.job_id,
+              batch.batch_id,
+              batch.status,
+              batch.last_error
+  ),
+  recovered as (
+    select * from stale_recovered
+    union all
+    select * from failed_dispatch_recovered
+  ),
+  error_insert as (
+    insert into sync_error (job_id, batch_id, error_class, error_text)
+    select job_id,
+           batch_id,
+           'dispatch_lease_expired',
+           coalesce(last_error, 'sync.oracle.load dispatch lease expired')
+      from recovered
+     where status = 'failed'
+    returning id
+  ),
+  job_update as (
+    update sync_job job
+       set status = case
+                      when exists (
+                        select 1
+                          from recovered
+                         where recovered.job_id = job.job_id
+                           and recovered.status = 'failed'
+                      ) then 'failed'
+                      else 'pending'
+                    end,
+           finished_at = case
+                           when exists (
+                             select 1
+                               from recovered
+                              where recovered.job_id = job.job_id
+                                and recovered.status = 'failed'
+                           ) then now()
+                           else null
+                         end
+     where job.job_id in (select job_id from recovered)
+    returning job.job_id
+  )
+  select count(*) into v_recovered_count from recovered;
+
+  return coalesce(v_recovered_count, 0);
+end;
+$$;
+
+create or replace function coordinator.release_batch_dispatch(
+  p_load jsonb,
+  p_error_text text
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_batch_id uuid := (p_load->>'batch_id')::uuid;
+  v_summary jsonb;
+begin
+  if v_batch_id is null then
+    raise exception 'release_batch_dispatch requires batch_id';
+  end if;
+
+  with batch_update as (
+    update sync_batch batch
+       set attempt_count = greatest(batch.attempt_count - 1, 0),
+           status = 'pending',
+           last_error = nullif(p_error_text, ''),
+           updated_at = now()
+     where batch.batch_id = v_batch_id
+       and batch.status = 'dispatched'
+    returning batch.job_id,
+              batch.batch_id,
+              batch.status,
+              batch.attempt_count,
+              batch.last_error
+  ),
+  job_update as (
+    update sync_job job
+       set status = 'pending',
+           finished_at = null
+     where job.job_id in (select job_id from batch_update)
+    returning job.job_id, job.status
+  )
+  select jsonb_build_object(
+           'updated', exists(select 1 from batch_update),
+           'batch_id', (select batch_id::text from batch_update limit 1),
+           'new_status', (select status from batch_update limit 1),
+           'attempt_count', (select attempt_count from batch_update limit 1),
+           'job_id', (select job_id::text from batch_update limit 1),
+           'job_status', (select status from job_update limit 1)
+         )
+    into v_summary;
+
+  return coalesce(v_summary, jsonb_build_object('updated', false));
+end;
+$$;
+
+create or replace function coordinator.mark_batch_dispatch_failed(
+  p_load jsonb,
+  p_error_text text,
+  p_max_attempts integer
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_batch_id uuid := (p_load->>'batch_id')::uuid;
+  v_max_attempts integer := greatest(coalesce(p_max_attempts, 5), 1);
+  v_summary jsonb;
+begin
+  if v_batch_id is null then
+    raise exception 'mark_batch_dispatch_failed requires batch_id';
+  end if;
+
+  with batch_update as (
+    update sync_batch batch
+       set attempt_count = batch.attempt_count + 1,
+           status = case
+                      when batch.attempt_count + 1 >= v_max_attempts then 'failed'
+                      else 'pending'
+                    end,
+           last_error = nullif(p_error_text, ''),
+           updated_at = now()
+     where batch.batch_id = v_batch_id
+       and batch.status = 'dispatched'
+    returning batch.job_id,
+              batch.batch_id,
+              batch.status,
+              batch.attempt_count,
+              batch.last_error
+  ),
+  error_insert as (
+    insert into sync_error (job_id, batch_id, error_class, error_text)
+    select job_id,
+           batch_id,
+           'dispatch_publish_failed',
+           coalesce(last_error, 'sync.oracle.load publish failed')
+      from batch_update
+     where status = 'failed'
+    returning id
+  ),
+  job_update as (
+    update sync_job job
+       set status = case
+                      when exists (
+                        select 1
+                          from batch_update
+                         where batch_update.job_id = job.job_id
+                           and batch_update.status = 'failed'
+                      ) then 'failed'
+                      else 'pending'
+                    end,
+           finished_at = case
+                           when exists (
+                             select 1
+                               from batch_update
+                              where batch_update.job_id = job.job_id
+                                and batch_update.status = 'failed'
+                           ) then now()
+                           else null
+                         end
+     where job.job_id in (select job_id from batch_update)
+    returning job.job_id, job.status
+  )
+  select jsonb_build_object(
+           'updated', exists(select 1 from batch_update),
+           'batch_id', (select batch_id::text from batch_update limit 1),
+           'new_status', (select status from batch_update limit 1),
+           'attempt_count', (select attempt_count from batch_update limit 1),
+           'job_id', (select job_id::text from batch_update limit 1),
+           'job_status', (select status from job_update limit 1),
+           'error_logged', exists(select 1 from error_insert)
+         )
+    into v_summary;
+
+  return coalesce(v_summary, jsonb_build_object('updated', false));
+end;
+$$;
+
+create or replace function coordinator.get_next_batch(
+  p_oracle_stream_names text[]
+)
 returns jsonb
 language plpgsql
 as $$
@@ -247,7 +543,13 @@ begin
   with picked as (
     select batch.batch_id
       from sync_batch batch
+      join sync_job job on job.job_id = batch.job_id
      where batch.status = 'pending'
+       and job.stream_name in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+              where btrim(configured.stream_name) <> ''
+           )
      order by batch.batch_id
      limit 1
      for update skip locked
@@ -597,9 +899,21 @@ language plpgsql
 as $$
 declare
   v_inserted integer := 0;
+  v_probes jsonb;
   v_probe jsonb;
 begin
-  for v_probe in select jsonb_array_elements(p_probes)
+  v_probes := case
+    when jsonb_typeof(p_probes) = 'array' then p_probes
+    when jsonb_typeof(p_probes) = 'object'
+      and jsonb_typeof(p_probes->'probes') = 'array' then p_probes->'probes'
+    else null
+  end;
+
+  if v_probes is null then
+    raise exception 'coordinator.flush_probe_batch requires a probe array or envelope with probes array';
+  end if;
+
+  for v_probe in select jsonb_array_elements(v_probes)
   loop
     insert into network_clients (ssid, client_mac, known_bssid, first_seen, last_seen, probe_count)
     values (

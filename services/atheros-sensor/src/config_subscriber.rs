@@ -1,12 +1,12 @@
-//! Raw-TCP NATS subscribers for live configuration push.
+//! Raw-TCP Redpanda subscribers for live configuration push.
 //!
 //! Implements three subscribers: audit window schedule updates, authorized network cache
-//! invalidation, and sensor config (BPF filter, channel). They speak the NATS text protocol
-//! directly over raw TCP rather than using a NATS client library to avoid pulling in a
+//! invalidation, and sensor config (BPF filter, channel). They speak the Redpanda text protocol
+//! directly over raw TCP rather than using a Redpanda client library to avoid pulling in a
 //! heavyweight async dependency for what is essentially three SUB connections. TLS is
-//! intentionally unsupported here; these subscribers require plain nats:// endpoints.
+//! intentionally unsupported here; these subscribers require plain redpanda:// endpoints.
 //! Each subscriber runs in its own Tokio task with a reconnect loop: on any error the
-//! connection is dropped and retried after a 5-second backoff, so transient NATS restarts
+//! connection is dropped and retried after a 5-second backoff, so transient Redpanda restarts
 //! or network blips are recovered automatically without restarting the sensor process.
 
 use std::{
@@ -34,10 +34,10 @@ use crate::{
     model::AuditContext,
 };
 
-pub const AUDIT_CONFIG_SUBJECT: &str = "wireless.audit.config";
-pub const AUTHORIZED_NETWORKS_CONFIG_SUBJECT: &str = "wireless.config.authorized_networks";
-pub const SENSOR_CONFIG_SUBJECT: &str = "wireless.config.sensor";
-const NATS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const AUDIT_CONFIG_TOPIC: &str = "wireless.audit.config";
+pub const AUTHORIZED_NETWORKS_CONFIG_TOPIC: &str = "wireless.config.authorized_networks";
+pub const SENSOR_CONFIG_TOPIC: &str = "wireless.config.sensor";
+const Redpanda_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
 struct AuditWindowUpdate {
@@ -58,12 +58,12 @@ struct SensorConfigUpdate {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-/// Parsed components of a `nats://[user:pass@]host:port` URL.
+/// Parsed components of a `redpanda://[user:pass@]host:port` URL.
 ///
 /// Credentials are percent-decoded before storage; callers that embed special characters
 /// (e.g. `@`, `:`) in usernames or passwords must percent-encode them in the URL or the
 /// authority split will produce incorrect user/host boundaries.
-struct NatsEndpoint {
+struct RedpandaEndpoint {
     address: String,
     user: Option<String>,
     password: Option<String>,
@@ -71,7 +71,7 @@ struct NatsEndpoint {
 
 /// Spawns the audit window config subscriber with automatic reconnect loop. Any error from
 /// run_subscriber_once logs a warning and retries after 5 seconds indefinitely, allowing
-/// transient NATS restarts without restarting the sensor process.
+/// transient Redpanda restarts without restarting the sensor process.
 pub fn spawn_audit_window_config_subscriber(
     config: SyncConfig,
     location_id: String,
@@ -82,7 +82,7 @@ pub fn spawn_audit_window_config_subscriber(
             if let Err(error) =
                 run_subscriber_once(&config, &location_id, Arc::clone(&audit_window)).await
             {
-                warn!(%error, subject = AUDIT_CONFIG_SUBJECT, "audit config subscriber disconnected");
+                warn!(%error, topic = AUDIT_CONFIG_TOPIC, "audit config subscriber disconnected");
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -98,7 +98,7 @@ pub fn spawn_authorized_network_config_subscriber(config: SyncConfig, generation
             if let Err(error) =
                 run_invalidation_subscriber_once(&config, Arc::clone(&generation)).await
             {
-                warn!(%error, subject = AUTHORIZED_NETWORKS_CONFIG_SUBJECT, "authorized network config subscriber disconnected");
+                warn!(%error, topic = AUTHORIZED_NETWORKS_CONFIG_TOPIC, "authorized network config subscriber disconnected");
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -113,6 +113,7 @@ pub fn spawn_sensor_config_subscriber(
     location_id: String,
     context: Arc<RwLock<AuditContext>>,
     capture_control: CaptureControl,
+    current_filter: Arc<RwLock<String>>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -121,40 +122,46 @@ pub fn spawn_sensor_config_subscriber(
                 &location_id,
                 Arc::clone(&context),
                 capture_control.clone(),
+                Arc::clone(&current_filter),
             )
             .await
             {
-                warn!(%error, subject = SENSOR_CONFIG_SUBJECT, "sensor config subscriber disconnected");
+                warn!(%error, topic = SENSOR_CONFIG_TOPIC, "sensor config subscriber disconnected");
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 }
 
-/// Reconnects on any error (connection drop, parse failure, NATS -ERR) with 5-second
-/// backoff; allows transient NATS restarts without restarting the sensor process.
+/// Reconnects on any error (connection drop, parse failure, Redpanda -ERR) with 5-second
+/// backoff; allows transient Redpanda restarts without restarting the sensor process.
 async fn run_subscriber_once(
     config: &SyncConfig,
     location_id: &str,
     audit_window: SharedAuditWindow,
 ) -> Result<(), String> {
-    let Some(nats_url) = config.nats_url.as_deref() else {
+    let Some(redpanda_bootstrap_servers) = config.redpanda_bootstrap_servers.as_deref() else {
         tokio::time::sleep(Duration::from_secs(3600)).await;
         return Ok(());
     };
-    if config.tls_enabled || nats_url.starts_with("tls://") {
-        return Err("audit config subscriber supports plain nats:// endpoints only".to_string());
+    if false || redpanda_bootstrap_servers.starts_with("tls://") {
+        return Err(
+            "audit config subscriber supports plain redpanda:// endpoints only".to_string(),
+        );
     }
-    let endpoint = parse_nats_endpoint(nats_url)?;
-    let stream = timeout(NATS_CONNECT_TIMEOUT, TcpStream::connect(&endpoint.address))
-        .await
-        .map_err(|_| {
-            format!(
-                "connect to NATS {} timed out after {:?}",
-                endpoint.address, NATS_CONNECT_TIMEOUT
-            )
-        })?
-        .map_err(|error| format!("connect to NATS {}: {error}", endpoint.address))?;
+    let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;
+    let stream = timeout(
+        Redpanda_CONNECT_TIMEOUT,
+        TcpStream::connect(&endpoint.address),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "connect to Redpanda {} timed out after {:?}",
+            endpoint.address, Redpanda_CONNECT_TIMEOUT
+        )
+    })?
+    .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
@@ -162,13 +169,13 @@ async fn run_subscriber_once(
     reader
         .read_line(&mut line)
         .await
-        .map_err(|error| format!("read NATS INFO: {error}"))?;
+        .map_err(|error| format!("read Redpanda INFO: {error}"))?;
     if !line.starts_with("INFO ") {
-        return Err(format!("expected NATS INFO banner, got: {line}"));
+        return Err(format!("expected Redpanda INFO banner, got: {line}"));
     }
 
-    let user = config.username.clone().or(endpoint.user);
-    let password = config.password.clone().or(endpoint.password);
+    let user = config.sasl_username.clone().or(endpoint.user);
+    let password = config.sasl_password.clone().or(endpoint.password);
     let mut connect_options = serde_json::json!({
         "lang": "rust",
         "version": env!("CARGO_PKG_VERSION"),
@@ -184,15 +191,15 @@ async fn run_subscriber_once(
     write_half
         .write_all(
             format!(
-                "CONNECT {}\r\nPING\r\nSUB {AUDIT_CONFIG_SUBJECT} 1\r\n",
+                "CONNECT {}\r\nPING\r\nSUB {AUDIT_CONFIG_TOPIC} 1\r\n",
                 connect_options
             )
             .as_bytes(),
         )
         .await
-        .map_err(|error| format!("subscribe to NATS: {error}"))?;
+        .map_err(|error| format!("subscribe to Redpanda: {error}"))?;
     info!(
-        subject = AUDIT_CONFIG_SUBJECT,
+        topic = AUDIT_CONFIG_TOPIC,
         "audit config subscriber connected"
     );
 
@@ -201,23 +208,23 @@ async fn run_subscriber_once(
         let bytes = reader
             .read_line(&mut line)
             .await
-            .map_err(|error| format!("read NATS frame: {error}"))?;
+            .map_err(|error| format!("read Redpanda frame: {error}"))?;
         if bytes == 0 {
-            return Err("NATS connection closed".to_string());
+            return Err("Redpanda connection closed".to_string());
         }
         let trimmed = line.trim_end();
         if trimmed == "PING" {
             write_half
                 .write_all(b"PONG\r\n")
                 .await
-                .map_err(|error| format!("write NATS PONG: {error}"))?;
+                .map_err(|error| format!("write Redpanda PONG: {error}"))?;
             continue;
         }
         if trimmed.starts_with("+OK") {
             continue;
         }
         if trimmed.starts_with("-ERR") {
-            return Err(format!("NATS returned {trimmed}"));
+            return Err(format!("Redpanda returned {trimmed}"));
         }
         if !trimmed.starts_with("MSG ") {
             continue;
@@ -226,21 +233,21 @@ async fn run_subscriber_once(
         let size = trimmed
             .split_whitespace()
             .last()
-            .ok_or_else(|| format!("missing NATS message size: {trimmed}"))?
+            .ok_or_else(|| format!("missing Redpanda message size: {trimmed}"))?
             .parse::<usize>()
-            .map_err(|error| format!("invalid NATS message size: {error}"))?;
+            .map_err(|error| format!("invalid Redpanda message size: {error}"))?;
         let mut payload = vec![0_u8; size];
         reader
             .read_exact(&mut payload)
             .await
-            .map_err(|error| format!("read NATS payload: {error}"))?;
+            .map_err(|error| format!("read Redpanda payload: {error}"))?;
         let mut terminator = [0_u8; 2];
         reader
             .read_exact(&mut terminator)
             .await
-            .map_err(|error| format!("read NATS payload terminator: {error}"))?;
+            .map_err(|error| format!("read Redpanda payload terminator: {error}"))?;
         if terminator != *b"\r\n" {
-            return Err("invalid NATS payload terminator".to_string());
+            return Err("invalid Redpanda payload terminator".to_string());
         }
         let payload = String::from_utf8(payload)
             .map_err(|error| format!("audit config payload is not UTF-8: {error}"))?;
@@ -249,8 +256,8 @@ async fn run_subscriber_once(
                 Ok(mut current) => {
                     *current = window;
                     info!(
-                        subject = AUDIT_CONFIG_SUBJECT,
-                        location_id, "audit window updated from NATS"
+                        topic = AUDIT_CONFIG_TOPIC,
+                        location_id, "audit window updated from Redpanda"
                     );
                 }
                 Err(error) => {
@@ -269,12 +276,12 @@ async fn run_invalidation_subscriber_once(
     config: &SyncConfig,
     generation: Arc<AtomicU64>,
 ) -> Result<(), String> {
-    run_message_loop(config, AUTHORIZED_NETWORKS_CONFIG_SUBJECT, |payload| {
+    run_message_loop(config, AUTHORIZED_NETWORKS_CONFIG_TOPIC, |payload| {
         generation.fetch_add(1, Ordering::Relaxed);
         info!(
-            subject = AUTHORIZED_NETWORKS_CONFIG_SUBJECT,
+            topic = AUTHORIZED_NETWORKS_CONFIG_TOPIC,
             payload_bytes = payload.len(),
-            "authorized network cache invalidated from NATS"
+            "authorized network cache invalidated from Redpanda"
         );
         Ok(())
     })
@@ -287,8 +294,9 @@ async fn run_sensor_config_subscriber_once(
     current_location_id: &str,
     context: Arc<RwLock<AuditContext>>,
     capture_control: CaptureControl,
+    current_filter: Arc<RwLock<String>>,
 ) -> Result<(), String> {
-    run_message_loop(config, SENSOR_CONFIG_SUBJECT, |payload| {
+    run_message_loop(config, SENSOR_CONFIG_TOPIC, |payload| {
         let update: SensorConfigUpdate =
             serde_json::from_str(payload).map_err(|error| format!("decode JSON: {error}"))?;
         if let Some(location_id) = update.location_id.as_deref() {
@@ -315,7 +323,7 @@ async fn run_sensor_config_subscriber_once(
                 before_channel = before,
                 after_channel = channel,
                 interface = %interface,
-                "sensor channel reloaded from NATS"
+                "sensor channel reloaded from Redpanda"
             );
         }
         if let Some(bpf) = update
@@ -324,8 +332,12 @@ async fn run_sensor_config_subscriber_once(
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            // Update the shared filter state so the hopper knows it changed.
+            if let Ok(mut filter) = current_filter.write() {
+                *filter = bpf.to_string();
+            }
             capture_control.apply_filter(bpf.to_string());
-            info!(bpf = %bpf, "sensor BPF reloaded from NATS");
+            info!(bpf = %bpf, "sensor BPF reloaded from Redpanda");
         }
         if update.log_idle_secs.is_some() {
             info!(
@@ -337,36 +349,45 @@ async fn run_sensor_config_subscriber_once(
     })
     .await
 }
-//todo: doc it!
+/// Runs a Redpanda subscriber over raw TCP for the given topic, calling `on_payload` for each message.
+///
+/// TLS is intentionally **unsupported**: if the Redpanda URL starts with `tls://` or `false`
+/// is true, the function returns an error immediately. This avoids pulling in the heavyweight
+/// `rdkafka` crate dependency — the sensor only needs three simple SUB connections, and raw TCP
+/// with the Redpanda text protocol keeps the binary lean. Callers implement the reconnect loop;
+/// this function returns `Err` on any connection, protocol, or payload processing error.
 async fn run_message_loop<F>(
     config: &SyncConfig,
-    subject: &'static str,
+    topic: &'static str,
     mut on_payload: F,
 ) -> Result<(), String>
 where
     F: FnMut(&str) -> Result<(), String>,
 {
-    let Some(nats_url) = config.nats_url.as_deref() else {
+    let Some(redpanda_bootstrap_servers) = config.redpanda_bootstrap_servers.as_deref() else {
         tokio::time::sleep(Duration::from_secs(3600)).await;
         return Ok(());
     };
-    if config.tls_enabled || nats_url.starts_with("tls://") {
-        return Err("config subscriber supports plain nats:// endpoints only".to_string());
+    if false || redpanda_bootstrap_servers.starts_with("tls://") {
+        return Err("config subscriber supports plain redpanda:// endpoints only".to_string());
     }
-    let endpoint = parse_nats_endpoint(nats_url)?;
-    let stream = timeout(NATS_CONNECT_TIMEOUT, TcpStream::connect(&endpoint.address))
-        .await
-        .map_err(|_| format!("connect to NATS {} timed out", endpoint.address))?
-        .map_err(|error| format!("connect to NATS {}: {error}", endpoint.address))?;
+    let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;
+    let stream = timeout(
+        Redpanda_CONNECT_TIMEOUT,
+        TcpStream::connect(&endpoint.address),
+    )
+    .await
+    .map_err(|_| format!("connect to Redpanda {} timed out", endpoint.address))?
+    .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
     reader
         .read_line(&mut line)
         .await
-        .map_err(|error| format!("read NATS INFO: {error}"))?;
-    let user = config.username.clone().or(endpoint.user);
-    let password = config.password.clone().or(endpoint.password);
+        .map_err(|error| format!("read Redpanda INFO: {error}"))?;
+    let user = config.sasl_username.clone().or(endpoint.user);
+    let password = config.sasl_password.clone().or(endpoint.password);
     let mut connect_options = serde_json::json!({
         "lang": "rust",
         "version": env!("CARGO_PKG_VERSION"),
@@ -380,32 +401,32 @@ where
         connect_options["pass"] = serde_json::Value::String(password);
     }
     write_half
-        .write_all(format!("CONNECT {}\r\nPING\r\nSUB {subject} 1\r\n", connect_options).as_bytes())
+        .write_all(format!("CONNECT {}\r\nPING\r\nSUB {topic} 1\r\n", connect_options).as_bytes())
         .await
-        .map_err(|error| format!("subscribe to NATS: {error}"))?;
-    info!(subject, "sensor config subscriber connected");
+        .map_err(|error| format!("subscribe to Redpanda: {error}"))?;
+    info!(topic, "sensor config subscriber connected");
     loop {
         line.clear();
         let bytes = reader
             .read_line(&mut line)
             .await
-            .map_err(|error| format!("read NATS frame: {error}"))?;
+            .map_err(|error| format!("read Redpanda frame: {error}"))?;
         if bytes == 0 {
-            return Err("NATS connection closed".to_string());
+            return Err("Redpanda connection closed".to_string());
         }
         let trimmed = line.trim_end();
         if trimmed == "PING" {
             write_half
                 .write_all(b"PONG\r\n")
                 .await
-                .map_err(|error| format!("write NATS PONG: {error}"))?;
+                .map_err(|error| format!("write Redpanda PONG: {error}"))?;
             continue;
         }
         if trimmed.starts_with("+OK") {
             continue;
         }
         if trimmed.starts_with("-ERR") {
-            return Err(format!("NATS returned {trimmed}"));
+            return Err(format!("Redpanda returned {trimmed}"));
         }
         if !trimmed.starts_with("MSG ") {
             continue;
@@ -413,19 +434,19 @@ where
         let size = trimmed
             .split_whitespace()
             .last()
-            .ok_or_else(|| format!("missing NATS message size: {trimmed}"))?
+            .ok_or_else(|| format!("missing Redpanda message size: {trimmed}"))?
             .parse::<usize>()
-            .map_err(|error| format!("invalid NATS message size: {error}"))?;
+            .map_err(|error| format!("invalid Redpanda message size: {error}"))?;
         let mut payload = vec![0_u8; size];
         reader
             .read_exact(&mut payload)
             .await
-            .map_err(|error| format!("read NATS payload: {error}"))?;
+            .map_err(|error| format!("read Redpanda payload: {error}"))?;
         let mut terminator = [0_u8; 2];
         reader
             .read_exact(&mut terminator)
             .await
-            .map_err(|error| format!("read NATS payload terminator: {error}"))?;
+            .map_err(|error| format!("read Redpanda payload terminator: {error}"))?;
         let payload = String::from_utf8(payload)
             .map_err(|error| format!("config payload is not UTF-8: {error}"))?;
         on_payload(&payload)?;
@@ -454,8 +475,20 @@ fn parse_audit_window_update(
             None,
         )));
     }
-    let start = parse_time(update.start_time.as_deref(), "start_time")?;
-    let end = parse_time(update.end_time.as_deref(), "end_time")?;
+    let start = match parse_time(update.start_time.as_deref(), "start_time") {
+        Ok(time) => time,
+        Err(error) => {
+            warn!(%error, start_time = ?update.start_time, "invalid audit window start_time; keeping previous window state");
+            return Ok(None);
+        }
+    };
+    let end = match parse_time(update.end_time.as_deref(), "end_time") {
+        Ok(time) => time,
+        Err(error) => {
+            warn!(%error, end_time = ?update.end_time, "invalid audit window end_time; keeping previous window state");
+            return Ok(None);
+        }
+    };
     Ok(Some(AuditWindow::from_parts(
         update.timezone,
         update.days,
@@ -463,7 +496,11 @@ fn parse_audit_window_update(
         end,
     )))
 }
-//todo: doc it!
+/// Parses a time string into a `NaiveTime`, accepting `%H:%M:%S`, `%H:%M`, `%k:%M:%S`, and `%k:%M`
+/// formats. The `%k` variants allow single-digit hours (e.g. `"9:00"`) without a leading zero.
+///
+/// Returns `Ok(None)` when `value` is `None` or empty. Returns `Err` with the field name on
+/// complete parse failure (none of the four format strings matched).
 fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTime>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -473,26 +510,28 @@ fn parse_time(value: Option<&str>, field: &'static str) -> Result<Option<NaiveTi
     }
     NaiveTime::parse_from_str(value, "%H:%M:%S")
         .or_else(|_| NaiveTime::parse_from_str(value, "%H:%M"))
+        .or_else(|_| NaiveTime::parse_from_str(value, "%k:%M:%S"))
+        .or_else(|_| NaiveTime::parse_from_str(value, "%k:%M"))
         .map(Some)
-        .map_err(|error| format!("invalid {field}: {error}"))
+        .map_err(|_| format!("invalid {field} value={value:?}: expected HH:MM or HH:MM:SS"))
 }
 
-/// Parses nats://[user:pass@]host:port into address and credentials; uses raw TCP
-/// (no TLS) to avoid heavyweight async-nats dependency for simple SUB connections.
+/// Parses redpanda://[user:pass@]host:port into address and credentials; uses raw TCP
+/// (no TLS) to avoid heavyweight rdkafka dependency for simple SUB connections.
 /// Credentials are percent-decoded; callers must percent-encode special chars in userinfo.
-/// Parses nats://[user:pass@]host:port URLs into address and credentials. Handles three forms:
-/// nats://host:port, nats://host (port defaults to 4222), and nats://user:pass@host:port.
+/// Parses redpanda://[user:pass@]host:port URLs into address and credentials. Handles three forms:
+/// redpanda://host:port, redpanda://host (port defaults to 9092), and redpanda://user:pass@host:port.
 /// Credentials are percent-decoded; callers must percent-encode special chars (@ :) in userinfo.
-fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
-    let trimmed = nats_url.trim();
+fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaEndpoint, String> {
+    let trimmed = redpanda_bootstrap_servers.trim();
     let authority = trimmed
-        .strip_prefix("nats://")
-        .ok_or_else(|| "expected nats:// URL".to_string())?
+        .strip_prefix("redpanda://")
+        .ok_or_else(|| "expected redpanda:// URL".to_string())?
         .split('/')
         .next()
         .unwrap_or_default();
     if authority.is_empty() {
-        return Err("missing NATS authority".to_string());
+        return Err("missing Redpanda authority".to_string());
     }
 
     let (userinfo, host_port) = match authority.rsplit_once('@') {
@@ -509,16 +548,16 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
     let address = if host_port.contains(':') {
         host_port.to_string()
     } else {
-        format!("{host_port}:4222")
+        format!("{host_port}:9092")
     };
-    Ok(NatsEndpoint {
+    Ok(RedpandaEndpoint {
         address,
         user,
         password,
     })
 }
 
-/// Decodes %XX sequences in NATS userinfo (username or password); handles @ and : chars.
+/// Decodes %XX sequences in Redpanda userinfo (username or password); handles @ and : chars.
 fn percent_decode_userinfo(value: &str) -> Result<String, String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -530,12 +569,12 @@ fn percent_decode_userinfo(value: &str) -> Result<String, String> {
                 .get(index + 1)
                 .copied()
                 .and_then(hex_value)
-                .ok_or_else(|| "invalid percent-encoded NATS userinfo".to_string())?;
+                .ok_or_else(|| "invalid percent-encoded Redpanda userinfo".to_string())?;
             let low = bytes
                 .get(index + 2)
                 .copied()
                 .and_then(hex_value)
-                .ok_or_else(|| "invalid percent-encoded NATS userinfo".to_string())?;
+                .ok_or_else(|| "invalid percent-encoded Redpanda userinfo".to_string())?;
             decoded.push((high << 4) | low);
             index += 3;
         } else {
@@ -544,9 +583,13 @@ fn percent_decode_userinfo(value: &str) -> Result<String, String> {
         }
     }
 
-    String::from_utf8(decoded).map_err(|_| "invalid UTF-8 in NATS userinfo".to_string())
+    String::from_utf8(decoded).map_err(|_| "invalid UTF-8 in Redpanda userinfo".to_string())
 }
-//todo: doc it!
+/// Converts an ASCII hex digit byte to its numeric value.
+///
+/// Accepts `0-9`, `a-f`, and `A-F`. Returns `None` for any other byte. This is the inner
+/// helper of [`percent_decode_userinfo`], used to decode `%XX` percent-encoded sequences in
+/// Redpanda URL userinfo fields.
 fn hex_value(value: u8) -> Option<u8> {
     match value {
         b'0'..=b'9' => Some(value - b'0'),
@@ -589,11 +632,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_nats_endpoint_with_userinfo() {
+    fn parses_redpanda_endpoint_with_userinfo() {
         assert_eq!(
-            parse_nats_endpoint("nats://user:pass@127.0.0.1:4222").unwrap(),
-            NatsEndpoint {
-                address: "127.0.0.1:4222".to_string(),
+            parse_redpanda_endpoint("redpanda://user:pass@127.0.0.1:9092").unwrap(),
+            RedpandaEndpoint {
+                address: "127.0.0.1:9092".to_string(),
                 user: Some("user".to_string()),
                 password: Some("pass".to_string())
             }
@@ -601,11 +644,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_nats_endpoint_with_percent_encoded_userinfo() {
+    fn parses_redpanda_endpoint_with_percent_encoded_userinfo() {
         assert_eq!(
-            parse_nats_endpoint("nats://user%40example:p%40ss%3Aword@127.0.0.1:4222").unwrap(),
-            NatsEndpoint {
-                address: "127.0.0.1:4222".to_string(),
+            parse_redpanda_endpoint("redpanda://user%40example:p%40ss%3Aword@127.0.0.1:9092")
+                .unwrap(),
+            RedpandaEndpoint {
+                address: "127.0.0.1:9092".to_string(),
                 user: Some("user@example".to_string()),
                 password: Some("p@ss:word".to_string())
             }
@@ -614,6 +658,6 @@ mod tests {
 
     #[test]
     fn rejects_invalid_percent_encoded_userinfo() {
-        assert!(parse_nats_endpoint("nats://user:%zz@127.0.0.1:4222").is_err());
+        assert!(parse_redpanda_endpoint("redpanda://user:%zz@127.0.0.1:9092").is_err());
     }
 }

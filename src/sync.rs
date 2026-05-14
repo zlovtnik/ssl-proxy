@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const SYNC_SCAN_REQUEST_SUBJECT: &str = "sync.scan.request";
-pub const PAYLOAD_AUDIT_SUBJECT: &str = "proxy.payload_audit";
+pub const SYNC_SCAN_REQUEST_TOPIC: &str = "sync.scan.request";
+pub const PAYLOAD_AUDIT_TOPIC: &str = "proxy.payload_audit";
 pub const INLINE_PAYLOAD_REF_PREFIX: &str = "inline://json/";
 pub const OUTBOX_PAYLOAD_REF_PREFIX: &str = "outbox://";
 
@@ -17,7 +17,7 @@ pub struct ScanRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublishedMessage {
-    pub subject: String,
+    pub topic: String,
     pub payload: String,
 }
 
@@ -63,8 +63,8 @@ pub fn should_publish_scan_request(event: &str) -> bool {
     )
 }
 
-pub fn should_publish_payload_audit(subject: &str) -> bool {
-    subject == PAYLOAD_AUDIT_SUBJECT
+pub fn should_publish_payload_audit(topic: &str) -> bool {
+    topic == PAYLOAD_AUDIT_TOPIC
 }
 
 #[cfg(test)]
@@ -72,7 +72,7 @@ mod tests {
     use super::{
         parse_payload_ref, should_publish_payload_audit, should_publish_scan_request,
         PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX,
-        PAYLOAD_AUDIT_SUBJECT,
+        PAYLOAD_AUDIT_TOPIC,
     };
 
     #[test]
@@ -102,9 +102,9 @@ mod tests {
     }
 
     #[test]
-    fn payload_audit_subject_filter_matches_constant() {
-        assert_eq!(PAYLOAD_AUDIT_SUBJECT, "proxy.payload_audit");
-        assert!(should_publish_payload_audit(PAYLOAD_AUDIT_SUBJECT));
+    fn payload_audit_topic_filter_matches_constant() {
+        assert_eq!(PAYLOAD_AUDIT_TOPIC, "proxy.payload_audit");
+        assert!(should_publish_payload_audit(PAYLOAD_AUDIT_TOPIC));
         assert!(!should_publish_payload_audit("sync.scan.request"));
     }
 }

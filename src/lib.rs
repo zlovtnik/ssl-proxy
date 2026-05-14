@@ -14,6 +14,7 @@ pub mod forensic;
 pub mod identity;
 pub mod obfuscation;
 pub mod payload_audit;
+pub(crate) mod payload_redaction;
 pub mod proxy;
 #[cfg(feature = "quic")]
 pub mod quic;

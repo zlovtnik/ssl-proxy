@@ -1,5 +1,5 @@
 //! Thin wrapper around `iw dev <iface> set channel <n>`, called by the channel hopper and the
-//! NATS sensor config subscriber to switch the monitor-mode interface to a new 802.11 channel.
+//! Redpanda sensor config subscriber to switch the monitor-mode interface to a new 802.11 channel.
 
 use std::process::Command;
 

@@ -21,7 +21,7 @@
 - Teach the coordinator/worker side to resolve `outbox://...` payload references from the shared runtime location.
 - Decide whether the outbox remains filesystem-backed or moves to object storage/shared durable media.
 - Remove or isolate the remaining Oracle-era `#[cfg(feature = "oracle-db")]` dead paths that still live inside tunnel handlers.
-- Expose subject/payload-ref contract examples in coordinator and worker operator docs.
+- Expose topic/payload-ref contract examples in coordinator and worker operator docs.
 
 ## Required proxy behavior changes
 - Keep header-aware request and response handling instead of blind header copying.

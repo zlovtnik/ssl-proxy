@@ -4,13 +4,16 @@
 //! upstream dialing, traffic classification, and tarpitting. It does not handle
 //! plain HTTP proxying; that remains in `proxy.rs`.
 
+pub(crate) mod audit_event;
 mod classify;
 mod connect;
 mod dial;
 mod tarpit;
-mod tls;
+pub(crate) mod tls;
 mod transparent;
 
+#[cfg(feature = "quic")]
+pub(crate) use classify::classify;
 pub use connect::handle;
 #[cfg(feature = "quic")]
 pub(crate) use dial::dial_upstream_with_resolver;

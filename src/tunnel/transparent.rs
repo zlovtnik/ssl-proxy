@@ -20,9 +20,11 @@ use crate::{
     events::{self, EmitPayload},
     forensic::{PacketDirection, PeerIdentity},
     obfuscation,
+    payload_redaction::payload_preview_json,
     state::SharedState,
 };
 
+use super::audit_event::TunnelAuditContext;
 use super::classify::{classify, is_cert_pinned_host};
 use super::tarpit::MAX_TARPIT_MS;
 use super::tls::{peek_tls_info, TlsInfo};
@@ -252,7 +254,7 @@ async fn handle_transparent_inner(
             .await;
         }
         TransparentPolicyDecision::Bypass(flow) => {
-            bypass_transparent_flow(stream, state, orig_dst, identity, flow).await;
+            bypass_transparent_flow(stream, state, orig_dst, identity, flow, tls).await;
         }
         TransparentPolicyDecision::Proxy(flow) => {
             if let Some(ref name) = flow.hostname {
@@ -623,6 +625,7 @@ async fn bypass_transparent_flow(
     orig_dst: SocketAddr,
     identity: crate::identity::ResolvedIdentity,
     flow: TransparentFlowContext,
+    tls: TlsInfo,
 ) {
     let start = Instant::now();
 
@@ -650,58 +653,24 @@ async fn bypass_transparent_flow(
     {
         Ok(Ok(mut upstream)) => {
             set_keepalive(&upstream);
+            let context = TunnelAuditContext::bypass("transparent", flow.category, flow.reason)
+                .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
+                .with_tls(tls);
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
-            events::emit(
-                &state,
-                "tunnel_open",
-                &flow.authority,
-                EmitPayload {
-                    peer_ip: identity.peer_ip.clone(),
-                    wg_pubkey: identity.wg_pubkey.clone(),
-                    device_id: identity.device_id.clone(),
-                    identity_source: identity.identity_source.clone(),
-                    peer_hostname: identity.peer_hostname.clone(),
-                    client_ua: identity.client_ua.clone(),
-                    bytes_up: 0,
-                    bytes_down: 0,
-                    status_code: None,
-                    blocked: false,
-                    obfuscation_profile: None,
-                    extra: serde_json::json!({
-                        "kind": "transparent",
-                        "category": flow.category,
-                        "reason": flow.reason,
-                    }),
-                },
-            );
+            context.emit_open(&state, &flow.authority, &identity);
 
             let (bytes_up, bytes_down) = tokio::io::copy_bidirectional(&mut stream, &mut upstream)
                 .await
                 .unwrap_or((0, 0));
             state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), bytes_up, bytes_down);
-            events::emit(
+            context.emit_close(
                 &state,
-                "tunnel_close",
                 &flow.authority,
-                EmitPayload {
-                    peer_ip: identity.peer_ip.clone(),
-                    wg_pubkey: identity.wg_pubkey.clone(),
-                    device_id: identity.device_id.clone(),
-                    identity_source: identity.identity_source.clone(),
-                    peer_hostname: identity.peer_hostname.clone(),
-                    client_ua: identity.client_ua.clone(),
-                    bytes_up,
-                    bytes_down,
-                    status_code: None,
-                    blocked: false,
-                    obfuscation_profile: None,
-                    extra: serde_json::json!({
-                        "kind": "transparent",
-                        "category": flow.category,
-                        "duration_ms": start.elapsed().as_millis(),
-                        "reason": flow.reason,
-                    }),
-                },
+                &identity,
+                bytes_up,
+                bytes_down,
+                start.elapsed(),
+                None,
             );
         }
         Ok(Err(e)) => {
@@ -786,19 +755,15 @@ pub(crate) fn original_dst(stream: &tokio::net::TcpStream) -> std::io::Result<So
     Ok(SocketAddr::from((ip, port)))
 }
 
-fn tls_metadata_present(tls: &TlsInfo) -> bool {
-    tls.tls_ver.is_some()
-        || tls.sni.is_some()
-        || tls.alpn.is_some()
-        || tls.cipher_suites_count.is_some()
-        || tls.ja3_lite.is_some()
+fn tls_detected(tls: &TlsInfo) -> bool {
+    tls.sni.is_some() || tls.alpn.is_some() || tls.tls_ver.is_some() || tls.ja3_lite.is_some()
 }
 
 /// Proxy a client TCP stream to its original destination and record tunnel lifecycle events.
 ///
 /// This function establishes a connection to `orig_dst`, proxies bytes bidirectionally between
 /// `client` and the upstream connection, and captures up/down byte counts plus a truncated
-/// payload preview when TLS metadata is present or plaintext capture is explicitly enabled. It
+/// payload preview when plaintext capture is enabled and the flow does not look like TLS. It
 /// emits lifecycle events and host/telemetry updates in `state`, applies TCP keepalive to the
 /// client, enforces a connection timeout when dialing the upstream, and records final tunnel
 /// statistics whether the proxying completes normally or the peer closes the connection
@@ -841,6 +806,9 @@ pub(crate) async fn run_transparent(
     {
         Ok(Ok(upstream)) => {
             let start = Instant::now();
+            let context = TunnelAuditContext::new("transparent", category, Some(reason), profile)
+                .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
+                .with_tls(tls.clone());
             info!(
                 target: "audit",
                 event = "tunnel_open",
@@ -863,41 +831,12 @@ pub(crate) async fn run_transparent(
                 );
             }
 
-            events::emit(
-                &state,
-                "tunnel_open",
-                &host,
-                EmitPayload {
-                    peer_ip: identity.peer_ip.clone(),
-                    wg_pubkey: identity.wg_pubkey.clone(),
-                    device_id: identity.device_id.clone(),
-                    identity_source: identity.identity_source.clone(),
-                    peer_hostname: identity.peer_hostname.clone(),
-                    client_ua: identity.client_ua.clone(),
-                    bytes_up: 0,
-                    bytes_down: 0,
-                    status_code: None,
-                    blocked: false,
-                    obfuscation_profile: if matches!(profile, crate::obfuscation::Profile::None) {
-                        None
-                    } else {
-                        Some(profile.as_str().to_string())
-                    },
-                    extra: serde_json::json!({
-                        "kind":             "transparent",
-                        "category":         category,
-                        "reason":           reason,
-                        "alpn":             tls.alpn,
-                        "tls_ver":          tls.tls_ver,
-                        "obfuscation_profile": profile.as_str(),
-                    }),
-                },
-            );
+            context.emit_open(&state, &host, &identity);
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
 
             const PAYLOAD_PREVIEW_LIMIT: usize = 4096;
             let capture_payloads =
-                state.config.proxy.capture_plaintext_payloads || tls_metadata_present(&tls);
+                state.config.proxy.capture_plaintext_payloads && !tls_detected(&tls);
 
             let (mut client_read, mut client_write) = tokio::io::split(client);
             let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream);
@@ -1032,66 +971,23 @@ pub(crate) async fn run_transparent(
                     );
 
                     let payload_preview = capture_payloads.then(|| {
-                        serde_json::json!({
-                            "up": base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                &up_buf,
-                            ),
-                            "down": base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                &down_buf,
-                            ),
-                            "truncated_up": bytes_up > PAYLOAD_PREVIEW_LIMIT as u64,
-                            "truncated_down": bytes_down > PAYLOAD_PREVIEW_LIMIT as u64,
-                        })
-                    });
-
-                    let extra = if let Some(payload_preview) = payload_preview {
-                        serde_json::json!({
-                            "kind":        "transparent",
-                            "category":    category,
-                            "bytes_up":    bytes_up,
-                            "bytes_down":  bytes_down,
-                            "duration_ms": start.elapsed().as_millis(),
-                            "reason":      reason,
-                            "payload_preview": payload_preview,
-                        })
-                    } else {
-                        serde_json::json!({
-                            "kind":        "transparent",
-                            "category":    category,
-                            "bytes_up":    bytes_up,
-                            "bytes_down":  bytes_down,
-                            "duration_ms": start.elapsed().as_millis(),
-                            "reason":      reason,
-                        })
-                    };
-
-                    events::emit(
-                        &state,
-                        "tunnel_close",
-                        &host,
-                        EmitPayload {
-                            peer_ip: identity.peer_ip.clone(),
-                            wg_pubkey: identity.wg_pubkey.clone(),
-                            device_id: identity.device_id.clone(),
-                            identity_source: identity.identity_source.clone(),
-                            peer_hostname: identity.peer_hostname.clone(),
-                            client_ua: identity.client_ua.clone(),
+                        payload_preview_json(
+                            &up_buf,
+                            &down_buf,
                             bytes_up,
                             bytes_down,
-                            status_code: None,
-                            blocked: false,
-                            obfuscation_profile: if matches!(
-                                profile,
-                                crate::obfuscation::Profile::None
-                            ) {
-                                None
-                            } else {
-                                Some(profile.as_str().to_string())
-                            },
-                            extra,
-                        },
+                            PAYLOAD_PREVIEW_LIMIT,
+                        )
+                    });
+
+                    context.emit_close(
+                        &state,
+                        &host,
+                        &identity,
+                        bytes_up,
+                        bytes_down,
+                        start.elapsed(),
+                        payload_preview,
                     );
                 }
                 Err(e) => {
@@ -1101,6 +997,15 @@ pub(crate) async fn run_transparent(
                         identity.wg_pubkey.as_deref(),
                         bytes_up,
                         bytes_down,
+                    );
+                    context.emit_close(
+                        &state,
+                        &host,
+                        &identity,
+                        bytes_up,
+                        bytes_down,
+                        start.elapsed(),
+                        None,
                     );
                     debug!(%host, %e, "transparent tunnel closed by peer");
                 }

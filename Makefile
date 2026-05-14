@@ -1,4 +1,4 @@
-.PHONY: build test docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats
+.PHONY: build test bench docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -17,9 +17,13 @@ test:
 	cd services/oracle-worker && cargo test
 	cd services/zig-coordinator && ZIG_GLOBAL_CACHE_DIR="$(ZIG_GLOBAL_CACHE_DIR)" ZIG_LOCAL_CACHE_DIR="$(ZIG_LOCAL_CACHE_DIR)" zig build test
 
+# Run local benchmark baselines.
+bench:
+	cargo bench --bench wg_packet_obfuscation
+
 # Build Docker images used by the compose stack.
 docker:
-	docker compose build ssl-proxy zig-coordinator oracle-worker nats postgres
+	docker compose build ssl-proxy zig-coordinator oracle-worker redpanda postgres
 
 # Run clippy lints
 lint:

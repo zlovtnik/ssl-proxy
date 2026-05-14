@@ -67,8 +67,8 @@ pub struct ReadyReport {
 }
 
 #[derive(Serialize)]
-pub struct SyncSubjectCount {
-    pub subject: String,
+pub struct SyncTopicCount {
+    pub topic: String,
     pub count: usize,
 }
 
@@ -76,7 +76,7 @@ pub struct SyncSubjectCount {
 pub struct SyncStatusReport {
     pub status: &'static str,
     pub publisher: crate::transport::SyncPublisherHealthSnapshot,
-    pub published_subjects: Vec<SyncSubjectCount>,
+    pub published_topics: Vec<SyncTopicCount>,
     pub last_error: Option<String>,
 }
 
@@ -110,12 +110,12 @@ pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
         .into_response()
 }
 
-/// GET /sync/status — local sync-plane publisher and subject accounting.
+/// GET /sync/status — local sync-plane publisher and topic accounting.
 pub async fn sync_status(State(state): State<SharedState>) -> Json<SyncStatusReport> {
     let publisher = state.publisher.health_snapshot();
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     for message in state.publisher.published_messages() {
-        *counts.entry(message.subject).or_default() += 1;
+        *counts.entry(message.topic).or_default() += 1;
     }
     let status = if publisher.configured && publisher.last_error.is_some() {
         "degraded"
@@ -126,9 +126,9 @@ pub async fn sync_status(State(state): State<SharedState>) -> Json<SyncStatusRep
         status,
         last_error: publisher.last_error.clone(),
         publisher,
-        published_subjects: counts
+        published_topics: counts
             .into_iter()
-            .map(|(subject, count)| SyncSubjectCount { subject, count })
+            .map(|(topic, count)| SyncTopicCount { topic, count })
             .collect(),
     })
 }

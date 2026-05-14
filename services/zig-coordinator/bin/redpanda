@@ -1,0 +1,163 @@
+#!/usr/bin/env sh
+set -eu
+
+server="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}"
+if [ "${1:-}" = "--server" ]; then
+  server="${2:-}"
+  shift 2
+fi
+
+if [ "${1:-}" = "--compat-version" ]; then
+  echo "redpanda coordinator rpk compatibility wrapper"
+  exit 0
+fi
+
+topic_for_consumer() {
+  stream="$1"
+  consumer="$2"
+
+  if [ "$consumer" = "${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}" ]; then
+    echo "${SYNC_SCAN_TOPIC:-sync.scan.request}"
+    return 0
+  fi
+  if [ "$consumer" = "${SYNC_RESULT_CONSUMER:-zig-coordinator-result}" ]; then
+    echo "${SYNC_RESULT_TOPIC:-sync.oracle.result}"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_BACKLOG_SAVE_CONSUMER:-wireless-backlog-save}" ]; then
+    echo "wireless.backlog.save"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_BACKLOG_LIST_CONSUMER:-wireless-backlog-list}" ]; then
+    echo "wireless.backlog.list"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_BACKLOG_SYNCED_CONSUMER:-wireless-backlog-synced}" ]; then
+    echo "wireless.backlog.synced"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_BACKLOG_PRUNE_CONSUMER:-wireless-backlog-prune}" ]; then
+    echo "wireless.backlog.prune"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_MAC_LOOKUP_CONSUMER:-wireless-mac-lookup}" ]; then
+    echo "wireless.mac.lookup"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_NETWORKS_AUTHORIZED_CONSUMER:-wireless-networks-authorized}" ]; then
+    echo "wireless.networks.authorized"
+    return 0
+  fi
+  if [ "$consumer" = "${WIRELESS_PROBE_FLUSH_CONSUMER:-wireless-probe-flush}" ]; then
+    echo "wireless.probe.flush"
+    return 0
+  fi
+
+  case "$stream" in
+    *.*)
+      echo "$stream"
+      return 0
+      ;;
+  esac
+
+  echo "unsupported consumer mapping: stream=${stream} consumer=${consumer}" >&2
+  return 2
+}
+
+consume_next() {
+  stream="${1:-}"
+  consumer="${2:-}"
+  shift 2
+  count=1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --count)
+        count="${2:-1}"
+        shift 2
+        ;;
+      --raw)
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  topic="$(topic_for_consumer "$stream" "$consumer")"
+  timeout_seconds="${REDPANDA_COMPAT_CONSUME_TIMEOUT_SECONDS:-1}"
+
+  set +e
+  timeout "$timeout_seconds" rpk topic consume "$topic" \
+    --brokers "$server" \
+    --group "$consumer" \
+    --num "$count" \
+    --format '%v\n' \
+    --fetch-max-wait 250ms
+  status="$?"
+  set -e
+
+  if [ "$status" -eq 124 ] || [ "$status" -eq 143 ]; then
+    echo "timeout waiting for messages" >&2
+    exit 1
+  fi
+  exit "$status"
+}
+
+consumer_info() {
+  stream="${1:-}"
+  consumer="${2:-}"
+  topic="$(topic_for_consumer "$stream" "$consumer")"
+
+  if rpk group describe "$consumer" --brokers "$server" >/tmp/redpanda-compat-group.txt 2>/dev/null; then
+    lag="$(awk '$1 == "TOTAL-LAG" { print $2 }' /tmp/redpanda-compat-group.txt)"
+    lag="${lag:-0}"
+  else
+    lag=0
+  fi
+
+  if [ "$lag" = "0" ]; then
+    if rpk topic describe "$topic" --brokers "$server" >/dev/null 2>&1; then
+      echo "Pending Messages: 1"
+      return 0
+    fi
+  fi
+
+  echo "Pending Messages: $lag"
+}
+
+publish_message() {
+  topic="${1:-}"
+  payload="${2:-}"
+
+  printf '%s\n' "$payload" | rpk topic produce "$topic" \
+    --brokers "$server" \
+    --format '%v\n' \
+    --output-format ''
+}
+
+case "${1:-}" in
+  consumer)
+    shift
+    case "${1:-}" in
+      next)
+        shift
+        consume_next "$@"
+        ;;
+      info)
+        shift
+        consumer_info "$@"
+        exit 0
+        ;;
+    esac
+    ;;
+  pub)
+    shift
+    publish_message "$@"
+    exit 0
+    ;;
+esac
+
+echo "unsupported redpanda compatibility command: $*" >&2
+exit 2

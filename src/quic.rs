@@ -20,10 +20,14 @@ use tracing::{debug, error, info, warn};
 use crate::blocklist;
 use crate::check_proxy_auth;
 use crate::config::Config;
-use crate::events::{self, EmitPayload};
+use crate::events;
 use crate::obfuscation;
+use crate::payload_redaction::payload_preview_json;
 use crate::state::SharedState;
-use crate::tunnel::{dial_upstream_with_resolver, parse_host_port};
+use crate::tunnel::{
+    audit_event::TunnelAuditContext, classify, dial_upstream_with_resolver, parse_host_port,
+    tls::parse_tls_info,
+};
 
 /// Create a TLS server configuration for QUIC using the certificate and private key
 /// files specified in `config.tls.cert_path` and `config.tls.key_path`.
@@ -340,7 +344,7 @@ async fn handle_h3_request(
     };
 
     // Parse host with proper IPv6 support
-    let (hostname, _port) = parse_host_port(&host);
+    let (hostname, port) = parse_host_port(&host);
 
     // Blocklist check — same logic as tunnel::handle (lines 801-935)
     if blocklist::is_blocked(&hostname, &state).await {
@@ -405,8 +409,8 @@ async fn handle_h3_request(
     }
 
     // Connect to the upstream target
-    let mut upstream = match dial_upstream_with_resolver(&state, &host).await {
-        Ok((stream, _resolved_ips, _selected_ip)) => stream,
+    let upstream = match dial_upstream_with_resolver(&state, &host).await {
+        Ok((stream, resolved_ips, selected_ip)) => (stream, resolved_ips, selected_ip),
         Err(e) => {
             error!(
                 %host,
@@ -419,8 +423,32 @@ async fn handle_h3_request(
             return;
         }
     };
+    let (mut upstream, resolved_ips, selected_ip) = upstream;
 
     let start = Instant::now();
+    // Split streams before open so the first H3 data frame can be inspected and replayed.
+    let (mut h3_send, mut h3_recv) = stream.split();
+    let (mut upstream_read, mut upstream_write) = upstream.split();
+    let mut first_up_chunk = Vec::new();
+    match timeout(Duration::from_millis(500), h3_recv.recv_data()).await {
+        Ok(Ok(Some(mut buf))) => {
+            while bytes::Buf::has_remaining(&buf) {
+                let chunk: &[u8] = bytes::Buf::chunk(&buf);
+                let len = chunk.len();
+                first_up_chunk.extend_from_slice(chunk);
+                bytes::Buf::advance(&mut buf, len);
+            }
+        }
+        Ok(Ok(None)) => {}
+        Ok(Err(e)) => debug!(%host, %e, "QUIC: first H3 recv failed"),
+        Err(_) => {}
+    }
+    let tls = parse_tls_info(&first_up_chunk);
+    let category = classify(&hostname, port, tls.alpn.as_deref());
+    let context = TunnelAuditContext::new("quic-h3", category, None, profile)
+        .with_resolution(resolved_ips.clone(), selected_ip.clone())
+        .with_tls(tls.clone());
+
     info!(
         target: "audit",
         event = "tunnel_open",
@@ -442,42 +470,17 @@ async fn handle_h3_request(
         );
     }
     state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
-    events::emit(
-        &state,
-        "tunnel_open",
-        &host,
-        EmitPayload {
-            peer_ip: identity.peer_ip.clone(),
-            wg_pubkey: identity.wg_pubkey.clone(),
-            device_id: identity.device_id.clone(),
-            identity_source: identity.identity_source.clone(),
-            peer_hostname: identity.peer_hostname.clone(),
-            client_ua: identity.client_ua.clone(),
-            bytes_up: 0,
-            bytes_down: 0,
-            status_code: None,
-            blocked: false,
-            obfuscation_profile: if matches!(profile, crate::obfuscation::Profile::None) {
-                None
-            } else {
-                Some(profile.as_str().to_string())
-            },
-            extra: serde_json::json!({
-                "kind": "quic-h3",
-            }),
-        },
-    );
+    context.emit_open(&state, &host, &identity);
 
     /// Maximum bytes to capture per direction for payload preview
     const PAYLOAD_PREVIEW_LIMIT: usize = 4096;
 
-    // Bidirectional copy between H3 stream and upstream TCP.
-    // Split the H3 bidi stream into send/recv halves and the upstream TCP stream.
-    let (mut h3_send, mut h3_recv) = stream.split();
-    let (mut upstream_read, mut upstream_write) = upstream.split();
-
-    // Only allocate payload capture buffers if explicitly enabled in configuration
-    let capture_payloads = state.config.proxy.capture_plaintext_payloads;
+    // Only allocate payload capture buffers for non-TLS tunnel bytes when explicitly enabled.
+    let capture_payloads = state.config.proxy.capture_plaintext_payloads
+        && tls.sni.is_none()
+        && tls.alpn.is_none()
+        && tls.tls_ver.is_none()
+        && tls.ja3_lite.is_none();
     let mut up_buf = if capture_payloads {
         Vec::with_capacity(PAYLOAD_PREVIEW_LIMIT)
     } else {
@@ -492,6 +495,17 @@ async fn handle_h3_request(
     // H3 → upstream: read H3 data chunks and write to TCP
     let h3_to_upstream = async {
         let mut total: u64 = 0;
+        if !first_up_chunk.is_empty() {
+            if let Err(e) = upstream_write.write_all(&first_up_chunk).await {
+                debug!(%host, %e, "QUIC: upstream first write failed");
+                return total;
+            }
+            total += first_up_chunk.len() as u64;
+            if capture_payloads && up_buf.len() < PAYLOAD_PREVIEW_LIMIT {
+                let take = (PAYLOAD_PREVIEW_LIMIT - up_buf.len()).min(first_up_chunk.len());
+                up_buf.extend_from_slice(&first_up_chunk[..take]);
+            }
+        }
         loop {
             match h3_recv.recv_data().await {
                 Ok(Some(mut buf)) => {
@@ -557,31 +571,8 @@ async fn handle_h3_request(
     let (up, down) = tokio::join!(h3_to_upstream, upstream_to_h3);
     state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
 
-    // Only build payload preview when capture is explicitly enabled
-    let payload_preview = if capture_payloads {
-        let mut up_redacted = up_buf.clone();
-        let mut down_redacted = down_buf.clone();
-
-        redact_sensitive_data(&mut up_redacted);
-        redact_sensitive_data(&mut down_redacted);
-
-        Some(serde_json::json!({
-            "up": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &up_redacted),
-            "down": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &down_redacted),
-            "truncated_up": up > PAYLOAD_PREVIEW_LIMIT as u64,
-            "truncated_down": down > PAYLOAD_PREVIEW_LIMIT as u64,
-            "byte_count_up": up_buf.len(),
-            "byte_count_down": down_buf.len(),
-            "redacted": true,
-        }))
-    } else {
-        // When capture is disabled: only include metadata, no raw bytes
-        Some(serde_json::json!({
-            "capture_disabled": true,
-            "truncated_up": up > PAYLOAD_PREVIEW_LIMIT as u64,
-            "truncated_down": down > PAYLOAD_PREVIEW_LIMIT as u64,
-        }))
-    };
+    let payload_preview = capture_payloads
+        .then(|| payload_preview_json(&up_buf, &down_buf, up, down, PAYLOAD_PREVIEW_LIMIT));
 
     info!(
         target: "audit",
@@ -594,246 +585,13 @@ async fn handle_h3_request(
         "QUIC tunnel closed"
     );
 
-    // Emit event with payload preview for downstream sync consumers
-    events::emit(
+    context.emit_close(
         &state,
-        "tunnel_close",
         &host,
-        EmitPayload {
-            peer_ip: identity.peer_ip,
-            wg_pubkey: identity.wg_pubkey,
-            device_id: identity.device_id,
-            identity_source: identity.identity_source,
-            peer_hostname: identity.peer_hostname,
-            client_ua: identity.client_ua,
-            bytes_up: up,
-            bytes_down: down,
-            status_code: None,
-            blocked: false,
-            obfuscation_profile: if matches!(profile, crate::obfuscation::Profile::None) {
-                None
-            } else {
-                Some(profile.as_str().to_string())
-            },
-            extra: serde_json::json!({
-                "kind":        "quic-h3",
-                "bytes_up":    up,
-                "bytes_down":  down,
-                "duration_ms": start.elapsed().as_millis(),
-                "payload_preview": payload_preview,
-            }),
-        },
+        &identity,
+        up,
+        down,
+        start.elapsed(),
+        payload_preview,
     );
-}
-
-/// Redact known sensitive patterns from captured payload.
-fn redact_sensitive_data(buf: &mut [u8]) {
-    if buf.is_empty() {
-        return;
-    }
-
-    fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
-        if needle.is_empty() || start >= haystack.len() || needle.len() > haystack.len() {
-            return None;
-        }
-        haystack[start..]
-            .windows(needle.len())
-            .position(|window| window == needle)
-            .map(|index| start + index)
-    }
-
-    fn mask_range(buf: &mut [u8], start: usize, delimiters: &[u8]) {
-        let mut idx = start;
-        while idx < buf.len() && !delimiters.contains(&buf[idx]) {
-            buf[idx] = b'*';
-            idx += 1;
-        }
-    }
-
-    fn next_line_start(buf: &[u8], pos: usize) -> usize {
-        buf[pos..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|offset| pos + offset + 1)
-            .unwrap_or(buf.len())
-    }
-
-    fn at_header_line_start(buf: &[u8], pos: usize) -> bool {
-        pos == 0 || (pos >= 1 && buf[pos - 1] == b'\n')
-    }
-
-    fn at_body_key_boundary(buf: &[u8], pos: usize) -> bool {
-        pos == 0
-            || matches!(
-                buf[pos - 1],
-                b'?' | b'&' | b';' | b'\r' | b'\n' | b' ' | b'\t' | b'{' | b',' | b'['
-            )
-    }
-
-    let lower: Vec<u8> = buf.iter().map(|byte| byte.to_ascii_lowercase()).collect();
-
-    for key in [
-        &b"authorization"[..],
-        &b"cookie"[..],
-        &b"set-cookie"[..],
-        &b"x-api-key"[..],
-        &b"proxy-authorization"[..],
-        &b"x-auth-token"[..],
-    ] {
-        let mut search_from = 0usize;
-        while let Some(pos) = find_bytes(&lower, key, search_from) {
-            let line_end = next_line_start(&lower, pos);
-            let sep = pos + key.len();
-            if at_header_line_start(&lower, pos) && sep < lower.len() && lower[sep] == b':' {
-                let mut value_start = sep + 1;
-                while value_start < buf.len() && matches!(buf[value_start], b' ' | b'\t') {
-                    value_start += 1;
-                }
-                // Cookie and Set-Cookie headers mask entire line to preserve all values
-                if key == b"cookie" || key == b"set-cookie" {
-                    mask_range(buf, value_start, b"\r\n");
-                } else {
-                    mask_range(buf, value_start, b"\r\n;&\t");
-                }
-            }
-            search_from = line_end.max(pos + 1);
-        }
-    }
-
-    let mut search_from = 0usize;
-    while let Some(pos) = find_bytes(&lower, b"bearer ", search_from) {
-        mask_range(buf, pos + "bearer ".len(), b"\r\n;& \t");
-        search_from = pos + "bearer ".len();
-    }
-
-    for key in [
-        &b"password="[..],
-        &b"pass="[..],
-        &b"token="[..],
-        &b"secret="[..],
-        &b"api_key="[..],
-        &b"apikey="[..],
-    ] {
-        let mut form_search_from = 0usize;
-        while let Some(pos) = find_bytes(&lower, key, form_search_from) {
-            if at_body_key_boundary(&lower, pos) {
-                mask_range(buf, pos + key.len(), b"\r\n&; \t\"'}");
-            }
-            form_search_from = pos + key.len();
-        }
-    }
-
-    for key in [
-        &b"\"password\":"[..],
-        &b"\"token\":"[..],
-        &b"\"secret\":"[..],
-        &b"\"api_key\":"[..],
-        &b"\"apikey\":"[..],
-    ] {
-        let mut json_search_from = 0usize;
-        while let Some(pos) = find_bytes(&lower, key, json_search_from) {
-            if at_body_key_boundary(&lower, pos) {
-                let mut value_start = pos + key.len();
-                while value_start < buf.len() && matches!(buf[value_start], b' ' | b'\t') {
-                    value_start += 1;
-                }
-                if value_start < buf.len() && buf[value_start] == b'"' {
-                    let mut idx = value_start + 1;
-                    while idx < buf.len() {
-                        if buf[idx] == b'\\' && idx + 1 < buf.len() {
-                            buf[idx] = b'*';
-                            buf[idx + 1] = b'*';
-                            idx += 2;
-                        } else if buf[idx] == b'"' {
-                            break;
-                        } else {
-                            buf[idx] = b'*';
-                            idx += 1;
-                        }
-                    }
-                } else {
-                    mask_range(buf, value_start, b"\r\n,} \t");
-                }
-            }
-            json_search_from = pos + key.len();
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::redact_sensitive_data;
-
-    #[test]
-    fn redacts_sensitive_headers_only_at_line_start() {
-        let mut payload = b"X-Not-Authorization: keep\r\nAuthorization: Bearer secret\r\n".to_vec();
-        redact_sensitive_data(&mut payload);
-        let redacted = String::from_utf8(payload).unwrap();
-
-        assert!(redacted.contains("X-Not-Authorization: keep"));
-        assert!(redacted.contains("Authorization: *************"));
-        assert!(!redacted.contains("Bearer secret"));
-    }
-
-    #[test]
-    fn redacts_added_header_form_and_json_keys() {
-        let mut payload = br#"Proxy-Authorization: Basic pxcred
-x-auth-token: xheadervalue
-password=formpassword&token=formtoken&secret=formsecret&api_key=formapikey&apikey=formapikey2
-{"password":"json-password","token":"json-token-value","secret":false}"#
-            .to_vec();
-        redact_sensitive_data(&mut payload);
-        let redacted = String::from_utf8(payload).unwrap();
-
-        for secret in [
-            "pxcred",
-            "xheadervalue",
-            "formpassword",
-            "formtoken",
-            "formsecret",
-            "formapikey",
-            "formapikey2",
-            "json-password",
-            "json-token-value",
-            "false",
-        ] {
-            assert!(!redacted.contains(secret));
-        }
-    }
-
-    #[test]
-    fn redacts_json_string_values_with_escaped_quotes() {
-        let mut payload = br#"{"token":"alpha \"quoted\" omega","safe":"keep"}"#.to_vec();
-        redact_sensitive_data(&mut payload);
-        let redacted = String::from_utf8(payload).unwrap();
-
-        assert!(!redacted.contains("alpha"));
-        assert!(!redacted.contains("quoted"));
-        assert!(!redacted.contains("omega"));
-        assert!(redacted.contains(r#""safe":"keep""#));
-    }
-
-    #[test]
-    fn redacts_cookie_multi_pairs() {
-        let mut payload = b"Cookie: a=1; b=2; c=three\r\nOther-Header: value\r\n".to_vec();
-        redact_sensitive_data(&mut payload);
-        let redacted = String::from_utf8(payload).unwrap();
-
-        // Verify all cookie values are redacted
-        assert!(!redacted.contains("a=1"));
-        assert!(!redacted.contains("b=2"));
-        assert!(!redacted.contains("c=three"));
-
-        // Verify cookie key remains
-        assert!(redacted.contains("Cookie:"));
-
-        // Verify other header is untouched
-        assert!(redacted.contains("Other-Header: value"));
-
-        // All values are completely masked - no structure information remains
-        assert!(!redacted.contains('='));
-        assert!(!redacted.contains("1"));
-        assert!(!redacted.contains("2"));
-        assert!(!redacted.contains("three"));
-    }
 }

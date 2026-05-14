@@ -34,3 +34,4 @@ ccm = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1.40", features = ["test-util"] }

@@ -5,16 +5,21 @@
 //! EXTERNAL_BANDWIDTH_THRESHOLD_BYTES triggers alerts when external BSSID traffic
 //! exceeds 500 MB per window, indicating potential rogue AP or data exfiltration.
 //!
-//! [`TrafficBucket`]: accumulates frame counters for the current window; when an observation
-//! arrives whose timestamp falls at or past `window_start + window`, the old window is
-//! flushed and returned as events before the new observation is recorded — so the flush is
-//! driven by the next incoming frame, not a timer.
+//! [`TrafficBucket`]: accumulates frame counters for the current window; a
+//! wall-clock [`Instant`] drives the flush decision, while the frame-level
+//! `observed_at` timestamp is used only for window attribution in the emitted
+//! event. This decouples flush timing from potentially-skewed or replayed frame
+//! timestamps.
 //!
 //! [`WirelessBandwidthEvent`]: the flushed summary for one (source_mac, destination_bssid)
 //! pair; `external_bssid` is true when the BSSID is not in the authorized network list, and
 //! `threshold_exceeded` is the actionable field that signals a potential exfiltration event.
+//! `wall_clock_delta_ms` reports how far behind the frame timestamp is from wall clock,
+//! giving operators a per-window health signal. `window_is_partial` is true when the flush
+//! was triggered by the periodic timer rather than by an incoming frame crossing the boundary.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -22,7 +27,7 @@ use thiserror::Error;
 
 use crate::model::AuditEntry;
 
-pub const BANDWIDTH_SUBJECT: &str = "audit.wireless.bandwidth";
+pub const BANDWIDTH_TOPIC: &str = "audit.wireless.bandwidth";
 pub const DEFAULT_BANDWIDTH_WINDOW_SECS: i64 = 60;
 pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
 
@@ -70,6 +75,22 @@ pub struct WirelessBandwidthEvent {
     #[serde(default)]
     pub frame_size_histogram: FrameSizeHistogram,
     pub inter_arrival_p50_ms: Option<u64>,
+    /// Milliseconds between wall-clock time and the frame timestamp at flush time.
+    /// Positive values mean the frame timestamp is behind wall clock (the common case
+    /// for backlog or delayed processing). This gives operators a per-window health
+    /// signal showing sensor lag.
+    #[serde(default)]
+    pub wall_clock_delta_ms: Option<i64>,
+    /// True when the flush was triggered by the periodic timer (`flush_current`)
+    /// rather than by an incoming frame crossing the window boundary. Partial
+    /// windows occur during idle periods and at shutdown.
+    #[serde(default)]
+    pub window_is_partial: bool,
+    /// RFC3339 wall-clock timestamp at the moment this event was serialized
+    /// and enqueued for publish. Allows downstream consumers to compute
+    /// `published_at - window_end` as a drift metric per event.
+    #[serde(default)]
+    pub published_at: Option<String>,
 }
 
 fn default_schema_version() -> u32 {
@@ -112,7 +133,10 @@ struct TrafficCounters {
 #[derive(Clone, Debug)]
 pub struct TrafficBucket {
     window: Duration,
+    /// Frame-time start of the current window (used for attribution in emitted events).
     window_start: Option<DateTime<Utc>>,
+    /// Wall-clock start of the current window (used for flush decision).
+    wall_clock_start: Option<Instant>,
     entries: HashMap<TrafficKey, TrafficCounters>,
 }
 
@@ -121,6 +145,7 @@ impl TrafficBucket {
         Self {
             window: Duration::seconds(window_secs.max(1)),
             window_start: None,
+            wall_clock_start: None,
             entries: HashMap::new(),
         }
     }
@@ -141,6 +166,7 @@ impl TrafficBucket {
 
         if self.window_start.is_none() {
             self.window_start = Some(observed_at);
+            self.wall_clock_start = Some(Instant::now());
         }
 
         // Count raw bytes against unknown bucket for unsupported frames
@@ -162,9 +188,10 @@ impl TrafficBucket {
         flushed
     }
 
-    /// Accumulates frame counters for the current window; when the observation timestamp
-    /// reaches or exceeds window_start + window, the old window is flushed and returned
-    /// before recording the new observation — flush is driven by incoming frames, not a timer.
+    /// Accumulates frame counters for the current window; when the wall-clock elapsed
+    /// time reaches or exceeds the window duration, the old window is flushed and
+    /// returned before recording the new observation. The frame `observed_at` timestamp
+    /// is used only for window attribution, not for the flush decision.
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -184,6 +211,7 @@ impl TrafficBucket {
 
         if self.window_start.is_none() {
             self.window_start = Some(observed_at);
+            self.wall_clock_start = Some(Instant::now());
         }
 
         let Some(source_mac) = entry.source_mac.as_deref().map(normalize_mac) else {
@@ -241,30 +269,68 @@ impl TrafficBucket {
         Ok(flushed)
     }
 
+    /// Timer-triggered flush: drains the current window unconditionally and resets
+    /// both wall-clock and frame-time starts. Sets `window_is_partial = true` since
+    /// this is not driven by an incoming frame crossing the boundary.
     pub fn flush_current(&mut self) -> Vec<WirelessBandwidthEvent> {
         let Some(window_start) = self.window_start.take() else {
             return Vec::new();
         };
-        self.drain_window(window_start)
+        let _ = self.wall_clock_start.take();
+        let wall_clock_delta_ms = (Utc::now() - window_start).num_milliseconds();
+        self.drain_window(window_start, wall_clock_delta_ms, true)
     }
 
-    /// Checks if the current observation falls at or past the window boundary; if so,
-    /// advances the window and drains all accumulated counters into events.
+    /// Checks if the wall-clock elapsed time has reached the window duration; if so,
+    /// advances both the wall-clock and frame-time starts, then drains all accumulated
+    /// counters into events. The `observed_at` parameter is used for attribution
+    /// (setting the new `window_start`), but the flush decision is based on wall clock.
     fn flush_if_elapsed(&mut self, observed_at: DateTime<Utc>) -> Vec<WirelessBandwidthEvent> {
         let Some(window_start) = self.window_start else {
             self.window_start = Some(observed_at);
+            self.wall_clock_start = Some(Instant::now());
             return Vec::new();
         };
-        if observed_at < window_start + self.window {
+        let Some(wall_clock_start) = self.wall_clock_start else {
+            // Should not happen if window_start is Some, but be defensive.
+            self.window_start = Some(observed_at);
+            self.wall_clock_start = Some(Instant::now());
             return Vec::new();
+        };
+
+        // Convert chrono::Duration to std::time::Duration for comparison.
+        let window_std = match self.window.to_std() {
+            Ok(d) => d,
+            Err(_) => {
+                // Negative or zero duration should not happen (new() clamps to >= 1),
+                // but if it does, treat as elapsed.
+                let delta = (Utc::now() - window_start).num_milliseconds();
+                self.window_start = Some(observed_at);
+                self.wall_clock_start = Some(Instant::now());
+                return self.drain_window(window_start, delta, false);
+            }
+        };
+
+        if wall_clock_start.elapsed() >= window_std {
+            let delta = (Utc::now() - window_start).num_milliseconds();
+            self.window_start = Some(observed_at);
+            self.wall_clock_start = Some(Instant::now());
+            self.drain_window(window_start, delta, false)
+        } else {
+            Vec::new()
         }
-        self.window_start = Some(observed_at);
-        self.drain_window(window_start)
     }
 
     /// Drains all accumulated counters into bandwidth events and clears the entries map.
-    fn drain_window(&mut self, window_start: DateTime<Utc>) -> Vec<WirelessBandwidthEvent> {
+    fn drain_window(
+        &mut self,
+        window_start: DateTime<Utc>,
+        wall_clock_delta_ms: i64,
+        window_is_partial: bool,
+    ) -> Vec<WirelessBandwidthEvent> {
         let window_end = window_start + self.window;
+        // Cap at Utc::now() to avoid future timestamps from clock skew.
+        let window_end = window_end.min(Utc::now());
         let mut events = Vec::with_capacity(self.entries.len());
         for (key, counters) in self.entries.drain() {
             let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
@@ -296,6 +362,9 @@ impl TrafficBucket {
                     range_1000_1500: counters.histogram[3],
                 },
                 inter_arrival_p50_ms,
+                wall_clock_delta_ms: Some(wall_clock_delta_ms),
+                window_is_partial,
+                published_at: None,
             });
         }
         events
@@ -336,4 +405,146 @@ fn calculate_p50_inter_arrival(times_ms: &[i64]) -> Option<u64> {
     }
     intervals.sort_unstable();
     Some(intervals[intervals.len() / 2])
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    /// Helper: creates a bandwidth AuditEntry at a given offset from a base time.
+    fn bandwidth_entry(
+        base: DateTime<Utc>,
+        offset_secs: i64,
+        raw_len: usize,
+        signal_dbm: i8,
+    ) -> AuditEntry {
+        let observed_at = base + chrono::Duration::seconds(offset_secs);
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 2,
+            "event_type": "wifi_data_frame",
+            "observed_at": ssl_proxy::time::rfc3339_from_utc(observed_at),
+            "sensor_id": "sensor-1",
+            "location_id": "lab",
+            "interface": "wlan0",
+            "channel": 6,
+            "frame_type": "data",
+            "bssid": "10:20:30:40:50:60",
+            "destination_bssid": "10:20:30:40:50:60",
+            "source_mac": "AA:BB:CC:DD:EE:01",
+            "destination_mac": "22:33:44:55:66:77",
+            "transmitter_mac": "aa:bb:cc:dd:ee:01",
+            "receiver_mac": "10:20:30:40:50:60",
+            "ssid": "CorpWiFi",
+            "frame_subtype": "data",
+            "signal_dbm": signal_dbm,
+            "sequence_number": 1,
+            "raw_len": raw_len,
+            "frame_control_flags": 0x7908,
+            "more_data": true,
+            "retry": true,
+            "power_save": true,
+            "protected": true,
+            "to_ds": true,
+            "from_ds": false,
+            "tags": ["wifi", "data"],
+            "security_flags": 0,
+            "handshake_captured": false,
+            "anomaly_reasons": [],
+            "device_id": null,
+            "username": null,
+            "identity_source": "mac_observed"
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn traffic_bucket_flushes_protected_data_frames_by_bssid() {
+        // Use a short window (1 second) so wall clock advances quickly with real time.
+        let mut bucket = TrafficBucket::new(1);
+        let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
+
+        // First observation at t=0 — opens window, no flush.
+        assert!(bucket
+            .observe(&bandwidth_entry(base, 0, 100, -52), false)
+            .unwrap()
+            .is_empty());
+
+        // Second observation just after (t=0.1s simulated) — too soon for 1s wall-clock window.
+        assert!(bucket
+            .observe(&bandwidth_entry(base, 0, 125, -47), false)
+            .unwrap()
+            .is_empty());
+
+        // Wait real time for wall clock to cross the 1s window.
+        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
+
+        // Third observation — wall clock has elapsed >1s, so flush.
+        let events = bucket
+            .observe(&bandwidth_entry(base, 2, 75, -60), false)
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source_mac, "aa:bb:cc:dd:ee:01");
+        assert_eq!(events[0].destination_bssid, "10:20:30:40:50:60");
+        assert_eq!(events[0].ssid.as_deref(), Some("CorpWiFi"));
+        assert_eq!(events[0].bytes, 225);
+        assert_eq!(events[0].frame_count, 2);
+        assert_eq!(events[0].retry_count, 2);
+        assert_eq!(events[0].more_data_count, 2);
+        assert_eq!(events[0].power_save_count, 2);
+        assert_eq!(events[0].strongest_signal_dbm, Some(-47));
+        // Frame-driven flush: window_is_partial should be false.
+        assert!(!events[0].window_is_partial);
+        // wall_clock_delta_ms should be present and non-negative.
+        assert!(events[0].wall_clock_delta_ms.is_some());
+
+        // Timer-triggered flush for remaining entries (the observation at t=2).
+        let remaining = bucket.flush_current();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].bytes, 75);
+        // Timer-driven flush: window_is_partial should be true.
+        assert!(remaining[0].window_is_partial);
+    }
+
+    #[test]
+    fn observe_raw_uses_wall_clock_for_flush() {
+        let mut bucket = TrafficBucket::new(10);
+        let observed_at = Utc::now();
+
+        // First raw observation opens the window.
+        let events = bucket.observe_raw(100, observed_at, "s1", "loc1", "wlan0", 6);
+        assert!(events.is_empty());
+
+        // Just after, with same timestamp — no flush because wall clock hasn't advanced.
+        let events = bucket.observe_raw(200, observed_at, "s1", "loc1", "wlan0", 6);
+        assert!(events.is_empty());
+
+        // Verify counters accumulated.
+        assert!(bucket.entries.values().any(|c| c.bytes >= 300));
+    }
+
+    #[test]
+    fn flush_current_returns_partial_window() {
+        let mut bucket = TrafficBucket::new(60);
+        let observed_at = Utc::now();
+
+        // Add some data.
+        let events = bucket.observe_raw(500, observed_at, "s1", "loc1", "wlan0", 6);
+        assert!(events.is_empty());
+
+        // Timer-triggered flush.
+        let events = bucket.flush_current();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].bytes, 500);
+        assert!(events[0].window_is_partial);
+        assert!(events[0].wall_clock_delta_ms.is_some());
+    }
+
+    #[test]
+    fn empty_flush_current_returns_empty() {
+        let mut bucket = TrafficBucket::new(60);
+        assert!(bucket.flush_current().is_empty());
+    }
 }

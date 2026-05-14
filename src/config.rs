@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     obfuscation::{Profile, FOX_DOMAINS},
-    wg_packet_obfuscation::parse_magic_byte,
+    wg_packet_obfuscation::{parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding},
 };
 
 /// Runtime configuration grouped by subsystem.
@@ -54,6 +54,7 @@ pub struct ProxyConfig {
     pub tunnel_endpoint: Option<String>,
     pub enable_dns_lookups: bool,
     pub fail_closed_no_sni: bool,
+    /// Capture bounded payload previews only for flows that do not look like TLS.
     pub capture_plaintext_payloads: bool,
     pub forensic_sentry_enabled: bool,
     pub forensic_monitor_interface: Option<String>,
@@ -77,22 +78,22 @@ pub struct AdminConfig {
 
 /// Sync-plane publisher settings.
 ///
-/// Configures NATS connectivity, TLS, authentication, and local spooling
+/// Configures Redpanda connectivity, TLS, authentication, and local spooling
 /// for the event synchronization pipeline.
 #[derive(Clone)]
 pub struct SyncConfig {
-    pub nats_url: Option<String>,
+    pub redpanda_bootstrap_servers: Option<String>,
     pub connect_timeout_ms: u64,
     pub publish_timeout_ms: u64,
     pub publish_queue_capacity: usize,
     pub publish_enqueue_timeout_ms: u64,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub tls_enabled: bool,
-    pub tls_server_name: Option<String>,
-    pub tls_ca_cert_path: Option<String>,
-    pub tls_client_cert_path: Option<String>,
-    pub tls_client_key_path: Option<String>,
+    pub security_protocol: Option<String>,
+    pub sasl_mechanisms: Option<String>,
+    pub sasl_username: Option<String>,
+    pub sasl_password: Option<String>,
+    pub ssl_ca_location: Option<String>,
+    pub ssl_certificate_location: Option<String>,
+    pub ssl_key_location: Option<String>,
     pub inline_payload_max_bytes: usize,
     pub outbox_dir: String,
     pub publish_spool_dir: String,
@@ -102,7 +103,7 @@ pub struct SyncConfig {
 #[derive(Clone, Debug)]
 pub struct PayloadAuditConfig {
     pub enabled: bool,
-    pub nats_subject: String,
+    pub redpanda_topic: String,
     pub max_body_bytes: usize,
     pub allowed_methods: Vec<String>,
     pub allowed_content_types: Vec<String>,
@@ -144,6 +145,12 @@ pub struct WireGuardConfig {
     pub obfuscation_key: Vec<u8>,
     pub obfuscation_magic_byte: Option<u8>,
     pub obfuscation_session_idle_secs: u64,
+    pub obfuscation_encryption_mode: EncryptionMode,
+    pub obfuscation_padding: PacketPadding,
+    pub obfuscation_magic_position: MagicPositionMode,
+    pub obfuscation_replay_protection: bool,
+    pub obfuscation_xor_rekey_packets: Option<u64>,
+    pub obfuscation_xor_rekey_secs: Option<u64>,
 }
 
 /// Runtime-only logging and operational settings.
@@ -177,6 +184,14 @@ pub enum ConfigError {
     MissingWireGuardObfuscationKey,
     #[error("WG_OBFUSCATION_MAGIC_BYTE must be a single byte in decimal or 0xNN form; got {0:?}")]
     InvalidWireGuardObfuscationMagicByte(String),
+    #[error("WG_OBFUSCATION_ENCRYPTION_MODE must be xor or aead; got {0:?}")]
+    InvalidWireGuardObfuscationEncryptionMode(String),
+    #[error("WG_OBFUSCATION_PADDING must be none, power-of-two, or fixed-mtu:<bytes>; got {0:?}")]
+    InvalidWireGuardObfuscationPadding(String),
+    #[error("WG_OBFUSCATION_MAGIC_POSITION must be fixed or randomized; got {0:?}")]
+    InvalidWireGuardObfuscationMagicPosition(String),
+    #[error("{var} must be a positive integer; got {value:?}")]
+    InvalidWireGuardObfuscationXorRekeyValue { var: &'static str, value: String },
     #[error(
         "WG_PORT ({public_port}) and WG_INTERNAL_PORT ({internal_port}) must differ when WG_OBFUSCATION_ENABLED=true"
     )]
@@ -184,22 +199,14 @@ pub enum ConfigError {
         public_port: u16,
         internal_port: u16,
     },
-    #[error(
-        "SYNC_NATS_USERNAME is set but SYNC_NATS_PASSWORD is missing (both are required for NATS auth)"
-    )]
-    MissingSyncNatsPassword,
-    #[error(
-        "SYNC_NATS_PASSWORD is set but SYNC_NATS_USERNAME is missing (both are required for NATS auth)"
-    )]
-    MissingSyncNatsUsername,
-    #[error(
-        "SYNC_NATS_TLS_ENABLED=true requires SYNC_NATS_TLS_CA_CERT_PATH because this runtime does not load system roots automatically"
-    )]
-    MissingSyncNatsTlsCaCertPath,
-    #[error("SYNC_NATS_TLS_CLIENT_CERT_PATH is set but SYNC_NATS_TLS_CLIENT_KEY_PATH is missing")]
-    MissingSyncNatsTlsClientKeyPath,
-    #[error("SYNC_NATS_TLS_CLIENT_KEY_PATH is set but SYNC_NATS_TLS_CLIENT_CERT_PATH is missing")]
-    MissingSyncNatsTlsClientCertPath,
+    #[error("SYNC_REDPANDA_SASL_USERNAME is set but SYNC_REDPANDA_SASL_PASSWORD is missing")]
+    MissingSyncRedpandaSaslPassword,
+    #[error("SYNC_REDPANDA_SASL_PASSWORD is set but SYNC_REDPANDA_SASL_USERNAME is missing")]
+    MissingSyncRedpandaSaslUsername,
+    #[error("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is set but SYNC_REDPANDA_SSL_KEY_LOCATION is missing")]
+    MissingSyncRedpandaSslKeyLocation,
+    #[error("SYNC_REDPANDA_SSL_KEY_LOCATION is set but SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is missing")]
+    MissingSyncRedpandaSslCertificateLocation,
 }
 
 impl std::fmt::Debug for Config {
@@ -317,7 +324,10 @@ impl std::fmt::Debug for AdminConfig {
 impl std::fmt::Debug for SyncConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyncConfig")
-            .field("nats_url", &redact_url_userinfo(self.nats_url.as_deref()))
+            .field(
+                "redpanda_bootstrap_servers",
+                &self.redpanda_bootstrap_servers,
+            )
             .field("connect_timeout_ms", &self.connect_timeout_ms)
             .field("publish_timeout_ms", &self.publish_timeout_ms)
             .field("publish_queue_capacity", &self.publish_queue_capacity)
@@ -325,16 +335,16 @@ impl std::fmt::Debug for SyncConfig {
                 "publish_enqueue_timeout_ms",
                 &self.publish_enqueue_timeout_ms,
             )
-            .field("username", &self.username)
+            .field("security_protocol", &self.security_protocol)
+            .field("sasl_mechanisms", &self.sasl_mechanisms)
+            .field("sasl_username", &self.sasl_username)
             .field(
-                "password",
-                &self.password.as_ref().map(|_| "[REDACTED]".to_string()),
+                "sasl_password",
+                &self.sasl_password.as_ref().map(|_| "[REDACTED]".to_string()),
             )
-            .field("tls_enabled", &self.tls_enabled)
-            .field("tls_server_name", &self.tls_server_name)
-            .field("tls_ca_cert_path", &self.tls_ca_cert_path)
-            .field("tls_client_cert_path", &self.tls_client_cert_path)
-            .field("tls_client_key_path", &self.tls_client_key_path)
+            .field("ssl_ca_location", &self.ssl_ca_location)
+            .field("ssl_certificate_location", &self.ssl_certificate_location)
+            .field("ssl_key_location", &self.ssl_key_location)
             .field("inline_payload_max_bytes", &self.inline_payload_max_bytes)
             .field("outbox_dir", &self.outbox_dir)
             .field("publish_spool_dir", &self.publish_spool_dir)
@@ -355,6 +365,27 @@ impl std::fmt::Debug for WireGuardConfig {
             .field(
                 "obfuscation_session_idle_secs",
                 &self.obfuscation_session_idle_secs,
+            )
+            .field(
+                "obfuscation_encryption_mode",
+                &self.obfuscation_encryption_mode,
+            )
+            .field("obfuscation_padding", &self.obfuscation_padding)
+            .field(
+                "obfuscation_magic_position",
+                &self.obfuscation_magic_position,
+            )
+            .field(
+                "obfuscation_replay_protection",
+                &self.obfuscation_replay_protection,
+            )
+            .field(
+                "obfuscation_xor_rekey_packets",
+                &self.obfuscation_xor_rekey_packets,
+            )
+            .field(
+                "obfuscation_xor_rekey_secs",
+                &self.obfuscation_xor_rekey_secs,
             )
             .finish()
     }
@@ -535,16 +566,16 @@ impl Default for Config {
                 recovery_drill_report_path: None,
             },
             sync: SyncConfig {
-                nats_url: None,
+                redpanda_bootstrap_servers: None,
                 connect_timeout_ms: 2_000,
                 publish_timeout_ms: 2_000,
-                username: None,
-                password: None,
-                tls_enabled: false,
-                tls_server_name: None,
-                tls_ca_cert_path: None,
-                tls_client_cert_path: None,
-                tls_client_key_path: None,
+                security_protocol: None,
+                sasl_mechanisms: None,
+                sasl_username: None,
+                sasl_password: None,
+                ssl_ca_location: None,
+                ssl_certificate_location: None,
+                ssl_key_location: None,
                 inline_payload_max_bytes: 2_048,
                 outbox_dir: "/tmp/ssl-proxy-sync-outbox".to_string(),
                 publish_queue_capacity: 8_192,
@@ -553,7 +584,7 @@ impl Default for Config {
             },
             payload_audit: PayloadAuditConfig {
                 enabled: false,
-                nats_subject: "proxy.payload_audit".to_string(),
+                redpanda_topic: "proxy.payload_audit".to_string(),
                 max_body_bytes: 65_536,
                 allowed_methods: vec!["POST".to_string(), "PUT".to_string(), "PATCH".to_string()],
                 allowed_content_types: vec!["application/json".to_string()],
@@ -583,6 +614,12 @@ impl Default for Config {
                 obfuscation_key: b"test-obfuscation-key".to_vec(),
                 obfuscation_magic_byte: Some(0xAA),
                 obfuscation_session_idle_secs: 300,
+                obfuscation_encryption_mode: EncryptionMode::Xor,
+                obfuscation_padding: PacketPadding::None,
+                obfuscation_magic_position: MagicPositionMode::Fixed,
+                obfuscation_replay_protection: false,
+                obfuscation_xor_rekey_packets: None,
+                obfuscation_xor_rekey_secs: None,
             },
             runtime: RuntimeConfig {
                 log_format: "human".to_string(),
@@ -730,46 +767,46 @@ impl AdminConfig {
 
 impl SyncConfig {
     fn from_env() -> Result<Self, ConfigError> {
-        let nats_url = std::env::var("SYNC_NATS_URL")
+        let redpanda_bootstrap_servers = std::env::var("SYNC_REDPANDA_BOOTSTRAP_SERVERS")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let username = std::env::var("SYNC_NATS_USERNAME")
+        let sasl_username = std::env::var("SYNC_REDPANDA_SASL_USERNAME")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let password = read_secret("SYNC_NATS_PASSWORD", "SYNC_NATS_PASSWORD_FILE");
-        let (username, password) = match (username, password) {
+        let sasl_password =
+            read_secret("SYNC_REDPANDA_SASL_PASSWORD", "SYNC_REDPANDA_SASL_PASSWORD_FILE");
+        let (sasl_username, sasl_password) = match (sasl_username, sasl_password) {
             (Some(username), Some(password)) => (Some(username), Some(password)),
-            (Some(_), None) => return Err(ConfigError::MissingSyncNatsPassword),
-            (None, Some(_)) => return Err(ConfigError::MissingSyncNatsUsername),
+            (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSaslPassword),
+            (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSaslUsername),
             (None, None) => (None, None),
         };
-
-        let inferred_tls = nats_url
-            .as_deref()
-            .map(|url| url.starts_with("tls://"))
-            .unwrap_or(false);
-        let tls_enabled = read_bool("SYNC_NATS_TLS_ENABLED", inferred_tls);
-        let tls_ca_cert_path = std::env::var("SYNC_NATS_TLS_CA_CERT_PATH")
+        let security_protocol = std::env::var("SYNC_REDPANDA_SECURITY_PROTOCOL")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let tls_client_cert_path = std::env::var("SYNC_NATS_TLS_CLIENT_CERT_PATH")
+        let sasl_mechanisms = std::env::var("SYNC_REDPANDA_SASL_MECHANISMS")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let tls_client_key_path = std::env::var("SYNC_NATS_TLS_CLIENT_KEY_PATH")
+        let ssl_ca_location = std::env::var("SYNC_REDPANDA_SSL_CA_LOCATION")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        match (&tls_client_cert_path, &tls_client_key_path) {
-            (Some(_), None) => return Err(ConfigError::MissingSyncNatsTlsClientKeyPath),
-            (None, Some(_)) => return Err(ConfigError::MissingSyncNatsTlsClientCertPath),
+        let ssl_certificate_location = std::env::var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let ssl_key_location = std::env::var("SYNC_REDPANDA_SSL_KEY_LOCATION")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        match (&ssl_certificate_location, &ssl_key_location) {
+            (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSslKeyLocation),
+            (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSslCertificateLocation),
             _ => {}
-        }
-        if tls_enabled && nats_url.is_some() && tls_ca_cert_path.is_none() {
-            return Err(ConfigError::MissingSyncNatsTlsCaCertPath);
         }
 
         let outbox_dir = std::env::var("SYNC_OUTBOX_DIR")
@@ -789,21 +826,18 @@ impl SyncConfig {
             });
 
         Ok(Self {
-            nats_url,
-            connect_timeout_ms: read_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000),
-            publish_timeout_ms: read_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000),
+            redpanda_bootstrap_servers,
+            connect_timeout_ms: read_u64("SYNC_REDPANDA_CONNECT_TIMEOUT_MS", 2_000),
+            publish_timeout_ms: read_u64("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", 2_000),
             publish_queue_capacity: read_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192),
             publish_enqueue_timeout_ms: read_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25),
-            username,
-            password,
-            tls_enabled,
-            tls_server_name: std::env::var("SYNC_NATS_TLS_SERVER_NAME")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-            tls_ca_cert_path,
-            tls_client_cert_path,
-            tls_client_key_path,
+            security_protocol,
+            sasl_mechanisms,
+            sasl_username,
+            sasl_password,
+            ssl_ca_location,
+            ssl_certificate_location,
+            ssl_key_location,
             inline_payload_max_bytes: read_usize("SYNC_INLINE_PAYLOAD_MAX_BYTES", 2_048),
             outbox_dir,
             publish_spool_dir,
@@ -815,7 +849,7 @@ impl PayloadAuditConfig {
     fn from_env() -> Self {
         Self {
             enabled: read_bool("PAYLOAD_AUDIT_ENABLED", false),
-            nats_subject: std::env::var("PAYLOAD_AUDIT_NATS_SUBJECT")
+            redpanda_topic: std::env::var("PAYLOAD_AUDIT_REDPANDA_TOPIC")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
@@ -911,7 +945,9 @@ impl WireGuardConfig {
     /// `WG_DROP_UDP_443` (defaults to `true`), `WG_OBFUSCATION_ENABLED`
     /// (defaults to `true`), `WG_OBFUSCATION_KEY` (required when obfuscation
     /// is enabled), `WG_OBFUSCATION_MAGIC_BYTE` (optional decimal or `0xNN` form),
-    /// and `WG_OBFUSCATION_SESSION_IDLE_SECS` (defaults to `300`).
+    /// `WG_OBFUSCATION_SESSION_IDLE_SECS` (defaults to `300`), and optional
+    /// framed-mode controls for encryption, padding, marker position, replay
+    /// protection, and XOR re-keying.
     ///
     /// # Examples
     ///
@@ -944,6 +980,12 @@ impl WireGuardConfig {
         if obfuscation_enabled && obfuscation_key.is_empty() {
             return Err(ConfigError::MissingWireGuardObfuscationKey);
         }
+        let obfuscation_encryption_mode =
+            read_wireguard_obfuscation_encryption_mode("WG_OBFUSCATION_ENCRYPTION_MODE")?;
+        let obfuscation_replay_protection = read_bool(
+            "WG_OBFUSCATION_REPLAY_PROTECTION",
+            matches!(obfuscation_encryption_mode, EncryptionMode::Aead),
+        );
 
         Ok(Self {
             port: read_port("WG_PORT", 443),
@@ -954,6 +996,14 @@ impl WireGuardConfig {
             obfuscation_key: obfuscation_key.into_bytes(),
             obfuscation_magic_byte: read_magic_byte("WG_OBFUSCATION_MAGIC_BYTE")?,
             obfuscation_session_idle_secs: read_u64("WG_OBFUSCATION_SESSION_IDLE_SECS", 300).max(1),
+            obfuscation_encryption_mode,
+            obfuscation_padding: read_wireguard_obfuscation_padding("WG_OBFUSCATION_PADDING")?,
+            obfuscation_magic_position: read_wireguard_obfuscation_magic_position(
+                "WG_OBFUSCATION_MAGIC_POSITION",
+            )?,
+            obfuscation_replay_protection,
+            obfuscation_xor_rekey_packets: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS")?,
+            obfuscation_xor_rekey_secs: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS")?,
         })
     }
 }
@@ -1193,6 +1243,83 @@ fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
         .ok_or(ConfigError::InvalidWireGuardObfuscationMagicByte(raw))
 }
 
+fn read_optional_u64(var: &'static str) -> Result<Option<u64>, ConfigError> {
+    let Some(raw) = std::env::var(var).ok() else {
+        return Ok(None);
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = value.parse::<u64>().map_err(|_| {
+        ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
+            var,
+            value: raw.clone(),
+        }
+    })?;
+    if parsed == 0 {
+        return Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue { var, value: raw });
+    }
+
+    Ok(Some(parsed))
+}
+
+fn read_wireguard_obfuscation_encryption_mode(var: &str) -> Result<EncryptionMode, ConfigError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(EncryptionMode::Xor);
+    };
+
+    match raw.as_str() {
+        "xor" => Ok(EncryptionMode::Xor),
+        "aead" | "xchacha20-poly1305" | "xchacha20poly1305" => Ok(EncryptionMode::Aead),
+        _ => Err(ConfigError::InvalidWireGuardObfuscationEncryptionMode(raw)),
+    }
+}
+
+fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadding, ConfigError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(PacketPadding::None);
+    };
+
+    match raw.as_str() {
+        "none" | "off" | "false" => Ok(PacketPadding::None),
+        "power-of-two" | "power_of_two" | "pow2" => Ok(PacketPadding::PowerOfTwo),
+        _ => raw
+            .strip_prefix("fixed-mtu:")
+            .or_else(|| raw.strip_prefix("fixed_mtu:"))
+            .or_else(|| raw.strip_prefix("fixed:"))
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .map(PacketPadding::FixedMtu)
+            .ok_or(ConfigError::InvalidWireGuardObfuscationPadding(raw)),
+    }
+}
+
+fn read_wireguard_obfuscation_magic_position(var: &str) -> Result<MagicPositionMode, ConfigError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(MagicPositionMode::Fixed);
+    };
+
+    match raw.as_str() {
+        "fixed" => Ok(MagicPositionMode::Fixed),
+        "randomized" | "randomised" | "random" => Ok(MagicPositionMode::Randomized),
+        _ => Err(ConfigError::InvalidWireGuardObfuscationMagicPosition(raw)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1255,24 +1382,30 @@ mod tests {
             "WG_OBFUSCATION_KEY_FILE",
             "WG_OBFUSCATION_MAGIC_BYTE",
             "WG_OBFUSCATION_SESSION_IDLE_SECS",
-            "SYNC_NATS_URL",
-            "SYNC_NATS_CONNECT_TIMEOUT_MS",
-            "SYNC_NATS_PUBLISH_TIMEOUT_MS",
-            "SYNC_NATS_USERNAME",
-            "SYNC_NATS_PASSWORD",
-            "SYNC_NATS_PASSWORD_FILE",
-            "SYNC_NATS_TLS_ENABLED",
-            "SYNC_NATS_TLS_SERVER_NAME",
-            "SYNC_NATS_TLS_CA_CERT_PATH",
-            "SYNC_NATS_TLS_CLIENT_CERT_PATH",
-            "SYNC_NATS_TLS_CLIENT_KEY_PATH",
+            "WG_OBFUSCATION_ENCRYPTION_MODE",
+            "WG_OBFUSCATION_PADDING",
+            "WG_OBFUSCATION_MAGIC_POSITION",
+            "WG_OBFUSCATION_REPLAY_PROTECTION",
+            "WG_OBFUSCATION_XOR_REKEY_PACKETS",
+            "WG_OBFUSCATION_XOR_REKEY_SECS",
+            "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
+            "SYNC_REDPANDA_CONNECT_TIMEOUT_MS",
+            "SYNC_REDPANDA_PUBLISH_TIMEOUT_MS",
+            "SYNC_REDPANDA_SASL_USERNAME",
+            "SYNC_REDPANDA_SASL_PASSWORD",
+            "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+            "SYNC_REDPANDA_SECURITY_PROTOCOL",
+            "SYNC_REDPANDA_SASL_MECHANISMS",
+            "SYNC_REDPANDA_SSL_CA_LOCATION",
+            "SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION",
+            "SYNC_REDPANDA_SSL_KEY_LOCATION",
             "SYNC_INLINE_PAYLOAD_MAX_BYTES",
             "SYNC_OUTBOX_DIR",
             "SYNC_PUBLISH_QUEUE_CAPACITY",
             "SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS",
             "SYNC_PUBLISH_SPOOL_DIR",
             "PAYLOAD_AUDIT_ENABLED",
-            "PAYLOAD_AUDIT_NATS_SUBJECT",
+            "PAYLOAD_AUDIT_REDPANDA_TOPIC",
             "PAYLOAD_AUDIT_MAX_BODY_BYTES",
             "PAYLOAD_AUDIT_ALLOWED_METHODS",
             "PAYLOAD_AUDIT_ALLOWED_CONTENT_TYPES",
@@ -1407,9 +1540,78 @@ mod tests {
         assert_eq!(result.wireguard.obfuscation_magic_byte, None);
         assert_eq!(result.wireguard.obfuscation_session_idle_secs, 300);
         assert_eq!(
+            result.wireguard.obfuscation_encryption_mode,
+            EncryptionMode::Xor
+        );
+        assert_eq!(result.wireguard.obfuscation_padding, PacketPadding::None);
+        assert_eq!(
+            result.wireguard.obfuscation_magic_position,
+            MagicPositionMode::Fixed
+        );
+        assert!(!result.wireguard.obfuscation_replay_protection);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, None);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, None);
+        assert_eq!(
             result.wireguard.obfuscation_key,
             b"test-obfuscation-key".to_vec()
         );
+    }
+
+    #[test]
+    fn wireguard_framed_obfuscation_options_are_loaded() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("WG_OBFUSCATION_ENCRYPTION_MODE", "aead");
+        std::env::set_var("WG_OBFUSCATION_PADDING", "fixed-mtu:1200");
+        std::env::set_var("WG_OBFUSCATION_MAGIC_POSITION", "randomized");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "128");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_SECS", "60");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(
+            result.wireguard.obfuscation_encryption_mode,
+            EncryptionMode::Aead
+        );
+        assert_eq!(
+            result.wireguard.obfuscation_padding,
+            PacketPadding::FixedMtu(1200)
+        );
+        assert_eq!(
+            result.wireguard.obfuscation_magic_position,
+            MagicPositionMode::Randomized
+        );
+        assert!(result.wireguard.obfuscation_replay_protection);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, Some(128));
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, Some(60));
+    }
+
+    #[test]
+    fn wireguard_xor_rekey_values_must_be_positive_integers() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "0");
+
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
+                var: "WG_OBFUSCATION_XOR_REKEY_PACKETS",
+                ..
+            })
+        ));
+
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "not-a-number");
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::InvalidWireGuardObfuscationXorRekeyValue {
+                var: "WG_OBFUSCATION_XOR_REKEY_PACKETS",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1562,16 +1764,19 @@ mod tests {
             result.sync.publish_spool_dir,
             "/tmp/ssl-proxy-sync-outbox/publish-spool"
         );
-        assert!(result.sync.nats_url.is_none());
+        assert!(result.sync.redpanda_bootstrap_servers.is_none());
 
-        std::env::set_var("SYNC_NATS_USERNAME", "proxy-user");
+        std::env::set_var("SYNC_REDPANDA_SASL_USERNAME", "proxy-user");
         let result = Config::from_env();
-        assert!(matches!(result, Err(ConfigError::MissingSyncNatsPassword)));
+        assert!(matches!(
+            result,
+            Err(ConfigError::MissingSyncRedpandaSaslPassword)
+        ));
 
-        std::env::set_var("SYNC_NATS_PASSWORD", "proxy-pass");
+        std::env::set_var("SYNC_REDPANDA_SASL_PASSWORD", "proxy-pass");
         let result = Config::from_env().unwrap();
-        assert_eq!(result.sync.username.as_deref(), Some("proxy-user"));
-        assert_eq!(result.sync.password.as_deref(), Some("proxy-pass"));
+        assert_eq!(result.sync.sasl_username.as_deref(), Some("proxy-user"));
+        assert_eq!(result.sync.sasl_password.as_deref(), Some("proxy-pass"));
     }
 
     #[test]
@@ -1599,25 +1804,17 @@ mod tests {
     }
 
     #[test]
-    fn sync_tls_requires_ca_and_validates_client_cert_pair() {
+    fn sync_ssl_validates_client_cert_pair() {
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
         std::env::set_var("ADMIN_API_KEY", "test-key");
-        std::env::set_var("SYNC_NATS_URL", "tls://nats.internal:4443");
 
+        std::env::set_var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION", "/tmp/client.pem");
         let result = Config::from_env();
         assert!(matches!(
             result,
-            Err(ConfigError::MissingSyncNatsTlsCaCertPath)
-        ));
-
-        std::env::set_var("SYNC_NATS_TLS_CA_CERT_PATH", "/tmp/ca.pem");
-        std::env::set_var("SYNC_NATS_TLS_CLIENT_CERT_PATH", "/tmp/client.pem");
-        let result = Config::from_env();
-        assert!(matches!(
-            result,
-            Err(ConfigError::MissingSyncNatsTlsClientKeyPath)
+            Err(ConfigError::MissingSyncRedpandaSslKeyLocation)
         ));
     }
 
@@ -1630,7 +1827,7 @@ mod tests {
 
         let result = Config::from_env().unwrap();
         assert!(!result.payload_audit.enabled);
-        assert_eq!(result.payload_audit.nats_subject, "proxy.payload_audit");
+        assert_eq!(result.payload_audit.redpanda_topic, "proxy.payload_audit");
         assert_eq!(result.payload_audit.max_body_bytes, 65_536);
         assert_eq!(
             result.payload_audit.allowed_methods,
@@ -1642,7 +1839,7 @@ mod tests {
         );
 
         std::env::set_var("PAYLOAD_AUDIT_ENABLED", "true");
-        std::env::set_var("PAYLOAD_AUDIT_NATS_SUBJECT", "audit.payloads");
+        std::env::set_var("PAYLOAD_AUDIT_REDPANDA_TOPIC", "audit.payloads");
         std::env::set_var("PAYLOAD_AUDIT_MAX_BODY_BYTES", "1024");
         std::env::set_var("PAYLOAD_AUDIT_ALLOWED_METHODS", "POST,DELETE");
         std::env::set_var(
@@ -1652,7 +1849,7 @@ mod tests {
 
         let result = Config::from_env().unwrap();
         assert!(result.payload_audit.enabled);
-        assert_eq!(result.payload_audit.nats_subject, "audit.payloads");
+        assert_eq!(result.payload_audit.redpanda_topic, "audit.payloads");
         assert_eq!(result.payload_audit.max_body_bytes, 1_024);
         assert_eq!(result.payload_audit.allowed_methods, vec!["POST", "DELETE"]);
         assert_eq!(
@@ -1672,6 +1869,12 @@ mod tests {
             obfuscation_key: b"super-secret".to_vec(),
             obfuscation_magic_byte: Some(0xAA),
             obfuscation_session_idle_secs: 300,
+            obfuscation_encryption_mode: EncryptionMode::Xor,
+            obfuscation_padding: PacketPadding::None,
+            obfuscation_magic_position: MagicPositionMode::Fixed,
+            obfuscation_replay_protection: false,
+            obfuscation_xor_rekey_packets: None,
+            obfuscation_xor_rekey_secs: None,
         };
 
         let rendered = format!("{config:?}");

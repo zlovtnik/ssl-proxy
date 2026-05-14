@@ -309,6 +309,25 @@ create table if not exists authorized_wireless_networks (
 create index if not exists authorized_wireless_networks_enabled_idx
   on authorized_wireless_networks (enabled, location_id);
 
+create table if not exists network_clients (
+  ssid text not null,
+  client_mac text not null,
+  known_bssid text,
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  probe_count integer not null default 1,
+  location_id text,
+  primary key (ssid, client_mac)
+);
+
+create index if not exists idx_network_clients_client_mac
+  on network_clients (client_mac);
+create index if not exists idx_network_clients_last_seen
+  on network_clients (last_seen desc);
+create index if not exists idx_network_clients_known_bssid
+  on network_clients (known_bssid)
+  where known_bssid is not null;
+
 create table if not exists shadow_it_alerts (
   source_mac text primary key,
   first_occurred_at timestamptz not null,
@@ -326,6 +345,97 @@ create table if not exists shadow_it_alerts (
   updated_at timestamptz not null default now(),
   constraint shadow_it_alerts_source_mac_format_chk check (source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$')
 );
+
+alter table shadow_it_alerts add column if not exists first_occurred_at timestamptz;
+alter table shadow_it_alerts add column if not exists last_occurred_at timestamptz;
+alter table shadow_it_alerts add column if not exists occurrence_count bigint not null default 1;
+alter table shadow_it_alerts add column if not exists destination_bssid text;
+alter table shadow_it_alerts add column if not exists ssid text;
+alter table shadow_it_alerts add column if not exists sensor_id text;
+alter table shadow_it_alerts add column if not exists location_id text;
+alter table shadow_it_alerts add column if not exists signal_dbm integer;
+alter table shadow_it_alerts add column if not exists reason text not null default 'strong_wireless_without_proxy_presence';
+alter table shadow_it_alerts add column if not exists evidence jsonb not null default '{}'::jsonb;
+alter table shadow_it_alerts add column if not exists resolved_at timestamptz;
+alter table shadow_it_alerts add column if not exists created_at timestamptz not null default now();
+alter table shadow_it_alerts add column if not exists updated_at timestamptz not null default now();
+
+do $$
+begin
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'shadow_it_alerts'
+       and column_name = 'observed_at'
+  ) then
+    update shadow_it_alerts
+       set first_occurred_at = coalesce(first_occurred_at, observed_at, created_at, now()),
+           last_occurred_at = coalesce(last_occurred_at, observed_at, updated_at, created_at, now());
+    alter table shadow_it_alerts alter column observed_at drop not null;
+  else
+    update shadow_it_alerts
+       set first_occurred_at = coalesce(first_occurred_at, created_at, now()),
+           last_occurred_at = coalesce(last_occurred_at, updated_at, created_at, now());
+  end if;
+
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'shadow_it_alerts'
+       and column_name = 'dedupe_key'
+  ) then
+    alter table shadow_it_alerts alter column dedupe_key drop not null;
+  end if;
+end $$;
+
+update shadow_it_alerts
+   set source_mac = lower(source_mac)
+ where source_mac <> lower(source_mac);
+
+with ranked as (
+  select ctid,
+         row_number() over (
+           partition by source_mac
+           order by last_occurred_at desc, updated_at desc, created_at desc, ctid desc
+         ) as row_number
+    from shadow_it_alerts
+)
+delete from shadow_it_alerts target
+ using ranked
+ where target.ctid = ranked.ctid
+   and ranked.row_number > 1;
+
+alter table shadow_it_alerts alter column first_occurred_at set not null;
+alter table shadow_it_alerts alter column last_occurred_at set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+      from pg_index idx
+      join pg_class tbl on tbl.oid = idx.indrelid
+      join pg_attribute attr on attr.attrelid = tbl.oid
+     where tbl.relname = 'shadow_it_alerts'
+       and idx.indisunique
+       and attr.attnum = any(idx.indkey)
+       and attr.attname = 'source_mac'
+  ) then
+    create unique index shadow_it_alerts_source_mac_unique_idx
+      on shadow_it_alerts (source_mac);
+  end if;
+
+  if exists (
+    select 1
+      from pg_class idx
+     where idx.relkind = 'i'
+       and idx.relname = 'shadow_it_alerts_open_idx'
+       and pg_get_indexdef(idx.oid) not ilike '%last_occurred_at%'
+  ) then
+    drop index shadow_it_alerts_open_idx;
+  end if;
+end $$;
 
 create index if not exists shadow_it_alerts_open_idx
   on shadow_it_alerts (last_occurred_at desc)

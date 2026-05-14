@@ -204,6 +204,23 @@ async fn main() {
 
     let state = state::AppState::new(client, resolver, stats_tx, events_tx, config.clone());
 
+    {
+        let retry_state = state.clone();
+        let retry_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = retry_shutdown.cancelled() => {
+                        info!("dashboard event retry task shutting down");
+                        break;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                }
+                retry_state.flush_dashboard_event_queue();
+            }
+        });
+    }
+
     forensic::spawn_hardware_worker(state.clone());
 
     // Semaphore to limit concurrent connections
