@@ -6,7 +6,12 @@ pub const Error = error{
 
 pub fn parseRedpandaAuthority(allocator: std.mem.Allocator, redpanda_url: []const u8) Error![]u8 {
     const trimmed = std.mem.trim(u8, redpanda_url, " \t\r\n");
-    const no_scheme = if (std.mem.startsWith(u8, trimmed, "redpanda://")) trimmed["redpanda://".len..] else trimmed;
+    const no_scheme = if (std.mem.startsWith(u8, trimmed, "redpanda://"))
+        trimmed["redpanda://".len..]
+    else if (std.mem.startsWith(u8, trimmed, "tls://"))
+        trimmed["tls://".len..]
+    else
+        trimmed;
     var iterator = std.mem.splitScalar(u8, no_scheme, '/');
     const authority = iterator.first();
     if (authority.len == 0) return error.InvalidRedpandaUrl;
@@ -102,4 +107,10 @@ test "parseRedpandaAuthority defaults the Redpanda port" {
     const parsed = try parseRedpandaAuthority(std.testing.allocator, "redpanda://redpanda");
     defer std.testing.allocator.free(parsed);
     try std.testing.expectEqualStrings("redpanda:9092", parsed);
+}
+
+test "parseRedpandaAuthority accepts tls scheme authority" {
+    const parsed = try parseRedpandaAuthority(std.testing.allocator, "tls://redpanda.internal:9093");
+    defer std.testing.allocator.free(parsed);
+    try std.testing.expectEqualStrings("redpanda.internal:9093", parsed);
 }
