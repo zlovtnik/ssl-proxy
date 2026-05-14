@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         libaio-dev \
         libclang-dev \
+        libcurl4-openssl-dev \
         libssl-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
