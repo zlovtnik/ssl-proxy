@@ -868,7 +868,7 @@ fn request_transport_unsupported(
     }
 
     let port = redpanda_port(host_port).unwrap_or(9092);
-    if port == 9092 || port == 19092 {
+    if port == 9092 || port == 9093 || port == 19092 {
         return Some(unsupported_request_transport_error(
             operation,
             redpanda_bootstrap_servers,
@@ -1123,6 +1123,9 @@ mod tests {
         assert!(
             request_transport_unsupported("lookup_device_by_mac", "redpanda://redpanda:9092")
                 .is_some()
+        );
+        assert!(
+            request_transport_unsupported("lookup_device_by_mac", "tls://redpanda:9093").is_some()
         );
         assert!(request_transport_unsupported(
             "lookup_device_by_mac",
