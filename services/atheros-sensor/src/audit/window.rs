@@ -6,7 +6,7 @@
 //!
 //! When all four fields are `None`, `is_active_at` unconditionally returns `true`; this is
 //! the default out-of-the-box behavior and means the sensor captures continuously until an
-//! explicit window is pushed via NATS or set via environment variables.
+//! explicit window is pushed via Redpanda or set via environment variables.
 
 use std::{
     collections::HashSet,

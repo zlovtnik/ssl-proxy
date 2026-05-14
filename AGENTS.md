@@ -14,7 +14,7 @@ This file governs the entire repository rooted here.
 ## Repo Anatomy
 - `src/` is the Rust service core.
 - `apps/ssl-proxy-dashboard/` is the SvelteKit dashboard.
-- `services/zig-coordinator/` is the control plane scaffold for Postgres state and JetStream orchestration.
+- `services/zig-coordinator/` is the control plane scaffold for Postgres state and Redpanda orchestration.
 - `services/oracle-worker/` is the Oracle sink worker scaffold.
 - `sql/` contains schema, views, and migrations.
 - `scripts/` and `setup-ubuntu.sh` are operational helpers.
@@ -24,7 +24,7 @@ This file governs the entire repository rooted here.
 - Treat the Rust proxy as a producer of sync-plane work, not as an Oracle client.
 - Keep Oracle ownership in `services/oracle-worker/`; do not reintroduce direct Oracle wiring into `src/`.
 - Keep coordinator concerns in `services/zig-coordinator/`: cursoring, dedupe, job state, batching, and result handling.
-- Use the locked subjects and meanings:
+- Use the locked topics and meanings:
   - `sync.scan.request` for proxy-to-coordinator work discovery
   - `sync.oracle.load` for coordinator-to-worker batch dispatch
   - `sync.oracle.result` for worker-to-coordinator batch outcomes

@@ -27,7 +27,7 @@ use thiserror::Error;
 
 use crate::model::AuditEntry;
 
-pub const BANDWIDTH_SUBJECT: &str = "audit.wireless.bandwidth";
+pub const BANDWIDTH_TOPIC: &str = "audit.wireless.bandwidth";
 pub const DEFAULT_BANDWIDTH_WINDOW_SECS: i64 = 60;
 pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
 

@@ -3,8 +3,8 @@ const config = @import("config.zig");
 const db = @import("db.zig");
 const db_sync = @import("db_sync.zig");
 const logging = @import("logging.zig");
-const nats_health = @import("nats_health.zig");
-const stream_config = @import("stream_config.zig");
+const redpanda_health = @import("redpanda_health.zig");
+const topic_manifest = @import("topic_manifest.zig");
 const sync_handlers = @import("sync_handlers.zig");
 const wireless_handlers = @import("wireless_handlers.zig");
 
@@ -13,13 +13,13 @@ const SHADOW_AUDIT_INTERVAL_MS: i64 = 10_000;
 
 pub const Error = error{
     MissingDatabaseUrl,
-    MissingNatsUrl,
-    InvalidNatsUrl,
-    NatsCheckFailed,
-    NatsStreamMissing,
-    NatsStreamSubjectMissing,
-    NatsConsumerMissing,
-    NatsConsumerFilterMismatch,
+    MissingRedpandaUrl,
+    InvalidRedpandaUrl,
+    RedpandaCheckFailed,
+    RedpandaStreamMissing,
+    RedpandaStreamTopicMissing,
+    RedpandaConsumerMissing,
+    RedpandaConsumerFilterMismatch,
     CursorNotFound,
     ScanFetchFailed,
     ScanIngestFailed,
@@ -32,7 +32,7 @@ pub const Error = error{
     NetworksListFailed,
     ProbeFlushFailed,
     WirelessMessageFailed,
-} || db.Error || nats_health.Error;
+} || db.Error || redpanda_health.Error;
 
 pub const Service = struct {
     allocator: std.mem.Allocator,
@@ -72,20 +72,20 @@ pub const Service = struct {
                 .log();
             return error.MissingDatabaseUrl;
         }
-        if (self.cfg.sync_nats_url.len == 0) {
+        if (self.cfg.sync_redpanda_url.len == 0) {
             logging.err()
                 .stringSafe("event", "healthcheck")
                 .stringSafe("status", "error")
-                .stringSafe("error", "MissingNatsUrl")
+                .stringSafe("error", "MissingRedpandaUrl")
                 .int("duration_ms", elapsedMs(start_ts, self.io))
                 .log();
-            return error.MissingNatsUrl;
+            return error.MissingRedpandaUrl;
         }
 
         try self.runLoggedStep("healthcheck_step", "check_postgres", Service.checkDatabaseConnectivity);
-        try self.runLoggedStep("healthcheck_step", "check_nats", Service.checkNatsConnectivity);
-        try self.runLoggedStep("healthcheck_step", "check_nats_streams", Service.checkNatsStreams);
-        try self.runLoggedStep("healthcheck_step", "check_nats_consumers", Service.checkNatsConsumers);
+        try self.runLoggedStep("healthcheck_step", "check_redpanda", Service.checkRedpandaConnectivity);
+        try self.runLoggedStep("healthcheck_step", "check_redpanda_streams", Service.checkRedpandaStreams);
+        try self.runLoggedStep("healthcheck_step", "check_redpanda_consumers", Service.checkRedpandaConsumers);
 
         logging.info()
             .stringSafe("event", "healthcheck")
@@ -186,16 +186,16 @@ pub const Service = struct {
         try self.database.checkConnectivity();
     }
 
-    fn checkNatsConnectivity(self: *Service) Error!void {
-        try nats_health.checkConnectivity(self.allocator, self.io, self.cfg);
+    fn checkRedpandaConnectivity(self: *Service) Error!void {
+        try redpanda_health.checkConnectivity(self.allocator, self.io, self.cfg);
     }
 
-    fn checkNatsStreams(self: *Service) Error!void {
-        try nats_health.checkStreams(self.allocator, self.io, self.cfg);
+    fn checkRedpandaStreams(self: *Service) Error!void {
+        try redpanda_health.checkStreams(self.allocator, self.io, self.cfg);
     }
 
-    fn checkNatsConsumers(self: *Service) Error!void {
-        try nats_health.checkConsumers(self.allocator, self.io, self.cfg);
+    fn checkRedpandaConsumers(self: *Service) Error!void {
+        try redpanda_health.checkConsumers(self.allocator, self.io, self.cfg);
     }
 
     fn runLoggedStep(
@@ -263,4 +263,4 @@ fn elapsedMs(start_ts: std.Io.Timestamp, io: std.Io) u64 {
     return @intCast(elapsed_ms);
 }
 
-pub const invalidOracleStreamName = stream_config.invalidOracleStreamName;
+pub const invalidOracleStreamName = topic_manifest.invalidOracleStreamName;

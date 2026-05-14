@@ -1,4 +1,4 @@
-use async_nats::jetstream;
+use rdkafka::Message;
 
 use crate::SERVICE_NAME;
 
@@ -13,28 +13,16 @@ pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     msg
 }
 
-pub(crate) fn log_poison_message(message: &jetstream::Message, error: &serde_json::Error) {
-    let subject = escape_for_log(message.subject.as_str());
+pub(crate) fn log_poison_message(message: &rdkafka::message::BorrowedMessage<'_>, error: &serde_json::Error) {
+    let topic = escape_for_log(message.topic());
     let error = escape_for_log(&format!("deserialize OracleLoad payload: {error}"));
-    match message.info() {
-        Ok(info) => eprintln!(
-            "service={SERVICE_NAME} event=worker_load status=error classification=poison subject={subject} stream={} consumer={} stream_sequence={} consumer_sequence={} delivered={} pending={} payload_bytes={} error=\"{}\"",
-            escape_for_log(info.stream),
-            escape_for_log(info.consumer),
-            info.stream_sequence,
-            info.consumer_sequence,
-            info.delivered,
-            info.pending,
-            message.payload.len(),
-            error,
-        ),
-        Err(info_error) => eprintln!(
-            "service={SERVICE_NAME} event=worker_load status=error classification=poison subject={subject} stream=unknown consumer=unknown stream_sequence=unknown consumer_sequence=unknown delivered=unknown pending=unknown payload_bytes={} metadata_error=\"{}\" error=\"{}\"",
-            message.payload.len(),
-            escape_for_log(&info_error.to_string()),
-            error,
-        ),
-    }
+    eprintln!(
+        "service={SERVICE_NAME} event=worker_load status=error classification=poison topic={topic} partition={} offset={} payload_bytes={} error=\"{}\"",
+        message.partition(),
+        message.offset(),
+        message.payload().map(|payload| payload.len()).unwrap_or(0),
+        error,
+    );
 }
 
 pub(crate) fn escape_for_log(value: &str) -> String {

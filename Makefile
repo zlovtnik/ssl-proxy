@@ -23,7 +23,7 @@ bench:
 
 # Build Docker images used by the compose stack.
 docker:
-	docker compose build ssl-proxy zig-coordinator oracle-worker nats postgres
+	docker compose build ssl-proxy zig-coordinator oracle-worker redpanda postgres
 
 # Run clippy lints
 lint:

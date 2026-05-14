@@ -1,4 +1,4 @@
-FROM natsio/nats-box:0.16.0 AS natsbox
+FROM redpandaio/redpanda-box:0.16.0 AS redpandabox
 
 FROM alpine:3.20 AS builder
 ARG ZIG_VERSION=0.16.0
@@ -33,9 +33,9 @@ RUN apk add --no-cache \
         tzdata
 WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
-COPY --from=natsbox /usr/local/bin/nats /usr/local/bin/nats
+COPY --from=redpandabox /usr/local/bin/redpanda /usr/local/bin/redpanda
 COPY services/zig-coordinator/schema ./schema
 COPY services/zig-coordinator/src/postgres ./src/postgres
-COPY docker/nats ./docker/nats
+COPY docker/redpanda ./docker/redpanda
 ENV SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]

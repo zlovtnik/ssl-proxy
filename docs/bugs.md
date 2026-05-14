@@ -28,7 +28,7 @@ fn flush_if_elapsed(&mut self, observed_at: DateTime<Utc>) -> Vec<WirelessBandwi
 
 `window_start` is seeded and advanced by `entry.observed_at`, which is `Utc::now()` at **capture time** (set in `capture.rs`). Under normal load this is fine. But:
 
-- When the NATS backlog grows (circuit breaker open, memory backlog filling) the sensor continues capturing packets. Each packet's `observed_at` is captured correctly...
+- When the Redpanda backlog grows (circuit breaker open, memory backlog filling) the sensor continues capturing packets. Each packet's `observed_at` is captured correctly...
 - BUT `process_packet` is async and can be queued behind backlog I/O. Packets already sitting in the `mpsc` channel (capacity 64) have **their own past `observed_at`** baked in at capture time.
 - When the backlog clears and processing resumes, a burst of 64 packets with stale timestamps is processed. The window bucket sees these as still-within-window and refuses to flush. Then when it finally does flush, `window_end = window_start + 60s` but `window_start` was 2+ hours ago in wall time.
 - The `bandwidth_flush` interval timer in `main.rs` calls `flush_current()` on a separate tokio tick — but `flush_current()` uses `window_start` (a past frame timestamp) to set `window_end`, so the published event's `window_start`/`window_end` fields are historically wrong even though the publish happens now.
@@ -116,7 +116,7 @@ These are cosmetic but signal areas where logic was added quickly. `parse_time` 
 
 - [ ] **T2.1** — Remove the `capture_control.apply_filter(bpf.clone())` call from `spawn_channel_hopper` in `main.rs`. The filter does not need to change when only the channel changes. The BPF expression `type mgt or type data` is channel-agnostic — libpcap captures all channels on the monitor interface regardless of which channel the radio is tuned to at any moment.
 
-- [ ] **T2.2** — Only re-apply the BPF filter in the hopper if the filter string itself has actually changed (e.g. after a live push from the NATS sensor config subscriber). Add a `current_filter: Arc<RwLock<String>>` shared between the config subscriber and the hopper, and diff before applying.
+- [ ] **T2.2** — Only re-apply the BPF filter in the hopper if the filter string itself has actually changed (e.g. after a live push from the Redpanda sensor config subscriber). Add a `current_filter: Arc<RwLock<String>>` shared between the config subscriber and the hopper, and diff before applying.
 
 - [ ] **T2.3** — Add a `channel_hop_count` counter to `CaptureStats` and log it in the heartbeat. This makes the hop rate visible and lets operators detect runaway hopping.
 
@@ -134,7 +134,7 @@ These are cosmetic but signal areas where logic was added quickly. `parse_time` 
 
 - [ ] **T3.5** — The `AuditLayer` in `src/audit/layer.rs` holds a `SharedAuditWindow` read lock on every `on_event()` call. Under high frame rate this is a hot contention point. Replace the per-event read lock with an atomic snapshot: add a `is_active: Arc<AtomicBool>` that is updated by a dedicated background task (every 5 seconds) rather than computed per-event.
 
-- [ ] **T3.6** — Document and fix the `parse_time` silent-failure in `config_subscriber.rs`. Currently if `AUDIT_WINDOW_START=9:00` (missing leading zero) is pushed via NATS, `parse_time` returns `None` and the window loses its start bound silently. Change to log a `warn!` with the malformed value and keep the previous window state rather than applying a partial update.
+- [ ] **T3.6** — Document and fix the `parse_time` silent-failure in `config_subscriber.rs`. Currently if `AUDIT_WINDOW_START=9:00` (missing leading zero) is pushed via Redpanda, `parse_time` returns `None` and the window loses its start bound silently. Change to log a `warn!` with the malformed value and keep the previous window state rather than applying a partial update.
 
 ---
 
@@ -144,7 +144,7 @@ These are cosmetic but signal areas where logic was added quickly. `parse_time` 
 
 - [ ] **T4.2** — Add `atheros_memory_backlog_len` gauge to the metrics endpoint. Currently the memory backlog size is only visible in warn logs. Exposing it as a metric enables alerting.
 
-- [ ] **T4.3** — Add `atheros_circuit_breaker_state` gauge (0=closed, 1=half-open, 2=open) to the metrics endpoint. This makes the NATS connectivity state visible to Prometheus without log scraping.
+- [ ] **T4.3** — Add `atheros_circuit_breaker_state` gauge (0=closed, 1=half-open, 2=open) to the metrics endpoint. This makes the Redpanda connectivity state visible to Prometheus without log scraping.
 
 - [ ] **T4.4** — Add `atheros_channel_hops_total` counter to the metrics endpoint (feeds from T2.3).
 
@@ -156,7 +156,7 @@ These are cosmetic but signal areas where logic was added quickly. `parse_time` 
 
 - [ ] **T5.1** — Document `PacketStream` struct in `capture.rs` (marked `//todo: doc it!`). Add doc comment explaining the mpsc channel capacity of 64 and why that is the effective backpressure limit before the capture thread blocks.
 
-- [ ] **T5.2** — Document `run_message_loop` in `config_subscriber.rs`. Specifically document that TLS is unsupported for config subscribers and why (avoidance of async-nats dependency), so future maintainers don't try to "fix" it.
+- [ ] **T5.2** — Document `run_message_loop` in `config_subscriber.rs`. Specifically document that TLS is unsupported for config subscribers and why (avoidance of rdkafka dependency), so future maintainers don't try to "fix" it.
 
 - [ ] **T5.3** — Document `parse_time` in `config_subscriber.rs`. Document the two accepted formats (`%H:%M:%S` and `%H:%M`) and what happens on failure.
 
@@ -184,7 +184,7 @@ T5.1 → T5.5                   (docs, any time)
 ## Quick Verification Steps (after T1.1–T1.5)
 
 1. Run the sensor with `RUST_LOG=debug` for 30 minutes with channel hopping enabled.
-2. Watch `window_start` values in the `audit.wireless.bandwidth` NATS subject — they should now track wall clock within ±2 seconds of publish time.
+2. Watch `window_start` values in the `audit.wireless.bandwidth` Redpanda topic — they should now track wall clock within ±2 seconds of publish time.
 3. Check `window_is_partial: true` events — these are timer-flushed windows and should appear once per `DEFAULT_BANDWIDTH_WINDOW_SECS` (60s) even when no frames arrived.
-4. Inject a NATS outage for 60 seconds, restore, and confirm `window_start` resumes from current wall time rather than the pre-outage timestamp.
+4. Inject a Redpanda outage for 60 seconds, restore, and confirm `window_start` resumes from current wall time rather than the pre-outage timestamp.
 5. Monitor `atheros_bandwidth_window_lag_ms` gauge — should stay below 5000ms under normal load.

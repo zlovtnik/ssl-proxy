@@ -1,9 +1,9 @@
 const std = @import("std");
-const protocol = @import("nats_protocol.zig");
+const protocol = @import("redpanda_protocol.zig");
 
-test "validate subject rejects protocol separators" {
-    try protocol.validateSubject("sync.oracle.load");
-    try std.testing.expectError(error.InvalidSubject, protocol.validateSubject("sync.oracle.load\r\nPING"));
+test "validate topic rejects protocol separators" {
+    try protocol.validateTopic("sync.oracle.load");
+    try std.testing.expectError(error.InvalidTopic, protocol.validateTopic("sync.oracle.load\r\nPING"));
 }
 
 test "write connect json escapes credentials" {
@@ -26,7 +26,7 @@ test "write connect json emits auth token" {
     );
 }
 
-test "write core publish does not request a JetStream ack" {
+test "write core publish does not request a Redpanda ack" {
     var buffer: [256]u8 = undefined;
     var writer = std.Io.Writer.fixed(&buffer);
     try protocol.writeCorePublish(&writer, "wireless.backlog.list.reply", "{\"ok\":true}");

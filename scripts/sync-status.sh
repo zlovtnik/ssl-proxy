@@ -4,24 +4,24 @@ set -eu
 STREAM_NAME="${AUDIT_STREAM_NAME:-AUDIT_STREAM}"
 SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
 DATABASE_URL="${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}"
-NATS_URL="${SYNC_NATS_URL:-nats://nats:4222}"
+Redpanda_URL="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://redpanda:4222}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-ssl-proxy}"
-NATS_IMAGE="${NATS_BOX_IMAGE:-natsio/nats-box:0.16.0}"
+Redpanda_IMAGE="${Redpanda_BOX_IMAGE:-redpandaio/redpanda-box:0.16.0}"
 
 echo "== compose services =="
-docker compose ps nats postgres nats-bootstrap zig-coordinator atheros-sensor
+docker compose ps redpanda postgres redpanda-bootstrap zig-coordinator atheros-sensor
 
 echo
-echo "== nats jetstream =="
-docker compose exec -T nats wget -qO- http://127.0.0.1:8222/jsz || true
+echo "== redpanda redpanda =="
+docker compose exec -T redpanda wget -qO- http://127.0.0.1:8222/jsz || true
 
 echo
-echo "== nats stream =="
-docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint nats "${NATS_IMAGE}" --server "${NATS_URL}" stream info "${STREAM_NAME}" --no-select || true
+echo "== redpanda stream =="
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint redpanda "${Redpanda_IMAGE}" --server "${Redpanda_URL}" stream info "${STREAM_NAME}" --no-select || true
 
 echo
-echo "== nats scan consumer =="
-docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint nats "${NATS_IMAGE}" --server "${NATS_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" --no-select || true
+echo "== redpanda scan consumer =="
+docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint redpanda "${Redpanda_IMAGE}" --server "${Redpanda_URL}" consumer info "${STREAM_NAME}" "${SCAN_CONSUMER}" --no-select || true
 
 echo
 echo "== postgres sync counts =="

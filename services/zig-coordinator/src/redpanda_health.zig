@@ -2,31 +2,31 @@ const std = @import("std");
 const command = @import("command.zig");
 const config = @import("config.zig");
 const logging = @import("logging.zig");
-const nats_cli = @import("nats_cli.zig");
-const topology = @import("topology.zig");
+const redpanda_cli = @import("redpanda_cli.zig");
+const topic_manifest = @import("topic_manifest.zig");
 
 pub const Error = error{
     OutOfMemory,
-    InvalidNatsUrl,
-    NatsCheckFailed,
-    NatsStreamMissing,
-    NatsStreamSubjectMissing,
-    NatsConsumerMissing,
-    NatsConsumerFilterMismatch,
+    InvalidRedpandaUrl,
+    RedpandaCheckFailed,
+    RedpandaStreamMissing,
+    RedpandaStreamTopicMissing,
+    RedpandaConsumerMissing,
+    RedpandaConsumerFilterMismatch,
     TopologyFileMissing,
     TopologyParseFailed,
 };
 
 pub fn checkConnectivity(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config) Error!void {
-    const authority = try nats_cli.parseNatsAuthority(allocator, cfg.sync_nats_url);
+    const authority = try redpanda_cli.parseRedpandaAuthority(allocator, cfg.sync_redpanda_url);
     defer allocator.free(authority);
 
     const host_start = if (std.mem.lastIndexOfScalar(u8, authority, '@')) |at| at + 1 else 0;
     const host_and_port = authority[host_start..];
-    const separator = std.mem.lastIndexOfScalar(u8, host_and_port, ':') orelse return error.InvalidNatsUrl;
+    const separator = std.mem.lastIndexOfScalar(u8, host_and_port, ':') orelse return error.InvalidRedpandaUrl;
     const host = host_and_port[0..separator];
     const port = host_and_port[separator + 1 ..];
-    if (host.len == 0 or port.len == 0) return error.InvalidNatsUrl;
+    if (host.len == 0 or port.len == 0) return error.InvalidRedpandaUrl;
 
     const argv = [_][]const u8{
         "nc",
@@ -34,61 +34,61 @@ pub fn checkConnectivity(allocator: std.mem.Allocator, io: std.Io, cfg: config.C
         host,
         port,
     };
-    try runRequiredCommand(allocator, io, &argv, "nc", error.NatsCheckFailed);
+    try runRequiredCommand(allocator, io, &argv, "nc", error.RedpandaCheckFailed);
 }
 
 pub fn checkStreams(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config) Error!void {
-    var topo = try topology.load(allocator, io, cfg.nats_topology_file);
+    var topo = try topic_manifest.load(allocator, io, cfg.redpanda_topic_manifest_file);
     defer topo.deinit();
 
     for (topo.streams) |stream| {
-        try checkNatsStream(allocator, io, cfg.sync_nats_url, stream.name);
-        var subjects = std.mem.splitScalar(u8, stream.subjects_csv, ',');
-        while (subjects.next()) |raw_subject| {
-            const subject = std.mem.trim(u8, raw_subject, " \t\r\n");
-            if (subject.len == 0) continue;
-            try checkNatsStreamSubject(allocator, io, cfg.sync_nats_url, stream.name, subject);
+        try checkRedpandaStream(allocator, io, cfg.sync_redpanda_url, stream.name);
+        var topics = std.mem.splitScalar(u8, stream.topics_csv, ',');
+        while (topics.next()) |raw_topic| {
+            const topic = std.mem.trim(u8, raw_topic, " \t\r\n");
+            if (topic.len == 0) continue;
+            try checkRedpandaStreamTopic(allocator, io, cfg.sync_redpanda_url, stream.name, topic);
         }
     }
 }
 
 pub fn checkConsumers(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config) Error!void {
-    var topo = try topology.load(allocator, io, cfg.nats_topology_file);
+    var topo = try topic_manifest.load(allocator, io, cfg.redpanda_topic_manifest_file);
     defer topo.deinit();
 
     for (topo.consumers) |consumer| {
-        try checkNatsConsumerFilter(allocator, io, cfg.sync_nats_url, consumer.stream_name, consumer.name, consumer.filter_subject);
+        try checkRedpandaConsumerFilter(allocator, io, cfg.sync_redpanda_url, consumer.stream_name, consumer.name, consumer.filter_topic);
     }
 }
 
-fn checkNatsStream(
+fn checkRedpandaStream(
     allocator: std.mem.Allocator,
     io: std.Io,
-    nats_url: []const u8,
+    redpanda_url: []const u8,
     stream_name: []const u8,
 ) Error!void {
     const argv = [_][]const u8{
-        "nats",
+        "redpanda",
         "--server",
-        nats_url,
+        redpanda_url,
         "stream",
         "info",
         stream_name,
     };
-    try runRequiredCommand(allocator, io, &argv, "nats", error.NatsStreamMissing);
+    try runRequiredCommand(allocator, io, &argv, "redpanda", error.RedpandaStreamMissing);
 }
 
-fn checkNatsStreamSubject(
+fn checkRedpandaStreamTopic(
     allocator: std.mem.Allocator,
     io: std.Io,
-    nats_url: []const u8,
+    redpanda_url: []const u8,
     stream_name: []const u8,
-    expected_subject: []const u8,
+    expected_topic: []const u8,
 ) Error!void {
     const argv = [_][]const u8{
-        "nats",
+        "redpanda",
         "--server",
-        nats_url,
+        redpanda_url,
         "stream",
         "info",
         stream_name,
@@ -96,38 +96,38 @@ fn checkNatsStreamSubject(
     };
 
     var result = command.exec(allocator, io, &argv) catch {
-        return error.NatsStreamMissing;
+        return error.RedpandaStreamMissing;
     };
     defer result.deinit(allocator);
 
     if (!command.isSuccess(result)) {
-        command.logFailure("nats", result);
-        return error.NatsStreamMissing;
+        command.logFailure("redpanda", result);
+        return error.RedpandaStreamMissing;
     }
 
-    if (!streamInfoHasSubject(allocator, result.stdout, expected_subject)) {
+    if (!streamInfoHasTopic(allocator, result.stdout, expected_topic)) {
         logging.err()
-            .stringSafe("event", "nats_stream_subject")
+            .stringSafe("event", "redpanda_stream_topic")
             .stringSafe("status", "error")
             .string("stream", stream_name)
-            .string("expected_subject", expected_subject)
+            .string("expected_topic", expected_topic)
             .log();
-        return error.NatsStreamSubjectMissing;
+        return error.RedpandaStreamTopicMissing;
     }
 }
 
-fn checkNatsConsumerFilter(
+fn checkRedpandaConsumerFilter(
     allocator: std.mem.Allocator,
     io: std.Io,
-    nats_url: []const u8,
+    redpanda_url: []const u8,
     stream_name: []const u8,
     consumer_name: []const u8,
     expected_filter: []const u8,
 ) Error!void {
     const argv = [_][]const u8{
-        "nats",
+        "redpanda",
         "--server",
-        nats_url,
+        redpanda_url,
         "consumer",
         "info",
         stream_name,
@@ -136,24 +136,24 @@ fn checkNatsConsumerFilter(
     };
 
     var result = command.exec(allocator, io, &argv) catch {
-        return error.NatsConsumerMissing;
+        return error.RedpandaConsumerMissing;
     };
     defer result.deinit(allocator);
 
     if (!command.isSuccess(result)) {
-        command.logFailure("nats", result);
-        return error.NatsConsumerMissing;
+        command.logFailure("redpanda", result);
+        return error.RedpandaConsumerMissing;
     }
 
     if (!consumerInfoFilterMatches(allocator, result.stdout, expected_filter)) {
         logging.err()
-            .stringSafe("event", "nats_consumer_filter")
+            .stringSafe("event", "redpanda_consumer_filter")
             .stringSafe("status", "error")
             .string("stream", stream_name)
             .string("consumer", consumer_name)
             .string("expected_filter", expected_filter)
             .log();
-        return error.NatsConsumerFilterMismatch;
+        return error.RedpandaConsumerFilterMismatch;
     }
 }
 
@@ -183,7 +183,7 @@ fn consumerInfoFilterMatches(
     expected_filter: []const u8,
 ) bool {
     const ConsumerConfig = struct {
-        filter_subject: ?[]const u8 = null,
+        filter_topic: ?[]const u8 = null,
     };
     const ConsumerInfo = struct {
         config: ConsumerConfig,
@@ -194,17 +194,17 @@ fn consumerInfoFilterMatches(
     }) catch return false;
     defer parsed.deinit();
 
-    const actual = parsed.value.config.filter_subject orelse return false;
+    const actual = parsed.value.config.filter_topic orelse return false;
     return std.mem.eql(u8, actual, expected_filter);
 }
 
-fn streamInfoHasSubject(
+fn streamInfoHasTopic(
     allocator: std.mem.Allocator,
     stdout: []const u8,
-    expected_subject: []const u8,
+    expected_topic: []const u8,
 ) bool {
     const StreamConfig = struct {
-        subjects: []const []const u8 = &.{},
+        topics: []const []const u8 = &.{},
     };
     const StreamInfo = struct {
         config: StreamConfig,
@@ -215,29 +215,29 @@ fn streamInfoHasSubject(
     }) catch return false;
     defer parsed.deinit();
 
-    for (parsed.value.config.subjects) |subject| {
-        if (subjectPatternMatches(subject, expected_subject)) return true;
+    for (parsed.value.config.topics) |topic| {
+        if (topicPatternMatches(topic, expected_topic)) return true;
     }
     return false;
 }
 
-fn subjectPatternMatches(pattern: []const u8, subject: []const u8) bool {
-    if (std.mem.eql(u8, pattern, subject)) return true;
+fn topicPatternMatches(pattern: []const u8, topic: []const u8) bool {
+    if (std.mem.eql(u8, pattern, topic)) return true;
 
     var pattern_parts = std.mem.splitScalar(u8, pattern, '.');
-    var subject_parts = std.mem.splitScalar(u8, subject, '.');
+    var topic_parts = std.mem.splitScalar(u8, topic, '.');
 
     while (pattern_parts.next()) |pattern_part| {
         if (std.mem.eql(u8, pattern_part, ">")) {
-            return pattern_parts.next() == null and subject_parts.next() != null;
+            return pattern_parts.next() == null and topic_parts.next() != null;
         }
 
-        const subject_part = subject_parts.next() orelse return false;
+        const topic_part = topic_parts.next() orelse return false;
         if (std.mem.eql(u8, pattern_part, "*")) continue;
-        if (!std.mem.eql(u8, pattern_part, subject_part)) return false;
+        if (!std.mem.eql(u8, pattern_part, topic_part)) return false;
     }
 
-    return subject_parts.next() == null;
+    return topic_parts.next() == null;
 }
 
 test "consumerInfoFilterMatches validates consumer filter" {
@@ -245,7 +245,7 @@ test "consumerInfoFilterMatches validates consumer filter" {
         \\{
         \\  "name": "oracle-worker-load",
         \\  "config": {
-        \\    "filter_subject": "sync.oracle.load"
+        \\    "filter_topic": "sync.oracle.load"
         \\  }
         \\}
     ;
@@ -254,24 +254,24 @@ test "consumerInfoFilterMatches validates consumer filter" {
     try std.testing.expect(!consumerInfoFilterMatches(std.testing.allocator, json, "wireless.audit"));
 }
 
-test "streamInfoHasSubject validates exact and wildcard subjects" {
+test "streamInfoHasTopic validates exact and wildcard topics" {
     const json =
         \\{
         \\  "config": {
-        \\    "subjects": ["sync.scan.request", "sync.oracle.load", "wireless.>"]
+        \\    "topics": ["sync.scan.request", "sync.oracle.load", "wireless.>"]
         \\  }
         \\}
     ;
 
-    try std.testing.expect(streamInfoHasSubject(std.testing.allocator, json, "sync.oracle.load"));
-    try std.testing.expect(streamInfoHasSubject(std.testing.allocator, json, "wireless.audit"));
-    try std.testing.expect(!streamInfoHasSubject(std.testing.allocator, json, "sync.oracle.result"));
+    try std.testing.expect(streamInfoHasTopic(std.testing.allocator, json, "sync.oracle.load"));
+    try std.testing.expect(streamInfoHasTopic(std.testing.allocator, json, "wireless.audit"));
+    try std.testing.expect(!streamInfoHasTopic(std.testing.allocator, json, "sync.oracle.result"));
 }
 
-test "subjectPatternMatches follows NATS wildcard shape" {
-    try std.testing.expect(subjectPatternMatches("sync.oracle.load", "sync.oracle.load"));
-    try std.testing.expect(subjectPatternMatches("sync.*.load", "sync.oracle.load"));
-    try std.testing.expect(subjectPatternMatches("sync.>", "sync.oracle.load"));
-    try std.testing.expect(!subjectPatternMatches("sync.*.load", "sync.oracle.result"));
-    try std.testing.expect(!subjectPatternMatches("sync.>", "sync"));
+test "topicPatternMatches follows Redpanda wildcard shape" {
+    try std.testing.expect(topicPatternMatches("sync.oracle.load", "sync.oracle.load"));
+    try std.testing.expect(topicPatternMatches("sync.*.load", "sync.oracle.load"));
+    try std.testing.expect(topicPatternMatches("sync.>", "sync.oracle.load"));
+    try std.testing.expect(!topicPatternMatches("sync.*.load", "sync.oracle.result"));
+    try std.testing.expect(!topicPatternMatches("sync.>", "sync"));
 }

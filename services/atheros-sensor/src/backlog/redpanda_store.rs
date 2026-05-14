@@ -1,4 +1,4 @@
-//! NATS-backed wireless backlog and lookup store.
+//! Redpanda-backed wireless backlog and lookup store.
 
 use std::{
     io::Cursor,
@@ -26,18 +26,18 @@ use super::store::{
 };
 use crate::publish::PublishClient;
 
-const WIRELESS_AUDIT_SUBJECT: &str = "sync.scan.request";
-const BACKLOG_SAVE_SUBJECT: &str = "wireless.backlog.save";
-const BACKLOG_LIST_SUBJECT: &str = "wireless.backlog.list";
-const BACKLOG_SYNCED_SUBJECT: &str = "wireless.backlog.synced";
-const BACKLOG_PRUNE_SUBJECT: &str = "wireless.backlog.prune";
-const MAC_LOOKUP_SUBJECT: &str = "wireless.mac.lookup";
-const AUTHORIZED_NETWORKS_SUBJECT: &str = "wireless.networks.authorized";
-const PROBE_FLUSH_SUBJECT: &str = "wireless.probe.flush";
+const WIRELESS_AUDIT_TOPIC: &str = "sync.scan.request";
+const BACKLOG_SAVE_TOPIC: &str = "wireless.backlog.save";
+const BACKLOG_LIST_TOPIC: &str = "wireless.backlog.list";
+const BACKLOG_SYNCED_TOPIC: &str = "wireless.backlog.synced";
+const BACKLOG_PRUNE_TOPIC: &str = "wireless.backlog.prune";
+const MAC_LOOKUP_TOPIC: &str = "wireless.mac.lookup";
+const AUTHORIZED_NETWORKS_TOPIC: &str = "wireless.networks.authorized";
+const PROBE_FLUSH_TOPIC: &str = "wireless.probe.flush";
 static NEXT_INBOX_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
-pub struct NatsBacklog {
+pub struct RedpandaBacklog {
     publisher: Arc<dyn PublishClient>,
     sync: SyncConfig,
     request_timeout: Duration,
@@ -50,20 +50,20 @@ pub struct NatsBacklog {
 }
 
 struct CachedRequestConnection {
-    reader: BufReader<Box<dyn NatsStream>>,
+    reader: BufReader<Box<dyn RedpandaStream>>,
     last_used: Instant,
     next_sid: u64,
 }
 
-impl NatsBacklog {
+impl RedpandaBacklog {
     pub fn new(
         publisher: Arc<dyn PublishClient>,
         sync: SyncConfig,
         request_timeout: Duration,
     ) -> Result<Self, BacklogError> {
         let tls_client_config =
-            build_tls_client_config(&sync).map_err(|message| BacklogError::Nats {
-                operation: "initialize_nats_backlog",
+            build_tls_client_config(&sync).map_err(|message| BacklogError::Redpanda {
+                operation: "initialize_redpanda_backlog",
                 message,
             })?;
         let tls_connector = tls_client_config
@@ -98,7 +98,7 @@ impl NatsBacklog {
     }
 
     async fn health_probe(&self) {
-        let result = self.ping_nats().await;
+        let result = self.ping_redpanda().await;
         let healthy = result.is_ok();
         self.health_status.store(healthy, Ordering::Relaxed);
         if healthy {
@@ -110,33 +110,33 @@ impl NatsBacklog {
         &self,
         operation: &'static str,
     ) -> Result<CachedRequestConnection, BacklogError> {
-        let nats_url = self
+        let redpanda_bootstrap_servers = self
             .sync
-            .nats_url
+            .redpanda_bootstrap_servers
             .as_deref()
             .ok_or_else(|| BacklogError::Disabled { operation })?;
-        let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
+        let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| BacklogError::Redpanda {
             operation,
             message: source,
         })?;
         let tcp_stream = timeout(self.request_timeout, TcpStream::connect(&endpoint.address))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("connect {}: {source}", endpoint.address),
             })?;
-        let mut stream: Box<dyn NatsStream> = if self.sync.tls_enabled || endpoint.tls_enabled {
+        let mut stream: Box<dyn RedpandaStream> = if false || endpoint.tls_enabled {
             let connector = self
                 .tls_connector
                 .as_ref()
-                .ok_or_else(|| BacklogError::Nats {
+                .ok_or_else(|| BacklogError::Redpanda {
                     operation,
-                    message: "NATS TLS connector was not initialized".to_string(),
+                    message: "Redpanda TLS connector was not initialized".to_string(),
                 })?;
             let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
                 .await
-                .map_err(|message| BacklogError::Nats { operation, message })?;
+                .map_err(|message| BacklogError::Redpanda { operation, message })?;
             Box::new(tls_stream)
         } else {
             Box::new(tcp_stream)
@@ -146,14 +146,14 @@ impl NatsBacklog {
         timeout(self.request_timeout, reader.read_line(&mut info_line))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("read INFO: {source}"),
             })?;
         if !info_line.starts_with("INFO ") {
-            return Err(BacklogError::Nats {
+            return Err(BacklogError::Redpanda {
                 operation,
-                message: format!("expected NATS INFO banner, got: {}", info_line.trim_end()),
+                message: format!("expected Redpanda INFO banner, got: {}", info_line.trim_end()),
             });
         }
 
@@ -162,21 +162,21 @@ impl NatsBacklog {
             "version": env!("CARGO_PKG_VERSION"),
             "verbose": false,
             "pedantic": false,
-            "user": self.sync.username.as_deref(),
-            "pass": self.sync.password.as_deref(),
+            "user": self.sync.sasl_username.as_deref(),
+            "pass": self.sync.sasl_password.as_deref(),
         });
         let command = format!("CONNECT {connect_options}\r\n");
         timeout(self.request_timeout, stream.write_all(command.as_bytes()))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("send CONNECT: {source}"),
             })?;
         timeout(self.request_timeout, stream.flush())
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("flush CONNECT: {source}"),
             })?;
@@ -190,9 +190,9 @@ impl NatsBacklog {
     async fn request_with_cached_connection(
         &self,
         operation: &'static str,
-        subject: &'static str,
+        topic: &'static str,
         payload: &str,
-        reply_subject: &str,
+        reply_topic: &str,
     ) -> Result<String, BacklogError> {
         let maybe_connection = self.request_connection.lock().unwrap().take();
 
@@ -223,9 +223,9 @@ impl NatsBacklog {
             .perform_request_over_connection(
                 &mut connection,
                 operation,
-                subject,
+                topic,
                 payload,
-                reply_subject,
+                reply_topic,
             )
             .await;
         let mut guard = self.request_connection.lock().unwrap();
@@ -237,7 +237,7 @@ impl NatsBacklog {
                 Ok(response)
             }
             Err(err) => {
-                if request_error_marks_nats_unhealthy(&err) {
+                if request_error_marks_redpanda_unhealthy(&err) {
                     self.health_status.store(false, Ordering::Relaxed);
                 }
                 guard.take();
@@ -250,51 +250,51 @@ impl NatsBacklog {
         &self,
         connection: &mut CachedRequestConnection,
         operation: &'static str,
-        subject: &'static str,
+        topic: &'static str,
         payload: &str,
-        reply_subject: &str,
+        reply_topic: &str,
     ) -> Result<String, BacklogError> {
         let stream = &mut connection.reader;
         let sid = connection.next_sid;
         connection.next_sid = connection.next_sid.saturating_add(1);
-        let subscribe = format!("SUB {reply_subject} {sid}\r\n");
+        let subscribe = format!("SUB {reply_topic} {sid}\r\n");
         timeout(self.request_timeout, stream.write_all(subscribe.as_bytes()))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
-                message: format!("subscribe reply subject: {source}"),
+                message: format!("subscribe reply topic: {source}"),
             })?;
 
-        let publish_command = format!("PUB {subject} {}\r\n", payload.len());
+        let publish_command = format!("PUB {topic} {}\r\n", payload.len());
         timeout(
             self.request_timeout,
             stream.write_all(publish_command.as_bytes()),
         )
         .await
         .map_err(|_| BacklogError::Timeout { operation })?
-        .map_err(|source| BacklogError::Nats {
+        .map_err(|source| BacklogError::Redpanda {
             operation,
             message: format!("send PUB header: {source}"),
         })?;
         timeout(self.request_timeout, stream.write_all(payload.as_bytes()))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("send PUB payload: {source}"),
             })?;
         timeout(self.request_timeout, stream.write_all(b"\r\n"))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("finish PUB payload: {source}"),
             })?;
         timeout(self.request_timeout, stream.flush())
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("flush request: {source}"),
             })?;
@@ -305,13 +305,13 @@ impl NatsBacklog {
             let bytes_read = timeout(self.request_timeout, stream.read_line(&mut line))
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
+                .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("read reply: {source}"),
                 })?;
             let trimmed = line.trim_end();
             if bytes_read == 0 || trimmed.is_empty() {
-                return Err(BacklogError::Nats {
+                return Err(BacklogError::Redpanda {
                     operation,
                     message: "unexpected EOF while reading reply".to_string(),
                 });
@@ -323,14 +323,14 @@ impl NatsBacklog {
                 )
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
+                .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("send PONG: {source}"),
                 })?;
                 timeout(self.request_timeout, stream.get_mut().flush())
                     .await
                     .map_err(|_| BacklogError::Timeout { operation })?
-                    .map_err(|source| BacklogError::Nats {
+                    .map_err(|source| BacklogError::Redpanda {
                         operation,
                         message: format!("flush PONG: {source}"),
                     })?;
@@ -347,7 +347,7 @@ impl NatsBacklog {
                 )
                 .await;
                 let _ = timeout(self.request_timeout, stream.flush()).await;
-                return Err(BacklogError::Nats {
+                return Err(BacklogError::Redpanda {
                     operation,
                     message: trimmed.to_string(),
                 });
@@ -359,18 +359,18 @@ impl NatsBacklog {
             if parts.len() < 4 {
                 continue;
             }
-            let msg_subject = parts[1];
-            if msg_subject != reply_subject {
+            let msg_topic = parts[1];
+            if msg_topic != reply_topic {
                 continue;
             }
             let size = parts
                 .last()
-                .ok_or_else(|| BacklogError::Nats {
+                .ok_or_else(|| BacklogError::Redpanda {
                     operation,
                     message: format!("missing reply size: {trimmed}"),
                 })?
                 .parse::<usize>()
-                .map_err(|source| BacklogError::Nats {
+                .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("invalid reply size: {source}"),
                 })?;
@@ -378,7 +378,7 @@ impl NatsBacklog {
             timeout(self.request_timeout, stream.read_exact(&mut payload_buf))
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
+                .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("read reply payload: {source}"),
                 })?;
@@ -386,17 +386,17 @@ impl NatsBacklog {
             timeout(self.request_timeout, stream.read_exact(&mut terminator))
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
+                .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("read reply terminator: {source}"),
                 })?;
             if terminator != *b"\r\n" {
-                return Err(BacklogError::Nats {
+                return Err(BacklogError::Redpanda {
                     operation,
                     message: "invalid reply terminator".to_string(),
                 });
             }
-            let result = String::from_utf8(payload_buf).map_err(|source| BacklogError::Nats {
+            let result = String::from_utf8(payload_buf).map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("reply is not UTF-8: {source}"),
             });
@@ -407,14 +407,14 @@ impl NatsBacklog {
             )
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
+            .map_err(|source| BacklogError::Redpanda {
                 operation,
                 message: format!("send UNSUB: {source}"),
             })?;
             timeout(self.request_timeout, stream.flush())
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
+                .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("flush UNSUB: {source}"),
                 })?;
@@ -422,39 +422,39 @@ impl NatsBacklog {
         }
     }
 
-    async fn ping_nats(&self) -> Result<(), BacklogError> {
-        let nats_url = self
+    async fn ping_redpanda(&self) -> Result<(), BacklogError> {
+        let redpanda_bootstrap_servers = self
             .sync
-            .nats_url
+            .redpanda_bootstrap_servers
             .as_deref()
             .ok_or_else(|| BacklogError::Disabled {
-                operation: "nats_health_check",
+                operation: "redpanda_health_check",
             })?;
-        let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
-            operation: "nats_health_check",
+        let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| BacklogError::Redpanda {
+            operation: "redpanda_health_check",
             message: source,
         })?;
         let tcp_stream = timeout(self.request_timeout, TcpStream::connect(&endpoint.address))
             .await
             .map_err(|_| BacklogError::Timeout {
-                operation: "nats_health_check",
+                operation: "redpanda_health_check",
             })?
-            .map_err(|source| BacklogError::Nats {
-                operation: "nats_health_check",
+            .map_err(|source| BacklogError::Redpanda {
+                operation: "redpanda_health_check",
                 message: format!("connect {}: {source}", endpoint.address),
             })?;
-        let mut stream: Box<dyn NatsStream> = if self.sync.tls_enabled || endpoint.tls_enabled {
+        let mut stream: Box<dyn RedpandaStream> = if false || endpoint.tls_enabled {
             let connector = self
                 .tls_connector
                 .as_ref()
-                .ok_or_else(|| BacklogError::Nats {
-                    operation: "nats_health_check",
-                    message: "NATS TLS connector was not initialized".to_string(),
+                .ok_or_else(|| BacklogError::Redpanda {
+                    operation: "redpanda_health_check",
+                    message: "Redpanda TLS connector was not initialized".to_string(),
                 })?;
             let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
                 .await
-                .map_err(|message| BacklogError::Nats {
-                    operation: "nats_health_check",
+                .map_err(|message| BacklogError::Redpanda {
+                    operation: "redpanda_health_check",
                     message,
                 })?;
             Box::new(tls_stream)
@@ -467,17 +467,17 @@ impl NatsBacklog {
             timeout(self.request_timeout, reader.read_line(&mut info_line))
                 .await
                 .map_err(|_| BacklogError::Timeout {
-                    operation: "nats_health_check",
+                    operation: "redpanda_health_check",
                 })?
-                .map_err(|source| BacklogError::Nats {
-                    operation: "nats_health_check",
+                .map_err(|source| BacklogError::Redpanda {
+                    operation: "redpanda_health_check",
                     message: format!("read INFO: {source}"),
                 })?;
         }
         if !info_line.starts_with("INFO ") {
-            return Err(BacklogError::Nats {
-                operation: "nats_health_check",
-                message: format!("expected NATS INFO banner, got: {}", info_line.trim_end()),
+            return Err(BacklogError::Redpanda {
+                operation: "redpanda_health_check",
+                message: format!("expected Redpanda INFO banner, got: {}", info_line.trim_end()),
             });
         }
         let connect_options = serde_json::json!({
@@ -485,26 +485,26 @@ impl NatsBacklog {
             "version": env!("CARGO_PKG_VERSION"),
             "verbose": false,
             "pedantic": false,
-            "user": self.sync.username.as_deref(),
-            "pass": self.sync.password.as_deref(),
+            "user": self.sync.sasl_username.as_deref(),
+            "pass": self.sync.sasl_password.as_deref(),
         });
         let command = format!("CONNECT {connect_options}\r\nPING\r\n");
         timeout(self.request_timeout, stream.write_all(command.as_bytes()))
             .await
             .map_err(|_| BacklogError::Timeout {
-                operation: "nats_health_check",
+                operation: "redpanda_health_check",
             })?
-            .map_err(|source| BacklogError::Nats {
-                operation: "nats_health_check",
+            .map_err(|source| BacklogError::Redpanda {
+                operation: "redpanda_health_check",
                 message: format!("send CONNECT/PING: {source}"),
             })?;
         timeout(self.request_timeout, stream.flush())
             .await
             .map_err(|_| BacklogError::Timeout {
-                operation: "nats_health_check",
+                operation: "redpanda_health_check",
             })?
-            .map_err(|source| BacklogError::Nats {
-                operation: "nats_health_check",
+            .map_err(|source| BacklogError::Redpanda {
+                operation: "redpanda_health_check",
                 message: format!("flush CONNECT/PING: {source}"),
             })?;
         let mut reader = BufReader::new(&mut *stream);
@@ -512,15 +512,15 @@ impl NatsBacklog {
         timeout(self.request_timeout, reader.read_line(&mut pong_line))
             .await
             .map_err(|_| BacklogError::Timeout {
-                operation: "nats_health_check",
+                operation: "redpanda_health_check",
             })?
-            .map_err(|source| BacklogError::Nats {
-                operation: "nats_health_check",
+            .map_err(|source| BacklogError::Redpanda {
+                operation: "redpanda_health_check",
                 message: format!("read PONG: {source}"),
             })?;
         if pong_line.trim() != "PONG" {
-            return Err(BacklogError::Nats {
-                operation: "nats_health_check",
+            return Err(BacklogError::Redpanda {
+                operation: "redpanda_health_check",
                 message: format!("unexpected health check response: {}", pong_line.trim_end()),
             });
         }
@@ -530,15 +530,15 @@ impl NatsBacklog {
     async fn request(
         &self,
         operation: &'static str,
-        subject: &'static str,
+        topic: &'static str,
         payload: &str,
     ) -> Result<String, BacklogError> {
-        let Some(_nats_url) = self.sync.nats_url.as_deref() else {
+        let Some(_redpanda_bootstrap_servers) = self.sync.redpanda_bootstrap_servers.as_deref() else {
             return Err(BacklogError::Disabled { operation });
         };
-        let reply_subject = next_inbox_subject();
-        let payload = payload_with_reply_subject(operation, payload, &reply_subject)?;
-        self.request_with_cached_connection(operation, subject, &payload, &reply_subject)
+        let reply_topic = next_inbox_topic();
+        let payload = payload_with_reply_topic(operation, payload, &reply_topic)?;
+        self.request_with_cached_connection(operation, topic, &payload, &reply_topic)
             .await
     }
 
@@ -565,7 +565,7 @@ impl NatsBacklog {
             },
         )?;
         let response = self
-            .request("lookup_device_by_mac", MAC_LOOKUP_SUBJECT, &payload)
+            .request("lookup_device_by_mac", MAC_LOOKUP_TOPIC, &payload)
             .await?;
         if response.trim() == "null" || response.trim().is_empty() {
             return Ok(None);
@@ -586,7 +586,7 @@ impl NatsBacklog {
         let response = self
             .request(
                 "list_authorized_wireless_networks",
-                AUTHORIZED_NETWORKS_SUBJECT,
+                AUTHORIZED_NETWORKS_TOPIC,
                 r#"{"operation":"list_authorized_wireless_networks"}"#,
             )
             .await?;
@@ -615,21 +615,21 @@ impl NatsBacklog {
                 probes,
             },
         )?;
-        self.publish(PROBE_FLUSH_SUBJECT, &payload).await
+        self.publish(PROBE_FLUSH_TOPIC, &payload).await
     }
 
-    async fn publish(&self, subject: &'static str, payload: &str) -> Result<(), BacklogError> {
+    async fn publish(&self, topic: &'static str, payload: &str) -> Result<(), BacklogError> {
         self.publisher
-            .publish_message(subject, payload)
+            .publish_message(topic, payload)
             .await
-            .map_err(|source| BacklogError::Nats {
-                operation: subject,
+            .map_err(|source| BacklogError::Redpanda {
+                operation: topic,
                 message: source,
             })
     }
 }
 
-fn request_error_marks_nats_unhealthy(error: &BacklogError) -> bool {
+fn request_error_marks_redpanda_unhealthy(error: &BacklogError) -> bool {
     !matches!(
         error,
         BacklogError::Timeout { .. }
@@ -650,7 +650,7 @@ pub struct ProbeFlushObservation {
 }
 
 #[async_trait]
-impl BacklogStore for NatsBacklog {
+impl BacklogStore for RedpandaBacklog {
     async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
         debug!(
             dedupe_key = record.dedupe_key,
@@ -660,7 +660,7 @@ impl BacklogStore for NatsBacklog {
             payload_sha256 = record.payload_sha256,
             producer = record.producer,
             event_kind = record.event_kind,
-            "publishing wireless audit ingest over NATS"
+            "publishing wireless audit ingest over Redpanda"
         );
         #[derive(Serialize)]
         struct IngestEnvelope<'a> {
@@ -686,7 +686,7 @@ impl BacklogStore for NatsBacklog {
                 event_kind: record.event_kind,
             },
         )?;
-        self.publish(WIRELESS_AUDIT_SUBJECT, &payload).await
+        self.publish(WIRELESS_AUDIT_TOPIC, &payload).await
     }
 
     async fn save_pending(
@@ -714,14 +714,14 @@ impl BacklogStore for NatsBacklog {
                 error,
             },
         )?;
-        self.publish(BACKLOG_SAVE_SUBJECT, &payload).await
+        self.publish(BACKLOG_SAVE_TOPIC, &payload).await
     }
 
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
         let response = self
             .request(
                 "list_pending",
-                BACKLOG_LIST_SUBJECT,
+                BACKLOG_LIST_TOPIC,
                 r#"{"operation":"list_pending"}"#,
             )
             .await?;
@@ -744,7 +744,7 @@ impl BacklogStore for NatsBacklog {
                 dedupe_key,
             },
         )?;
-        self.publish(BACKLOG_SYNCED_SUBJECT, &payload).await
+        self.publish(BACKLOG_SYNCED_TOPIC, &payload).await
     }
 
     async fn prune_stale(
@@ -771,7 +771,7 @@ impl BacklogStore for NatsBacklog {
             },
         )?;
         let response = self
-            .request("prune_stale", BACKLOG_PRUNE_SUBJECT, &payload)
+            .request("prune_stale", BACKLOG_PRUNE_TOPIC, &payload)
             .await?;
         let parsed: PruneResult =
             serde_json::from_str(&response).map_err(|source| BacklogError::Deserialize {
@@ -809,42 +809,42 @@ fn serialize<T: Serialize>(operation: &'static str, value: &T) -> Result<String,
     serde_json::to_string(value).map_err(|source| BacklogError::Serialize { operation, source })
 }
 
-fn payload_with_reply_subject(
+fn payload_with_reply_topic(
     operation: &'static str,
     payload: &str,
-    reply_subject: &str,
+    reply_topic: &str,
 ) -> Result<String, BacklogError> {
     let mut object: Map<String, Value> = serde_json::from_str(payload)
         .map_err(|source| BacklogError::Serialize { operation, source })?;
 
     object.insert(
-        "reply_subject".to_string(),
-        Value::String(reply_subject.to_string()),
+        "reply_topic".to_string(),
+        Value::String(reply_topic.to_string()),
     );
 
     serde_json::to_string(&object).map_err(|source| BacklogError::Serialize { operation, source })
 }
 
-fn next_inbox_subject() -> String {
+fn next_inbox_topic() -> String {
     let id = NEXT_INBOX_ID.fetch_add(1, Ordering::Relaxed);
     format!("_INBOX.ssl_proxy.{}.{}", std::process::id(), id)
 }
 
-trait NatsStream: AsyncRead + AsyncWrite + Unpin + Send {}
+trait RedpandaStream: AsyncRead + AsyncWrite + Unpin + Send {}
 
-impl<T> NatsStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T> RedpandaStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
-struct NatsEndpoint {
+struct RedpandaEndpoint {
     address: String,
     host: String,
     tls_enabled: bool,
 }
 
-fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
-    let trimmed = nats_url.trim();
+fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaEndpoint, String> {
+    let trimmed = redpanda_bootstrap_servers.trim();
     let (tls_enabled, without_scheme) = if let Some(value) = trimmed.strip_prefix("tls://") {
         (true, value)
-    } else if let Some(value) = trimmed.strip_prefix("nats://") {
+    } else if let Some(value) = trimmed.strip_prefix("redpanda://") {
         (false, value)
     } else {
         (false, trimmed)
@@ -852,9 +852,9 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
     let authority = without_scheme
         .split('/')
         .next()
-        .ok_or_else(|| "missing NATS authority".to_string())?;
+        .ok_or_else(|| "missing Redpanda authority".to_string())?;
     if authority.is_empty() {
-        return Err("missing NATS authority".to_string());
+        return Err("missing Redpanda authority".to_string());
     }
     let host_port = authority.rsplit('@').next().unwrap_or(authority);
     let has_port = if host_port.starts_with('[') {
@@ -884,9 +884,9 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
             .to_string()
     };
     if host.is_empty() {
-        return Err("missing NATS host".to_string());
+        return Err("missing Redpanda host".to_string());
     }
-    Ok(NatsEndpoint {
+    Ok(RedpandaEndpoint {
         address,
         host,
         tls_enabled,
@@ -894,9 +894,9 @@ fn parse_nats_endpoint(nats_url: &str) -> Result<NatsEndpoint, String> {
 }
 
 fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::ClientConfig>>, String> {
-    let tls_required = sync.tls_enabled
+    let tls_required = false
         || sync
-            .nats_url
+            .redpanda_bootstrap_servers
             .as_deref()
             .is_some_and(|url| url.trim().starts_with("tls://"));
     if !tls_required {
@@ -907,39 +907,39 @@ fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::Clien
 
     let mut roots = rustls::RootCertStore::empty();
     let ca_cert_path = sync
-        .tls_ca_cert_path
+        .ssl_ca_location
         .as_deref()
-        .ok_or_else(|| "SYNC_NATS_TLS_CA_CERT_PATH is required when TLS is enabled".to_string())?;
+        .ok_or_else(|| "SYNC_REDPANDA_SSL_CA_LOCATION is required when TLS is enabled".to_string())?;
     let ca_pem = std::fs::read(ca_cert_path)
-        .map_err(|error| format!("read NATS CA certificate {ca_cert_path}: {error}"))?;
+        .map_err(|error| format!("read Redpanda CA certificate {ca_cert_path}: {error}"))?;
     let ca_certs = rustls_pemfile::certs(&mut Cursor::new(ca_pem))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("parse NATS CA certificate {ca_cert_path}: {error}"))?;
+        .map_err(|error| format!("parse Redpanda CA certificate {ca_cert_path}: {error}"))?;
     let (added, _ignored) = roots.add_parsable_certificates(ca_certs);
     if added == 0 {
         return Err(format!(
-            "no trust anchors loaded from NATS CA certificate {ca_cert_path}"
+            "no trust anchors loaded from Redpanda CA certificate {ca_cert_path}"
         ));
     }
 
     let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
     let client_config = if let (Some(cert_path), Some(key_path)) = (
-        sync.tls_client_cert_path.as_deref(),
-        sync.tls_client_key_path.as_deref(),
+        sync.ssl_certificate_location.as_deref(),
+        sync.ssl_key_location.as_deref(),
     ) {
         let cert_pem = std::fs::read(cert_path)
-            .map_err(|error| format!("read NATS client certificate {cert_path}: {error}"))?;
+            .map_err(|error| format!("read Redpanda client certificate {cert_path}: {error}"))?;
         let certs = rustls_pemfile::certs(&mut Cursor::new(cert_pem))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("parse NATS client certificate {cert_path}: {error}"))?;
+            .map_err(|error| format!("parse Redpanda client certificate {cert_path}: {error}"))?;
         let key_pem = std::fs::read(key_path)
-            .map_err(|error| format!("read NATS client key {key_path}: {error}"))?;
+            .map_err(|error| format!("read Redpanda client key {key_path}: {error}"))?;
         let key = rustls_pemfile::private_key(&mut Cursor::new(key_pem))
-            .map_err(|error| format!("parse NATS client key {key_path}: {error}"))?
+            .map_err(|error| format!("parse Redpanda client key {key_path}: {error}"))?
             .ok_or_else(|| format!("no private key found in {key_path}"))?;
         builder
             .with_client_auth_cert(certs, key)
-            .map_err(|error| format!("build NATS TLS client auth config: {error}"))?
+            .map_err(|error| format!("build Redpanda TLS client auth config: {error}"))?
     } else {
         builder.with_no_client_auth()
     };
@@ -953,23 +953,20 @@ async fn connect_tls(
     host: &str,
     stream: TcpStream,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
-    let server_name = sync
-        .tls_server_name
-        .clone()
-        .unwrap_or_else(|| host.to_string());
+    let server_name = host.to_string();
     let server_name = rustls::pki_types::ServerName::try_from(server_name.clone())
-        .map_err(|error| format!("invalid NATS TLS server name {server_name}: {error}"))?;
+        .map_err(|error| format!("invalid Redpanda TLS server name {server_name}: {error}"))?;
     connector
         .connect(server_name, stream)
         .await
-        .map_err(|error| format!("establish NATS TLS session: {error}"))
+        .map_err(|error| format!("establish Redpanda TLS session: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_authorized_networks_response, parse_nats_endpoint, payload_with_reply_subject,
-        request_error_marks_nats_unhealthy,
+        parse_authorized_networks_response, parse_redpanda_endpoint, payload_with_reply_topic,
+        request_error_marks_redpanda_unhealthy,
     };
     use crate::backlog::BacklogError;
 
@@ -1011,8 +1008,8 @@ mod tests {
     }
 
     #[test]
-    fn adds_reply_subject_to_request_payload() {
-        let payload = payload_with_reply_subject(
+    fn adds_reply_topic_to_request_payload() {
+        let payload = payload_with_reply_topic(
             "list_pending",
             r#"{"operation":"list_pending"}"#,
             "_INBOX.x",
@@ -1021,12 +1018,12 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
 
         assert_eq!(parsed["operation"], "list_pending");
-        assert_eq!(parsed["reply_subject"], "_INBOX.x");
+        assert_eq!(parsed["reply_topic"], "_INBOX.x");
     }
 
     #[test]
     fn rejects_non_object_request_payloads() {
-        let error = payload_with_reply_subject("list_pending", r#"[]"#, "_INBOX.x").unwrap_err();
+        let error = payload_with_reply_topic("list_pending", r#"[]"#, "_INBOX.x").unwrap_err();
 
         assert!(
             matches!(error, BacklogError::Serialize { .. })
@@ -1035,58 +1032,58 @@ mod tests {
     }
 
     #[test]
-    fn request_reply_timeout_does_not_mark_nats_transport_unhealthy() {
+    fn request_reply_timeout_does_not_mark_redpanda_transport_unhealthy() {
         let error = BacklogError::Timeout {
             operation: "lookup_device_by_mac",
         };
 
-        assert!(!request_error_marks_nats_unhealthy(&error));
+        assert!(!request_error_marks_redpanda_unhealthy(&error));
     }
 
     #[test]
-    fn transport_io_error_marks_nats_transport_unhealthy() {
-        let error = BacklogError::Nats {
+    fn transport_io_error_marks_redpanda_transport_unhealthy() {
+        let error = BacklogError::Redpanda {
             operation: "lookup_device_by_mac",
             message: "unexpected EOF while reading reply".to_string(),
         };
 
-        assert!(request_error_marks_nats_unhealthy(&error));
+        assert!(request_error_marks_redpanda_unhealthy(&error));
     }
 
     #[test]
     fn parses_host_with_default_port() {
-        let endpoint = parse_nats_endpoint("nats://nats.internal").unwrap();
-        assert_eq!(endpoint.address, "nats.internal:4222");
-        assert_eq!(endpoint.host, "nats.internal");
+        let endpoint = parse_redpanda_endpoint("redpanda://redpanda.internal").unwrap();
+        assert_eq!(endpoint.address, "redpanda.internal:4222");
+        assert_eq!(endpoint.host, "redpanda.internal");
         assert!(!endpoint.tls_enabled);
     }
 
     #[test]
     fn parses_tls_scheme() {
-        let endpoint = parse_nats_endpoint("tls://nats.internal:4443").unwrap();
-        assert_eq!(endpoint.address, "nats.internal:4443");
-        assert_eq!(endpoint.host, "nats.internal");
+        let endpoint = parse_redpanda_endpoint("tls://redpanda.internal:4443").unwrap();
+        assert_eq!(endpoint.address, "redpanda.internal:4443");
+        assert_eq!(endpoint.host, "redpanda.internal");
         assert!(endpoint.tls_enabled);
     }
 
     #[test]
     fn parses_bracketed_ipv6_without_port() {
-        let endpoint = parse_nats_endpoint("nats://[::1]").unwrap();
+        let endpoint = parse_redpanda_endpoint("redpanda://[::1]").unwrap();
         assert_eq!(endpoint.address, "[::1]:4222");
         assert_eq!(endpoint.host, "::1");
     }
 
     #[test]
     fn parses_bracketed_ipv6_with_port() {
-        let endpoint = parse_nats_endpoint("nats://[::1]:4223").unwrap();
+        let endpoint = parse_redpanda_endpoint("redpanda://[::1]:4223").unwrap();
         assert_eq!(endpoint.address, "[::1]:4223");
         assert_eq!(endpoint.host, "::1");
     }
 
     #[test]
     fn ignores_userinfo_for_address_parsing() {
-        let endpoint = parse_nats_endpoint("nats://user:pass@nats.internal:4224").unwrap();
-        assert_eq!(endpoint.address, "nats.internal:4224");
-        assert_eq!(endpoint.host, "nats.internal");
+        let endpoint = parse_redpanda_endpoint("redpanda://user:pass@redpanda.internal:4224").unwrap();
+        assert_eq!(endpoint.address, "redpanda.internal:4224");
+        assert_eq!(endpoint.host, "redpanda.internal");
     }
 }

@@ -7,10 +7,10 @@ sync-plane used by this repository.
 ## Runtime Model
 
 - Runs on a Linux host with direct access to a monitor-capable Wi-Fi interface (AR9271 preferred).
-- Uses NATS through `SYNC_NATS_URL`; the zig-coordinator owns all Postgres access.
-- Publishes the raw audit payload on subject `wireless.audit`.
+- Uses Redpanda through `SYNC_REDPANDA_BOOTSTRAP_SERVERS`; the zig-coordinator owns all Postgres access.
+- Publishes the raw audit payload on topic `wireless.audit`.
 - Publishes a matching `sync.scan.request` message with `stream_name=wireless.audit`.
-- Asks the coordinator to persist `audit_backlog` rows when NATS publish paths fail.
+- Asks the coordinator to persist `audit_backlog` rows when Redpanda publish paths fail.
 
 ## Environment
 
@@ -31,7 +31,7 @@ sync-plane used by this repository.
 - `ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS`
 - `ATH_SENSOR_EXPORT_HANDSHAKES`
 - `ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS`
-- `ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS`
+- `ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS`
 - `ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED`
 - `ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS`
 - `ATH_SENSOR_METRICS_PORT`
@@ -41,14 +41,14 @@ sync-plane used by this repository.
 - `AUDIT_WINDOW_DAYS`
 - `AUDIT_WINDOW_START`
 - `AUDIT_WINDOW_END`
-- `SYNC_NATS_URL`
-- `SYNC_NATS_USERNAME`
-- `SYNC_NATS_PASSWORD` or `SYNC_NATS_PASSWORD_FILE`
-- `SYNC_NATS_TLS_ENABLED`
-- `SYNC_NATS_TLS_SERVER_NAME`
-- `SYNC_NATS_TLS_CA_CERT_PATH`
-- `SYNC_NATS_TLS_CLIENT_CERT_PATH`
-- `SYNC_NATS_TLS_CLIENT_KEY_PATH`
+- `SYNC_REDPANDA_BOOTSTRAP_SERVERS`
+- `SYNC_REDPANDA_SASL_USERNAME`
+- `SYNC_REDPANDA_SASL_PASSWORD` or `SYNC_REDPANDA_SASL_PASSWORD_FILE`
+- `SYNC_REDPANDA_SSL_ENABLED`
+- `SYNC_REDPANDA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM`
+- `SYNC_REDPANDA_SSL_CA_LOCATION`
+- `SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION`
+- `SYNC_REDPANDA_SSL_KEY_LOCATION`
 - `SYNC_INLINE_PAYLOAD_MAX_BYTES`
 - `SYNC_OUTBOX_DIR`
 - `RUST_LOG`
@@ -90,7 +90,7 @@ Published event schemas use explicit `schema_version` fields where payloads can
 evolve independently. Current versions are `AuditEntry.schema_version=2` and
 `WirelessBandwidthEvent`/`HandshakeAlert` `schema_version=1`.
 
-Additional subjects emitted by this sensor:
+Additional topics emitted by this sensor:
 
 - `wireless.client.inventory`
 - `wireless.alert.rogue_ap`
@@ -103,7 +103,7 @@ Additional subjects emitted by this sensor:
 
 1. Put the capture interface into monitor mode with [`scripts/prep_ath.sh`](/Users/rcs/git/ssl-proxy/scripts/prep_ath.sh).
 2. Point the sensor at the compose stack:
-   - `SYNC_NATS_URL=nats://127.0.0.1:4222`
+   - `SYNC_REDPANDA_BOOTSTRAP_SERVERS=redpanda://127.0.0.1:4222`
 3. Start the service directly or install the provided `systemd` unit template.
 
 Default capture filter is `type mgt or type data`. Override `ATH_SENSOR_BPF` when

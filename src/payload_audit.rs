@@ -132,7 +132,7 @@ pub fn audit_http_preview(
 
     match state
         .publisher
-        .publish_payload_audit(&state.config.payload_audit.nats_subject, &json)
+        .publish_payload_audit(&state.config.payload_audit.redpanda_topic, &json)
     {
         Ok(()) => {
             debug!(host, "payload audit record enqueued");
@@ -245,7 +245,7 @@ mod tests {
     fn config() -> PayloadAuditConfig {
         PayloadAuditConfig {
             enabled: true,
-            nats_subject: "proxy.payload_audit".to_string(),
+            redpanda_topic: "proxy.payload_audit".to_string(),
             max_body_bytes: 65_536,
             allowed_methods: vec!["POST".to_string(), "PUT".to_string(), "PATCH".to_string()],
             allowed_content_types: vec!["application/json".to_string()],

@@ -3,27 +3,27 @@ const config = @import("config.zig");
 const db = @import("db.zig");
 const db_wireless = @import("db_wireless.zig");
 const logging = @import("logging.zig");
-const service_nats = @import("service_nats.zig");
+const service_redpanda = @import("service_redpanda.zig");
 
 const ReplyRequest = struct {
     operation: []const u8,
-    reply_subject: ?[]const u8 = null,
+    reply_topic: ?[]const u8 = null,
 };
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_save_consumer)) had_work = (try handleBacklogSave(allocator, io, cfg, database)) or had_work;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_list_consumer)) had_work = (try handleBacklogList(allocator, io, cfg, database)) or had_work;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_synced_consumer)) had_work = (try handleBacklogSynced(allocator, io, cfg, database)) or had_work;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_prune_consumer)) had_work = (try handleBacklogPrune(allocator, io, cfg, database)) or had_work;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_mac_stream_name, cfg.wireless_mac_lookup_consumer)) had_work = (try handleMacLookup(allocator, io, cfg, database)) or had_work;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_networks_stream_name, cfg.wireless_networks_authorized_consumer)) had_work = (try handleNetworksAuthorized(allocator, io, cfg, database)) or had_work;
-    if (try service_nats.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_probe_stream_name, cfg.wireless_probe_flush_consumer)) had_work = (try handleProbeFlush(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_save_consumer)) had_work = (try handleBacklogSave(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_list_consumer)) had_work = (try handleBacklogList(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_synced_consumer)) had_work = (try handleBacklogSynced(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_prune_consumer)) had_work = (try handleBacklogPrune(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_mac_stream_name, cfg.wireless_mac_lookup_consumer)) had_work = (try handleMacLookup(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_networks_stream_name, cfg.wireless_networks_authorized_consumer)) had_work = (try handleNetworksAuthorized(allocator, io, cfg, database)) or had_work;
+    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_probe_stream_name, cfg.wireless_probe_flush_consumer)) had_work = (try handleProbeFlush(allocator, io, cfg, database)) or had_work;
     return had_work;
 }
 
 fn handleBacklogSave(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const msg = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_save_consumer);
+    const msg = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_save_consumer);
     defer if (msg) |m| allocator.free(m);
     if (msg) |payload| {
         db_wireless.saveBacklogEntry(database, payload) catch |err| {
@@ -37,20 +37,20 @@ fn handleBacklogSave(allocator: std.mem.Allocator, io: std.Io, cfg: config.Confi
 }
 
 fn handleBacklogList(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const req = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_list_consumer);
+    const req = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_list_consumer);
     defer if (req) |m| allocator.free(m);
     if (req) |request_payload| {
         var parsed_request = parseReplyRequest(allocator, request_payload);
         defer if (parsed_request) |*parsed| parsed.deinit();
-        const reply_subject = if (parsed_request) |parsed| parsed.value.reply_subject orelse cfg.wireless_backlog_list_reply_subject else cfg.wireless_backlog_list_reply_subject;
+        const reply_topic = if (parsed_request) |parsed| parsed.value.reply_topic orelse cfg.wireless_backlog_list_reply_topic else cfg.wireless_backlog_list_reply_topic;
         const list = db_wireless.listPendingBacklog(database) catch |err| {
             logging.err().stringSafe("event", "backlog_list").stringSafe("status", "error").err(err).log();
             return error.BacklogOperationFailed;
         };
         defer if (list) |l| allocator.free(l);
         if (list) |payload| {
-            try service_nats.publish(allocator, io, cfg, reply_subject, payload, error.AlertPublishFailed);
-            logging.info().stringSafe("event", "backlog_list").stringSafe("status", "ok").string("reply_subject", reply_subject).int("payload_bytes", payload.len).log();
+            try service_redpanda.publish(allocator, io, cfg, reply_topic, payload, error.AlertPublishFailed);
+            logging.info().stringSafe("event", "backlog_list").stringSafe("status", "ok").string("reply_topic", reply_topic).int("payload_bytes", payload.len).log();
         }
         return true;
     }
@@ -58,7 +58,7 @@ fn handleBacklogList(allocator: std.mem.Allocator, io: std.Io, cfg: config.Confi
 }
 
 fn handleBacklogSynced(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const msg = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_synced_consumer);
+    const msg = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_synced_consumer);
     defer if (msg) |m| allocator.free(m);
     if (msg) |payload| {
         var parsed = std.json.parseFromSlice(struct { dedupe_key: []const u8 }, allocator, payload, .{ .ignore_unknown_fields = true }) catch |err| {
@@ -77,12 +77,12 @@ fn handleBacklogSynced(allocator: std.mem.Allocator, io: std.Io, cfg: config.Con
 }
 
 fn handleBacklogPrune(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const msg = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_prune_consumer);
+    const msg = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_prune_consumer);
     defer if (msg) |m| allocator.free(m);
     if (msg) |request_payload| {
         var parsed_request = parseReplyRequest(allocator, request_payload);
         defer if (parsed_request) |*parsed| parsed.deinit();
-        const reply_subject = if (parsed_request) |parsed| parsed.value.reply_subject orelse cfg.wireless_backlog_prune_reply_subject else cfg.wireless_backlog_prune_reply_subject;
+        const reply_topic = if (parsed_request) |parsed| parsed.value.reply_topic orelse cfg.wireless_backlog_prune_reply_topic else cfg.wireless_backlog_prune_reply_topic;
         const deleted = db_wireless.pruneBacklog(database) catch |err| {
             logging.err().stringSafe("event", "backlog_prune").stringSafe("status", "error").err(err).log();
             return error.BacklogOperationFailed;
@@ -91,18 +91,18 @@ fn handleBacklogPrune(allocator: std.mem.Allocator, io: std.Io, cfg: config.Conf
         const count = if (deleted) |d| std.fmt.parseInt(i64, d, 10) catch 0 else 0;
         const reply = std.fmt.allocPrint(allocator, "{{\"pruned\":{d}}}", .{count}) catch return error.BacklogOperationFailed;
         defer allocator.free(reply);
-        try service_nats.publish(allocator, io, cfg, reply_subject, reply, error.AlertPublishFailed);
-        logging.info().stringSafe("event", "backlog_prune").stringSafe("status", "ok").string("reply_subject", reply_subject).int("deleted_count", count).log();
+        try service_redpanda.publish(allocator, io, cfg, reply_topic, reply, error.AlertPublishFailed);
+        logging.info().stringSafe("event", "backlog_prune").stringSafe("status", "ok").string("reply_topic", reply_topic).int("deleted_count", count).log();
         return true;
     }
     return false;
 }
 
 fn handleMacLookup(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const req = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_mac_stream_name, cfg.wireless_mac_lookup_consumer);
+    const req = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_mac_stream_name, cfg.wireless_mac_lookup_consumer);
     defer if (req) |m| allocator.free(m);
     if (req) |payload| {
-        var parsed = std.json.parseFromSlice(struct { mac: []const u8, reply_subject: ?[]const u8 = null }, allocator, payload, .{ .ignore_unknown_fields = true }) catch |err| {
+        var parsed = std.json.parseFromSlice(struct { mac: []const u8, reply_topic: ?[]const u8 = null }, allocator, payload, .{ .ignore_unknown_fields = true }) catch |err| {
             logging.err().stringSafe("event", "mac_lookup").stringSafe("status", "error").stringSafe("error", "InvalidMacLookupJson").err(err).log();
             return error.MacLookupFailed;
         };
@@ -113,33 +113,33 @@ fn handleMacLookup(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config,
         };
         defer if (result) |r| allocator.free(r);
         const reply = result orelse "null";
-        const reply_subject = parsed.value.reply_subject orelse cfg.wireless_mac_lookup_reply_subject;
-        try service_nats.publish(allocator, io, cfg, reply_subject, reply, error.AlertPublishFailed);
-        logging.info().stringSafe("event", "mac_lookup").stringSafe("status", "ok").string("mac", parsed.value.mac).string("reply_subject", reply_subject).boolean("found", result != null).log();
+        const reply_topic = parsed.value.reply_topic orelse cfg.wireless_mac_lookup_reply_topic;
+        try service_redpanda.publish(allocator, io, cfg, reply_topic, reply, error.AlertPublishFailed);
+        logging.info().stringSafe("event", "mac_lookup").stringSafe("status", "ok").string("mac", parsed.value.mac).string("reply_topic", reply_topic).boolean("found", result != null).log();
         return true;
     }
     return false;
 }
 
 fn handleNetworksAuthorized(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const req = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_networks_stream_name, cfg.wireless_networks_authorized_consumer);
+    const req = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_networks_stream_name, cfg.wireless_networks_authorized_consumer);
     defer if (req) |m| allocator.free(m);
     if (req) |request_payload| {
         const start_ts = std.Io.Timestamp.now(io, .awake);
         var parsed_request = parseReplyRequest(allocator, request_payload);
         defer if (parsed_request) |*parsed| parsed.deinit();
-        const reply_subject = if (parsed_request) |parsed| parsed.value.reply_subject orelse cfg.wireless_networks_authorized_reply_subject else cfg.wireless_networks_authorized_reply_subject;
-        logging.info().stringSafe("event", "networks_authorized_request").stringSafe("status", "received").string("reply_subject", reply_subject).log();
+        const reply_topic = if (parsed_request) |parsed| parsed.value.reply_topic orelse cfg.wireless_networks_authorized_reply_topic else cfg.wireless_networks_authorized_reply_topic;
+        logging.info().stringSafe("event", "networks_authorized_request").stringSafe("status", "received").string("reply_topic", reply_topic).log();
         const list = db_wireless.listAuthorizedNetworks(database) catch |err| {
-            logging.err().stringSafe("event", "networks_authorized").stringSafe("status", "error").string("reply_subject", reply_subject).int("duration_ms", elapsedMs(start_ts, io)).err(err).log();
+            logging.err().stringSafe("event", "networks_authorized").stringSafe("status", "error").string("reply_topic", reply_topic).int("duration_ms", elapsedMs(start_ts, io)).err(err).log();
             return error.NetworksListFailed;
         };
         defer if (list) |l| allocator.free(l);
         if (list) |payload| {
-            try service_nats.publish(allocator, io, cfg, reply_subject, payload, error.AlertPublishFailed);
-            logging.info().stringSafe("event", "networks_authorized").stringSafe("status", "ok").string("reply_subject", reply_subject).int("payload_bytes", payload.len).int("network_count", countNetworkEntries(payload)).int("duration_ms", elapsedMs(start_ts, io)).log();
+            try service_redpanda.publish(allocator, io, cfg, reply_topic, payload, error.AlertPublishFailed);
+            logging.info().stringSafe("event", "networks_authorized").stringSafe("status", "ok").string("reply_topic", reply_topic).int("payload_bytes", payload.len).int("network_count", countNetworkEntries(payload)).int("duration_ms", elapsedMs(start_ts, io)).log();
         } else {
-            logging.info().stringSafe("event", "networks_authorized").stringSafe("status", "empty").string("reply_subject", reply_subject).int("duration_ms", elapsedMs(start_ts, io)).log();
+            logging.info().stringSafe("event", "networks_authorized").stringSafe("status", "empty").string("reply_topic", reply_topic).int("duration_ms", elapsedMs(start_ts, io)).log();
         }
         return true;
     }
@@ -147,7 +147,7 @@ fn handleNetworksAuthorized(allocator: std.mem.Allocator, io: std.Io, cfg: confi
 }
 
 fn handleProbeFlush(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const msg = try service_nats.pullWirelessMessage(allocator, io, cfg, cfg.wireless_probe_stream_name, cfg.wireless_probe_flush_consumer);
+    const msg = try service_redpanda.pullWirelessMessage(allocator, io, cfg, cfg.wireless_probe_stream_name, cfg.wireless_probe_flush_consumer);
     defer if (msg) |m| allocator.free(m);
     if (msg) |payload| {
         db_wireless.flushProbeBatch(database, payload) catch |err| {
@@ -182,14 +182,14 @@ fn countNetworkEntries(payload: []const u8) usize {
     return count;
 }
 
-test "parseReplyRequest reads optional reply subject" {
-    var parsed = parseReplyRequest(std.testing.allocator, "{\"operation\":\"list_pending\",\"reply_subject\":\"_INBOX.test.1\"}").?;
+test "parseReplyRequest reads optional reply topic" {
+    var parsed = parseReplyRequest(std.testing.allocator, "{\"operation\":\"list_pending\",\"reply_topic\":\"_INBOX.test.1\"}").?;
     defer parsed.deinit();
-    try std.testing.expectEqualStrings("_INBOX.test.1", parsed.value.reply_subject.?);
+    try std.testing.expectEqualStrings("_INBOX.test.1", parsed.value.reply_topic.?);
 }
 
 test "parseReplyRequest tolerates legacy request payloads" {
     var parsed = parseReplyRequest(std.testing.allocator, "{\"operation\":\"list_pending\"}").?;
     defer parsed.deinit();
-    try std.testing.expect(parsed.value.reply_subject == null);
+    try std.testing.expect(parsed.value.reply_topic == null);
 }

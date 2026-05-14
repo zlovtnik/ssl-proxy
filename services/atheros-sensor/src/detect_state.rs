@@ -8,8 +8,8 @@
 //! (edit distance <= 2), BSSID-to-SSID mapping changes, and multi-channel conflicts;
 //! DeauthFloodTracker counts deauthentication and disassociation frames per BSSID in a sliding
 //! window and fires an alert when the threshold is exceeded, with a cooldown to suppress repeats;
-//! AuthorizedNetworkCache holds the NATS-backed list of known SSIDs/BSSIDs and is
-//! invalidated by the NATS generation counter when the console pushes a config change;
+//! AuthorizedNetworkCache holds the Redpanda-backed list of known SSIDs/BSSIDs and is
+//! invalidated by the Redpanda generation counter when the console pushes a config change;
 //! evil-twin detection runs through IdentityCache (in parse/) which correlates adjacent MACs
 //! and session keys to surface impersonation across frames.
 //!
@@ -37,14 +37,14 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::backlog::{AuthorizedWirelessNetwork, NatsBacklog};
+use crate::backlog::{AuthorizedWirelessNetwork, RedpandaBacklog};
 use crate::model::AuditEntry;
 use crate::parse::SECURITY_PMF_REQUIRED;
 
-pub const CLIENT_INVENTORY_SUBJECT: &str = "wireless.client.inventory";
-pub const ROGUE_AP_SUBJECT: &str = "wireless.alert.rogue_ap";
-pub const DEAUTH_FLOOD_SUBJECT: &str = "wireless.alert.deauth_flood";
-pub const ATTACK_SEQUENCE_SUBJECT: &str = "wireless.alert.attack_sequence";
+pub const CLIENT_INVENTORY_TOPIC: &str = "wireless.client.inventory";
+pub const ROGUE_AP_TOPIC: &str = "wireless.alert.rogue_ap";
+pub const DEAUTH_FLOOD_TOPIC: &str = "wireless.alert.deauth_flood";
+pub const ATTACK_SEQUENCE_TOPIC: &str = "wireless.alert.attack_sequence";
 const ROGUE_AP_ALERT_TTL: Duration = Duration::from_secs(60);
 const ATTACK_CORRELATION_WINDOW: Duration = Duration::from_secs(300);
 const ATTACK_SEQUENCE_COOLDOWN: Duration = Duration::from_secs(60);
@@ -462,7 +462,7 @@ impl AuthorizedNetworkCache {
 
     pub async fn refresh_if_needed(
         &mut self,
-        backlog: &NatsBacklog,
+        backlog: &RedpandaBacklog,
         ttl: Duration,
     ) -> Result<(), crate::backlog::BacklogError> {
         if self
@@ -478,7 +478,7 @@ impl AuthorizedNetworkCache {
                 if self.loaded_at.is_some() {
                     return Ok(());
                 }
-                return Err(crate::backlog::BacklogError::Nats {
+                return Err(crate::backlog::BacklogError::Redpanda {
                     operation: "refresh_if_needed",
                     message: format!(
                         "previous authorized network refresh failed; retry backoff {}ms",

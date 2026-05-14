@@ -1,13 +1,13 @@
 const std = @import("std");
 const logging = @import("logging.zig");
-const nats_endpoint = @import("nats_endpoint.zig");
+const redpanda_endpoint = @import("redpanda_endpoint.zig");
 
 const MAX_ACK_PAYLOAD_BYTES = 8 * 1024;
 
-pub fn validateSubject(subject: []const u8) !void {
-    if (subject.len == 0) return error.InvalidSubject;
-    for (subject) |byte| {
-        if (std.ascii.isWhitespace(byte)) return error.InvalidSubject;
+pub fn validateTopic(topic: []const u8) !void {
+    if (topic.len == 0) return error.InvalidTopic;
+    for (topic) |byte| {
+        if (std.ascii.isWhitespace(byte)) return error.InvalidTopic;
     }
 }
 
@@ -16,15 +16,15 @@ pub fn expectInfo(reader: *std.Io.net.Stream.Reader) !void {
     if (!std.mem.startsWith(u8, line, "INFO ")) return error.ProtocolError;
 }
 
-pub fn writeConnect(writer: *std.Io.Writer, endpoint: nats_endpoint.Endpoint) !void {
+pub fn writeConnect(writer: *std.Io.Writer, endpoint: redpanda_endpoint.Endpoint) !void {
     try writer.writeAll("CONNECT ");
     try writeConnectJson(writer, endpoint.user, endpoint.pass, endpoint.token);
     try writer.writeAll("\r\n");
     try writer.flush();
 }
 
-pub fn writeCorePublish(writer: *std.Io.Writer, subject: []const u8, payload: []const u8) !void {
-    try writer.print("PUB {s} {d}\r\n", .{ subject, payload.len });
+pub fn writeCorePublish(writer: *std.Io.Writer, topic: []const u8, payload: []const u8) !void {
+    try writer.print("PUB {s} {d}\r\n", .{ topic, payload.len });
     try writer.writeAll(payload);
     try writer.writeAll("\r\n");
     try writer.flush();
@@ -53,11 +53,11 @@ pub fn writeAckSubscription(writer: *std.Io.Writer, inbox: []const u8) !void {
 
 pub fn writeAckedPublish(
     writer: *std.Io.Writer,
-    subject: []const u8,
+    topic: []const u8,
     inbox: []const u8,
     payload: []const u8,
 ) !void {
-    try writer.print("PUB {s} {s} {d}\r\n", .{ subject, inbox, payload.len });
+    try writer.print("PUB {s} {s} {d}\r\n", .{ topic, inbox, payload.len });
     try writer.writeAll(payload);
     try writer.writeAll("\r\n");
     try writer.flush();
@@ -96,13 +96,13 @@ pub fn waitForPublishAck(
     var attempts: usize = 0;
     while (attempts < 32) : (attempts += 1) {
         if (elapsedMs(start_ts, io) >= timeout_ms) {
-            logPublishAckFailure("ack_timeout", "timed out waiting for JetStream publish acknowledgement");
+            logPublishAckFailure("ack_timeout", "timed out waiting for Redpanda publish acknowledgement");
             return error.PublishAckFailed;
         }
 
         const line = readLine(reader) catch |err| {
             if (err == error.Timeout) {
-                logPublishAckFailure("ack_timeout", "timed out waiting for JetStream publish acknowledgement");
+                logPublishAckFailure("ack_timeout", "timed out waiting for Redpanda publish acknowledgement");
                 return error.PublishAckFailed;
             }
             return err;
@@ -141,7 +141,7 @@ pub fn waitForPublishAck(
         return error.ProtocolError;
     }
 
-    logPublishAckFailure("ack_timeout", "no JetStream publish acknowledgement received");
+    logPublishAckFailure("ack_timeout", "no Redpanda publish acknowledgement received");
     return error.PublishAckFailed;
 }
 
@@ -242,7 +242,7 @@ fn logPublishAckFailure(reason: []const u8, raw: []const u8) void {
     var buffer: [1024]u8 = undefined;
     const snippet = sanitizeSnippet(&buffer, raw);
     logging.err()
-        .stringSafe("event", "jetstream_publish_ack")
+        .stringSafe("event", "redpanda_publish_ack")
         .stringSafe("status", "error")
         .string("reason", reason)
         .string("payload", snippet)
@@ -253,7 +253,7 @@ fn logPublishAckProgress(phase: []const u8, raw: []const u8) void {
     var buffer: [1024]u8 = undefined;
     const snippet = sanitizeSnippet(&buffer, raw);
     logging.debug()
-        .stringSafe("event", "jetstream_publish_ack")
+        .stringSafe("event", "redpanda_publish_ack")
         .stringSafe("status", "observed")
         .string("phase", phase)
         .string("payload", snippet)
@@ -262,7 +262,7 @@ fn logPublishAckProgress(phase: []const u8, raw: []const u8) void {
 
 fn logPublishAckSuccess(attempts: usize) void {
     logging.debug()
-        .stringSafe("event", "jetstream_publish_ack")
+        .stringSafe("event", "redpanda_publish_ack")
         .stringSafe("status", "ok")
         .stringSafe("phase", "publish_ack")
         .int("attempts", attempts)
@@ -286,5 +286,5 @@ fn sanitizeSnippet(buffer: []u8, raw: []const u8) []const u8 {
 }
 
 test {
-    _ = @import("nats_protocol_test.zig");
+    _ = @import("redpanda_protocol_test.zig");
 }

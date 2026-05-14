@@ -24,7 +24,7 @@ pub enum SensorError {
     /// Fired when the pcap handle cannot be opened or the datalink type is not radiotap.
     #[error("capture setup failed: {0}")]
     Capture(#[from] CaptureError),
-    /// Fired when the NATS-backed backlog boundary fails.
+    /// Fired when the Redpanda-backed backlog boundary fails.
     #[error("backlog failed: {0}")]
     Backlog(#[from] BacklogError),
     /// Fired when a publish fails with no fallback path and the pipeline cannot continue.

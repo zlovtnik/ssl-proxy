@@ -4,12 +4,12 @@
 //! no config file. Secrets support a file-fallback pattern: read_secret checks the plain variable
 //! first, then falls back to reading the path named by the _FILE variant, enabling Docker secrets
 //! mounts without exposing values in the environment. ATH_SENSOR_REQUIRE_HOST_ENDPOINTS is a
-//! deployment guard that rejects Docker service hostnames ("nats") in NATS endpoints,
+//! deployment guard that rejects Docker service hostnames ("redpanda") in Redpanda endpoints,
 //! enforcing host-network-mode endpoints when the sensor runs outside Docker.
 //!
 //! # AppConfig field mutability
 //!
-//! Fields that can be updated at runtime via a NATS push (no restart required):
+//! Fields that can be updated at runtime via a Redpanda push (no restart required):
 //! `bpf` (BPF filter), `channel` (via `wireless.config.sensor`), and the `audit_window`
 //! schedule (via `wireless.audit.config`).
 //!
@@ -56,7 +56,7 @@ pub struct AppConfig {
     pub circuit_breaker_initial_timeout_ms: u64,
     pub circuit_breaker_max_timeout_ms: u64,
     pub authorized_network_cache_backoff_ms: u64,
-    pub nats_request_timeout_ms: u64,
+    pub redpanda_request_timeout_ms: u64,
     pub mac_device_lookup_enabled: bool,
     pub mac_lookup_error_ttl_secs: u64,
 }
@@ -94,35 +94,41 @@ pub enum ConfigError {
 impl AppConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         let sync = SyncConfig {
-            nats_url: std::env::var("SYNC_NATS_URL")
+            redpanda_bootstrap_servers: std::env::var("SYNC_REDPANDA_BOOTSTRAP_SERVERS")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            connect_timeout_ms: parse_u64("SYNC_NATS_CONNECT_TIMEOUT_MS", 2_000).unwrap_or(2_000),
-            publish_timeout_ms: parse_u64("SYNC_NATS_PUBLISH_TIMEOUT_MS", 2_000).unwrap_or(2_000),
+            connect_timeout_ms: parse_u64("SYNC_REDPANDA_CONNECT_TIMEOUT_MS", 2_000).unwrap_or(2_000),
+            publish_timeout_ms: parse_u64("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", 2_000).unwrap_or(2_000),
             publish_queue_capacity: parse_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192)
                 .unwrap_or(8_192),
             publish_enqueue_timeout_ms: parse_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25)
                 .unwrap_or(25),
-            username: std::env::var("SYNC_NATS_USERNAME")
+            security_protocol: std::env::var("SYNC_REDPANDA_SECURITY_PROTOCOL")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            password: read_secret("SYNC_NATS_PASSWORD", "SYNC_NATS_PASSWORD_FILE"),
-            tls_enabled: read_bool("SYNC_NATS_TLS_ENABLED", false),
-            tls_server_name: std::env::var("SYNC_NATS_TLS_SERVER_NAME")
+            sasl_mechanisms: std::env::var("SYNC_REDPANDA_SASL_MECHANISMS")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            tls_ca_cert_path: std::env::var("SYNC_NATS_TLS_CA_CERT_PATH")
+            sasl_username: std::env::var("SYNC_REDPANDA_SASL_USERNAME")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            tls_client_cert_path: std::env::var("SYNC_NATS_TLS_CLIENT_CERT_PATH")
+            sasl_password: read_secret(
+                "SYNC_REDPANDA_SASL_PASSWORD",
+                "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+            ),
+            ssl_ca_location: std::env::var("SYNC_REDPANDA_SSL_CA_LOCATION")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            tls_client_key_path: std::env::var("SYNC_NATS_TLS_CLIENT_KEY_PATH")
+            ssl_certificate_location: std::env::var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            ssl_key_location: std::env::var("SYNC_REDPANDA_SSL_KEY_LOCATION")
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
@@ -140,7 +146,7 @@ impl AppConfig {
                 .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox/publish-spool".to_string()),
         };
         if read_bool("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", false) {
-            validate_host_network_endpoints(sync.nats_url.as_deref())?;
+            validate_host_network_endpoints(sync.redpanda_bootstrap_servers.as_deref())?;
         }
 
         let memory_backlog_size_val = parse_usize("ATH_SENSOR_MEMORY_BACKLOG_SIZE", 1024)
@@ -240,7 +246,7 @@ impl AppConfig {
                 30_000,
             )
             .unwrap_or(30_000),
-            nats_request_timeout_ms: parse_u64("ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS", 10_000)
+            redpanda_request_timeout_ms: parse_u64("ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS", 10_000)
                 .unwrap_or(10_000)
                 .max(1),
             mac_device_lookup_enabled: read_bool("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", true),
@@ -251,15 +257,15 @@ impl AppConfig {
     }
 }
 
-fn validate_host_network_endpoints(nats_url: Option<&str>) -> Result<(), ConfigError> {
-    if let Some(host) = nats_url.and_then(nats_host) {
-        reject_docker_service_host("SYNC_NATS_URL", &host)?;
+fn validate_host_network_endpoints(redpanda_bootstrap_servers: Option<&str>) -> Result<(), ConfigError> {
+    if let Some(host) = redpanda_bootstrap_servers.and_then(redpanda_host) {
+        reject_docker_service_host("SYNC_REDPANDA_BOOTSTRAP_SERVERS", &host)?;
     }
     Ok(())
 }
 
 fn reject_docker_service_host(variable: &'static str, host: &str) -> Result<(), ConfigError> {
-    if matches!(host.to_ascii_lowercase().as_str(), "nats") {
+    if matches!(host.to_ascii_lowercase().as_str(), "redpanda") {
         return Err(ConfigError::HostNetworkEndpoint {
             variable,
             host: host.to_string(),
@@ -268,14 +274,14 @@ fn reject_docker_service_host(variable: &'static str, host: &str) -> Result<(), 
     Ok(())
 }
 
-fn nats_host(nats_url: &str) -> Option<String> {
-    let trimmed = nats_url.trim();
+fn redpanda_host(redpanda_bootstrap_servers: &str) -> Option<String> {
+    let trimmed = redpanda_bootstrap_servers.trim();
     if trimmed.is_empty() {
         return None;
     }
     let without_scheme = trimmed
         .strip_prefix("tls://")
-        .or_else(|| trimmed.strip_prefix("nats://"))
+        .or_else(|| trimmed.strip_prefix("redpanda://"))
         .unwrap_or(trimmed);
     let authority = without_scheme
         .split('/')
@@ -451,17 +457,17 @@ mod tests {
     fn clear_env() {
         for name in [
             "ATH_SENSOR_REQUIRE_HOST_ENDPOINTS",
-            "SYNC_NATS_URL",
-            "SYNC_NATS_CONNECT_TIMEOUT_MS",
-            "SYNC_NATS_PUBLISH_TIMEOUT_MS",
-            "SYNC_NATS_USERNAME",
-            "SYNC_NATS_PASSWORD",
-            "SYNC_NATS_PASSWORD_FILE",
-            "SYNC_NATS_TLS_ENABLED",
-            "SYNC_NATS_TLS_SERVER_NAME",
-            "SYNC_NATS_TLS_CA_CERT_PATH",
-            "SYNC_NATS_TLS_CLIENT_CERT_PATH",
-            "SYNC_NATS_TLS_CLIENT_KEY_PATH",
+            "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
+            "SYNC_REDPANDA_CONNECT_TIMEOUT_MS",
+            "SYNC_REDPANDA_PUBLISH_TIMEOUT_MS",
+            "SYNC_REDPANDA_SASL_USERNAME",
+            "SYNC_REDPANDA_SASL_PASSWORD",
+            "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+            "SYNC_REDPANDA_SSL_ENABLED",
+            "SYNC_REDPANDA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM",
+            "SYNC_REDPANDA_SSL_CA_LOCATION",
+            "SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION",
+            "SYNC_REDPANDA_SSL_KEY_LOCATION",
             "SYNC_INLINE_PAYLOAD_MAX_BYTES",
             "SYNC_OUTBOX_DIR",
             "ATH_SENSOR_DEVICE",
@@ -488,7 +494,7 @@ mod tests {
             "ATH_SENSOR_CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS",
             "ATH_SENSOR_CIRCUIT_BREAKER_MAX_TIMEOUT_MS",
             "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_BACKOFF_MS",
-            "ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS",
+            "ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS",
             "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
             "ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS",
             "ATH_SENSOR_METRICS_PORT",
@@ -507,13 +513,13 @@ mod tests {
     fn host_endpoint_validation_accepts_loopback_endpoints() {
         let _env = test_env();
         std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
-        std::env::set_var("SYNC_NATS_URL", "nats://127.0.0.1:4222");
+        std::env::set_var("SYNC_REDPANDA_BOOTSTRAP_SERVERS", "redpanda://127.0.0.1:4222");
 
         let config = AppConfig::from_env().unwrap();
 
         assert_eq!(
-            config.sync.nats_url.as_deref(),
-            Some("nats://127.0.0.1:4222")
+            config.sync.redpanda_bootstrap_servers.as_deref(),
+            Some("redpanda://127.0.0.1:4222")
         );
         assert_eq!(config.sync.publish_timeout_ms, 2_000);
     }
@@ -524,7 +530,7 @@ mod tests {
 
         let config = AppConfig::from_env().unwrap();
 
-        assert_eq!(config.nats_request_timeout_ms, 10_000);
+        assert_eq!(config.redpanda_request_timeout_ms, 10_000);
         assert!(config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 30);
     }
@@ -532,13 +538,13 @@ mod tests {
     #[test]
     fn enrichment_knobs_accept_overrides() {
         let _env = test_env();
-        std::env::set_var("ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS", "15000");
+        std::env::set_var("ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS", "15000");
         std::env::set_var("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", "false");
         std::env::set_var("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", "7");
 
         let config = AppConfig::from_env().unwrap();
 
-        assert_eq!(config.nats_request_timeout_ms, 15_000);
+        assert_eq!(config.redpanda_request_timeout_ms, 15_000);
         assert!(!config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 7);
     }
@@ -589,30 +595,30 @@ mod tests {
     }
 
     #[test]
-    fn host_endpoint_validation_rejects_nats_service_host() {
+    fn host_endpoint_validation_rejects_redpanda_service_host() {
         let _env = test_env();
         std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
-        std::env::set_var("SYNC_NATS_URL", "nats://nats:4222");
+        std::env::set_var("SYNC_REDPANDA_BOOTSTRAP_SERVERS", "redpanda://redpanda:4222");
 
         let error = match AppConfig::from_env() {
-            Ok(_) => panic!("expected host-network endpoint validation to reject NATS host"),
+            Ok(_) => panic!("expected host-network endpoint validation to reject Redpanda host"),
             Err(error) => error,
         };
 
         assert!(matches!(
             error,
             ConfigError::HostNetworkEndpoint {
-                variable: "SYNC_NATS_URL",
+                variable: "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
                 ref host
-            } if host == "nats"
+            } if host == "redpanda"
         ));
     }
 
     #[test]
-    fn nats_host_extracts_host_with_userinfo() {
+    fn redpanda_host_extracts_host_with_userinfo() {
         assert_eq!(
-            nats_host("nats://user:pass@nats:4222").as_deref(),
-            Some("nats")
+            redpanda_host("redpanda://user:pass@redpanda:4222").as_deref(),
+            Some("redpanda")
         );
     }
 }

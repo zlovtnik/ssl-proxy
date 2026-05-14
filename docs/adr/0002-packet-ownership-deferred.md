@@ -38,7 +38,7 @@ It does not take over:
 
 - The current kernel-routed transparent path remains the supported runtime.
 - TLS preview and timing classification stay intentionally lightweight for now.
-- Cutover work can focus on resolvable payload references, NATS auth/TLS, and
+- Cutover work can focus on resolvable payload references, Redpanda auth/TLS, and
   operator-facing readiness clarity.
 
 ## Follow-up

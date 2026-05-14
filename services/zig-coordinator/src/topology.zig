@@ -9,7 +9,7 @@ pub const Error = error{
 pub const Stream = struct {
     key: []const u8,
     name: []const u8,
-    subjects_csv: []const u8,
+    topics_csv: []const u8,
     max_age: []const u8,
     dupe_window: []const u8,
     max_msgs: []const u8,
@@ -20,7 +20,7 @@ pub const Consumer = struct {
     stream_key: []const u8,
     stream_name: []const u8,
     name: []const u8,
-    filter_subject: []const u8,
+    filter_topic: []const u8,
 };
 
 pub const Topology = struct {
@@ -32,7 +32,7 @@ pub const Topology = struct {
         for (self.streams) |stream| {
             self.allocator.free(stream.key);
             self.allocator.free(stream.name);
-            self.allocator.free(stream.subjects_csv);
+            self.allocator.free(stream.topics_csv);
             self.allocator.free(stream.max_age);
             self.allocator.free(stream.dupe_window);
             self.allocator.free(stream.max_msgs);
@@ -44,7 +44,7 @@ pub const Topology = struct {
             self.allocator.free(consumer.stream_key);
             self.allocator.free(consumer.stream_name);
             self.allocator.free(consumer.name);
-            self.allocator.free(consumer.filter_subject);
+            self.allocator.free(consumer.filter_topic);
         }
         self.allocator.free(self.consumers);
     }
@@ -65,7 +65,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) Error!Topology {
         for (streams.items) |stream| {
             allocator.free(stream.key);
             allocator.free(stream.name);
-            allocator.free(stream.subjects_csv);
+            allocator.free(stream.topics_csv);
             allocator.free(stream.max_age);
             allocator.free(stream.dupe_window);
             allocator.free(stream.max_msgs);
@@ -90,7 +90,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) Error!Topology {
             const key = parts.next() orelse return error.TopologyParseFailed;
             const env_vars = parts.next() orelse return error.TopologyParseFailed;
             const default_name = parts.next() orelse return error.TopologyParseFailed;
-            const subjects = parts.next() orelse return error.TopologyParseFailed;
+            const topics = parts.next() orelse return error.TopologyParseFailed;
             const max_age = parts.next() orelse return error.TopologyParseFailed;
             const dupe_window = parts.next() orelse return error.TopologyParseFailed;
             const max_msgs = parts.next() orelse return error.TopologyParseFailed;
@@ -98,8 +98,8 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) Error!Topology {
 
             const name = try resolveEnvList(allocator, env_vars, default_name);
             errdefer allocator.free(name);
-            const resolved_subjects = try expandTemplate(allocator, subjects);
-            errdefer allocator.free(resolved_subjects);
+            const resolved_topics = try expandTemplate(allocator, topics);
+            errdefer allocator.free(resolved_topics);
 
             const key_copy = try allocator.dupe(u8, key);
             errdefer allocator.free(key_copy);
@@ -113,7 +113,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) Error!Topology {
             try streams.append(allocator, .{
                 .key = key_copy,
                 .name = name,
-                .subjects_csv = resolved_subjects,
+                .topics_csv = resolved_topics,
                 .max_age = max_age_copy,
                 .dupe_window = dupe_window_copy,
                 .max_msgs = max_msgs_copy,
@@ -145,7 +145,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) Error!Topology {
             allocator.free(consumer.stream_key);
             allocator.free(consumer.stream_name);
             allocator.free(consumer.name);
-            allocator.free(consumer.filter_subject);
+            allocator.free(consumer.filter_topic);
         }
         consumers.deinit(allocator);
     }
@@ -169,7 +169,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8) Error!Topology {
             .stream_key = stream_key_copy,
             .stream_name = stream_name_copy,
             .name = name,
-            .filter_subject = filter,
+            .filter_topic = filter,
         });
     }
 
@@ -247,10 +247,10 @@ const RawConsumer = struct {
     }
 };
 
-test "topology parser resolves streams consumers and subject templates" {
+test "topic_manifest parser resolves streams consumers and topic templates" {
     const manifest =
-        \\stream|audit|AUDIT_STREAM_NAME|AUDIT_STREAM|${SYNC_SCAN_SUBJECT:-sync.scan.request},wireless.audit|720h|2m|-1
-        \\consumer|scan|audit|SYNC_SCAN_CONSUMER|zig-coordinator-scan|${SYNC_SCAN_SUBJECT:-sync.scan.request}
+        \\stream|audit|AUDIT_STREAM_NAME|AUDIT_STREAM|${SYNC_SCAN_TOPIC:-sync.scan.request},wireless.audit|720h|2m|-1
+        \\consumer|scan|audit|SYNC_SCAN_CONSUMER|zig-coordinator-scan|${SYNC_SCAN_TOPIC:-sync.scan.request}
     ;
 
     var parsed = try parse(std.testing.allocator, manifest);
@@ -259,8 +259,8 @@ test "topology parser resolves streams consumers and subject templates" {
     try std.testing.expectEqual(@as(usize, 1), parsed.streams.len);
     try std.testing.expectEqualStrings("audit", parsed.streams[0].key);
     try std.testing.expectEqualStrings("AUDIT_STREAM", parsed.streams[0].name);
-    try std.testing.expectEqualStrings("sync.scan.request,wireless.audit", parsed.streams[0].subjects_csv);
+    try std.testing.expectEqualStrings("sync.scan.request,wireless.audit", parsed.streams[0].topics_csv);
     try std.testing.expectEqual(@as(usize, 1), parsed.consumers.len);
     try std.testing.expectEqualStrings("AUDIT_STREAM", parsed.consumers[0].stream_name);
-    try std.testing.expectEqualStrings("sync.scan.request", parsed.consumers[0].filter_subject);
+    try std.testing.expectEqualStrings("sync.scan.request", parsed.consumers[0].filter_topic);
 }

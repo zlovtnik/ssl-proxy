@@ -86,14 +86,14 @@ fn routes_wireless_alert_and_inventory_targets() {
         ),
     ];
 
-    for (subject, payload) in cases {
+    for (topic, payload) in cases {
         let mut sink = RecordingSink::default();
         let result = handle_load_with_sink(
             OracleLoad {
-                job_id: format!("job-{subject}"),
-                batch_id: format!("batch-{subject}"),
+                job_id: format!("job-{topic}"),
+                batch_id: format!("batch-{topic}"),
                 batch_no: 0,
-                stream_name: subject.to_string(),
+                stream_name: topic.to_string(),
                 payload_ref: inline_payload(payload),
                 cursor_start: "1".to_string(),
                 cursor_end: "2".to_string(),
@@ -101,7 +101,7 @@ fn routes_wireless_alert_and_inventory_targets() {
             },
             &mut sink,
         );
-        assert_eq!(result.status, "success", "{subject}");
-        assert_eq!(result.row_count, 1, "{subject}");
+        assert_eq!(result.status, "success", "{topic}");
+        assert_eq!(result.row_count, 1, "{topic}");
     }
 }

@@ -11,10 +11,10 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run coordinator unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    const nats_integration_tests = addNatsIntegrationTests(b, target, optimize);
-    const run_nats_integration_tests = b.addRunArtifact(nats_integration_tests);
-    const nats_integration_step = b.step("test:nats-integration", "Run NATS JetStream integration tests gated by NATS_URL");
-    nats_integration_step.dependOn(&run_nats_integration_tests.step);
+    const redpanda_integration_tests = addRedpandaIntegrationTests(b, target, optimize);
+    const run_redpanda_integration_tests = b.addRunArtifact(redpanda_integration_tests);
+    const redpanda_integration_step = b.step("test:redpanda-integration", "Run Redpanda Redpanda integration tests gated by Redpanda_URL");
+    redpanda_integration_step.dependOn(&run_redpanda_integration_tests.step);
 }
 
 fn addCoordinatorExecutable(
@@ -83,7 +83,7 @@ fn addCoordinatorTests(
     return tests;
 }
 
-fn addNatsIntegrationTests(
+fn addRedpandaIntegrationTests(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -94,7 +94,7 @@ fn addNatsIntegrationTests(
     });
     if (@hasField(std.Build.TestOptions, "root_module")) {
         const test_module = b.createModule(.{
-            .root_source_file = b.path("src/nats.zig"),
+            .root_source_file = b.path("src/redpanda.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
@@ -106,7 +106,7 @@ fn addNatsIntegrationTests(
     }
 
     const tests = b.addTest(.{
-        .root_source_file = b.path("src/nats.zig"),
+        .root_source_file = b.path("src/redpanda.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,

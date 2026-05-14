@@ -1,7 +1,7 @@
 //! Two-tier persistence strategy for wireless audit event publishing.
 //!
-//! Implements a dual-path publish pipeline: primary path publishes to NATS; fallback path
-//! asks the coordinator to save audit_backlog retry rows. When NATS
+//! Implements a dual-path publish pipeline: primary path publishes to Redpanda; fallback path
+//! asks the coordinator to save audit_backlog retry rows. When Redpanda
 //! is unavailable, a circuit breaker opens and events are queued in an in-memory backlog until
 //! connectivity is restored. The circuit breaker uses exponential backoff, with automatic
 //! re-probing after the backoff timeout elapses. When the memory backlog cannot be flushed,
@@ -17,19 +17,19 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ssl_proxy::{
-    sync::{ScanRequest, SYNC_SCAN_REQUEST_SUBJECT},
+    sync::{ScanRequest, SYNC_SCAN_REQUEST_TOPIC},
     transport::ENQUEUE_TIMEOUT_ERROR,
 };
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_SUBJECT},
+    audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_TOPIC},
     backlog::{BacklogError, BacklogStore, IngestRecord},
     model::{AuditEntry, HandshakeAlert},
 };
 
-pub const HANDSHAKE_ALERT_SUBJECT: &str = "wifi.alert.handshake";
+pub const HANDSHAKE_ALERT_TOPIC: &str = "wifi.alert.handshake";
 
 /// Errors that can occur during audit entry publishing.
 #[derive(Debug, Error)]
@@ -44,11 +44,11 @@ pub enum PublishError {
     Queued(String),
 }
 
-/// Trait for publishing audit entries and alerts to NATS.
+/// Trait for publishing audit entries and alerts to Redpanda.
 #[async_trait]
 pub trait PublishClient: Send + Sync {
-    fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String>;
-    async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String>;
+    fn enqueue_message(&self, topic: &str, payload: &str) -> Result<(), String>;
+    async fn publish_message(&self, topic: &str, payload: &str) -> Result<(), String>;
     fn payload_ref_for_event(&self, raw_payload: &str, observed_at: &str)
         -> Result<String, String>;
 }
@@ -66,12 +66,12 @@ impl SyncPublisherClient {
 
 #[async_trait]
 impl PublishClient for SyncPublisherClient {
-    fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
-        self.publisher.try_enqueue_message(subject, payload)
+    fn enqueue_message(&self, topic: &str, payload: &str) -> Result<(), String> {
+        self.publisher.try_enqueue_message(topic, payload)
     }
 
-    async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
-        self.publisher.publish_message(subject, payload).await
+    async fn publish_message(&self, topic: &str, payload: &str) -> Result<(), String> {
+        self.publisher.publish_message(topic, payload).await
     }
 
     fn payload_ref_for_event(
@@ -226,7 +226,7 @@ struct PreparedPublish {
 }
 
 /// Two-phase write: publishes the wireless audit payload through the backlog boundary, then
-/// enqueues the scan request to NATS.
+/// enqueues the scan request to Redpanda.
 pub async fn publish_entry(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,
@@ -290,7 +290,7 @@ pub async fn publish_entry(
     Ok(())
 }
 
-/// Publishes a handshake alert to the HANDSHAKE_ALERT_SUBJECT.
+/// Publishes a handshake alert to the HANDSHAKE_ALERT_TOPIC.
 pub async fn publish_handshake_alert(
     publisher: &dyn PublishClient,
     alert: &HandshakeAlert,
@@ -300,7 +300,7 @@ pub async fn publish_handshake_alert(
     queue_publish_with_backpressure(
         publisher,
         "publish_handshake_alert",
-        HANDSHAKE_ALERT_SUBJECT,
+        HANDSHAKE_ALERT_TOPIC,
         &payload,
         &key,
     )
@@ -308,14 +308,14 @@ pub async fn publish_handshake_alert(
     .map_err(PublishError::Publish)?;
     debug!(
         dedupe_key = %key,
-        subject = HANDSHAKE_ALERT_SUBJECT,
+        topic = HANDSHAKE_ALERT_TOPIC,
         payload_bytes = payload.len(),
         "queued handshake alert"
     );
     Ok(())
 }
 
-/// Publishes a wireless bandwidth event to the BANDWIDTH_SUBJECT.
+/// Publishes a wireless bandwidth event to the BANDWIDTH_TOPIC.
 pub async fn publish_bandwidth_event(
     publisher: &dyn PublishClient,
     event: &WirelessBandwidthEvent,
@@ -327,7 +327,7 @@ pub async fn publish_bandwidth_event(
     queue_publish_with_backpressure(
         publisher,
         "publish_bandwidth_event",
-        BANDWIDTH_SUBJECT,
+        BANDWIDTH_TOPIC,
         &payload,
         &key,
     )
@@ -335,28 +335,28 @@ pub async fn publish_bandwidth_event(
     .map_err(PublishError::Publish)?;
     debug!(
         dedupe_key = %key,
-        subject = BANDWIDTH_SUBJECT,
+        topic = BANDWIDTH_TOPIC,
         payload_bytes = payload.len(),
         "queued wireless bandwidth event"
     );
     Ok(())
 }
 
-/// Publishes a generic JSON-serializable value to the specified NATS subject.
+/// Publishes a generic JSON-serializable value to the specified Redpanda topic.
 pub async fn publish_json<T: serde::Serialize>(
     publisher: &dyn PublishClient,
     operation: &'static str,
-    subject: &str,
+    topic: &str,
     value: &T,
 ) -> Result<(), PublishError> {
     let payload = serde_json::to_string(value)?;
     let key = sha256_hex(&payload);
-    queue_publish_with_backpressure(publisher, operation, subject, &payload, &key)
+    queue_publish_with_backpressure(publisher, operation, topic, &payload, &key)
         .await
         .map_err(PublishError::Publish)?;
     debug!(
         dedupe_key = %key,
-        subject,
+        topic,
         payload_bytes = payload.len(),
         "queued wireless JSON event"
     );
@@ -781,14 +781,14 @@ async fn enqueue_prepared_publish(
     queue_publish_with_backpressure(
         publisher,
         "publish_scan_request",
-        SYNC_SCAN_REQUEST_SUBJECT,
+        SYNC_SCAN_REQUEST_TOPIC,
         &prepared.request_payload,
         dedupe_key,
     )
     .await?;
     debug!(
         dedupe_key,
-        subject = SYNC_SCAN_REQUEST_SUBJECT,
+        topic = SYNC_SCAN_REQUEST_TOPIC,
         payload_bytes = prepared.request_payload.len(),
         "queued scan request"
     );
@@ -798,28 +798,28 @@ async fn enqueue_prepared_publish(
 async fn queue_publish_with_backpressure(
     publisher: &dyn PublishClient,
     stage: &str,
-    subject: &str,
+    topic: &str,
     payload: &str,
     dedupe_key: &str,
 ) -> Result<(), String> {
-    match publisher.enqueue_message(subject, payload) {
+    match publisher.enqueue_message(topic, payload) {
         Ok(()) => Ok(()),
         Err(error) if error == ENQUEUE_TIMEOUT_ERROR => {
             debug!(
                 dedupe_key,
-                subject,
+                topic,
                 payload_bytes = payload.len(),
                 "sync publisher queue full; retrying with backpressure"
             );
             publisher
-                .publish_message(subject, payload)
+                .publish_message(topic, payload)
                 .await
                 .map_err(|error| {
-                    format!("stage={stage} subject={subject} dedupe_key={dedupe_key}: {error}")
+                    format!("stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}")
                 })
         }
         Err(error) => Err(format!(
-            "stage={stage} subject={subject} dedupe_key={dedupe_key}: {error}"
+            "stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}"
         )),
     }
 }
@@ -894,19 +894,19 @@ mod tests {
 
     #[async_trait]
     impl PublishClient for MemoryPublisher {
-        fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        fn enqueue_message(&self, topic: &str, payload: &str) -> Result<(), String> {
             if self.fail {
-                return Err("nats unavailable".to_string());
+                return Err("redpanda unavailable".to_string());
             }
             self.published
                 .lock()
                 .unwrap()
-                .push((subject.to_string(), payload.to_string()));
+                .push((topic.to_string(), payload.to_string()));
             Ok(())
         }
 
-        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
-            self.enqueue_message(subject, payload)
+        async fn publish_message(&self, topic: &str, payload: &str) -> Result<(), String> {
+            self.enqueue_message(topic, payload)
         }
 
         fn payload_ref_for_event(
@@ -979,7 +979,7 @@ mod tests {
     #[async_trait]
     impl BacklogStore for FailingBacklog {
         async fn record_ingest(&self, _record: IngestRecord<'_>) -> Result<(), BacklogError> {
-            Err(BacklogError::Nats {
+            Err(BacklogError::Redpanda {
                 operation: "record_ingest",
                 message: "unavailable".to_string(),
             })
@@ -992,7 +992,7 @@ mod tests {
             _payload: &str,
             _error: &str,
         ) -> Result<(), BacklogError> {
-            Err(BacklogError::Nats {
+            Err(BacklogError::Redpanda {
                 operation: "save_pending",
                 message: "unavailable".to_string(),
             })
@@ -1035,7 +1035,7 @@ mod tests {
     impl BacklogStore for SelectiveIngestFailBacklog {
         async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
             if self.failing_keys.contains(record.dedupe_key) {
-                return Err(BacklogError::Nats {
+                return Err(BacklogError::Redpanda {
                     operation: "record_ingest",
                     message: "ingest ledger unavailable".to_string(),
                 });
@@ -1122,7 +1122,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_publish_emits_both_subjects() {
+    async fn successful_publish_emits_both_topics() {
         let state = test_state();
         let publisher = MemoryPublisher {
             fail: false,
@@ -1136,7 +1136,7 @@ mod tests {
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_TOPIC);
         assert!(backlog.rows.lock().unwrap().is_empty());
         let ingest_rows = backlog.ingest_rows.lock().unwrap();
         assert_eq!(ingest_rows.len(), 1);
@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publishes_handshake_alert_subject() {
+    async fn publishes_handshake_alert_topic() {
         let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
@@ -1170,14 +1170,14 @@ mod tests {
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, HANDSHAKE_ALERT_SUBJECT);
+        assert_eq!(published[0].0, HANDSHAKE_ALERT_TOPIC);
         assert!(published[0]
             .1
             .contains("\"client_mac\":\"aa:bb:cc:dd:ee:01\""));
     }
 
     #[tokio::test]
-    async fn publishes_bandwidth_event_subject() {
+    async fn publishes_bandwidth_event_topic() {
         let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
@@ -1218,7 +1218,7 @@ mod tests {
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, BANDWIDTH_SUBJECT);
+        assert_eq!(published[0].0, BANDWIDTH_TOPIC);
         assert!(published[0]
             .1
             .contains("\"event_type\":\"wireless_bandwidth_window\""));
@@ -1247,7 +1247,7 @@ mod tests {
 
     #[async_trait]
     impl PublishClient for QueueFullOnEnqueuePublisher {
-        fn enqueue_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        fn enqueue_message(&self, topic: &str, payload: &str) -> Result<(), String> {
             let mut queue_full_remaining = self.queue_full_remaining.lock().unwrap();
             if *queue_full_remaining > 0 {
                 *queue_full_remaining -= 1;
@@ -1256,15 +1256,15 @@ mod tests {
             self.published
                 .lock()
                 .unwrap()
-                .push((subject.to_string(), payload.to_string()));
+                .push((topic.to_string(), payload.to_string()));
             Ok(())
         }
 
-        async fn publish_message(&self, subject: &str, payload: &str) -> Result<(), String> {
+        async fn publish_message(&self, topic: &str, payload: &str) -> Result<(), String> {
             self.published
                 .lock()
                 .unwrap()
-                .push((subject.to_string(), payload.to_string()));
+                .push((topic.to_string(), payload.to_string()));
             Ok(())
         }
 
@@ -1296,7 +1296,7 @@ mod tests {
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_SUBJECT);
+        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_TOPIC);
     }
 
     #[tokio::test]
@@ -1343,7 +1343,7 @@ mod tests {
     async fn flush_memory_backlog_opens_circuit_breaker_when_save_pending_fails() {
         let state = test_state();
         let payload = "{\"event_type\":\"wifi_management_frame\"}".to_string();
-        let error = "nats unavailable".to_string();
+        let error = "redpanda unavailable".to_string();
 
         state.lock().unwrap().put_memory_backlog(
             "dedupe-1".to_string(),
@@ -1369,7 +1369,7 @@ mod tests {
         let payload = serde_json::to_string(&event).unwrap();
         let key = dedupe_key(&payload);
         backlog
-            .save_pending(&key, "wireless.audit", &payload, "nats unavailable")
+            .save_pending(&key, "wireless.audit", &payload, "redpanda unavailable")
             .await
             .unwrap();
 
@@ -1399,7 +1399,7 @@ mod tests {
         let payload = serde_json::to_string(&event).unwrap();
         let key = dedupe_key(&payload);
         backlog
-            .save_pending(&key, "wireless.audit", &payload, "nats unavailable")
+            .save_pending(&key, "wireless.audit", &payload, "redpanda unavailable")
             .await
             .unwrap();
 
@@ -1444,7 +1444,7 @@ mod tests {
                 &first_key,
                 "wireless.audit",
                 &first_payload,
-                "nats unavailable",
+                "redpanda unavailable",
             )
             .await
             .unwrap();
@@ -1453,7 +1453,7 @@ mod tests {
                 &second_key,
                 "wireless.audit",
                 &second_payload,
-                "nats unavailable",
+                "redpanda unavailable",
             )
             .await
             .unwrap();
@@ -1488,7 +1488,7 @@ mod tests {
         let state = test_state();
         let backlog = MemoryBacklog::default();
         backlog
-            .save_pending("bad", "wireless.audit", "{}", "nats unavailable")
+            .save_pending("bad", "wireless.audit", "{}", "redpanda unavailable")
             .await
             .unwrap();
         let publisher = MemoryPublisher {
@@ -1518,7 +1518,7 @@ mod tests {
         let payload = serde_json::to_string(&event).unwrap();
         let key = dedupe_key(&payload);
         backlog
-            .save_pending(&key, "wireless.audit", &payload, "nats unavailable")
+            .save_pending(&key, "wireless.audit", &payload, "redpanda unavailable")
             .await
             .unwrap();
         let publisher = MemoryPublisher {

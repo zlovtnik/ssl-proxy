@@ -32,16 +32,16 @@ For threat-centric review and control-gap tracking, use the companion [Threat Mo
 **Guiding principles:**
 
 - Zero blocking I/O on the request hot path — all writes are fire-and-forget via the existing `EventSender` channel or new side-car queues.
-- Data captured at the proxy is the ground truth; the proxy publishes sync-plane work through NATS/outbox and the Oracle worker owns Oracle persistence.
+- Data captured at the proxy is the ground truth; the proxy publishes sync-plane work through Redpanda/outbox and the Oracle worker owns Oracle persistence.
 - Bandwidth improvements precede new capture features to ensure headroom.
 - Every new table/column is guarded by an idempotent migration following the `Vxxx__*.sql` convention already in `sql/`.
 
 ### Sync-plane architecture
 
-- `sync.scan.request` is the proxy-to-coordinator discovery subject. Messages identify a stream, observed timestamp, dedupe key, and a payload reference.
+- `sync.scan.request` is the proxy-to-coordinator discovery topic. Messages identify a stream, observed timestamp, dedupe key, and a payload reference.
 - `inline://json/...` references carry small JSON payloads directly. `outbox://...` references point to spooled payload files in the shared sync outbox volume.
-- `sync.oracle.load` is the coordinator-to-worker batch dispatch subject. The coordinator dedupes in Postgres, advances cursors, and publishes load batches.
-- `sync.oracle.result` is the worker-to-coordinator result subject. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batch`, `sync_job`, and `sync_error`.
+- `sync.oracle.load` is the coordinator-to-worker batch dispatch topic. The coordinator dedupes in Postgres, advances cursors, and publishes load batches.
+- `sync.oracle.result` is the worker-to-coordinator result topic. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batch`, `sync_job`, and `sync_error`.
 - `sync-publish` refers to the proxy-side publish path that prepares payload references and emits `sync.scan.request`; it must never call Oracle directly.
 
 ## Execution Mode (How We’ll Run This) {#execution-mode}
@@ -356,7 +356,7 @@ The first sprint should front-load performance headroom and unblock later compli
 - [x] **P0:** Keep the existing non-capture transparent fast path on `copy_bidirectional`; treat it as baseline, not backlog.
 - [x] **P0:** Keep DNS positive/negative cache behavior as baseline runtime capability, not new sprint scope.
 - [ ] **P0:** Replace placeholder sync payload references with resolvable `inline://json/...` and `outbox://...` references.
-- [ ] **P0:** Add NATS auth/TLS configuration to the proxy publisher and surface publisher health through `/ready`.
+- [ ] **P0:** Add Redpanda auth/TLS configuration to the proxy publisher and surface publisher health through `/ready`.
 - [ ] **P1:** Remove stale cutover/backlog drift in docs and inline TODOs so the repo reflects the live architecture.
 - [ ] **P1:** Add a coordinator/worker follow-up task for resolving `outbox://...` payload references from shared storage.
 - [ ] **P1:** Add a benchmark harness focused on sync-publish and tunnel-regression checks instead of the removed Oracle writer path.

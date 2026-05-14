@@ -56,40 +56,40 @@ pub(crate) fn check_secret_file(path: &str) -> Result<(), String> {
     }
 }
 
-pub(crate) fn check_nats(nats_url: &str) -> Result<(), String> {
-    let address = parse_nats_address(nats_url)?;
+pub(crate) fn check_redpanda(redpanda_bootstrap_servers: &str) -> Result<(), String> {
+    let address = parse_redpanda_address(redpanda_bootstrap_servers)?;
     let socket = address
         .to_socket_addrs()
-        .map_err(|error| format!("resolve NATS address {address}: {error}"))?
+        .map_err(|error| format!("resolve Redpanda address {address}: {error}"))?
         .next()
-        .ok_or_else(|| format!("no NATS addresses resolved for {address}"))?;
+        .ok_or_else(|| format!("no Redpanda addresses resolved for {address}"))?;
     TcpStream::connect_timeout(&socket, Duration::from_secs(2))
         .map(|_| ())
-        .map_err(|error| format!("connect NATS {address}: {error}"))
+        .map_err(|error| format!("connect Redpanda {address}: {error}"))
 }
 
-pub(crate) fn parse_nats_address(nats_url: &str) -> Result<String, String> {
-    let trimmed = nats_url.trim();
+pub(crate) fn parse_redpanda_address(redpanda_bootstrap_servers: &str) -> Result<String, String> {
+    let trimmed = redpanda_bootstrap_servers.trim();
     if trimmed.starts_with("tls://") {
-        return Err("tls:// NATS URLs are not supported for worker healthcheck".to_string());
+        return Err("tls:// Redpanda URLs are not supported for worker healthcheck".to_string());
     }
-    let without_scheme = trimmed.strip_prefix("nats://").unwrap_or(trimmed);
+    let without_scheme = trimmed.strip_prefix("redpanda://").unwrap_or(trimmed);
     let authority = without_scheme
         .split('/')
         .next()
-        .ok_or_else(|| "missing NATS authority".to_string())?;
+        .ok_or_else(|| "missing Redpanda authority".to_string())?;
     if authority.is_empty() {
-        return Err("missing NATS authority".to_string());
+        return Err("missing Redpanda authority".to_string());
     }
     if authority.contains(':') {
         Ok(authority.to_string())
     } else {
-        Ok(format!("{authority}:4222"))
+        Ok(format!("{authority}:9092"))
     }
 }
 
-pub(crate) fn nats_log_authority(nats_url: &str) -> String {
-    match parse_nats_address(nats_url) {
+pub(crate) fn redpanda_log_authority(redpanda_url: &str) -> String {
+    match parse_redpanda_address(redpanda_url) {
         Ok(authority) => authority
             .rsplit_once('@')
             .map(|(_, host)| host.to_string())
@@ -100,18 +100,18 @@ pub(crate) fn nats_log_authority(nats_url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_nats_address;
+    use super::parse_redpanda_address;
 
     #[test]
-    fn parse_nats_address_adds_default_port() {
+    fn parse_redpanda_address_adds_default_port() {
         assert_eq!(
-            parse_nats_address("nats://nats.local").unwrap(),
-            "nats.local:4222"
+            parse_redpanda_address("redpanda.local").unwrap(),
+            "redpanda.local:9092"
         );
     }
 
     #[test]
-    fn parse_nats_address_rejects_tls_urls() {
-        assert!(parse_nats_address("tls://nats.local:4222").is_err());
+    fn parse_redpanda_address_rejects_tls_urls() {
+        assert!(parse_redpanda_address("tls://redpanda.local:4222").is_err());
     }
 }

@@ -3,11 +3,11 @@ const config = @import("config.zig");
 const db = @import("db.zig");
 const db_sync = @import("db_sync.zig");
 const logging = @import("logging.zig");
-const nats = @import("nats.zig");
-const service_nats = @import("service_nats.zig");
-const stream_config = @import("stream_config.zig");
+const redpanda = @import("redpanda.zig");
+const service_redpanda = @import("service_redpanda.zig");
+const topic_manifest = @import("topic_manifest.zig");
 
-const SHADOW_ALERT_SUBJECT = "audit.threat.shadow_device";
+const SHADOW_ALERT_TOPIC = "audit.threat.shadow_device";
 const INLINE_PAYLOAD_REF_PREFIX = "inline://json/";
 const OUTBOX_PAYLOAD_REF_PREFIX = "outbox://";
 const MAX_SCAN_PAYLOAD_BYTES = 16 * 1024 * 1024;
@@ -30,7 +30,7 @@ const DispatchPayload = struct {
 pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
     while (true) {
-        const batch = try service_nats.pullScanBatch(allocator, io, cfg, cfg.scan_fetch_count);
+        const batch = try service_redpanda.pullScanBatch(allocator, io, cfg, cfg.scan_fetch_count);
         if (batch.items.len == 0) break;
 
         for (batch.items) |raw_line| {
@@ -53,7 +53,7 @@ pub fn dispatchNextBatch(allocator: std.mem.Allocator, io: std.Io, cfg: config.C
             defer if (parsed_payload) |*parsed| parsed.deinit();
             logDispatch("selected", value, parsed_payload);
 
-            service_nats.publishWithMode(allocator, io, cfg, cfg.load_subject, value, .jetstream_ack, error.BatchDispatchFailed) catch |err| {
+            service_redpanda.publishWithMode(allocator, io, cfg, cfg.load_topic, value, .redpanda_ack, error.BatchDispatchFailed) catch |err| {
                 var error_buffer: [128]u8 = undefined;
                 const error_text = dispatchPublishErrorText(&error_buffer, err);
                 const summary = db_sync.markBatchDispatchFailed(database, value, error_text, cfg.batch_max_attempts) catch |mark_err| {
@@ -97,7 +97,7 @@ pub fn recoverStaleDispatchedBatches(cfg: config.Config, database: *db.Client) !
 pub fn handleResults(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
     while (true) {
-        const batch = try service_nats.pullResultBatch(allocator, io, cfg, cfg.result_fetch_count);
+        const batch = try service_redpanda.pullResultBatch(allocator, io, cfg, cfg.result_fetch_count);
         if (batch.items.len == 0) break;
 
         for (batch.items) |raw_line| {
@@ -133,7 +133,7 @@ pub fn runShadowAudit(
     while (iterator.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, " \t\r\n");
         if (line.len == 0) continue;
-        try service_nats.publish(allocator, io, cfg, SHADOW_ALERT_SUBJECT, line, error.AlertPublishFailed);
+        try service_redpanda.publish(allocator, io, cfg, SHADOW_ALERT_TOPIC, line, error.AlertPublishFailed);
         had_work = true;
     }
     return had_work;
@@ -147,7 +147,7 @@ fn recordScanRequest(allocator: std.mem.Allocator, io: std.Io, cfg: config.Confi
     defer parsed.deinit();
 
     const request = parsed.value;
-    if (!stream_config.streamNameIsConfigured(cfg.stream_names_csv, request.stream_name)) {
+    if (!topic_manifest.streamNameIsConfigured(cfg.stream_names_csv, request.stream_name)) {
         logging.info().stringSafe("event", "scan_request_ingest").stringSafe("status", "ignored").string("stream_name", request.stream_name).log();
         return false;
     }

@@ -1,23 +1,23 @@
 const std = @import("std");
 
 pub const Error = error{
-    InvalidNatsUrl,
+    InvalidRedpandaUrl,
 };
 
-pub fn parseNatsAuthority(allocator: std.mem.Allocator, nats_url: []const u8) Error![]u8 {
-    const trimmed = std.mem.trim(u8, nats_url, " \t\r\n");
-    const no_scheme = if (std.mem.startsWith(u8, trimmed, "nats://")) trimmed["nats://".len..] else trimmed;
+pub fn parseRedpandaAuthority(allocator: std.mem.Allocator, redpanda_url: []const u8) Error![]u8 {
+    const trimmed = std.mem.trim(u8, redpanda_url, " \t\r\n");
+    const no_scheme = if (std.mem.startsWith(u8, trimmed, "redpanda://")) trimmed["redpanda://".len..] else trimmed;
     var iterator = std.mem.splitScalar(u8, no_scheme, '/');
     const authority = iterator.first();
-    if (authority.len == 0) return error.InvalidNatsUrl;
+    if (authority.len == 0) return error.InvalidRedpandaUrl;
 
     const host_start = if (std.mem.lastIndexOfScalar(u8, authority, '@')) |at| at + 1 else 0;
     const host_and_port = authority[host_start..];
     if (std.mem.lastIndexOfScalar(u8, host_and_port, ':') != null) {
-        return allocator.dupe(u8, authority) catch error.InvalidNatsUrl;
+        return allocator.dupe(u8, authority) catch error.InvalidRedpandaUrl;
     }
 
-    return std.fmt.allocPrint(allocator, "{s}:4222", .{authority}) catch error.InvalidNatsUrl;
+    return std.fmt.allocPrint(allocator, "{s}:4222", .{authority}) catch error.InvalidRedpandaUrl;
 }
 
 pub fn looksLikeNoMessage(stderr: []const u8) bool {

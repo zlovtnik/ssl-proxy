@@ -19,8 +19,8 @@ use std::{
 pub(crate) const SERVICE_NAME: &str = "oracle-worker";
 pub(crate) const HEARTBEAT_INTERVAL_SECS: u64 = 300;
 pub(crate) const DEFAULT_AUDIT_STREAM_NAME: &str = "AUDIT_STREAM";
-pub(crate) const DEFAULT_SYNC_LOAD_SUBJECT: &str = "sync.oracle.load";
-pub(crate) const DEFAULT_SYNC_RESULT_SUBJECT: &str = "sync.oracle.result";
+pub(crate) const DEFAULT_SYNC_LOAD_TOPIC: &str = "sync.oracle.load";
+pub(crate) const DEFAULT_SYNC_RESULT_TOPIC: &str = "sync.oracle.result";
 pub(crate) const DEFAULT_SYNC_LOAD_CONSUMER: &str = "oracle-worker-load";
 pub(crate) const DEFAULT_ORACLE_WORKER_PARALLELISM: usize = 32;
 

@@ -3,14 +3,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use async_nats::jetstream;
-use futures::StreamExt;
 use r2d2::Pool;
 use r2d2_oracle::OracleConnectionManager;
+use rdkafka::{
+    consumer::{CommitMode, Consumer, StreamConsumer},
+    producer::{FutureProducer, FutureRecord},
+    ClientConfig, Message,
+};
 use tokio::sync::Semaphore;
 
 use crate::config::RunConfig;
-use crate::consumer::ensure_load_consumer;
 use crate::healthcheck::healthcheck;
 use crate::log::{escape_for_log, log_poison_message};
 use crate::{worker, HEARTBEAT_INTERVAL_SECS, SERVICE_NAME};
@@ -20,22 +22,13 @@ pub(crate) async fn run_loop(
     pool: Arc<Pool<OracleConnectionManager>>,
     started: Instant,
 ) -> Result<(), String> {
-    let client = async_nats::connect(config.sync_nats_url.clone())
-        .await
-        .map_err(|error| format!("connect NATS {}: {error}", config.sync_nats_url))?;
-    let jetstream = jetstream::new(client);
-    let stream = jetstream
-        .get_stream(config.audit_stream_name.clone())
-        .await
-        .map_err(|error| format!("get JetStream stream {}: {error}", config.audit_stream_name))?;
-    let consumer = ensure_load_consumer(&stream, &config).await?;
-    let mut messages = consumer
-        .messages()
-        .await
-        .map_err(|error| format!("open pull consumer message stream: {error}"))?;
+    let consumer = build_consumer(&config)?;
+    consumer
+        .subscribe(&[config.load_topic.as_str()])
+        .map_err(|error| format!("subscribe to {}: {error}", config.load_topic))?;
+    let producer = Arc::new(build_producer(&config)?);
 
     let semaphore = Arc::new(Semaphore::new(config.oracle_worker_parallelism));
-    let jetstream = Arc::new(jetstream);
     let mut last_heartbeat = Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -54,25 +47,18 @@ pub(crate) async fn run_loop(
             _ = heartbeat.tick() => {
                 emit_heartbeat(started, &mut last_heartbeat, &pool).await?;
             }
-            next_message = messages.next() => {
-                match next_message {
-                    Some(Ok(message)) => {
-                        let permit = semaphore.clone().acquire_owned().await
-                            .map_err(|error| format!("acquire semaphore permit: {error}"))?;
-                        let jetstream = jetstream.clone();
-                        let config = config.clone();
-                        let pool = pool.clone();
+            next_message = consumer.recv() => {
+                let message = next_message.map_err(|error| format!("consume {} message: {error}", config.load_topic))?;
+                let permit = semaphore.clone().acquire_owned().await
+                    .map_err(|error| format!("acquire semaphore permit: {error}"))?;
+                let config = config.clone();
+                let pool = pool.clone();
+                let producer = producer.clone();
 
-                        tokio::spawn(async move {
-                            let _permit = permit;
-                            if let Err(e) = handle_load_message(&jetstream, &config, &pool, message).await {
-                                eprintln!("service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"", escape_for_log(&e));
-                            }
-                        });
-                    }
-                    Some(Err(error)) => return Err(format!("consume sync.oracle.load message: {error}")),
-                    None => return Err("sync.oracle.load consumer stream ended unexpectedly".to_string()),
+                if let Err(e) = handle_load_message(&producer, &config, &pool, &consumer, message).await {
+                    eprintln!("service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"", escape_for_log(&e));
                 }
+                drop(permit);
             }
         }
     }
@@ -109,19 +95,20 @@ async fn emit_heartbeat(
 }
 
 async fn handle_load_message(
-    jetstream: &Arc<jetstream::Context>,
+    producer: &FutureProducer,
     config: &Arc<RunConfig>,
     pool: &Arc<Pool<OracleConnectionManager>>,
-    message: jetstream::Message,
+    consumer: &StreamConsumer,
+    message: rdkafka::message::BorrowedMessage<'_>,
 ) -> Result<(), String> {
-    let load = match serde_json::from_slice::<worker::OracleLoad>(&message.payload) {
+    let payload = message.payload().unwrap_or_default();
+    let load = match serde_json::from_slice::<worker::OracleLoad>(payload) {
         Ok(load) => load,
         Err(error) => {
             log_poison_message(&message, &error);
-            message
-                .ack()
-                .await
-                .map_err(|ack_error| format!("ack poison message: {ack_error}"))?;
+            consumer
+                .commit_message(&message, CommitMode::Async)
+                .map_err(|ack_error| format!("commit poison message: {ack_error}"))?;
             return Ok(());
         }
     };
@@ -135,7 +122,7 @@ async fn handle_load_message(
         load.cursor_start,
         load.cursor_end,
         load.attempt,
-        message.payload.len(),
+        payload.len(),
     );
 
     let batch_started = Instant::now();
@@ -143,13 +130,14 @@ async fn handle_load_message(
     let result = tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &pool))
         .await
         .map_err(|error| format!("oracle load task panicked: {error}"))?;
-    publish_result(jetstream, config, &message, result, batch_started).await
+    publish_result(producer, config, consumer, &message, result, batch_started).await
 }
 
 async fn publish_result(
-    jetstream: &jetstream::Context,
+    producer: &FutureProducer,
     config: &RunConfig,
-    message: &jetstream::Message,
+    consumer: &StreamConsumer,
+    message: &rdkafka::message::BorrowedMessage<'_>,
     result: worker::OracleResult,
     batch_started: Instant,
 ) -> Result<(), String> {
@@ -159,24 +147,37 @@ async fn publish_result(
     let row_count = result.row_count;
     let payload = serde_json::to_vec(&result)
         .map_err(|error| format!("serialize OracleResult for batch {batch_id}: {error}"))?;
-    let publish_ack = jetstream
-        .publish(config.result_subject.clone(), payload.into())
+    producer
+        .send(
+            FutureRecord::to(config.result_topic.as_str())
+                .payload(&payload)
+                .key(batch_id.as_str()),
+            Duration::from_secs(5),
+        )
         .await
-        .map_err(|error| {
-            format!(
-                "publish sync.oracle.result for batch {batch_id} to {}: {error}",
-                config.result_subject
-            )
-        })?;
-    publish_ack
-        .await
-        .map_err(|error| format!("await publish ack for batch {batch_id}: {error}"))?;
-    message
-        .ack()
-        .await
-        .map_err(|error| format!("ack sync.oracle.load message for batch {batch_id}: {error}"))?;
+        .map_err(|(error, _)| format!("publish result for batch {batch_id}: {error}"))?;
+    consumer
+        .commit_message(message, CommitMode::Async)
+        .map_err(|error| format!("commit load message for batch {batch_id}: {error}"))?;
     log_result(&batch_id, &status, row_count, batch_duration_ms, &result);
     Ok(())
+}
+
+fn build_consumer(config: &RunConfig) -> Result<StreamConsumer, String> {
+    ClientConfig::new()
+        .set("bootstrap.servers", &config.redpanda_bootstrap_servers)
+        .set("group.id", &config.load_consumer)
+        .set("enable.auto.commit", "false")
+        .set("auto.offset.reset", "earliest")
+        .create()
+        .map_err(|error| format!("create Redpanda consumer: {error}"))
+}
+
+fn build_producer(config: &RunConfig) -> Result<FutureProducer, String> {
+    ClientConfig::new()
+        .set("bootstrap.servers", &config.redpanda_bootstrap_servers)
+        .create()
+        .map_err(|error| format!("create Redpanda producer: {error}"))
 }
 
 fn log_result(

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::config::HealthcheckConfig;
 use crate::infra::{
-    check_nats, check_oracle_libs, check_secret_file, check_wallet, nats_log_authority,
+    check_redpanda, check_oracle_libs, check_secret_file, check_wallet, redpanda_log_authority,
 };
 use crate::log::escape_for_log;
 use crate::{worker, SERVICE_NAME};
@@ -12,8 +12,8 @@ pub(crate) fn healthcheck(mode: &str) -> Result<(), String> {
     println!("service={SERVICE_NAME} event=healthcheck status=start mode={mode}");
     let config = load_config(mode, started)?;
     println!(
-        "service={SERVICE_NAME} event=config_summary mode={mode} nats_authority={} wallet_path={} ld_library_path={} oracle_pass_file={}",
-        nats_log_authority(&config.sync_nats_url),
+        "service={SERVICE_NAME} event=config_summary mode={mode} redpanda_authority={} wallet_path={} ld_library_path={} oracle_pass_file={}",
+        redpanda_log_authority(&config.redpanda_bootstrap_servers),
         config.tns_admin,
         config.ld_library_path,
         config.oracle_pass_file,
@@ -31,8 +31,8 @@ pub(crate) fn healthcheck(mode: &str) -> Result<(), String> {
     run_step(mode, started, "check_oracle_connection", || {
         worker::check_oracle_connection_from_env()
     })?;
-    run_step(mode, started, "check_nats", || {
-        check_nats(&config.sync_nats_url)
+    run_step(mode, started, "check_redpanda", || {
+        check_redpanda(&config.redpanda_bootstrap_servers)
     })?;
     println!(
         "service={SERVICE_NAME} event=healthcheck status=ok mode={mode} duration_ms={}",

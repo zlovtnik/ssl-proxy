@@ -5,10 +5,10 @@
 //! All mutable per-frame state lives in PipelineState, which is
 //! owned by the loop and never shared across tasks, avoiding locks on the hot path.
 //! SensorHandles bundles the shared resources that are either read-only or Arc-wrapped:
-//! the NATS backlog, the NATS publish client, the audit window, and the authorized-network
+//! the Redpanda backlog, the Redpanda publish client, the audit window, and the authorized-network
 //! config generation counter. On SIGTERM or Ctrl-C, shutdown_flush drains the current bandwidth
 //! window, flushes the in-memory publish backlog to the coordinator, then sleeps for shutdown_grace_secs
-//! to allow in-flight NATS publishes to complete before the process exits.
+//! to allow in-flight Redpanda publishes to complete before the process exits.
 //!
 //! # Type notes
 //!
@@ -63,14 +63,14 @@ use crate::{
         AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
-    backlog::{BacklogStore, NatsBacklog, ProbeFlushObservation},
+    backlog::{BacklogStore, RedpandaBacklog, ProbeFlushObservation},
     capture::{stream_packets, CaptureControl, CaptureError},
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
         AuthorizationStatus, AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker,
-        PmfAttackTracker, RogueApTracker, SignalTracker, CLIENT_INVENTORY_SUBJECT,
-        DEAUTH_FLOOD_SUBJECT, ROGUE_AP_SUBJECT,
+        PmfAttackTracker, RogueApTracker, SignalTracker, CLIENT_INVENTORY_TOPIC,
+        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
@@ -106,19 +106,19 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         read_mac_address(&device),
     )?;
 
-    // Verify NATS publisher initializes
+    // Verify Redpanda publisher initializes
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     let publish_client: Arc<dyn PublishClient> =
         Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let backlog = step(
-        "initialize NATS backlog",
-        NatsBacklog::new(
+        "initialize Redpanda backlog",
+        RedpandaBacklog::new(
             Arc::clone(&publish_client),
             config.sync.clone(),
-            Duration::from_millis(config.nats_request_timeout_ms),
+            Duration::from_millis(config.redpanda_request_timeout_ms),
         ),
     )?;
-    match step_async("request coordinator backlog list over NATS", async {
+    match step_async("request coordinator backlog list over Redpanda", async {
         backlog.list_pending().await
     })
     .await
@@ -129,7 +129,7 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         }
     }
 
-    println!("Healthcheck OK: configuration valid, device accessible, NATS publisher initialized");
+    println!("Healthcheck OK: configuration valid, device accessible, Redpanda publisher initialized");
     Ok(())
 }
 
@@ -265,7 +265,7 @@ async fn run_sensor() -> Result<(), SensorError> {
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
-                if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_SUBJECT, &snapshot).await {
+                if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &snapshot).await {
                     warn!(%error, "client inventory publish failed");
                 }
 
@@ -303,7 +303,7 @@ struct SensorHandles {
     context: SharedContext,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     capture_control: CaptureControl,
-    backlog: Arc<NatsBacklog>,
+    backlog: Arc<RedpandaBacklog>,
     publish_client: Arc<SyncPublisherClient>,
     publish_state: SharedPublishState,
     stats: metrics::SharedStats,
@@ -447,7 +447,7 @@ fn remember_mac_lookup_failure_in_cache(
 }
 
 /// Initializes sensor in startup order: tracing first (so all subsequent steps are logged),
-/// then device detection, then NATS backlog, then pcap capture, then config subscribers.
+/// then device detection, then Redpanda backlog, then pcap capture, then config subscribers.
 async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
@@ -485,16 +485,26 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         snaplen = config.snaplen,
         pcap_timeout_ms = config.pcap_timeout_ms,
         log_idle_secs = config.log_idle_secs,
-        nats_configured = config.sync.nats_url.is_some(),
-        nats_tls_enabled = config.sync.tls_enabled,
+        redpanda_configured = config.sync.redpanda_bootstrap_servers.is_some(),
+        redpanda_tls_enabled = config
+            .sync
+            .security_protocol
+            .as_deref()
+            .map(|protocol| protocol.to_ascii_uppercase().contains("SSL"))
+            .unwrap_or(false),
         audit_window = ?audit_window_snapshot(&audit_window),
         "atheros sensor starting"
     );
 
     let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
     info!(
-        nats_configured = config.sync.nats_url.is_some(),
-        nats_tls_enabled = config.sync.tls_enabled,
+        redpanda_configured = config.sync.redpanda_bootstrap_servers.is_some(),
+        redpanda_tls_enabled = config
+            .sync
+            .security_protocol
+            .as_deref()
+            .map(|protocol| protocol.to_ascii_uppercase().contains("SSL"))
+            .unwrap_or(false),
         "atheros sensor publisher initialized"
     );
     let publish_client = Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
@@ -504,11 +514,11 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     );
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
     let backlog = Arc::new(step(
-        "initialize NATS backlog",
-        NatsBacklog::new(
+        "initialize Redpanda backlog",
+        RedpandaBacklog::new(
             backlog_client,
             config.sync.clone(),
-            Duration::from_millis(config.nats_request_timeout_ms),
+            Duration::from_millis(config.redpanda_request_timeout_ms),
         ),
     )?);
     backlog.clone().spawn_health_check();
@@ -524,7 +534,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         }
     }
 
-    info!("atheros sensor NATS backlog initialized");
+    info!("atheros sensor Redpanda backlog initialized");
 
     config_subscriber::spawn_audit_window_config_subscriber(
         config.sync.clone(),
@@ -617,12 +627,12 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
 /// authorized network -> tags threats -> enriches with MAC device lookup -> observes
-/// bandwidth -> publishes to NATS.
+/// bandwidth -> publishes to Redpanda.
 async fn process_packet(
     packet: RawPacket,
     context: &AuditContext,
     config: &AppConfig,
-    backlog: &NatsBacklog,
+    backlog: &RedpandaBacklog,
     publish_client: &dyn PublishClient,
     publish_state: &SharedPublishState,
     pipeline: &mut PipelineState,
@@ -786,7 +796,7 @@ async fn process_packet(
         if let Err(error) = publish_json(
             publish_client,
             "publish_rogue_ap_alert",
-            ROGUE_AP_SUBJECT,
+            ROGUE_AP_TOPIC,
             &alert,
         )
         .await
@@ -803,7 +813,7 @@ async fn process_packet(
         if let Err(error) = publish_json(
             publish_client,
             "publish_deauth_flood_alert",
-            DEAUTH_FLOOD_SUBJECT,
+            DEAUTH_FLOOD_TOPIC,
             &alert,
         )
         .await
@@ -984,7 +994,7 @@ fn spawn_channel_hopper(
 }
 
 /// Flushes bandwidth window, writes memory backlog to the coordinator, then sleeps for
-/// shutdown_grace_secs to let in-flight NATS publishes drain before process exit.
+/// shutdown_grace_secs to let in-flight Redpanda publishes drain before process exit.
 async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineState) {
     let events = pipeline_state.traffic_bucket.flush_current();
     let now = Utc::now();

@@ -2,8 +2,8 @@ const std = @import("std");
 const command = @import("command.zig");
 const config = @import("config.zig");
 const logging = @import("logging.zig");
-const nats = @import("nats.zig");
-const nats_cli = @import("nats_cli.zig");
+const redpanda = @import("redpanda.zig");
+const redpanda_cli = @import("redpanda_cli.zig");
 
 pub const BatchResult = struct {
     items: [][]const u8,
@@ -26,12 +26,12 @@ pub fn pullScanBatch(
     defer allocator.free(count_str);
 
     const argv = [_][]const u8{
-        "nats",            "--server", cfg.sync_nats_url,
+        "redpanda",            "--server", cfg.sync_redpanda_url,
         "consumer",        "next",     cfg.audit_stream_name,
         cfg.scan_consumer, "--count",  count_str,
         "--raw",
     };
-    return pullNatsMessages(allocator, io, &argv);
+    return pullRedpandaMessages(allocator, io, &argv);
 }
 
 pub fn pullResultBatch(
@@ -44,12 +44,12 @@ pub fn pullResultBatch(
     defer allocator.free(count_str);
 
     const argv = [_][]const u8{
-        "nats",              "--server", cfg.sync_nats_url,
+        "redpanda",              "--server", cfg.sync_redpanda_url,
         "consumer",          "next",     cfg.result_stream_name,
         cfg.result_consumer, "--count",  count_str,
         "--raw",
     };
-    return pullNatsMessages(allocator, io, &argv);
+    return pullRedpandaMessages(allocator, io, &argv);
 }
 
 pub fn pullWirelessMessage(
@@ -60,7 +60,7 @@ pub fn pullWirelessMessage(
     consumer: []const u8,
 ) Error!?[]u8 {
     const argv = [_][]const u8{
-        "nats",     "--server", cfg.sync_nats_url,
+        "redpanda",     "--server", cfg.sync_redpanda_url,
         "consumer", "next",     stream,
         consumer,   "--count",  "1",
         "--raw",
@@ -70,8 +70,8 @@ pub fn pullWirelessMessage(
     defer result.deinit(allocator);
 
     if (!command.isSuccess(result)) {
-        if (nats_cli.looksLikeNoMessage(result.stderr)) return null;
-        command.logFailure("nats", result);
+        if (redpanda_cli.looksLikeNoMessage(result.stderr)) return null;
+        command.logFailure("redpanda", result);
         return error.WirelessMessageFailed;
     }
 
@@ -88,7 +88,7 @@ pub fn wirelessConsumerHasBacklog(
     consumer: []const u8,
 ) Error!bool {
     const argv = [_][]const u8{
-        "nats",     "--server", cfg.sync_nats_url,
+        "redpanda",     "--server", cfg.sync_redpanda_url,
         "consumer", "info",     stream,
         consumer,
     };
@@ -97,55 +97,55 @@ pub fn wirelessConsumerHasBacklog(
     defer result.deinit(allocator);
 
     if (!command.isSuccess(result)) {
-        command.logFailure("nats", result);
+        command.logFailure("redpanda", result);
         return error.WirelessMessageFailed;
     }
 
-    return nats_cli.consumerInfoHasBacklog(result.stdout);
+    return redpanda_cli.consumerInfoHasBacklog(result.stdout);
 }
 
 pub fn publish(
     allocator: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
-    subject: []const u8,
+    topic: []const u8,
     payload: []const u8,
     on_error: Error,
 ) Error!void {
-    try publishWithMode(allocator, io, cfg, subject, payload, .core, on_error);
+    try publishWithMode(allocator, io, cfg, topic, payload, .core, on_error);
 }
 
 pub fn publishWithMode(
     allocator: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
-    subject: []const u8,
+    topic: []const u8,
     payload: []const u8,
-    mode: nats.PublishMode,
+    mode: redpanda.PublishMode,
     on_error: Error,
 ) Error!void {
-    nats.publish(allocator, io, cfg.sync_nats_url, subject, payload, mode, cfg.nats_publish_timeout_ms) catch |err| {
-        if (err == error.UnsupportedNatsScheme and mode == .core) return publishWithCli(allocator, io, cfg, subject, payload, on_error);
-        if (err == error.PublishAckFailed and mode == .core) return publishWithCli(allocator, io, cfg, subject, payload, on_error);
-        if (err == error.UnsupportedNatsScheme and mode == .jetstream_ack) return publishWithJetStreamCli(allocator, io, cfg, subject, payload, on_error);
-        if (err == error.PublishAckFailed and mode == .jetstream_ack) return publishWithJetStreamCli(allocator, io, cfg, subject, payload, on_error);
+    redpanda.publish(allocator, io, cfg.sync_redpanda_url, topic, payload, mode, cfg.redpanda_publish_timeout_ms) catch |err| {
+        if (err == error.UnsupportedRedpandaScheme and mode == .core) return publishWithCli(allocator, io, cfg, topic, payload, on_error);
+        if (err == error.PublishAckFailed and mode == .core) return publishWithCli(allocator, io, cfg, topic, payload, on_error);
+        if (err == error.UnsupportedRedpandaScheme and mode == .redpanda_ack) return publishWithRedpandaCli(allocator, io, cfg, topic, payload, on_error);
+        if (err == error.PublishAckFailed and mode == .redpanda_ack) return publishWithRedpandaCli(allocator, io, cfg, topic, payload, on_error);
 
         logging.err()
-            .stringSafe("event", "nats_publish_failure")
-            .string("subject", subject)
+            .stringSafe("event", "redpanda_publish_failure")
+            .string("topic", topic)
             .err(err)
             .log();
         return on_error;
     };
 }
 
-fn pullNatsMessages(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) Error!BatchResult {
+fn pullRedpandaMessages(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) Error!BatchResult {
     var result = command.exec(allocator, io, argv) catch return BatchResult{ .items = &.{} };
     defer result.deinit(allocator);
 
     if (!command.isSuccess(result)) {
-        if (nats_cli.looksLikeNoMessage(result.stderr)) return BatchResult{ .items = &.{} };
-        command.logFailure("nats", result);
+        if (redpanda_cli.looksLikeNoMessage(result.stderr)) return BatchResult{ .items = &.{} };
+        command.logFailure("redpanda", result);
         return BatchResult{ .items = &.{} };
     }
 
@@ -177,38 +177,38 @@ fn pullNatsMessages(allocator: std.mem.Allocator, io: std.Io, argv: []const []co
     return BatchResult{ .items = items[0..idx] };
 }
 
-fn publishWithJetStreamCli(
+fn publishWithRedpandaCli(
     allocator: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
-    subject: []const u8,
+    topic: []const u8,
     payload: []const u8,
     on_error: Error,
 ) Error!void {
     logging.info()
-        .stringSafe("event", "nats_publish_fallback")
-        .stringSafe("mode", "jetstream_cli")
-        .string("subject", subject)
+        .stringSafe("event", "redpanda_publish_fallback")
+        .stringSafe("mode", "redpanda_cli")
+        .string("topic", topic)
         .log();
-    const argv = [_][]const u8{ "nats", "--server", cfg.sync_nats_url, "pub", subject, payload };
-    try runRequiredCommand(allocator, io, &argv, "nats", on_error);
+    const argv = [_][]const u8{ "redpanda", "--server", cfg.sync_redpanda_url, "pub", topic, payload };
+    try runRequiredCommand(allocator, io, &argv, "redpanda", on_error);
 }
 
 fn publishWithCli(
     allocator: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
-    subject: []const u8,
+    topic: []const u8,
     payload: []const u8,
     on_error: Error,
 ) Error!void {
     logging.info()
-        .stringSafe("event", "nats_publish_fallback")
+        .stringSafe("event", "redpanda_publish_fallback")
         .stringSafe("mode", "cli")
-        .string("subject", subject)
+        .string("topic", topic)
         .log();
-    const argv = [_][]const u8{ "nats", "--server", cfg.sync_nats_url, "pub", subject, payload };
-    try runRequiredCommand(allocator, io, &argv, "nats", on_error);
+    const argv = [_][]const u8{ "redpanda", "--server", cfg.sync_redpanda_url, "pub", topic, payload };
+    try runRequiredCommand(allocator, io, &argv, "redpanda", on_error);
 }
 
 fn runRequiredCommand(
