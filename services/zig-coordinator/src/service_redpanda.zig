@@ -124,8 +124,12 @@ pub fn publishWithMode(
     mode: redpanda.PublishMode,
     on_error: Error,
 ) Error!void {
+    if (shouldUseRedpandaCliFirst(cfg.sync_redpanda_url)) {
+        return publishWithCliFallback(allocator, io, cfg, topic, payload, mode, "redpanda_bootstrap", on_error);
+    }
+
     redpanda.publish(allocator, io, cfg.sync_redpanda_url, topic, payload, mode, cfg.redpanda_publish_timeout_ms) catch |err| {
-        if (shouldFallbackToRedpandaCli(err)) return publishWithCliFallback(allocator, io, cfg, topic, payload, mode, err, on_error);
+        if (shouldFallbackToRedpandaCli(err)) return publishWithCliFallback(allocator, io, cfg, topic, payload, mode, @errorName(err), on_error);
 
         logging.err()
             .stringSafe("event", "redpanda_publish_failure")
@@ -178,6 +182,14 @@ fn shouldFallbackToRedpandaCli(err: anyerror) bool {
     return err != error.InvalidTopic and err != error.OutOfMemory;
 }
 
+fn shouldUseRedpandaCliFirst(redpanda_url: []const u8) bool {
+    const trimmed = std.mem.trim(u8, redpanda_url, " \t\r\n");
+    return std.mem.startsWith(u8, trimmed, "redpanda://") or
+        std.mem.indexOf(u8, trimmed, ":9092") != null or
+        std.mem.indexOf(u8, trimmed, ":19092") != null or
+        std.mem.indexOfScalar(u8, trimmed, ',') != null;
+}
+
 fn publishWithCliFallback(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -185,7 +197,7 @@ fn publishWithCliFallback(
     topic: []const u8,
     payload: []const u8,
     mode: redpanda.PublishMode,
-    native_err: anyerror,
+    reason: []const u8,
     on_error: Error,
 ) Error!void {
     const fallback_mode = switch (mode) {
@@ -196,9 +208,13 @@ fn publishWithCliFallback(
         .stringSafe("event", "redpanda_publish_fallback")
         .stringSafe("mode", fallback_mode)
         .string("topic", topic)
-        .stringSafe("reason", @errorName(native_err))
+        .stringSafe("reason", reason)
         .log();
-    const argv = [_][]const u8{ "redpanda", "--server", cfg.sync_redpanda_url, "pub", topic, payload };
+
+    const server = redpanda_cli.parseRedpandaAuthority(allocator, cfg.sync_redpanda_url) catch return on_error;
+    defer allocator.free(server);
+
+    const argv = [_][]const u8{ "redpanda", "--server", server, "pub", topic, payload };
     try runRequiredCommand(allocator, io, &argv, "redpanda", on_error);
 }
 
@@ -230,4 +246,11 @@ test "native Redpanda publish failures fall back to the CLI producer" {
 test "native Redpanda publish validation errors do not fall back to the CLI producer" {
     try std.testing.expect(!shouldFallbackToRedpandaCli(error.InvalidTopic));
     try std.testing.expect(!shouldFallbackToRedpandaCli(error.OutOfMemory));
+}
+
+test "Redpanda bootstrap addresses use the CLI producer first" {
+    try std.testing.expect(shouldUseRedpandaCliFirst("redpanda:9092"));
+    try std.testing.expect(shouldUseRedpandaCliFirst("redpanda://127.0.0.1:19092"));
+    try std.testing.expect(shouldUseRedpandaCliFirst("redpanda-1:9092,redpanda-2:9092"));
+    try std.testing.expect(!shouldUseRedpandaCliFirst("localhost:4222"));
 }

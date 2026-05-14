@@ -66,13 +66,16 @@ fn checkRedpandaTopic(
     redpanda_url: []const u8,
     topic: []const u8,
 ) Error!void {
+    const brokers = try redpanda_cli.parseRedpandaAuthority(allocator, redpanda_url);
+    defer allocator.free(brokers);
+
     const argv = [_][]const u8{
         "rpk",
         "topic",
         "describe",
         topic,
         "--brokers",
-        redpanda_url,
+        brokers,
     };
     runRequiredCommand(allocator, io, &argv, "rpk", error.RedpandaTopicMissing) catch |err| {
         logging.err()

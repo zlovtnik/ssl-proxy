@@ -14,10 +14,10 @@ pub fn parseRedpandaAuthority(allocator: std.mem.Allocator, redpanda_url: []cons
     const host_start = if (std.mem.lastIndexOfScalar(u8, authority, '@')) |at| at + 1 else 0;
     const host_and_port = authority[host_start..];
     if (std.mem.lastIndexOfScalar(u8, host_and_port, ':') != null) {
-        return allocator.dupe(u8, authority) catch error.InvalidRedpandaUrl;
+        return allocator.dupe(u8, host_and_port) catch error.InvalidRedpandaUrl;
     }
 
-    return std.fmt.allocPrint(allocator, "{s}:9092", .{authority}) catch error.InvalidRedpandaUrl;
+    return std.fmt.allocPrint(allocator, "{s}:9092", .{host_and_port}) catch error.InvalidRedpandaUrl;
 }
 
 pub fn looksLikeNoMessage(stderr: []const u8) bool {
@@ -90,4 +90,16 @@ test "looksLikeNoMessage matches timeout variants" {
 test "consumerInfoHasBacklog parses labeled counts" {
     try std.testing.expect(consumerInfoHasBacklog("Pending Messages: 1,200\n"));
     try std.testing.expect(!consumerInfoHasBacklog("Pending Messages: 0\n"));
+}
+
+test "parseRedpandaAuthority strips scheme and userinfo for rpk" {
+    const parsed = try parseRedpandaAuthority(std.testing.allocator, "redpanda://user:pass@redpanda:9092");
+    defer std.testing.allocator.free(parsed);
+    try std.testing.expectEqualStrings("redpanda:9092", parsed);
+}
+
+test "parseRedpandaAuthority defaults the Redpanda port" {
+    const parsed = try parseRedpandaAuthority(std.testing.allocator, "redpanda://redpanda");
+    defer std.testing.allocator.free(parsed);
+    try std.testing.expectEqualStrings("redpanda:9092", parsed);
 }
