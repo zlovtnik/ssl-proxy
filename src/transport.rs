@@ -795,6 +795,35 @@ fn rdkafka_bootstrap_servers(redpanda_bootstrap_servers: &str) -> String {
         .to_string()
 }
 
+#[cfg(test)]
+mod rdkafka_bootstrap_tests {
+    use super::rdkafka_bootstrap_servers;
+
+    #[test]
+    fn keeps_plain_bootstrap_servers() {
+        assert_eq!(
+            rdkafka_bootstrap_servers("127.0.0.1:9092"),
+            "127.0.0.1:9092"
+        );
+    }
+
+    #[test]
+    fn strips_redpanda_scheme_for_librdkafka() {
+        assert_eq!(
+            rdkafka_bootstrap_servers("redpanda://127.0.0.1:19092"),
+            "127.0.0.1:19092"
+        );
+    }
+
+    #[test]
+    fn strips_url_userinfo_for_librdkafka() {
+        assert_eq!(
+            rdkafka_bootstrap_servers("redpanda://user:pass@redpanda:9092"),
+            "redpanda:9092"
+        );
+    }
+}
+
 fn record_worker_error(health: &Arc<Mutex<SyncPublisherHealth>>, error: String) {
     let mut snapshot = health
         .lock()

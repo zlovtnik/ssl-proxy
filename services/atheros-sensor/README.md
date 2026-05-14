@@ -106,6 +106,11 @@ Additional topics emitted by this sensor:
    - `SYNC_REDPANDA_BOOTSTRAP_SERVERS=redpanda://127.0.0.1:19092`
 3. Start the service directly or install the provided `systemd` unit template.
 
+When running the compose service, override the sensor endpoint with
+`ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS`; the stack-wide
+`SYNC_REDPANDA_BOOTSTRAP_SERVERS` default remains container-to-container for the
+coordinator and workers.
+
 Default capture filter is `type mgt or type data`. Override `ATH_SENSOR_BPF` when
 you need a narrower packet profile.
 

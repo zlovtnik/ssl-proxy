@@ -125,10 +125,7 @@ pub fn publishWithMode(
     on_error: Error,
 ) Error!void {
     redpanda.publish(allocator, io, cfg.sync_redpanda_url, topic, payload, mode, cfg.redpanda_publish_timeout_ms) catch |err| {
-        if (err == error.UnsupportedRedpandaScheme and mode == .core) return publishWithCli(allocator, io, cfg, topic, payload, on_error);
-        if (err == error.PublishAckFailed and mode == .core) return publishWithCli(allocator, io, cfg, topic, payload, on_error);
-        if (err == error.UnsupportedRedpandaScheme and mode == .redpanda_ack) return publishWithRedpandaCli(allocator, io, cfg, topic, payload, on_error);
-        if (err == error.PublishAckFailed and mode == .redpanda_ack) return publishWithRedpandaCli(allocator, io, cfg, topic, payload, on_error);
+        if (shouldFallbackToRedpandaCli(err)) return publishWithCliFallback(allocator, io, cfg, topic, payload, mode, err, on_error);
 
         logging.err()
             .stringSafe("event", "redpanda_publish_failure")
@@ -177,35 +174,29 @@ fn pullRedpandaMessages(allocator: std.mem.Allocator, io: std.Io, argv: []const 
     return BatchResult{ .items = items[0..idx] };
 }
 
-fn publishWithRedpandaCli(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    cfg: config.Config,
-    topic: []const u8,
-    payload: []const u8,
-    on_error: Error,
-) Error!void {
-    logging.info()
-        .stringSafe("event", "redpanda_publish_fallback")
-        .stringSafe("mode", "redpanda_cli")
-        .string("topic", topic)
-        .log();
-    const argv = [_][]const u8{ "redpanda", "--server", cfg.sync_redpanda_url, "pub", topic, payload };
-    try runRequiredCommand(allocator, io, &argv, "redpanda", on_error);
+fn shouldFallbackToRedpandaCli(err: anyerror) bool {
+    return err != error.InvalidTopic and err != error.OutOfMemory;
 }
 
-fn publishWithCli(
+fn publishWithCliFallback(
     allocator: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
     topic: []const u8,
     payload: []const u8,
+    mode: redpanda.PublishMode,
+    native_err: anyerror,
     on_error: Error,
 ) Error!void {
+    const fallback_mode = switch (mode) {
+        .core => "cli",
+        .redpanda_ack => "redpanda_cli",
+    };
     logging.info()
         .stringSafe("event", "redpanda_publish_fallback")
-        .stringSafe("mode", "cli")
+        .stringSafe("mode", fallback_mode)
         .string("topic", topic)
+        .stringSafe("reason", @errorName(native_err))
         .log();
     const argv = [_][]const u8{ "redpanda", "--server", cfg.sync_redpanda_url, "pub", topic, payload };
     try runRequiredCommand(allocator, io, &argv, "redpanda", on_error);
@@ -227,4 +218,16 @@ fn runRequiredCommand(
     }
 
     command.logOutput(command_name, result.stdout);
+}
+
+test "native Redpanda publish failures fall back to the CLI producer" {
+    try std.testing.expect(shouldFallbackToRedpandaCli(error.ReadFailed));
+    try std.testing.expect(shouldFallbackToRedpandaCli(error.ProtocolError));
+    try std.testing.expect(shouldFallbackToRedpandaCli(error.PublishAckFailed));
+    try std.testing.expect(shouldFallbackToRedpandaCli(error.UnsupportedRedpandaScheme));
+}
+
+test "native Redpanda publish validation errors do not fall back to the CLI producer" {
+    try std.testing.expect(!shouldFallbackToRedpandaCli(error.InvalidTopic));
+    try std.testing.expect(!shouldFallbackToRedpandaCli(error.OutOfMemory));
 }
