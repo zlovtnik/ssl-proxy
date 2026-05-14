@@ -397,6 +397,7 @@ impl DeauthFloodTracker {
 
 pub struct AuthorizedNetworkCache {
     entries: Vec<AuthorizedWirelessNetwork>,
+    has_loaded: bool,
     loaded_at: Option<Instant>,
     last_failure: Option<Instant>,
     failure_count: u32,
@@ -410,10 +411,18 @@ impl Default for AuthorizedNetworkCache {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthorizationStatus {
+    Authorized,
+    Unauthorized,
+    Unknown,
+}
+
 impl AuthorizedNetworkCache {
     pub fn new(backoff_ms: u64) -> Self {
         Self {
             entries: Vec::new(),
+            has_loaded: false,
             loaded_at: None,
             last_failure: None,
             failure_count: 0,
@@ -482,6 +491,7 @@ impl AuthorizedNetworkCache {
         match backlog.list_authorized_wireless_networks().await {
             Ok(entries) => {
                 self.entries = entries;
+                self.has_loaded = true;
                 self.loaded_at = Some(Instant::now());
                 self.last_failure = None;
                 self.failure_count = 0;
@@ -502,15 +512,18 @@ impl AuthorizedNetworkCache {
     /// Checks if a network is authorized using three-field AND logic: location_id, SSID, and
     /// BSSID. A None field on the stored entry acts as a wildcard (matches any value). At least
     /// one of SSID or BSSID must be non-None on the stored entry to match.
-    pub fn is_authorized(
+    pub fn authorization_status(
         &self,
         ssid: Option<&str>,
         bssid: Option<&str>,
         location_id: &str,
-    ) -> bool {
+    ) -> AuthorizationStatus {
+        if !self.has_loaded {
+            return AuthorizationStatus::Unknown;
+        }
         let normalized_ssid = ssid.map(|value| value.trim().to_ascii_lowercase());
         let normalized_bssid = bssid.map(normalize_mac);
-        self.entries.iter().any(|entry| {
+        let is_authorized = self.entries.iter().any(|entry| {
             entry
                 .location_id
                 .as_deref()
@@ -522,7 +535,21 @@ impl AuthorizedNetworkCache {
                     normalized_bssid.as_deref() == Some(known.trim().to_ascii_lowercase().as_str())
                 })
                 && (entry.ssid.is_some() || entry.bssid.is_some())
-        })
+        });
+        if is_authorized {
+            AuthorizationStatus::Authorized
+        } else {
+            AuthorizationStatus::Unauthorized
+        }
+    }
+
+    pub fn is_authorized(
+        &self,
+        ssid: Option<&str>,
+        bssid: Option<&str>,
+        location_id: &str,
+    ) -> bool {
+        self.authorization_status(ssid, bssid, location_id) == AuthorizationStatus::Authorized
     }
 
     pub fn is_known_ssid(&self, ssid: &str) -> bool {
@@ -875,6 +902,42 @@ mod tests {
 
         let result = inventory.link_probe_to_network(&entry, &cache);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn authorization_status_is_unknown_until_cache_loads() {
+        use super::{AuthorizationStatus, AuthorizedNetworkCache};
+
+        let cache = AuthorizedNetworkCache::default();
+
+        assert_eq!(
+            cache.authorization_status(Some("CorpWiFi"), Some("aa:bb:cc:dd:ee:ff"), "loc1"),
+            AuthorizationStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn authorization_status_distinguishes_authorized_and_unauthorized() {
+        use super::{AuthorizationStatus, AuthorizedNetworkCache};
+        use crate::backlog::AuthorizedWirelessNetwork;
+
+        let mut cache = AuthorizedNetworkCache::default();
+        cache.has_loaded = true;
+        cache.entries = vec![AuthorizedWirelessNetwork {
+            ssid: Some("CorpWiFi".to_string()),
+            bssid: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            location_id: Some("loc1".to_string()),
+            psk: None,
+        }];
+
+        assert_eq!(
+            cache.authorization_status(Some("CorpWiFi"), Some("aa:bb:cc:dd:ee:ff"), "loc1"),
+            AuthorizationStatus::Authorized
+        );
+        assert_eq!(
+            cache.authorization_status(Some("Guest"), Some("aa:bb:cc:dd:ee:ff"), "loc1"),
+            AuthorizationStatus::Unauthorized
+        );
     }
 
     #[test]

@@ -56,7 +56,11 @@ struct CachedRequestConnection {
 }
 
 impl NatsBacklog {
-    pub fn new(publisher: Arc<dyn PublishClient>, sync: SyncConfig) -> Result<Self, BacklogError> {
+    pub fn new(
+        publisher: Arc<dyn PublishClient>,
+        sync: SyncConfig,
+        request_timeout: Duration,
+    ) -> Result<Self, BacklogError> {
         let tls_client_config =
             build_tls_client_config(&sync).map_err(|message| BacklogError::Nats {
                 operation: "initialize_nats_backlog",
@@ -68,7 +72,7 @@ impl NatsBacklog {
         Ok(Self {
             publisher,
             sync,
-            request_timeout: Duration::from_secs(5),
+            request_timeout,
             request_connection_ttl: Duration::from_secs(10),
             tls_client_config,
             tls_connector,
@@ -102,17 +106,15 @@ impl NatsBacklog {
         }
     }
 
-    fn should_skip_request(&self) -> bool {
-        !self.health_status.load(Ordering::Relaxed)
-    }
-
     async fn connect_request_connection(
         &self,
         operation: &'static str,
     ) -> Result<CachedRequestConnection, BacklogError> {
-        let nats_url = self.sync.nats_url.as_deref().ok_or_else(|| BacklogError::Disabled {
-            operation,
-        })?;
+        let nats_url = self
+            .sync
+            .nats_url
+            .as_deref()
+            .ok_or_else(|| BacklogError::Disabled { operation })?;
         let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
             operation,
             message: source,
@@ -125,10 +127,13 @@ impl NatsBacklog {
                 message: format!("connect {}: {source}", endpoint.address),
             })?;
         let mut stream: Box<dyn NatsStream> = if self.sync.tls_enabled || endpoint.tls_enabled {
-            let connector = self.tls_connector.as_ref().ok_or_else(|| BacklogError::Nats {
-                operation,
-                message: "NATS TLS connector was not initialized".to_string(),
-            })?;
+            let connector = self
+                .tls_connector
+                .as_ref()
+                .ok_or_else(|| BacklogError::Nats {
+                    operation,
+                    message: "NATS TLS connector was not initialized".to_string(),
+                })?;
             let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
                 .await
                 .map_err(|message| BacklogError::Nats { operation, message })?;
@@ -189,13 +194,6 @@ impl NatsBacklog {
         payload: &str,
         reply_subject: &str,
     ) -> Result<String, BacklogError> {
-        if self.should_skip_request() {
-            return Err(BacklogError::Nats {
-                operation,
-                message: "skipping request because NATS connection is unhealthy".to_string(),
-            });
-        }
-
         let maybe_connection = self.request_connection.lock().unwrap().take();
 
         let mut connection = if let Some(conn) = maybe_connection {
@@ -203,14 +201,32 @@ impl NatsBacklog {
                 conn
             } else {
                 self.connection_generation.fetch_add(1, Ordering::Relaxed);
-                self.connect_request_connection(operation).await?
+                match self.connect_request_connection(operation).await {
+                    Ok(conn) => conn,
+                    Err(err) => {
+                        self.health_status.store(false, Ordering::Relaxed);
+                        return Err(err);
+                    }
+                }
             }
         } else {
-            self.connect_request_connection(operation).await?
+            match self.connect_request_connection(operation).await {
+                Ok(conn) => conn,
+                Err(err) => {
+                    self.health_status.store(false, Ordering::Relaxed);
+                    return Err(err);
+                }
+            }
         };
 
         let result = self
-            .perform_request_over_connection(&mut connection, operation, subject, payload, reply_subject)
+            .perform_request_over_connection(
+                &mut connection,
+                operation,
+                subject,
+                payload,
+                reply_subject,
+            )
             .await;
         let mut guard = self.request_connection.lock().unwrap();
         match result {
@@ -221,7 +237,9 @@ impl NatsBacklog {
                 Ok(response)
             }
             Err(err) => {
-                self.health_status.store(false, Ordering::Relaxed);
+                if request_error_marks_nats_unhealthy(&err) {
+                    self.health_status.store(false, Ordering::Relaxed);
+                }
                 guard.take();
                 Err(err)
             }
@@ -249,13 +267,16 @@ impl NatsBacklog {
             })?;
 
         let publish_command = format!("PUB {subject} {}\r\n", payload.len());
-        timeout(self.request_timeout, stream.write_all(publish_command.as_bytes()))
-            .await
-            .map_err(|_| BacklogError::Timeout { operation })?
-            .map_err(|source| BacklogError::Nats {
-                operation,
-                message: format!("send PUB header: {source}"),
-            })?;
+        timeout(
+            self.request_timeout,
+            stream.write_all(publish_command.as_bytes()),
+        )
+        .await
+        .map_err(|_| BacklogError::Timeout { operation })?
+        .map_err(|source| BacklogError::Nats {
+            operation,
+            message: format!("send PUB header: {source}"),
+        })?;
         timeout(self.request_timeout, stream.write_all(payload.as_bytes()))
             .await
             .map_err(|_| BacklogError::Timeout { operation })?
@@ -296,13 +317,16 @@ impl NatsBacklog {
                 });
             }
             if trimmed == "PING" {
-                timeout(self.request_timeout, stream.get_mut().write_all(b"PONG\r\n"))
-                    .await
-                    .map_err(|_| BacklogError::Timeout { operation })?
-                    .map_err(|source| BacklogError::Nats {
-                        operation,
-                        message: format!("send PONG: {source}"),
-                    })?;
+                timeout(
+                    self.request_timeout,
+                    stream.get_mut().write_all(b"PONG\r\n"),
+                )
+                .await
+                .map_err(|_| BacklogError::Timeout { operation })?
+                .map_err(|source| BacklogError::Nats {
+                    operation,
+                    message: format!("send PONG: {source}"),
+                })?;
                 timeout(self.request_timeout, stream.get_mut().flush())
                     .await
                     .map_err(|_| BacklogError::Timeout { operation })?
@@ -317,7 +341,11 @@ impl NatsBacklog {
             }
             if trimmed.starts_with("-ERR") {
                 let unsub_command = format!("UNSUB {sid} 1\r\n");
-                let _ = timeout(self.request_timeout, stream.write_all(unsub_command.as_bytes())).await;
+                let _ = timeout(
+                    self.request_timeout,
+                    stream.write_all(unsub_command.as_bytes()),
+                )
+                .await;
                 let _ = timeout(self.request_timeout, stream.flush()).await;
                 return Err(BacklogError::Nats {
                     operation,
@@ -373,13 +401,16 @@ impl NatsBacklog {
                 message: format!("reply is not UTF-8: {source}"),
             });
             let unsub_command = format!("UNSUB {sid} 1\r\n");
-            timeout(self.request_timeout, stream.write_all(unsub_command.as_bytes()))
-                .await
-                .map_err(|_| BacklogError::Timeout { operation })?
-                .map_err(|source| BacklogError::Nats {
-                    operation,
-                    message: format!("send UNSUB: {source}"),
-                })?;
+            timeout(
+                self.request_timeout,
+                stream.write_all(unsub_command.as_bytes()),
+            )
+            .await
+            .map_err(|_| BacklogError::Timeout { operation })?
+            .map_err(|source| BacklogError::Nats {
+                operation,
+                message: format!("send UNSUB: {source}"),
+            })?;
             timeout(self.request_timeout, stream.flush())
                 .await
                 .map_err(|_| BacklogError::Timeout { operation })?
@@ -392,9 +423,13 @@ impl NatsBacklog {
     }
 
     async fn ping_nats(&self) -> Result<(), BacklogError> {
-        let nats_url = self.sync.nats_url.as_deref().ok_or_else(|| BacklogError::Disabled {
-            operation: "nats_health_check",
-        })?;
+        let nats_url = self
+            .sync
+            .nats_url
+            .as_deref()
+            .ok_or_else(|| BacklogError::Disabled {
+                operation: "nats_health_check",
+            })?;
         let endpoint = parse_nats_endpoint(nats_url).map_err(|source| BacklogError::Nats {
             operation: "nats_health_check",
             message: source,
@@ -409,10 +444,13 @@ impl NatsBacklog {
                 message: format!("connect {}: {source}", endpoint.address),
             })?;
         let mut stream: Box<dyn NatsStream> = if self.sync.tls_enabled || endpoint.tls_enabled {
-            let connector = self.tls_connector.as_ref().ok_or_else(|| BacklogError::Nats {
-                operation: "nats_health_check",
-                message: "NATS TLS connector was not initialized".to_string(),
-            })?;
+            let connector = self
+                .tls_connector
+                .as_ref()
+                .ok_or_else(|| BacklogError::Nats {
+                    operation: "nats_health_check",
+                    message: "NATS TLS connector was not initialized".to_string(),
+                })?;
             let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
                 .await
                 .map_err(|message| BacklogError::Nats {
@@ -589,7 +627,16 @@ impl NatsBacklog {
                 message: source,
             })
     }
+}
 
+fn request_error_marks_nats_unhealthy(error: &BacklogError) -> bool {
+    !matches!(
+        error,
+        BacklogError::Timeout { .. }
+            | BacklogError::Serialize { .. }
+            | BacklogError::Deserialize { .. }
+            | BacklogError::Disabled { .. }
+    )
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -922,6 +969,7 @@ async fn connect_tls(
 mod tests {
     use super::{
         parse_authorized_networks_response, parse_nats_endpoint, payload_with_reply_subject,
+        request_error_marks_nats_unhealthy,
     };
     use crate::backlog::BacklogError;
 
@@ -980,8 +1028,29 @@ mod tests {
     fn rejects_non_object_request_payloads() {
         let error = payload_with_reply_subject("list_pending", r#"[]"#, "_INBOX.x").unwrap_err();
 
-        assert!(matches!(error, BacklogError::Serialize { .. })
-            || error.to_string().contains("list_pending"));
+        assert!(
+            matches!(error, BacklogError::Serialize { .. })
+                || error.to_string().contains("list_pending")
+        );
+    }
+
+    #[test]
+    fn request_reply_timeout_does_not_mark_nats_transport_unhealthy() {
+        let error = BacklogError::Timeout {
+            operation: "lookup_device_by_mac",
+        };
+
+        assert!(!request_error_marks_nats_unhealthy(&error));
+    }
+
+    #[test]
+    fn transport_io_error_marks_nats_transport_unhealthy() {
+        let error = BacklogError::Nats {
+            operation: "lookup_device_by_mac",
+            message: "unexpected EOF while reading reply".to_string(),
+        };
+
+        assert!(request_error_marks_nats_unhealthy(&error));
     }
 
     #[test]

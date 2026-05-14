@@ -68,9 +68,9 @@ use crate::{
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker,
-        RogueApTracker, SignalTracker, CLIENT_INVENTORY_SUBJECT, DEAUTH_FLOOD_SUBJECT,
-        ROGUE_AP_SUBJECT,
+        AuthorizationStatus, AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker,
+        PmfAttackTracker, RogueApTracker, SignalTracker, CLIENT_INVENTORY_SUBJECT,
+        DEAUTH_FLOOD_SUBJECT, ROGUE_AP_SUBJECT,
     },
     device::{detect, read_mac_address},
     error::SensorError,
@@ -78,15 +78,14 @@ use crate::{
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_json, PublishClient, PublishError,
-        PublishState, SharedPublishState, SyncPublisherClient, replay_journal,
+        publish_entry, publish_handshake_alert, publish_json, replay_journal, PublishClient,
+        PublishError, PublishState, SharedPublishState, SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
-const MAC_LOOKUP_ERROR_TTL_SECS: u64 = 30;
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -113,7 +112,11 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let backlog = step(
         "initialize NATS backlog",
-        NatsBacklog::new(Arc::clone(&publish_client), config.sync.clone()),
+        NatsBacklog::new(
+            Arc::clone(&publish_client),
+            config.sync.clone(),
+            Duration::from_millis(config.nats_request_timeout_ms),
+        ),
     )?;
     match step_async("request coordinator backlog list over NATS", async {
         backlog.list_pending().await
@@ -371,12 +374,85 @@ impl PipelineState {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum MacLookupCacheDecision {
+    UseCached(Option<(String, Option<String>)>),
+    SkipRecentFailure,
+    Fetch,
+}
+
+fn cached_mac_lookup(
+    pipeline: &mut PipelineState,
+    cache_key: &str,
+    error_ttl: Duration,
+) -> MacLookupCacheDecision {
+    mac_lookup_cache_decision(
+        &mut pipeline.mac_device_cache,
+        &mut pipeline.mac_lookup_error_cache,
+        cache_key,
+        error_ttl,
+    )
+}
+
+fn mac_lookup_cache_decision(
+    device_cache: &mut LruCache<String, Option<(String, Option<String>)>>,
+    error_cache: &mut LruCache<String, Instant>,
+    cache_key: &str,
+    error_ttl: Duration,
+) -> MacLookupCacheDecision {
+    if let Some(cached) = device_cache.get(cache_key) {
+        return MacLookupCacheDecision::UseCached(cached.clone());
+    }
+    if error_cache
+        .get(cache_key)
+        .is_some_and(|last| last.elapsed() < error_ttl)
+    {
+        return MacLookupCacheDecision::SkipRecentFailure;
+    }
+    MacLookupCacheDecision::Fetch
+}
+
+fn remember_mac_lookup_success(
+    pipeline: &mut PipelineState,
+    cache_key: String,
+    lookup: Option<(String, Option<String>)>,
+) {
+    remember_mac_lookup_success_in_caches(
+        &mut pipeline.mac_device_cache,
+        &mut pipeline.mac_lookup_error_cache,
+        cache_key,
+        lookup,
+    );
+}
+
+fn remember_mac_lookup_failure(pipeline: &mut PipelineState, cache_key: String) {
+    remember_mac_lookup_failure_in_cache(&mut pipeline.mac_lookup_error_cache, cache_key);
+}
+
+fn remember_mac_lookup_success_in_caches(
+    device_cache: &mut LruCache<String, Option<(String, Option<String>)>>,
+    error_cache: &mut LruCache<String, Instant>,
+    cache_key: String,
+    lookup: Option<(String, Option<String>)>,
+) {
+    error_cache.pop(&cache_key);
+    device_cache.put(cache_key, lookup);
+}
+
+fn remember_mac_lookup_failure_in_cache(
+    error_cache: &mut LruCache<String, Instant>,
+    cache_key: String,
+) {
+    error_cache.put(cache_key, Instant::now());
+}
+
 /// Initializes sensor in startup order: tracing first (so all subsequent steps are logged),
 /// then device detection, then NATS backlog, then pcap capture, then config subscribers.
 async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let audit_window: SharedAuditWindow = Arc::new(RwLock::new(config.audit_window.clone()));
 
-    let (log_filter, _audit_window_active) = init_tracing(Arc::clone(&audit_window), config.audit_layer_stream);
+    let (log_filter, _audit_window_active) =
+        init_tracing(Arc::clone(&audit_window), config.audit_layer_stream);
     info!(
         rust_log = %log_filter,
         default_rust_log = DEFAULT_RUST_LOG,
@@ -429,7 +505,11 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
     let backlog = Arc::new(step(
         "initialize NATS backlog",
-        NatsBacklog::new(backlog_client, config.sync.clone()),
+        NatsBacklog::new(
+            backlog_client,
+            config.sync.clone(),
+            Duration::from_millis(config.nats_request_timeout_ms),
+        ),
     )?);
     backlog.clone().spawn_health_check();
     // Replay journal entries from previous outages
@@ -439,7 +519,9 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
                 info!(replayed = count, "recovered publish journal entries");
             }
         }
-        Err(error) => warn!(%error, "publish journal replay failed; entries remain in journal for retry"),
+        Err(error) => {
+            warn!(%error, "publish journal replay failed; entries remain in journal for retry")
+        }
     }
 
     info!("atheros sensor NATS backlog initialized");
@@ -477,7 +559,11 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     );
 
     let stats = metrics::shared_stats();
-    metrics::spawn_metrics_server(config.metrics_port, Arc::clone(&stats), Arc::clone(&publish_state));
+    metrics::spawn_metrics_server(
+        config.metrics_port,
+        Arc::clone(&stats),
+        Arc::clone(&publish_state),
+    );
 
     // Shared filter state: tracks the last-applied BPF so the hopper can skip
     // re-applying when the filter hasn't changed.
@@ -607,7 +693,7 @@ async fn process_packet(
             "authorized wireless network cache refresh failed"
         );
     }
-    let authorized = pipeline.authorized_network_cache.is_authorized(
+    let authorization_status = pipeline.authorized_network_cache.authorization_status(
         entry.ssid.as_deref(),
         entry
             .bssid
@@ -615,9 +701,13 @@ async fn process_packet(
             .or(entry.destination_bssid.as_deref()),
         &entry.location_id,
     );
-    let external_bssid = !authorized;
-    if entry.ssid.is_some() && external_bssid {
+    let external_bssid = authorization_status == AuthorizationStatus::Unauthorized;
+    if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unauthorized {
         entry.tags.push("threat:unauthorized_bssid".to_string());
+    } else if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unknown {
+        entry
+            .tags
+            .push("enrichment:authorized_network_unknown".to_string());
     }
     pipeline.client_inventory.observe(&entry);
 
@@ -735,39 +825,36 @@ async fn process_packet(
             0
         }
     };
-    let skip_mac_lookup = backlog_pct > 80;
+    let skip_mac_lookup = backlog_pct > 80 || !config.mac_device_lookup_enabled;
     if skip_mac_lookup {
         if entry.identity_source == "unknown" || entry.identity_source == "mac_observed" {
-            entry.identity_source = "mac_lookup_skipped_backpressure".to_string();
+            entry.identity_source = if config.mac_device_lookup_enabled {
+                "mac_lookup_skipped_backpressure".to_string()
+            } else {
+                "mac_lookup_disabled".to_string()
+            };
         }
     } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
         let cache_key = mac.to_ascii_lowercase();
-        let lookup = if let Some(cached) = pipeline.mac_device_cache.get(&cache_key) {
-            cached.clone()
-        } else {
-            let lookup = if pipeline
-                .mac_lookup_error_cache
-                .get(&cache_key)
-                .is_some_and(|last| last.elapsed() < Duration::from_secs(MAC_LOOKUP_ERROR_TTL_SECS))
-            {
-                None
-            } else {
-                match backlog.lookup_device_by_mac(&cache_key).await {
-                    Ok(lookup) => lookup,
-                    Err(error) => {
-                        stats.lock().unwrap().mac_lookup_failures += 1;
-                        pipeline
-                            .mac_lookup_error_cache
-                            .put(cache_key.clone(), Instant::now());
-                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
-                        None
-                    }
+        let lookup = match cached_mac_lookup(
+            pipeline,
+            &cache_key,
+            Duration::from_secs(config.mac_lookup_error_ttl_secs),
+        ) {
+            MacLookupCacheDecision::UseCached(lookup) => lookup,
+            MacLookupCacheDecision::SkipRecentFailure => None,
+            MacLookupCacheDecision::Fetch => match backlog.lookup_device_by_mac(&cache_key).await {
+                Ok(lookup) => {
+                    remember_mac_lookup_success(pipeline, cache_key.clone(), lookup.clone());
+                    lookup
                 }
-            };
-            pipeline
-                .mac_device_cache
-                .put(cache_key.clone(), lookup.clone());
-            lookup
+                Err(error) => {
+                    stats.lock().unwrap().mac_lookup_failures += 1;
+                    remember_mac_lookup_failure(pipeline, cache_key.clone());
+                    warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
+                    None
+                }
+            },
         };
         if let Some((device_id, username)) = lookup {
             entry.device_id = Some(device_id);
@@ -905,7 +992,9 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         .iter()
         .filter_map(|e| {
             let window_end = chrono::DateTime::parse_from_rfc3339(&e.window_end).ok()?;
-            let lag = (now - window_end.with_timezone(&chrono::Utc)).num_milliseconds().max(0) as u64;
+            let lag = (now - window_end.with_timezone(&chrono::Utc))
+                .num_milliseconds()
+                .max(0) as u64;
             Some(lag)
         })
         .collect();
@@ -994,7 +1083,10 @@ fn init_tracing(
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer().json())
-        .with(AuditLayer::new(Arc::clone(&audit_window_active), audit_layer_stream))
+        .with(AuditLayer::new(
+            Arc::clone(&audit_window_active),
+            audit_layer_stream,
+        ))
         .init();
 
     (filter_source, audit_window_active)
@@ -1046,4 +1138,55 @@ where
     future
         .await
         .map_err(|error| SensorError::step(label, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_lookup_failure_suppresses_retry_without_caching_miss() {
+        let mut device_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut error_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let cache_key = "aa:bb:cc:dd:ee:ff".to_string();
+
+        remember_mac_lookup_failure_in_cache(&mut error_cache, cache_key.clone());
+
+        assert_eq!(
+            mac_lookup_cache_decision(
+                &mut device_cache,
+                &mut error_cache,
+                &cache_key,
+                Duration::from_secs(30),
+            ),
+            MacLookupCacheDecision::SkipRecentFailure
+        );
+        assert!(device_cache.get(&cache_key).is_none());
+    }
+
+    #[test]
+    fn mac_lookup_success_caches_none_and_clears_error_backoff() {
+        let mut device_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let mut error_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
+        let cache_key = "aa:bb:cc:dd:ee:ff".to_string();
+        remember_mac_lookup_failure_in_cache(&mut error_cache, cache_key.clone());
+
+        remember_mac_lookup_success_in_caches(
+            &mut device_cache,
+            &mut error_cache,
+            cache_key.clone(),
+            None,
+        );
+
+        assert_eq!(
+            mac_lookup_cache_decision(
+                &mut device_cache,
+                &mut error_cache,
+                &cache_key,
+                Duration::from_secs(30),
+            ),
+            MacLookupCacheDecision::UseCached(None)
+        );
+        assert!(error_cache.get(&cache_key).is_none());
+    }
 }

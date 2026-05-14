@@ -19,9 +19,9 @@
 
 use chrono::NaiveTime;
 use ssl_proxy::config::SyncConfig;
-use thiserror::Error;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use thiserror::Error;
 
 use crate::audit::AuditWindow;
 
@@ -56,6 +56,9 @@ pub struct AppConfig {
     pub circuit_breaker_initial_timeout_ms: u64,
     pub circuit_breaker_max_timeout_ms: u64,
     pub authorized_network_cache_backoff_ms: u64,
+    pub nats_request_timeout_ms: u64,
+    pub mac_device_lookup_enabled: bool,
+    pub mac_lookup_error_ttl_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,7 +144,8 @@ impl AppConfig {
         }
 
         let memory_backlog_size_val = parse_usize("ATH_SENSOR_MEMORY_BACKLOG_SIZE", 1024)
-            .unwrap_or(1024).max(64);
+            .unwrap_or(1024)
+            .max(64);
         let memory_backlog_size = NonZeroUsize::new(memory_backlog_size_val)
             .unwrap_or_else(|| NonZeroUsize::new(1024).unwrap());
 
@@ -216,18 +220,33 @@ impl AppConfig {
             audit_layer_stream: audit_layer_stream_from_env(),
             memory_backlog_size,
             memory_backlog_flush_interval_secs: parse_u64(
-                "ATH_SENSOR_MEMORY_BACKLOG_FLUSH_INTERVAL_SECS", 30
-            ).unwrap_or(30),
+                "ATH_SENSOR_MEMORY_BACKLOG_FLUSH_INTERVAL_SECS",
+                30,
+            )
+            .unwrap_or(30),
             publish_journal_path: publish_journal_path_env,
             circuit_breaker_initial_timeout_ms: parse_u64(
-                "ATH_SENSOR_CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS", 10_000
-            ).unwrap_or(10_000),
+                "ATH_SENSOR_CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS",
+                10_000,
+            )
+            .unwrap_or(10_000),
             circuit_breaker_max_timeout_ms: parse_u64(
-                "ATH_SENSOR_CIRCUIT_BREAKER_MAX_TIMEOUT_MS", 320_000
-            ).unwrap_or(320_000),
+                "ATH_SENSOR_CIRCUIT_BREAKER_MAX_TIMEOUT_MS",
+                320_000,
+            )
+            .unwrap_or(320_000),
             authorized_network_cache_backoff_ms: parse_u64(
-                "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_BACKOFF_MS", 30_000
-            ).unwrap_or(30_000),
+                "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_BACKOFF_MS",
+                30_000,
+            )
+            .unwrap_or(30_000),
+            nats_request_timeout_ms: parse_u64("ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS", 10_000)
+                .unwrap_or(10_000)
+                .max(1),
+            mac_device_lookup_enabled: read_bool("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", true),
+            mac_lookup_error_ttl_secs: parse_u64("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", 30)
+                .unwrap_or(30)
+                .max(1),
         })
     }
 }
@@ -469,6 +488,9 @@ mod tests {
             "ATH_SENSOR_CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS",
             "ATH_SENSOR_CIRCUIT_BREAKER_MAX_TIMEOUT_MS",
             "ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_BACKOFF_MS",
+            "ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS",
+            "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
+            "ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS",
             "ATH_SENSOR_METRICS_PORT",
             "ATH_SENSOR_SHUTDOWN_GRACE_SECS",
             "ATH_SENSOR_AUDIT_LAYER_STREAM",
@@ -494,6 +516,31 @@ mod tests {
             Some("nats://127.0.0.1:4222")
         );
         assert_eq!(config.sync.publish_timeout_ms, 2_000);
+    }
+
+    #[test]
+    fn enrichment_knobs_use_safe_defaults() {
+        let _env = test_env();
+
+        let config = AppConfig::from_env().unwrap();
+
+        assert_eq!(config.nats_request_timeout_ms, 10_000);
+        assert!(config.mac_device_lookup_enabled);
+        assert_eq!(config.mac_lookup_error_ttl_secs, 30);
+    }
+
+    #[test]
+    fn enrichment_knobs_accept_overrides() {
+        let _env = test_env();
+        std::env::set_var("ATH_SENSOR_NATS_REQUEST_TIMEOUT_MS", "15000");
+        std::env::set_var("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", "false");
+        std::env::set_var("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", "7");
+
+        let config = AppConfig::from_env().unwrap();
+
+        assert_eq!(config.nats_request_timeout_ms, 15_000);
+        assert!(!config.mac_device_lookup_enabled);
+        assert_eq!(config.mac_lookup_error_ttl_secs, 7);
     }
 
     #[test]
