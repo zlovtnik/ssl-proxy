@@ -80,7 +80,10 @@ impl RunConfig {
             load_subject: env_or_default("SYNC_LOAD_SUBJECT", DEFAULT_SYNC_LOAD_SUBJECT),
             result_subject: env_or_default("SYNC_RESULT_SUBJECT", DEFAULT_SYNC_RESULT_SUBJECT),
             load_consumer: env_or_default("SYNC_LOAD_CONSUMER", DEFAULT_SYNC_LOAD_CONSUMER),
-            oracle_worker_parallelism: env_or_default_usize("ORACLE_WORKER_PARALLELISM", DEFAULT_ORACLE_WORKER_PARALLELISM),
+            oracle_worker_parallelism: env_or_default_usize(
+                "ORACLE_WORKER_PARALLELISM",
+                DEFAULT_ORACLE_WORKER_PARALLELISM,
+            ),
             oracle_pool: None,
         })
     }
@@ -125,14 +128,20 @@ fn run() -> Result<(), String> {
         .parse()
         .unwrap_or(30);
     let manager = OracleConnectionManager::new(&user, &password, &connect_string);
-    println!("service={SERVICE_NAME} event=pool_build_start max_size={}", config.oracle_worker_parallelism);
+    println!(
+        "service={SERVICE_NAME} event=pool_build_start max_size={}",
+        config.oracle_worker_parallelism
+    );
     let pool = r2d2::Pool::builder()
         .max_size(config.oracle_worker_parallelism as u32)
         .min_idle(Some(0))
         .connection_timeout(Duration::from_secs(pool_timeout_secs))
         .build(manager)
         .map_err(|error| format!("create Oracle connection pool: {}", error_chain(&error)))?;
-    println!("service={SERVICE_NAME} event=pool_build_ok max_size={}", config.oracle_worker_parallelism);
+    println!(
+        "service={SERVICE_NAME} event=pool_build_ok max_size={}",
+        config.oracle_worker_parallelism
+    );
     println!(
         "service={SERVICE_NAME} event=pool_config max_size={} timeout_secs={}",
         config.oracle_worker_parallelism, pool_timeout_secs
@@ -320,9 +329,10 @@ async fn handle_load_message(
 
     let batch_started = Instant::now();
     let oracle_pool = Arc::clone(config.oracle_pool.as_ref().unwrap());
-    let result = tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &oracle_pool))
-        .await
-        .map_err(|error| format!("oracle load task panicked: {error}"))?;
+    let result =
+        tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &oracle_pool))
+            .await
+            .map_err(|error| format!("oracle load task panicked: {error}"))?;
     let batch_id = result.batch_id.clone();
     let status = result.status.clone();
     let batch_duration_ms = batch_started.elapsed().as_millis();
@@ -525,12 +535,7 @@ fn env_or_default(name: &str, default: &str) -> String {
 
 fn env_or_default_usize(name: &str, default: usize) -> usize {
     match env::var(name) {
-        Ok(value) => {
-            value
-                .trim()
-                .parse::<usize>()
-                .unwrap_or(default)
-        }
+        Ok(value) => value.trim().parse::<usize>().unwrap_or(default),
         _ => default,
     }
 }
