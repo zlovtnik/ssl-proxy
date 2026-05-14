@@ -145,18 +145,23 @@ async fn run_subscriber_once(
         return Ok(());
     };
     if false || redpanda_bootstrap_servers.starts_with("tls://") {
-        return Err("audit config subscriber supports plain redpanda:// endpoints only".to_string());
+        return Err(
+            "audit config subscriber supports plain redpanda:// endpoints only".to_string(),
+        );
     }
     let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;
-    let stream = timeout(Redpanda_CONNECT_TIMEOUT, TcpStream::connect(&endpoint.address))
-        .await
-        .map_err(|_| {
-            format!(
-                "connect to Redpanda {} timed out after {:?}",
-                endpoint.address, Redpanda_CONNECT_TIMEOUT
-            )
-        })?
-        .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
+    let stream = timeout(
+        Redpanda_CONNECT_TIMEOUT,
+        TcpStream::connect(&endpoint.address),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "connect to Redpanda {} timed out after {:?}",
+            endpoint.address, Redpanda_CONNECT_TIMEOUT
+        )
+    })?
+    .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
@@ -367,10 +372,13 @@ where
         return Err("config subscriber supports plain redpanda:// endpoints only".to_string());
     }
     let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;
-    let stream = timeout(Redpanda_CONNECT_TIMEOUT, TcpStream::connect(&endpoint.address))
-        .await
-        .map_err(|_| format!("connect to Redpanda {} timed out", endpoint.address))?
-        .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
+    let stream = timeout(
+        Redpanda_CONNECT_TIMEOUT,
+        TcpStream::connect(&endpoint.address),
+    )
+    .await
+    .map_err(|_| format!("connect to Redpanda {} timed out", endpoint.address))?
+    .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
@@ -638,7 +646,8 @@ mod tests {
     #[test]
     fn parses_redpanda_endpoint_with_percent_encoded_userinfo() {
         assert_eq!(
-            parse_redpanda_endpoint("redpanda://user%40example:p%40ss%3Aword@127.0.0.1:9092").unwrap(),
+            parse_redpanda_endpoint("redpanda://user%40example:p%40ss%3Aword@127.0.0.1:9092")
+                .unwrap(),
             RedpandaEndpoint {
                 address: "127.0.0.1:9092".to_string(),
                 user: Some("user@example".to_string()),

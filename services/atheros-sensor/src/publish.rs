@@ -128,7 +128,10 @@ impl PublishState {
         Arc::new(Mutex::new(Self::default()))
     }
 
-    pub fn shared_with_config(capacity: NonZeroUsize, journal_path: Option<PathBuf>) -> SharedPublishState {
+    pub fn shared_with_config(
+        capacity: NonZeroUsize,
+        journal_path: Option<PathBuf>,
+    ) -> SharedPublishState {
         Arc::new(Mutex::new(Self {
             circuit_breaker_state: CircuitBreakerState::Closed,
             circuit_breaker_opened_at: None,
@@ -154,18 +157,15 @@ impl PublishState {
         payload: &str,
         error: &str,
     ) -> usize {
-        if let Some((evicted_key, (evicted_stream, _, _, _))) = self
-            .memory_backlog
-            .push(
-                dedupe_key,
-                (
-                    stream_name,
-                    payload.to_string(),
-                    error.to_string(),
-                    String::new(),
-                ),
-            )
-        {
+        if let Some((evicted_key, (evicted_stream, _, _, _))) = self.memory_backlog.push(
+            dedupe_key,
+            (
+                stream_name,
+                payload.to_string(),
+                error.to_string(),
+                String::new(),
+            ),
+        ) {
             warn!(
                 evicted_dedupe_key = %evicted_key,
                 evicted_stream_name = %evicted_stream,
@@ -283,7 +283,8 @@ pub async fn publish_entry(
         close_backlog_circuit_breaker(state);
     }
 
-    if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await {
+    if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
+    {
         persist_publish_failure(state, backlog, &dedupe_key, payload, error).await?;
     }
 
@@ -432,7 +433,10 @@ fn circuit_breaker_is_open(
             }
             state.circuit_breaker_state = CircuitBreakerState::HalfOpen;
             state.circuit_breaker_opened_at = None;
-            info!(dedupe_key, "backlog circuit breaker probe starting (half-open)");
+            info!(
+                dedupe_key,
+                "backlog circuit breaker probe starting (half-open)"
+            );
             false
         }
         CircuitBreakerState::HalfOpen => false,
@@ -472,7 +476,12 @@ fn queue_in_memory_after_backlog_failure(
         &payload_ref,
         &error_ref,
     );
-    s.journal_append(&dedupe_key, "wireless.audit", &payload_ref, &backlog_err.to_string());
+    s.journal_append(
+        &dedupe_key,
+        "wireless.audit",
+        &payload_ref,
+        &backlog_err.to_string(),
+    );
     warn!(
         dedupe_key = %dedupe_key,
         memory_backlog_entries,
@@ -503,11 +512,15 @@ pub(crate) async fn flush_memory_backlog(
                 "failed to flush memory backlog entry to coordinator"
             );
             queue_in_memory_after_backlog_failure(state, key, payload, err, backlog_err);
-            for (remaining_key, (remaining_stream, remaining_payload, remaining_err, _)) in memory_entries {
-                state
-                    .lock()
-                    .unwrap()
-                    .put_memory_backlog(remaining_key, remaining_stream, &remaining_payload, &remaining_err);
+            for (remaining_key, (remaining_stream, remaining_payload, remaining_err, _)) in
+                memory_entries
+            {
+                state.lock().unwrap().put_memory_backlog(
+                    remaining_key,
+                    remaining_stream,
+                    &remaining_payload,
+                    &remaining_err,
+                );
             }
             return false;
         }
@@ -563,13 +576,19 @@ pub async fn replay_journal(
             Err(_) => continue,
         };
         let dedupe_key = parsed["dedupe_key"].as_str().unwrap_or("").to_string();
-        let stream_name = parsed["stream_name"].as_str().unwrap_or("wireless.audit").to_string();
+        let stream_name = parsed["stream_name"]
+            .as_str()
+            .unwrap_or("wireless.audit")
+            .to_string();
         let payload = parsed["payload"].as_str().unwrap_or("").to_string();
         let error = parsed["error"].as_str().unwrap_or("").to_string();
         if dedupe_key.is_empty() || payload.is_empty() {
             continue;
         }
-        match backlog.save_pending(&dedupe_key, &stream_name, &payload, &error).await {
+        match backlog
+            .save_pending(&dedupe_key, &stream_name, &payload, &error)
+            .await
+        {
             Ok(()) => {
                 replayed += 1;
                 info!(%dedupe_key, %stream_name, "replayed journal entry to coordinator backlog");
@@ -854,10 +873,7 @@ fn sha256_hex(payload: &str) -> String {
 }
 
 /// Periodic drain of memory backlog — runs regardless of circuit breaker state.
-pub async fn periodic_memory_backlog_flush(
-    state: &SharedPublishState,
-    backlog: &dyn BacklogStore,
-) {
+pub async fn periodic_memory_backlog_flush(state: &SharedPublishState, backlog: &dyn BacklogStore) {
     let backlog_len = state.lock().unwrap().memory_backlog.len();
     if backlog_len == 0 {
         return;

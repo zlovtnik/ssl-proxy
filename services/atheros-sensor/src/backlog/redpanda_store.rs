@@ -115,9 +115,11 @@ impl RedpandaBacklog {
             .redpanda_bootstrap_servers
             .as_deref()
             .ok_or_else(|| BacklogError::Disabled { operation })?;
-        let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| BacklogError::Redpanda {
-            operation,
-            message: source,
+        let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| {
+            BacklogError::Redpanda {
+                operation,
+                message: source,
+            }
         })?;
         let tcp_stream = timeout(self.request_timeout, TcpStream::connect(&endpoint.address))
             .await
@@ -153,7 +155,10 @@ impl RedpandaBacklog {
         if !info_line.starts_with("INFO ") {
             return Err(BacklogError::Redpanda {
                 operation,
-                message: format!("expected Redpanda INFO banner, got: {}", info_line.trim_end()),
+                message: format!(
+                    "expected Redpanda INFO banner, got: {}",
+                    info_line.trim_end()
+                ),
             });
         }
 
@@ -430,9 +435,16 @@ impl RedpandaBacklog {
             .ok_or_else(|| BacklogError::Disabled {
                 operation: "redpanda_health_check",
             })?;
-        let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| BacklogError::Redpanda {
-            operation: "redpanda_health_check",
-            message: source,
+        if let Some(error) =
+            request_transport_unsupported("redpanda_health_check", redpanda_bootstrap_servers)
+        {
+            return Err(error);
+        }
+        let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers).map_err(|source| {
+            BacklogError::Redpanda {
+                operation: "redpanda_health_check",
+                message: source,
+            }
         })?;
         let tcp_stream = timeout(self.request_timeout, TcpStream::connect(&endpoint.address))
             .await
@@ -477,7 +489,10 @@ impl RedpandaBacklog {
         if !info_line.starts_with("INFO ") {
             return Err(BacklogError::Redpanda {
                 operation: "redpanda_health_check",
-                message: format!("expected Redpanda INFO banner, got: {}", info_line.trim_end()),
+                message: format!(
+                    "expected Redpanda INFO banner, got: {}",
+                    info_line.trim_end()
+                ),
             });
         }
         let connect_options = serde_json::json!({
@@ -533,9 +548,13 @@ impl RedpandaBacklog {
         topic: &'static str,
         payload: &str,
     ) -> Result<String, BacklogError> {
-        let Some(_redpanda_bootstrap_servers) = self.sync.redpanda_bootstrap_servers.as_deref() else {
+        let Some(redpanda_bootstrap_servers) = self.sync.redpanda_bootstrap_servers.as_deref()
+        else {
             return Err(BacklogError::Disabled { operation });
         };
+        if let Some(error) = request_transport_unsupported(operation, redpanda_bootstrap_servers) {
+            return Err(error);
+        }
         let reply_topic = next_inbox_topic();
         let payload = payload_with_reply_topic(operation, payload, &reply_topic)?;
         self.request_with_cached_connection(operation, topic, &payload, &reply_topic)
@@ -830,6 +849,61 @@ fn next_inbox_topic() -> String {
     format!("_INBOX.ssl_proxy.{}.{}", std::process::id(), id)
 }
 
+fn request_transport_unsupported(
+    operation: &'static str,
+    redpanda_bootstrap_servers: &str,
+) -> Option<BacklogError> {
+    let trimmed = redpanda_bootstrap_servers.trim();
+    let without_scheme = trimmed
+        .strip_prefix("tls://")
+        .or_else(|| trimmed.strip_prefix("redpanda://"))
+        .unwrap_or(trimmed);
+    let authority = without_scheme.split('/').next().unwrap_or_default();
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    if host_port.contains(',') {
+        return Some(unsupported_request_transport_error(
+            operation,
+            redpanda_bootstrap_servers,
+        ));
+    }
+
+    let port = redpanda_port(host_port).unwrap_or(9092);
+    if port == 9092 || port == 19092 {
+        return Some(unsupported_request_transport_error(
+            operation,
+            redpanda_bootstrap_servers,
+        ));
+    }
+
+    None
+}
+
+fn unsupported_request_transport_error(
+    operation: &'static str,
+    redpanda_bootstrap_servers: &str,
+) -> BacklogError {
+    BacklogError::Redpanda {
+        operation,
+        message: format!(
+            "Kafka Redpanda listener {redpanda_bootstrap_servers} does not support inline request/reply; skipping request"
+        ),
+    }
+}
+
+fn redpanda_port(host_port: &str) -> Option<u16> {
+    if let Some(rest) = host_port.strip_prefix('[') {
+        let end = rest.find(']')?;
+        return rest
+            .get(end + 1..)
+            .and_then(|tail| tail.strip_prefix(':'))
+            .and_then(|port| port.parse::<u16>().ok());
+    }
+
+    host_port
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse::<u16>().ok())
+}
+
 trait RedpandaStream: AsyncRead + AsyncWrite + Unpin + Send {}
 
 impl<T> RedpandaStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -906,10 +980,9 @@ fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::Clien
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let mut roots = rustls::RootCertStore::empty();
-    let ca_cert_path = sync
-        .ssl_ca_location
-        .as_deref()
-        .ok_or_else(|| "SYNC_REDPANDA_SSL_CA_LOCATION is required when TLS is enabled".to_string())?;
+    let ca_cert_path = sync.ssl_ca_location.as_deref().ok_or_else(|| {
+        "SYNC_REDPANDA_SSL_CA_LOCATION is required when TLS is enabled".to_string()
+    })?;
     let ca_pem = std::fs::read(ca_cert_path)
         .map_err(|error| format!("read Redpanda CA certificate {ca_cert_path}: {error}"))?;
     let ca_certs = rustls_pemfile::certs(&mut Cursor::new(ca_pem))
@@ -966,7 +1039,7 @@ async fn connect_tls(
 mod tests {
     use super::{
         parse_authorized_networks_response, parse_redpanda_endpoint, payload_with_reply_topic,
-        request_error_marks_redpanda_unhealthy,
+        request_error_marks_redpanda_unhealthy, request_transport_unsupported,
     };
     use crate::backlog::BacklogError;
 
@@ -1041,6 +1114,32 @@ mod tests {
     }
 
     #[test]
+    fn kafka_listener_request_transport_fails_fast() {
+        assert!(request_transport_unsupported(
+            "lookup_device_by_mac",
+            "redpanda://127.0.0.1:19092"
+        )
+        .is_some());
+        assert!(
+            request_transport_unsupported("lookup_device_by_mac", "redpanda://redpanda:9092")
+                .is_some()
+        );
+        assert!(request_transport_unsupported(
+            "lookup_device_by_mac",
+            "redpanda://redpanda-a:9092,redpanda-b:9092"
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn non_kafka_request_transport_keeps_legacy_path_available() {
+        assert!(
+            request_transport_unsupported("lookup_device_by_mac", "redpanda://127.0.0.1:4222")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn transport_io_error_marks_redpanda_transport_unhealthy() {
         let error = BacklogError::Redpanda {
             operation: "lookup_device_by_mac",
@@ -1082,7 +1181,8 @@ mod tests {
 
     #[test]
     fn ignores_userinfo_for_address_parsing() {
-        let endpoint = parse_redpanda_endpoint("redpanda://user:pass@redpanda.internal:4224").unwrap();
+        let endpoint =
+            parse_redpanda_endpoint("redpanda://user:pass@redpanda.internal:4224").unwrap();
         assert_eq!(endpoint.address, "redpanda.internal:4224");
         assert_eq!(endpoint.host, "redpanda.internal");
     }

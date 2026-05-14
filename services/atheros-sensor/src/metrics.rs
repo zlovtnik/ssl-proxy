@@ -30,7 +30,11 @@ pub fn shared_stats() -> SharedStats {
 
 /// Spawns the metrics HTTP server on 127.0.0.1 (not 0.0.0.0) serving exactly one path:
 /// /metrics. No-op when port is None, returning immediately with no listener.
-pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, publish_state: SharedPublishState) {
+pub fn spawn_metrics_server(
+    port: Option<u16>,
+    stats: SharedStats,
+    publish_state: SharedPublishState,
+) {
     let Some(port) = port else {
         return;
     };
@@ -56,9 +60,8 @@ pub fn spawn_metrics_server(port: Option<u16>, stats: SharedStats, publish_state
             let ps = Arc::clone(&publish_state);
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
-                let service = service_fn(move |req| {
-                    serve_metrics(req, Arc::clone(&stats), Arc::clone(&ps))
-                });
+                let service =
+                    service_fn(move |req| serve_metrics(req, Arc::clone(&stats), Arc::clone(&ps)));
                 if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
                     warn!(%error, "metrics connection failed");
                 }

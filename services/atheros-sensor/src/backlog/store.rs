@@ -65,7 +65,9 @@ pub enum BacklogError {
     },
     #[error("redpanda request {operation} timed out")]
     Timeout { operation: &'static str },
-    #[error("redpanda request {operation} unsupported when SYNC_REDPANDA_BOOTSTRAP_SERVERS is unset")]
+    #[error(
+        "redpanda request {operation} unsupported when SYNC_REDPANDA_BOOTSTRAP_SERVERS is unset"
+    )]
     Disabled { operation: &'static str },
 }
 

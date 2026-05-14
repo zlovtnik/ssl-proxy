@@ -98,8 +98,10 @@ impl AppConfig {
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            connect_timeout_ms: parse_u64("SYNC_REDPANDA_CONNECT_TIMEOUT_MS", 2_000).unwrap_or(2_000),
-            publish_timeout_ms: parse_u64("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", 2_000).unwrap_or(2_000),
+            connect_timeout_ms: parse_u64("SYNC_REDPANDA_CONNECT_TIMEOUT_MS", 2_000)
+                .unwrap_or(2_000),
+            publish_timeout_ms: parse_u64("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", 2_000)
+                .unwrap_or(2_000),
             publish_queue_capacity: parse_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192)
                 .unwrap_or(8_192),
             publish_enqueue_timeout_ms: parse_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25)
@@ -246,9 +248,12 @@ impl AppConfig {
                 30_000,
             )
             .unwrap_or(30_000),
-            redpanda_request_timeout_ms: parse_u64("ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS", 10_000)
-                .unwrap_or(10_000)
-                .max(1),
+            redpanda_request_timeout_ms: parse_u64(
+                "ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS",
+                10_000,
+            )
+            .unwrap_or(10_000)
+            .max(1),
             mac_device_lookup_enabled: read_bool("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", true),
             mac_lookup_error_ttl_secs: parse_u64("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", 30)
                 .unwrap_or(30)
@@ -257,7 +262,9 @@ impl AppConfig {
     }
 }
 
-fn validate_host_network_endpoints(redpanda_bootstrap_servers: Option<&str>) -> Result<(), ConfigError> {
+fn validate_host_network_endpoints(
+    redpanda_bootstrap_servers: Option<&str>,
+) -> Result<(), ConfigError> {
     if let Some(host) = redpanda_bootstrap_servers.and_then(redpanda_host) {
         reject_docker_service_host("SYNC_REDPANDA_BOOTSTRAP_SERVERS", &host)?;
     }

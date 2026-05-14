@@ -63,7 +63,7 @@ use crate::{
         AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
-    backlog::{BacklogStore, RedpandaBacklog, ProbeFlushObservation},
+    backlog::{BacklogStore, ProbeFlushObservation, RedpandaBacklog},
     capture::{stream_packets, CaptureControl, CaptureError},
     channel_control::set_channel,
     config::AppConfig,
@@ -129,7 +129,9 @@ async fn run_healthcheck() -> Result<(), SensorError> {
         }
     }
 
-    println!("Healthcheck OK: configuration valid, device accessible, Redpanda publisher initialized");
+    println!(
+        "Healthcheck OK: configuration valid, device accessible, Redpanda publisher initialized"
+    );
     Ok(())
 }
 
