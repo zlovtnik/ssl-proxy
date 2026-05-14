@@ -40,37 +40,66 @@ pub(crate) fn payload_rows(
 ) -> Result<Vec<serde_json::Value>, String> {
     let value: serde_json::Value =
         serde_json::from_str(payload).map_err(|error| format!("decode payload json: {error}"))?;
-    if target == SinkTarget::WirelessProbeRequests {
-        if let Some(rows) = value.get("probes").and_then(serde_json::Value::as_array) {
-            return Ok(rows.clone());
-        }
+
+    if let Some(rows) = probe_rows(target, &value) {
+        return Ok(rows);
     }
-    if target == SinkTarget::WirelessClientInventory {
-        if let Some(clients) = value.get("clients").and_then(serde_json::Value::as_array) {
-            let mut rows = Vec::with_capacity(clients.len());
-            for client in clients {
-                let mut merged = client.as_object().cloned().ok_or_else(|| {
-                    "wireless client inventory clients must contain objects".to_string()
-                })?;
-                if let Some(sensor_id) = value.get("sensor_id") {
-                    merged.insert("sensor_id".to_string(), sensor_id.clone());
-                }
-                if let Some(location_id) = value.get("location_id") {
-                    merged.insert("location_id".to_string(), location_id.clone());
-                }
-                if let Some(snapshot_at) = value
-                    .get("snapshot_at")
-                    .or_else(|| value.get("observed_at"))
-                {
-                    merged.insert("snapshot_at".to_string(), snapshot_at.clone());
-                }
-                rows.push(serde_json::Value::Object(merged));
-            }
-            return Ok(rows);
-        }
+
+    if let Some(rows) = client_inventory_rows(target, &value)? {
+        return Ok(rows);
     }
+
     match value {
         serde_json::Value::Array(rows) => Ok(rows),
         other => Ok(vec![other]),
     }
+}
+
+fn probe_rows(target: SinkTarget, value: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    (target == SinkTarget::WirelessProbeRequests)
+        .then(|| value.get("probes")?.as_array().cloned())
+        .flatten()
+}
+
+fn client_inventory_rows(
+    target: SinkTarget,
+    value: &serde_json::Value,
+) -> Result<Option<Vec<serde_json::Value>>, String> {
+    if target != SinkTarget::WirelessClientInventory {
+        return Ok(None);
+    }
+
+    let Some(clients) = value.get("clients").and_then(serde_json::Value::as_array) else {
+        return Ok(None);
+    };
+
+    clients
+        .iter()
+        .map(|client| merge_client_inventory(value, client))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn merge_client_inventory(
+    envelope: &serde_json::Value,
+    client: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut merged = client
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "wireless client inventory clients must contain objects".to_string())?;
+
+    for field in ["sensor_id", "location_id"] {
+        if let Some(value) = envelope.get(field) {
+            merged.insert(field.to_string(), value.clone());
+        }
+    }
+    if let Some(snapshot_at) = envelope
+        .get("snapshot_at")
+        .or_else(|| envelope.get("observed_at"))
+    {
+        merged.insert("snapshot_at".to_string(), snapshot_at.clone());
+    }
+
+    Ok(serde_json::Value::Object(merged))
 }

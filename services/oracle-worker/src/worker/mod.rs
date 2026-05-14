@@ -24,11 +24,19 @@ pub use classify::{classify_oracle_error, sink_target};
 #[allow(unused_imports)]
 pub use handle::{handle_load, handle_load_with_pool, handle_load_with_sink};
 #[allow(unused_imports)]
+pub use payload::resolve_payload;
+#[allow(unused_imports)]
 pub use proxy_transform::{blocked_event_rows_from_payload, proxy_event_rows_from_payload};
-pub use proxy_types::{BlockedEventInsert, ProxyEventInsert};
+#[allow(unused_imports)]
+pub use proxy_types::{
+    BlockedEventInsert, BlockedFingerprint, BlockedMetrics, ProxyEventInsert, ProxyEventRow,
+};
 pub use sink::check_oracle_connection_from_env;
+#[allow(unused_imports)]
+pub use sink::OracleProxyEventSink;
 pub use sink_trait::ProxyEventSink;
-pub use types::{OracleErrorClass, OracleLoad, OracleResult, SinkTarget};
+#[allow(unused_imports)]
+pub use types::{OracleConnection, OracleErrorClass, OracleLoad, OracleResult, SinkTarget};
 pub use wireless_types::{
     WirelessAuditFrameInsert, WirelessBandwidthInsert, WirelessClientInventoryInsert,
     WirelessDeauthFloodInsert, WirelessPmfAttackInsert, WirelessProbeRequestInsert,
@@ -37,8 +45,6 @@ pub use wireless_types::{
 
 #[cfg(test)]
 pub(crate) use classify::checksum;
-#[cfg(test)]
-pub(crate) use payload::resolve_payload;
 #[cfg(test)]
 pub(crate) use proxy_db::{is_proxy_events_batch_row_duplicate, pending_proxy_event_rows};
 #[cfg(test)]
