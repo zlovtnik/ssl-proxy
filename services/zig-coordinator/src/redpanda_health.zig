@@ -8,6 +8,7 @@ pub const Error = error{
     OutOfMemory,
     InvalidRedpandaUrl,
     RedpandaCheckFailed,
+    RedpandaCommandFailed,
     RedpandaTopicMissing,
     TopologyFileMissing,
     TopologyParseFailed,
@@ -78,6 +79,7 @@ fn checkRedpandaTopic(
             .stringSafe("event", "redpanda_topic")
             .stringSafe("status", "error")
             .string("topic", topic)
+            .err(err)
             .log();
         return err;
     };
@@ -97,10 +99,16 @@ fn runRequiredCommand(
 
     if (!command.isSuccess(result)) {
         command.logFailure(command_name, result);
+        if (isCommandExecutionFailure(result)) return error.RedpandaCommandFailed;
         return on_error;
     }
 
     command.logOutput(command_name, result.stdout);
+}
+
+fn isCommandExecutionFailure(result: command.Result) bool {
+    const code = command.exitCode(result) orelse return false;
+    return code == 126 or code == 127;
 }
 
 test "checkConsumers is a Redpanda no-op" {

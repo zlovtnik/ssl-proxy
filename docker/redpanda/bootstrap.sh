@@ -15,6 +15,8 @@ until rpk cluster info --brokers "${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; do
   sleep 1
 done
 
+topic_count=0
+
 while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
   case "${topic}" in
     ""|\#*) continue ;;
@@ -39,4 +41,14 @@ while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
     --brokers "${BOOTSTRAP_SERVERS}" \
     --set "retention.ms=${topic_retention_ms}" \
     --set "retention.bytes=${topic_retention_bytes}" >/dev/null
+
+  if ! rpk topic describe "${topic}" --brokers "${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; then
+    echo "error: Redpanda topic verification failed: ${topic}" >&2
+    exit 1
+  fi
+
+  topic_count=$((topic_count + 1))
+  echo "Verified topic ${topic}"
 done < "${TOPIC_MANIFEST}"
+
+echo "Verified ${topic_count} Redpanda topics from ${TOPIC_MANIFEST}"
