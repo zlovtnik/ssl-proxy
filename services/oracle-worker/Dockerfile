@@ -4,9 +4,13 @@ COPY services/oracle-worker/Cargo.toml services/oracle-worker/Cargo.lock ./
 COPY services/oracle-worker/src ./src
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
+        clang \
         cmake \
         libaio-dev \
-    && rm -rf /var/lib/apt/lists/*  
+        libclang-dev \
+        libssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 RUN cargo build --release
 
 FROM debian:bookworm-slim
