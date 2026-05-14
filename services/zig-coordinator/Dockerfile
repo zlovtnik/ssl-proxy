@@ -35,7 +35,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 COPY --from=builder /app/services/zig-coordinator/zig-out/bin/zig-coordinator /usr/local/bin/zig-coordinator
 COPY --from=redpanda-tools /opt/redpanda/libexec/rpk /usr/local/bin/rpk
-RUN rpk version
+RUN rpk --version
 COPY services/zig-coordinator/schema ./schema
 COPY services/zig-coordinator/src/postgres ./src/postgres
 COPY docker/redpanda ./docker/redpanda
