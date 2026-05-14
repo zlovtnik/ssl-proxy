@@ -148,12 +148,14 @@ case "${1:-}" in
       info)
         shift
         consumer_info "$@"
+        exit 0
         ;;
     esac
     ;;
   pub)
     shift
     publish_message "$@"
+    exit 0
     ;;
 esac
 

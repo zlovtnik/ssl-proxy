@@ -1,5 +1,5 @@
 x-ath-sensor-env: &ath_sensor_env
-  SYNC_REDPANDA_BOOTSTRAP_SERVERS: 127.0.0.1:9092
+  SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda://127.0.0.1:19092
   DATABASE_URL: postgres://sync:sync@127.0.0.1:5432/sync
 
 services:
@@ -314,7 +314,9 @@ services:
       - sync-outbox:/sync-outbox
     environment:
       <<: *ath_sensor_env
-      SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-127.0.0.1:9092}
+      # The sensor runs in host networking for capture, so Docker service DNS
+      # names such as redpanda are not reachable from this container.
+      SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://127.0.0.1:19092}
       DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
       ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
       ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
@@ -371,9 +373,9 @@ services:
       - "0"
       - --check=false
       - --kafka-addr
-      - PLAINTEXT://0.0.0.0:9092
+      - INTERNAL://0.0.0.0:9092,HOST://0.0.0.0:19092
       - --advertise-kafka-addr
-      - PLAINTEXT://redpanda:9092
+      - INTERNAL://redpanda:9092,HOST://127.0.0.1:19092
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster info --brokers 127.0.0.1:9092 >/dev/null 2>&1"]
@@ -382,6 +384,7 @@ services:
       retries: 5
     ports:
       - "9092:9092"
+      - "127.0.0.1:19092:19092"
       - "9644:9644"
     volumes:
       - redpanda-data:/data

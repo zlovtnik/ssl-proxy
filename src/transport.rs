@@ -744,10 +744,11 @@ fn build_redpanda_producer(config: &SyncPublisherConfig) -> Result<FutureProduce
         .redpanda_bootstrap_servers
         .as_deref()
         .ok_or_else(|| "sync publisher disabled".to_string())?;
+    let bootstrap_servers = rdkafka_bootstrap_servers(bootstrap_servers);
 
     let mut client_config = ClientConfig::new();
     client_config
-        .set("bootstrap.servers", bootstrap_servers)
+        .set("bootstrap.servers", &bootstrap_servers)
         .set("message.timeout.ms", config.publish_timeout.as_millis().to_string())
         .set("socket.timeout.ms", config.connect_timeout.as_millis().to_string());
 
@@ -776,6 +777,22 @@ fn build_redpanda_producer(config: &SyncPublisherConfig) -> Result<FutureProduce
     client_config
         .create()
         .map_err(|error| format!("create Redpanda producer: {error}"))
+}
+
+fn rdkafka_bootstrap_servers(redpanda_bootstrap_servers: &str) -> String {
+    let trimmed = redpanda_bootstrap_servers.trim();
+    let authority = trimmed
+        .strip_prefix("redpanda://")
+        .unwrap_or(trimmed)
+        .split('/')
+        .next()
+        .unwrap_or_default();
+
+    authority
+        .rsplit('@')
+        .next()
+        .unwrap_or(authority)
+        .to_string()
 }
 
 fn record_worker_error(health: &Arc<Mutex<SyncPublisherHealth>>, error: String) {

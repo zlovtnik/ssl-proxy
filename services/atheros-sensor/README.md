@@ -103,7 +103,7 @@ Additional topics emitted by this sensor:
 
 1. Put the capture interface into monitor mode with [`scripts/prep_ath.sh`](/Users/rcs/git/ssl-proxy/scripts/prep_ath.sh).
 2. Point the sensor at the compose stack:
-   - `SYNC_REDPANDA_BOOTSTRAP_SERVERS=127.0.0.1:9092`
+   - `SYNC_REDPANDA_BOOTSTRAP_SERVERS=redpanda://127.0.0.1:19092`
 3. Start the service directly or install the provided `systemd` unit template.
 
 Default capture filter is `type mgt or type data`. Override `ATH_SENSOR_BPF` when
