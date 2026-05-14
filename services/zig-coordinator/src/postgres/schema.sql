@@ -132,7 +132,9 @@ as $$
 declare
   v_marked_count integer := 0;
   v_recovered_count integer := 0;
+  v_batched_count integer := 0;
   v_limit integer := greatest(coalesce(p_batch_size, 200), 1);
+  v_processed_dedupe_keys text[] := array[]::text[];
 begin
   update sync_scan_ingest ingest
      set status = 'batched',
@@ -181,91 +183,97 @@ begin
         limit v_limit
         for update skip locked
      )
-    returning *
-  ),
-  job_upsert as (
-    insert into sync_job (job_id, stream_name, status, attempt_count, created_at, started_at)
-    select sync_stable_uuid(dedupe_key || ':job'),
-           stream_name,
-           'pending',
-           0,
-           now(),
-           now()
-      from next_ingest
-     where stream_name in (
-           select btrim(configured.stream_name)
-             from unnest(p_oracle_stream_names) as configured(stream_name)
-     )
-    on conflict (job_id) do nothing
-    returning job_id
-  ),
-  batch_upsert as (
-    insert into sync_batch (
-      batch_id,
-      job_id,
-      batch_no,
-      payload_ref,
-      status,
-      row_count,
-      checksum,
-      attempt_count,
-      last_error,
-      dedupe_key,
-      cursor_start,
-      cursor_end
-    )
-    select sync_stable_uuid(dedupe_key || ':batch'),
-           sync_stable_uuid(dedupe_key || ':job'),
-           0,
-           payload_ref,
-           'pending',
-           1,
-           payload_sha256,
-           0,
-           null,
-           dedupe_key,
-           coordinator.ensure_cursor(stream_name),
-           extract(epoch from observed_at)::bigint::text
-      from next_ingest
-     where stream_name in (
-           select btrim(configured.stream_name)
-             from unnest(p_oracle_stream_names) as configured(stream_name)
-     )
-    on conflict (dedupe_key) do nothing
     returning dedupe_key
-  ),
-  cursor_upsert as (
-    insert into sync_cursor (stream_name, cursor_value, updated_at)
-    select stream_name, extract(epoch from observed_at)::bigint::text, now()
-      from next_ingest
-    on conflict (stream_name)
-    do update set cursor_value = excluded.cursor_value, updated_at = now()
-    returning stream_name
-  ),
-  mark_batched as (
-    update sync_scan_ingest ingest
-       set status = 'batched',
-           updated_at = now()
-      from next_ingest
-     where ingest.dedupe_key = next_ingest.dedupe_key
-       and (
-             next_ingest.stream_name not in (
-               select btrim(configured.stream_name)
-                 from unnest(p_oracle_stream_names) as configured(stream_name)
-             )
-             or exists (
-               select 1
-                 from batch_upsert
-                where batch_upsert.dedupe_key = next_ingest.dedupe_key
-             )
-       )
-    returning ingest.dedupe_key
   )
-  select v_marked_count + v_recovered_count + count(*)
-    into v_marked_count
-    from mark_batched;
+  select coalesce(array_agg(dedupe_key), array[]::text[])
+    into v_processed_dedupe_keys
+    from next_ingest;
 
-  return v_marked_count;
+  insert into sync_cursor (stream_name, cursor_value, updated_at)
+  select distinct stream_name, '0', now()
+    from sync_scan_ingest
+   where dedupe_key = any(v_processed_dedupe_keys)
+  on conflict (stream_name) do nothing;
+
+  insert into sync_job (job_id, stream_name, status, attempt_count, created_at, started_at)
+  select sync_stable_uuid(dedupe_key || ':job'),
+         stream_name,
+         'pending',
+         0,
+         now(),
+         now()
+    from sync_scan_ingest
+   where dedupe_key = any(v_processed_dedupe_keys)
+     and stream_name in (
+           select btrim(configured.stream_name)
+             from unnest(p_oracle_stream_names) as configured(stream_name)
+     )
+  on conflict (job_id) do nothing;
+
+  insert into sync_batch (
+    batch_id,
+    job_id,
+    batch_no,
+    payload_ref,
+    status,
+    row_count,
+    checksum,
+    attempt_count,
+    last_error,
+    dedupe_key,
+    cursor_start,
+    cursor_end
+  )
+  select sync_stable_uuid(ingest.dedupe_key || ':batch'),
+         sync_stable_uuid(ingest.dedupe_key || ':job'),
+         0,
+         ingest.payload_ref,
+         'pending',
+         1,
+         ingest.payload_sha256,
+         0,
+         null,
+         ingest.dedupe_key,
+         cursor.cursor_value,
+         extract(epoch from ingest.observed_at)::bigint::text
+    from sync_scan_ingest ingest
+    join sync_cursor cursor on cursor.stream_name = ingest.stream_name
+   where ingest.dedupe_key = any(v_processed_dedupe_keys)
+     and ingest.stream_name in (
+           select btrim(configured.stream_name)
+             from unnest(p_oracle_stream_names) as configured(stream_name)
+     )
+  on conflict (dedupe_key) do nothing;
+
+  insert into sync_cursor (stream_name, cursor_value, updated_at)
+  select distinct on (stream_name)
+         stream_name,
+         extract(epoch from observed_at)::bigint::text,
+         now()
+    from sync_scan_ingest
+   where dedupe_key = any(v_processed_dedupe_keys)
+   order by stream_name, observed_at desc
+  on conflict (stream_name)
+  do update set cursor_value = excluded.cursor_value, updated_at = now();
+
+  update sync_scan_ingest ingest
+     set status = 'batched',
+         updated_at = now()
+   where ingest.dedupe_key = any(v_processed_dedupe_keys)
+     and (
+           ingest.stream_name not in (
+             select btrim(configured.stream_name)
+               from unnest(p_oracle_stream_names) as configured(stream_name)
+           )
+           or exists (
+             select 1
+               from sync_batch batch
+              where batch.dedupe_key = ingest.dedupe_key
+           )
+     );
+  get diagnostics v_batched_count = row_count;
+
+  return v_marked_count + v_recovered_count + v_batched_count;
 end;
 $$;
 
