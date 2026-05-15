@@ -79,8 +79,8 @@ use crate::{
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_oracle_json, replay_journal,
-        PublishClient, PublishError, PublishState, SharedPublishState, SyncPublisherClient,
+        publish_entry, publish_handshake_alert, publish_oracle_json, replay_journal, PublishClient,
+        PublishError, PublishState, SharedPublishState, SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
@@ -409,9 +409,7 @@ fn pmf_attack_alert_from_entry(
     attack_tag: &str,
     config: &AppConfig,
 ) -> Option<PmfAttackAlert> {
-    if !attack_tag.starts_with("threat:pmf_")
-        && attack_tag != "threat:handshake_harvest_attack"
-    {
+    if !attack_tag.starts_with("threat:pmf_") && attack_tag != "threat:handshake_harvest_attack" {
         return None;
     }
 
@@ -430,7 +428,10 @@ fn pmf_attack_alert_from_entry(
         sensor_id: entry.sensor_id.clone(),
         location_id: entry.location_id.clone(),
         target_mac,
-        target_bssid: entry.bssid.clone().or_else(|| entry.destination_bssid.clone()),
+        target_bssid: entry
+            .bssid
+            .clone()
+            .or_else(|| entry.destination_bssid.clone()),
         ssid: entry.ssid.clone(),
         channel: Some(entry.channel),
         attack_tag: attack_tag.to_string(),

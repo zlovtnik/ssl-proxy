@@ -56,9 +56,6 @@ pub(crate) async fn run_loop(
             }
             next_message = consumer.recv() => {
                 let message = next_message.map_err(|error| format!("consume {} message: {error}", config.load_topic))?;
-                let permit = semaphore.clone().acquire_owned().await
-                    .map_err(|error| format!("acquire semaphore permit: {error}"))?;
-
                 let commit_target = CommitTarget {
                     topic: message.topic().to_string(),
                     partition: message.partition(),
@@ -262,12 +259,15 @@ impl OrderedCommitTracker {
             .completed_offsets
             .remove(&state.next_uncommitted_offset)
         {
-            state.next_uncommitted_offset = state.next_uncommitted_offset.checked_add(1).ok_or_else(|| {
-                format!(
-                    "commit offset overflow for topic {} partition {}",
-                    key.topic, key.partition
-                )
-            })?;
+            state.next_uncommitted_offset = state
+                .next_uncommitted_offset
+                .checked_add(1)
+                .ok_or_else(|| {
+                    format!(
+                        "commit offset overflow for topic {} partition {}",
+                        key.topic, key.partition
+                    )
+                })?;
             advanced = true;
         }
 
@@ -301,7 +301,11 @@ fn commit_load_offset(
 ) -> Result<(), String> {
     let mut offsets = TopicPartitionList::new();
     offsets
-        .add_partition_offset(&target.topic, target.partition, Offset::Offset(target.next_offset))
+        .add_partition_offset(
+            &target.topic,
+            target.partition,
+            Offset::Offset(target.next_offset),
+        )
         .map_err(|error| format!("build commit offset for batch {batch_id}: {error}"))?;
     consumer
         .commit(&offsets, CommitMode::Async)

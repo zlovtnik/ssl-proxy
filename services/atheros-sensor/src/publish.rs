@@ -231,6 +231,7 @@ pub async fn publish_entry(
     publisher: &dyn PublishClient,
     entry: AuditEntry,
 ) -> Result<(), PublishError> {
+    parse_observed_at_timestamp(&entry.observed_at)?;
     let payload = serde_json::to_string(&entry)?;
     let dedupe_key = dedupe_key(&payload);
     debug!(
@@ -251,7 +252,15 @@ pub async fn publish_entry(
     ) {
         Ok(prepared) => prepared,
         Err(error) => {
-            persist_publish_failure(state, backlog, WIRELESS_AUDIT_TOPIC, &dedupe_key, payload, error).await?;
+            persist_publish_failure(
+                state,
+                backlog,
+                WIRELESS_AUDIT_TOPIC,
+                &dedupe_key,
+                payload,
+                error,
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -265,7 +274,15 @@ pub async fn publish_entry(
     )
     .await
     {
-        persist_publish_failure(state, backlog, WIRELESS_AUDIT_TOPIC, &dedupe_key, payload, error).await?;
+        persist_publish_failure(
+            state,
+            backlog,
+            WIRELESS_AUDIT_TOPIC,
+            &dedupe_key,
+            payload,
+            error,
+        )
+        .await?;
         return Ok(());
     }
 
@@ -275,7 +292,15 @@ pub async fn publish_entry(
     }
 
     if let Err(error) = enqueue_prepared_publish(publisher, &dedupe_key, &prepared).await {
-        persist_publish_failure(state, backlog, WIRELESS_AUDIT_TOPIC, &dedupe_key, payload, error).await?;
+        persist_publish_failure(
+            state,
+            backlog,
+            WIRELESS_AUDIT_TOPIC,
+            &dedupe_key,
+            payload,
+            error,
+        )
+        .await?;
     }
 
     Ok(())
@@ -696,20 +721,25 @@ pub async fn reconcile_backlog(
             continue;
         }
 
-        let prepared =
-            match prepare_publish(publisher, &entry.stream_name, &entry.payload, &entry.dedupe_key, &observed_at) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    warn!(
-                        dedupe_key = %entry.dedupe_key,
-                        stream_name = %entry.stream_name,
-                        attempt_count = entry.attempt_count,
-                        %error,
-                        "backlog entry publish preparation failed"
-                    );
-                    continue;
-                }
-            };
+        let prepared = match prepare_publish(
+            publisher,
+            &entry.stream_name,
+            &entry.payload,
+            &entry.dedupe_key,
+            &observed_at,
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    %error,
+                    "backlog entry publish preparation failed"
+                );
+                continue;
+            }
+        };
         if let Err(error) = enqueue_prepared_publish(publisher, &entry.dedupe_key, &prepared).await
         {
             warn!(
@@ -757,6 +787,8 @@ fn prepare_publish(
     dedupe_key: &str,
     observed_at: &str,
 ) -> Result<PreparedPublish, String> {
+    DateTime::parse_from_rfc3339(observed_at)
+        .map_err(|error| format!("invalid observed_at timestamp {observed_at:?}: {error}"))?;
     let payload_ref = publisher.payload_ref_for_event(payload, observed_at)?;
     let request = ScanRequest {
         stream_name: stream_name.to_string(),
@@ -766,9 +798,7 @@ fn prepare_publish(
     };
     let request_payload = serde_json::to_string(&request)
         .map_err(|error| format!("serialize scan request: {error}"))?;
-    Ok(PreparedPublish {
-        request_payload,
-    })
+    Ok(PreparedPublish { request_payload })
 }
 
 async fn enqueue_prepared_publish(
@@ -1468,7 +1498,9 @@ mod tests {
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 2);
-        assert!(published.iter().all(|(topic, _)| topic == SYNC_SCAN_REQUEST_TOPIC));
+        assert!(published
+            .iter()
+            .all(|(topic, _)| topic == SYNC_SCAN_REQUEST_TOPIC));
     }
 
     #[tokio::test]
