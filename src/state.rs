@@ -430,9 +430,6 @@ impl AppState {
             } else {
                 remaining.push_back(event);
             }
-
-            remaining.append(&mut pending);
-            break;
         }
 
         let mut queue = self.dashboard_event_queue.lock().unwrap();
