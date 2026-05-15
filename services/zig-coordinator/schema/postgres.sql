@@ -961,3 +961,856 @@ select
   updated_at
 from shadow_it_alerts
 order by last_occurred_at desc;
+
+-- vec similarity foundation begin
+create extension if not exists vector;
+create extension if not exists pg_cron;
+
+do $$
+begin
+  if not exists (select 1 from pg_am where amname = 'hnsw') then
+    raise exception 'pgvector hnsw index access method is unavailable';
+  end if;
+
+  if not exists (select 1 from pg_am where amname = 'ivfflat') then
+    raise exception 'pgvector ivfflat index access method is unavailable';
+  end if;
+
+  if not exists (select 1 from pg_opclass where opcname = 'vector_cosine_ops') then
+    raise exception 'pgvector vector_cosine_ops operator class is unavailable';
+  end if;
+end $$;
+
+create table if not exists vec_embeddings (
+  embedding_id bigserial primary key,
+  source_table text not null,
+  source_key text not null,
+  source_observed_at timestamptz,
+  source_stream_name text,
+  source_sensor_id text,
+  source_location_id text,
+  source_mac text,
+  embedding_model text not null,
+  embedding_kind text not null,
+  embedding_dimensions integer not null,
+  content_sha256 text not null,
+  content_text text not null,
+  embedding vector not null,
+  metadata jsonb not null default '{}'::jsonb,
+  embedded_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window')),
+  constraint vec_embeddings_dimensions_chk check (embedding_dimensions > 0),
+  constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
+);
+
+create index if not exists vec_embeddings_source_idx
+  on vec_embeddings (source_table, source_key);
+create index if not exists vec_embeddings_kind_model_idx
+  on vec_embeddings (embedding_kind, embedding_model, embedded_at desc);
+create index if not exists vec_embeddings_source_mac_idx
+  on vec_embeddings (lower(source_mac), source_observed_at desc)
+  where source_mac is not null;
+create index if not exists vec_embeddings_event_hnsw_768_idx
+  on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
+  where embedding_kind = 'event'
+    and embedding_model = 'nomic-embed-text-v2-moe'
+    and embedding_dimensions = 768;
+create index if not exists vec_embeddings_device_hnsw_768_idx
+  on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
+  where embedding_kind = 'device'
+    and embedding_model = 'nomic-embed-text-v2-moe'
+    and embedding_dimensions = 768;
+create index if not exists vec_embeddings_behaviour_hnsw_768_idx
+  on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
+  where embedding_kind = 'behaviour_window'
+    and embedding_model = 'nomic-embed-text-v2-moe'
+    and embedding_dimensions = 768;
+
+create table if not exists vec_behaviour_snapshots (
+  snapshot_id bigserial primary key,
+  snapshot_key text not null unique,
+  source_mac text not null,
+  location_id text,
+  sensor_id text,
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  event_count bigint not null default 0,
+  protocol_mix jsonb not null default '{}'::jsonb,
+  frame_type_distribution jsonb not null default '{}'::jsonb,
+  signal_min_dbm integer,
+  signal_max_dbm integer,
+  signal_avg_dbm numeric(8,2),
+  retry_count bigint not null default 0,
+  protected_count bigint not null default 0,
+  unprotected_count bigint not null default 0,
+  unique_bssid_count bigint not null default 0,
+  mac_rotation_indicators jsonb not null default '{}'::jsonb,
+  text_summary text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_behaviour_snapshots_window_chk check (window_end > window_start)
+);
+
+create index if not exists vec_behaviour_snapshots_mac_time_idx
+  on vec_behaviour_snapshots (source_mac, window_start desc);
+create index if not exists vec_behaviour_snapshots_location_time_idx
+  on vec_behaviour_snapshots (location_id, window_start desc);
+
+create table if not exists vec_similarity_pairs (
+  pair_id bigserial primary key,
+  pair_kind text not null,
+  embedding_model text not null,
+  embedding_kind text not null,
+  left_embedding_id bigint not null references vec_embeddings(embedding_id) on delete cascade,
+  right_embedding_id bigint not null references vec_embeddings(embedding_id) on delete cascade,
+  left_source_table text not null,
+  left_source_key text not null,
+  left_source_mac text,
+  left_sensor_id text,
+  left_location_id text,
+  left_observed_at timestamptz,
+  right_source_table text not null,
+  right_source_key text not null,
+  right_source_mac text,
+  right_sensor_id text,
+  right_location_id text,
+  right_observed_at timestamptz,
+  cosine_distance double precision not null,
+  cosine_similarity double precision not null,
+  rank integer not null default 1,
+  evidence jsonb not null default '{}'::jsonb,
+  computed_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_similarity_pairs_kind_chk check (pair_kind in ('event_event', 'device_device', 'cross_sensor')),
+  constraint vec_similarity_pairs_order_chk check (left_embedding_id < right_embedding_id),
+  constraint vec_similarity_pairs_distance_chk check (cosine_distance >= 0),
+  constraint vec_similarity_pairs_similarity_chk check (cosine_similarity <= 1),
+  constraint vec_similarity_pairs_unique unique (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id)
+);
+
+create index if not exists vec_similarity_pairs_kind_idx
+  on vec_similarity_pairs (pair_kind, embedding_model, embedding_kind, cosine_similarity desc);
+create index if not exists vec_similarity_pairs_left_source_idx
+  on vec_similarity_pairs (left_source_table, left_source_key);
+create index if not exists vec_similarity_pairs_right_source_idx
+  on vec_similarity_pairs (right_source_table, right_source_key);
+create index if not exists vec_similarity_pairs_mac_idx
+  on vec_similarity_pairs (left_source_mac, right_source_mac, computed_at desc);
+
+create table if not exists vec_embedding_jobs (
+  job_id bigserial primary key,
+  source_table text not null,
+  source_key text not null,
+  embedding_model text not null,
+  embedding_kind text not null,
+  status text not null default 'pending',
+  priority integer not null default 100,
+  attempts integer not null default 0,
+  max_attempts integer not null default 5,
+  lease_token text,
+  leased_at timestamptz,
+  locked_by text,
+  due_at timestamptz not null default now(),
+  content_sha256 text,
+  last_error text,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window')),
+  constraint vec_embedding_jobs_status_chk check (status in ('pending', 'leased', 'completed', 'failed')),
+  constraint vec_embedding_jobs_attempts_chk check (attempts >= 0 and max_attempts > 0),
+  constraint vec_embedding_jobs_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
+);
+
+create index if not exists vec_embedding_jobs_pending_idx
+  on vec_embedding_jobs (priority, due_at, job_id)
+  where status in ('pending', 'failed');
+create index if not exists vec_embedding_jobs_lease_idx
+  on vec_embedding_jobs (leased_at)
+  where status = 'leased';
+
+create table if not exists vec_worker_state (
+  worker_name text primary key,
+  status text not null default 'idle',
+  last_cursor text,
+  last_run_started_at timestamptz,
+  last_run_finished_at timestamptz,
+  rows_processed bigint not null default 0,
+  last_error text,
+  updated_at timestamptz not null default now()
+);
+
+create or replace function vec_build_behaviour_snapshots(
+  p_from timestamptz default now() - interval '2 hours',
+  p_to timestamptz default now(),
+  p_window interval default interval '15 minutes'
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with base as (
+    select
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(location_id, payload->>'location_id'), '') as location_id,
+      nullif(coalesce(sensor_id, payload->>'sensor_id'), '') as sensor_id,
+      date_bin(p_window, observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start,
+      coalesce(app_protocol, payload->>'app_protocol', payload->>'ip_protocol_name', payload->>'transport_protocol', 'unknown') as app_protocol,
+      coalesce(frame_type, payload->>'frame_type', payload->>'frame_subtype', 'unknown') as frame_type,
+      coalesce(
+        signal_dbm,
+        case when payload->>'signal_dbm' ~ '^-?[0-9]+$' then (payload->>'signal_dbm')::integer end
+      ) as signal_dbm,
+      coalesce(retry, false) as retry,
+      coalesce(protected, false) as protected,
+      coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid') as bssid,
+      coalesce(wps_device_name, payload->>'wps_device_name') as wps_device_name,
+      coalesce(wps_manufacturer, payload->>'wps_manufacturer') as wps_manufacturer,
+      coalesce(wps_model_name, payload->>'wps_model_name') as wps_model_name,
+      coalesce(device_fingerprint, payload->>'device_fingerprint') as device_fingerprint
+    from sync_scan_ingest
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
+  ),
+  rollup as (
+    select
+      source_mac,
+      location_id,
+      min(sensor_id) filter (where sensor_id is not null) as sensor_id,
+      window_start,
+      window_start + p_window as window_end,
+      count(*)::bigint as event_count,
+      min(signal_dbm) as signal_min_dbm,
+      max(signal_dbm) as signal_max_dbm,
+      round(avg(signal_dbm)::numeric, 2) as signal_avg_dbm,
+      count(*) filter (where retry)::bigint as retry_count,
+      count(*) filter (where protected)::bigint as protected_count,
+      count(*) filter (where not protected)::bigint as unprotected_count,
+      count(distinct lower(bssid)) filter (where bssid is not null)::bigint as unique_bssid_count,
+      bool_or(wps_device_name is not null or wps_manufacturer is not null or wps_model_name is not null) as has_wps_identity,
+      count(distinct device_fingerprint) filter (where device_fingerprint is not null)::bigint as device_fingerprint_count
+    from base
+    group by source_mac, location_id, window_start
+  ),
+  protocol_counts as (
+    select source_mac, location_id, window_start, app_protocol, count(*)::bigint as item_count
+    from base
+    group by source_mac, location_id, window_start, app_protocol
+  ),
+  protocol_json as (
+    select source_mac, location_id, window_start, jsonb_object_agg(app_protocol, item_count order by app_protocol) as protocol_mix
+    from protocol_counts
+    group by source_mac, location_id, window_start
+  ),
+  frame_counts as (
+    select source_mac, location_id, window_start, frame_type, count(*)::bigint as item_count
+    from base
+    group by source_mac, location_id, window_start, frame_type
+  ),
+  frame_json as (
+    select source_mac, location_id, window_start, jsonb_object_agg(frame_type, item_count order by frame_type) as frame_type_distribution
+    from frame_counts
+    group by source_mac, location_id, window_start
+  ),
+  prepared as (
+    select
+      md5(r.source_mac || '|' || coalesce(r.location_id, '') || '|' || r.window_start::text || '|' || r.window_end::text) as snapshot_key,
+      r.source_mac,
+      r.location_id,
+      r.sensor_id,
+      r.window_start,
+      r.window_end,
+      r.event_count,
+      coalesce(p.protocol_mix, '{}'::jsonb) as protocol_mix,
+      coalesce(f.frame_type_distribution, '{}'::jsonb) as frame_type_distribution,
+      r.signal_min_dbm,
+      r.signal_max_dbm,
+      r.signal_avg_dbm,
+      r.retry_count,
+      r.protected_count,
+      r.unprotected_count,
+      r.unique_bssid_count,
+      jsonb_build_object(
+        'has_wps_identity', coalesce(r.has_wps_identity, false),
+        'device_fingerprint_count', r.device_fingerprint_count,
+        'unique_bssid_count', r.unique_bssid_count,
+        'protected_ratio', case when r.event_count = 0 then 0 else round((r.protected_count::numeric / r.event_count::numeric), 4) end,
+        'retry_ratio', case when r.event_count = 0 then 0 else round((r.retry_count::numeric / r.event_count::numeric), 4) end
+      ) as mac_rotation_indicators,
+      concat_ws(
+        E'\n',
+        'kind: behaviour_window',
+        'source_mac: ' || r.source_mac,
+        'location_id: ' || coalesce(r.location_id, 'unknown'),
+        'sensor_id: ' || coalesce(r.sensor_id, 'unknown'),
+        'window_start: ' || r.window_start::text,
+        'window_end: ' || r.window_end::text,
+        'event_count: ' || r.event_count::text,
+        'protocol_mix: ' || coalesce(p.protocol_mix, '{}'::jsonb)::text,
+        'frame_type_distribution: ' || coalesce(f.frame_type_distribution, '{}'::jsonb)::text,
+        'signal_min_dbm: ' || coalesce(r.signal_min_dbm::text, 'unknown'),
+        'signal_max_dbm: ' || coalesce(r.signal_max_dbm::text, 'unknown'),
+        'signal_avg_dbm: ' || coalesce(r.signal_avg_dbm::text, 'unknown'),
+        'retry_count: ' || r.retry_count::text,
+        'protected_count: ' || r.protected_count::text,
+        'unprotected_count: ' || r.unprotected_count::text,
+        'unique_bssid_count: ' || r.unique_bssid_count::text
+      ) as text_summary
+    from rollup r
+    left join protocol_json p
+      on p.source_mac = r.source_mac
+     and p.location_id is not distinct from r.location_id
+     and p.window_start = r.window_start
+    left join frame_json f
+      on f.source_mac = r.source_mac
+     and f.location_id is not distinct from r.location_id
+     and f.window_start = r.window_start
+  )
+  insert into vec_behaviour_snapshots (
+    snapshot_key, source_mac, location_id, sensor_id, window_start, window_end,
+    event_count, protocol_mix, frame_type_distribution, signal_min_dbm, signal_max_dbm,
+    signal_avg_dbm, retry_count, protected_count, unprotected_count, unique_bssid_count,
+    mac_rotation_indicators, text_summary, created_at, updated_at
+  )
+  select
+    snapshot_key, source_mac, location_id, sensor_id, window_start, window_end,
+    event_count, protocol_mix, frame_type_distribution, signal_min_dbm, signal_max_dbm,
+    signal_avg_dbm, retry_count, protected_count, unprotected_count, unique_bssid_count,
+    mac_rotation_indicators, text_summary, now(), now()
+  from prepared
+  on conflict (snapshot_key) do update set
+    sensor_id = excluded.sensor_id,
+    event_count = excluded.event_count,
+    protocol_mix = excluded.protocol_mix,
+    frame_type_distribution = excluded.frame_type_distribution,
+    signal_min_dbm = excluded.signal_min_dbm,
+    signal_max_dbm = excluded.signal_max_dbm,
+    signal_avg_dbm = excluded.signal_avg_dbm,
+    retry_count = excluded.retry_count,
+    protected_count = excluded.protected_count,
+    unprotected_count = excluded.unprotected_count,
+    unique_bssid_count = excluded.unique_bssid_count,
+    mac_rotation_indicators = excluded.mac_rotation_indicators,
+    text_summary = excluded.text_summary,
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function vec_enqueue_embedding_jobs(
+  p_model text default 'nomic-embed-text-v2-moe'
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with cursor_state as (
+    select coalesce(
+      (select cursor_value::timestamptz
+         from sync_cursor
+        where stream_name = 'vec_embeddings.sync_scan_ingest.wireless.audit'),
+      timestamptz '1970-01-01 00:00:00+00'
+    ) as last_cursor
+  ),
+  event_jobs as (
+    select
+      'sync_scan_ingest'::text as source_table,
+      dedupe_key::text as source_key,
+      p_model as embedding_model,
+      'event'::text as embedding_kind,
+      10 as priority
+    from sync_scan_ingest source
+    cross join cursor_state cursor_state
+    left join vec_embeddings existing
+      on existing.source_table = 'sync_scan_ingest'
+     and existing.source_key = source.dedupe_key
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'event'
+    where stream_name = 'wireless.audit'
+      and (
+        existing.embedding_id is null
+        or source.updated_at > existing.embedded_at
+        or (
+          source.status = 'batched'
+          and source.updated_at > cursor_state.last_cursor
+        )
+      )
+  ),
+  device_jobs as (
+    select
+      'devices'::text as source_table,
+      mac_id::text as source_key,
+      p_model as embedding_model,
+      'device'::text as embedding_kind,
+      30 as priority
+    from devices source
+    left join vec_embeddings existing
+      on existing.source_table = 'devices'
+     and existing.source_key = source.mac_id
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'device'
+    where existing.embedding_id is null
+       or source.last_seen > existing.embedded_at
+  ),
+  behaviour_jobs as (
+    select
+      'vec_behaviour_snapshots'::text as source_table,
+      snapshot_id::text as source_key,
+      p_model as embedding_model,
+      'behaviour_window'::text as embedding_kind,
+      20 as priority
+    from vec_behaviour_snapshots source
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_behaviour_snapshots'
+     and existing.source_key = source.snapshot_id::text
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'behaviour_window'
+    where existing.embedding_id is null
+       or source.updated_at > existing.embedded_at
+  ),
+  inserted as (
+    insert into vec_embedding_jobs (
+      source_table, source_key, embedding_model, embedding_kind, priority, status, due_at, created_at, updated_at
+    )
+    select source_table, source_key, embedding_model, embedding_kind, priority, 'pending', now(), now(), now()
+    from (
+      select * from event_jobs
+      union all
+      select * from device_jobs
+      union all
+      select * from behaviour_jobs
+    ) jobs
+    on conflict (source_table, source_key, embedding_model, embedding_kind) do update set
+      status = case
+        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.status
+        else 'pending'
+      end,
+      due_at = case
+        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.due_at
+        else least(vec_embedding_jobs.due_at, now())
+      end,
+      priority = least(vec_embedding_jobs.priority, excluded.priority),
+      completed_at = case
+        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.completed_at
+        else null
+      end,
+      content_sha256 = case
+        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.content_sha256
+        else null
+      end,
+      updated_at = now()
+    returning 1
+  )
+  select count(*) into v_count from inserted;
+
+  insert into sync_cursor (stream_name, cursor_value, updated_at)
+  select
+    'vec_embeddings.sync_scan_ingest.wireless.audit',
+    coalesce(max(updated_at)::text, now()::text),
+    now()
+  from sync_scan_ingest
+  where stream_name = 'wireless.audit'
+  on conflict (stream_name) do update set
+    cursor_value = greatest(sync_cursor.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
+    updated_at = now();
+
+  return v_count;
+end;
+$$;
+
+create or replace function vec_lease_embedding_jobs(
+  p_limit integer default 25,
+  p_worker_name text default 'vector-worker',
+  p_lease interval default interval '5 minutes'
+)
+returns setof vec_embedding_jobs
+language plpgsql
+as $$
+begin
+  return query
+  with selected as (
+    select job_id
+    from vec_embedding_jobs
+    where (
+        status in ('pending', 'failed')
+        or (status = 'leased' and leased_at < now() - p_lease)
+      )
+      and attempts < max_attempts
+      and due_at <= now()
+    order by priority asc, due_at asc, job_id asc
+    for update skip locked
+    limit greatest(p_limit, 1)
+  )
+  update vec_embedding_jobs job
+     set status = 'leased',
+         attempts = job.attempts + 1,
+         lease_token = md5(random()::text || clock_timestamp()::text || job.job_id::text),
+         leased_at = now(),
+         locked_by = p_worker_name,
+         last_error = null,
+         updated_at = now()
+    from selected
+   where job.job_id = selected.job_id
+  returning job.*;
+end;
+$$;
+
+create or replace function vec_materialize_similarity_pairs(
+  p_model text default 'nomic-embed-text-v2-moe',
+  p_top_k integer default 10,
+  p_event_dup_distance_threshold double precision default 0.05,
+  p_behaviour_similarity_threshold double precision default 0.92
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_total integer := 0;
+  v_count integer := 0;
+begin
+  with candidates as (
+    select
+      least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
+      greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
+      min(neighbor.cosine_distance) as cosine_distance
+    from vec_embeddings e1
+    join lateral (
+      select
+        e2.embedding_id,
+        (e2.embedding::vector(768) <=> e1.embedding::vector(768)) as cosine_distance
+      from vec_embeddings e2
+      where e2.embedding_kind = 'event'
+        and e2.embedding_model = p_model
+        and e2.embedding_dimensions = 768
+        and e2.embedding_id <> e1.embedding_id
+      order by e2.embedding::vector(768) <=> e1.embedding::vector(768)
+      limit greatest(p_top_k, 1)
+    ) neighbor on true
+    where e1.embedding_kind = 'event'
+      and e1.embedding_model = p_model
+      and e1.embedding_dimensions = 768
+      and neighbor.cosine_distance <= p_event_dup_distance_threshold
+    group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
+  )
+  insert into vec_similarity_pairs (
+    pair_kind, embedding_model, embedding_kind,
+    left_embedding_id, right_embedding_id,
+    left_source_table, left_source_key, left_source_mac, left_sensor_id, left_location_id, left_observed_at,
+    right_source_table, right_source_key, right_source_mac, right_sensor_id, right_location_id, right_observed_at,
+    cosine_distance, cosine_similarity, rank, evidence, computed_at, created_at, updated_at
+  )
+  select
+    'event_event', p_model, 'event',
+    candidates.left_embedding_id, candidates.right_embedding_id,
+    left_e.source_table, left_e.source_key, left_e.source_mac, left_e.source_sensor_id, left_e.source_location_id, left_e.source_observed_at,
+    right_e.source_table, right_e.source_key, right_e.source_mac, right_e.source_sensor_id, right_e.source_location_id, right_e.source_observed_at,
+    candidates.cosine_distance,
+    1 - candidates.cosine_distance,
+    1,
+    jsonb_build_object('threshold', p_event_dup_distance_threshold, 'detector', 'near_duplicate_event'),
+    now(), now(), now()
+  from candidates
+  join vec_embeddings left_e on left_e.embedding_id = candidates.left_embedding_id
+  join vec_embeddings right_e on right_e.embedding_id = candidates.right_embedding_id
+  on conflict (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id) do update set
+    cosine_distance = excluded.cosine_distance,
+    cosine_similarity = excluded.cosine_similarity,
+    evidence = excluded.evidence,
+    computed_at = now(),
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
+  with candidates as (
+    select
+      least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
+      greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
+      min(neighbor.cosine_distance) as cosine_distance
+    from vec_embeddings e1
+    join lateral (
+      select
+        e2.embedding_id,
+        (e2.embedding::vector(768) <=> e1.embedding::vector(768)) as cosine_distance
+      from vec_embeddings e2
+      where e2.embedding_kind = 'event'
+        and e2.embedding_model = p_model
+        and e2.embedding_dimensions = 768
+        and e2.embedding_id <> e1.embedding_id
+        and (
+          e2.source_sensor_id is distinct from e1.source_sensor_id
+          or e2.source_stream_name is distinct from e1.source_stream_name
+        )
+      order by e2.embedding::vector(768) <=> e1.embedding::vector(768)
+      limit greatest(p_top_k, 1)
+    ) neighbor on true
+    where e1.embedding_kind = 'event'
+      and e1.embedding_model = p_model
+      and e1.embedding_dimensions = 768
+      and neighbor.cosine_distance <= greatest(p_event_dup_distance_threshold * 3, p_event_dup_distance_threshold)
+    group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
+  )
+  insert into vec_similarity_pairs (
+    pair_kind, embedding_model, embedding_kind,
+    left_embedding_id, right_embedding_id,
+    left_source_table, left_source_key, left_source_mac, left_sensor_id, left_location_id, left_observed_at,
+    right_source_table, right_source_key, right_source_mac, right_sensor_id, right_location_id, right_observed_at,
+    cosine_distance, cosine_similarity, rank, evidence, computed_at, created_at, updated_at
+  )
+  select
+    'cross_sensor', p_model, 'event',
+    candidates.left_embedding_id, candidates.right_embedding_id,
+    left_e.source_table, left_e.source_key, left_e.source_mac, left_e.source_sensor_id, left_e.source_location_id, left_e.source_observed_at,
+    right_e.source_table, right_e.source_key, right_e.source_mac, right_e.source_sensor_id, right_e.source_location_id, right_e.source_observed_at,
+    candidates.cosine_distance,
+    1 - candidates.cosine_distance,
+    1,
+    jsonb_build_object('detector', 'cross_sensor_event_cluster'),
+    now(), now(), now()
+  from candidates
+  join vec_embeddings left_e on left_e.embedding_id = candidates.left_embedding_id
+  join vec_embeddings right_e on right_e.embedding_id = candidates.right_embedding_id
+  on conflict (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id) do update set
+    cosine_distance = excluded.cosine_distance,
+    cosine_similarity = excluded.cosine_similarity,
+    evidence = excluded.evidence,
+    computed_at = now(),
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
+  with candidates as (
+    select
+      least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
+      greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
+      min(neighbor.cosine_distance) as cosine_distance
+    from vec_embeddings e1
+    join vec_behaviour_snapshots s1 on s1.snapshot_id::text = e1.source_key
+    join lateral (
+      select
+        e2.embedding_id,
+        (e2.embedding::vector(768) <=> e1.embedding::vector(768)) as cosine_distance
+      from vec_embeddings e2
+      join vec_behaviour_snapshots s2 on s2.snapshot_id::text = e2.source_key
+      where e2.embedding_kind = 'behaviour_window'
+        and e2.embedding_model = p_model
+        and e2.embedding_dimensions = 768
+        and e2.embedding_id <> e1.embedding_id
+        and s2.source_mac <> s1.source_mac
+        and s2.location_id is not distinct from s1.location_id
+      order by e2.embedding::vector(768) <=> e1.embedding::vector(768)
+      limit greatest(p_top_k, 1)
+    ) neighbor on true
+    where e1.embedding_kind = 'behaviour_window'
+      and e1.embedding_model = p_model
+      and e1.embedding_dimensions = 768
+      and neighbor.cosine_distance <= (1 - p_behaviour_similarity_threshold)
+    group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
+  )
+  insert into vec_similarity_pairs (
+    pair_kind, embedding_model, embedding_kind,
+    left_embedding_id, right_embedding_id,
+    left_source_table, left_source_key, left_source_mac, left_sensor_id, left_location_id, left_observed_at,
+    right_source_table, right_source_key, right_source_mac, right_sensor_id, right_location_id, right_observed_at,
+    cosine_distance, cosine_similarity, rank, evidence, computed_at, created_at, updated_at
+  )
+  select
+    'device_device', p_model, 'behaviour_window',
+    candidates.left_embedding_id, candidates.right_embedding_id,
+    left_e.source_table, left_e.source_key, left_e.source_mac, left_e.source_sensor_id, left_e.source_location_id, left_e.source_observed_at,
+    right_e.source_table, right_e.source_key, right_e.source_mac, right_e.source_sensor_id, right_e.source_location_id, right_e.source_observed_at,
+    candidates.cosine_distance,
+    1 - candidates.cosine_distance,
+    1,
+    jsonb_build_object('threshold', p_behaviour_similarity_threshold, 'detector', 'mac_rotation_suspected'),
+    now(), now(), now()
+  from candidates
+  join vec_embeddings left_e on left_e.embedding_id = candidates.left_embedding_id
+  join vec_embeddings right_e on right_e.embedding_id = candidates.right_embedding_id
+  on conflict (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id) do update set
+    cosine_distance = excluded.cosine_distance,
+    cosine_similarity = excluded.cosine_similarity,
+    evidence = excluded.evidence,
+    computed_at = now(),
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
+  update sync_scan_ingest target
+     set dedupe_or_replay_suspect = true,
+         updated_at = now()
+   where target.dedupe_key in (
+     select left_source_key
+     from vec_similarity_pairs
+     where pair_kind = 'event_event'
+       and embedding_model = p_model
+       and embedding_kind = 'event'
+       and cosine_distance <= p_event_dup_distance_threshold
+     union
+     select right_source_key
+     from vec_similarity_pairs
+     where pair_kind = 'event_event'
+       and embedding_model = p_model
+       and embedding_kind = 'event'
+       and cosine_distance <= p_event_dup_distance_threshold
+   )
+     and not coalesce(target.dedupe_or_replay_suspect, false);
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
+  insert into shadow_it_alerts (
+    source_mac, first_occurred_at, last_occurred_at, occurrence_count,
+    destination_bssid, ssid, sensor_id, location_id, signal_dbm,
+    reason, evidence, resolved_at, created_at, updated_at
+  )
+  select
+    right_snapshot.source_mac,
+    least(left_snapshot.window_start, right_snapshot.window_start),
+    greatest(left_snapshot.window_end, right_snapshot.window_end),
+    1,
+    null,
+    null,
+    right_snapshot.sensor_id,
+    right_snapshot.location_id,
+    right_snapshot.signal_avg_dbm::integer,
+    'mac_rotation_suspected',
+    jsonb_build_object(
+      'matched_mac', left_snapshot.source_mac,
+      'behaviour_similarity', round(pair.cosine_similarity::numeric, 4),
+      'left_snapshot_id', left_snapshot.snapshot_id,
+      'right_snapshot_id', right_snapshot.snapshot_id,
+      'pair_id', pair.pair_id
+    ),
+    null,
+    now(),
+    now()
+  from vec_similarity_pairs pair
+  join vec_behaviour_snapshots left_snapshot on left_snapshot.snapshot_id::text = pair.left_source_key
+  join vec_behaviour_snapshots right_snapshot on right_snapshot.snapshot_id::text = pair.right_source_key
+  where pair.pair_kind = 'device_device'
+    and pair.embedding_model = p_model
+    and pair.embedding_kind = 'behaviour_window'
+    and pair.cosine_similarity >= p_behaviour_similarity_threshold
+    and left_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+    and right_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+  on conflict (source_mac) do update set
+    last_occurred_at = greatest(shadow_it_alerts.last_occurred_at, excluded.last_occurred_at),
+    occurrence_count = coalesce(shadow_it_alerts.occurrence_count, 0) + excluded.occurrence_count,
+    sensor_id = excluded.sensor_id,
+    location_id = excluded.location_id,
+    signal_dbm = excluded.signal_dbm,
+    reason = excluded.reason,
+    evidence = excluded.evidence,
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
+  return v_total;
+end;
+$$;
+
+create or replace view v_vec_similarity_audit as
+select
+  pair.pair_id,
+  pair.pair_kind,
+  pair.embedding_model,
+  pair.embedding_kind,
+  pair.cosine_distance,
+  pair.cosine_similarity,
+  pair.rank,
+  pair.evidence,
+  pair.computed_at,
+  pair.left_source_table,
+  pair.left_source_key,
+  pair.left_source_mac,
+  pair.left_sensor_id,
+  pair.left_location_id,
+  pair.left_observed_at,
+  left_event.stream_name as left_stream_name,
+  left_event.ssid as left_ssid,
+  left_event.bssid as left_bssid,
+  left_event.destination_bssid as left_destination_bssid,
+  left_device.display_name as left_device_display_name,
+  left_snapshot.snapshot_id as left_snapshot_id,
+  left_snapshot.window_start as left_window_start,
+  left_snapshot.window_end as left_window_end,
+  pair.right_source_table,
+  pair.right_source_key,
+  pair.right_source_mac,
+  pair.right_sensor_id,
+  pair.right_location_id,
+  pair.right_observed_at,
+  right_event.stream_name as right_stream_name,
+  right_event.ssid as right_ssid,
+  right_event.bssid as right_bssid,
+  right_event.destination_bssid as right_destination_bssid,
+  right_device.display_name as right_device_display_name,
+  right_snapshot.snapshot_id as right_snapshot_id,
+  right_snapshot.window_start as right_window_start,
+  right_snapshot.window_end as right_window_end
+from vec_similarity_pairs pair
+left join sync_scan_ingest left_event
+  on pair.left_source_table = 'sync_scan_ingest'
+ and left_event.dedupe_key = pair.left_source_key
+left join sync_scan_ingest right_event
+  on pair.right_source_table = 'sync_scan_ingest'
+ and right_event.dedupe_key = pair.right_source_key
+left join devices left_device
+  on left_device.mac_id = pair.left_source_key
+  or left_device.mac_id = lower(pair.left_source_mac)
+left join devices right_device
+  on right_device.mac_id = pair.right_source_key
+  or right_device.mac_id = lower(pair.right_source_mac)
+left join vec_behaviour_snapshots left_snapshot
+  on pair.left_source_table = 'vec_behaviour_snapshots'
+ and left_snapshot.snapshot_id::text = pair.left_source_key
+left join vec_behaviour_snapshots right_snapshot
+  on pair.right_source_table = 'vec_behaviour_snapshots'
+ and right_snapshot.snapshot_id::text = pair.right_source_key;
+
+create or replace function vec_install_cron_jobs()
+returns void
+language plpgsql
+as $$
+begin
+  if to_regnamespace('cron') is null then
+    raise exception 'pg_cron schema is unavailable';
+  end if;
+
+  perform cron.schedule(
+    'vec-build-behaviour-snapshots',
+    '*/5 * * * *',
+    $cron$select vec_build_behaviour_snapshots();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-enqueue-embedding-jobs',
+    '*/2 * * * *',
+    $cron$select vec_enqueue_embedding_jobs();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-materialize-similarity-pairs',
+    '*/5 * * * *',
+    $cron$select vec_materialize_similarity_pairs();$cron$
+  );
+end;
+$$;
+
+select vec_install_cron_jobs();
+-- vec similarity foundation end
