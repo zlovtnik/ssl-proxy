@@ -8,9 +8,10 @@ use r2d2_oracle::OracleConnectionManager;
 use rdkafka::{
     consumer::{CommitMode, Consumer, StreamConsumer},
     producer::{FutureProducer, FutureRecord},
-    ClientConfig, Message,
+    ClientConfig, Message, Offset, TopicPartitionList,
 };
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::config::RunConfig;
 use crate::healthcheck::healthcheck;
@@ -22,13 +23,14 @@ pub(crate) async fn run_loop(
     pool: Arc<Pool<OracleConnectionManager>>,
     started: Instant,
 ) -> Result<(), String> {
-    let consumer = build_consumer(&config)?;
+    let consumer = Arc::new(build_consumer(&config)?);
     consumer
         .subscribe(&[config.load_topic.as_str()])
         .map_err(|error| format!("subscribe to {}: {error}", config.load_topic))?;
     let producer = Arc::new(build_producer(&config)?);
 
     let semaphore = Arc::new(Semaphore::new(config.oracle_worker_parallelism));
+    let mut in_flight = JoinSet::new();
     let mut last_heartbeat = Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -44,6 +46,9 @@ pub(crate) async fn run_loop(
                 println!("service={SERVICE_NAME} event=signal_received signal={signal}");
                 break;
             }
+            task = in_flight.join_next(), if !in_flight.is_empty() => {
+                log_task_result(task);
+            }
             _ = heartbeat.tick() => {
                 emit_heartbeat(started, &mut last_heartbeat, &pool).await?;
             }
@@ -51,16 +56,54 @@ pub(crate) async fn run_loop(
                 let message = next_message.map_err(|error| format!("consume {} message: {error}", config.load_topic))?;
                 let permit = semaphore.clone().acquire_owned().await
                     .map_err(|error| format!("acquire semaphore permit: {error}"))?;
-                let config = config.clone();
-                let pool = pool.clone();
-                let producer = producer.clone();
 
-                if let Err(e) = handle_load_message(&producer, &config, &pool, &consumer, message).await {
-                    eprintln!("service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"", escape_for_log(&e));
+                let payload = message.payload().unwrap_or_default();
+                let load = match serde_json::from_slice::<worker::OracleLoad>(payload) {
+                    Ok(load) => load,
+                    Err(error) => {
+                        log_poison_message(&message, &error);
+                        consumer
+                            .commit_message(&message, CommitMode::Async)
+                            .map_err(|ack_error| format!("commit poison message: {ack_error}"))?;
+                        drop(permit);
+                        continue;
+                    }
+                };
+                println!(
+                    "service={SERVICE_NAME} event=batch_received batch_id={} batch_no={} stream_name={} payload_ref={} cursor_start={} cursor_end={} attempt={} payload_bytes={}",
+                    load.batch_id,
+                    load.batch_no,
+                    load.stream_name,
+                    load.payload_ref,
+                    load.cursor_start,
+                    load.cursor_end,
+                    load.attempt,
+                    payload.len(),
+                );
+
+                let commit_target = CommitTarget {
+                    topic: message.topic().to_string(),
+                    partition: message.partition(),
+                    offset: message.offset(),
+                };
+                let config = Arc::clone(&config);
+                let pool = Arc::clone(&pool);
+                let producer = Arc::clone(&producer);
+                let consumer = Arc::clone(&consumer);
+
+                in_flight.spawn(async move {
+                    let _permit = permit;
+                    handle_load_message(&producer, &config, &pool, &consumer, load, commit_target).await
+                });
+                while let Some(task) = in_flight.try_join_next() {
+                    log_task_result(Some(task));
                 }
-                drop(permit);
             }
         }
+    }
+
+    while let Some(task) = in_flight.join_next().await {
+        log_task_result(Some(task));
     }
 
     println!(
@@ -94,50 +137,34 @@ async fn emit_heartbeat(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct CommitTarget {
+    topic: String,
+    partition: i32,
+    offset: i64,
+}
+
 async fn handle_load_message(
     producer: &FutureProducer,
     config: &Arc<RunConfig>,
     pool: &Arc<Pool<OracleConnectionManager>>,
     consumer: &StreamConsumer,
-    message: rdkafka::message::BorrowedMessage<'_>,
+    load: worker::OracleLoad,
+    commit_target: CommitTarget,
 ) -> Result<(), String> {
-    let payload = message.payload().unwrap_or_default();
-    let load = match serde_json::from_slice::<worker::OracleLoad>(payload) {
-        Ok(load) => load,
-        Err(error) => {
-            log_poison_message(&message, &error);
-            consumer
-                .commit_message(&message, CommitMode::Async)
-                .map_err(|ack_error| format!("commit poison message: {ack_error}"))?;
-            return Ok(());
-        }
-    };
-
-    println!(
-        "service={SERVICE_NAME} event=batch_received batch_id={} batch_no={} stream_name={} payload_ref={} cursor_start={} cursor_end={} attempt={} payload_bytes={}",
-        load.batch_id,
-        load.batch_no,
-        load.stream_name,
-        load.payload_ref,
-        load.cursor_start,
-        load.cursor_end,
-        load.attempt,
-        payload.len(),
-    );
-
     let batch_started = Instant::now();
     let pool = Arc::clone(pool);
     let result = tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &pool))
         .await
         .map_err(|error| format!("oracle load task panicked: {error}"))?;
-    publish_result(producer, config, consumer, &message, result, batch_started).await
+    publish_result(producer, config, consumer, commit_target, result, batch_started).await
 }
 
 async fn publish_result(
     producer: &FutureProducer,
     config: &RunConfig,
     consumer: &StreamConsumer,
-    message: &rdkafka::message::BorrowedMessage<'_>,
+    commit_target: CommitTarget,
     result: worker::OracleResult,
     batch_started: Instant,
 ) -> Result<(), String> {
@@ -156,11 +183,44 @@ async fn publish_result(
         )
         .await
         .map_err(|(error, _)| format!("publish result for batch {batch_id}: {error}"))?;
-    consumer
-        .commit_message(message, CommitMode::Async)
-        .map_err(|error| format!("commit load message for batch {batch_id}: {error}"))?;
+    commit_load_offset(consumer, &commit_target, &batch_id)?;
     log_result(&batch_id, &status, row_count, batch_duration_ms, &result);
     Ok(())
+}
+
+fn commit_load_offset(
+    consumer: &StreamConsumer,
+    target: &CommitTarget,
+    batch_id: &str,
+) -> Result<(), String> {
+    let next_offset = target
+        .next_commit_offset()
+        .ok_or_else(|| format!("commit offset overflow for batch {batch_id}"))?;
+    let mut offsets = TopicPartitionList::new();
+    offsets
+        .add_partition_offset(&target.topic, target.partition, Offset::Offset(next_offset))
+        .map_err(|error| format!("build commit offset for batch {batch_id}: {error}"))?;
+    consumer
+        .commit(&offsets, CommitMode::Async)
+        .map_err(|error| format!("commit load message for batch {batch_id}: {error}"))
+}
+
+fn log_task_result(task: Option<Result<Result<(), String>, tokio::task::JoinError>>) {
+    match task {
+        Some(Ok(Ok(()))) | None => {}
+        Some(Ok(Err(error))) => {
+            eprintln!(
+                "service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"",
+                escape_for_log(&error)
+            );
+        }
+        Some(Err(error)) => {
+            eprintln!(
+                "service={SERVICE_NAME} event=worker_load_task_panic error=\"{}\"",
+                escape_for_log(&error.to_string())
+            );
+        }
+    }
 }
 
 fn build_consumer(config: &RunConfig) -> Result<StreamConsumer, String> {
@@ -222,5 +282,38 @@ async fn wait_for_shutdown_signal() -> Result<&'static str, String> {
             .await
             .map_err(|error| format!("wait for SIGINT: {error}"))?;
         Ok("SIGINT")
+    }
+}
+
+impl CommitTarget {
+    fn next_commit_offset(&self) -> Option<i64> {
+        self.offset.checked_add(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommitTarget;
+
+    #[test]
+    fn commit_target_advances_to_next_offset() {
+        let target = CommitTarget {
+            topic: "sync.oracle.load".to_string(),
+            partition: 2,
+            offset: 41,
+        };
+
+        assert_eq!(target.next_commit_offset(), Some(42));
+    }
+
+    #[test]
+    fn commit_target_rejects_offset_overflow() {
+        let target = CommitTarget {
+            topic: "sync.oracle.load".to_string(),
+            partition: 0,
+            offset: i64::MAX,
+        };
+
+        assert_eq!(target.next_commit_offset(), None);
     }
 }

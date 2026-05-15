@@ -54,6 +54,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use lru::LruCache;
+use serde::Serialize;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -78,14 +79,16 @@ use crate::{
     parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_json, replay_journal, PublishClient,
-        PublishError, PublishState, SharedPublishState, SyncPublisherClient,
+        publish_entry, publish_handshake_alert, publish_oracle_json, replay_journal,
+        PublishClient, PublishError, PublishState, SharedPublishState, SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
+const SIGNAL_ANOMALY_TOPIC: &str = "wireless.alert.signal_anomaly";
+const PMF_ATTACK_TOPIC: &str = "wireless.alert.pmf_attack";
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -267,7 +270,17 @@ async fn run_sensor() -> Result<(), SensorError> {
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
-                if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &snapshot).await {
+                let observed_at = snapshot.observed_at.clone();
+                let context = context_snapshot(&handles.context);
+                let inventory_payload = serde_json::json!({
+                    "schema_version": snapshot.schema_version,
+                    "event_type": snapshot.event_type,
+                    "observed_at": observed_at.clone(),
+                    "sensor_id": context.sensor_id,
+                    "location_id": context.location_id,
+                    "clients": snapshot.clients,
+                });
+                if let Err(error) = publish_oracle_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &inventory_payload, observed_at).await {
                     warn!(%error, "client inventory publish failed");
                 }
 
@@ -283,7 +296,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                         probe_count: obs.probe_count,
                     })
                     .collect::<Vec<_>>();
-                if let Err(error) = handles.backlog.flush_probe_batch(&batch).await {
+                if let Err(error) = publish_probe_flush_batch(&*handles.publish_client, &batch).await {
                     warn!(%error, "probe batch publish failed; reinserting for retry");
                     for (key, obs) in probes_to_flush {
                         pipeline_state.probe_accumulator.insert(key, obs);
@@ -339,6 +352,88 @@ struct ProbeObservation {
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
     probe_count: u32,
+}
+
+#[derive(Serialize)]
+struct ProbeFlushPayload<'a> {
+    operation: &'static str,
+    probes: &'a [ProbeFlushObservation],
+}
+
+#[derive(Serialize)]
+struct PmfAttackAlert {
+    schema_version: u32,
+    event_type: String,
+    observed_at: String,
+    sensor_id: String,
+    location_id: String,
+    target_mac: String,
+    target_bssid: Option<String>,
+    ssid: Option<String>,
+    channel: Option<u8>,
+    attack_tag: String,
+    reconnect_window_ms: Option<i64>,
+}
+
+async fn publish_probe_flush_batch(
+    publisher: &dyn PublishClient,
+    probes: &[ProbeFlushObservation],
+) -> Result<(), PublishError> {
+    if probes.is_empty() {
+        return Ok(());
+    }
+    let observed_at = probes
+        .iter()
+        .map(|probe| probe.last_seen)
+        .max()
+        .map(ssl_proxy::time::rfc3339_from_utc)
+        .unwrap_or_else(ssl_proxy::time::now_rfc3339);
+    let payload = ProbeFlushPayload {
+        operation: "flush_probe_batch",
+        probes,
+    };
+    publish_oracle_json(
+        publisher,
+        "publish_probe_flush",
+        "wireless.probe.flush",
+        &payload,
+        &observed_at,
+    )
+    .await
+}
+
+fn pmf_attack_alert_from_entry(
+    entry: &crate::model::AuditEntry,
+    attack_tag: &str,
+    config: &AppConfig,
+) -> Option<PmfAttackAlert> {
+    if !attack_tag.starts_with("threat:pmf_")
+        && attack_tag != "threat:handshake_harvest_attack"
+    {
+        return None;
+    }
+
+    let target_mac = entry
+        .destination_mac
+        .as_deref()
+        .or(entry.source_mac.as_deref())
+        .or(entry.bssid.as_deref())?
+        .trim()
+        .to_ascii_lowercase();
+
+    Some(PmfAttackAlert {
+        schema_version: 1,
+        event_type: "wireless_pmf_attack".to_string(),
+        observed_at: entry.observed_at.clone(),
+        sensor_id: entry.sensor_id.clone(),
+        location_id: entry.location_id.clone(),
+        target_mac,
+        target_bssid: entry.bssid.clone().or_else(|| entry.destination_bssid.clone()),
+        ssid: entry.ssid.clone(),
+        channel: Some(entry.channel),
+        attack_tag: attack_tag.to_string(),
+        reconnect_window_ms: Some(config.handshake_ttl_secs.saturating_mul(1000) as i64),
+    })
 }
 
 impl PipelineState {
@@ -777,29 +872,41 @@ async fn process_packet(
                 probe_count: obs.probe_count,
             })
             .collect::<Vec<_>>();
-        if let Err(error) = backlog.flush_probe_batch(&batch).await {
+        if let Err(error) = publish_probe_flush_batch(publish_client, &batch).await {
             warn!(%error, "probe batch early flush failed; reinserting for retry");
             for (key, obs) in probes_to_flush {
                 pipeline.probe_accumulator.insert(key, obs);
             }
         }
     }
-    if pipeline
+    if let Some(alert) = pipeline
         .signal_tracker
         .observe(&entry, config.signal_anomaly_dbm_delta)
     {
         entry.tags.push("threat:signal_anomaly".to_string());
         entry.anomaly_reasons.push("signal_anomaly".to_string());
+        if let Err(error) = publish_oracle_json(
+            publish_client,
+            "publish_signal_anomaly_alert",
+            SIGNAL_ANOMALY_TOPIC,
+            &alert,
+            &alert.observed_at,
+        )
+        .await
+        {
+            warn!(%error, "signal anomaly alert publish failed");
+        }
     }
     if let Some(alert) = pipeline
         .rogue_ap_tracker
         .observe(&entry, &pipeline.authorized_network_cache)
     {
-        if let Err(error) = publish_json(
+        if let Err(error) = publish_oracle_json(
             publish_client,
             "publish_rogue_ap_alert",
             ROGUE_AP_TOPIC,
             &alert,
+            &alert.observed_at,
         )
         .await
         {
@@ -812,11 +919,12 @@ async fn process_packet(
         config.deauth_flood_window_secs,
         config.deauth_flood_cooldown_secs,
     ) {
-        if let Err(error) = publish_json(
+        if let Err(error) = publish_oracle_json(
             publish_client,
             "publish_deauth_flood_alert",
             DEAUTH_FLOOD_TOPIC,
             &alert,
+            &alert.observed_at,
         )
         .await
         {
@@ -825,6 +933,21 @@ async fn process_packet(
     }
     let mut pmf_tags = Vec::new();
     pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
+    for tag in &pmf_tags {
+        if let Some(alert) = pmf_attack_alert_from_entry(&entry, tag, config) {
+            if let Err(error) = publish_oracle_json(
+                publish_client,
+                "publish_pmf_attack_alert",
+                PMF_ATTACK_TOPIC,
+                &alert,
+                &alert.observed_at,
+            )
+            .await
+            {
+                warn!(%error, "PMF attack alert publish failed");
+            }
+        }
+    }
     entry.tags.extend(pmf_tags);
     // Backpressure guard: if the memory backlog is >80% full, skip the MAC device lookup
     // (which adds async I/O per packet) to prevent the backlog from growing further.

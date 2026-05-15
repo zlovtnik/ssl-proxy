@@ -195,22 +195,61 @@ pub struct SignalTracker {
     last_by_bssid: HashMap<String, i8>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SignalAnomalyAlert {
+    pub schema_version: u32,
+    pub event_type: String,
+    pub observed_at: String,
+    pub sensor_id: String,
+    pub location_id: String,
+    pub source_mac: String,
+    pub bssid: Option<String>,
+    pub ssid: Option<String>,
+    pub channel: u8,
+    pub baseline_dbm: i8,
+    pub observed_dbm: i8,
+    pub dbm_delta: i16,
+    pub configured_delta: i8,
+}
+
 impl SignalTracker {
-    /// Observes a frame and returns true when the signal delta exceeds threshold. Returns true
-    /// on the second observation of a BSSID when the delta exceeds threshold; the first
-    /// observation has no baseline to compare against.
-    pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> bool {
+    /// Observes a frame and returns an alert when the signal delta exceeds threshold.
+    pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> Option<SignalAnomalyAlert> {
         if threshold <= 0 {
-            return false;
+            return None;
         }
         let (Some(bssid), Some(signal)) =
             (entry.bssid.as_deref().map(normalize_mac), entry.signal_dbm)
         else {
-            return false;
+            return None;
         };
-        let previous = self.last_by_bssid.insert(bssid, signal);
-        previous
-            .is_some_and(|last| (i16::from(signal) - i16::from(last)).abs() >= i16::from(threshold))
+        let source_mac = entry
+            .source_mac
+            .as_deref()
+            .or(entry.bssid.as_deref())
+            .map(normalize_mac)?;
+        let previous = self.last_by_bssid.insert(bssid.clone(), signal);
+        let baseline = previous?;
+        let delta = i16::from(signal) - i16::from(baseline);
+        if delta.abs() < i16::from(threshold) {
+            return None;
+        }
+
+        Some(SignalAnomalyAlert {
+            schema_version: 1,
+            event_type: "wireless_signal_anomaly".to_string(),
+            observed_at: entry.observed_at.clone(),
+            sensor_id: entry.sensor_id.clone(),
+            location_id: entry.location_id.clone(),
+            source_mac,
+            bssid: Some(bssid),
+            ssid: entry.ssid.clone(),
+            channel: entry.channel,
+            baseline_dbm: baseline,
+            observed_dbm: signal,
+            dbm_delta: delta.abs(),
+            configured_delta: threshold,
+        })
     }
 }
 

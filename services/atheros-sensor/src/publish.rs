@@ -25,10 +25,11 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_TOPIC},
-    backlog::{BacklogError, BacklogStore, IngestRecord},
+    backlog::{BacklogError, BacklogStore},
     model::{AuditEntry, HandshakeAlert},
 };
 
+pub const WIRELESS_AUDIT_TOPIC: &str = "wireless.audit";
 pub const HANDSHAKE_ALERT_TOPIC: &str = "wifi.alert.handshake";
 
 /// Errors that can occur during audit entry publishing.
@@ -220,13 +221,10 @@ impl PublishState {
 }
 
 struct PreparedPublish {
-    payload_ref: String,
     request_payload: String,
-    payload_sha256: String,
 }
 
-/// Two-phase write: publishes the wireless audit payload through the backlog boundary, then
-/// enqueues the scan request to Redpanda.
+/// Two-phase write: publish the live wireless audit topic, then enqueue one Oracle scan request.
 pub async fn publish_entry(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,
@@ -244,38 +242,31 @@ pub async fn publish_entry(
         "publishing wireless audit entry"
     );
 
-    let observed_at_dt = parse_observed_at_timestamp(&entry.observed_at)?;
-
-    let prepared = match prepare_publish(publisher, &payload, &dedupe_key, &entry.observed_at) {
+    let prepared = match prepare_publish(
+        publisher,
+        WIRELESS_AUDIT_TOPIC,
+        &payload,
+        &dedupe_key,
+        &entry.observed_at,
+    ) {
         Ok(prepared) => prepared,
         Err(error) => {
-            persist_publish_failure(state, backlog, &dedupe_key, payload, error).await?;
+            persist_publish_failure(state, backlog, WIRELESS_AUDIT_TOPIC, &dedupe_key, payload, error).await?;
             return Ok(());
         }
     };
 
-    if let Err(backlog_err) = backlog
-        .record_ingest(IngestRecord {
-            dedupe_key: &dedupe_key,
-            stream_name: "wireless.audit",
-            observed_at: observed_at_dt,
-            payload_ref: &prepared.payload_ref,
-            payload: &payload,
-            payload_sha256: &prepared.payload_sha256,
-            producer: "atheros-sensor",
-            event_kind: Some(&entry.event_type),
-        })
-        .await
+    if let Err(error) = queue_publish_with_backpressure(
+        publisher,
+        "publish_wireless_audit_topic",
+        WIRELESS_AUDIT_TOPIC,
+        &payload,
+        &dedupe_key,
+    )
+    .await
     {
-        let error = format!("record sync ingest ledger: {backlog_err}");
-        queue_in_memory_after_backlog_failure(
-            state,
-            dedupe_key,
-            payload,
-            error.clone(),
-            backlog_err,
-        );
-        return Err(PublishError::Queued(error));
+        persist_publish_failure(state, backlog, WIRELESS_AUDIT_TOPIC, &dedupe_key, payload, error).await?;
+        return Ok(());
     }
 
     let drained = flush_memory_backlog(state, backlog).await;
@@ -283,9 +274,8 @@ pub async fn publish_entry(
         close_backlog_circuit_breaker(state);
     }
 
-    if let Err(error) = enqueue_prepared_publish(publisher, &payload, &dedupe_key, &prepared).await
-    {
-        persist_publish_failure(state, backlog, &dedupe_key, payload, error).await?;
+    if let Err(error) = enqueue_prepared_publish(publisher, &dedupe_key, &prepared).await {
+        persist_publish_failure(state, backlog, WIRELESS_AUDIT_TOPIC, &dedupe_key, payload, error).await?;
     }
 
     Ok(())
@@ -323,22 +313,58 @@ pub async fn publish_bandwidth_event(
 ) -> Result<(), PublishError> {
     let mut event = event.clone();
     event.published_at = Some(ssl_proxy::time::now_rfc3339());
-    let payload = serde_json::to_string(&event)?;
-    let key = sha256_hex(&payload);
-    queue_publish_with_backpressure(
+    publish_oracle_json(
         publisher,
         "publish_bandwidth_event",
         BANDWIDTH_TOPIC,
-        &payload,
-        &key,
+        &event,
+        &event.window_end,
     )
-    .await
-    .map_err(PublishError::Publish)?;
+    .await?;
+    let payload = serde_json::to_string(&event)?;
+    let key = sha256_hex(&payload);
     debug!(
         dedupe_key = %key,
         topic = BANDWIDTH_TOPIC,
         payload_bytes = payload.len(),
         "queued wireless bandwidth event"
+    );
+    Ok(())
+}
+
+/// Publishes a live Redpanda event and the matching Oracle scan request.
+pub async fn publish_oracle_json<T: serde::Serialize>(
+    publisher: &dyn PublishClient,
+    operation: &'static str,
+    stream_name: &str,
+    value: &T,
+    observed_at: &str,
+) -> Result<(), PublishError> {
+    let payload = serde_json::to_string(value)?;
+    publish_oracle_payload(publisher, operation, stream_name, &payload, observed_at).await
+}
+
+pub async fn publish_oracle_payload(
+    publisher: &dyn PublishClient,
+    operation: &'static str,
+    stream_name: &str,
+    payload: &str,
+    observed_at: &str,
+) -> Result<(), PublishError> {
+    let key = sha256_hex(payload);
+    let prepared = prepare_publish(publisher, stream_name, payload, &key, observed_at)
+        .map_err(PublishError::Publish)?;
+    queue_publish_with_backpressure(publisher, operation, stream_name, payload, &key)
+        .await
+        .map_err(PublishError::Publish)?;
+    enqueue_prepared_publish(publisher, &key, &prepared)
+        .await
+        .map_err(PublishError::Publish)?;
+    debug!(
+        dedupe_key = %key,
+        topic = stream_name,
+        payload_bytes = payload.len(),
+        "queued wireless Oracle-bound event"
     );
     Ok(())
 }
@@ -368,21 +394,23 @@ pub async fn publish_json<T: serde::Serialize>(
 async fn persist_publish_failure(
     state: &SharedPublishState,
     backlog: &dyn BacklogStore,
+    stream_name: &str,
     dedupe_key: &str,
     payload: String,
     error: String,
 ) -> Result<(), PublishError> {
-    if circuit_breaker_is_open(state, dedupe_key, &payload, &error) {
+    if circuit_breaker_is_open(state, stream_name, dedupe_key, &payload, &error) {
         return Err(PublishError::Queued(error));
     }
 
     if let Err(backlog_err) = backlog
-        .save_pending(dedupe_key, "wireless.audit", &payload, &error)
+        .save_pending(dedupe_key, stream_name, &payload, &error)
         .await
     {
         queue_in_memory_after_backlog_failure(
             state,
             dedupe_key.to_string(),
+            stream_name.to_string(),
             payload,
             error.clone(),
             backlog_err,
@@ -401,6 +429,7 @@ async fn persist_publish_failure(
 /// Checks if the coordinator backlog circuit breaker is open.
 fn circuit_breaker_is_open(
     state: &SharedPublishState,
+    stream_name: &str,
     dedupe_key: &str,
     payload: &str,
     error: &str,
@@ -414,11 +443,11 @@ fn circuit_breaker_is_open(
                 if opened_at.elapsed() < timeout {
                     let memory_backlog_entries = state.put_memory_backlog(
                         dedupe_key.to_string(),
-                        "wireless.audit".to_string(),
+                        stream_name.to_string(),
                         payload,
                         error,
                     );
-                    state.journal_append(dedupe_key, "wireless.audit", payload, error);
+                    state.journal_append(dedupe_key, stream_name, payload, error);
                     warn!(
                         dedupe_key,
                         publish_error = %error,
@@ -447,6 +476,7 @@ fn circuit_breaker_is_open(
 fn queue_in_memory_after_backlog_failure(
     state: &SharedPublishState,
     dedupe_key: String,
+    stream_name: String,
     payload: String,
     error: String,
     backlog_err: BacklogError,
@@ -472,13 +502,13 @@ fn queue_in_memory_after_backlog_failure(
     let error_ref = error.clone();
     let memory_backlog_entries = s.put_memory_backlog(
         dedupe_key.clone(),
-        "wireless.audit".to_string(),
+        stream_name.clone(),
         &payload_ref,
         &error_ref,
     );
     s.journal_append(
         &dedupe_key,
-        "wireless.audit",
+        &stream_name,
         &payload_ref,
         &backlog_err.to_string(),
     );
@@ -511,7 +541,7 @@ pub(crate) async fn flush_memory_backlog(
                 %backlog_err,
                 "failed to flush memory backlog entry to coordinator"
             );
-            queue_in_memory_after_backlog_failure(state, key, payload, err, backlog_err);
+            queue_in_memory_after_backlog_failure(state, key, stream, payload, err, backlog_err);
             for (remaining_key, (remaining_stream, remaining_payload, remaining_err, _)) in
                 memory_entries
             {
@@ -667,7 +697,7 @@ pub async fn reconcile_backlog(
         }
 
         let prepared =
-            match prepare_publish(publisher, &entry.payload, &entry.dedupe_key, &observed_at) {
+            match prepare_publish(publisher, &entry.stream_name, &entry.payload, &entry.dedupe_key, &observed_at) {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     warn!(
@@ -680,68 +710,19 @@ pub async fn reconcile_backlog(
                     continue;
                 }
             };
-        let event_kind = serde_json::from_str::<serde_json::Value>(&entry.payload)
-            .ok()
-            .and_then(|payload| {
-                payload
-                    .get("event_type")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string)
-            });
-        if let Err(backlog_err) = backlog
-            .record_ingest(IngestRecord {
-                dedupe_key: &entry.dedupe_key,
-                stream_name: &entry.stream_name,
-                observed_at: observed_at_dt,
-                payload_ref: &prepared.payload_ref,
-                payload: &entry.payload,
-                payload_sha256: &prepared.payload_sha256,
-                producer: "atheros-sensor",
-                event_kind: event_kind.as_deref(),
-            })
-            .await
-        {
-            let error = format!("record sync ingest ledger: {backlog_err}");
-            warn!(
-                dedupe_key = %entry.dedupe_key,
-                stream_name = %entry.stream_name,
-                attempt_count = entry.attempt_count,
-                backlog_error = %backlog_err,
-                "backlog entry ingest ledger record failed"
-            );
-            if let Err(persist_err) = persist_publish_failure(
-                state,
-                backlog,
-                &entry.dedupe_key,
-                entry.payload.clone(),
-                error,
-            )
-            .await
-            {
-                warn!(
-                    dedupe_key = %entry.dedupe_key,
-                    stream_name = %entry.stream_name,
-                    attempt_count = entry.attempt_count,
-                    persist_error = %persist_err,
-                    "failed to persist backlog entry after ingest ledger failure"
-                );
-            }
-            continue;
-        }
-
-        if let Err(error) =
-            enqueue_prepared_publish(publisher, &entry.payload, &entry.dedupe_key, &prepared).await
+        if let Err(error) = enqueue_prepared_publish(publisher, &entry.dedupe_key, &prepared).await
         {
             warn!(
                 dedupe_key = %entry.dedupe_key,
                 stream_name = %entry.stream_name,
                 attempt_count = entry.attempt_count,
                 %error,
-                "backlog entry publish retry enqueue failed after ingest ledger record"
+                "backlog entry publish retry enqueue failed"
             );
             if let Err(persist_err) = persist_publish_failure(
                 state,
                 backlog,
+                &entry.stream_name,
                 &entry.dedupe_key,
                 entry.payload.clone(),
                 error,
@@ -771,13 +752,14 @@ pub async fn reconcile_backlog(
 
 fn prepare_publish(
     publisher: &dyn PublishClient,
+    stream_name: &str,
     payload: &str,
     dedupe_key: &str,
     observed_at: &str,
 ) -> Result<PreparedPublish, String> {
     let payload_ref = publisher.payload_ref_for_event(payload, observed_at)?;
     let request = ScanRequest {
-        stream_name: "wireless.audit".to_string(),
+        stream_name: stream_name.to_string(),
         dedupe_key: dedupe_key.to_string(),
         payload_ref: payload_ref.clone(),
         observed_at: observed_at.to_string(),
@@ -785,15 +767,12 @@ fn prepare_publish(
     let request_payload = serde_json::to_string(&request)
         .map_err(|error| format!("serialize scan request: {error}"))?;
     Ok(PreparedPublish {
-        payload_ref,
         request_payload,
-        payload_sha256: sha256_hex(payload),
     })
 }
 
 async fn enqueue_prepared_publish(
     publisher: &dyn PublishClient,
-    _payload: &str,
     dedupe_key: &str,
     prepared: &PreparedPublish,
 ) -> Result<(), String> {
@@ -900,7 +879,7 @@ mod tests {
 
     use crate::{
         audit::AuditWindow,
-        backlog::{BacklogEntry, BacklogError},
+        backlog::{BacklogEntry, BacklogError, IngestRecord},
     };
 
     struct MemoryPublisher {
