@@ -29,6 +29,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     audit::{AuditWindow, SharedAuditWindow},
+    backlog::inline_request_reply_transport_supported,
     capture::CaptureControl,
     channel_control::set_channel,
     model::AuditContext,
@@ -38,6 +39,29 @@ pub const AUDIT_CONFIG_TOPIC: &str = "wireless.audit.config";
 pub const AUTHORIZED_NETWORKS_CONFIG_TOPIC: &str = "wireless.config.authorized_networks";
 pub const SENSOR_CONFIG_TOPIC: &str = "wireless.config.sensor";
 const Redpanda_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub fn supports_config_subscriber_transport(config: &SyncConfig) -> bool {
+    config
+        .redpanda_bootstrap_servers
+        .as_deref()
+        .is_some_and(|redpanda_bootstrap_servers| {
+            let trimmed = redpanda_bootstrap_servers.trim();
+            !trimmed.starts_with("tls://") && inline_request_reply_transport_supported(trimmed)
+        })
+}
+
+pub fn config_subscriber_disabled_reason(config: &SyncConfig) -> Option<String> {
+    let redpanda_bootstrap_servers = config.redpanda_bootstrap_servers.as_deref()?;
+    let trimmed = redpanda_bootstrap_servers.trim();
+    if trimmed.starts_with("tls://") {
+        return Some("config subscribers support plain redpanda:// endpoints only".to_string());
+    }
+    (!inline_request_reply_transport_supported(trimmed)).then(|| {
+        format!(
+            "Kafka Redpanda listener {redpanda_bootstrap_servers} does not expose the raw subscriber protocol"
+        )
+    })
+}
 
 #[derive(Debug, Deserialize)]
 struct AuditWindowUpdate {
@@ -605,6 +629,26 @@ mod tests {
 
     use super::*;
 
+    fn sync_config(redpanda_bootstrap_servers: Option<&str>) -> SyncConfig {
+        SyncConfig {
+            redpanda_bootstrap_servers: redpanda_bootstrap_servers.map(str::to_string),
+            connect_timeout_ms: 2_000,
+            publish_timeout_ms: 2_000,
+            publish_queue_capacity: 8_192,
+            publish_enqueue_timeout_ms: 25,
+            security_protocol: None,
+            sasl_mechanisms: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: None,
+            ssl_certificate_location: None,
+            ssl_key_location: None,
+            inline_payload_max_bytes: 65_535,
+            outbox_dir: "/tmp/atheros-sensor-sync-outbox".to_string(),
+            publish_spool_dir: "/tmp/atheros-sensor-sync-outbox/publish-spool".to_string(),
+        }
+    }
+
     #[test]
     fn parses_matching_audit_window_config() {
         let payload = r#"{"location_id":"lab","timezone":"America/New_York","days":"mon","start_time":"09:00","end_time":"17:00","enabled":true}"#;
@@ -659,5 +703,23 @@ mod tests {
     #[test]
     fn rejects_invalid_percent_encoded_userinfo() {
         assert!(parse_redpanda_endpoint("redpanda://user:%zz@127.0.0.1:9092").is_err());
+    }
+
+    #[test]
+    fn config_subscribers_reject_kafka_listener() {
+        let config = sync_config(Some("redpanda://127.0.0.1:19092"));
+
+        assert!(!supports_config_subscriber_transport(&config));
+        assert!(config_subscriber_disabled_reason(&config)
+            .unwrap()
+            .contains("does not expose the raw subscriber protocol"));
+    }
+
+    #[test]
+    fn config_subscribers_accept_legacy_raw_listener() {
+        let config = sync_config(Some("redpanda://127.0.0.1:4222"));
+
+        assert!(supports_config_subscriber_transport(&config));
+        assert!(config_subscriber_disabled_reason(&config).is_none());
     }
 }

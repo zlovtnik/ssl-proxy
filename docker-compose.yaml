@@ -224,6 +224,7 @@ services:
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
       interval: 30s

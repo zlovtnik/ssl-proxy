@@ -121,15 +121,21 @@ async fn run_healthcheck() -> Result<(), SensorError> {
             Duration::from_millis(config.redpanda_request_timeout_ms),
         ),
     )?;
-    match step_async("request coordinator backlog list over Redpanda", async {
-        backlog.list_pending().await
-    })
-    .await
-    {
-        Ok(_) => {}
-        Err(error) => {
-            eprintln!("Healthcheck WARNING: coordinator backlog list failed (sensor is degraded but operational): {}", error);
+    if backlog.supports_inline_request_reply() {
+        match step_async("request coordinator backlog list over Redpanda", async {
+            backlog.list_pending().await
+        })
+        .await
+        {
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("Healthcheck WARNING: coordinator backlog list failed (sensor is degraded but operational): {}", error);
+            }
         }
+    } else if let Some(reason) = backlog.inline_request_reply_disabled_reason() {
+        eprintln!(
+            "Healthcheck NOTICE: coordinator request/reply skipped for publish-only endpoint: {reason}"
+        );
     }
 
     println!(
@@ -218,6 +224,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &handles.stats,
                     &handles.authorized_config_generation,
                     &handles.capture_control,
+                    handles.inline_request_reply_enabled,
                 )
                 .instrument(span)
                 .await;
@@ -323,6 +330,7 @@ struct SensorHandles {
     publish_state: SharedPublishState,
     stats: metrics::SharedStats,
     authorized_config_generation: Arc<AtomicU64>,
+    inline_request_reply_enabled: bool,
 }
 
 /// Thread-safe shared reference to the current audit context.
@@ -621,7 +629,15 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             Duration::from_millis(config.redpanda_request_timeout_ms),
         ),
     )?);
-    backlog.clone().spawn_health_check();
+    let inline_request_reply_enabled = backlog.supports_inline_request_reply();
+    if inline_request_reply_enabled {
+        backlog.clone().spawn_health_check();
+    } else if let Some(reason) = backlog.inline_request_reply_disabled_reason() {
+        info!(
+            %reason,
+            "Redpanda inline request/reply disabled; MAC lookup, authorized network refresh, and request health check are unavailable"
+        );
+    }
     // Replay journal entries from previous outages
     match replay_journal(&publish_state, &*backlog).await {
         Ok(count) => {
@@ -636,16 +652,25 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
     info!("atheros sensor Redpanda backlog initialized");
 
-    config_subscriber::spawn_audit_window_config_subscriber(
-        config.sync.clone(),
-        config.location_id.clone(),
-        Arc::clone(&audit_window),
-    );
+    let config_subscribers_enabled =
+        config_subscriber::supports_config_subscriber_transport(&config.sync);
+    if config_subscribers_enabled {
+        config_subscriber::spawn_audit_window_config_subscriber(
+            config.sync.clone(),
+            config.location_id.clone(),
+            Arc::clone(&audit_window),
+        );
+    } else if let Some(reason) = config_subscriber::config_subscriber_disabled_reason(&config.sync)
+    {
+        info!(%reason, "live wireless config subscribers disabled");
+    }
     let authorized_config_generation = Arc::new(AtomicU64::new(0));
-    config_subscriber::spawn_authorized_network_config_subscriber(
-        config.sync.clone(),
-        Arc::clone(&authorized_config_generation),
-    );
+    if config_subscribers_enabled {
+        config_subscriber::spawn_authorized_network_config_subscriber(
+            config.sync.clone(),
+            Arc::clone(&authorized_config_generation),
+        );
+    }
 
     let context = Arc::new(RwLock::new(AuditContext {
         sensor_id,
@@ -690,13 +715,15 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             Arc::clone(&stats),
         );
     }
-    config_subscriber::spawn_sensor_config_subscriber(
-        config.sync.clone(),
-        config.location_id.clone(),
-        Arc::clone(&context),
-        packet_stream.control.clone(),
-        current_filter,
-    );
+    if config_subscribers_enabled {
+        config_subscriber::spawn_sensor_config_subscriber(
+            config.sync.clone(),
+            config.location_id.clone(),
+            Arc::clone(&context),
+            packet_stream.control.clone(),
+            current_filter,
+        );
+    }
     // Spawn periodic memory backlog flush timer
     let flush_state = Arc::clone(&publish_state);
     let flush_backlog = Arc::clone(&backlog);
@@ -722,6 +749,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         publish_state,
         stats,
         authorized_config_generation,
+        inline_request_reply_enabled,
     })
 }
 
@@ -739,6 +767,7 @@ async fn process_packet(
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
     capture_control: &CaptureControl,
+    inline_request_reply_enabled: bool,
 ) -> Result<PipelineOutcome, SensorError> {
     let packet_len = packet.data.len() as u64;
 
@@ -790,18 +819,20 @@ async fn process_packet(
         pipeline.authorized_network_cache.invalidate();
         pipeline.seen_authorized_config_generation = latest_generation;
     }
-    let refresh_result = pipeline
-        .authorized_network_cache
-        .refresh_if_needed(
-            backlog,
-            Duration::from_secs(config.authorized_network_cache_ttl_secs),
-        )
-        .await;
-    if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
-        warn!(
-            error = %refresh_result.as_ref().unwrap_err(),
-            "authorized wireless network cache refresh failed"
-        );
+    if inline_request_reply_enabled {
+        let refresh_result = pipeline
+            .authorized_network_cache
+            .refresh_if_needed(
+                backlog,
+                Duration::from_secs(config.authorized_network_cache_ttl_secs),
+            )
+            .await;
+        if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
+            warn!(
+                error = %refresh_result.as_ref().unwrap_err(),
+                "authorized wireless network cache refresh failed"
+            );
+        }
     }
     let authorization_status = pipeline.authorized_network_cache.authorization_status(
         entry.ssid.as_deref(),
@@ -963,14 +994,16 @@ async fn process_packet(
             0
         }
     };
-    let skip_mac_lookup = backlog_pct > 80 || !config.mac_device_lookup_enabled;
+    let skip_mac_lookup =
+        backlog_pct > 80 || !config.mac_device_lookup_enabled || !inline_request_reply_enabled;
     if skip_mac_lookup {
         if entry.identity_source == "unknown" || entry.identity_source == "mac_observed" {
-            entry.identity_source = if config.mac_device_lookup_enabled {
-                "mac_lookup_skipped_backpressure".to_string()
-            } else {
-                "mac_lookup_disabled".to_string()
-            };
+            entry.identity_source =
+                if !config.mac_device_lookup_enabled || !inline_request_reply_enabled {
+                    "mac_lookup_disabled".to_string()
+                } else {
+                    "mac_lookup_skipped_backpressure".to_string()
+                };
         }
     } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
         let cache_key = mac.to_ascii_lowercase();

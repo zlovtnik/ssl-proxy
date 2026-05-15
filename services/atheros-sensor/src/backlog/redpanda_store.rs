@@ -97,6 +97,19 @@ impl RedpandaBacklog {
         self.health_status.load(Ordering::Relaxed)
     }
 
+    pub fn supports_inline_request_reply(&self) -> bool {
+        self.sync
+            .redpanda_bootstrap_servers
+            .as_deref()
+            .is_some_and(inline_request_reply_transport_supported)
+    }
+
+    pub fn inline_request_reply_disabled_reason(&self) -> Option<String> {
+        let redpanda_bootstrap_servers = self.sync.redpanda_bootstrap_servers.as_deref()?;
+        request_transport_unsupported("inline_request_reply", redpanda_bootstrap_servers)
+            .map(|error| error.to_string())
+    }
+
     async fn health_probe(&self) {
         let result = self.ping_redpanda().await;
         let healthy = result.is_ok();
@@ -878,6 +891,10 @@ fn request_transport_unsupported(
     None
 }
 
+pub fn inline_request_reply_transport_supported(redpanda_bootstrap_servers: &str) -> bool {
+    request_transport_unsupported("inline_request_reply", redpanda_bootstrap_servers).is_none()
+}
+
 fn unsupported_request_transport_error(
     operation: &'static str,
     redpanda_bootstrap_servers: &str,
@@ -1038,8 +1055,9 @@ async fn connect_tls(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_authorized_networks_response, parse_redpanda_endpoint, payload_with_reply_topic,
-        request_error_marks_redpanda_unhealthy, request_transport_unsupported,
+        inline_request_reply_transport_supported, parse_authorized_networks_response,
+        parse_redpanda_endpoint, payload_with_reply_topic, request_error_marks_redpanda_unhealthy,
+        request_transport_unsupported,
     };
     use crate::backlog::BacklogError;
 
@@ -1120,6 +1138,9 @@ mod tests {
             "redpanda://127.0.0.1:19092"
         )
         .is_some());
+        assert!(!inline_request_reply_transport_supported(
+            "redpanda://127.0.0.1:19092"
+        ));
         assert!(
             request_transport_unsupported("lookup_device_by_mac", "redpanda://redpanda:9092")
                 .is_some()
@@ -1140,6 +1161,9 @@ mod tests {
             request_transport_unsupported("lookup_device_by_mac", "redpanda://127.0.0.1:4222")
                 .is_none()
         );
+        assert!(inline_request_reply_transport_supported(
+            "redpanda://127.0.0.1:4222"
+        ));
     }
 
     #[test]
