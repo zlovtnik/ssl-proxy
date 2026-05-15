@@ -19,6 +19,7 @@ const allowed_oracle_stream_names = [_][]const u8{
     "wireless.alert.pmf_attack",
     "wireless.client.inventory",
     "wireless.probe.flush",
+    "proxy.payload_audit",
 };
 
 fn allowedOracleStreamName(stream_name: []const u8) bool {
