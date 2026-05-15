@@ -37,7 +37,7 @@ pub fn main(init: std.process.Init) !void {
             .string("stream_name", stream_name)
             .string("stream_names", cfg.stream_names_csv)
             .string("oracle_stream_names", cfg.oracle_stream_names_csv)
-            .stringSafe("allowed_oracle_stream_names", "proxy.events")
+            .stringSafe("allowed_oracle_stream_names", config.DEFAULT_ORACLE_STREAM_NAMES)
             .log();
         return error.InvalidOracleStreamConfig;
     }

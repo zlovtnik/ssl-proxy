@@ -29,14 +29,12 @@ const DispatchPayload = struct {
 
 pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
-    while (true) {
-        const batch = try service_redpanda.pullScanBatch(allocator, io, cfg, cfg.scan_fetch_count);
-        if (batch.items.len == 0) break;
+    const batch = try service_redpanda.pullScanBatch(allocator, io, cfg, cfg.scan_fetch_count);
+    if (batch.items.len == 0) return false;
+    defer service_redpanda.freeBatch(allocator, batch);
 
-        for (batch.items) |raw_line| {
-            if (try recordScanRequest(allocator, io, cfg, database, raw_line)) had_work = true;
-        }
-        allocator.free(batch.items);
+    for (batch.items) |raw_line| {
+        if (try recordScanRequest(allocator, io, cfg, database, raw_line)) had_work = true;
     }
     return had_work;
 }
@@ -44,7 +42,8 @@ pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.C
 pub fn dispatchNextBatch(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
     var dispatched: usize = 0;
-    while (dispatched < 16) {
+    const dispatch_limit: usize = @max(@as(usize, @intCast(cfg.dispatch_batch_size)), 1);
+    while (dispatched < dispatch_limit) {
         const payload = try db_sync.getNextBatch(database, cfg.oracle_stream_names_csv);
         defer if (payload) |value| allocator.free(value);
 
@@ -96,15 +95,13 @@ pub fn recoverStaleDispatchedBatches(cfg: config.Config, database: *db.Client) !
 
 pub fn handleResults(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
-    while (true) {
-        const batch = try service_redpanda.pullResultBatch(allocator, io, cfg, cfg.result_fetch_count);
-        if (batch.items.len == 0) break;
+    const batch = try service_redpanda.pullResultBatch(allocator, io, cfg, cfg.result_fetch_count);
+    if (batch.items.len == 0) return false;
+    defer service_redpanda.freeBatch(allocator, batch);
 
-        for (batch.items) |raw_line| {
-            try db_sync.processBatchResult(database, raw_line);
-            had_work = true;
-        }
-        allocator.free(batch.items);
+    for (batch.items) |raw_line| {
+        try db_sync.processBatchResult(database, raw_line);
+        had_work = true;
     }
     return had_work;
 }

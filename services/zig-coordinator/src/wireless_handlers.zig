@@ -12,13 +12,13 @@ const ReplyRequest = struct {
 
 pub fn run(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
     var had_work = false;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_save_consumer)) had_work = (try handleBacklogSave(allocator, io, cfg, database)) or had_work;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_list_consumer)) had_work = (try handleBacklogList(allocator, io, cfg, database)) or had_work;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_synced_consumer)) had_work = (try handleBacklogSynced(allocator, io, cfg, database)) or had_work;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_backlog_stream_name, cfg.wireless_backlog_prune_consumer)) had_work = (try handleBacklogPrune(allocator, io, cfg, database)) or had_work;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_mac_stream_name, cfg.wireless_mac_lookup_consumer)) had_work = (try handleMacLookup(allocator, io, cfg, database)) or had_work;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_networks_stream_name, cfg.wireless_networks_authorized_consumer)) had_work = (try handleNetworksAuthorized(allocator, io, cfg, database)) or had_work;
-    if (try service_redpanda.wirelessConsumerHasBacklog(allocator, io, cfg, cfg.wireless_probe_stream_name, cfg.wireless_probe_flush_consumer)) had_work = (try handleProbeFlush(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleBacklogSave(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleBacklogList(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleBacklogSynced(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleBacklogPrune(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleMacLookup(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleNetworksAuthorized(allocator, io, cfg, database)) or had_work;
+    had_work = (try handleProbeFlush(allocator, io, cfg, database)) or had_work;
     return had_work;
 }
 
