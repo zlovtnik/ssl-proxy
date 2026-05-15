@@ -4,6 +4,7 @@ sync.oracle.load|3|1|2592000000|-1
 sync.oracle.result|3|1|2592000000|-1
 proxy.payload_audit|3|1|2592000000|-1
 wireless.audit|3|1|2592000000|-1
+wireless.mac.seen|3|1|2592000000|-1
 wireless.audit.config|1|1|2592000000|-1
 wireless.config.authorized_networks|1|1|2592000000|-1
 wireless.config.sensor|1|1|2592000000|-1
