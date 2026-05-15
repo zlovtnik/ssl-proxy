@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, time::Duration};
 
 use oracle::Connection;
 use r2d2_oracle::OracleConnectionManager;
@@ -63,6 +63,17 @@ impl OracleProxyEventSink {
                 crate::log::error_chain(&error)
             )
         })?;
+        let timeout_secs = crate::env::env_or_default("ORACLE_STATEMENT_TIMEOUT_SECS", "30")
+            .parse()
+            .unwrap_or(30u64);
+        connection
+            .set_call_timeout(Some(Duration::from_secs(timeout_secs)))
+            .map_err(|error| {
+                format!(
+                    "set Oracle call timeout to {timeout_secs}s: {}",
+                    crate::log::error_chain(&error)
+                )
+            })?;
         let duration_ms = start.elapsed().as_millis();
         eprintln!(
             "service=oracle-worker event=connection_acquired pool=true duration_ms={}",

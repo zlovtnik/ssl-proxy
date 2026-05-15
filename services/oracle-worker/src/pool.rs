@@ -36,8 +36,10 @@ pub(crate) fn build_oracle_pool(
         config.oracle_worker_parallelism
     );
     println!(
-        "service={SERVICE_NAME} event=pool_config max_size={} timeout_secs={}",
-        config.oracle_worker_parallelism, pool_timeout_secs
+        "service={SERVICE_NAME} event=pool_config max_size={} timeout_secs={} statement_timeout_secs={}",
+        config.oracle_worker_parallelism,
+        pool_timeout_secs,
+        config.oracle_statement_timeout_secs
     );
     Ok(Arc::new(pool))
 }

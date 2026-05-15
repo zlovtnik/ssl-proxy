@@ -5,6 +5,10 @@ use super::types::{OracleErrorClass, OracleResult, SinkTarget};
 pub fn classify_oracle_error(message: &str) -> OracleErrorClass {
     let normalized = message.to_ascii_lowercase();
     if normalized.contains("timeout")
+        || normalized.contains("dpi-1067")
+        || normalized.contains("ora-03114")
+        || normalized.contains("ora-03136")
+        || normalized.contains("ora-3136")
         || normalized.contains("temporarily unavailable")
         || normalized.contains("connection reset")
         || normalized.contains("deadlock")

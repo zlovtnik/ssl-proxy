@@ -6,6 +6,14 @@ fn classifies_retryable_failures() {
         classify_oracle_error("timeout while writing batch"),
         OracleErrorClass::Retryable
     );
+    assert_eq!(
+        classify_oracle_error("DPI-1067: call timeout of 30000 ms exceeded"),
+        OracleErrorClass::Retryable
+    );
+    assert_eq!(
+        classify_oracle_error("ORA-03114: not connected to ORACLE after call timeout cleanup"),
+        OracleErrorClass::Retryable
+    );
 }
 
 #[test]
