@@ -23,5 +23,7 @@ wireless.probe.flush|3|1|3600000|-1
 audit.wireless.bandwidth|3|1|604800000|-1
 wireless.alert.rogue_ap|3|1|2592000000|-1
 wireless.alert.deauth_flood|3|1|2592000000|-1
+wireless.alert.signal_anomaly|3|1|2592000000|-1
+wireless.alert.pmf_attack|3|1|2592000000|-1
 wireless.alert.attack_sequence|3|1|2592000000|-1
 wifi.alert.handshake|3|1|2592000000|-1

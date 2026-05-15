@@ -280,7 +280,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     "location_id": context.location_id,
                     "clients": snapshot.clients,
                 });
-                if let Err(error) = publish_oracle_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &inventory_payload, observed_at).await {
+                if let Err(error) = publish_oracle_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &inventory_payload, &observed_at).await {
                     warn!(%error, "client inventory publish failed");
                 }
 
@@ -357,6 +357,7 @@ struct ProbeObservation {
 #[derive(Serialize)]
 struct ProbeFlushPayload<'a> {
     operation: &'static str,
+    observed_at: String,
     probes: &'a [ProbeFlushObservation],
 }
 
@@ -390,6 +391,7 @@ async fn publish_probe_flush_batch(
         .unwrap_or_else(ssl_proxy::time::now_rfc3339);
     let payload = ProbeFlushPayload {
         operation: "flush_probe_batch",
+        observed_at: observed_at.clone(),
         probes,
     };
     publish_oracle_json(

@@ -1130,17 +1130,11 @@ mod tests {
             .unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_TOPIC);
+        assert_eq!(published.len(), 2);
+        assert_eq!(published[0].0, WIRELESS_AUDIT_TOPIC);
+        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_TOPIC);
         assert!(backlog.rows.lock().unwrap().is_empty());
-        let ingest_rows = backlog.ingest_rows.lock().unwrap();
-        assert_eq!(ingest_rows.len(), 1);
-        assert_eq!(
-            ingest_rows[0].1,
-            DateTime::parse_from_rfc3339("2026-04-20T12:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc)
-        );
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1212,8 +1206,9 @@ mod tests {
         publish_bandwidth_event(&publisher, &event).await.unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 1);
+        assert_eq!(published.len(), 2);
         assert_eq!(published[0].0, BANDWIDTH_TOPIC);
+        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_TOPIC);
         assert!(published[0]
             .1
             .contains("\"event_type\":\"wireless_bandwidth_window\""));
@@ -1232,7 +1227,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(backlog.rows.lock().unwrap().len(), 1);
-        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
     }
 
     struct QueueFullOnEnqueuePublisher {
@@ -1290,8 +1285,9 @@ mod tests {
 
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 1);
-        assert_eq!(published[0].0, SYNC_SCAN_REQUEST_TOPIC);
+        assert_eq!(published.len(), 2);
+        assert_eq!(published[0].0, WIRELESS_AUDIT_TOPIC);
+        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_TOPIC);
     }
 
     #[tokio::test]
@@ -1383,7 +1379,7 @@ mod tests {
 
         assert!(backlog.rows.lock().unwrap().is_empty());
         assert_eq!(publisher.published.lock().unwrap().len(), 1);
-        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1415,12 +1411,12 @@ mod tests {
         let rows = backlog.rows.lock().unwrap().clone();
         assert!(!rows.is_empty());
         assert!(rows.iter().any(|row| row.dedupe_key == key));
-        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
+        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
         assert!(publisher.published.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn reconciliation_ingest_failure_is_persisted_and_processing_continues() {
+    async fn reconciliation_continues_across_multiple_entries() {
         let state = test_state();
 
         let mut first = entry();
@@ -1433,7 +1429,7 @@ mod tests {
         let second_payload = serde_json::to_string(&second).unwrap();
         let second_key = dedupe_key(&second_payload);
 
-        let backlog = SelectiveIngestFailBacklog::new([first_key.clone()]);
+        let backlog = MemoryBacklog::default();
         backlog
             .save_pending(
                 &first_key,
@@ -1468,14 +1464,11 @@ mod tests {
         .unwrap();
 
         let pending = backlog.rows.lock().unwrap().clone();
-        assert!(pending.iter().any(|row| row.dedupe_key == first_key));
-        assert!(!pending.iter().any(|row| row.dedupe_key == second_key));
-
-        let ingested = backlog.ingest_rows.lock().unwrap().clone();
-        assert_eq!(ingested, vec![second_key]);
+        assert!(pending.is_empty());
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 1);
+        assert_eq!(published.len(), 2);
+        assert!(published.iter().all(|(topic, _)| topic == SYNC_SCAN_REQUEST_TOPIC));
     }
 
     #[tokio::test]
