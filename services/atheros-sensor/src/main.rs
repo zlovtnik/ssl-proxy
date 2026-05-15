@@ -69,18 +69,22 @@ use crate::{
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizationStatus, AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker,
-        PmfAttackTracker, RogueApTracker, SignalTracker, CLIENT_INVENTORY_TOPIC,
-        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
+        AttackTimelineCorrelator, AuthorizationStatus, AuthorizedNetworkCache, ClientInventory,
+        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker, ATTACK_SEQUENCE_TOPIC,
+        CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
     model::{AuditContext, EnrichedFrame, RawPacket},
-    parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
+    parse::{
+        attach_context, decode_frame, to_audit_entry, try_decrypt_frame, HandshakeMonitor,
+        IdentityCache,
+    },
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_oracle_json, replay_journal, PublishClient,
-        PublishError, PublishState, SharedPublishState, SyncPublisherClient,
+        publish_entry, publish_handshake_alert, publish_oracle_json, reconcile_backlog,
+        replay_journal, PublishClient, PublishError, PublishState, SharedPublishState,
+        SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
@@ -89,6 +93,10 @@ const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
 const SIGNAL_ANOMALY_TOPIC: &str = "wireless.alert.signal_anomaly";
 const PMF_ATTACK_TOPIC: &str = "wireless.alert.pmf_attack";
+const BACKLOG_RECONCILE_INTERVAL_SECS: u64 = 60;
+const BACKLOG_PRUNE_INTERVAL_SECS: u64 = 3_600;
+const BACKLOG_PRUNE_MAX_ATTEMPTS: i32 = 10;
+const BACKLOG_PRUNE_MAX_AGE_HOURS: i64 = 72;
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -303,7 +311,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                         probe_count: obs.probe_count,
                     })
                     .collect::<Vec<_>>();
-                if let Err(error) = publish_probe_flush_batch(&*handles.publish_client, &batch).await {
+                if let Err(error) = handles.backlog.flush_probe_batch(&batch).await {
                     warn!(%error, "probe batch publish failed; reinserting for retry");
                     for (key, obs) in probes_to_flush {
                         pipeline_state.probe_accumulator.insert(key, obs);
@@ -348,6 +356,7 @@ struct PipelineState {
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
+    attack_timeline_correlator: AttackTimelineCorrelator,
     pmf_attack_tracker: PmfAttackTracker,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
@@ -363,13 +372,6 @@ struct ProbeObservation {
 }
 
 #[derive(Serialize)]
-struct ProbeFlushPayload<'a> {
-    operation: &'static str,
-    observed_at: String,
-    probes: &'a [ProbeFlushObservation],
-}
-
-#[derive(Serialize)]
 struct PmfAttackAlert {
     schema_version: u32,
     event_type: String,
@@ -382,34 +384,6 @@ struct PmfAttackAlert {
     channel: Option<u8>,
     attack_tag: String,
     reconnect_window_ms: Option<i64>,
-}
-
-async fn publish_probe_flush_batch(
-    publisher: &dyn PublishClient,
-    probes: &[ProbeFlushObservation],
-) -> Result<(), PublishError> {
-    if probes.is_empty() {
-        return Ok(());
-    }
-    let observed_at = probes
-        .iter()
-        .map(|probe| probe.last_seen)
-        .max()
-        .map(ssl_proxy::time::rfc3339_from_utc)
-        .unwrap_or_else(ssl_proxy::time::now_rfc3339);
-    let payload = ProbeFlushPayload {
-        operation: "flush_probe_batch",
-        observed_at: observed_at.clone(),
-        probes,
-    };
-    publish_oracle_json(
-        publisher,
-        "publish_probe_flush",
-        "wireless.probe.flush",
-        &payload,
-        &observed_at,
-    )
-    .await
 }
 
 fn pmf_attack_alert_from_entry(
@@ -472,6 +446,7 @@ impl PipelineState {
             signal_tracker: SignalTracker::default(),
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
+            attack_timeline_correlator: AttackTimelineCorrelator::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
             authorized_network_cache: AuthorizedNetworkCache::new(
                 _config.authorized_network_cache_backoff_ms,
@@ -619,6 +594,8 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let publish_state = PublishState::shared_with_config(
         config.memory_backlog_size,
         config.publish_journal_path.clone(),
+        config.circuit_breaker_initial_timeout_ms,
+        config.circuit_breaker_max_timeout_ms,
     );
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
     let backlog = Arc::new(step(
@@ -737,6 +714,16 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         }
     });
 
+    if inline_request_reply_enabled {
+        spawn_backlog_reconcile_task(
+            Arc::clone(&publish_state),
+            Arc::clone(&backlog),
+            Arc::clone(&publish_client),
+            Arc::clone(&audit_window),
+        );
+        spawn_backlog_prune_task(Arc::clone(&backlog));
+    }
+
     Ok(SensorHandles {
         config: config.clone(),
         audit_window,
@@ -751,6 +738,54 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         authorized_config_generation,
         inline_request_reply_enabled,
     })
+}
+
+fn spawn_backlog_reconcile_task(
+    publish_state: SharedPublishState,
+    backlog: Arc<RedpandaBacklog>,
+    publish_client: Arc<SyncPublisherClient>,
+    audit_window: SharedAuditWindow,
+) {
+    tokio::spawn(async move {
+        let mut interval = interval_secs(BACKLOG_RECONCILE_INTERVAL_SECS);
+        loop {
+            interval.tick().await;
+            if !backlog.is_healthy() {
+                debug!("skipping backlog reconciliation while Redpanda health check is failing");
+                continue;
+            }
+            let audit_window = audit_window_snapshot(&audit_window);
+            if let Err(error) =
+                reconcile_backlog(&publish_state, &*backlog, &*publish_client, &audit_window).await
+            {
+                warn!(%error, "backlog reconciliation failed");
+            }
+        }
+    });
+}
+
+fn spawn_backlog_prune_task(backlog: Arc<RedpandaBacklog>) {
+    tokio::spawn(async move {
+        let mut interval = interval_secs(BACKLOG_PRUNE_INTERVAL_SECS);
+        loop {
+            interval.tick().await;
+            if !backlog.is_healthy() {
+                debug!("skipping backlog prune while Redpanda health check is failing");
+                continue;
+            }
+            match backlog
+                .prune_stale(BACKLOG_PRUNE_MAX_ATTEMPTS, BACKLOG_PRUNE_MAX_AGE_HOURS)
+                .await
+            {
+                Ok(pruned) => {
+                    if pruned > 0 {
+                        info!(pruned, "pruned stale synced backlog entries");
+                    }
+                }
+                Err(error) => warn!(%error, "backlog prune failed"),
+            }
+        }
+    });
 }
 
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
@@ -801,19 +836,6 @@ async fn process_packet(
         Some(capture_control),
         handshake_ttl,
     );
-    let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
-    let enriched: EnrichedFrame = attach_context(wifi_frame, context);
-    let mut entry = to_audit_entry(enriched);
-    if let Some(alert) = handshake_alert.as_ref() {
-        if let Err(error) = publish_handshake_alert(publish_client, alert).await {
-            warn!(%error, "handshake alert publish failed; continuing audit publish");
-        }
-    }
-    if let Some(identity) = resolved_identity {
-        entry.username = Some(identity.username);
-        entry.identity_source = identity.source;
-        entry.tags.extend(identity.tags);
-    }
     let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
     if latest_generation != pipeline.seen_authorized_config_generation {
         pipeline.authorized_network_cache.invalidate();
@@ -834,6 +856,26 @@ async fn process_packet(
             );
         }
     }
+    if try_decrypt_frame(
+        &mut wifi_frame,
+        &pipeline.handshake_monitor,
+        pipeline.authorized_network_cache.entries(),
+    ) {
+        debug!("protected data frame decrypted using authorized network PSK");
+    }
+    let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
+    let enriched: EnrichedFrame = attach_context(wifi_frame, context);
+    let mut entry = to_audit_entry(enriched);
+    if let Some(alert) = handshake_alert.as_ref() {
+        if let Err(error) = publish_handshake_alert(publish_client, alert).await {
+            warn!(%error, "handshake alert publish failed; continuing audit publish");
+        }
+    }
+    if let Some(identity) = resolved_identity {
+        entry.username = Some(identity.username);
+        entry.identity_source = identity.source;
+        entry.tags.extend(identity.tags);
+    }
     let authorization_status = pipeline.authorized_network_cache.authorization_status(
         entry.ssid.as_deref(),
         entry
@@ -842,7 +884,16 @@ async fn process_packet(
             .or(entry.destination_bssid.as_deref()),
         &entry.location_id,
     );
-    let external_bssid = authorization_status == AuthorizationStatus::Unauthorized;
+    let is_authorized_network = pipeline.authorized_network_cache.is_authorized(
+        entry.ssid.as_deref(),
+        entry
+            .bssid
+            .as_deref()
+            .or(entry.destination_bssid.as_deref()),
+        &entry.location_id,
+    );
+    let external_bssid =
+        authorization_status == AuthorizationStatus::Unauthorized && !is_authorized_network;
     if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unauthorized {
         entry.tags.push("threat:unauthorized_bssid".to_string());
     } else if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unknown {
@@ -870,19 +921,23 @@ async fn process_packet(
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(chrono::Utc::now);
 
+            let linked_bssid = pipeline
+                .client_inventory
+                .link_probe_to_network(&entry, &pipeline.authorized_network_cache)
+                .map(|(bssid, _, _)| bssid);
             let key = (ssid.to_string(), client_mac.clone());
             pipeline
                 .probe_accumulator
                 .entry(key)
                 .and_modify(|obs| {
                     if obs.known_bssid.is_none() {
-                        obs.known_bssid = entry.bssid.clone();
+                        obs.known_bssid = linked_bssid.clone().or_else(|| entry.bssid.clone());
                     }
                     obs.last_seen = observed_at;
                     obs.probe_count = obs.probe_count.saturating_add(1);
                 })
                 .or_insert_with(|| ProbeObservation {
-                    known_bssid: entry.bssid.clone(),
+                    known_bssid: linked_bssid.or_else(|| entry.bssid.clone()),
                     first_seen: observed_at,
                     last_seen: observed_at,
                     probe_count: 1,
@@ -906,10 +961,32 @@ async fn process_packet(
                 probe_count: obs.probe_count,
             })
             .collect::<Vec<_>>();
-        if let Err(error) = publish_probe_flush_batch(publish_client, &batch).await {
+        if let Err(error) = backlog.flush_probe_batch(&batch).await {
             warn!(%error, "probe batch early flush failed; reinserting for retry");
             for (key, obs) in probes_to_flush {
                 pipeline.probe_accumulator.insert(key, obs);
+            }
+        }
+    }
+    if entry
+        .tags
+        .iter()
+        .any(|tag| tag == "threat:karma_probe_response")
+    {
+        if let Some(alert) = pipeline
+            .attack_timeline_correlator
+            .observe(&entry, "karma_probe_response")
+        {
+            if let Err(error) = publish_oracle_json(
+                publish_client,
+                "publish_attack_sequence_alert",
+                ATTACK_SEQUENCE_TOPIC,
+                &alert,
+                &alert.observed_at,
+            )
+            .await
+            {
+                warn!(%error, "attack sequence alert publish failed");
             }
         }
     }
@@ -935,6 +1012,28 @@ async fn process_packet(
         .rogue_ap_tracker
         .observe(&entry, &pipeline.authorized_network_cache)
     {
+        if alert
+            .reasons
+            .iter()
+            .any(|reason| reason == "bssid_spoofing")
+        {
+            if let Some(sequence_alert) = pipeline
+                .attack_timeline_correlator
+                .observe(&entry, "bssid_spoofing")
+            {
+                if let Err(error) = publish_oracle_json(
+                    publish_client,
+                    "publish_attack_sequence_alert",
+                    ATTACK_SEQUENCE_TOPIC,
+                    &sequence_alert,
+                    &sequence_alert.observed_at,
+                )
+                .await
+                {
+                    warn!(%error, "attack sequence alert publish failed");
+                }
+            }
+        }
         if let Err(error) = publish_oracle_json(
             publish_client,
             "publish_rogue_ap_alert",

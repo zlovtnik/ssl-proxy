@@ -31,6 +31,8 @@ mod tags;
 mod text;
 
 #[doc(inline)]
+pub use decrypt::try_decrypt_frame;
+#[doc(inline)]
 #[allow(unused_imports)]
 pub use frame::ParseError;
 #[doc(inline)]

@@ -68,7 +68,11 @@ pub(super) fn analyze_payload(
     let Some(payload_offset) = data_payload_offset(frame_control, subtype, frame_bytes) else {
         return PayloadAnalysis::default();
     };
-    let Some(llc) = frame_bytes.get(payload_offset..payload_offset + 8) else {
+    analyze_decrypted_payload(frame_bytes.get(payload_offset..).unwrap_or_default())
+}
+
+pub(super) fn analyze_decrypted_payload(plaintext_payload: &[u8]) -> PayloadAnalysis {
+    let Some(llc) = plaintext_payload.get(..8) else {
         return PayloadAnalysis::default();
     };
     if llc[0] != 0xaa || llc[1] != 0xaa || llc[2] != 0x03 {
@@ -78,7 +82,7 @@ pub(super) fn analyze_payload(
     let oui = format!("{:02x}:{:02x}:{:02x}", llc[3], llc[4], llc[5]);
     let ethertype = u16::from_be_bytes([llc[6], llc[7]]);
     let ethertype_name = ethertype_name(ethertype).to_string();
-    let payload = frame_bytes.get(payload_offset + 8..).unwrap_or_default();
+    let payload = plaintext_payload.get(8..).unwrap_or_default();
 
     let mut analysis = PayloadAnalysis {
         llc_snap: Some(LlcSnapLayer {

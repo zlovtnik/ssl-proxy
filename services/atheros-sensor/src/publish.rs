@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_TOPIC},
-    backlog::{BacklogError, BacklogStore},
+    backlog::{BacklogError, BacklogStore, IngestRecord},
     model::{AuditEntry, HandshakeAlert},
 };
 
@@ -88,7 +88,6 @@ impl PublishClient for SyncPublisherClient {
 const CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS: u64 = 10_000;
 const CIRCUIT_BREAKER_MAX_TIMEOUT_MS: u64 = 320_000;
 const DEFAULT_MEMORY_BACKLOG_SIZE: usize = 1024;
-const DEFAULT_JOURNAL_PATH: &str = "/tmp/atheros-sensor-publish-journal.jsonl";
 
 type MemoryBacklogEntry = (String, String, String, String);
 pub type SharedPublishState = Arc<Mutex<PublishState>>;
@@ -106,6 +105,8 @@ pub struct PublishState {
     pub circuit_breaker_state: CircuitBreakerState,
     circuit_breaker_opened_at: Option<Instant>,
     circuit_breaker_failure_count: u32,
+    circuit_breaker_initial_timeout_ms: u64,
+    circuit_breaker_max_timeout_ms: u64,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
     memory_backlog_capacity: NonZeroUsize,
     journal_path: Option<PathBuf>,
@@ -117,6 +118,8 @@ impl Default for PublishState {
             circuit_breaker_state: CircuitBreakerState::Closed,
             circuit_breaker_opened_at: None,
             circuit_breaker_failure_count: 0,
+            circuit_breaker_initial_timeout_ms: CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS,
+            circuit_breaker_max_timeout_ms: CIRCUIT_BREAKER_MAX_TIMEOUT_MS,
             memory_backlog: LruCache::new(NonZeroUsize::new(DEFAULT_MEMORY_BACKLOG_SIZE).unwrap()),
             memory_backlog_capacity: NonZeroUsize::new(DEFAULT_MEMORY_BACKLOG_SIZE).unwrap(),
             journal_path: None,
@@ -125,6 +128,7 @@ impl Default for PublishState {
 }
 
 impl PublishState {
+    #[cfg(test)]
     pub fn shared() -> SharedPublishState {
         Arc::new(Mutex::new(Self::default()))
     }
@@ -132,11 +136,17 @@ impl PublishState {
     pub fn shared_with_config(
         capacity: NonZeroUsize,
         journal_path: Option<PathBuf>,
+        circuit_breaker_initial_timeout_ms: u64,
+        circuit_breaker_max_timeout_ms: u64,
     ) -> SharedPublishState {
+        let initial_timeout = circuit_breaker_initial_timeout_ms.max(1);
+        let max_timeout = circuit_breaker_max_timeout_ms.max(initial_timeout);
         Arc::new(Mutex::new(Self {
             circuit_breaker_state: CircuitBreakerState::Closed,
             circuit_breaker_opened_at: None,
             circuit_breaker_failure_count: 0,
+            circuit_breaker_initial_timeout_ms: initial_timeout,
+            circuit_breaker_max_timeout_ms: max_timeout,
             memory_backlog: LruCache::new(capacity),
             memory_backlog_capacity: capacity,
             journal_path,
@@ -205,9 +215,10 @@ impl PublishState {
     fn circuit_breaker_timeout(&self) -> Duration {
         let exponent = self.circuit_breaker_failure_count.saturating_sub(1).min(63);
         let multiplier = 1u64.checked_shl(exponent).unwrap_or(u64::MAX);
-        let ms = CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS
+        let ms = self
+            .circuit_breaker_initial_timeout_ms
             .saturating_mul(multiplier)
-            .min(CIRCUIT_BREAKER_MAX_TIMEOUT_MS);
+            .min(self.circuit_breaker_max_timeout_ms);
         Duration::from_millis(ms)
     }
 
@@ -222,6 +233,10 @@ impl PublishState {
 
 struct PreparedPublish {
     request_payload: String,
+    stream_name: String,
+    dedupe_key: String,
+    payload_ref: String,
+    observed_at: DateTime<Utc>,
 }
 
 /// Two-phase write: publish the live wireless audit topic, then enqueue one Oracle scan request.
@@ -291,7 +306,16 @@ pub async fn publish_entry(
         close_backlog_circuit_breaker(state);
     }
 
-    if let Err(error) = enqueue_prepared_publish(publisher, &dedupe_key, &prepared).await {
+    if let Err(error) = backlog
+        .record_ingest(IngestRecord {
+            dedupe_key: &prepared.dedupe_key,
+            stream_name: &prepared.stream_name,
+            observed_at: prepared.observed_at,
+            payload_ref: &prepared.payload_ref,
+        })
+        .await
+        .map_err(|error| error.to_string())
+    {
         persist_publish_failure(
             state,
             backlog,
@@ -390,27 +414,6 @@ pub async fn publish_oracle_payload(
         topic = stream_name,
         payload_bytes = payload.len(),
         "queued wireless Oracle-bound event"
-    );
-    Ok(())
-}
-
-/// Publishes a generic JSON-serializable value to the specified Redpanda topic.
-pub async fn publish_json<T: serde::Serialize>(
-    publisher: &dyn PublishClient,
-    operation: &'static str,
-    topic: &str,
-    value: &T,
-) -> Result<(), PublishError> {
-    let payload = serde_json::to_string(value)?;
-    let key = sha256_hex(&payload);
-    queue_publish_with_backpressure(publisher, operation, topic, &payload, &key)
-        .await
-        .map_err(PublishError::Publish)?;
-    debug!(
-        dedupe_key = %key,
-        topic,
-        payload_bytes = payload.len(),
-        "queued wireless JSON event"
     );
     Ok(())
 }
@@ -787,7 +790,8 @@ fn prepare_publish(
     dedupe_key: &str,
     observed_at: &str,
 ) -> Result<PreparedPublish, String> {
-    DateTime::parse_from_rfc3339(observed_at)
+    let observed_at_dt = DateTime::parse_from_rfc3339(observed_at)
+        .map(|value| value.with_timezone(&Utc))
         .map_err(|error| format!("invalid observed_at timestamp {observed_at:?}: {error}"))?;
     let payload_ref = publisher.payload_ref_for_event(payload, observed_at)?;
     let request = ScanRequest {
@@ -798,7 +802,13 @@ fn prepare_publish(
     };
     let request_payload = serde_json::to_string(&request)
         .map_err(|error| format!("serialize scan request: {error}"))?;
-    Ok(PreparedPublish { request_payload })
+    Ok(PreparedPublish {
+        request_payload,
+        stream_name: stream_name.to_string(),
+        dedupe_key: dedupe_key.to_string(),
+        payload_ref,
+        observed_at: observed_at_dt,
+    })
 }
 
 async fn enqueue_prepared_publish(
@@ -900,8 +910,7 @@ pub async fn periodic_memory_backlog_flush(state: &SharedPublishState, backlog: 
 #[cfg(test)]
 mod tests {
     use base64::Engine;
-    use chrono::NaiveTime;
-    use std::collections::HashSet;
+    use chrono::{NaiveTime, TimeZone};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -1040,84 +1049,6 @@ mod tests {
         }
     }
 
-    struct SelectiveIngestFailBacklog {
-        rows: Mutex<Vec<BacklogEntry>>,
-        ingest_rows: Mutex<Vec<String>>,
-        failing_keys: HashSet<String>,
-    }
-
-    impl SelectiveIngestFailBacklog {
-        fn new(failing_keys: impl IntoIterator<Item = String>) -> Self {
-            Self {
-                rows: Mutex::new(Vec::new()),
-                ingest_rows: Mutex::new(Vec::new()),
-                failing_keys: failing_keys.into_iter().collect(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl BacklogStore for SelectiveIngestFailBacklog {
-        async fn record_ingest(&self, record: IngestRecord<'_>) -> Result<(), BacklogError> {
-            if self.failing_keys.contains(record.dedupe_key) {
-                return Err(BacklogError::Redpanda {
-                    operation: "record_ingest",
-                    message: "ingest ledger unavailable".to_string(),
-                });
-            }
-
-            self.ingest_rows
-                .lock()
-                .unwrap()
-                .push(record.dedupe_key.to_string());
-            Ok(())
-        }
-
-        async fn save_pending(
-            &self,
-            dedupe_key: &str,
-            stream_name: &str,
-            payload: &str,
-            _error: &str,
-        ) -> Result<(), BacklogError> {
-            let mut rows = self.rows.lock().unwrap();
-            if let Some(existing) = rows.iter_mut().find(|row| row.dedupe_key == dedupe_key) {
-                existing.stream_name = stream_name.to_string();
-                existing.payload = payload.to_string();
-                existing.attempt_count += 1;
-                return Ok(());
-            }
-
-            rows.push(BacklogEntry {
-                dedupe_key: dedupe_key.to_string(),
-                stream_name: stream_name.to_string(),
-                payload: payload.to_string(),
-                attempt_count: 1,
-            });
-            Ok(())
-        }
-
-        async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
-            Ok(self.rows.lock().unwrap().clone())
-        }
-
-        async fn mark_synced(&self, dedupe_key: &str) -> Result<(), BacklogError> {
-            self.rows
-                .lock()
-                .unwrap()
-                .retain(|entry| entry.dedupe_key != dedupe_key);
-            Ok(())
-        }
-
-        async fn prune_stale(
-            &self,
-            _max_attempts: i32,
-            _max_age_hours: i64,
-        ) -> Result<u64, BacklogError> {
-            Ok(0)
-        }
-    }
-
     fn test_state() -> SharedPublishState {
         PublishState::shared()
     }
@@ -1147,7 +1078,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_publish_emits_both_topics() {
+    async fn successful_publish_emits_audit_and_records_scan_request() {
         let state = test_state();
         let publisher = MemoryPublisher {
             fail: false,
@@ -1160,11 +1091,15 @@ mod tests {
             .unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
         assert_eq!(published[0].0, WIRELESS_AUDIT_TOPIC);
-        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_TOPIC);
         assert!(backlog.rows.lock().unwrap().is_empty());
-        assert!(backlog.ingest_rows.lock().unwrap().is_empty());
+        let ingest_rows = backlog.ingest_rows.lock().unwrap();
+        assert_eq!(ingest_rows.len(), 1);
+        assert_eq!(
+            ingest_rows[0].1,
+            Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1221,12 +1156,7 @@ mod tests {
             strongest_signal_dbm: Some(-42),
             external_bssid: true,
             threshold_exceeded: false,
-            frame_size_histogram: crate::audit::FrameSizeHistogram {
-                under_100: 0,
-                range_100_500: 1,
-                range_500_1000: 1,
-                range_1000_1500: 0,
-            },
+            frame_size_histogram: Default::default(),
             inter_arrival_p50_ms: Some(500),
             wall_clock_delta_ms: None,
             window_is_partial: false,
@@ -1315,9 +1245,9 @@ mod tests {
 
         assert!(backlog.rows.lock().unwrap().is_empty());
         let published = publisher.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 2);
+        assert_eq!(published.len(), 1);
         assert_eq!(published[0].0, WIRELESS_AUDIT_TOPIC);
-        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_TOPIC);
+        assert_eq!(backlog.ingest_rows.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1380,6 +1310,18 @@ mod tests {
             state.lock().unwrap().circuit_breaker_state,
             CircuitBreakerState::Open
         );
+    }
+
+    #[test]
+    fn circuit_breaker_uses_configured_timeout_bounds() {
+        let state = PublishState::shared_with_config(NonZeroUsize::new(64).unwrap(), None, 5, 20);
+        let mut state = state.lock().unwrap();
+
+        state.circuit_breaker_failure_count = 1;
+        assert_eq!(state.circuit_breaker_timeout(), Duration::from_millis(5));
+
+        state.circuit_breaker_failure_count = 3;
+        assert_eq!(state.circuit_breaker_timeout(), Duration::from_millis(20));
     }
 
     #[tokio::test]

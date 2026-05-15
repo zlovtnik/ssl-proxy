@@ -25,6 +25,8 @@ use thiserror::Error;
 
 use crate::audit::AuditWindow;
 
+pub const DEFAULT_PUBLISH_JOURNAL_PATH: &str = "/tmp/atheros-sensor-publish-journal.jsonl";
+
 #[derive(Clone)]
 pub struct AppConfig {
     pub device_override: Option<String>,
@@ -157,11 +159,12 @@ impl AppConfig {
         let memory_backlog_size = NonZeroUsize::new(memory_backlog_size_val)
             .unwrap_or_else(|| NonZeroUsize::new(1024).unwrap());
 
-        let publish_journal_path_env = std::env::var("ATH_SENSOR_PUBLISH_JOURNAL_PATH")
+        let publish_journal_path = std::env::var("ATH_SENSOR_PUBLISH_JOURNAL_PATH")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_PUBLISH_JOURNAL_PATH));
 
         Ok(Self {
             device_override: std::env::var("ATH_SENSOR_DEVICE")
@@ -232,7 +235,7 @@ impl AppConfig {
                 30,
             )
             .unwrap_or(30),
-            publish_journal_path: publish_journal_path_env,
+            publish_journal_path: Some(publish_journal_path),
             circuit_breaker_initial_timeout_ms: parse_u64(
                 "ATH_SENSOR_CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS",
                 10_000,
@@ -543,6 +546,10 @@ mod tests {
         assert_eq!(config.redpanda_request_timeout_ms, 10_000);
         assert!(config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 30);
+        assert_eq!(
+            config.publish_journal_path.as_deref(),
+            Some(std::path::Path::new(DEFAULT_PUBLISH_JOURNAL_PATH))
+        );
     }
 
     #[test]

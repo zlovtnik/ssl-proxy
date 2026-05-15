@@ -38,7 +38,7 @@ use crate::{
 pub const AUDIT_CONFIG_TOPIC: &str = "wireless.audit.config";
 pub const AUTHORIZED_NETWORKS_CONFIG_TOPIC: &str = "wireless.config.authorized_networks";
 pub const SENSOR_CONFIG_TOPIC: &str = "wireless.config.sensor";
-const Redpanda_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const REDPANDA_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn supports_config_subscriber_transport(config: &SyncConfig) -> bool {
     config
@@ -175,14 +175,14 @@ async fn run_subscriber_once(
     }
     let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;
     let stream = timeout(
-        Redpanda_CONNECT_TIMEOUT,
+        REDPANDA_CONNECT_TIMEOUT,
         TcpStream::connect(&endpoint.address),
     )
     .await
     .map_err(|_| {
         format!(
             "connect to Redpanda {} timed out after {:?}",
-            endpoint.address, Redpanda_CONNECT_TIMEOUT
+            endpoint.address, REDPANDA_CONNECT_TIMEOUT
         )
     })?
     .map_err(|error| format!("connect to Redpanda {}: {error}", endpoint.address))?;
@@ -397,7 +397,7 @@ where
     }
     let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;
     let stream = timeout(
-        Redpanda_CONNECT_TIMEOUT,
+        REDPANDA_CONNECT_TIMEOUT,
         TcpStream::connect(&endpoint.address),
     )
     .await

@@ -591,6 +591,10 @@ impl AuthorizedNetworkCache {
         self.authorization_status(ssid, bssid, location_id) == AuthorizationStatus::Authorized
     }
 
+    pub fn entries(&self) -> &[AuthorizedWirelessNetwork] {
+        &self.entries
+    }
+
     pub fn is_known_ssid(&self, ssid: &str) -> bool {
         let ssid = ssid.trim().to_ascii_lowercase();
         self.entries.iter().any(|entry| {
@@ -871,7 +875,6 @@ mod tests {
     fn link_probe_to_network_matches_ssid() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
-        use crate::model::AuditEntry;
 
         let mut cache = AuthorizedNetworkCache::default();
         cache.entries = vec![AuthorizedWirelessNetwork {
@@ -899,7 +902,6 @@ mod tests {
     fn link_probe_to_network_case_insensitive() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
-        use crate::model::AuditEntry;
 
         let mut cache = AuthorizedNetworkCache::default();
         cache.entries = vec![AuthorizedWirelessNetwork {
@@ -923,7 +925,6 @@ mod tests {
     fn link_probe_to_network_no_match() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
-        use crate::model::AuditEntry;
 
         let mut cache = AuthorizedNetworkCache::default();
         cache.entries = vec![AuthorizedWirelessNetwork {
@@ -976,6 +977,33 @@ mod tests {
         assert_eq!(
             cache.authorization_status(Some("Guest"), Some("aa:bb:cc:dd:ee:ff"), "loc1"),
             AuthorizationStatus::Unauthorized
+        );
+    }
+
+    #[test]
+    fn attack_timeline_correlates_karma_and_bssid_spoofing() {
+        use super::AttackTimelineCorrelator;
+
+        let mut correlator = AttackTimelineCorrelator::default();
+        let mut entry = create_test_audit_entry();
+        entry.ssid = Some("CorpWiFi".to_string());
+        entry.observed_at = "2024-01-01T12:00:00Z".to_string();
+
+        assert!(correlator.observe(&entry, "karma_probe_response").is_none());
+
+        entry.observed_at = "2024-01-01T12:01:00Z".to_string();
+        let alert = correlator
+            .observe(&entry, "bssid_spoofing")
+            .expect("second correlated attack type should emit sequence alert");
+
+        assert_eq!(alert.event_type, "wireless_attack_sequence");
+        assert_eq!(alert.ssid, "CorpWiFi");
+        assert_eq!(
+            alert.attack_chain,
+            vec![
+                "bssid_spoofing".to_string(),
+                "karma_probe_response".to_string()
+            ]
         );
     }
 
@@ -1118,7 +1146,6 @@ mod tests {
     #[test]
     fn pmf_attack_not_detected_when_pmf_required() {
         use super::PmfAttackTracker;
-        use crate::model::AuditEntry;
         use crate::parse::SECURITY_PMF_REQUIRED;
 
         let mut tracker = PmfAttackTracker::new(3000);

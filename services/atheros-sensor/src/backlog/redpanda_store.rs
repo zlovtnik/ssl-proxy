@@ -12,7 +12,10 @@ use std::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use ssl_proxy::config::SyncConfig;
+use ssl_proxy::{
+    config::SyncConfig,
+    sync::{ScanRequest, SYNC_SCAN_REQUEST_TOPIC},
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -26,7 +29,6 @@ use super::store::{
 };
 use crate::publish::PublishClient;
 
-const WIRELESS_AUDIT_TOPIC: &str = "sync.scan.request";
 const BACKLOG_SAVE_TOPIC: &str = "wireless.backlog.save";
 const BACKLOG_LIST_TOPIC: &str = "wireless.backlog.list";
 const BACKLOG_SYNCED_TOPIC: &str = "wireless.backlog.synced";
@@ -42,7 +44,6 @@ pub struct RedpandaBacklog {
     sync: SyncConfig,
     request_timeout: Duration,
     request_connection_ttl: Duration,
-    tls_client_config: Option<Arc<rustls::ClientConfig>>,
     tls_connector: Option<TlsConnector>,
     request_connection: Arc<Mutex<Option<CachedRequestConnection>>>,
     health_status: Arc<AtomicBool>,
@@ -74,7 +75,6 @@ impl RedpandaBacklog {
             sync,
             request_timeout,
             request_connection_ttl: Duration::from_secs(10),
-            tls_client_config,
             tls_connector,
             request_connection: Arc::new(Mutex::new(None)),
             health_status: Arc::new(AtomicBool::new(true)),
@@ -141,7 +141,7 @@ impl RedpandaBacklog {
                 operation,
                 message: format!("connect {}: {source}", endpoint.address),
             })?;
-        let mut stream: Box<dyn RedpandaStream> = if false || endpoint.tls_enabled {
+        let mut stream: Box<dyn RedpandaStream> = if redpanda_tls_enabled(&self.sync, &endpoint) {
             let connector = self
                 .tls_connector
                 .as_ref()
@@ -149,7 +149,7 @@ impl RedpandaBacklog {
                     operation,
                     message: "Redpanda TLS connector was not initialized".to_string(),
                 })?;
-            let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
+            let tls_stream = connect_tls(connector, endpoint.host.as_str(), tcp_stream)
                 .await
                 .map_err(|message| BacklogError::Redpanda { operation, message })?;
             Box::new(tls_stream)
@@ -468,7 +468,7 @@ impl RedpandaBacklog {
                 operation: "redpanda_health_check",
                 message: format!("connect {}: {source}", endpoint.address),
             })?;
-        let mut stream: Box<dyn RedpandaStream> = if false || endpoint.tls_enabled {
+        let mut stream: Box<dyn RedpandaStream> = if redpanda_tls_enabled(&self.sync, &endpoint) {
             let connector = self
                 .tls_connector
                 .as_ref()
@@ -476,7 +476,7 @@ impl RedpandaBacklog {
                     operation: "redpanda_health_check",
                     message: "Redpanda TLS connector was not initialized".to_string(),
                 })?;
-            let tls_stream = connect_tls(connector, &self.sync, endpoint.host.as_str(), tcp_stream)
+            let tls_stream = connect_tls(connector, endpoint.host.as_str(), tcp_stream)
                 .await
                 .map_err(|message| BacklogError::Redpanda {
                     operation: "redpanda_health_check",
@@ -638,12 +638,20 @@ impl RedpandaBacklog {
         #[derive(Serialize)]
         struct Payload<'a> {
             operation: &'static str,
+            observed_at: String,
             probes: &'a [ProbeFlushObservation],
         }
+        let observed_at = probes
+            .iter()
+            .map(|probe| probe.last_seen)
+            .max()
+            .map(ssl_proxy::time::rfc3339_from_utc)
+            .unwrap_or_else(ssl_proxy::time::now_rfc3339);
         let payload = serialize(
             "flush_probe_batch",
             &Payload {
                 operation: "flush_probe_batch",
+                observed_at,
                 probes,
             },
         )?;
@@ -689,36 +697,16 @@ impl BacklogStore for RedpandaBacklog {
             stream_name = record.stream_name,
             observed_at = %record.observed_at,
             payload_ref = record.payload_ref,
-            payload_sha256 = record.payload_sha256,
-            producer = record.producer,
-            event_kind = record.event_kind,
             "publishing wireless audit ingest over Redpanda"
         );
-        #[derive(Serialize)]
-        struct IngestEnvelope<'a> {
-            dedupe_key: &'a str,
-            stream_name: &'a str,
-            observed_at: chrono::DateTime<chrono::Utc>,
-            payload_ref: &'a str,
-            payload: &'a str,
-            payload_sha256: &'a str,
-            producer: &'a str,
-            event_kind: Option<&'a str>,
-        }
-        let payload = serialize(
-            "record_ingest",
-            &IngestEnvelope {
-                dedupe_key: record.dedupe_key,
-                stream_name: record.stream_name,
-                observed_at: record.observed_at,
-                payload_ref: record.payload_ref,
-                payload: record.payload,
-                payload_sha256: record.payload_sha256,
-                producer: record.producer,
-                event_kind: record.event_kind,
-            },
-        )?;
-        self.publish(WIRELESS_AUDIT_TOPIC, &payload).await
+        let request = ScanRequest {
+            stream_name: record.stream_name.to_string(),
+            dedupe_key: record.dedupe_key.to_string(),
+            payload_ref: record.payload_ref.to_string(),
+            observed_at: ssl_proxy::time::rfc3339_from_utc(record.observed_at),
+        };
+        let payload = serialize("record_ingest", &request)?;
+        self.publish(SYNC_SCAN_REQUEST_TOPIC, &payload).await
     }
 
     async fn save_pending(
@@ -985,11 +973,14 @@ fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaE
 }
 
 fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::ClientConfig>>, String> {
-    let tls_required = false
+    let tls_required = sync
+        .redpanda_bootstrap_servers
+        .as_deref()
+        .is_some_and(|url| url.trim().starts_with("tls://"))
         || sync
-            .redpanda_bootstrap_servers
+            .security_protocol
             .as_deref()
-            .is_some_and(|url| url.trim().starts_with("tls://"));
+            .is_some_and(|protocol| protocol.to_ascii_uppercase().contains("SSL"));
     if !tls_required {
         return Ok(None);
     }
@@ -1037,9 +1028,16 @@ fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::Clien
     Ok(Some(Arc::new(client_config)))
 }
 
+fn redpanda_tls_enabled(sync: &SyncConfig, endpoint: &RedpandaEndpoint) -> bool {
+    endpoint.tls_enabled
+        || sync
+            .security_protocol
+            .as_deref()
+            .is_some_and(|protocol| protocol.to_ascii_uppercase().contains("SSL"))
+}
+
 async fn connect_tls(
     connector: &TlsConnector,
-    sync: &SyncConfig,
     host: &str,
     stream: TcpStream,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, String> {
