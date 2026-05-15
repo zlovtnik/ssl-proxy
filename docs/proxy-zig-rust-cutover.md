@@ -8,8 +8,9 @@
   - `sync.oracle.result`
 - Added a thin proxy publisher seam that records and publishes `ScanRequest` messages.
 - Replaced placeholder `payload_ref` values with resolvable runtime references:
-  - `inline://json/<base64url>` for bounded envelopes
-  - `outbox://<file>` for spooled payloads under the configured outbox directory
+  - `inline://json/<base64url>` for bounded envelopes; base64url is only the transport wrapper and must decode to UTF-8 JSON.
+  - `outbox://<file>` for spooled payloads under the configured outbox directory; files must be `.json` content and parse as JSON before ingest.
+- Hardened proxy payload previews so decoded audit events remain readable JSON. Captured request/response previews use `payload_preview.schema_version = 2` with JSON/text fields or metadata-only omission for binary data; nested raw/base64 body bytes are not allowed.
 - Added sync publisher auth/TLS configuration and readiness-facing publisher health snapshots.
 - Tightened sync publishing to an explicit allowlist of sink-worthy traffic events.
 - Removed dashboard WebSocket routes from the active admin surface.
@@ -22,6 +23,7 @@
 - Decide whether the outbox remains filesystem-backed or moves to object storage/shared durable media.
 - Remove or isolate the remaining Oracle-era `#[cfg(feature = "oracle-db")]` dead paths that still live inside tunnel handlers.
 - Expose topic/payload-ref contract examples in coordinator and worker operator docs.
+- Add a compatibility window only if an external producer still emits legacy nested `payload_preview.up` / `payload_preview.down` base64 fields.
 
 ## Required proxy behavior changes
 - Keep header-aware request and response handling instead of blind header copying.

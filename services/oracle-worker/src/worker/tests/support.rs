@@ -38,6 +38,12 @@ pub(super) fn proxy_close_payload() -> String {
     )
 }
 
+pub(super) fn proxy_close_payload_with_preview_v2() -> String {
+    inline_payload(
+        r#"{"type":"tunnel_close","host":"example.com","time":"2026-04-21T00:00:01Z","peer_ip":"10.0.0.2","wg_pubkey":"peer","device_id":"device-1","identity_source":"registered","peer_hostname":"phone.local","client_ua":"UA","bytes_up":123,"bytes_down":456,"blocked":false,"obfuscation_profile":"default","correlation_id":"session-1","event_sequence":2,"kind":"connect","category":"analytics","reason":"allowed_sni","duration_ms":789,"payload_preview":{"schema_version":2,"up":{"format":"text","text":"POST /login HTTP/1.1\r\nHost: example.com\r\n\r\n{}","byte_count":46,"total_bytes":46,"truncated":false},"down":{"format":"omitted","omitted_reason":"empty","byte_count":0,"total_bytes":0,"truncated":false},"redaction":"byte"}} "#,
+    )
+}
+
 pub(super) fn blocked_payload() -> String {
     inline_payload(
         r#"{"type":"block","host":"blocked.example","time":"2026-04-21T00:00:00Z","peer_ip":"10.0.0.2","wg_pubkey":"peer","device_id":"device-1","identity_source":"registered","peer_hostname":"phone.local","client_ua":"UA","bytes_up":12,"bytes_down":34,"blocked":true,"category":"analytics","verdict":"HEURISTIC_FLAG_DATA_EXFIL","metrics":{"attempt_count":4,"total_blocked_bytes_approx":46,"frequency_hz":2.5,"risk_score":115.0,"iat_ms":88,"consecutive_blocks":4},"fingerprint":{"tls_ver":"TLS1.3","alpn":"h2","ja3_lite":"ja3-lite-hash"}}"#,

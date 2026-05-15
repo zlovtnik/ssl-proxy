@@ -176,6 +176,7 @@ fn resolvePayloadRef(allocator: std.mem.Allocator, io: std.Io, outbox_dir: []con
         const decoded = allocator.alloc(u8, decoded_len) catch return error.PayloadResolveFailed;
         errdefer allocator.free(decoded);
         std.base64.url_safe_no_pad.Decoder.decode(decoded, encoded) catch return error.PayloadResolveFailed;
+        validateJsonPayload(allocator, decoded) catch return error.PayloadResolveFailed;
         return decoded;
     }
 
@@ -187,10 +188,18 @@ fn resolvePayloadRef(allocator: std.mem.Allocator, io: std.Io, outbox_dir: []con
         else
             std.Io.Dir.openDir(.cwd(), io, outbox_dir, .{}) catch return error.PayloadResolveFailed;
         defer dir.close(io);
-        return dir.readFileAlloc(io, locator, allocator, .limited(MAX_SCAN_PAYLOAD_BYTES)) catch return error.PayloadResolveFailed;
+        const payload = dir.readFileAlloc(io, locator, allocator, .limited(MAX_SCAN_PAYLOAD_BYTES)) catch return error.PayloadResolveFailed;
+        errdefer allocator.free(payload);
+        validateJsonPayload(allocator, payload) catch return error.PayloadResolveFailed;
+        return payload;
     }
 
     return error.PayloadResolveFailed;
+}
+
+fn validateJsonPayload(allocator: std.mem.Allocator, payload: []const u8) !void {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{}) catch return error.PayloadResolveFailed;
+    defer parsed.deinit();
 }
 
 fn isSafeOutboxLocator(locator: []const u8) bool {
@@ -233,6 +242,27 @@ test "resolvePayloadRef decodes inline JSON payloads" {
     defer std.testing.allocator.free(payload);
     try std.testing.expectEqualStrings("{\"ok\":true}", payload);
     try std.testing.expectEqualStrings("4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93", &sha256Hex(payload));
+}
+
+test "resolvePayloadRef rejects inline non-JSON payloads" {
+    try std.testing.expectError(
+        error.PayloadResolveFailed,
+        resolvePayloadRef(std.testing.allocator, std.testing.io, "/sync-outbox", "inline://json/bm90IGpzb24"),
+    );
+}
+
+test "resolvePayloadRef rejects outbox non-JSON payloads" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "bad.json", .data = "not json" });
+
+    const outbox_dir = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path[0..]});
+    defer std.testing.allocator.free(outbox_dir);
+
+    try std.testing.expectError(
+        error.PayloadResolveFailed,
+        resolvePayloadRef(std.testing.allocator, std.testing.io, outbox_dir, "outbox://bad.json"),
+    );
 }
 
 test "isSafeOutboxLocator rejects traversal" {
