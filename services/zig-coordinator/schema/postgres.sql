@@ -1799,6 +1799,55 @@ left join vec_behaviour_snapshots right_snapshot
   on pair.right_source_table = 'vec_behaviour_snapshots'
  and right_snapshot.snapshot_id::text = pair.right_source_key;
 
+-- Release jobs whose leases have expired (worker died mid-batch).
+-- Uses a fixed default of 30 minutes matching VECTOR_EMBEDDING_LEASE_SECONDS=1800.
+create or replace function vec_release_expired_leases(
+  p_lease_interval interval default interval '30 minutes'
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer;
+begin
+  update vec_embedding_jobs
+     set status = 'pending',
+         lease_token = null,
+         leased_at = null,
+         locked_by = null,
+         due_at = now(),
+         last_error = 'lease expired',
+         updated_at = now()
+   where status = 'leased'
+     and leased_at < now() - p_lease_interval;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- Mark worker rows stale if heartbeat (updated_at) is older than threshold.
+-- These are ghost workers from dead containers with no active lease.
+create or replace function vec_reap_stale_workers(
+  p_stale_after interval default interval '5 minutes'
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer;
+begin
+  update vec_worker_state
+     set status = 'stale',
+         updated_at = now()
+   where status = 'running'
+     and updated_at < now() - p_stale_after;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
 create or replace function vec_install_cron_jobs()
 returns void
 language plpgsql
@@ -1824,6 +1873,18 @@ begin
     'vec-materialize-similarity-pairs',
     '*/5 * * * *',
     $cron$select vec_materialize_similarity_pairs();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-release-expired-leases',
+    '* * * * *',
+    $cron$select vec_release_expired_leases();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-reap-stale-workers',
+    '*/5 * * * *',
+    $cron$select vec_reap_stale_workers();$cron$
   );
 end;
 $$;
