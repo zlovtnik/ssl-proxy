@@ -1056,6 +1056,7 @@ create table if not exists vec_behaviour_snapshots (
   unique_bssid_count bigint not null default 0,
   mac_rotation_indicators jsonb not null default '{}'::jsonb,
   text_summary text not null,
+  embedding_text text,     -- identity-stripped behavioural text for dense embedding
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint vec_behaviour_snapshots_window_chk check (window_end > window_start)
@@ -1270,7 +1271,24 @@ begin
         'protected_count: ' || r.protected_count::text,
         'unprotected_count: ' || r.unprotected_count::text,
         'unique_bssid_count: ' || r.unique_bssid_count::text
-      ) as text_summary
+      ) as text_summary,
+      -- Identity-stripped text for dense embedding: behavioural signal only
+      concat_ws(
+        E'\n',
+        'kind: behaviour_window',
+        'window_start: ' || r.window_start::text,
+        'window_end: ' || r.window_end::text,
+        'event_count: ' || r.event_count::text,
+        'protocol_mix: ' || coalesce(p.protocol_mix, '{}'::jsonb)::text,
+        'frame_type_distribution: ' || coalesce(f.frame_type_distribution, '{}'::jsonb)::text,
+        'signal_min_dbm: ' || coalesce(r.signal_min_dbm::text, 'unknown'),
+        'signal_max_dbm: ' || coalesce(r.signal_max_dbm::text, 'unknown'),
+        'signal_avg_dbm: ' || coalesce(r.signal_avg_dbm::text, 'unknown'),
+        'retry_count: ' || r.retry_count::text,
+        'protected_count: ' || r.protected_count::text,
+        'unprotected_count: ' || r.unprotected_count::text,
+        'unique_bssid_count: ' || r.unique_bssid_count::text
+      ) as embedding_text
     from rollup r
     left join protocol_json p
       on p.source_mac = r.source_mac
@@ -1285,13 +1303,13 @@ begin
     snapshot_key, source_mac, location_id, sensor_id, window_start, window_end,
     event_count, protocol_mix, frame_type_distribution, signal_min_dbm, signal_max_dbm,
     signal_avg_dbm, retry_count, protected_count, unprotected_count, unique_bssid_count,
-    mac_rotation_indicators, text_summary, created_at, updated_at
+    mac_rotation_indicators, text_summary, embedding_text, created_at, updated_at
   )
   select
     snapshot_key, source_mac, location_id, sensor_id, window_start, window_end,
     event_count, protocol_mix, frame_type_distribution, signal_min_dbm, signal_max_dbm,
     signal_avg_dbm, retry_count, protected_count, unprotected_count, unique_bssid_count,
-    mac_rotation_indicators, text_summary, now(), now()
+    mac_rotation_indicators, text_summary, embedding_text, now(), now()
   from prepared
   on conflict (snapshot_key) do update set
     sensor_id = excluded.sensor_id,
@@ -1307,6 +1325,7 @@ begin
     unique_bssid_count = excluded.unique_bssid_count,
     mac_rotation_indicators = excluded.mac_rotation_indicators,
     text_summary = excluded.text_summary,
+    embedding_text = excluded.embedding_text,
     updated_at = now();
 
   get diagnostics v_count = row_count;
