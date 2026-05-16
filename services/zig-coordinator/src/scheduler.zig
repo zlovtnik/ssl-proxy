@@ -143,7 +143,7 @@ pub const Service = struct {
                 .log();
 
             if (!had_work) {
-                sleepUnlessShutdown(self.io, shutdown, 1000);
+                sleepUnlessShutdown(self.io, shutdown, self.cfg.idle_sleep_ms);
             }
             maybeLogHeartbeat(start_ts, &last_heartbeat_ts, self.io);
         }

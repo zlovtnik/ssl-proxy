@@ -1,6 +1,9 @@
 const std = @import("std");
 const command = @import("command.zig");
 
+const INLINE_SQL_ARG_LIMIT = 96 * 1024;
+var sql_file_counter = std.atomic.Value(u64).init(0);
+
 pub const Error = error{
     OutOfMemory,
     DatabaseCheckFailed,
@@ -75,6 +78,52 @@ pub const Client = struct {
         defer if (output) |value| self.allocator.free(value);
 
         if (output == null or !std.mem.eql(u8, output.?, "1")) return error.DatabaseCheckFailed;
+    }
+
+    pub fn runScalarSql(
+        self: *Client,
+        query: []const u8,
+        command_name: []const u8,
+        on_error: Error,
+        log_output: bool,
+    ) Error!?[]u8 {
+        if (query.len <= INLINE_SQL_ARG_LIMIT) {
+            const argv = [_][]const u8{
+                "psql",
+                self.database_url,
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-qAt",
+                "-c",
+                query,
+            };
+            return self.runScalar(&argv, command_name, on_error, log_output);
+        }
+
+        const counter = sql_file_counter.fetchAdd(1, .monotonic);
+        const now_ns = std.Io.Timestamp.now(self.io, .awake).toNanoseconds();
+        const sql_path = try std.fmt.allocPrint(
+            self.allocator,
+            "/tmp/zig-coordinator-query-{d}-{d}.sql",
+            .{ now_ns, counter },
+        );
+        defer self.allocator.free(sql_path);
+
+        std.Io.Dir.writeFile(.cwd(), self.io, .{ .sub_path = sql_path, .data = query }) catch {
+            return on_error;
+        };
+        defer std.Io.Dir.deleteFile(.cwd(), self.io, sql_path) catch {};
+
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-f",
+            sql_path,
+        };
+        return self.runScalar(&argv, command_name, on_error, log_output);
     }
 
     pub fn ensureCursor(self: *Client, stream_name: []const u8) Error![]u8 {

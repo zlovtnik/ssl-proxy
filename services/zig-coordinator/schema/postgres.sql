@@ -256,6 +256,14 @@ create index if not exists idx_sync_error_job_id on sync_error (job_id);
 create index if not exists idx_sync_error_batch_id on sync_error (batch_id);
 create index if not exists sync_scan_ingest_status_idx on sync_scan_ingest (status, observed_at);
 create index if not exists sync_scan_ingest_stream_idx on sync_scan_ingest (stream_name, observed_at);
+create index if not exists sync_scan_ingest_ready_idx on sync_scan_ingest (status, stream_name, observed_at)
+  where status in ('pending', 'failed');
+create index if not exists sync_scan_ingest_processing_idx on sync_scan_ingest (updated_at)
+  where status = 'processing';
+create index if not exists sync_batch_pending_idx on sync_batch (status, batch_id)
+  where status = 'pending';
+create index if not exists sync_batch_dispatch_lease_idx on sync_batch (status, updated_at)
+  where status in ('dispatched', 'failed');
 
 create table if not exists audit_backlog (
   dedupe_key text primary key,
@@ -1392,24 +1400,13 @@ begin
       select * from behaviour_jobs
     ) jobs
     on conflict (source_table, source_key, embedding_model, embedding_kind) do update set
-      status = case
-        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.status
-        else 'pending'
-      end,
-      due_at = case
-        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.due_at
-        else least(vec_embedding_jobs.due_at, now())
-      end,
+      status = 'pending',
+      due_at = least(vec_embedding_jobs.due_at, now()),
       priority = least(vec_embedding_jobs.priority, excluded.priority),
-      completed_at = case
-        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.completed_at
-        else null
-      end,
-      content_sha256 = case
-        when vec_embedding_jobs.status = 'leased' then vec_embedding_jobs.content_sha256
-        else null
-      end,
+      completed_at = null,
+      content_sha256 = null,
       updated_at = now()
+    where vec_embedding_jobs.status = 'completed'
     returning 1
   )
   select count(*) into v_count from inserted;

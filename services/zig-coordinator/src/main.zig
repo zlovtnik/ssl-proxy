@@ -27,6 +27,11 @@ pub fn main(init: std.process.Init) !void {
         .string("scan_topic", cfg.scan_topic)
         .string("load_topic", cfg.load_topic)
         .string("result_topic", cfg.result_topic)
+        .int("scan_fetch_count", cfg.scan_fetch_count)
+        .int("result_fetch_count", cfg.result_fetch_count)
+        .int("ingest_batch_size", cfg.ingest_batch_size)
+        .int("dispatch_batch_size", cfg.dispatch_batch_size)
+        .int("idle_sleep_ms", cfg.idle_sleep_ms)
         .log();
 
     if (scheduler.invalidOracleStreamName(cfg.stream_names_csv, cfg.oracle_stream_names_csv)) |stream_name| {

@@ -44,6 +44,7 @@ pub const Config = struct {
     result_fetch_count: usize,
     ingest_batch_size: u32,
     dispatch_batch_size: u32,
+    idle_sleep_ms: u32,
 };
 
 pub const DEFAULT_ORACLE_STREAM_NAMES =
@@ -90,10 +91,11 @@ pub fn load() Config {
         .redpanda_publish_timeout_ms = parsePositiveU32(envOrDefault("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
 
         // Batch tuning (env overridable).
-        .scan_fetch_count = parsePositiveUsize(envOrDefault("SYNC_SCAN_FETCH_COUNT", "500"), 500),
-        .result_fetch_count = parsePositiveUsize(envOrDefault("SYNC_RESULT_FETCH_COUNT", "500"), 500),
-        .ingest_batch_size = parsePositiveU32(envOrDefault("SYNC_INGEST_BATCH_SIZE", "500"), 500),
-        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "500"), 500),
+        .scan_fetch_count = parsePositiveUsize(envOrDefault("SYNC_SCAN_FETCH_COUNT", "2000"), 2000),
+        .result_fetch_count = parsePositiveUsize(envOrDefault("SYNC_RESULT_FETCH_COUNT", "1000"), 1000),
+        .ingest_batch_size = parsePositiveU32(envOrDefault("SYNC_INGEST_BATCH_SIZE", "5000"), 5000),
+        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "1000"), 1000),
+        .idle_sleep_ms = parsePositiveU32(envOrDefault("SYNC_IDLE_SLEEP_MS", "100"), 100),
     };
 }
 

@@ -27,16 +27,53 @@ const DispatchPayload = struct {
     attempt: i64 = 0,
 };
 
+const PreparedScanRecord = struct {
+    raw_json: []const u8,
+    payload: []u8,
+    payload_for_sql: ?[]const u8,
+    payload_sha256: [64]u8,
+    dedupe_key: []u8,
+    stream_name: []u8,
+
+    fn deinit(self: *PreparedScanRecord, allocator: std.mem.Allocator) void {
+        allocator.free(self.payload);
+        allocator.free(self.dedupe_key);
+        allocator.free(self.stream_name);
+    }
+};
+
 pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    var had_work = false;
     const batch = try service_redpanda.pullScanBatch(allocator, io, cfg, cfg.scan_fetch_count);
     if (batch.items.len == 0) return false;
     defer service_redpanda.freeBatch(allocator, batch);
 
-    for (batch.items) |raw_line| {
-        if (try recordScanRequest(allocator, io, cfg, database, raw_line)) had_work = true;
+    var records = std.ArrayList(PreparedScanRecord).empty;
+    defer {
+        for (records.items) |*record| record.deinit(allocator);
+        records.deinit(allocator);
     }
-    return had_work;
+
+    for (batch.items) |raw_line| {
+        if (try prepareScanRecord(allocator, io, cfg, raw_line)) |record| {
+            try records.append(allocator, record);
+        }
+    }
+
+    if (records.items.len == 0) return true;
+
+    const db_records = try allocator.alloc(db_sync.ScanRequestRecord, records.items.len);
+    defer allocator.free(db_records);
+    for (records.items, 0..) |record, idx| {
+        db_records[idx] = .{
+            .request_json = record.raw_json,
+            .payload_json = record.payload_for_sql,
+            .payload_sha256 = &record.payload_sha256,
+        };
+    }
+
+    const recorded = try db_sync.recordScanRequests(database, db_records, cfg.stream_names_csv);
+    logRecordedScanRequests(records.items, recorded);
+    return true;
 }
 
 pub fn dispatchNextBatch(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
@@ -94,16 +131,18 @@ pub fn recoverStaleDispatchedBatches(cfg: config.Config, database: *db.Client) !
 }
 
 pub fn handleResults(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    var had_work = false;
     const batch = try service_redpanda.pullResultBatch(allocator, io, cfg, cfg.result_fetch_count);
     if (batch.items.len == 0) return false;
     defer service_redpanda.freeBatch(allocator, batch);
 
-    for (batch.items) |raw_line| {
-        try db_sync.processBatchResult(database, raw_line);
-        had_work = true;
-    }
-    return had_work;
+    const processed = try db_sync.processBatchResults(database, batch.items);
+    logging.info()
+        .stringSafe("event", "batch_result_ingest")
+        .stringSafe("status", "processed")
+        .int("message_count", batch.items.len)
+        .int("updated_count", processed)
+        .log();
+    return true;
 }
 
 pub fn runShadowAudit(
@@ -136,7 +175,7 @@ pub fn runShadowAudit(
     return had_work;
 }
 
-fn recordScanRequest(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client, raw_json: []const u8) !bool {
+fn prepareScanRecord(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, raw_json: []const u8) !?PreparedScanRecord {
     var parsed = std.json.parseFromSlice(ScanRequest, allocator, raw_json, .{ .ignore_unknown_fields = true }) catch |err| {
         logging.err().stringSafe("event", "scan_request_ingest").stringSafe("status", "error").stringSafe("error", "InvalidScanRequestJson").err(err).log();
         return error.ScanIngestFailed;
@@ -146,27 +185,50 @@ fn recordScanRequest(allocator: std.mem.Allocator, io: std.Io, cfg: config.Confi
     const request = parsed.value;
     if (!topic_manifest.streamNameIsConfigured(cfg.stream_names_csv, request.stream_name)) {
         logging.info().stringSafe("event", "scan_request_ingest").stringSafe("status", "ignored").string("stream_name", request.stream_name).log();
-        return false;
+        return null;
     }
 
     const payload = resolvePayloadRef(allocator, io, cfg.sync_outbox_dir, request.payload_ref) catch |err| {
         logging.err().stringSafe("event", "scan_request_ingest").stringSafe("status", "error").string("dedupe_key", request.dedupe_key).stringSafe("error", "PayloadResolveFailed").err(err).log();
         return error.PayloadResolveFailed;
     };
-    defer allocator.free(payload);
+    errdefer allocator.free(payload);
 
     const payload_sha256 = sha256Hex(payload);
     const payload_for_sql: ?[]const u8 = if (payload.len <= MAX_SCAN_PAYLOAD_SQL_BYTES) payload else null;
-    try db_sync.recordScanRequest(database, raw_json, payload_for_sql, &payload_sha256, cfg.stream_names_csv);
+    const dedupe_key = try allocator.dupe(u8, request.dedupe_key);
+    errdefer allocator.free(dedupe_key);
+    const stream_name = try allocator.dupe(u8, request.stream_name);
+    errdefer allocator.free(stream_name);
+
+    return .{
+        .raw_json = raw_json,
+        .payload = payload,
+        .payload_for_sql = payload_for_sql,
+        .payload_sha256 = payload_sha256,
+        .dedupe_key = dedupe_key,
+        .stream_name = stream_name,
+    };
+}
+
+fn logRecordedScanRequests(records: []const PreparedScanRecord, recorded: usize) void {
+    for (records) |record| {
+        logging.info()
+            .stringSafe("event", "scan_request_ingest")
+            .stringSafe("status", "recorded")
+            .string("dedupe_key", record.dedupe_key)
+            .string("stream_name", record.stream_name)
+            .int("payload_bytes", record.payload.len)
+            .boolean("payload_stored", record.payload_for_sql != null)
+            .log();
+    }
+
     logging.info()
-        .stringSafe("event", "scan_request_ingest")
+        .stringSafe("event", "scan_request_ingest_batch")
         .stringSafe("status", "recorded")
-        .string("dedupe_key", request.dedupe_key)
-        .string("stream_name", request.stream_name)
-        .int("payload_bytes", payload.len)
-        .boolean("payload_stored", payload_for_sql != null)
+        .int("message_count", records.len)
+        .int("recorded_count", recorded)
         .log();
-    return true;
 }
 
 fn resolvePayloadRef(allocator: std.mem.Allocator, io: std.Io, outbox_dir: []const u8, payload_ref: []const u8) ![]u8 {
