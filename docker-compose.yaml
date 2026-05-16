@@ -306,7 +306,7 @@ services:
     command: ["bin/rails", "runner", "VectorEmbeddings::Worker.new.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
