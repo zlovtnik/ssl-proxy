@@ -319,6 +319,33 @@ services:
       - VECTOR_EVENT_DUP_DISTANCE_THRESHOLD=${VECTOR_EVENT_DUP_DISTANCE_THRESHOLD:-0.05}
       - VECTOR_BEHAVIOUR_MAC_ROTATION_THRESHOLD=${VECTOR_BEHAVIOUR_MAC_ROTATION_THRESHOLD:-0.92}
 
+  vec-worker:
+    profiles:
+      - vector
+    depends_on:
+      postgres:
+        condition: service_healthy
+      integration-console-db-setup:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_started
+    build:
+      context: .
+      dockerfile: services/vec-worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=info,sqlx=warn}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
+      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-ollama}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://ollama:11434}
+      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
+      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
+      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-100}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-32}
+      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-1800}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-5}
+
   atheros-sensor:
     depends_on:
       redpanda:

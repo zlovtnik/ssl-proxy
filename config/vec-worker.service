@@ -1,0 +1,26 @@
+[Unit]
+Description=Vector Embedding Worker (Ollama)
+Documentation=https://github.com/zlovtnik/ssl-proxy
+After=network-online.target postgresql.service ollama.service
+Wants=network-online.target
+BindsTo=postgresql.service ollama.service
+
+[Service]
+Type=simple
+Environment=RUST_LOG=vec_worker=info,sqlx=warn
+EnvironmentFile=-/etc/vec-worker/env
+ExecStart=/usr/local/bin/vec-worker
+Restart=on-failure
+RestartSec=5s
+User=vec-worker
+Group=vec-worker
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run /var/run
+CapabilityBoundingSet=
+StateDirectory=vec-worker
+
+[Install]
+WantedBy=multi-user.target
