@@ -289,56 +289,19 @@ services:
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
 
-  integration-console-vector-worker:
-    profiles:
-      - vector
-    depends_on:
-      postgres:
-        condition: service_healthy
-      integration-console-db-setup:
-        condition: service_completed_successfully
-      ollama:
-        condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-    restart: unless-stopped
-    command: ["bin/rails", "runner", "VectorEmbeddings::Worker.new.run_forever"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
-      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
-      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-ollama}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://ollama:11434}
-      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
-      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
-      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-100}
-      - VECTOR_SIMILARITY_TOP_K=${VECTOR_SIMILARITY_TOP_K:-10}
-      - VECTOR_EVENT_DUP_DISTANCE_THRESHOLD=${VECTOR_EVENT_DUP_DISTANCE_THRESHOLD:-0.05}
-      - VECTOR_BEHAVIOUR_MAC_ROTATION_THRESHOLD=${VECTOR_BEHAVIOUR_MAC_ROTATION_THRESHOLD:-0.92}
-
   vec-worker:
     profiles:
       - vector
-    depends_on:
-      postgres:
-        condition: service_healthy
-      integration-console-db-setup:
-        condition: service_completed_successfully
-      ollama:
-        condition: service_started
     build:
       context: .
       dockerfile: services/vec-worker/Dockerfile
     restart: unless-stopped
     environment:
-      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=info,sqlx=warn}
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
-      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-ollama}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://ollama:11434}
+      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
       - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
       - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-100}

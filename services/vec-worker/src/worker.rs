@@ -14,7 +14,7 @@
 //! ```
 
 use crate::db::{self, EmbeddingJob, WorkerStateParams};
-use crate::ollama::{self, OllamaClient};
+use crate::embedder::EmbeddingClient;
 use crate::text_builder;
 use crate::{Config, WorkerError};
 use futures::stream::FuturesUnordered;
@@ -41,7 +41,7 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 pub async fn run_forever(
     config: Config,
     pool: PgPool,
-    ollama: OllamaClient,
+    embedder: EmbeddingClient,
 ) -> Result<(), WorkerError> {
     // ---- top-level span for the lifetime of this worker ----
     let _startup = info_span!(
@@ -66,7 +66,7 @@ pub async fn run_forever(
             break;
         }
 
-        match run_once(&config, &pool, &ollama).await {
+        match run_once(&config, &pool, &embedder).await {
             Ok(count) => {
                 info!(rows_processed = count, "run_once summary");
 
@@ -113,7 +113,7 @@ pub async fn run_forever(
 pub async fn run_once(
     config: &Config,
     pool: &PgPool,
-    ollama: &OllamaClient,
+    embedder: &EmbeddingClient,
 ) -> Result<usize, WorkerError> {
     let _run_once = debug_span!("run_once").entered();
     let started_at = chrono::Utc::now();
@@ -154,7 +154,7 @@ pub async fn run_once(
     }
 
     // Process the leased jobs.
-    let processed = process_jobs(config, pool, ollama, jobs).await;
+    let processed = process_jobs(config, pool, embedder, jobs).await;
 
     // Mark worker state as idle with processed count.
     let idle_params = WorkerStateParams {
@@ -177,7 +177,7 @@ pub async fn run_once(
 pub async fn process_jobs(
     config: &Config,
     pool: &PgPool,
-    ollama: &OllamaClient,
+    embedder: &EmbeddingClient,
     jobs: Vec<EmbeddingJob>,
 ) -> usize {
     let batch_size = config.request_batch_size;
@@ -185,7 +185,7 @@ pub async fn process_jobs(
     let mut completed = 0usize;
 
     for chunk in jobs.chunks(batch_size) {
-        let (succeeded, failed) = process_batch(config, pool, ollama, chunk.to_vec()).await;
+        let (succeeded, failed) = process_batch(config, pool, embedder, chunk.to_vec()).await;
         completed += succeeded;
         if failed > 0 {
             warn!(failed, succeeded, "batch completed with failures");
@@ -208,7 +208,7 @@ pub async fn process_jobs(
 pub async fn process_batch(
     config: &Config,
     pool: &PgPool,
-    ollama: &OllamaClient,
+    embedder: &EmbeddingClient,
     jobs: Vec<EmbeddingJob>,
 ) -> (usize, usize) {
     let batch_size = jobs.len();
@@ -283,8 +283,8 @@ pub async fn process_batch(
         return (0, jobs.len());
     }
 
-    // ---- Step 2: Embed via Ollama ----
-    let embeddings = match ollama::embed_many(ollama, &texts).await {
+    // ---- Step 2: Embed via the configured provider ----
+    let embeddings = match embedder.embed_many(&texts).await {
         Ok(emb) => emb,
         Err(e) => {
             error!(error = %e, "embed_many failed, failing entire batch");
@@ -314,7 +314,7 @@ pub async fn process_batch(
     let mut failed = 0usize;
 
     for (prepared_job, vector) in prepared.into_iter().zip(embeddings.into_iter()) {
-        if let Err(e) = ollama::validate_dimensions(&vector, config.dimensions) {
+        if let Err(e) = embedder.validate_dimensions(&vector, config.dimensions) {
             warn!(
                 job_id = prepared_job.job.job_id,
                 error = %e,

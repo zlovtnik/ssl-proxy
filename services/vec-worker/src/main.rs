@@ -5,7 +5,8 @@
 
 use clap::Parser;
 use tracing_subscriber::fmt;
-use vec_worker::{Config, OllamaClient};
+use vec_worker::config::EmbeddingProvider;
+use vec_worker::{Config, EmbeddingClient, LlamaCppClient, OllamaClient};
 use vec_worker::db;
 
 /// Command-line arguments for the vector embeddings worker.
@@ -66,7 +67,8 @@ async fn main() {
         tracing::debug!(?config, "dry-run mode: exiting");
         println!("Dry-run complete. Config:");
         println!("  embeddings_enabled: {}", config.embeddings_enabled);
-        println!("  ollama_url: {}", config.ollama_url);
+        println!("  provider: {}", config.provider.as_str());
+        println!("  embed_url: {}", config.embed_url);
         println!("  model: {}", config.model);
         println!("  dimensions: {}", config.dimensions);
         println!("  batch_size: {}", config.batch_size);
@@ -89,11 +91,18 @@ async fn main() {
         }
     };
 
-    // Create the Ollama client.
-    let ollama = OllamaClient::new(&config.ollama_url, &config.model);
+    // Create the embedding client based on provider.
+    let embedder = match config.provider {
+        EmbeddingProvider::Ollama => {
+            EmbeddingClient::Ollama(OllamaClient::new(&config.embed_url, &config.model))
+        }
+        EmbeddingProvider::LlamaCpp => {
+            EmbeddingClient::LlamaCpp(LlamaCppClient::new(&config.embed_url, &config.model))
+        }
+    };
 
     // Run the worker loop.
-    if let Err(e) = vec_worker::worker::run_forever(config, pool, ollama).await {
+    if let Err(e) = vec_worker::worker::run_forever(config, pool, embedder).await {
         tracing::error!("worker error: {}", e);
         eprintln!("Worker error: {}", e);
         std::process::exit(1);

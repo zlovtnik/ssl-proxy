@@ -367,10 +367,11 @@ pub async fn mark_worker_state(
 /// Release any leases that have expired in the database.
 ///
 /// Calls `SELECT vec_release_expired_leases()` which returns the number of
-/// jobs that were reset to `pending`.
+/// jobs that were reset to `pending`.  The PostgreSQL function returns
+/// `integer`, so we decode into `i32`.
 #[instrument(skip(pool))]
-pub async fn release_expired_leases(pool: &PgPool) -> Result<i64, sqlx::Error> {
-    let row: (i64,) = sqlx::query_as("SELECT vec_release_expired_leases()")
+pub async fn release_expired_leases(pool: &PgPool) -> Result<i32, sqlx::Error> {
+    let row: (i32,) = sqlx::query_as("SELECT vec_release_expired_leases()")
         .fetch_one(pool)
         .await?;
 

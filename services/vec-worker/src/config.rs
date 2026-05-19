@@ -5,20 +5,52 @@
 
 use crate::WorkerError;
 
+/// The embedding provider backend.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EmbeddingProvider {
+    /// Ollama provider (`POST /api/embed`).
+    Ollama,
+    /// llama.cpp provider (`POST /v1/embeddings`, OpenAI-compatible).
+    LlamaCpp,
+}
+
+impl EmbeddingProvider {
+    /// Parse a provider name from its string representation.
+    ///
+    /// Accepts `"ollama"` or `"llamacpp"` (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "ollama" => Some(Self::Ollama),
+            "llamacpp" => Some(Self::LlamaCpp),
+            _ => None,
+        }
+    }
+
+    /// Return the string representation of this provider.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::LlamaCpp => "llamacpp",
+        }
+    }
+}
+
 /// Runtime configuration for the vector embeddings worker.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Whether vector embeddings are enabled.
     pub embeddings_enabled: bool,
-    /// Ollama provider URL (default: "http://127.0.0.1:11434").
-    pub ollama_url: String,
-    /// Ollama model name (required when embeddings_enabled=true).
+    /// Embedding provider backend ("ollama" or "llamacpp").
+    pub provider: EmbeddingProvider,
+    /// Embedding provider URL (default: "http://127.0.0.1:11434").
+    pub embed_url: String,
+    /// Model name (required when embeddings_enabled=true).
     pub model: String,
     /// Expected embedding vector dimension (required when embeddings_enabled=true).
     pub dimensions: usize,
     /// Batch size for job leasing (default: 25).
     pub batch_size: usize,
-    /// Request batch size for Ollama (default: min(batch_size, 32)).
+    /// Request batch size for embedding requests (default: min(batch_size, 32)).
     pub request_batch_size: usize,
     /// Lease duration in seconds (default: 1800).
     pub lease_seconds: u64,
@@ -66,20 +98,29 @@ impl Config {
     pub fn from_env() -> Result<Self, WorkerError> {
         let embeddings_enabled = read_bool("VECTOR_EMBEDDINGS_ENABLED", false);
 
-        // Validate provider if embeddings are enabled
-        if embeddings_enabled {
-            let provider = std::env::var("VECTOR_EMBEDDING_PROVIDER")
+        // Parse and validate provider if embeddings are enabled.
+        let provider = if embeddings_enabled {
+            let raw = std::env::var("VECTOR_EMBEDDING_PROVIDER")
                 .unwrap_or_else(|_| "ollama".to_string());
-            if provider != "ollama" {
-                return Err(WorkerError::config(format!(
-                    "VECTOR_EMBEDDING_PROVIDER must be 'ollama', got '{}'",
-                    provider
-                )));
-            }
-        }
+            EmbeddingProvider::from_str(&raw).ok_or_else(|| {
+                WorkerError::config(format!(
+                    "VECTOR_EMBEDDING_PROVIDER must be 'ollama' or 'llamacpp', got '{}'",
+                    raw
+                ))
+            })?
+        } else {
+            EmbeddingProvider::Ollama
+        };
 
-        let ollama_url = std::env::var("VECTOR_EMBEDDING_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        // Default URL differs by provider:
+        //   ollama  -> http://127.0.0.1:11434
+        //   llamacpp -> http://127.0.0.1:8080
+        let default_url = match provider {
+            EmbeddingProvider::Ollama => "http://127.0.0.1:11434",
+            EmbeddingProvider::LlamaCpp => "http://127.0.0.1:8080",
+        };
+        let embed_url = std::env::var("VECTOR_EMBEDDING_URL")
+            .unwrap_or_else(|_| default_url.to_string());
 
         let model = std::env::var("VECTOR_EMBEDDING_MODEL")
             .ok()
@@ -149,7 +190,8 @@ impl Config {
 
         Ok(Self {
             embeddings_enabled,
-            ollama_url,
+            provider,
+            embed_url,
             model,
             dimensions,
             batch_size,
@@ -199,7 +241,7 @@ mod hostname {
             use std::os::unix::ffi::OsStrExt;
             let mut buf = [0u8; 256];
             let result = unsafe {
-                libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len())
+                libc::gethostname(buf.as_mut_ptr(), buf.len())
             };
             if result == 0 {
                 let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
