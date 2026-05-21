@@ -358,6 +358,7 @@ struct PipelineState {
     deauth_flood_tracker: DeauthFloodTracker,
     attack_timeline_correlator: AttackTimelineCorrelator,
     pmf_attack_tracker: PmfAttackTracker,
+    pmf_reconnect_window_ms: i64,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
     probe_accumulator: HashMap<(String, String), ProbeObservation>,
@@ -389,19 +390,23 @@ struct PmfAttackAlert {
 fn pmf_attack_alert_from_entry(
     entry: &crate::model::AuditEntry,
     attack_tag: &str,
-    config: &AppConfig,
+    reconnect_window_ms: i64,
 ) -> Option<PmfAttackAlert> {
     if !attack_tag.starts_with("threat:pmf_") && attack_tag != "threat:handshake_harvest_attack" {
         return None;
     }
 
-    let target_mac = entry
-        .destination_mac
-        .as_deref()
-        .or(entry.source_mac.as_deref())
-        .or(entry.bssid.as_deref())?
-        .trim()
-        .to_ascii_lowercase();
+    let target_mac = if attack_tag == "threat:pmf_forced_reconnect" {
+        entry.source_mac.as_deref()
+    } else {
+        entry
+            .destination_mac
+            .as_deref()
+            .or(entry.source_mac.as_deref())
+    }
+    .or(entry.bssid.as_deref())?
+    .trim()
+    .to_ascii_lowercase();
 
     Some(PmfAttackAlert {
         schema_version: 1,
@@ -417,7 +422,7 @@ fn pmf_attack_alert_from_entry(
         ssid: entry.ssid.clone(),
         channel: Some(entry.channel),
         attack_tag: attack_tag.to_string(),
-        reconnect_window_ms: Some(config.handshake_ttl_secs.saturating_mul(1000) as i64),
+        reconnect_window_ms: Some(reconnect_window_ms),
     })
 }
 
@@ -448,6 +453,7 @@ impl PipelineState {
             deauth_flood_tracker: DeauthFloodTracker::default(),
             attack_timeline_correlator: AttackTimelineCorrelator::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
+            pmf_reconnect_window_ms,
             authorized_network_cache: AuthorizedNetworkCache::new(
                 _config.authorized_network_cache_backoff_ms,
             ),
@@ -1067,7 +1073,9 @@ async fn process_packet(
     let mut pmf_tags = Vec::new();
     pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
     for tag in &pmf_tags {
-        if let Some(alert) = pmf_attack_alert_from_entry(&entry, tag, config) {
+        if let Some(alert) =
+            pmf_attack_alert_from_entry(&entry, tag, pipeline.pmf_reconnect_window_ms)
+        {
             if let Err(error) = publish_oracle_json(
                 publish_client,
                 "publish_pmf_attack_alert",

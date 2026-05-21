@@ -14,6 +14,7 @@ use thiserror::Error;
 /// - `DimensionMismatch`: Embedding vector dimension validation failure
 /// - `Config`: Configuration loading or validation failure
 /// - `TextBuild`: Text content building failure
+/// - `Alerts`: Alert generation query or insert failure
 #[derive(Debug, Error)]
 pub enum WorkerError {
     /// Database connection or query error.
@@ -28,6 +29,14 @@ pub enum WorkerError {
     #[error("dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
 
+    /// Embedding response count mismatch (sent N texts but got M embeddings).
+    #[error("embedding response count mismatch: sent {expected} texts, got {actual} embeddings")]
+    ResponseCountMismatch { expected: usize, actual: usize },
+
+    /// Embedding response indices are invalid or incomplete.
+    #[error("embedding response index error: {0}")]
+    EmbeddingIndex(String),
+
     /// Configuration loading or validation error.
     #[error("config error: {0}")]
     Config(String),
@@ -35,6 +44,10 @@ pub enum WorkerError {
     /// Text content or metadata building error.
     #[error("text build error: {0}")]
     TextBuild(String),
+
+    /// Alert generation query or insert failure.
+    #[error("alerts error: {0}")]
+    Alerts(String),
 
     /// Generic I/O error.
     #[error("io error: {0}")]
@@ -50,5 +63,10 @@ impl WorkerError {
     /// Constructs a `TextBuild` error from a message.
     pub fn text_build(msg: impl Into<String>) -> Self {
         Self::TextBuild(msg.into())
+    }
+
+    /// Constructs an `Alerts` error from a message.
+    pub fn alerts(msg: impl Into<String>) -> Self {
+        Self::Alerts(msg.into())
     }
 }

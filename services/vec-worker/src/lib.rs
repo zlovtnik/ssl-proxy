@@ -4,6 +4,7 @@
 //! for the vector embeddings worker. The binary entry point (`main.rs`) wires
 //! these components together with CLI flags and tracing initialization.
 
+pub mod alerts;
 pub mod config;
 pub mod db;
 pub mod embedder;

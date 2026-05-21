@@ -1,19 +1,18 @@
-//! Worker orchestration — real database and Ollama calls (Phase 6).
+//! Worker orchestration — real database and embedding provider calls.
 //!
 //! # Span hierarchy during a single pass
 //!
 //! ```text
 //! run_forever (worker_name, model, dimensions)
 //! ├── run_once (rows_leased, rows_completed, rows_failed on exit)
-//! │   ├── prepare_job (job_id, source_table, source_key, embedding_kind)
-//! │   │   └── build_text
-//! │   ├── batch (batch_size, batch_id)
-//! │   │   └── embed_many (elapsed_ms)
-//! │   └── complete_job_pipeline (job_id, content_sha256)
+//! │   ├── prepare_chunk (prepare_ms)
+//! │   ├── embed_chunk (embed_ms)
+//! │   └── complete_chunk (complete_ms)
 //! └── run_once ...
 //! ```
 
-use crate::db::{self, EmbeddingJob, WorkerStateParams};
+use crate::alerts::{self, AlertConfig};
+use crate::db::{self, CompleteBatchRow, EmbeddingJob, WorkerStateParams};
 use crate::embedder::EmbeddingClient;
 use crate::text_builder;
 use crate::{Config, WorkerError};
@@ -21,29 +20,19 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::signal;
-use tokio::sync::Semaphore;
+use tokio::sync::{watch, Semaphore};
+use tokio::task::JoinHandle;
 use tracing::{debug, debug_span, error, info, info_span, warn};
 
-/// Flag used to signal graceful shutdown from the signal handler.
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-
 /// Run the worker loop indefinitely (or once if `config.once` is set).
-///
-/// On each iteration it calls [`run_once`] and then waits for the configured
-/// poll interval before checking again.  A SIGTERM/SIGINT causes the loop to
-/// exit gracefully after the current pass completes.
-///
-/// Every 10 iterations the function also calls `release_expired_leases` to
-/// reclaim any jobs whose leases have expired.
 pub async fn run_forever(
     config: Config,
     pool: PgPool,
     embedder: EmbeddingClient,
 ) -> Result<(), WorkerError> {
-    // ---- top-level span for the lifetime of this worker ----
     let _startup = info_span!(
         "worker_startup",
         worker_name = %config.worker_name,
@@ -54,14 +43,13 @@ pub async fn run_forever(
 
     info!("worker started");
 
-    // Install signal handler for graceful shutdown.
-    install_signal_handler();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    install_signal_handler(shutdown_tx);
 
     let mut iteration: u64 = 0;
 
     loop {
-        // Check for shutdown signal before each pass.
-        if SHUTDOWN.load(Ordering::Relaxed) {
+        if *shutdown_rx.borrow() {
             info!("shutdown signal received, exiting");
             break;
         }
@@ -69,33 +57,36 @@ pub async fn run_forever(
         match run_once(&config, &pool, &embedder).await {
             Ok(count) => {
                 info!(rows_processed = count, "run_once summary");
-
-                // If 0 rows processed, sleep before retrying.
                 if count == 0 {
                     debug!("no jobs leased, sleeping");
-                    sleep_or_shutdown(config.poll_interval_secs).await;
+                    sleep_or_shutdown(config.poll_interval_secs, shutdown_rx.clone()).await;
                 }
             }
             Err(e) => {
                 error!(error = %e, "run_once failed, will retry");
-                sleep_or_shutdown(config.poll_interval_secs).await;
+                sleep_or_shutdown(config.poll_interval_secs, shutdown_rx.clone()).await;
             }
         }
 
-        // Every 10 iterations, release expired leases.
         iteration += 1;
+
+        // Periodic maintenance: release expired leases every 10 iterations
         if iteration % 10 == 0 {
             match db::release_expired_leases(&pool).await {
-                Ok(released) => {
-                    if released > 0 {
-                        info!(released, "expired leases released");
-                    }
+                Ok(released) if released > 0 => {
+                    info!(released, "expired leases released");
                 }
                 Err(e) => warn!(error = %e, "release_expired_leases failed"),
+                _ => {}
+            }
+
+            // Periodic alert sweep every 10 iterations
+            let alert_cfg = AlertConfig::default();
+            if let Err(e) = alerts::run_alert_sweep(&pool, &alert_cfg).await {
+                warn!(error = %e, "alert sweep failed");
             }
         }
 
-        // If --once mode, exit after a single pass.
         if config.once {
             info!("--once mode, exiting after single pass");
             break;
@@ -106,10 +97,7 @@ pub async fn run_forever(
     Ok(())
 }
 
-/// Execute a single pass: update worker state, lease jobs, process them, then
-/// mark worker state as idle.
-///
-/// Returns the number of jobs successfully processed.
+/// Execute a single pass: update worker state, lease jobs, process them, then idle.
 pub async fn run_once(
     config: &Config,
     pool: &PgPool,
@@ -118,7 +106,6 @@ pub async fn run_once(
     let _run_once = debug_span!("run_once").entered();
     let started_at = chrono::Utc::now();
 
-    // Mark worker state as running.
     let running_params = WorkerStateParams {
         worker_name: config.worker_name.clone(),
         status: "running".to_string(),
@@ -130,7 +117,6 @@ pub async fn run_once(
     };
     db::mark_worker_state(pool, &running_params).await?;
 
-    // Lease a batch of jobs.
     let jobs = db::lease_jobs(
         pool,
         config.batch_size as i32,
@@ -143,7 +129,6 @@ pub async fn run_once(
     debug!(rows_leased, "jobs leased");
 
     if rows_leased == 0 {
-        // Mark idle with 0 rows processed.
         let idle_params = WorkerStateParams {
             status: "idle".to_string(),
             last_run_finished_at: Some(chrono::Utc::now()),
@@ -153,10 +138,8 @@ pub async fn run_once(
         return Ok(0);
     }
 
-    // Process the leased jobs.
     let processed = process_jobs(config, pool, embedder, jobs).await;
 
-    // Mark worker state as idle with processed count.
     let idle_params = WorkerStateParams {
         status: "idle".to_string(),
         last_run_finished_at: Some(chrono::Utc::now()),
@@ -170,267 +153,361 @@ pub async fn run_once(
     Ok(processed)
 }
 
-/// Process a list of jobs by splitting them into request-batch-sized chunks and
-/// calling [`process_batch`] for each chunk.
-///
-/// Returns the total number of jobs successfully completed.
+/// Process leased jobs with pipelined prepare / embed / complete across request chunks.
 pub async fn process_jobs(
     config: &Config,
     pool: &PgPool,
     embedder: &EmbeddingClient,
     jobs: Vec<EmbeddingJob>,
 ) -> usize {
-    let batch_size = config.request_batch_size;
-    let total = jobs.len();
-    let mut completed = 0usize;
-
-    for chunk in jobs.chunks(batch_size) {
-        let (succeeded, failed) = process_batch(config, pool, embedder, chunk.to_vec()).await;
-        completed += succeeded;
-        if failed > 0 {
-            warn!(failed, succeeded, "batch completed with failures");
-        }
-    }
-
-    debug!(total, completed, "process_jobs done");
-    completed
-}
-
-/// Process a batch of jobs through the full pipeline:
-///
-/// 1. Prepare each job (build text + compute sha256)
-/// 2. Embed all prepared texts via Ollama
-/// 3. Complete each job (upsert embedding + mark completed)
-///
-/// # Returns
-///
-/// A tuple `(succeeded, failed)` counts.
-pub async fn process_batch(
-    config: &Config,
-    pool: &PgPool,
-    embedder: &EmbeddingClient,
-    jobs: Vec<EmbeddingJob>,
-) -> (usize, usize) {
-    let batch_size = jobs.len();
-    if batch_size == 0 {
-        return (0, 0);
-    }
-
-    let _batch_span = debug_span!(
-        "batch",
-        batch_size = batch_size,
-        batch_id = tracing::field::Empty,
-    )
-    .entered();
-
-    // ---- Step 1: Prepare all jobs concurrently ----
-    // Use a semaphore to limit how many IO-bound prepare_job calls run at once.
-    // FuturesUnordered runs the futures concurrently on the same task, avoiding
-    // the cost of tokio::spawn and the Send requirement (tracing EnteredSpan
-    // guards are !Send).
-    let semaphore = Arc::new(Semaphore::new(config.max_concurrent_prepares));
-
-    let mut tasks: FuturesUnordered<_> = jobs
-        .iter()
-        .map(|job| {
-            let semaphore = Arc::clone(&semaphore);
-            async move {
-                let _permit = semaphore.acquire().await.expect("semaphore not closed");
-                match prepare_job(pool, job).await {
-                    Ok(p) => Ok(p),
-                    Err(e) => {
-                        warn!(
-                            job_id = job.job_id,
-                            error = %e,
-                            "prepare_job failed, failing job",
-                        );
-                        if let Err(db_err) = db::fail_job(
-                            pool,
-                            job.job_id,
-                            job.attempts,
-                            job.max_attempts,
-                            &e.to_string(),
-                        )
-                        .await
-                        {
-                            warn!(error = %db_err, "fail_job call failed");
-                        }
-                        Err(e)
-                    }
-                }
-            }
-        })
+    let chunks: Vec<Vec<EmbeddingJob>> = jobs
+        .chunks(config.request_batch_size)
+        .map(|c| c.to_vec())
         .collect();
+    let total = jobs.len();
+    let n = chunks.len();
 
-    let mut prepared = Vec::with_capacity(jobs.len());
-    let mut texts = Vec::with_capacity(jobs.len());
-    let mut all_succeeded = true;
-
-    while let Some(result) = tasks.next().await {
-        match result {
-            Ok(p) => {
-                texts.push(p.input.text.clone());
-                prepared.push(p);
-            }
-            Err(_) => {
-                all_succeeded = false;
-            }
-        }
+    if n == 0 {
+        return 0;
     }
 
-    // If all jobs failed preparation, short-circuit.
-    if prepared.is_empty() {
-        return (0, jobs.len());
-    }
-
-    // ---- Step 2: Embed via the configured provider ----
-    let embeddings = match embedder.embed_many(&texts).await {
-        Ok(emb) => emb,
-        Err(e) => {
-            error!(error = %e, "embed_many failed, failing entire batch");
-            for p in &prepared {
-                if let Err(db_err) = db::fail_job(
-                    pool,
-                    p.job.job_id,
-                    p.job.attempts,
-                    p.job.max_attempts,
-                    &e.to_string(),
-                )
-                .await
-                {
-                    warn!(error = %db_err, "fail_job call failed");
-                }
-            }
-            return if all_succeeded {
-                (0, prepared.len())
-            } else {
-                (0, jobs.len())
-            };
-        }
-    };
-
-    // Validate dimension count for each embedding.
+    let embed_sem = Arc::new(Semaphore::new(config.max_concurrent_embed_requests.max(1)));
     let mut succeeded = 0usize;
     let mut failed = 0usize;
+    let mut next_prepare: Option<JoinHandle<PrepareChunkResult>> = None;
+    let mut complete_handle: Option<JoinHandle<CompleteChunkResult>> = None;
 
-    for (prepared_job, vector) in prepared.into_iter().zip(embeddings.into_iter()) {
-        if let Err(e) = embedder.validate_dimensions(&vector, config.dimensions) {
-            warn!(
-                job_id = prepared_job.job.job_id,
-                error = %e,
-                "dimension mismatch, failing job",
-            );
-            if let Err(db_err) = db::fail_job(
-                pool,
-                prepared_job.job.job_id,
-                prepared_job.job.attempts,
-                prepared_job.job.max_attempts,
-                &e.to_string(),
-            )
-            .await
-            {
-                warn!(error = %db_err, "fail_job call failed");
-            }
-            failed += 1;
-            continue;
+    for i in 0..n {
+        let chunk = chunks[i].clone();
+        let prepared = match next_prepare.take() {
+            Some(handle) => handle.await.unwrap_or_else(|e| panic!("prepare panicked: {e}")),
+            None => prepare_chunk(pool, chunk).await,
+        };
+
+        if i + 1 < n {
+            let next_chunk = chunks[i + 1].clone();
+            let pool = pool.clone();
+            next_prepare = Some(tokio::spawn(async move {
+                prepare_chunk(&pool, next_chunk).await
+            }));
         }
 
-        // ---- Step 3: Complete the job (upsert + mark done) ----
-        match complete_job_pipeline(pool, config.dimensions, &prepared_job, &vector).await {
-            Ok(()) => {
-                succeeded += 1;
-            }
-            Err(e) => {
-                warn!(
-                    job_id = prepared_job.job.job_id,
-                    error = %e,
-                    "complete_job_pipeline failed, failing job",
-                );
-                if let Err(db_err) = db::fail_job(
-                    pool,
-                    prepared_job.job.job_id,
-                    prepared_job.job.attempts,
-                    prepared_job.job.max_attempts,
-                    &e.to_string(),
-                )
-                .await
-                {
-                    warn!(error = %db_err, "fail_job call failed");
-                }
-                failed += 1;
-            }
+        let embedded = embed_chunk(config, pool, embedder, prepared, &embed_sem).await;
+
+        if let Some(handle) = complete_handle.take() {
+            let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));
+            succeeded += result.succeeded;
+            failed += result.failed;
         }
+
+        let cfg = config.clone();
+        let pool = pool.clone();
+        complete_handle = Some(tokio::spawn(async move {
+            complete_chunk(&cfg, &pool, embedded).await
+        }));
     }
 
-    (succeeded, failed)
+    if let Some(handle) = complete_handle {
+        let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));
+        succeeded += result.succeeded;
+        failed += result.failed;
+    }
+
+    debug!(total, succeeded, failed, "process_jobs done");
+    succeeded
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline helpers
+// Chunk pipeline stages
 // ---------------------------------------------------------------------------
 
-/// A job that has been prepared for embedding (text built, sha256 computed).
 struct PreparedJob {
     job: EmbeddingJob,
     input: crate::db::EmbeddingInput,
     content_sha256: String,
 }
 
-/// Prepare a single job: build its embedding text and compute the sha256 digest.
-async fn prepare_job(
-    pool: &PgPool,
-    job: &EmbeddingJob,
-) -> Result<PreparedJob, WorkerError> {
-    let _job_span = debug_span!(
-        "prepare_job",
-        job_id = %job.job_id,
-        source_table = %job.source_table,
-        source_key = %job.source_key,
-        embedding_kind = %job.embedding_kind,
-    )
-    .entered();
-
-    let (_text, input) = text_builder::build_text(pool, job).await?;
-
-    // Compute sha256 of the embedding text.
-    let content_sha256 = {
-        let mut hasher = Sha256::new();
-        hasher.update(input.text.as_bytes());
-        format!("{:x}", hasher.finalize())
-    };
-
-    debug!(content_sha256 = %content_sha256, "job prepared");
-
-    Ok(PreparedJob {
-        job: job.clone(),
-        input,
-        content_sha256,
-    })
+struct PrepareChunkResult {
+    prepared: Vec<PreparedJob>,
+    failed: usize,
+    prepare_ms: u64,
 }
 
-/// Complete the pipeline for a single job: upsert the embedding vector and mark
-/// the job as completed.
-///
-/// Both operations are idempotent (ON CONFLICT DO UPDATE for upsert, and
-/// setting status=completed for the job), so we call them sequentially without
-/// a transaction. If the process crashes between the two operations, the lease
-/// will expire and the job will be retried safely.
+struct EmbeddedChunkResult {
+    items: Vec<(PreparedJob, Vec<f32>)>,
+    failed: usize,
+    prepare_ms: u64,
+    embed_ms: u64,
+}
+
+struct CompleteChunkResult {
+    succeeded: usize,
+    failed: usize,
+}
+
+async fn prepare_chunk(pool: &PgPool, jobs: Vec<EmbeddingJob>) -> PrepareChunkResult {
+    let start = Instant::now();
+    let batch_size = jobs.len();
+
+    let inputs = match text_builder::build_text_batch(pool, &jobs).await {
+        Ok(map) => map,
+        Err(e) => {
+            warn!(error = %e, "build_text_batch failed, failing entire chunk");
+            let mut failed = 0usize;
+            for job in &jobs {
+                if fail_job_with_error(pool, job, &e.to_string()).await {
+                    failed += 1;
+                }
+            }
+            return PrepareChunkResult {
+                prepared: Vec::new(),
+                failed,
+                prepare_ms: start.elapsed().as_millis() as u64,
+            };
+        }
+    };
+
+    let mut prepared = Vec::with_capacity(jobs.len());
+    let mut failed = 0usize;
+
+    for job in jobs {
+        match inputs.get(&job.source_key) {
+            Some(input) => {
+                prepared.push(PreparedJob {
+                    job,
+                    input: input.clone(),
+                    content_sha256: sha256_hex(&input.text),
+                });
+            }
+            None => {
+                let msg = format!("source row not found: {}", job.source_key);
+                warn!(job_id = job.job_id, "{msg}");
+                if fail_job_with_error(pool, &job, &msg).await {
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    let prepare_ms = start.elapsed().as_millis() as u64;
+    debug!(batch_size, prepare_ms, prepared = prepared.len(), failed, "prepare_chunk done");
+
+    PrepareChunkResult {
+        prepared,
+        failed,
+        prepare_ms,
+    }
+}
+
+async fn embed_chunk(
+    config: &Config,
+    pool: &PgPool,
+    embedder: &EmbeddingClient,
+    prepared_chunk: PrepareChunkResult,
+    embed_sem: &Semaphore,
+) -> EmbeddedChunkResult {
+    let start = Instant::now();
+    let prepare_ms = prepared_chunk.prepare_ms;
+    let mut failed = prepared_chunk.failed;
+
+    if prepared_chunk.prepared.is_empty() {
+        return EmbeddedChunkResult {
+            items: Vec::new(),
+            failed,
+            prepare_ms,
+            embed_ms: 0,
+        };
+    }
+
+    let texts: Vec<String> = prepared_chunk
+        .prepared
+        .iter()
+        .map(|p| p.input.text.clone())
+        .collect();
+
+    let _permit = embed_sem.acquire().await.expect("embed semaphore closed");
+
+    let embeddings = match embedder.embed_many(&texts).await {
+        Ok(emb) => emb,
+        Err(e) => {
+            error!(error = %e, "embed_many failed, failing entire chunk");
+            for p in &prepared_chunk.prepared {
+                if fail_job_with_error(pool, &p.job, &e.to_string()).await {
+                    failed += 1;
+                }
+            }
+            return EmbeddedChunkResult {
+                items: Vec::new(),
+                failed,
+                prepare_ms,
+                embed_ms: start.elapsed().as_millis() as u64,
+            };
+        }
+    };
+
+    let embed_ms = start.elapsed().as_millis() as u64;
+    let mut items = Vec::with_capacity(prepared_chunk.prepared.len());
+
+    for (prepared_job, vector) in prepared_chunk.prepared.into_iter().zip(embeddings) {
+        if let Err(e) = embedder.validate_dimensions(&vector, config.dimensions) {
+            warn!(
+                job_id = prepared_job.job.job_id,
+                error = %e,
+                "dimension mismatch, failing job",
+            );
+            if fail_job_with_error(pool, &prepared_job.job, &e.to_string()).await {
+                failed += 1;
+            }
+            continue;
+        }
+        items.push((prepared_job, vector));
+    }
+
+    EmbeddedChunkResult {
+        items,
+        failed,
+        prepare_ms,
+        embed_ms,
+    }
+}
+
+async fn complete_chunk(
+    config: &Config,
+    pool: &PgPool,
+    embedded: EmbeddedChunkResult,
+) -> CompleteChunkResult {
+    let start = Instant::now();
+    let mut succeeded = 0usize;
+    let mut failed = embedded.failed;
+
+    if embedded.items.is_empty() {
+        let complete_ms = start.elapsed().as_millis() as u64;
+        log_batch_metrics(
+            embedded.prepare_ms,
+            embedded.embed_ms,
+            complete_ms,
+            succeeded,
+            failed,
+        );
+        return CompleteChunkResult { succeeded, failed };
+    }
+
+    let dimensions = config.dimensions as i32;
+    let batch_rows: Vec<CompleteBatchRow> = embedded
+        .items
+        .iter()
+        .map(|(p, v)| {
+            db::complete_batch_row(&p.job, &p.input, &p.content_sha256, v, dimensions)
+        })
+        .collect();
+
+    match db::complete_embedding_batch(pool, &batch_rows).await {
+        Ok(completed) => {
+            let completed = completed as usize;
+            if completed == batch_rows.len() {
+                succeeded = completed;
+            } else if completed > 0 {
+                warn!(
+                    expected = batch_rows.len(),
+                    completed,
+                    "bulk complete partial, falling back per job"
+                );
+                let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
+                succeeded = s;
+                failed += f;
+            } else {
+                warn!("bulk complete returned 0, falling back per job");
+                let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
+                succeeded = s;
+                failed += f;
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "bulk complete failed, falling back per job");
+            let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
+            succeeded = s;
+            failed += f;
+        }
+    }
+
+    let complete_ms = start.elapsed().as_millis() as u64;
+    log_batch_metrics(
+        embedded.prepare_ms,
+        embedded.embed_ms,
+        complete_ms,
+        succeeded,
+        failed,
+    );
+
+    CompleteChunkResult { succeeded, failed }
+}
+
+async fn complete_jobs_fallback(
+    config: &Config,
+    pool: &PgPool,
+    items: &[(PreparedJob, Vec<f32>)],
+) -> (usize, usize) {
+    let semaphore = Arc::new(Semaphore::new(config.max_concurrent_completes));
+    let mut tasks: FuturesUnordered<_> = items
+        .iter()
+        .map(|(prepared, vector)| {
+            let semaphore = Arc::clone(&semaphore);
+            let pool = pool.clone();
+            let dimensions = config.dimensions;
+            async move {
+                let _permit = semaphore.acquire().await.expect("complete semaphore closed");
+                match complete_job_pipeline(&pool, dimensions, prepared, vector).await {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        if fail_job_with_error(&pool, &prepared.job, &e.to_string()).await {
+                            Err(())
+                        } else {
+                            Err(())
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    while let Some(result) = tasks.next().await {
+        match result {
+            Ok(()) => succeeded += 1,
+            Err(()) => failed += 1,
+        }
+    }
+    (succeeded, failed)
+}
+
+fn log_batch_metrics(
+    prepare_ms: u64,
+    embed_ms: u64,
+    complete_ms: u64,
+    jobs_ok: usize,
+    jobs_failed: usize,
+) {
+    info!(
+        prepare_ms,
+        embed_ms,
+        complete_ms,
+        jobs_ok,
+        jobs_failed,
+        "batch timing"
+    );
+}
+
 async fn complete_job_pipeline(
     pool: &PgPool,
     dimensions: usize,
     prepared: &PreparedJob,
     vector: &[f32],
 ) -> Result<(), WorkerError> {
-    let _complete_span = debug_span!(
-        "complete_job",
-        job_id = %prepared.job.job_id,
-        content_sha256 = %prepared.content_sha256,
-    )
-    .entered();
+    let mut tx = pool.begin().await?;
 
-    // Upsert the embedding vector.
-    db::upsert_embedding(
-        pool,
+    db::upsert_embedding_tx(
+        &mut tx,
         &prepared.job,
         &prepared.input,
         &prepared.content_sha256,
@@ -439,55 +516,71 @@ async fn complete_job_pipeline(
     )
     .await?;
 
-    // Mark the job as completed.
-    db::complete_job(pool, prepared.job.job_id, &prepared.content_sha256).await?;
+    db::complete_job_tx(
+        &mut tx,
+        prepared.job.job_id,
+        prepared.job.lease_token.as_deref(),
+        &prepared.content_sha256,
+    )
+    .await?;
 
-    debug!("job completed successfully");
+    tx.commit().await?;
     Ok(())
+}
+
+async fn fail_job_with_error(pool: &PgPool, job: &EmbeddingJob, message: &str) -> bool {
+    db::fail_job(
+        pool,
+        job.job_id,
+        job.lease_token.as_deref(),
+        job.attempts,
+        job.max_attempts,
+        message,
+    )
+    .await
+    .is_ok()
+}
+
+fn sha256_hex(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 // ---------------------------------------------------------------------------
 // Signal handling
 // ---------------------------------------------------------------------------
 
-/// Install signal handlers that set the `SHUTDOWN` flag on SIGTERM or SIGINT.
-///
-/// Uses `tokio::signal::unix` on Unix to catch SIGTERM. On all platforms
-/// Ctrl-C (SIGINT) is caught via `tokio::signal::ctrl_c()`.
-fn install_signal_handler() {
-    // Spawn a task that handles SIGINT (Ctrl-C) on all platforms.
-    tokio::spawn(async {
-        match signal::ctrl_c().await {
-            Ok(()) => {
-                info!("SIGINT received, initiating graceful shutdown");
-                SHUTDOWN.store(true, Ordering::Relaxed);
-            }
-            Err(e) => {
-                error!(error = %e, "SIGINT handler error");
+fn install_signal_handler(shutdown_tx: watch::Sender<bool>) {
+    tokio::spawn({
+        let shutdown_tx = shutdown_tx.clone();
+        async move {
+            match signal::ctrl_c().await {
+                Ok(()) => {
+                    info!("SIGINT received, initiating graceful shutdown");
+                    let _ = shutdown_tx.send(true);
+                }
+                Err(e) => error!(error = %e, "SIGINT handler error"),
             }
         }
     });
 
-    // On Unix, also spawn a task that handles SIGTERM.
     #[cfg(unix)]
-    tokio::spawn(async {
+    tokio::spawn(async move {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(mut sig) => {
                 info!("SIGTERM handler installed");
                 sig.recv().await;
                 info!("SIGTERM received, initiating graceful shutdown");
-                SHUTDOWN.store(true, Ordering::Relaxed);
+                let _ = shutdown_tx.send(true);
             }
-            Err(e) => {
-                error!(error = %e, "failed to install SIGTERM handler");
-            }
+            Err(e) => error!(error = %e, "failed to install SIGTERM handler"),
         }
     });
 }
 
-/// Sleep for `secs` seconds, but allow early wake on shutdown signal.
-async fn sleep_or_shutdown(secs: u64) {
-    if secs == 0 {
+async fn sleep_or_shutdown(secs: u64, mut shutdown_rx: watch::Receiver<bool>) {
+    if secs == 0 || *shutdown_rx.borrow() {
         return;
     }
 
@@ -496,8 +589,6 @@ async fn sleep_or_shutdown(secs: u64) {
 
     tokio::select! {
         _ = &mut sleep => {}
-        // The signal handler will set SHUTDOWN. We can't directly select on it
-        // here without a oneshot channel, but the main loop checks SHUTDOWN
-        // before each iteration so it will eventually see it.
+        _ = shutdown_rx.changed() => {}
     }
 }

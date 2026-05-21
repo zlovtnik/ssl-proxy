@@ -1010,8 +1010,23 @@ create table if not exists vec_embeddings (
   updated_at timestamptz not null default now(),
   constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window')),
   constraint vec_embeddings_dimensions_chk check (embedding_dimensions > 0),
+  constraint chk_embedding_dims_matches_embedding_dimensions check (vector_dims(embedding) = embedding_dimensions),
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
 );
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'chk_embedding_dims_matches_embedding_dimensions'
+      and conrelid = 'vec_embeddings'::regclass
+  ) then
+    alter table vec_embeddings
+      add constraint chk_embedding_dims_matches_embedding_dimensions
+      check (vector_dims(embedding) = embedding_dimensions);
+  end if;
+end $$;
 
 create index if not exists vec_embeddings_source_idx
   on vec_embeddings (source_table, source_key);
@@ -1136,10 +1151,15 @@ create table if not exists vec_embedding_jobs (
 
 create index if not exists vec_embedding_jobs_pending_idx
   on vec_embedding_jobs (priority, due_at, job_id)
-  where status in ('pending', 'failed');
+  where status in ('pending', 'failed')
+    and attempts < max_attempts;
 create index if not exists vec_embedding_jobs_lease_idx
-  on vec_embedding_jobs (leased_at)
-  where status = 'leased';
+  on vec_embedding_jobs (leased_at, priority, job_id)
+  where status = 'leased'
+    and attempts < max_attempts;
+create index if not exists vec_embedding_jobs_completion_idx
+  on vec_embedding_jobs (job_id, lease_token)
+  where status in ('pending', 'leased', 'failed');
 
 create table if not exists vec_worker_state (
   worker_name text primary key,
@@ -1453,20 +1473,22 @@ create or replace function vec_lease_embedding_jobs(
 returns setof vec_embedding_jobs
 language plpgsql
 as $$
+declare
+  v_limit integer := greatest(p_limit, 1);
+  v_count integer;
 begin
+  -- Branch A: pending & failed jobs that are due for retry.
+  -- Uses pending_idx which pre-filters on status, attempts < max_attempts, due_at <= now().
   return query
   with selected as (
     select job_id
     from vec_embedding_jobs
-    where (
-        status in ('pending', 'failed')
-        or (status = 'leased' and leased_at < now() - p_lease)
-      )
+    where status in ('pending', 'failed')
       and attempts < max_attempts
       and due_at <= now()
     order by priority asc, due_at asc, job_id asc
     for update skip locked
-    limit greatest(p_limit, 1)
+    limit v_limit
   )
   update vec_embedding_jobs job
      set status = 'leased',
@@ -1479,6 +1501,133 @@ begin
     from selected
    where job.job_id = selected.job_id
   returning job.*;
+
+  get diagnostics v_count = row_count;
+  if v_count >= v_limit then
+    return;
+  end if;
+
+  -- Branch B: expired leases (worker died mid-batch).
+  -- Uses lease_idx which pre-filters on status = 'leased' and attempts < max_attempts.
+  return query
+  with selected as (
+    select job_id
+    from vec_embedding_jobs
+    where status = 'leased'
+      and leased_at < now() - p_lease
+      and attempts < max_attempts
+      and due_at <= now()
+    order by leased_at asc, priority asc, job_id asc
+    for update skip locked
+    limit v_limit
+  )
+  update vec_embedding_jobs job
+     set status = 'leased',
+         attempts = job.attempts + 1,
+         lease_token = md5(random()::text || clock_timestamp()::text || job.job_id::text),
+         leased_at = now(),
+         locked_by = p_worker_name,
+         last_error = null,
+         updated_at = now()
+    from selected
+   where job.job_id = selected.job_id
+  returning job.*;
+end;
+$$;
+
+create or replace function vec_complete_embedding_batch(p_payload jsonb)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer;
+begin
+  if p_payload is null or jsonb_typeof(p_payload) <> 'array' or jsonb_array_length(p_payload) = 0 then
+    return 0;
+  end if;
+
+  insert into vec_embeddings (
+    source_table, source_key, source_observed_at, source_stream_name,
+    source_sensor_id, source_location_id, source_mac,
+    embedding_model, embedding_kind, embedding_dimensions,
+    content_sha256, content_text, embedding, metadata,
+    embedded_at, created_at, updated_at
+  )
+  select
+    r.source_table,
+    r.source_key,
+    r.source_observed_at,
+    r.source_stream_name,
+    r.source_sensor_id,
+    r.source_location_id,
+    r.source_mac,
+    r.embedding_model,
+    r.embedding_kind,
+    r.embedding_dimensions,
+    r.content_sha256,
+    r.content_text,
+    r.embedding::vector,
+    coalesce(r.metadata, '{}'::jsonb),
+    now(), now(), now()
+  from jsonb_to_recordset(p_payload) as r(
+    job_id bigint,
+    lease_token text,
+    source_table text,
+    source_key text,
+    source_observed_at timestamptz,
+    source_stream_name text,
+    source_sensor_id text,
+    source_location_id text,
+    source_mac text,
+    embedding_model text,
+    embedding_kind text,
+    embedding_dimensions integer,
+    content_sha256 text,
+    content_text text,
+    embedding text,
+    metadata jsonb
+  )
+  on conflict (source_table, source_key, embedding_model, embedding_kind)
+  do update set
+    source_observed_at = excluded.source_observed_at,
+    source_stream_name = excluded.source_stream_name,
+    source_sensor_id = excluded.source_sensor_id,
+    source_location_id = excluded.source_location_id,
+    source_mac = excluded.source_mac,
+    embedding_dimensions = excluded.embedding_dimensions,
+    content_sha256 = excluded.content_sha256,
+    content_text = excluded.content_text,
+    embedding = excluded.embedding,
+    metadata = excluded.metadata,
+    embedded_at = now(),
+    updated_at = now();
+
+  -- UPDATE jobs in job_id ASC order to enforce consistent lock ordering
+  -- with vec_lease_embedding_jobs (which also orders by job_id ASC).
+  -- This prevents deadlock cycles when both functions run concurrently.
+  update vec_embedding_jobs j
+     set status = 'completed',
+         content_sha256 = r.content_sha256,
+         completed_at = now(),
+         lease_token = null,
+         leased_at = null,
+         locked_by = null,
+         last_error = null,
+         updated_at = now()
+    from (
+      select r.job_id, r.lease_token, r.content_sha256
+        from jsonb_to_recordset(p_payload) as r(
+          job_id bigint,
+          lease_token text,
+          content_sha256 text
+        )
+       order by r.job_id asc
+    ) r
+   where j.job_id = r.job_id
+     and j.lease_token is not distinct from r.lease_token;
+
+  get diagnostics v_count = row_count;
+  return v_count;
 end;
 $$;
 
@@ -1725,7 +1874,11 @@ begin
     and right_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
   on conflict (source_mac) do update set
     last_occurred_at = greatest(shadow_it_alerts.last_occurred_at, excluded.last_occurred_at),
-    occurrence_count = coalesce(shadow_it_alerts.occurrence_count, 0) + excluded.occurrence_count,
+    occurrence_count = coalesce(shadow_it_alerts.occurrence_count, 0) + case
+      when excluded.last_occurred_at > shadow_it_alerts.last_occurred_at
+      then excluded.occurrence_count
+      else 0
+    end,
     sensor_id = excluded.sensor_id,
     location_id = excluded.location_id,
     signal_dbm = excluded.signal_dbm,

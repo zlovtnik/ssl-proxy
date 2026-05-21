@@ -14,7 +14,7 @@
 use crate::WorkerError;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // Client
@@ -75,6 +75,9 @@ struct EmbedResponse {
 
 /// Send a batch of texts to Ollama and return their embedding vectors.
 ///
+/// Implements automatic retry with 2-second backoff on transient failures
+/// (e.g., GPU OOM, model swap, network blips). Will retry once before giving up.
+///
 /// # Arguments
 ///
 /// * `client` — The `OllamaClient` holding base URL, model, and HTTP client.
@@ -87,8 +90,8 @@ struct EmbedResponse {
 ///
 /// # Errors
 ///
-/// * `WorkerError::Http` if the HTTP request or response parsing fails.
-/// * `WorkerError::DimensionMismatch` if the response contains a different
+/// * `WorkerError::Http` if the HTTP request or response parsing fails (after retries).
+/// * `WorkerError::ResponseCountMismatch` if the response contains a different
 ///   number of embeddings than the number of input texts.
 ///
 /// # Logging
@@ -96,11 +99,34 @@ struct EmbedResponse {
 /// * `DEBUG` — request start with model and input count
 /// * `INFO`  — completion with elapsed milliseconds
 /// * `DEBUG` — response embedding count
+/// * `WARN` — if a retry is triggered
 pub async fn embed_many(
     client: &OllamaClient,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, WorkerError> {
-    let url = format!("{}/api/embed", client.base_url);
+    let mut last_err = None;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            warn!("embed_many retry after error, waiting 2 seconds");
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        match try_embed_many(client, texts).await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+/// Internal embed_many implementation without retry logic.
+async fn try_embed_many(
+    client: &OllamaClient,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, WorkerError> {
+    let url = format!(
+        "{}/api/embed",
+        client.base_url.trim_end_matches('/')
+    );
     let input_count = texts.len();
 
     debug!(
@@ -127,13 +153,14 @@ pub async fn embed_many(
     let elapsed_ms = start.elapsed().as_millis() as u64;
     info!(elapsed_ms, "embed_many completed");
 
+    let response = response.error_for_status()?;
     let embed_resp: EmbedResponse = response.json().await?; // WorkerError::Http
 
     let count = embed_resp.embeddings.len();
     debug!(embedding_count = count, "embed_many response");
 
     if count != input_count {
-        return Err(WorkerError::DimensionMismatch {
+        return Err(WorkerError::ResponseCountMismatch {
             expected: input_count,
             actual: count,
         });

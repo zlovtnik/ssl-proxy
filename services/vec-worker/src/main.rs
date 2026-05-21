@@ -32,11 +32,21 @@ async fn main() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("vec_worker=info,sqlx=warn"));
 
-    fmt()
+    let log_format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    let use_pretty = matches!(
+        log_format.to_ascii_lowercase().as_str(),
+        "text" | "pretty" | "human"
+    );
+
+    let subscriber = fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(env_filter)
-        .json()
-        .init();
+        .with_env_filter(env_filter);
+
+    if use_pretty {
+        subscriber.pretty().init();
+    } else {
+        subscriber.json().init();
+    }
 
     tracing::debug!(?args, "cli arguments parsed");
 
@@ -64,25 +74,15 @@ async fn main() {
 
     // If --dry-run is set, log config and exit.
     if args.dry_run {
-        tracing::debug!(?config, "dry-run mode: exiting");
-        println!("Dry-run complete. Config:");
-        println!("  embeddings_enabled: {}", config.embeddings_enabled);
-        println!("  provider: {}", config.provider.as_str());
-        println!("  embed_url: {}", config.embed_url);
-        println!("  model: {}", config.model);
-        println!("  dimensions: {}", config.dimensions);
-        println!("  batch_size: {}", config.batch_size);
-        println!("  request_batch_size: {}", config.request_batch_size);
-        println!("  lease_seconds: {}", config.lease_seconds);
-        println!("  worker_name: {}", config.worker_name);
-        println!("  database_url: {}", config.database_url);
-        println!("  poll_interval_secs: {}", config.poll_interval_secs);
-        println!("  once: {}", config.once);
+        let sanitized = config.sanitized();
+        tracing::debug!(?sanitized, "dry-run mode: exiting");
+        println!("Dry-run complete. Config:\n{sanitized:#?}");
         return;
     }
 
     // Connect to PostgreSQL.
-    let pool = match db::connect(&config.database_url).await {
+    let pool = match db::connect(&config.database_url, config.effective_pool_max_connections()).await
+    {
         Ok(p) => p,
         Err(e) => {
             tracing::error!("database connection failed: {}", e);

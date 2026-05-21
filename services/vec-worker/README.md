@@ -65,11 +65,14 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `http://127.0.0.1:11434` for Ollama
   - Default: `http://127.0.0.1:8080` for llama.cpp
 - `VECTOR_EMBEDDING_BATCH_SIZE`
-  - Default: `25`
+  - Default: `64`
   - Number of jobs leased per run.
 - `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE`
-  - Default: `min(batch_size, 32)`
-  - Number of embedding requests sent to the provider in a single batch.
+  - Default: `min(batch_size, VECTOR_EMBEDDING_REQUEST_BATCH_MAX)`
+  - Number of texts sent to the provider in one `embed_many` HTTP call.
+- `VECTOR_EMBEDDING_REQUEST_BATCH_MAX`
+  - Default: `64`
+  - Upper bound for the default request batch size when `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE` is unset.
 - `VECTOR_EMBEDDING_LEASE_SECONDS`
   - Default: `1800`
   - Lease duration for jobs in seconds.
@@ -80,8 +83,22 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `5`
   - Sleep interval when no jobs are leased or after an error.
 - `VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES`
-  - Default: `4`
-  - Limits concurrent source row fetch / text build operations.
+  - Default: `8`
+  - Reserved for future per-job prepare parallelism; source fetches use batched `ANY()` queries per chunk.
+- `VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES`
+  - Default: `8`
+  - Limits concurrent per-job completion transactions when bulk complete falls back.
+- `VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS`
+  - Default: `1`
+  - Maximum in-flight embedding HTTP requests across chunks (increase when the provider can serve parallel batches).
+- `DATABASE_POOL_MAX_CONNECTIONS`
+  - Default: `max(prepares, completes, embed_requests) + 2`, floor `10`
+  - Postgres connection pool size for the worker.
+- `LOG_FORMAT`
+  - Default: JSON structured logs
+  - Set to `text`, `pretty`, or `human` for human-readable local output
+- `RUST_LOG`
+  - Standard tracing filter (default: `vec_worker=info,sqlx=warn`)
 
 ### CLI flags
 
@@ -235,7 +252,7 @@ Role:
 Relevant columns used by vec worker:
 
 - `mac_id` — primary key and `source_key`
-- `display_name`, `username`, `hostname`, `os_hint`, `mac_hint`, `wg_pubkey`
+- `display_name`, `username`, `hostname`, `os_hint`, `mac_hint`
 - `first_seen`, `last_seen`
 
 Usage by vec worker:
@@ -300,6 +317,14 @@ The vec worker calls this function through `db::lease_jobs()`.
 
 The worker invokes this every 10 iterations to reclaim stuck leases.
 
+### `vec_complete_embedding_batch(p_payload jsonb)`
+
+- Accepts a JSON array of embedding completion rows (job id, lease token, source fields, vector literal, metadata).
+- Upserts all rows into `vec_embeddings` in one statement (`ON CONFLICT DO UPDATE`).
+- Marks matching jobs `completed` when `lease_token` matches.
+- Returns the number of jobs updated.
+- Called by `db::complete_embedding_batch()` after each embedded chunk.
+
 ## Embedding processing flow
 
 The worker pipeline is implemented in `src/worker.rs`.
@@ -307,18 +332,14 @@ The worker pipeline is implemented in `src/worker.rs`.
 1. `run_once()` marks worker state as `running`.
 2. `lease_jobs()` obtains a batch of jobs from `vec_embedding_jobs`.
 3. If no jobs are leased, the worker marks itself `idle` and returns.
-4. `process_jobs()` chunks jobs into request batches of `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE`.
-5. For each chunk, `process_batch()` does:
-   - `prepare_job()` for each job:
-     - builds text and metadata via `text_builder::build_text()`
-     - computes `content_sha256` of the generated text
-   - if any preparation fails, that job is failed in Postgres
-   - calls `embed_many()` on the configured provider with the prepared text list
-   - validates each returned vector against `VECTOR_EMBEDDING_DIMENSIONS`
-   - for each successful vector:
-     - `upsert_embedding()` writes the vector and metadata into `vec_embeddings`
-     - `complete_job()` marks the job completed
-   - if embedding fails or dimension validation fails, the job is failed with an error message
+4. `process_jobs()` splits leased jobs into request-sized chunks and pipelines stages across chunks:
+   - prepare chunk *k+1* while embedding chunk *k*
+   - complete chunk *k-1* while preparing/embedding later chunks
+5. For each chunk:
+   - `prepare_chunk()` calls `text_builder::build_text_batch()` (batched `WHERE key = ANY(...)` per embedding kind), then computes `content_sha256` per job
+   - `embed_chunk()` calls `embed_many()` once for the chunk (limited by `VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS`)
+   - `complete_chunk()` calls `vec_complete_embedding_batch()` for all successful vectors in one DB round-trip; falls back to concurrent per-job transactions on partial failure
+   - logs `prepare_ms`, `embed_ms`, `complete_ms`, `jobs_ok`, and `jobs_failed` at INFO
 6. After each run, `mark_worker_state()` records `idle`, `rows_processed`, and `last_run_finished_at`.
 
 ### Job failure handling
@@ -342,7 +363,7 @@ The worker supports three embedding kinds.
 ### `device`
 
 - Source: `devices` row where `mac_id = source_key`
-- Builds text from identity fields such as `display_name`, `username`, `hostname`, `os_hint`, `mac_hint`, `wg_pubkey`, and time range fields
+- Builds text from identity fields such as `display_name`, `username`, `hostname`, `os_hint`, `mac_hint`, and time range fields (`wg_pubkey` is intentionally excluded — no semantic value, leaks infra topology)
 - Includes `kind: device` as the first line
 - Populates `source_mac` from `mac_id`
 - Uses `last_seen` as `source_observed_at`
@@ -355,6 +376,11 @@ The worker supports three embedding kinds.
 - If neither exists, constructs deterministic fallback text from snapshot fields
 - First line is `kind: behaviour_window`
 - Populates metadata from `window_start`, `sensor_id`, `location_id`, and `source_mac`
+
+## Compatibility
+
+- **Ollama**: requires Ollama >= 0.1.26 for batched `POST /api/embed` (multi-input). Older versions used `/api/embeddings` (singular, single-input only).
+- **llama.cpp**: server with embedding support; `POST /v1/embeddings` (OpenAI-compatible). Set `VECTOR_EMBEDDING_PROVIDER=llamacpp`.
 
 ## Model expectations
 
@@ -382,13 +408,73 @@ If a model returns a vector with the wrong length, the job is failed and retried
 - The worker formats the vector as a pgvector literal `[f1,f2,...]`.
 - `ON CONFLICT` upsert semantics ensure repeated jobs for the same source row/model/kind update the existing embedding row.
 
+## Performance and horizontal scaling
+
+Throughput comes from **larger lease batches**, **larger embed HTTP batches**, **bulk Postgres completion**, and **multiple worker replicas**.
+
+### Single-process tuning (starting point)
+
+```bash
+VECTOR_EMBEDDING_BATCH_SIZE=64
+VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=32
+VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=2
+DATABASE_POOL_MAX_CONNECTIONS=16
+```
+
+Watch structured logs for `batch timing` (`prepare_ms`, `embed_ms`, `complete_ms`) and raise or lower batch sizes based on which stage dominates.
+
+### Multiple replicas
+
+Run **2–4** `vec-worker` containers (or processes), each with a **unique** `VECTOR_EMBEDDING_WORKER_NAME`. Postgres `vec_lease_embedding_jobs` uses `FOR UPDATE SKIP LOCKED`, so replicas coordinate without double-processing.
+
+Tune the embedding provider separately (for example Ollama `OLLAMA_NUM_PARALLEL`, llama.cpp server thread/batch settings). The worker batches HTTP requests; the provider must keep up.
+
+If replicas contend on leases but the queue stays deep, increase `VECTOR_EMBEDDING_BATCH_SIZE` slightly or add another replica rather than raising poll frequency.
+
 ## Operational notes
 
 - This worker does not own topic or Kafka logic; it works only with Postgres-based jobs and tables.
 - `VECTOR_EMBEDDING_LEASE_SECONDS` should match lease cleanup expectations; the schema default and release function use 30 minutes.
 - `POLL_INTERVAL_SECONDS` controls idle polling frequency and should be balanced between latency and database load.
-- `VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES` limits IO-bound source fetch work and protects the database.
 - `vec_worker_state` is the only worker-specific status table; it is safe to monitor for stale or unhealthy worker instances.
+
+## External dependencies: PSQL cron jobs
+
+The vec-worker is a **consumer** of embedding jobs — it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `services/zig-coordinator/schema/postgres.sql` (lines 2004–2045). `pg_cron` must be installed and the `cron` schema available.
+
+Without these cron jobs the worker would run forever, lease nothing, and produce zero output.
+
+### Cron job reference
+
+| # | Name | Schedule | Function | Produces | Consumed by worker |
+|---|------|----------|----------|----------|--------------------|
+| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_scan_ingest` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` → inserts/updates `pending` rows into `vec_embedding_jobs` | Yes — this is the sole source of work items |
+| 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes — the worker reads `embedding_text` / `text_summary` from this table |
+| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search → `vec_similarity_pairs`, marks dedupe suspects on `sync_scan_ingest`, creates shadow IT alerts | No — consumes worker output |
+| 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping — the worker also does this internally every 10 iterations |
+| 5 | `vec-reap-stale-workers` | `*/5 * * * *` (every 5 min) | `vec_reap_stale_workers()` | Marks dead worker heartbeats in `vec_worker_state` as `stale` | No — observability only |
+
+Jobs #1, #2, and #4 are directly required for the worker to function. If any of them stop running, the embedding pipeline stalls:
+
+- **#1 missing** → `vec_embedding_jobs` stays empty → worker leases nothing
+- **#2 missing** → behaviour window jobs fail because `vec_behaviour_snapshots` rows are never created
+- **#4 missing** → jobs orphaned by a crashed worker are never reclaimed, causing permanent queue stalls
+
+### Re-embedding on text builder changes
+
+Migration `V021__vec_reembed_jobs_function.sql` adds `vec_reembed_changed_jobs(p_limit)` — a helper function that re-queues embedding jobs for rows whose stored `content_sha256` no longer matches the SHA-256 of `content_text`. It is **not** scheduled by cron; it is an on-demand function to be called manually (or via a one-shot job) after text builder changes are deployed:
+
+```sql
+SELECT vec_reembed_changed_jobs(p_limit => 1000);
+```
+
+### Where the cron definitions live
+
+```
+services/zig-coordinator/schema/postgres.sql  →  vec_install_cron_jobs()  (end of file)
+```
+
+The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_snapshots`, `vec_materialize_similarity_pairs`, `vec_release_expired_leases`, `vec_reap_stale_workers`) are defined in the same file, lines 1175–2002.
 
 ## Relevant source files
 

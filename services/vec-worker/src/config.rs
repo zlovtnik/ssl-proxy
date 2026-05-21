@@ -36,7 +36,7 @@ impl EmbeddingProvider {
 }
 
 /// Runtime configuration for the vector embeddings worker.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     /// Whether vector embeddings are enabled.
     pub embeddings_enabled: bool,
@@ -61,13 +61,35 @@ pub struct Config {
     /// Poll interval in seconds for job leasing loop (default: 5).
     pub poll_interval_secs: u64,
     /// Maximum number of concurrent `prepare_job` calls (text fetching is IO bound).
-    /// Default: 4. Set to 1 for fully sequential behaviour.
+    /// Default: 8. Set to 1 for fully sequential behaviour.
     pub max_concurrent_prepares: usize,
+    /// Maximum number of concurrent per-job completion transactions.
+    /// Used only when bulk completion is unavailable. Default: 8.
+    pub max_concurrent_completes: usize,
+    /// Maximum number of in-flight embedding HTTP requests across chunks. Default: 1.
+    pub max_concurrent_embed_requests: usize,
+    /// Upper bound for `request_batch_size` when not explicitly set. Default: 64.
+    pub request_batch_max: usize,
+    /// Override for `PgPool` max connections; when unset, derived from concurrency knobs.
+    pub database_pool_max_connections: Option<u32>,
     /// Run a single pass and exit (set by CLI `--once` flag).
     pub once: bool,
 }
 
 impl Config {
+    /// Effective Postgres pool size: env override or `max(prepares, completes, embed) + 2`, floor 10.
+    pub fn effective_pool_max_connections(&self) -> u32 {
+        if let Some(n) = self.database_pool_max_connections {
+            return n.max(1);
+        }
+        let derived = self
+            .max_concurrent_prepares
+            .max(self.max_concurrent_completes)
+            .max(self.max_concurrent_embed_requests)
+            .saturating_add(2);
+        (derived.max(10)) as u32
+    }
+
     /// Load and validate configuration from environment variables.
     ///
     /// Reads all vector embedding configuration from the environment:
@@ -95,8 +117,13 @@ impl Config {
     /// println!("Worker {} connecting to {}", cfg.worker_name, cfg.database_url);
     /// # Ok::<(), vec_worker::WorkerError>(())
     /// ```
+    /// Returns a copy of this config with credential-bearing URLs redacted for logging.
+    pub fn sanitized(&self) -> SanitizedConfig<'_> {
+        SanitizedConfig { inner: self }
+    }
+
     pub fn from_env() -> Result<Self, WorkerError> {
-        let embeddings_enabled = read_bool("VECTOR_EMBEDDINGS_ENABLED", false);
+        let embeddings_enabled = read_bool("VECTOR_EMBEDDINGS_ENABLED", false)?;
 
         // Parse and validate provider if embeddings are enabled.
         let provider = if embeddings_enabled {
@@ -153,13 +180,37 @@ impl Config {
             }
             Err(_) => 768,
         };
+        if dimensions == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_DIMENSIONS must be >= 1",
+            ));
+        }
 
-        let batch_size = read_usize("VECTOR_EMBEDDING_BATCH_SIZE", 25);
-        let request_batch_size = read_usize(
+        let batch_size = read_usize("VECTOR_EMBEDDING_BATCH_SIZE", 64)?;
+        if batch_size == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_BATCH_SIZE must be >= 1",
+            ));
+        }
+        let request_batch_max = read_usize("VECTOR_EMBEDDING_REQUEST_BATCH_MAX", 64)?;
+        if request_batch_max == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_REQUEST_BATCH_MAX must be >= 1",
+            ));
+        }
+        let mut request_batch_size = read_usize(
             "VECTOR_EMBEDDING_REQUEST_BATCH_SIZE",
-            batch_size.min(32),
-        );
-        let lease_seconds = read_u64("VECTOR_EMBEDDING_LEASE_SECONDS", 1800);
+            batch_size.min(request_batch_max),
+        )?;
+        if request_batch_size == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_REQUEST_BATCH_SIZE must be >= 1",
+            ));
+        }
+        request_batch_size = request_batch_size
+            .min(batch_size.min(request_batch_max))
+            .max(1);
+        let lease_seconds = read_u64("VECTOR_EMBEDDING_LEASE_SECONDS", 1800)?;
 
         let worker_name = std::env::var("VECTOR_EMBEDDING_WORKER_NAME")
             .ok()
@@ -185,8 +236,44 @@ impl Config {
                 )
             })?;
 
-        let poll_interval_secs = read_u64("POLL_INTERVAL_SECONDS", 5);
-        let max_concurrent_prepares = read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES", 4);
+        let poll_interval_secs = read_u64("POLL_INTERVAL_SECONDS", 5)?;
+        let max_concurrent_prepares =
+            read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES", 8)?;
+        if max_concurrent_prepares == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES must be >= 1",
+            ));
+        }
+        let max_concurrent_completes =
+            read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES", 8)?;
+        if max_concurrent_completes == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES must be >= 1",
+            ));
+        }
+        let max_concurrent_embed_requests =
+            read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS", 1)?;
+        if max_concurrent_embed_requests == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS must be >= 1",
+            ));
+        }
+        let database_pool_max_connections = match std::env::var("DATABASE_POOL_MAX_CONNECTIONS") {
+            Ok(v) => {
+                let n: u32 = v.parse().map_err(|_| {
+                    WorkerError::config(format!(
+                        "DATABASE_POOL_MAX_CONNECTIONS must be a valid u32, got '{v}'"
+                    ))
+                })?;
+                if n == 0 {
+                    return Err(WorkerError::config(
+                        "DATABASE_POOL_MAX_CONNECTIONS must be >= 1",
+                    ));
+                }
+                Some(n)
+            }
+            Err(_) => None,
+        };
 
         Ok(Self {
             embeddings_enabled,
@@ -201,47 +288,137 @@ impl Config {
             database_url,
             poll_interval_secs,
             max_concurrent_prepares,
+            max_concurrent_completes,
+            max_concurrent_embed_requests,
+            request_batch_max,
+            database_pool_max_connections,
             once: false,
         })
     }
 }
 
+/// Config view with credential-bearing URLs redacted for safe logging.
+pub struct SanitizedConfig<'a> {
+    inner: &'a Config,
+}
+
+impl std::fmt::Debug for SanitizedConfig<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("embeddings_enabled", &self.inner.embeddings_enabled)
+            .field("provider", &self.inner.provider)
+            .field("embed_url", &redact_url(&self.inner.embed_url))
+            .field("model", &self.inner.model)
+            .field("dimensions", &self.inner.dimensions)
+            .field("batch_size", &self.inner.batch_size)
+            .field("request_batch_size", &self.inner.request_batch_size)
+            .field("lease_seconds", &self.inner.lease_seconds)
+            .field("worker_name", &self.inner.worker_name)
+            .field("database_url", &redact_url(&self.inner.database_url))
+            .field("poll_interval_secs", &self.inner.poll_interval_secs)
+            .field("max_concurrent_prepares", &self.inner.max_concurrent_prepares)
+            .field("max_concurrent_completes", &self.inner.max_concurrent_completes)
+            .field(
+                "max_concurrent_embed_requests",
+                &self.inner.max_concurrent_embed_requests,
+            )
+            .field("request_batch_max", &self.inner.request_batch_max)
+            .field(
+                "database_pool_max_connections",
+                &self.inner.effective_pool_max_connections(),
+            )
+            .field("once", &self.inner.once)
+            .finish()
+    }
+}
+
+fn redact_url(url: &str) -> String {
+    let Some(scheme_end) = url.find("://") else {
+        return url.to_string();
+    };
+    let rest = &url[scheme_end + 3..];
+    if let Some(at_pos) = rest.find('@') {
+        format!("{}://****{}", &url[..scheme_end + 3], &rest[at_pos..])
+    } else {
+        url.to_string()
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("embeddings_enabled", &self.embeddings_enabled)
+            .field("provider", &self.provider)
+            .field("embed_url", &self.embed_url)
+            .field("model", &self.model)
+            .field("dimensions", &self.dimensions)
+            .field("batch_size", &self.batch_size)
+            .field("request_batch_size", &self.request_batch_size)
+            .field("lease_seconds", &self.lease_seconds)
+            .field("worker_name", &self.worker_name)
+            .field("database_url", &"[redacted]")
+            .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("max_concurrent_prepares", &self.max_concurrent_prepares)
+            .field("max_concurrent_completes", &self.max_concurrent_completes)
+            .field(
+                "max_concurrent_embed_requests",
+                &self.max_concurrent_embed_requests,
+            )
+            .field("request_batch_max", &self.request_batch_max)
+            .field(
+                "database_pool_max_connections",
+                &self.effective_pool_max_connections(),
+            )
+            .field("once", &self.once)
+            .finish()
+    }
+}
+
 /// Read a boolean environment variable with a fallback default.
-fn read_bool(var: &str, default: bool) -> bool {
-    std::env::var(var)
-        .map(|v| match v.to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => true,
-            "false" | "0" | "no" | "off" => false,
-            _ => default,
-        })
-        .unwrap_or(default)
+fn read_bool(var: &str, default: bool) -> Result<bool, WorkerError> {
+    match std::env::var(var) {
+        Ok(v) => match v.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(true),
+            "false" | "0" | "no" | "off" => Ok(false),
+            _ => Err(WorkerError::config(format!(
+                "{var} must be a boolean, got '{v}'"
+            ))),
+        },
+        Err(_) => Ok(default),
+    }
 }
 
 /// Read a u64 environment variable with a fallback default.
-fn read_u64(var: &str, default: u64) -> u64 {
-    std::env::var(var)
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(default)
+fn read_u64(var: &str, default: u64) -> Result<u64, WorkerError> {
+    match std::env::var(var) {
+        Ok(v) => v.parse::<u64>().map_err(|_| {
+            WorkerError::config(format!("{var} must be a valid u64, got '{v}'"))
+        }),
+        Err(_) => Ok(default),
+    }
 }
 
 /// Read a usize environment variable with a fallback default.
-fn read_usize(var: &str, default: usize) -> usize {
-    std::env::var(var)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
+fn read_usize(var: &str, default: usize) -> Result<usize, WorkerError> {
+    match std::env::var(var) {
+        Ok(v) => v.parse::<usize>().map_err(|_| {
+            WorkerError::config(format!("{var} must be a valid usize, got '{v}'"))
+        }),
+        Err(_) => Ok(default),
+    }
 }
 
 // A simple hostname fallback for systems that may not have the hostname crate
 mod hostname {
+    use libc;
+
     pub fn get() -> std::io::Result<std::ffi::OsString> {
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
             let mut buf = [0u8; 256];
             let result = unsafe {
-                libc::gethostname(buf.as_mut_ptr(), buf.len())
+                libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len())
             };
             if result == 0 {
                 let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());

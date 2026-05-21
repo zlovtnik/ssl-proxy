@@ -973,6 +973,10 @@ fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaE
 }
 
 fn build_tls_client_config(sync: &SyncConfig) -> Result<Option<Arc<rustls::ClientConfig>>, String> {
+    if sync.redpanda_bootstrap_servers.as_deref().is_none() {
+        return Ok(None);
+    }
+
     let tls_required = sync
         .redpanda_bootstrap_servers
         .as_deref()

@@ -11,6 +11,7 @@
 //! * [`WorkerStateParams`] — input parameters for `mark_worker_state`
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tracing::instrument;
@@ -74,14 +75,35 @@ pub struct WorkerStateParams {
 // Connection
 // ---------------------------------------------------------------------------
 
+/// Row payload for [`complete_embedding_batch`].
+#[derive(Debug, Clone, Serialize)]
+pub struct CompleteBatchRow {
+    pub job_id: i64,
+    pub lease_token: Option<String>,
+    pub source_table: String,
+    pub source_key: String,
+    pub source_observed_at: Option<DateTime<Utc>>,
+    pub source_stream_name: Option<String>,
+    pub source_sensor_id: Option<String>,
+    pub source_location_id: Option<String>,
+    pub source_mac: Option<String>,
+    pub embedding_model: String,
+    pub embedding_kind: String,
+    pub embedding_dimensions: i32,
+    pub content_sha256: String,
+    pub content_text: String,
+    /// pgvector literal, e.g. `[1.0,2.0,...]`.
+    pub embedding: String,
+    pub metadata: serde_json::Value,
+}
+
 /// Open a new connection pool to the PostgreSQL database.
 ///
-/// Uses `sqlx::PgPoolOptions` with default settings.  Call once at startup
-/// and share the pool via `Arc` or injection.
-#[instrument]
-pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
+/// Call once at startup and share the pool via `Arc` or injection.
+#[instrument(skip(database_url))]
+pub async fn connect(database_url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(max_connections.max(1))
         .connect(database_url)
         .await
 }
@@ -122,9 +144,10 @@ pub async fn lease_jobs(
 pub async fn complete_job(
     pool: &PgPool,
     job_id: i64,
+    lease_token: Option<&str>,
     content_sha256: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         UPDATE vec_embedding_jobs
         SET status = 'completed',
@@ -136,12 +159,71 @@ pub async fn complete_job(
             last_error = NULL,
             updated_at = now()
         WHERE job_id = $2
+          AND lease_token IS NOT DISTINCT FROM $3
         "#,
     )
     .bind(content_sha256)
     .bind(job_id)
+    .bind(lease_token)
     .execute(pool)
     .await?;
+
+    if result.rows_affected() != 1 {
+        return Err(sqlx::Error::RowNotFound);
+    }
+
+    Ok(())
+}
+
+/// Mark a job as completed within a transaction.
+///
+/// Transaction-aware variant of [`complete_job`] that accepts a mutable transaction
+/// reference instead of a pool. Used to atomically complete the embedding upsert
+/// and job completion together.
+#[instrument(skip(tx))]
+pub async fn complete_job_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job_id: i64,
+    lease_token: Option<&str>,
+    content_sha256: &str,
+) -> Result<(), sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE vec_embedding_jobs
+        SET status = 'completed',
+            content_sha256 = $1,
+            completed_at = now(),
+            lease_token = NULL,
+            leased_at = NULL,
+            locked_by = NULL,
+            last_error = NULL,
+            updated_at = now()
+        WHERE job_id = $2
+          AND lease_token IS NOT DISTINCT FROM $3
+        "#,
+    )
+    .bind(content_sha256)
+    .bind(job_id)
+    .bind(lease_token)
+    .execute(&mut **tx)
+    .await?;
+
+    if result.rows_affected() != 1 {
+        // If the UPDATE matched 0 rows, the job may already be completed.
+        // Check its status — if already completed, treat as success (idempotent).
+        let status: Option<String> = sqlx::query_scalar(
+            r#"SELECT status FROM vec_embedding_jobs WHERE job_id = $1"#,
+        )
+        .bind(job_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten();
+
+        match status.as_deref() {
+            Some("completed") => return Ok(()),
+            _ => return Err(sqlx::Error::RowNotFound),
+        }
+    }
 
     Ok(())
 }
@@ -155,11 +237,12 @@ pub async fn complete_job(
 pub async fn fail_job(
     pool: &PgPool,
     job_id: i64,
+    lease_token: Option<&str>,
     attempts: i32,
     max_attempts: i32,
     error_message: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         UPDATE vec_embedding_jobs
         SET status = CASE WHEN $2 >= $3 THEN 'failed' ELSE 'pending' END,
@@ -170,6 +253,7 @@ pub async fn fail_job(
             due_at = now() + make_interval(secs => $4),
             updated_at = now()
         WHERE job_id = $5
+          AND lease_token IS NOT DISTINCT FROM $6
         "#,
     )
     .bind(error_message)
@@ -177,8 +261,13 @@ pub async fn fail_job(
     .bind(max_attempts)
     .bind(backoff_seconds(attempts))
     .bind(job_id)
+    .bind(lease_token)
     .execute(pool)
     .await?;
+
+    if result.rows_affected() != 1 {
+        return Err(sqlx::Error::RowNotFound);
+    }
 
     Ok(())
 }
@@ -202,7 +291,7 @@ fn backoff_seconds(attempts: i32) -> i64 {
 ///
 /// `dimensions` is the expected number of dimensions for the embedding model,
 /// typically `config.dimensions` from the worker configuration.
-#[instrument(skip(pool, vector))]
+#[instrument(skip(pool, job, input, vector))]
 pub async fn upsert_embedding(
     pool: &PgPool,
     job: &EmbeddingJob,
@@ -263,6 +352,123 @@ pub async fn upsert_embedding(
     .await?;
 
     Ok(())
+}
+
+/// Upsert an embedding row into `vec_embeddings` within a transaction.
+///
+/// Transaction-aware variant of [`upsert_embedding`] that accepts a mutable transaction
+/// reference instead of a pool. Used to atomically complete the embedding upsert
+/// and job completion together.
+#[instrument(skip(tx, job, input, vector))]
+pub async fn upsert_embedding_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job: &EmbeddingJob,
+    input: &EmbeddingInput,
+    content_sha256: &str,
+    vector: &[f32],
+    dimensions: i32,
+) -> Result<(), sqlx::Error> {
+    let vector_literal = format_vector_literal(vector);
+
+    sqlx::query(
+        r#"
+        INSERT INTO vec_embeddings (
+            source_table, source_key, source_observed_at, source_stream_name,
+            source_sensor_id, source_location_id, source_mac,
+            embedding_model, embedding_kind, embedding_dimensions,
+            content_sha256, content_text, embedding, metadata,
+            embedded_at, created_at, updated_at
+        )
+        VALUES (
+            $1, $2, $3, $4,
+            $5, $6, $7,
+            $8, $9, $10,
+            $11, $12, $13::vector, $14::jsonb,
+            now(), now(), now()
+        )
+        ON CONFLICT (source_table, source_key, embedding_model, embedding_kind)
+        DO UPDATE SET
+            source_observed_at = EXCLUDED.source_observed_at,
+            source_stream_name = EXCLUDED.source_stream_name,
+            source_sensor_id = EXCLUDED.source_sensor_id,
+            source_location_id = EXCLUDED.source_location_id,
+            source_mac = EXCLUDED.source_mac,
+            embedding_dimensions = EXCLUDED.embedding_dimensions,
+            content_sha256 = EXCLUDED.content_sha256,
+            content_text = EXCLUDED.content_text,
+            embedding = EXCLUDED.embedding,
+            metadata = EXCLUDED.metadata,
+            embedded_at = now(),
+            updated_at = now()
+        "#,
+    )
+    .bind(&job.source_table)
+    .bind(&job.source_key)
+    .bind(input.source_observed_at)
+    .bind(&input.source_stream_name)
+    .bind(&input.source_sensor_id)
+    .bind(&input.source_location_id)
+    .bind(&input.source_mac)
+    .bind(&job.embedding_model)
+    .bind(&job.embedding_kind)
+    .bind(dimensions)
+    .bind(content_sha256)
+    .bind(&input.text)
+    .bind(&vector_literal)
+    .bind(serde_json::json!(build_metadata(input)))
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+/// Upsert embeddings and mark jobs completed in one database round-trip.
+///
+/// Calls `vec_complete_embedding_batch($1::jsonb)`. All rows must pass lease-token
+/// checks or they are skipped by the function (not counted in the return value).
+#[instrument(skip(pool, rows))]
+pub async fn complete_embedding_batch(
+    pool: &PgPool,
+    rows: &[CompleteBatchRow],
+) -> Result<i32, sqlx::Error> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let payload = serde_json::to_value(rows).map_err(|e| sqlx::Error::Decode(e.into()))?;
+    let (count,): (i32,) =
+        sqlx::query_as("SELECT vec_complete_embedding_batch($1::jsonb) AS completed_count")
+            .bind(payload)
+            .fetch_one(pool)
+            .await?;
+    Ok(count)
+}
+
+/// Build a [`CompleteBatchRow`] from job, input, digest, and vector.
+pub fn complete_batch_row(
+    job: &EmbeddingJob,
+    input: &EmbeddingInput,
+    content_sha256: &str,
+    vector: &[f32],
+    dimensions: i32,
+) -> CompleteBatchRow {
+    CompleteBatchRow {
+        job_id: job.job_id,
+        lease_token: job.lease_token.clone(),
+        source_table: job.source_table.clone(),
+        source_key: job.source_key.clone(),
+        source_observed_at: input.source_observed_at,
+        source_stream_name: input.source_stream_name.clone(),
+        source_sensor_id: input.source_sensor_id.clone(),
+        source_location_id: input.source_location_id.clone(),
+        source_mac: input.source_mac.clone(),
+        embedding_model: job.embedding_model.clone(),
+        embedding_kind: job.embedding_kind.clone(),
+        embedding_dimensions: dimensions,
+        content_sha256: content_sha256.to_string(),
+        content_text: input.text.clone(),
+        embedding: format_vector_literal(vector),
+        metadata: build_metadata(input),
+    }
 }
 
 /// Build the metadata JSON object from an `EmbeddingInput`.

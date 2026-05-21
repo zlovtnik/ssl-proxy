@@ -22,7 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+RUN groupadd -r app --gid 1000 \
+    && useradd -r -g app --uid 1000 --home-dir /app --shell /usr/sbin/nologin app
+
 WORKDIR /app
 COPY --from=builder /app/services/vec-worker/target/release/vec-worker /usr/local/bin/vec-worker
+RUN chown app:app /app /usr/local/bin/vec-worker
 
+USER app
 CMD ["/usr/local/bin/vec-worker"]

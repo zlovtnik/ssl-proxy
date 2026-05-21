@@ -8,6 +8,7 @@
 use crate::db::{EmbeddingInput, EmbeddingJob};
 use crate::WorkerError;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use tracing::instrument;
 
 /// Build the embedding text and metadata for a job.
@@ -16,9 +17,8 @@ use tracing::instrument;
 ///
 /// # Returns
 ///
-/// A tuple of `(embedding_text, EmbeddingInput)` where `embedding_text` is the
-/// identity-stripped semantic text to embed, and `EmbeddingInput` contains the
-/// text plus the metadata fields (observed_at, stream_name, sensor_id, location_id, mac).
+/// `EmbeddingInput` containing the identity-stripped semantic text to embed plus
+/// metadata fields (observed_at, stream_name, sensor_id, location_id, mac).
 ///
 /// # Errors
 ///
@@ -30,7 +30,7 @@ use tracing::instrument;
 pub async fn build_text(
     pool: &PgPool,
     job: &EmbeddingJob,
-) -> Result<(String, EmbeddingInput), WorkerError> {
+) -> Result<EmbeddingInput, WorkerError> {
     match job.embedding_kind.as_str() {
         "event" => build_event(pool, job).await,
         "device" => build_device(pool, job).await,
@@ -40,6 +40,55 @@ pub async fn build_text(
             other
         ))),
     }
+}
+
+/// Build embedding text for many jobs using batched source-table queries.
+///
+/// Returns a map keyed by `source_key`. Jobs whose source row is missing are omitted.
+#[instrument(skip(pool, jobs))]
+pub async fn build_text_batch(
+    pool: &PgPool,
+    jobs: &[EmbeddingJob],
+) -> Result<HashMap<String, EmbeddingInput>, WorkerError> {
+    if jobs.is_empty() {
+        return Ok(HashMap::new());
+    }
+    if jobs.len() == 1 {
+        let job = &jobs[0];
+        let input = build_text(pool, job).await?;
+        let mut map = HashMap::with_capacity(1);
+        map.insert(job.source_key.clone(), input);
+        return Ok(map);
+    }
+
+    let mut events = Vec::new();
+    let mut devices = Vec::new();
+    let mut behaviours = Vec::new();
+
+    for job in jobs {
+        match job.embedding_kind.as_str() {
+            "event" => events.push(job),
+            "device" => devices.push(job),
+            "behaviour_window" => behaviours.push(job),
+            other => {
+                return Err(WorkerError::text_build(format!(
+                    "unsupported embedding_kind: '{other}'"
+                )));
+            }
+        }
+    }
+
+    let mut out = HashMap::with_capacity(jobs.len());
+    if !events.is_empty() {
+        build_events_batch(pool, &events, &mut out).await?;
+    }
+    if !devices.is_empty() {
+        build_devices_batch(pool, &devices, &mut out).await?;
+    }
+    if !behaviours.is_empty() {
+        build_behaviour_windows_batch(pool, &behaviours, &mut out).await?;
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +108,7 @@ const EVENT_SEMANTIC_FIELDS: &[&str] = &[
     "wps_device_name",
     "wps_manufacturer",
     "wps_model_name",
+    "ssid",
     "device_fingerprint",
     "handshake_captured",
     "protected",
@@ -69,7 +119,7 @@ const EVENT_SEMANTIC_FIELDS: &[&str] = &[
     "power_save",
 ];
 
-async fn build_event(pool: &PgPool, job: &EmbeddingJob) -> Result<(String, EmbeddingInput), WorkerError> {
+async fn build_event(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput, WorkerError> {
     let row = sqlx::query_as::<_, EventRow>(
         r#"
         SELECT
@@ -108,23 +158,140 @@ async fn build_event(pool: &PgPool, job: &EmbeddingJob) -> Result<(String, Embed
     .map_err(|e| WorkerError::text_build(format!("event query failed: {e}")))?
     .ok_or_else(|| WorkerError::text_build(format!("event not found: {}", job.source_key)))?;
 
+    Ok(event_row_to_input(&row))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct EventBatchRow {
+    dedupe_key: String,
+    observed_at: Option<chrono::DateTime<chrono::Utc>>,
+    stream_name: Option<String>,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    source_mac: Option<String>,
+    ssid: Option<String>,
+    frame_type: Option<String>,
+    frame_subtype: Option<String>,
+    channel_number: Option<String>,
+    signal_dbm: Option<String>,
+    retry: Option<String>,
+    more_data: Option<String>,
+    power_save: Option<String>,
+    protected: Option<String>,
+    security_flags: Option<String>,
+    app_protocol: Option<String>,
+    transport_protocol: Option<String>,
+    dns_query_name: Option<String>,
+    mdns_name: Option<String>,
+    dhcp_hostname: Option<String>,
+    wps_device_name: Option<String>,
+    wps_manufacturer: Option<String>,
+    wps_model_name: Option<String>,
+    device_fingerprint: Option<String>,
+    handshake_captured: Option<String>,
+}
+
+async fn build_events_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, EventBatchRow>(
+        r#"
+        SELECT
+            dedupe_key,
+            observed_at,
+            stream_name,
+            COALESCE(sensor_id, payload->>'sensor_id') AS sensor_id,
+            COALESCE(location_id, payload->>'location_id') AS location_id,
+            LOWER(COALESCE(source_mac, payload->>'source_mac')) AS source_mac,
+            COALESCE(ssid, payload->>'ssid') AS ssid,
+            COALESCE(frame_type, payload->>'frame_type') AS frame_type,
+            payload->>'frame_subtype' AS frame_subtype,
+            COALESCE(channel_number::text, payload->>'channel_number', payload->>'channel') AS channel_number,
+            COALESCE(signal_dbm::text, payload->>'signal_dbm') AS signal_dbm,
+            COALESCE(retry::text, payload->>'retry') AS retry,
+            COALESCE(more_data::text, payload->>'more_data') AS more_data,
+            COALESCE(power_save::text, payload->>'power_save') AS power_save,
+            COALESCE(protected::text, payload->>'protected') AS protected,
+            COALESCE(security_flags::text, payload->>'security_flags') AS security_flags,
+            COALESCE(app_protocol, payload->>'app_protocol') AS app_protocol,
+            COALESCE(transport_protocol, payload->>'transport_protocol') AS transport_protocol,
+            COALESCE(dns_query_name, payload->>'dns_query_name') AS dns_query_name,
+            COALESCE(mdns_name, payload->>'mdns_name') AS mdns_name,
+            COALESCE(dhcp_hostname, payload->>'dhcp_hostname') AS dhcp_hostname,
+            COALESCE(wps_device_name, payload->>'wps_device_name') AS wps_device_name,
+            COALESCE(wps_manufacturer, payload->>'wps_manufacturer') AS wps_manufacturer,
+            COALESCE(wps_model_name, payload->>'wps_model_name') AS wps_model_name,
+            COALESCE(device_fingerprint, payload->>'device_fingerprint') AS device_fingerprint,
+            COALESCE(handshake_captured::text, payload->>'handshake_captured') AS handshake_captured
+        FROM sync_scan_ingest
+        WHERE dedupe_key = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("event batch query failed: {e}")))?;
+
+    for row in rows {
+        let event_row = event_batch_to_row(&row);
+        let input = event_row_to_input(&event_row);
+        out.insert(row.dedupe_key.clone(), input);
+    }
+    Ok(())
+}
+
+fn event_batch_to_row(row: &EventBatchRow) -> EventRow {
+    EventRow {
+        observed_at: row.observed_at,
+        stream_name: row.stream_name.clone(),
+        sensor_id: row.sensor_id.clone(),
+        location_id: row.location_id.clone(),
+        source_mac: row.source_mac.clone(),
+        ssid: row.ssid.clone(),
+        frame_type: row.frame_type.clone(),
+        frame_subtype: row.frame_subtype.clone(),
+        channel_number: row.channel_number.clone(),
+        signal_dbm: row.signal_dbm.clone(),
+        retry: row.retry.clone(),
+        more_data: row.more_data.clone(),
+        power_save: row.power_save.clone(),
+        protected: row.protected.clone(),
+        security_flags: row.security_flags.clone(),
+        app_protocol: row.app_protocol.clone(),
+        transport_protocol: row.transport_protocol.clone(),
+        dns_query_name: row.dns_query_name.clone(),
+        mdns_name: row.mdns_name.clone(),
+        dhcp_hostname: row.dhcp_hostname.clone(),
+        wps_device_name: row.wps_device_name.clone(),
+        wps_manufacturer: row.wps_manufacturer.clone(),
+        wps_model_name: row.wps_model_name.clone(),
+        device_fingerprint: row.device_fingerprint.clone(),
+        handshake_captured: row.handshake_captured.clone(),
+    }
+}
+
+fn event_row_to_input(row: &EventRow) -> EmbeddingInput {
     let mut lines = vec!["kind: event".to_string()];
     for field in EVENT_SEMANTIC_FIELDS {
-        append_value(&mut lines, field, row.get_field(field));
+        let value = if *field == "wps_device_name" {
+            row.wps_device_name.as_deref().map(normalize_wps_name)
+        } else {
+            row.get_field(field).map(|s| s.to_string())
+        };
+        append_value(&mut lines, field, value.as_deref());
     }
-    append_value(&mut lines, "ssid", row.ssid.as_deref());
     let text = lines.join("\n");
-
-    let input = EmbeddingInput {
+    EmbeddingInput {
         text,
         source_observed_at: row.observed_at,
-        source_stream_name: row.stream_name,
-        source_sensor_id: row.sensor_id,
-        source_location_id: row.location_id,
-        source_mac: row.source_mac,
-    };
-
-    Ok((input.text.clone(), input))
+        source_stream_name: row.stream_name.clone(),
+        source_sensor_id: row.sensor_id.clone(),
+        source_location_id: row.location_id.clone(),
+        source_mac: row.source_mac.clone(),
+    }
 }
 
 /// Intermediate row for event queries.
@@ -171,6 +338,7 @@ impl EventRow {
             "wps_device_name" => self.wps_device_name.as_deref(),
             "wps_manufacturer" => self.wps_manufacturer.as_deref(),
             "wps_model_name" => self.wps_model_name.as_deref(),
+            "ssid" => self.ssid.as_deref(),
             "device_fingerprint" => self.device_fingerprint.as_deref(),
             "handshake_captured" => self.handshake_captured.as_deref(),
             "protected" => self.protected.as_deref(),
@@ -195,7 +363,7 @@ const DEVICE_FIELDS: &[&str] = &[
     "hostname",
     "os_hint",
     "mac_hint",
-    "wg_pubkey",
+    // wg_pubkey intentionally excluded — no semantic value, leaks infra topology
     "first_seen",
     "last_seen",
 ];
@@ -208,15 +376,14 @@ struct DeviceRow {
     hostname: Option<String>,
     os_hint: Option<String>,
     mac_hint: Option<String>,
-    wg_pubkey: Option<String>,
     first_seen: Option<chrono::DateTime<chrono::Utc>>,
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-async fn build_device(pool: &PgPool, job: &EmbeddingJob) -> Result<(String, EmbeddingInput), WorkerError> {
+async fn build_device(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput, WorkerError> {
     let row = sqlx::query_as::<_, DeviceRow>(
         r#"
-        SELECT mac_id, display_name, username, hostname, os_hint, mac_hint, wg_pubkey, first_seen, last_seen
+        SELECT mac_id, display_name, username, hostname, os_hint, mac_hint, first_seen, last_seen
         FROM devices
         WHERE mac_id = $1
         "#,
@@ -227,40 +394,94 @@ async fn build_device(pool: &PgPool, job: &EmbeddingJob) -> Result<(String, Embe
     .map_err(|e| WorkerError::text_build(format!("device query failed: {e}")))?
     .ok_or_else(|| WorkerError::text_build(format!("device not found: {}", job.source_key)))?;
 
+    Ok(device_row_to_input(&row))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct DeviceBatchRow {
+    mac_id: String,
+    display_name: Option<String>,
+    username: Option<String>,
+    hostname: Option<String>,
+    os_hint: Option<String>,
+    mac_hint: Option<String>,
+    first_seen: Option<chrono::DateTime<chrono::Utc>>,
+    last_seen: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn build_devices_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, DeviceBatchRow>(
+        r#"
+        SELECT mac_id, display_name, username, hostname, os_hint, mac_hint, first_seen, last_seen
+        FROM devices
+        WHERE mac_id = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("device batch query failed: {e}")))?;
+
+    for row in rows {
+        let device_row = DeviceRow {
+            mac_id: Some(row.mac_id.clone()),
+            display_name: row.display_name,
+            username: row.username,
+            hostname: row.hostname,
+            os_hint: row.os_hint,
+            mac_hint: row.mac_hint,
+            first_seen: row.first_seen,
+            last_seen: row.last_seen,
+        };
+        out.insert(row.mac_id, device_row_to_input(&device_row));
+    }
+    Ok(())
+}
+
+fn device_row_to_input(row: &DeviceRow) -> EmbeddingInput {
     let mut lines = vec!["kind: device".to_string()];
     for field in DEVICE_FIELDS {
-        if let Some(val) = row.get_field(field) {
-            if !val.is_empty() {
-                lines.push(format!("{}: {}", field, val));
+        match *field {
+            "first_seen" | "last_seen" => {
+                let val = match *field {
+                    "first_seen" => row.first_seen.as_ref().map(|dt| dt.to_rfc3339()),
+                    "last_seen" => row.last_seen.as_ref().map(|dt| dt.to_rfc3339()),
+                    _ => unreachable!(),
+                };
+                if let Some(ref v) = val {
+                    if !v.is_empty() {
+                        lines.push(format!("{}: {}", field, v));
+                    }
+                }
             }
+            _ => append_value(&mut lines, field, row.get_field(field)),
         }
     }
     let text = lines.join("\n");
-
-    let input = EmbeddingInput {
+    EmbeddingInput {
         text,
         source_observed_at: row.last_seen,
         source_stream_name: None,
         source_sensor_id: None,
         source_location_id: None,
-        source_mac: row.mac_id,
-    };
-
-    Ok((input.text.clone(), input))
+        source_mac: row.mac_id.clone(),
+    }
 }
 
 impl DeviceRow {
-    fn get_field(&self, name: &str) -> Option<String> {
+    fn get_field(&self, name: &str) -> Option<&str> {
         match name {
-            "mac_id" => self.mac_id.clone(),
-            "display_name" => self.display_name.clone(),
-            "username" => self.username.clone(),
-            "hostname" => self.hostname.clone(),
-            "os_hint" => self.os_hint.clone(),
-            "mac_hint" => self.mac_hint.clone(),
-            "wg_pubkey" => self.wg_pubkey.clone(),
-            "first_seen" => self.first_seen.as_ref().map(|dt| dt.to_rfc3339()),
-            "last_seen" => self.last_seen.as_ref().map(|dt| dt.to_rfc3339()),
+            "mac_id" => self.mac_id.as_deref(),
+            "display_name" => self.display_name.as_deref(),
+            "username" => self.username.as_deref(),
+            "hostname" => self.hostname.as_deref(),
+            "os_hint" => self.os_hint.as_deref(),
+            "mac_hint" => self.mac_hint.as_deref(),
             _ => None,
         }
     }
@@ -295,6 +516,7 @@ struct BehaviourWindowRow {
     embedding_text: Option<String>,
     text_summary: Option<String>,
     window_start: Option<chrono::DateTime<chrono::Utc>>,
+    window_end: Option<chrono::DateTime<chrono::Utc>>,
     sensor_id: Option<String>,
     location_id: Option<String>,
     source_mac: Option<String>,
@@ -311,13 +533,14 @@ struct BehaviourWindowRow {
     mac_rotation_indicators: Option<serde_json::Value>,
 }
 
-async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<(String, EmbeddingInput), WorkerError> {
+async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput, WorkerError> {
     let row = sqlx::query_as::<_, BehaviourWindowRow>(
         r#"
         SELECT
             embedding_text,
             text_summary,
             window_start,
+            window_end,
             sensor_id,
             location_id,
             source_mac,
@@ -342,7 +565,96 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<(St
     .map_err(|e| WorkerError::text_build(format!("behaviour_window query failed: {e}")))?
     .ok_or_else(|| WorkerError::text_build(format!("behaviour_window not found: {}", job.source_key)))?;
 
-    // Prefer identity-stripped embedding_text; fall back to text_summary, then field-based construction.
+    Ok(behaviour_row_to_input(&row))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BehaviourBatchRow {
+    snapshot_key: String,
+    embedding_text: Option<String>,
+    text_summary: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    window_end: Option<chrono::DateTime<chrono::Utc>>,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    source_mac: Option<String>,
+    event_count: Option<i64>,
+    protocol_mix: Option<serde_json::Value>,
+    frame_type_distribution: Option<serde_json::Value>,
+    signal_min_dbm: Option<f64>,
+    signal_max_dbm: Option<f64>,
+    signal_avg_dbm: Option<f64>,
+    retry_count: Option<i64>,
+    protected_count: Option<i64>,
+    unprotected_count: Option<i64>,
+    unique_bssid_count: Option<i64>,
+    mac_rotation_indicators: Option<serde_json::Value>,
+}
+
+async fn build_behaviour_windows_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, BehaviourBatchRow>(
+        r#"
+        SELECT
+            snapshot_id::text AS snapshot_key,
+            embedding_text,
+            text_summary,
+            window_start,
+            window_end,
+            sensor_id,
+            location_id,
+            source_mac,
+            event_count,
+            protocol_mix,
+            frame_type_distribution,
+            signal_min_dbm,
+            signal_max_dbm,
+            signal_avg_dbm,
+            retry_count,
+            protected_count,
+            unprotected_count,
+            unique_bssid_count,
+            mac_rotation_indicators
+        FROM vec_behaviour_snapshots
+        WHERE snapshot_id::text = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("behaviour_window batch query failed: {e}")))?;
+
+    for row in rows {
+        let behaviour_row = BehaviourWindowRow {
+            embedding_text: row.embedding_text,
+            text_summary: row.text_summary,
+            window_start: row.window_start,
+            window_end: row.window_end,
+            sensor_id: row.sensor_id,
+            location_id: row.location_id,
+            source_mac: row.source_mac,
+            event_count: row.event_count,
+            protocol_mix: row.protocol_mix,
+            frame_type_distribution: row.frame_type_distribution,
+            signal_min_dbm: row.signal_min_dbm,
+            signal_max_dbm: row.signal_max_dbm,
+            signal_avg_dbm: row.signal_avg_dbm,
+            retry_count: row.retry_count,
+            protected_count: row.protected_count,
+            unprotected_count: row.unprotected_count,
+            unique_bssid_count: row.unique_bssid_count,
+            mac_rotation_indicators: row.mac_rotation_indicators,
+        };
+        out.insert(row.snapshot_key, behaviour_row_to_input(&behaviour_row));
+    }
+    Ok(())
+}
+
+fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
     let text = if let Some(ref et) = row.embedding_text {
         if !et.is_empty() {
             et.clone()
@@ -350,31 +662,29 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<(St
             if !ts.is_empty() {
                 ts.clone()
             } else {
-                build_snapshot_fallback(&row)
+                build_snapshot_fallback(row)
             }
         } else {
-            build_snapshot_fallback(&row)
+            build_snapshot_fallback(row)
         }
     } else if let Some(ref ts) = row.text_summary {
         if !ts.is_empty() {
             ts.clone()
         } else {
-            build_snapshot_fallback(&row)
+            build_snapshot_fallback(row)
         }
     } else {
-        build_snapshot_fallback(&row)
+        build_snapshot_fallback(row)
     };
 
-    let input = EmbeddingInput {
+    EmbeddingInput {
         text,
         source_observed_at: row.window_start,
         source_stream_name: None,
-        source_sensor_id: row.sensor_id,
-        source_location_id: row.location_id,
-        source_mac: row.source_mac,
-    };
-
-    Ok((input.text.clone(), input))
+        source_sensor_id: row.sensor_id.clone(),
+        source_location_id: row.location_id.clone(),
+        source_mac: row.source_mac.clone(),
+    }
 }
 
 /// Build a fallback text from individual snapshot fields when no pre-built text exists.
@@ -386,7 +696,7 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
             "location_id" => row.location_id.clone(),
             "sensor_id" => row.sensor_id.clone(),
             "window_start" => row.window_start.as_ref().map(|dt| dt.to_rfc3339()),
-            "window_end" => None,
+            "window_end" => row.window_end.as_ref().map(|dt| dt.to_rfc3339()),
             "event_count" => row.event_count.map(|v| v.to_string()),
             "protocol_mix" => row.protocol_mix.as_ref().map(normalize_json),
             "frame_type_distribution" => row.frame_type_distribution.as_ref().map(normalize_json),
@@ -413,12 +723,60 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Append a `"field: value"` line if the value is non-empty.
+/// Append a `"field: value"` line if the value is non-empty and semantically meaningful.
 fn append_value(lines: &mut Vec<String>, field: &str, value: Option<&str>) {
     match value {
-        Some(v) if !v.is_empty() => lines.push(format!("{}: {}", field, v)),
+        Some(v) if !is_empty_value(v) => lines.push(format!("{}: {}", field, v)),
         _ => {}
     }
+}
+
+/// Returns `true` for values that carry no semantic signal for an embedding model.
+///
+/// These are boolean-false, zero-integer, and null-like tokens that would add noise
+/// if included in the text representation.
+fn is_empty_value(v: &str) -> bool {
+    matches!(
+        v.to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "none" | "null" | "unknown"
+    )
+}
+
+/// Normalise a WPS device name for embedding: strip screen-size prefixes,
+/// lowercase, and remove brand/trailing suffixes.
+///
+/// This groups similar devices (e.g. `60" Hisense Roku TV` and `55" Hisense Roku TV`)
+/// into the same vector-space region.
+fn normalize_wps_name(name: &str) -> String {
+    let mut s = name.to_lowercase();
+
+    // Strip leading screen-size patterns like `60"`, `55"`, `65 inch`, etc.
+    // Find the first non-digit character to get the full number prefix.
+    let digit_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    if digit_end > 0 {
+        let rest = &s[digit_end..];
+        if rest.starts_with('"') || rest.starts_with('\'') {
+            s = rest[1..].trim().to_string();
+        } else if rest.starts_with(" inch") || rest.starts_with("-inch") {
+            s = rest[5..].trim().to_string();
+        }
+    }
+
+    // Strip trailing brand/type suffixes (case-insensitive already due to lowercasing)
+    let suffixes = [
+        " tv", " smart tv", " roku tv", " android tv", " led tv", " lcd tv",
+        " 4k tv", " hd tv", " full hd tv", " uhd tv",
+        " television", " smart television",
+        " monitor", " display",
+    ];
+    for suffix in &suffixes {
+        if s.ends_with(suffix) {
+            s = s[..s.len() - suffix.len()].trim().to_string();
+            break;
+        }
+    }
+
+    s
 }
 
 /// Normalise a JSON value for text output, matching the Ruby `normalize_json`.
@@ -462,5 +820,47 @@ mod tests {
         let a_pos = result.find(r#""a":2"#).expect("key 'a:2' not found");
         let z_pos = result.find(r#""z":1"#).expect("key 'z:1' not found");
         assert!(a_pos < z_pos, "keys should be sorted: 'a' before 'z'");
+    }
+
+    #[test]
+    fn is_empty_value_filters_noise() {
+        assert!(is_empty_value(""));
+        assert!(is_empty_value("0"));
+        assert!(is_empty_value("false"));
+        assert!(is_empty_value("FALSE"));
+        assert!(is_empty_value("None"));
+        assert!(is_empty_value("null"));
+        assert!(is_empty_value("unknown"));
+        assert!(!is_empty_value("beacon"));
+        assert!(!is_empty_value("management"));
+        assert!(!is_empty_value("-79"));
+        assert!(!is_empty_value("my-network"));
+    }
+
+    #[test]
+    fn append_value_skips_empty_values() {
+        let mut lines = vec!["kind: event".to_string()];
+        append_value(&mut lines, "security_flags", Some("0"));
+        append_value(&mut lines, "protected", Some("false"));
+        append_value(&mut lines, "channel_number", Some("6"));
+        append_value(&mut lines, "signal_dbm", Some("-79"));
+        assert_eq!(lines, vec!["kind: event", "channel_number: 6", "signal_dbm: -79"]);
+    }
+
+    #[test]
+    fn normalize_wps_name_strips_screen_size() {
+        assert_eq!(normalize_wps_name(r#"60" Hisense Roku TV"#), "hisense roku");
+        assert_eq!(normalize_wps_name(r#"55" Samsung Smart TV"#), "samsung smart");
+        assert_eq!(normalize_wps_name("65 inch LG TV"), "lg");
+        assert_eq!(normalize_wps_name("Apple TV"), "apple");
+        // "null" is preserved by normalize but filtered by is_empty_value
+        assert_eq!(normalize_wps_name("null"), "null");
+    }
+
+    #[test]
+    fn normalize_wps_name_lowercases_no_op() {
+        // A name that's already clean should remain unchanged (minus lowercasing)
+        assert_eq!(normalize_wps_name("Google Chromecast"), "google chromecast");
+        assert_eq!(normalize_wps_name("Amazon Fire Stick"), "amazon fire stick");
     }
 }

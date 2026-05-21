@@ -41,6 +41,22 @@ pub(crate) struct RunConfig {
     pub(crate) oracle_statement_timeout_secs: u64,
 }
 
+fn non_zero_u64(value: u64, default: u64) -> u64 {
+    if value == 0 {
+        default
+    } else {
+        value
+    }
+}
+
+fn non_zero_usize(value: usize, default: usize) -> usize {
+    if value == 0 {
+        default
+    } else {
+        value
+    }
+}
+
 impl RunConfig {
     pub(crate) fn load() -> Result<Self, String> {
         Ok(Self {
@@ -53,13 +69,22 @@ impl RunConfig {
                 "ORACLE_WORKER_PARALLELISM",
                 DEFAULT_ORACLE_WORKER_PARALLELISM,
             ),
-            window_duration_secs: env_or_default("ORACLE_WINDOW_DURATION_SECS", "15")
-                .parse()
-                .unwrap_or(15),
-            window_max_messages: env_or_default_usize("ORACLE_WINDOW_MAX_MESSAGES", 200),
-            oracle_statement_timeout_secs: env_or_default("ORACLE_STATEMENT_TIMEOUT_SECS", "30")
-                .parse()
-                .unwrap_or(30),
+            window_duration_secs: non_zero_u64(
+                env_or_default("ORACLE_WINDOW_DURATION_SECS", "15")
+                    .parse()
+                    .unwrap_or(15),
+                15,
+            ),
+            window_max_messages: non_zero_usize(
+                env_or_default_usize("ORACLE_WINDOW_MAX_MESSAGES", 200),
+                200,
+            ),
+            oracle_statement_timeout_secs: non_zero_u64(
+                env_or_default("ORACLE_STATEMENT_TIMEOUT_SECS", "30")
+                    .parse()
+                    .unwrap_or(30),
+                30,
+            ),
         })
     }
 }

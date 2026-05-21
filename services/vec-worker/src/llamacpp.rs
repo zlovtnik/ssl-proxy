@@ -12,7 +12,7 @@
 use crate::WorkerError;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // Client
@@ -95,7 +95,7 @@ struct EmbedResponse {
 /// # Errors
 ///
 /// * `WorkerError::Http` if the HTTP request or response parsing fails.
-/// * `WorkerError::DimensionMismatch` if the response contains a different
+/// * `WorkerError::ResponseCountMismatch` if the response contains a different
 ///   number of embeddings than the number of input texts.
 ///
 /// # Logging
@@ -104,6 +104,25 @@ struct EmbedResponse {
 /// * `INFO`  — completion with elapsed milliseconds
 /// * `DEBUG` — response embedding count
 pub async fn embed_many(
+    client: &LlamaCppClient,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, WorkerError> {
+    let mut last_err = None;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            warn!("llamacpp embed_many retry after error, waiting 2 seconds");
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        match try_embed_many(client, texts).await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+/// Internal embed_many implementation without retry logic.
+async fn try_embed_many(
     client: &LlamaCppClient,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, WorkerError> {
@@ -134,16 +153,40 @@ pub async fn embed_many(
     let elapsed_ms = start.elapsed().as_millis() as u64;
     info!(elapsed_ms, "llamacpp embed_many completed");
 
+    let response = response.error_for_status()?;
     let embed_resp: EmbedResponse = response.json().await?; // WorkerError::Http
 
     let count = embed_resp.data.len();
     debug!(embedding_count = count, "llamacpp embed_many response");
 
     if count != input_count {
-        return Err(WorkerError::DimensionMismatch {
+        return Err(WorkerError::ResponseCountMismatch {
             expected: input_count,
             actual: count,
         });
+    }
+
+    let mut seen = vec![false; input_count];
+    for datum in &embed_resp.data {
+        if datum.index >= input_count {
+            return Err(WorkerError::EmbeddingIndex(format!(
+                "embedding index {} is out of range for {} inputs",
+                datum.index, input_count
+            )));
+        }
+        if seen[datum.index] {
+            return Err(WorkerError::EmbeddingIndex(format!(
+                "duplicate embedding index {}",
+                datum.index
+            )));
+        }
+        seen[datum.index] = true;
+    }
+    if seen.iter().any(|present| !*present) {
+        return Err(WorkerError::EmbeddingIndex(format!(
+            "embedding response missing one or more indices in 0..{}",
+            input_count
+        )));
     }
 
     // Sort by index to ensure we return embeddings in input order

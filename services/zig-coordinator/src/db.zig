@@ -2,7 +2,6 @@ const std = @import("std");
 const command = @import("command.zig");
 
 const INLINE_SQL_ARG_LIMIT = 96 * 1024;
-var sql_file_counter = std.atomic.Value(u64).init(0);
 
 pub const Error = error{
     OutOfMemory,
@@ -100,18 +99,26 @@ pub const Client = struct {
             return self.runScalar(&argv, command_name, on_error, log_output);
         }
 
-        const counter = sql_file_counter.fetchAdd(1, .monotonic);
-        const now_ns = std.Io.Timestamp.now(self.io, .awake).toNanoseconds();
+        var random_bytes: [16]u8 = undefined;
+        const seed: u64 = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(self.io, .awake).toNanoseconds())));
+        var prng = std.Random.DefaultPrng.init(seed);
+        prng.random().bytes(&random_bytes);
+        const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
         const sql_path = try std.fmt.allocPrint(
             self.allocator,
-            "/tmp/zig-coordinator-query-{d}-{d}.sql",
-            .{ now_ns, counter },
+            "/tmp/zig-coordinator-query-{s}.sql",
+            .{&random_hex},
         );
         defer self.allocator.free(sql_path);
 
-        std.Io.Dir.writeFile(.cwd(), self.io, .{ .sub_path = sql_path, .data = query }) catch {
-            return on_error;
-        };
+        var atomic_file = std.Io.Dir.cwd().createFileAtomic(self.io, sql_path, .{
+            .replace = true,
+            .permissions = .fromMode(0o600),
+        }) catch return on_error;
+        defer atomic_file.deinit(self.io);
+
+        atomic_file.file.writeStreamingAll(self.io, query) catch return on_error;
+        atomic_file.replace(self.io) catch return on_error;
         defer std.Io.Dir.deleteFile(.cwd(), self.io, sql_path) catch {};
 
         const argv = [_][]const u8{

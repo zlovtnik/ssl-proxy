@@ -40,21 +40,32 @@ pub const AUTHORIZED_NETWORKS_CONFIG_TOPIC: &str = "wireless.config.authorized_n
 pub const SENSOR_CONFIG_TOPIC: &str = "wireless.config.sensor";
 const REDPANDA_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn redpanda_security_protocol_uses_tls(config: &SyncConfig) -> bool {
+    config.security_protocol.as_deref().is_some_and(|protocol| {
+        protocol.to_ascii_uppercase().contains("SSL")
+    })
+}
+
 pub fn supports_config_subscriber_transport(config: &SyncConfig) -> bool {
-    config
-        .redpanda_bootstrap_servers
-        .as_deref()
-        .is_some_and(|redpanda_bootstrap_servers| {
-            let trimmed = redpanda_bootstrap_servers.trim();
-            !trimmed.starts_with("tls://") && inline_request_reply_transport_supported(trimmed)
-        })
+    let Some(redpanda_bootstrap_servers) = config.redpanda_bootstrap_servers.as_deref() else {
+        return false;
+    };
+    let trimmed = redpanda_bootstrap_servers.trim();
+    trimmed.starts_with("redpanda://")
+        && !redpanda_security_protocol_uses_tls(config)
+        && inline_request_reply_transport_supported(trimmed)
 }
 
 pub fn config_subscriber_disabled_reason(config: &SyncConfig) -> Option<String> {
     let redpanda_bootstrap_servers = config.redpanda_bootstrap_servers.as_deref()?;
     let trimmed = redpanda_bootstrap_servers.trim();
-    if trimmed.starts_with("tls://") {
+    if !trimmed.starts_with("redpanda://") {
         return Some("config subscribers support plain redpanda:// endpoints only".to_string());
+    }
+    if redpanda_security_protocol_uses_tls(config) {
+        return Some(
+            "config subscribers do not support SSL-enabled Redpanda security protocols".to_string(),
+        );
     }
     (!inline_request_reply_transport_supported(trimmed)).then(|| {
         format!(
