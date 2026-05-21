@@ -24,9 +24,7 @@
 -- 1. Add completion index
 -- -------------------------------------------------------------------
 
-drop index if exists vec_embedding_jobs_completion_idx;
-
-create index if not exists vec_embedding_jobs_completion_idx
+create index if not exists vec_embedding_jobs_completion_idx_v2
   on vec_embedding_jobs (job_id, lease_token)
   where status in ('pending', 'leased', 'failed');
 
@@ -113,17 +111,37 @@ begin
          locked_by = null,
          last_error = null,
          updated_at = now()
-    from (
+    from payload_rows r
+   where j.job_id = r.job_id
+     and j.lease_token is not distinct from r.lease_token;
+
+  with payload_rows as (
       select r.job_id, r.lease_token, r.content_sha256
         from jsonb_to_recordset(p_payload) as r(
           job_id bigint,
           lease_token text,
           content_sha256 text
         )
-       order by r.job_id asc
-    ) r
-   where j.job_id = r.job_id
-     and j.lease_token is not distinct from r.lease_token;
+  ),
+  locked as (
+      select j.job_id, p.lease_token, p.content_sha256
+        from vec_embedding_jobs j
+        join payload_rows p using (job_id)
+       where j.lease_token is not distinct from p.lease_token
+       order by j.job_id asc
+       for update
+  )
+  update vec_embedding_jobs j
+     set status = 'completed',
+         completed_at = now(),
+         lease_token = null,
+         leased_at = null,
+         locked_by = null,
+         last_error = null,
+         updated_at = now()
+    from locked l
+   where j.job_id = l.job_id
+     and j.lease_token is not distinct from l.lease_token;
 
   get diagnostics v_count = row_count;
   return v_count;

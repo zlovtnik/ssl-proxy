@@ -440,7 +440,7 @@ If replicas contend on leases but the queue stays deep, increase `VECTOR_EMBEDDI
 
 ## External dependencies: PSQL cron jobs
 
-The vec-worker is a **consumer** of embedding jobs — it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `services/zig-coordinator/schema/postgres.sql` (lines 2004–2045). `pg_cron` must be installed and the `cron` schema available.
+The vec-worker is a **consumer** of embedding jobs - it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `services/zig-coordinator/schema/postgres.sql` (lines 2004-2045). `pg_cron` must be installed and the `cron` schema available.
 
 Without these cron jobs the worker would run forever, lease nothing, and produce zero output.
 
@@ -448,21 +448,21 @@ Without these cron jobs the worker would run forever, lease nothing, and produce
 
 | # | Name | Schedule | Function | Produces | Consumed by worker |
 |---|------|----------|----------|----------|--------------------|
-| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_scan_ingest` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` → inserts/updates `pending` rows into `vec_embedding_jobs` | Yes — this is the sole source of work items |
-| 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes — the worker reads `embedding_text` / `text_summary` from this table |
-| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search → `vec_similarity_pairs`, marks dedupe suspects on `sync_scan_ingest`, creates shadow IT alerts | No — consumes worker output |
-| 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping — the worker also does this internally every 10 iterations |
-| 5 | `vec-reap-stale-workers` | `*/5 * * * *` (every 5 min) | `vec_reap_stale_workers()` | Marks dead worker heartbeats in `vec_worker_state` as `stale` | No — observability only |
+| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_scan_ingest` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` -> inserts/updates `pending` rows into `vec_embedding_jobs` | Yes - this is the sole source of work items |
+| 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes - the worker reads `embedding_text` / `text_summary` from this table |
+| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search -> `vec_similarity_pairs`, marks dedupe suspects on `sync_scan_ingest`, creates shadow IT alerts | No - consumes worker output |
+| 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping - the worker also does this internally every 10 iterations |
+| 5 | `vec-reap-stale-workers` | `*/5 * * * *` (every 5 min) | `vec_reap_stale_workers()` | Marks dead worker heartbeats in `vec_worker_state` as `stale` | No - observability only |
 
 Jobs #1, #2, and #4 are directly required for the worker to function. If any of them stop running, the embedding pipeline stalls:
 
-- **#1 missing** → `vec_embedding_jobs` stays empty → worker leases nothing
-- **#2 missing** → behaviour window jobs fail because `vec_behaviour_snapshots` rows are never created
-- **#4 missing** → jobs orphaned by a crashed worker are never reclaimed, causing permanent queue stalls
+- **#1 missing** -> `vec_embedding_jobs` stays empty -> worker leases nothing
+- **#2 missing** -> behaviour window jobs fail because `vec_behaviour_snapshots` rows are never created
+- **#4 missing** -> jobs orphaned by a crashed worker are never reclaimed, causing permanent queue stalls
 
 ### Re-embedding on text builder changes
 
-Migration `V021__vec_reembed_jobs_function.sql` adds `vec_reembed_changed_jobs(p_limit)` — a helper function that re-queues embedding jobs for rows whose stored `content_sha256` no longer matches the SHA-256 of `content_text`. It is **not** scheduled by cron; it is an on-demand function to be called manually (or via a one-shot job) after text builder changes are deployed:
+Migration `V021__vec_reembed_jobs_function.sql` adds `vec_reembed_changed_jobs(p_limit)` - a helper function that re-queues embedding jobs for rows whose stored `content_sha256` no longer matches the SHA-256 of `content_text`. It is **not** scheduled by cron; it is an on-demand function to be called manually (or via a one-shot job) after text builder changes are deployed:
 
 ```sql
 SELECT vec_reembed_changed_jobs(p_limit => 1000);
@@ -470,8 +470,8 @@ SELECT vec_reembed_changed_jobs(p_limit => 1000);
 
 ### Where the cron definitions live
 
-```
-services/zig-coordinator/schema/postgres.sql  →  vec_install_cron_jobs()  (end of file)
+```text
+services/zig-coordinator/schema/postgres.sql  ->  vec_install_cron_jobs()  (end of file)
 ```
 
 The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_snapshots`, `vec_materialize_similarity_pairs`, `vec_release_expired_leases`, `vec_reap_stale_workers`) are defined in the same file, lines 1175–2002.

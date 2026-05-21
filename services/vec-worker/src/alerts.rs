@@ -80,7 +80,7 @@ pub async fn check_near_duplicates(
 
     let mut inserted = 0usize;
     for row in &rows {
-        let mac = row.source_mac.as_deref().unwrap_or("unknown");
+        let mac = row.source_mac.as_deref();
         let meta = serde_json::json!(NearDuplicateMeta {
             near_duplicate_pairs: row.near_duplicate_pairs.unwrap_or(0),
             min_distance: row.min_distance.unwrap_or(1.0),

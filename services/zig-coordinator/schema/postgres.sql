@@ -1476,6 +1476,7 @@ as $$
 declare
   v_limit integer := greatest(p_limit, 1);
   v_count integer;
+  remaining_limit integer;
 begin
   -- Branch A: pending & failed jobs that are due for retry.
   -- Uses pending_idx which pre-filters on status, attempts < max_attempts, due_at <= now().
@@ -1507,6 +1508,11 @@ begin
     return;
   end if;
 
+  remaining_limit := greatest(0, p_limit - v_count);
+  if remaining_limit <= 0 then
+    return;
+  end if;
+
   -- Branch B: expired leases (worker died mid-batch).
   -- Uses lease_idx which pre-filters on status = 'leased' and attempts < max_attempts.
   return query
@@ -1519,7 +1525,7 @@ begin
       and due_at <= now()
     order by leased_at asc, priority asc, job_id asc
     for update skip locked
-    limit v_limit
+    limit remaining_limit
   )
   update vec_embedding_jobs job
      set status = 'leased',

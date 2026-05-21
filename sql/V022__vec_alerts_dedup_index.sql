@@ -1,0 +1,12 @@
+-- V022: Add composite index for vec_alerts near-duplicate dedupe predicate
+--
+-- check_near_duplicates filters by alert_type, source_mac, and recent
+-- created_at. A single composite index serves that predicate more efficiently
+-- than the three separate indexes added in V020.
+--
+-- The existing indexes (idx_vec_alerts_type_created, idx_vec_alerts_mac,
+-- idx_vec_alerts_created) are left in place since they may serve other
+-- query patterns.
+
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_mac_created
+    ON vec_alerts (alert_type, source_mac, created_at DESC);

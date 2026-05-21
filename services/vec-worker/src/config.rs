@@ -338,7 +338,7 @@ fn redact_url(url: &str) -> String {
     };
     let rest = &url[scheme_end + 3..];
     if let Some(at_pos) = rest.find('@') {
-        format!("{}://****{}", &url[..scheme_end + 3], &rest[at_pos..])
+        format!("{}****{}", &url[..scheme_end + 3], &rest[at_pos..])
     } else {
         url.to_string()
     }
