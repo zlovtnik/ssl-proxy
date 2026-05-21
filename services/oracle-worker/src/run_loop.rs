@@ -1,20 +1,24 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use futures::FutureExt;
 use r2d2::Pool;
 use r2d2_oracle::OracleConnectionManager;
 use rdkafka::{
     consumer::{CommitMode, Consumer, StreamConsumer},
     producer::{FutureProducer, FutureRecord},
-    ClientConfig, Message,
+    ClientConfig, Offset, TopicPartitionList,
 };
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use crate::config::RunConfig;
 use crate::healthcheck::healthcheck;
-use crate::log::{escape_for_log, log_poison_message};
+use crate::log::escape_for_log;
+use crate::window::{self, CollectedMessage, CommitTarget};
 use crate::{worker, HEARTBEAT_INTERVAL_SECS, SERVICE_NAME};
 
 pub(crate) async fn run_loop(
@@ -22,44 +26,80 @@ pub(crate) async fn run_loop(
     pool: Arc<Pool<OracleConnectionManager>>,
     started: Instant,
 ) -> Result<(), String> {
-    let consumer = build_consumer(&config)?;
+    let consumer = Arc::new(build_consumer(&config)?);
     consumer
         .subscribe(&[config.load_topic.as_str()])
         .map_err(|error| format!("subscribe to {}: {error}", config.load_topic))?;
     let producer = Arc::new(build_producer(&config)?);
 
     let semaphore = Arc::new(Semaphore::new(config.oracle_worker_parallelism));
+    let mut commit_tracker = OrderedCommitTracker::default();
     let mut last_heartbeat = Instant::now();
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    heartbeat.tick().await;
+    let mut window_no = 0u64;
 
     let shutdown = wait_for_shutdown_signal();
     tokio::pin!(shutdown);
 
     loop {
-        tokio::select! {
-            signal = &mut shutdown => {
-                let signal = signal?;
-                println!("service={SERVICE_NAME} event=signal_received signal={signal}");
-                break;
-            }
-            _ = heartbeat.tick() => {
-                emit_heartbeat(started, &mut last_heartbeat, &pool).await?;
-            }
-            next_message = consumer.recv() => {
-                let message = next_message.map_err(|error| format!("consume {} message: {error}", config.load_topic))?;
-                let permit = semaphore.clone().acquire_owned().await
-                    .map_err(|error| format!("acquire semaphore permit: {error}"))?;
-                let config = config.clone();
-                let pool = pool.clone();
-                let producer = producer.clone();
+        if let Some(signal) = shutdown.as_mut().now_or_never() {
+            let signal = signal?;
+            println!("service={SERVICE_NAME} event=signal_received signal={signal}");
+            break;
+        }
 
-                if let Err(e) = handle_load_message(&producer, &config, &pool, &consumer, message).await {
-                    eprintln!("service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"", escape_for_log(&e));
-                }
-                drop(permit);
+        let window_start = Instant::now();
+        window_no = window_no
+            .checked_add(1)
+            .ok_or_else(|| "window counter overflow".to_string())?;
+
+        let window_budget = Duration::from_secs(config.window_duration_secs);
+        let (messages, summary) =
+            window::collect(&consumer, config.window_max_messages, window_budget).await;
+        println!(
+            "service={SERVICE_NAME} event=window_collected window_no={window_no} count={} poison={} collect_ms={}",
+            summary.collected, summary.poison, summary.elapsed_collect_ms
+        );
+
+        if !messages.is_empty() {
+            let mut join_set = JoinSet::new();
+            for message in messages {
+                process_collected_message(
+                    message,
+                    &consumer,
+                    &mut commit_tracker,
+                    &mut join_set,
+                    &semaphore,
+                    &producer,
+                    &config,
+                    &pool,
+                )
+                .await?;
             }
+
+            while let Some(task) = join_set.join_next().await {
+                process_task_result(Some(task), &consumer, &mut commit_tracker)?;
+            }
+        }
+
+        log_window_complete(
+            window_no,
+            window_start.elapsed().as_millis(),
+            window_budget,
+            window_start
+                .checked_add(window_budget)
+                .unwrap_or(window_start)
+                .saturating_duration_since(Instant::now())
+                .as_millis(),
+            summary.collected,
+        );
+
+        let sleep_target = window_start
+            .checked_add(window_budget)
+            .unwrap_or(window_start);
+        tokio::time::sleep_until(tokio::time::Instant::from_std(sleep_target)).await;
+
+        if last_heartbeat.elapsed() >= Duration::from_secs(HEARTBEAT_INTERVAL_SECS) {
+            emit_heartbeat(started, &mut last_heartbeat, &pool).await?;
         }
     }
 
@@ -68,6 +108,131 @@ pub(crate) async fn run_loop(
         started.elapsed().as_secs()
     );
     Ok(())
+}
+
+async fn process_collected_message(
+    message: CollectedMessage,
+    consumer: &StreamConsumer,
+    commit_tracker: &mut OrderedCommitTracker,
+    join_set: &mut JoinSet<Result<CompletedLoad, String>>,
+    semaphore: &Arc<Semaphore>,
+    producer: &Arc<FutureProducer>,
+    config: &Arc<RunConfig>,
+    pool: &Arc<Pool<OracleConnectionManager>>,
+) -> Result<(), String> {
+    let CollectedMessage {
+        commit_target,
+        load,
+        payload_bytes,
+    } = message;
+
+    let load = match load {
+        Ok(load) => load,
+        Err(error) => {
+            log_collected_poison_message(&commit_target, payload_bytes, &error);
+            commit_completed_offset(
+                consumer,
+                commit_tracker,
+                CompletedLoad {
+                    batch_id: "poison-message".to_string(),
+                    commit_target,
+                },
+            )?;
+            return Ok(());
+        }
+    };
+
+    commit_tracker.mark_started(&commit_target);
+    let permit = semaphore
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| format!("acquire semaphore permit: {error}"))?;
+    println!(
+        "service={SERVICE_NAME} event=batch_received batch_id={} batch_no={} stream_name={} payload_ref={} cursor_start={} cursor_end={} attempt={} payload_bytes={}",
+        load.batch_id,
+        load.batch_no,
+        load.stream_name,
+        load.payload_ref,
+        load.cursor_start,
+        load.cursor_end,
+        load.attempt,
+        payload_bytes,
+    );
+
+    let config = Arc::clone(config);
+    let pool = Arc::clone(pool);
+    let producer = Arc::clone(producer);
+
+    join_set.spawn(async move {
+        let _permit = permit;
+        handle_load_message(&producer, &config, &pool, load, commit_target).await
+    });
+    Ok(())
+}
+
+fn log_collected_poison_message(
+    commit_target: &CommitTarget,
+    payload_bytes: usize,
+    error: &serde_json::Error,
+) {
+    let topic = escape_for_log(&commit_target.topic);
+    let error = escape_for_log(&format!("deserialize OracleLoad payload: {error}"));
+    eprintln!(
+        "service={SERVICE_NAME} event=worker_load status=error classification=poison topic={topic} partition={} offset={} payload_bytes={} error=\"{}\"",
+        commit_target.partition,
+        commit_target.offset,
+        payload_bytes,
+        error,
+    );
+}
+
+fn log_window_complete(
+    window_no: u64,
+    processing_ms: u128,
+    window_budget: Duration,
+    sleeping_ms: u128,
+    collected: usize,
+) {
+    let lines = window_complete_log_lines(
+        window_no,
+        processing_ms,
+        window_budget,
+        sleeping_ms,
+        collected,
+    );
+    if let Some(overrun) = lines.overrun {
+        eprintln!("{overrun}");
+    }
+    println!("{}", lines.complete);
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct WindowCompleteLogLines {
+    overrun: Option<String>,
+    complete: String,
+}
+
+fn window_complete_log_lines(
+    window_no: u64,
+    processing_ms: u128,
+    window_budget: Duration,
+    sleeping_ms: u128,
+    collected: usize,
+) -> WindowCompleteLogLines {
+    let window_budget_ms = window_budget.as_millis();
+    let overrun = if processing_ms > window_budget_ms {
+        Some(format!(
+            "service={SERVICE_NAME} event=window_overrun window_no={window_no} processing_ms={processing_ms} over_budget_ms={}",
+            processing_ms - window_budget_ms
+        ))
+    } else {
+        None
+    };
+    let complete = format!(
+        "service={SERVICE_NAME} event=window_complete window_no={window_no} processing_ms={processing_ms} sleeping_ms={sleeping_ms} collected={collected}"
+    );
+    WindowCompleteLogLines { overrun, complete }
 }
 
 async fn emit_heartbeat(
@@ -94,53 +259,34 @@ async fn emit_heartbeat(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct CompletedLoad {
+    batch_id: String,
+    commit_target: CommitTarget,
+}
+
 async fn handle_load_message(
     producer: &FutureProducer,
     config: &Arc<RunConfig>,
     pool: &Arc<Pool<OracleConnectionManager>>,
-    consumer: &StreamConsumer,
-    message: rdkafka::message::BorrowedMessage<'_>,
-) -> Result<(), String> {
-    let payload = message.payload().unwrap_or_default();
-    let load = match serde_json::from_slice::<worker::OracleLoad>(payload) {
-        Ok(load) => load,
-        Err(error) => {
-            log_poison_message(&message, &error);
-            consumer
-                .commit_message(&message, CommitMode::Async)
-                .map_err(|ack_error| format!("commit poison message: {ack_error}"))?;
-            return Ok(());
-        }
-    };
-
-    println!(
-        "service={SERVICE_NAME} event=batch_received batch_id={} batch_no={} stream_name={} payload_ref={} cursor_start={} cursor_end={} attempt={} payload_bytes={}",
-        load.batch_id,
-        load.batch_no,
-        load.stream_name,
-        load.payload_ref,
-        load.cursor_start,
-        load.cursor_end,
-        load.attempt,
-        payload.len(),
-    );
-
+    load: worker::OracleLoad,
+    commit_target: CommitTarget,
+) -> Result<CompletedLoad, String> {
     let batch_started = Instant::now();
     let pool = Arc::clone(pool);
     let result = tokio::task::spawn_blocking(move || worker::handle_load_with_pool(load, &pool))
         .await
         .map_err(|error| format!("oracle load task panicked: {error}"))?;
-    publish_result(producer, config, consumer, &message, result, batch_started).await
+    publish_result(producer, config, commit_target, result, batch_started).await
 }
 
 async fn publish_result(
     producer: &FutureProducer,
     config: &RunConfig,
-    consumer: &StreamConsumer,
-    message: &rdkafka::message::BorrowedMessage<'_>,
+    commit_target: CommitTarget,
     result: worker::OracleResult,
     batch_started: Instant,
-) -> Result<(), String> {
+) -> Result<CompletedLoad, String> {
     let batch_id = result.batch_id.clone();
     let status = result.status.clone();
     let batch_duration_ms = batch_started.elapsed().as_millis();
@@ -156,10 +302,148 @@ async fn publish_result(
         )
         .await
         .map_err(|(error, _)| format!("publish result for batch {batch_id}: {error}"))?;
-    consumer
-        .commit_message(message, CommitMode::Async)
-        .map_err(|error| format!("commit load message for batch {batch_id}: {error}"))?;
     log_result(&batch_id, &status, row_count, batch_duration_ms, &result);
+    if status != "success" {
+        return Err(format!(
+            "oracle load failed for batch {batch_id}; result_status={status}; offset not committed"
+        ));
+    }
+    Ok(CompletedLoad {
+        batch_id,
+        commit_target,
+    })
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PartitionKey {
+    topic: String,
+    partition: i32,
+}
+
+#[derive(Debug)]
+struct PartitionCommitState {
+    next_uncommitted_offset: i64,
+    completed_offsets: BTreeSet<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CommitReady {
+    topic: String,
+    partition: i32,
+    next_offset: i64,
+}
+
+#[derive(Debug, Default)]
+struct OrderedCommitTracker {
+    partitions: BTreeMap<PartitionKey, PartitionCommitState>,
+}
+
+impl OrderedCommitTracker {
+    fn mark_started(&mut self, target: &CommitTarget) {
+        self.partitions
+            .entry(target.partition_key())
+            .or_insert_with(|| PartitionCommitState {
+                next_uncommitted_offset: target.offset,
+                completed_offsets: BTreeSet::new(),
+            });
+    }
+
+    fn mark_completed(&mut self, target: &CommitTarget) -> Result<Option<CommitReady>, String> {
+        let key = target.partition_key();
+        let state = self
+            .partitions
+            .entry(key.clone())
+            .or_insert_with(|| PartitionCommitState {
+                next_uncommitted_offset: target.offset,
+                completed_offsets: BTreeSet::new(),
+            });
+
+        if target.offset < state.next_uncommitted_offset {
+            return Ok(None);
+        }
+
+        state.completed_offsets.insert(target.offset);
+        let mut advanced = false;
+        while state
+            .completed_offsets
+            .remove(&state.next_uncommitted_offset)
+        {
+            state.next_uncommitted_offset = state
+                .next_uncommitted_offset
+                .checked_add(1)
+                .ok_or_else(|| {
+                    format!(
+                        "commit offset overflow for topic {} partition {}",
+                        key.topic, key.partition
+                    )
+                })?;
+            advanced = true;
+        }
+
+        if advanced {
+            Ok(Some(CommitReady {
+                topic: key.topic,
+                partition: key.partition,
+                next_offset: state.next_uncommitted_offset,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+fn commit_completed_offset(
+    consumer: &StreamConsumer,
+    commit_tracker: &mut OrderedCommitTracker,
+    completed: CompletedLoad,
+) -> Result<(), String> {
+    if let Some(commit_ready) = commit_tracker.mark_completed(&completed.commit_target)? {
+        commit_load_offset(consumer, &commit_ready, &completed.batch_id)?;
+    }
+    Ok(())
+}
+
+fn commit_load_offset(
+    consumer: &StreamConsumer,
+    target: &CommitReady,
+    batch_id: &str,
+) -> Result<(), String> {
+    let mut offsets = TopicPartitionList::new();
+    offsets
+        .add_partition_offset(
+            &target.topic,
+            target.partition,
+            Offset::Offset(target.next_offset),
+        )
+        .map_err(|error| format!("build commit offset for batch {batch_id}: {error}"))?;
+    consumer
+        .commit(&offsets, CommitMode::Async)
+        .map_err(|error| format!("commit load message for batch {batch_id}: {error}"))
+}
+
+fn process_task_result(
+    task: Option<Result<Result<CompletedLoad, String>, tokio::task::JoinError>>,
+    consumer: &StreamConsumer,
+    commit_tracker: &mut OrderedCommitTracker,
+) -> Result<(), String> {
+    match task {
+        Some(Ok(Ok(completed))) => {
+            commit_completed_offset(consumer, commit_tracker, completed)?;
+        }
+        None => {}
+        Some(Ok(Err(error))) => {
+            eprintln!(
+                "service={SERVICE_NAME} event=worker_load_task_error error=\"{}\"",
+                escape_for_log(&error)
+            );
+        }
+        Some(Err(error)) => {
+            eprintln!(
+                "service={SERVICE_NAME} event=worker_load_task_panic error=\"{}\"",
+                escape_for_log(&error.to_string())
+            );
+        }
+    }
     Ok(())
 }
 
@@ -222,5 +506,101 @@ async fn wait_for_shutdown_signal() -> Result<&'static str, String> {
             .await
             .map_err(|error| format!("wait for SIGINT: {error}"))?;
         Ok("SIGINT")
+    }
+}
+
+impl CommitTarget {
+    fn partition_key(&self) -> PartitionKey {
+        PartitionKey {
+            topic: self.topic.clone(),
+            partition: self.partition,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use tokio::{sync::Semaphore, task::JoinSet};
+
+    use super::{window_complete_log_lines, CommitTarget, OrderedCommitTracker};
+
+    #[test]
+    fn ordered_commit_tracker_waits_for_lower_offset() {
+        let mut tracker = OrderedCommitTracker::default();
+        let first = commit_target(2, 41);
+        let second = commit_target(2, 42);
+        tracker.mark_started(&first);
+        tracker.mark_started(&second);
+
+        assert_eq!(tracker.mark_completed(&second).unwrap(), None);
+
+        let ready = tracker.mark_completed(&first).unwrap().unwrap();
+        assert_eq!(ready.partition, 2);
+        assert_eq!(ready.next_offset, 43);
+    }
+
+    #[test]
+    fn ordered_commit_tracker_tracks_partitions_independently() {
+        let mut tracker = OrderedCommitTracker::default();
+        let partition_0 = commit_target(0, 10);
+        let partition_1 = commit_target(1, 99);
+        tracker.mark_started(&partition_0);
+        tracker.mark_started(&partition_1);
+
+        let ready = tracker.mark_completed(&partition_1).unwrap().unwrap();
+        assert_eq!(ready.partition, 1);
+        assert_eq!(ready.next_offset, 100);
+
+        let ready = tracker.mark_completed(&partition_0).unwrap().unwrap();
+        assert_eq!(ready.partition, 0);
+        assert_eq!(ready.next_offset, 11);
+    }
+
+    #[test]
+    fn ordered_commit_tracker_rejects_offset_overflow() {
+        let mut tracker = OrderedCommitTracker::default();
+        let target = commit_target(0, i64::MAX);
+        tracker.mark_started(&target);
+
+        assert!(tracker.mark_completed(&target).is_err());
+    }
+
+    #[tokio::test]
+    async fn window_overrun_log_fires_when_tasks_exceed_budget() {
+        let started = std::time::Instant::now();
+        let semaphore = Arc::new(Semaphore::new(1));
+        let mut join_set = JoinSet::new();
+
+        for _ in 0..3 {
+            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            join_set.spawn(async move {
+                let _permit = permit;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            });
+        }
+
+        while join_set.join_next().await.is_some() {}
+
+        let lines = window_complete_log_lines(
+            7,
+            started.elapsed().as_millis(),
+            Duration::from_millis(10),
+            0,
+            3,
+        );
+        let overrun = lines.overrun.expect("expected overrun log line");
+        assert!(overrun.contains("event=window_overrun"));
+        assert!(overrun.contains("window_no=7"));
+        assert!(overrun.contains("over_budget_ms="));
+    }
+
+    fn commit_target(partition: i32, offset: i64) -> CommitTarget {
+        CommitTarget {
+            topic: "sync.oracle.load".to_string(),
+            partition,
+            offset,
+        }
     }
 }

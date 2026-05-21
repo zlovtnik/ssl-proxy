@@ -44,13 +44,17 @@ pub const Config = struct {
     result_fetch_count: usize,
     ingest_batch_size: u32,
     dispatch_batch_size: u32,
+    idle_sleep_ms: u32,
 };
+
+pub const DEFAULT_ORACLE_STREAM_NAMES =
+    "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush";
 
 pub fn load() Config {
     return .{
         .stream_name = envOrDefault("SYNC_STREAM_NAME", "proxy.events"),
-        .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", "proxy.events,wireless.audit"),
-        .oracle_stream_names_csv = envOrDefault("SYNC_ORACLE_STREAM_NAMES", "proxy.events"),
+        .stream_names_csv = envOrDefault("SYNC_STREAM_NAMES", DEFAULT_ORACLE_STREAM_NAMES),
+        .oracle_stream_names_csv = envOrDefault("SYNC_ORACLE_STREAM_NAMES", DEFAULT_ORACLE_STREAM_NAMES),
         .batch_size = parseBatchSize(envOrDefault("SYNC_BATCH_SIZE", "100")),
         .scan_topic = envOrDefault("SYNC_SCAN_TOPIC", "sync.scan.request"),
         .load_topic = envOrDefault("SYNC_LOAD_TOPIC", "sync.oracle.load"),
@@ -86,12 +90,12 @@ pub fn load() Config {
         .batch_max_attempts = parsePositiveU32(envOrDefault("SYNC_BATCH_MAX_ATTEMPTS", "5"), 5),
         .redpanda_publish_timeout_ms = parsePositiveU32(envOrDefault("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", "10000"), 10_000),
 
-        // Batch tuning (env overridable)
-        // Increased from 200→200 (scan), 200→200 (result), 200→200 (ingest), 5→200 (dispatch)
-        .scan_fetch_count = parsePositiveUsize(envOrDefault("SYNC_SCAN_FETCH_COUNT", "500"), 500),
-        .result_fetch_count = parsePositiveUsize(envOrDefault("SYNC_RESULT_FETCH_COUNT", "500"), 500),
-        .ingest_batch_size = parsePositiveU32(envOrDefault("SYNC_INGEST_BATCH_SIZE", "500"), 500),
-        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "500"), 500),
+        // Batch tuning (env overridable).
+        .scan_fetch_count = parsePositiveUsize(envOrDefault("SYNC_SCAN_FETCH_COUNT", "2000"), 2000),
+        .result_fetch_count = parsePositiveUsize(envOrDefault("SYNC_RESULT_FETCH_COUNT", "1000"), 1000),
+        .ingest_batch_size = parsePositiveU32(envOrDefault("SYNC_INGEST_BATCH_SIZE", "5000"), 5000),
+        .dispatch_batch_size = parsePositiveU32(envOrDefault("SYNC_DISPATCH_BATCH_SIZE", "1000"), 1000),
+        .idle_sleep_ms = parsePositiveU32(envOrDefault("SYNC_IDLE_SLEEP_MS", "100"), 100),
     };
 }
 

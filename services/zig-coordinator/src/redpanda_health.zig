@@ -157,5 +157,6 @@ test "checkConsumers is a Redpanda no-op" {
         .result_fetch_count = 1,
         .ingest_batch_size = 1,
         .dispatch_batch_size = 1,
+        .idle_sleep_ms = 1,
     });
 }

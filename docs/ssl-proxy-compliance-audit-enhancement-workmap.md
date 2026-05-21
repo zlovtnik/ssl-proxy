@@ -39,7 +39,9 @@ For threat-centric review and control-gap tracking, use the companion [Threat Mo
 ### Sync-plane architecture
 
 - `sync.scan.request` is the proxy-to-coordinator discovery topic. Messages identify a stream, observed timestamp, dedupe key, and a payload reference.
-- `inline://json/...` references carry small JSON payloads directly. `outbox://...` references point to spooled payload files in the shared sync outbox volume.
+- `inline://json/...` references carry small JSON payloads through a base64url transport wrapper. After decoding, the payload must be UTF-8 JSON, not binary data.
+- `outbox://...` references point to spooled `.json` payload files in the shared sync outbox volume. Coordinators and workers must reject files that do not parse as JSON.
+- Proxy `payload_preview` fields must stay readable: schema v2 uses JSON/text direction objects or metadata-only omission for binary/non-UTF-8 captures; nested base64 body previews are not allowed.
 - `sync.oracle.load` is the coordinator-to-worker batch dispatch topic. The coordinator dedupes in Postgres, advances cursors, and publishes load batches.
 - `sync.oracle.result` is the worker-to-coordinator result topic. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batch`, `sync_job`, and `sync_error`.
 - `sync-publish` refers to the proxy-side publish path that prepares payload references and emits `sync.scan.request`; it must never call Oracle directly.
@@ -363,7 +365,7 @@ The first sprint should front-load performance headroom and unblock later compli
 
 ### Sprint 1 acceptance gates
 
-- [ ] `sync.scan.request` emits resolvable payload references with stable prefixes.
+- [ ] `sync.scan.request` emits resolvable payload references with stable prefixes, and every resolved proxy payload parses as readable JSON.
 - [ ] Large event payloads spool cleanly into the configured outbox without blocking local event broadcast.
 - [ ] Publisher auth/TLS misconfiguration degrades readiness visibility without crashing the proxy.
 - [ ] Existing test suite passes; new tests cover payload references, publish filtering, and sync config parsing.

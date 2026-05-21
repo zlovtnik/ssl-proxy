@@ -27,6 +27,11 @@ pub fn main(init: std.process.Init) !void {
         .string("scan_topic", cfg.scan_topic)
         .string("load_topic", cfg.load_topic)
         .string("result_topic", cfg.result_topic)
+        .int("scan_fetch_count", cfg.scan_fetch_count)
+        .int("result_fetch_count", cfg.result_fetch_count)
+        .int("ingest_batch_size", cfg.ingest_batch_size)
+        .int("dispatch_batch_size", cfg.dispatch_batch_size)
+        .int("idle_sleep_ms", cfg.idle_sleep_ms)
         .log();
 
     if (scheduler.invalidOracleStreamName(cfg.stream_names_csv, cfg.oracle_stream_names_csv)) |stream_name| {
@@ -37,7 +42,7 @@ pub fn main(init: std.process.Init) !void {
             .string("stream_name", stream_name)
             .string("stream_names", cfg.stream_names_csv)
             .string("oracle_stream_names", cfg.oracle_stream_names_csv)
-            .stringSafe("allowed_oracle_stream_names", "proxy.events")
+            .stringSafe("allowed_oracle_stream_names", config.DEFAULT_ORACLE_STREAM_NAMES)
             .log();
         return error.InvalidOracleStreamConfig;
     }

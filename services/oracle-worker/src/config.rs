@@ -36,6 +36,25 @@ pub(crate) struct RunConfig {
     pub(crate) result_topic: String,
     pub(crate) load_consumer: String,
     pub(crate) oracle_worker_parallelism: usize,
+    pub(crate) window_duration_secs: u64,
+    pub(crate) window_max_messages: usize,
+    pub(crate) oracle_statement_timeout_secs: u64,
+}
+
+fn non_zero_u64(value: u64, default: u64) -> u64 {
+    if value == 0 {
+        default
+    } else {
+        value
+    }
+}
+
+fn non_zero_usize(value: usize, default: usize) -> usize {
+    if value == 0 {
+        default
+    } else {
+        value
+    }
 }
 
 impl RunConfig {
@@ -49,6 +68,22 @@ impl RunConfig {
             oracle_worker_parallelism: env_or_default_usize(
                 "ORACLE_WORKER_PARALLELISM",
                 DEFAULT_ORACLE_WORKER_PARALLELISM,
+            ),
+            window_duration_secs: non_zero_u64(
+                env_or_default("ORACLE_WINDOW_DURATION_SECS", "15")
+                    .parse()
+                    .unwrap_or(15),
+                15,
+            ),
+            window_max_messages: non_zero_usize(
+                env_or_default_usize("ORACLE_WINDOW_MAX_MESSAGES", 200),
+                200,
+            ),
+            oracle_statement_timeout_secs: non_zero_u64(
+                env_or_default("ORACLE_STATEMENT_TIMEOUT_SECS", "30")
+                    .parse()
+                    .unwrap_or(30),
+                30,
             ),
         })
     }

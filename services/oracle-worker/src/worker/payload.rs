@@ -8,7 +8,9 @@ pub fn resolve_payload(payload_ref: &str) -> Result<String, String> {
         let bytes = URL_SAFE_NO_PAD
             .decode(b64)
             .map_err(|error| format!("base64 decode: {error}"))?;
-        return String::from_utf8(bytes).map_err(|error| format!("utf8: {error}"));
+        let payload = String::from_utf8(bytes).map_err(|error| format!("utf8: {error}"))?;
+        validate_json_payload(&payload)?;
+        return Ok(payload);
     }
 
     if let Some(path) = payload_ref.strip_prefix("outbox://") {
@@ -27,11 +29,19 @@ pub fn resolve_payload(payload_ref: &str) -> Result<String, String> {
                 resolved.display()
             ));
         }
-        return std::fs::read_to_string(&resolved)
-            .map_err(|error| format!("read outbox {}: {error}", resolved.display()));
+        let payload = std::fs::read_to_string(&resolved)
+            .map_err(|error| format!("read outbox {}: {error}", resolved.display()))?;
+        validate_json_payload(&payload)?;
+        return Ok(payload);
     }
 
     Err(format!("unsupported payload_ref scheme: {payload_ref}"))
+}
+
+fn validate_json_payload(payload: &str) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .map(|_| ())
+        .map_err(|error| format!("payload_ref resolved non-JSON payload: {error}"))
 }
 
 pub(crate) fn payload_rows(

@@ -38,10 +38,6 @@ pub struct IngestRecord<'a> {
     pub stream_name: &'a str,
     pub observed_at: DateTime<Utc>,
     pub payload_ref: &'a str,
-    pub payload: &'a str,
-    pub payload_sha256: &'a str,
-    pub producer: &'a str,
-    pub event_kind: Option<&'a str>,
 }
 
 #[derive(Debug, Error)]

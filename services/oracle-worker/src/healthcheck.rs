@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::config::HealthcheckConfig;
 use crate::infra::{
-    check_redpanda, check_oracle_libs, check_secret_file, check_wallet, redpanda_log_authority,
+    check_oracle_libs, check_redpanda, check_secret_file, check_wallet, redpanda_log_authority,
 };
 use crate::log::escape_for_log;
 use crate::{worker, SERVICE_NAME};

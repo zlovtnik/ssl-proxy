@@ -4,7 +4,9 @@ mod redpanda_store;
 mod store;
 
 #[doc(inline)]
-pub use redpanda_store::{ProbeFlushObservation, RedpandaBacklog};
+pub use redpanda_store::{
+    inline_request_reply_transport_supported, ProbeFlushObservation, RedpandaBacklog,
+};
 #[doc(inline)]
 #[allow(unused_imports)]
 pub use store::{AuthorizedWirelessNetwork, BacklogEntry, IngestRecord};

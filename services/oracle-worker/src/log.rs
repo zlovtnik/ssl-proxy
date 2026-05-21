@@ -13,7 +13,10 @@ pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     msg
 }
 
-pub(crate) fn log_poison_message(message: &rdkafka::message::BorrowedMessage<'_>, error: &serde_json::Error) {
+pub(crate) fn log_poison_message(
+    message: &rdkafka::message::BorrowedMessage<'_>,
+    error: &serde_json::Error,
+) {
     let topic = escape_for_log(message.topic());
     let error = escape_for_log(&format!("deserialize OracleLoad payload: {error}"));
     eprintln!(

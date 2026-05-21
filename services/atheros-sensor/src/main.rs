@@ -54,6 +54,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use lru::LruCache;
+use serde::Serialize;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -68,24 +69,34 @@ use crate::{
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AuthorizationStatus, AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker,
-        PmfAttackTracker, RogueApTracker, SignalTracker, CLIENT_INVENTORY_TOPIC,
-        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
+        AttackTimelineCorrelator, AuthorizationStatus, AuthorizedNetworkCache, ClientInventory,
+        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker, ATTACK_SEQUENCE_TOPIC,
+        CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
     model::{AuditContext, EnrichedFrame, RawPacket},
-    parse::{attach_context, decode_frame, to_audit_entry, HandshakeMonitor, IdentityCache},
+    parse::{
+        attach_context, decode_frame, to_audit_entry, try_decrypt_frame, HandshakeMonitor,
+        IdentityCache,
+    },
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_json, replay_journal, PublishClient,
-        PublishError, PublishState, SharedPublishState, SyncPublisherClient,
+        publish_entry, publish_handshake_alert, publish_oracle_json, reconcile_backlog,
+        replay_journal, PublishClient, PublishError, PublishState, SharedPublishState,
+        SyncPublisherClient,
     },
     stats::PipelineOutcome,
 };
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
+const SIGNAL_ANOMALY_TOPIC: &str = "wireless.alert.signal_anomaly";
+const PMF_ATTACK_TOPIC: &str = "wireless.alert.pmf_attack";
+const BACKLOG_RECONCILE_INTERVAL_SECS: u64 = 60;
+const BACKLOG_PRUNE_INTERVAL_SECS: u64 = 3_600;
+const BACKLOG_PRUNE_MAX_ATTEMPTS: i32 = 10;
+const BACKLOG_PRUNE_MAX_AGE_HOURS: i64 = 72;
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -118,15 +129,21 @@ async fn run_healthcheck() -> Result<(), SensorError> {
             Duration::from_millis(config.redpanda_request_timeout_ms),
         ),
     )?;
-    match step_async("request coordinator backlog list over Redpanda", async {
-        backlog.list_pending().await
-    })
-    .await
-    {
-        Ok(_) => {}
-        Err(error) => {
-            eprintln!("Healthcheck WARNING: coordinator backlog list failed (sensor is degraded but operational): {}", error);
+    if backlog.supports_inline_request_reply() {
+        match step_async("request coordinator backlog list over Redpanda", async {
+            backlog.list_pending().await
+        })
+        .await
+        {
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("Healthcheck WARNING: coordinator backlog list failed (sensor is degraded but operational): {}", error);
+            }
         }
+    } else if let Some(reason) = backlog.inline_request_reply_disabled_reason() {
+        eprintln!(
+            "Healthcheck NOTICE: coordinator request/reply skipped for publish-only endpoint: {reason}"
+        );
     }
 
     println!(
@@ -215,6 +232,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &handles.stats,
                     &handles.authorized_config_generation,
                     &handles.capture_control,
+                    handles.inline_request_reply_enabled,
                 )
                 .instrument(span)
                 .await;
@@ -267,7 +285,17 @@ async fn run_sensor() -> Result<(), SensorError> {
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
-                if let Err(error) = publish_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &snapshot).await {
+                let observed_at = snapshot.observed_at.clone();
+                let context = context_snapshot(&handles.context);
+                let inventory_payload = serde_json::json!({
+                    "schema_version": snapshot.schema_version,
+                    "event_type": snapshot.event_type,
+                    "observed_at": observed_at.clone(),
+                    "sensor_id": context.sensor_id,
+                    "location_id": context.location_id,
+                    "clients": snapshot.clients,
+                });
+                if let Err(error) = publish_oracle_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &inventory_payload, &observed_at).await {
                     warn!(%error, "client inventory publish failed");
                 }
 
@@ -310,6 +338,7 @@ struct SensorHandles {
     publish_state: SharedPublishState,
     stats: metrics::SharedStats,
     authorized_config_generation: Arc<AtomicU64>,
+    inline_request_reply_enabled: bool,
 }
 
 /// Thread-safe shared reference to the current audit context.
@@ -327,7 +356,9 @@ struct PipelineState {
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
+    attack_timeline_correlator: AttackTimelineCorrelator,
     pmf_attack_tracker: PmfAttackTracker,
+    pmf_reconnect_window_ms: i64,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
     probe_accumulator: HashMap<(String, String), ProbeObservation>,
@@ -339,6 +370,60 @@ struct ProbeObservation {
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
     probe_count: u32,
+}
+
+#[derive(Serialize)]
+struct PmfAttackAlert {
+    schema_version: u32,
+    event_type: String,
+    observed_at: String,
+    sensor_id: String,
+    location_id: String,
+    target_mac: String,
+    target_bssid: Option<String>,
+    ssid: Option<String>,
+    channel: Option<u8>,
+    attack_tag: String,
+    reconnect_window_ms: Option<i64>,
+}
+
+fn pmf_attack_alert_from_entry(
+    entry: &crate::model::AuditEntry,
+    attack_tag: &str,
+    reconnect_window_ms: i64,
+) -> Option<PmfAttackAlert> {
+    if !attack_tag.starts_with("threat:pmf_") && attack_tag != "threat:handshake_harvest_attack" {
+        return None;
+    }
+
+    let target_mac = if attack_tag == "threat:pmf_forced_reconnect" {
+        entry.source_mac.as_deref()
+    } else {
+        entry
+            .destination_mac
+            .as_deref()
+            .or(entry.source_mac.as_deref())
+    }
+    .or(entry.bssid.as_deref())?
+    .trim()
+    .to_ascii_lowercase();
+
+    Some(PmfAttackAlert {
+        schema_version: 1,
+        event_type: "wireless_pmf_attack".to_string(),
+        observed_at: entry.observed_at.clone(),
+        sensor_id: entry.sensor_id.clone(),
+        location_id: entry.location_id.clone(),
+        target_mac,
+        target_bssid: entry
+            .bssid
+            .clone()
+            .or_else(|| entry.destination_bssid.clone()),
+        ssid: entry.ssid.clone(),
+        channel: Some(entry.channel),
+        attack_tag: attack_tag.to_string(),
+        reconnect_window_ms: Some(reconnect_window_ms),
+    })
 }
 
 impl PipelineState {
@@ -366,7 +451,9 @@ impl PipelineState {
             signal_tracker: SignalTracker::default(),
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
+            attack_timeline_correlator: AttackTimelineCorrelator::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
+            pmf_reconnect_window_ms,
             authorized_network_cache: AuthorizedNetworkCache::new(
                 _config.authorized_network_cache_backoff_ms,
             ),
@@ -513,6 +600,8 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
     let publish_state = PublishState::shared_with_config(
         config.memory_backlog_size,
         config.publish_journal_path.clone(),
+        config.circuit_breaker_initial_timeout_ms,
+        config.circuit_breaker_max_timeout_ms,
     );
     let backlog_client: Arc<dyn PublishClient> = publish_client.clone();
     let backlog = Arc::new(step(
@@ -523,7 +612,15 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             Duration::from_millis(config.redpanda_request_timeout_ms),
         ),
     )?);
-    backlog.clone().spawn_health_check();
+    let inline_request_reply_enabled = backlog.supports_inline_request_reply();
+    if inline_request_reply_enabled {
+        backlog.clone().spawn_health_check();
+    } else if let Some(reason) = backlog.inline_request_reply_disabled_reason() {
+        info!(
+            %reason,
+            "Redpanda inline request/reply disabled; MAC lookup, authorized network refresh, and request health check are unavailable"
+        );
+    }
     // Replay journal entries from previous outages
     match replay_journal(&publish_state, &*backlog).await {
         Ok(count) => {
@@ -538,16 +635,25 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
     info!("atheros sensor Redpanda backlog initialized");
 
-    config_subscriber::spawn_audit_window_config_subscriber(
-        config.sync.clone(),
-        config.location_id.clone(),
-        Arc::clone(&audit_window),
-    );
+    let config_subscribers_enabled =
+        config_subscriber::supports_config_subscriber_transport(&config.sync);
+    if config_subscribers_enabled {
+        config_subscriber::spawn_audit_window_config_subscriber(
+            config.sync.clone(),
+            config.location_id.clone(),
+            Arc::clone(&audit_window),
+        );
+    } else if let Some(reason) = config_subscriber::config_subscriber_disabled_reason(&config.sync)
+    {
+        info!(%reason, "live wireless config subscribers disabled");
+    }
     let authorized_config_generation = Arc::new(AtomicU64::new(0));
-    config_subscriber::spawn_authorized_network_config_subscriber(
-        config.sync.clone(),
-        Arc::clone(&authorized_config_generation),
-    );
+    if config_subscribers_enabled {
+        config_subscriber::spawn_authorized_network_config_subscriber(
+            config.sync.clone(),
+            Arc::clone(&authorized_config_generation),
+        );
+    }
 
     let context = Arc::new(RwLock::new(AuditContext {
         sensor_id,
@@ -592,13 +698,15 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             Arc::clone(&stats),
         );
     }
-    config_subscriber::spawn_sensor_config_subscriber(
-        config.sync.clone(),
-        config.location_id.clone(),
-        Arc::clone(&context),
-        packet_stream.control.clone(),
-        current_filter,
-    );
+    if config_subscribers_enabled {
+        config_subscriber::spawn_sensor_config_subscriber(
+            config.sync.clone(),
+            config.location_id.clone(),
+            Arc::clone(&context),
+            packet_stream.control.clone(),
+            current_filter,
+        );
+    }
     // Spawn periodic memory backlog flush timer
     let flush_state = Arc::clone(&publish_state);
     let flush_backlog = Arc::clone(&backlog);
@@ -612,6 +720,16 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         }
     });
 
+    if inline_request_reply_enabled {
+        spawn_backlog_reconcile_task(
+            Arc::clone(&publish_state),
+            Arc::clone(&backlog),
+            Arc::clone(&publish_client),
+            Arc::clone(&audit_window),
+        );
+        spawn_backlog_prune_task(Arc::clone(&backlog));
+    }
+
     Ok(SensorHandles {
         config: config.clone(),
         audit_window,
@@ -624,7 +742,56 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         publish_state,
         stats,
         authorized_config_generation,
+        inline_request_reply_enabled,
     })
+}
+
+fn spawn_backlog_reconcile_task(
+    publish_state: SharedPublishState,
+    backlog: Arc<RedpandaBacklog>,
+    publish_client: Arc<SyncPublisherClient>,
+    audit_window: SharedAuditWindow,
+) {
+    tokio::spawn(async move {
+        let mut interval = interval_secs(BACKLOG_RECONCILE_INTERVAL_SECS);
+        loop {
+            interval.tick().await;
+            if !backlog.is_healthy() {
+                debug!("skipping backlog reconciliation while Redpanda health check is failing");
+                continue;
+            }
+            let audit_window = audit_window_snapshot(&audit_window);
+            if let Err(error) =
+                reconcile_backlog(&publish_state, &*backlog, &*publish_client, &audit_window).await
+            {
+                warn!(%error, "backlog reconciliation failed");
+            }
+        }
+    });
+}
+
+fn spawn_backlog_prune_task(backlog: Arc<RedpandaBacklog>) {
+    tokio::spawn(async move {
+        let mut interval = interval_secs(BACKLOG_PRUNE_INTERVAL_SECS);
+        loop {
+            interval.tick().await;
+            if !backlog.is_healthy() {
+                debug!("skipping backlog prune while Redpanda health check is failing");
+                continue;
+            }
+            match backlog
+                .prune_stale(BACKLOG_PRUNE_MAX_ATTEMPTS, BACKLOG_PRUNE_MAX_AGE_HOURS)
+                .await
+            {
+                Ok(pruned) => {
+                    if pruned > 0 {
+                        info!(pruned, "pruned stale synced backlog entries");
+                    }
+                }
+                Err(error) => warn!(%error, "backlog prune failed"),
+            }
+        }
+    });
 }
 
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
@@ -641,6 +808,7 @@ async fn process_packet(
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
     capture_control: &CaptureControl,
+    inline_request_reply_enabled: bool,
 ) -> Result<PipelineOutcome, SensorError> {
     let packet_len = packet.data.len() as u64;
 
@@ -674,6 +842,33 @@ async fn process_packet(
         Some(capture_control),
         handshake_ttl,
     );
+    let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
+    if latest_generation != pipeline.seen_authorized_config_generation {
+        pipeline.authorized_network_cache.invalidate();
+        pipeline.seen_authorized_config_generation = latest_generation;
+    }
+    if inline_request_reply_enabled {
+        let refresh_result = pipeline
+            .authorized_network_cache
+            .refresh_if_needed(
+                backlog,
+                Duration::from_secs(config.authorized_network_cache_ttl_secs),
+            )
+            .await;
+        if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
+            warn!(
+                error = %refresh_result.as_ref().unwrap_err(),
+                "authorized wireless network cache refresh failed"
+            );
+        }
+    }
+    if try_decrypt_frame(
+        &mut wifi_frame,
+        &pipeline.handshake_monitor,
+        pipeline.authorized_network_cache.entries(),
+    ) {
+        debug!("protected data frame decrypted using authorized network PSK");
+    }
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
     let enriched: EnrichedFrame = attach_context(wifi_frame, context);
     let mut entry = to_audit_entry(enriched);
@@ -687,24 +882,6 @@ async fn process_packet(
         entry.identity_source = identity.source;
         entry.tags.extend(identity.tags);
     }
-    let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
-    if latest_generation != pipeline.seen_authorized_config_generation {
-        pipeline.authorized_network_cache.invalidate();
-        pipeline.seen_authorized_config_generation = latest_generation;
-    }
-    let refresh_result = pipeline
-        .authorized_network_cache
-        .refresh_if_needed(
-            backlog,
-            Duration::from_secs(config.authorized_network_cache_ttl_secs),
-        )
-        .await;
-    if refresh_result.is_err() && pipeline.authorized_network_cache.should_log_failure(true) {
-        warn!(
-            error = %refresh_result.as_ref().unwrap_err(),
-            "authorized wireless network cache refresh failed"
-        );
-    }
     let authorization_status = pipeline.authorized_network_cache.authorization_status(
         entry.ssid.as_deref(),
         entry
@@ -713,7 +890,16 @@ async fn process_packet(
             .or(entry.destination_bssid.as_deref()),
         &entry.location_id,
     );
-    let external_bssid = authorization_status == AuthorizationStatus::Unauthorized;
+    let is_authorized_network = pipeline.authorized_network_cache.is_authorized(
+        entry.ssid.as_deref(),
+        entry
+            .bssid
+            .as_deref()
+            .or(entry.destination_bssid.as_deref()),
+        &entry.location_id,
+    );
+    let external_bssid =
+        authorization_status == AuthorizationStatus::Unauthorized && !is_authorized_network;
     if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unauthorized {
         entry.tags.push("threat:unauthorized_bssid".to_string());
     } else if entry.ssid.is_some() && authorization_status == AuthorizationStatus::Unknown {
@@ -741,19 +927,23 @@ async fn process_packet(
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(chrono::Utc::now);
 
+            let linked_bssid = pipeline
+                .client_inventory
+                .link_probe_to_network(&entry, &pipeline.authorized_network_cache)
+                .map(|(bssid, _, _)| bssid);
             let key = (ssid.to_string(), client_mac.clone());
             pipeline
                 .probe_accumulator
                 .entry(key)
                 .and_modify(|obs| {
                     if obs.known_bssid.is_none() {
-                        obs.known_bssid = entry.bssid.clone();
+                        obs.known_bssid = linked_bssid.clone().or_else(|| entry.bssid.clone());
                     }
                     obs.last_seen = observed_at;
                     obs.probe_count = obs.probe_count.saturating_add(1);
                 })
                 .or_insert_with(|| ProbeObservation {
-                    known_bssid: entry.bssid.clone(),
+                    known_bssid: linked_bssid.or_else(|| entry.bssid.clone()),
                     first_seen: observed_at,
                     last_seen: observed_at,
                     probe_count: 1,
@@ -784,22 +974,78 @@ async fn process_packet(
             }
         }
     }
-    if pipeline
+    if entry
+        .tags
+        .iter()
+        .any(|tag| tag == "threat:karma_probe_response")
+    {
+        if let Some(alert) = pipeline
+            .attack_timeline_correlator
+            .observe(&entry, "karma_probe_response")
+        {
+            if let Err(error) = publish_oracle_json(
+                publish_client,
+                "publish_attack_sequence_alert",
+                ATTACK_SEQUENCE_TOPIC,
+                &alert,
+                &alert.observed_at,
+            )
+            .await
+            {
+                warn!(%error, "attack sequence alert publish failed");
+            }
+        }
+    }
+    if let Some(alert) = pipeline
         .signal_tracker
         .observe(&entry, config.signal_anomaly_dbm_delta)
     {
         entry.tags.push("threat:signal_anomaly".to_string());
         entry.anomaly_reasons.push("signal_anomaly".to_string());
+        if let Err(error) = publish_oracle_json(
+            publish_client,
+            "publish_signal_anomaly_alert",
+            SIGNAL_ANOMALY_TOPIC,
+            &alert,
+            &alert.observed_at,
+        )
+        .await
+        {
+            warn!(%error, "signal anomaly alert publish failed");
+        }
     }
     if let Some(alert) = pipeline
         .rogue_ap_tracker
         .observe(&entry, &pipeline.authorized_network_cache)
     {
-        if let Err(error) = publish_json(
+        if alert
+            .reasons
+            .iter()
+            .any(|reason| reason == "bssid_spoofing")
+        {
+            if let Some(sequence_alert) = pipeline
+                .attack_timeline_correlator
+                .observe(&entry, "bssid_spoofing")
+            {
+                if let Err(error) = publish_oracle_json(
+                    publish_client,
+                    "publish_attack_sequence_alert",
+                    ATTACK_SEQUENCE_TOPIC,
+                    &sequence_alert,
+                    &sequence_alert.observed_at,
+                )
+                .await
+                {
+                    warn!(%error, "attack sequence alert publish failed");
+                }
+            }
+        }
+        if let Err(error) = publish_oracle_json(
             publish_client,
             "publish_rogue_ap_alert",
             ROGUE_AP_TOPIC,
             &alert,
+            &alert.observed_at,
         )
         .await
         {
@@ -812,11 +1058,12 @@ async fn process_packet(
         config.deauth_flood_window_secs,
         config.deauth_flood_cooldown_secs,
     ) {
-        if let Err(error) = publish_json(
+        if let Err(error) = publish_oracle_json(
             publish_client,
             "publish_deauth_flood_alert",
             DEAUTH_FLOOD_TOPIC,
             &alert,
+            &alert.observed_at,
         )
         .await
         {
@@ -825,6 +1072,23 @@ async fn process_packet(
     }
     let mut pmf_tags = Vec::new();
     pipeline.pmf_attack_tracker.observe(&entry, &mut pmf_tags);
+    for tag in &pmf_tags {
+        if let Some(alert) =
+            pmf_attack_alert_from_entry(&entry, tag, pipeline.pmf_reconnect_window_ms)
+        {
+            if let Err(error) = publish_oracle_json(
+                publish_client,
+                "publish_pmf_attack_alert",
+                PMF_ATTACK_TOPIC,
+                &alert,
+                &alert.observed_at,
+            )
+            .await
+            {
+                warn!(%error, "PMF attack alert publish failed");
+            }
+        }
+    }
     entry.tags.extend(pmf_tags);
     // Backpressure guard: if the memory backlog is >80% full, skip the MAC device lookup
     // (which adds async I/O per packet) to prevent the backlog from growing further.
@@ -837,14 +1101,16 @@ async fn process_packet(
             0
         }
     };
-    let skip_mac_lookup = backlog_pct > 80 || !config.mac_device_lookup_enabled;
+    let skip_mac_lookup =
+        backlog_pct > 80 || !config.mac_device_lookup_enabled || !inline_request_reply_enabled;
     if skip_mac_lookup {
         if entry.identity_source == "unknown" || entry.identity_source == "mac_observed" {
-            entry.identity_source = if config.mac_device_lookup_enabled {
-                "mac_lookup_skipped_backpressure".to_string()
-            } else {
-                "mac_lookup_disabled".to_string()
-            };
+            entry.identity_source =
+                if !config.mac_device_lookup_enabled || !inline_request_reply_enabled {
+                    "mac_lookup_disabled".to_string()
+                } else {
+                    "mac_lookup_skipped_backpressure".to_string()
+                };
         }
     } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
         let cache_key = mac.to_ascii_lowercase();

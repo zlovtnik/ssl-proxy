@@ -343,6 +343,8 @@ impl SyncPublisher {
         raw_payload: &str,
         observed_at: &str,
     ) -> Result<String, String> {
+        validate_json_payload(raw_payload)?;
+
         if raw_payload.len() <= self.config.inline_payload_max_bytes {
             return Ok(format!(
                 "{INLINE_PAYLOAD_REF_PREFIX}{}",
@@ -372,7 +374,7 @@ impl SyncPublisher {
     pub fn resolve_payload_ref_contents(&self, payload_ref: &str) -> Result<String, String> {
         let parsed = parse_payload_ref(payload_ref)
             .ok_or_else(|| format!("unsupported payload_ref: {payload_ref}"))?;
-        match parsed.kind {
+        let contents = match parsed.kind {
             crate::sync::PayloadRefKind::Inline => URL_SAFE_NO_PAD
                 .decode(parsed.locator.as_bytes())
                 .map_err(|error| format!("decode inline payload_ref: {error}"))
@@ -403,7 +405,9 @@ impl SyncPublisher {
                     )
                 })
             }
-        }
+        }?;
+        validate_json_payload(&contents)?;
+        Ok(contents)
     }
 
     pub fn health_snapshot(&self) -> SyncPublisherHealthSnapshot {
@@ -528,6 +532,12 @@ impl SyncPublisher {
         self.counters.spooled_total.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
+}
+
+fn validate_json_payload(raw_payload: &str) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(raw_payload)
+        .map(|_| ())
+        .map_err(|error| format!("sync payload must be valid JSON: {error}"))
 }
 
 fn write_spool_envelope(spool_dir: &Path, topic: &str, payload: &str) -> Result<PathBuf, String> {
@@ -749,8 +759,14 @@ fn build_redpanda_producer(config: &SyncPublisherConfig) -> Result<FutureProduce
     let mut client_config = ClientConfig::new();
     client_config
         .set("bootstrap.servers", &bootstrap_servers)
-        .set("message.timeout.ms", config.publish_timeout.as_millis().to_string())
-        .set("socket.timeout.ms", config.connect_timeout.as_millis().to_string());
+        .set(
+            "message.timeout.ms",
+            config.publish_timeout.as_millis().to_string(),
+        )
+        .set(
+            "socket.timeout.ms",
+            config.connect_timeout.as_millis().to_string(),
+        );
 
     if let Some(value) = &config.security_protocol {
         client_config.set("security.protocol", value);
@@ -829,6 +845,64 @@ fn record_worker_error(health: &Arc<Mutex<SyncPublisherHealth>>, error: String) 
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     snapshot.last_error = Some(error);
+}
+
+#[cfg(test)]
+mod payload_ref_tests {
+    use std::path::Path;
+
+    use super::SyncPublisher;
+    use crate::{config::Config, sync::parse_payload_ref};
+
+    #[test]
+    fn inline_payload_ref_decodes_to_valid_json() {
+        let publisher = SyncPublisher::new(&Config::default().sync);
+        let payload_ref = publisher
+            .payload_ref_for_event("{\"small\":true}", "2026-04-17T00:00:00Z")
+            .unwrap();
+
+        let contents = publisher
+            .resolve_payload_ref_contents(&payload_ref)
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&contents).unwrap();
+        assert_eq!(contents, "{\"small\":true}");
+    }
+
+    #[test]
+    fn outbox_payload_ref_file_contains_valid_json() {
+        let outbox = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.sync.inline_payload_max_bytes = 1;
+        config.sync.outbox_dir = outbox.path().display().to_string();
+        let publisher = SyncPublisher::new(&config.sync);
+        let payload_ref = publisher
+            .payload_ref_for_event(
+                "{\"large\":true,\"payload\":\"readable\"}",
+                "2026-04-17T00:00:00Z",
+            )
+            .unwrap();
+
+        let parsed = parse_payload_ref(&payload_ref).unwrap();
+        let path = Path::new(&config.sync.outbox_dir).join(parsed.locator);
+        let file_contents = std::fs::read_to_string(path).unwrap();
+        serde_json::from_str::<serde_json::Value>(&file_contents).unwrap();
+        assert_eq!(
+            publisher
+                .resolve_payload_ref_contents(&payload_ref)
+                .unwrap(),
+            file_contents
+        );
+    }
+
+    #[test]
+    fn payload_ref_for_event_rejects_non_json_payloads() {
+        let publisher = SyncPublisher::new(&Config::default().sync);
+        let error = publisher
+            .payload_ref_for_event("not json", "2026-04-17T00:00:00Z")
+            .unwrap_err();
+
+        assert!(error.contains("valid JSON"));
+    }
 }
 
 #[cfg(all(test, any()))]
@@ -1259,7 +1333,10 @@ mod tests {
         let _ = server_task.await.unwrap();
     }
 
-    fn test_publisher_config(redpanda_bootstrap_servers: String, spool_dir: &Path) -> SyncPublisherConfig {
+    fn test_publisher_config(
+        redpanda_bootstrap_servers: String,
+        spool_dir: &Path,
+    ) -> SyncPublisherConfig {
         SyncPublisherConfig {
             redpanda_bootstrap_servers: Some(redpanda_bootstrap_servers),
             connect_timeout: Duration::from_secs(1),

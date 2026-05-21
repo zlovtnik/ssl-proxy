@@ -114,8 +114,8 @@ services:
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
       - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
       - SYNC_STREAM_NAME=proxy.events
-      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit}
-      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events}
+      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
       - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
@@ -224,6 +224,7 @@ services:
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
       interval: 30s
@@ -287,6 +288,27 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
+
+  vec-worker:
+    profiles:
+      - vector
+    build:
+      context: .
+      dockerfile: services/vec-worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=debug,sqlx=warn}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
+      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
+      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
+      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-512}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-512}
+      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-1800}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-5}
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-1}
 
   atheros-sensor:
     depends_on:
@@ -421,6 +443,16 @@ services:
       retries: 5
       start_period: 10s
 
+  ollama:
+    profiles:
+      - vector
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -455,7 +487,15 @@ services:
     command: ["/config/bootstrap.sh"]
 
   postgres:
-    image: postgres:16-bookworm
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=sync
     restart: unless-stopped
     environment:
       POSTGRES_DB: sync
@@ -478,3 +518,4 @@ volumes:
   postgres-data:
   sync-outbox:
   minio-data:
+  ollama-data:

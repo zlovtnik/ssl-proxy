@@ -11,6 +11,15 @@ pub fn streamNameIsConfigured(stream_names_csv: []const u8, stream_name: []const
 
 const allowed_oracle_stream_names = [_][]const u8{
     "proxy.events",
+    "wireless.audit",
+    "audit.wireless.bandwidth",
+    "wireless.alert.rogue_ap",
+    "wireless.alert.deauth_flood",
+    "wireless.alert.signal_anomaly",
+    "wireless.alert.pmf_attack",
+    "wireless.client.inventory",
+    "wireless.probe.flush",
+    "proxy.payload_audit",
 };
 
 fn allowedOracleStreamName(stream_name: []const u8) bool {
@@ -37,14 +46,18 @@ test "streamNameIsConfigured matches trimmed CSV entries" {
     try std.testing.expect(!streamNameIsConfigured("proxy.events, wireless.audit", "unknown"));
 }
 
-test "invalidOracleStreamName accepts proxy events only" {
-    try std.testing.expect(invalidOracleStreamName("proxy.events, wireless.audit", "proxy.events") == null);
-    try std.testing.expect(invalidOracleStreamName("proxy.events, wireless.audit", "") == null);
+test "invalidOracleStreamName accepts supported Oracle streams" {
+    const configured =
+        "proxy.events, wireless.audit, audit.wireless.bandwidth, wireless.alert.rogue_ap, wireless.alert.deauth_flood, wireless.alert.signal_anomaly, wireless.alert.pmf_attack, wireless.client.inventory, wireless.probe.flush";
+    const oracle_streams =
+        "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush";
+    try std.testing.expect(invalidOracleStreamName(configured, oracle_streams) == null);
+    try std.testing.expect(invalidOracleStreamName(configured, "") == null);
 }
 
-test "invalidOracleStreamName rejects wireless audit Oracle dispatch" {
-    const invalid = invalidOracleStreamName("proxy.events, wireless.audit", "proxy.events, wireless.audit").?;
-    try std.testing.expectEqualStrings("wireless.audit", invalid);
+test "invalidOracleStreamName rejects unsupported Oracle dispatch" {
+    const invalid = invalidOracleStreamName("proxy.events, wireless.audit, wifi.alert.handshake", "proxy.events, wifi.alert.handshake").?;
+    try std.testing.expectEqualStrings("wifi.alert.handshake", invalid);
 }
 
 test "invalidOracleStreamName rejects Oracle stream outside configured streams" {

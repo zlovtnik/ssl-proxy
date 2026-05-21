@@ -4,11 +4,14 @@ sync.oracle.load|3|1|2592000000|-1
 sync.oracle.result|3|1|2592000000|-1
 proxy.payload_audit|3|1|2592000000|-1
 wireless.audit|3|1|2592000000|-1
+wireless.mac.seen|3|1|2592000000|-1
+wireless.audit.enriched|3|1|2592000000|-1
 wireless.audit.config|1|1|2592000000|-1
 wireless.config.authorized_networks|1|1|2592000000|-1
 wireless.config.sensor|1|1|2592000000|-1
 wireless.client.inventory|3|1|2592000000|-1
 audit.threat.shadow_device|3|1|2592000000|-1
+wireless.mac.registry|1|1|2592000000|-1
 wireless.backlog.save|3|1|2592000000|-1
 wireless.backlog.list|3|1|2592000000|-1
 wireless.backlog.synced|3|1|2592000000|-1
@@ -23,5 +26,7 @@ wireless.probe.flush|3|1|3600000|-1
 audit.wireless.bandwidth|3|1|604800000|-1
 wireless.alert.rogue_ap|3|1|2592000000|-1
 wireless.alert.deauth_flood|3|1|2592000000|-1
+wireless.alert.signal_anomaly|3|1|2592000000|-1
+wireless.alert.pmf_attack|3|1|2592000000|-1
 wireless.alert.attack_sequence|3|1|2592000000|-1
 wifi.alert.handshake|3|1|2592000000|-1

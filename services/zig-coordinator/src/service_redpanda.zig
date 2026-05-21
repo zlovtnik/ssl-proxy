@@ -9,6 +9,12 @@ pub const BatchResult = struct {
     items: [][]const u8,
 };
 
+pub fn freeBatch(allocator: std.mem.Allocator, batch: BatchResult) void {
+    if (batch.items.len == 0) return;
+    for (batch.items) |item| allocator.free(item);
+    allocator.free(batch.items);
+}
+
 pub const Error = error{
     OutOfMemory,
     WirelessMessageFailed,

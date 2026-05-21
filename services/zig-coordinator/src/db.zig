@@ -1,6 +1,8 @@
 const std = @import("std");
 const command = @import("command.zig");
 
+const INLINE_SQL_ARG_LIMIT = 96 * 1024;
+
 pub const Error = error{
     OutOfMemory,
     DatabaseCheckFailed,
@@ -75,6 +77,60 @@ pub const Client = struct {
         defer if (output) |value| self.allocator.free(value);
 
         if (output == null or !std.mem.eql(u8, output.?, "1")) return error.DatabaseCheckFailed;
+    }
+
+    pub fn runScalarSql(
+        self: *Client,
+        query: []const u8,
+        command_name: []const u8,
+        on_error: Error,
+        log_output: bool,
+    ) Error!?[]u8 {
+        if (query.len <= INLINE_SQL_ARG_LIMIT) {
+            const argv = [_][]const u8{
+                "psql",
+                self.database_url,
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-qAt",
+                "-c",
+                query,
+            };
+            return self.runScalar(&argv, command_name, on_error, log_output);
+        }
+
+        var random_bytes: [16]u8 = undefined;
+        const seed: u64 = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(self.io, .awake).toNanoseconds())));
+        var prng = std.Random.DefaultPrng.init(seed);
+        prng.random().bytes(&random_bytes);
+        const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
+        const sql_path = try std.fmt.allocPrint(
+            self.allocator,
+            "/tmp/zig-coordinator-query-{s}.sql",
+            .{&random_hex},
+        );
+        defer self.allocator.free(sql_path);
+
+        var atomic_file = std.Io.Dir.cwd().createFileAtomic(self.io, sql_path, .{
+            .replace = true,
+            .permissions = .fromMode(0o600),
+        }) catch return on_error;
+        defer atomic_file.deinit(self.io);
+
+        atomic_file.file.writeStreamingAll(self.io, query) catch return on_error;
+        atomic_file.replace(self.io) catch return on_error;
+        defer std.Io.Dir.deleteFile(.cwd(), self.io, sql_path) catch {};
+
+        const argv = [_][]const u8{
+            "psql",
+            self.database_url,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-f",
+            sql_path,
+        };
+        return self.runScalar(&argv, command_name, on_error, log_output);
     }
 
     pub fn ensureCursor(self: *Client, stream_name: []const u8) Error![]u8 {

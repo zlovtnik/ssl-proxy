@@ -1,6 +1,7 @@
 //! Shared byte-level payload redaction helpers for audit previews.
 
-use base64::{engine::general_purpose, Engine as _};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 /// Redact known sensitive patterns from captured payload bytes in place.
 pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
@@ -166,20 +167,81 @@ pub(crate) fn payload_preview_json(
     redact_sensitive_data(&mut up_redacted);
     redact_sensitive_data(&mut down_redacted);
 
-    serde_json::json!({
-        "up": general_purpose::STANDARD.encode(&up_redacted),
-        "down": general_purpose::STANDARD.encode(&down_redacted),
-        "truncated_up": bytes_up > limit as u64,
-        "truncated_down": bytes_down > limit as u64,
-        "byte_count_up": up_buf.len(),
-        "byte_count_down": down_buf.len(),
+    json!({
+        "schema_version": 2,
+        "up": readable_direction_preview(&up_redacted, bytes_up, bytes_up > limit as u64),
+        "down": readable_direction_preview(&down_redacted, bytes_down, bytes_down > limit as u64),
         "redaction": "byte",
     })
 }
 
+fn readable_direction_preview(redacted: &[u8], total_bytes: u64, truncated: bool) -> Value {
+    let base = |format: &'static str| {
+        json!({
+            "format": format,
+            "byte_count": redacted.len(),
+            "total_bytes": total_bytes,
+            "truncated": truncated,
+        })
+    };
+
+    if redacted.is_empty() {
+        let mut preview = base("omitted");
+        preview["omitted_reason"] = Value::String("empty".to_string());
+        return preview;
+    }
+
+    let text = match std::str::from_utf8(redacted) {
+        Ok(text) => text,
+        Err(_) => return omitted_preview(redacted, total_bytes, truncated, "non_utf8"),
+    };
+
+    if !is_readable_text(text) {
+        return omitted_preview(redacted, total_bytes, truncated, "non_readable_text");
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        let mut preview = base("omitted");
+        preview["omitted_reason"] = Value::String("blank".to_string());
+        return preview;
+    }
+
+    if let Ok(json_value) = serde_json::from_str::<Value>(trimmed) {
+        let mut preview = base("json");
+        preview["json"] = json_value;
+        return preview;
+    }
+
+    let mut preview = base("text");
+    preview["text"] = Value::String(text.to_string());
+    preview
+}
+
+fn omitted_preview(
+    redacted: &[u8],
+    total_bytes: u64,
+    truncated: bool,
+    omitted_reason: &'static str,
+) -> Value {
+    json!({
+        "format": "omitted",
+        "omitted_reason": omitted_reason,
+        "byte_count": redacted.len(),
+        "total_bytes": total_bytes,
+        "truncated": truncated,
+        "sha256": format!("{:x}", Sha256::digest(redacted)),
+    })
+}
+
+fn is_readable_text(text: &str) -> bool {
+    text.chars()
+        .all(|ch| !ch.is_control() || matches!(ch, '\r' | '\n' | '\t'))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::redact_sensitive_data;
+    use super::{payload_preview_json, redact_sensitive_data};
 
     #[test]
     fn redacts_sensitive_headers_only_at_line_start() {
@@ -255,5 +317,58 @@ access_token=formaccess&refresh_token=formrefresh&id_token=formid&client_secret=
         assert!(!redacted.contains("1"));
         assert!(!redacted.contains("2"));
         assert!(!redacted.contains("three"));
+    }
+
+    #[test]
+    fn payload_preview_json_serializes_json_payload_as_readable_json() {
+        let payload = br#"{"username":"alice","password":"secret"}"#;
+        let preview = payload_preview_json(payload, b"", payload.len() as u64, 0, 4096);
+
+        assert_eq!(preview["schema_version"], 2);
+        assert_eq!(preview["up"]["format"], "json");
+        assert_eq!(preview["up"]["json"]["username"], "alice");
+        assert_eq!(preview["up"]["json"]["password"], "******");
+        assert_eq!(preview["up"]["byte_count"], payload.len());
+        assert_eq!(preview["up"]["total_bytes"], payload.len() as u64);
+        assert_eq!(preview["up"]["truncated"], false);
+
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains("secret"));
+        assert!(!serialized.contains("\"up\":\""));
+        assert!(!serialized.contains("\"down\":\""));
+    }
+
+    #[test]
+    fn payload_preview_json_serializes_http_payload_as_text() {
+        let preview = payload_preview_json(
+            b"POST /login HTTP/1.1\r\nHost: example.com\r\nAuthorization: Bearer secret\r\n\r\nhello",
+            b"",
+            80,
+            0,
+            4096,
+        );
+
+        assert_eq!(preview["up"]["format"], "text");
+        let text = preview["up"]["text"].as_str().unwrap();
+        assert!(text.contains("POST /login HTTP/1.1"));
+        assert!(text.contains("Authorization: *************"));
+        assert!(!text.contains("Bearer secret"));
+
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains("\"up\":\""));
+    }
+
+    #[test]
+    fn payload_preview_json_omits_binary_payload_bytes() {
+        let preview = payload_preview_json(&[0xff, 0xfe, 0xfd], b"", 10, 0, 2);
+
+        assert_eq!(preview["up"]["format"], "omitted");
+        assert_eq!(preview["up"]["omitted_reason"], "non_utf8");
+        assert_eq!(preview["up"]["byte_count"], 3);
+        assert_eq!(preview["up"]["total_bytes"], 10);
+        assert_eq!(preview["up"]["truncated"], true);
+        assert!(preview["up"]["sha256"].as_str().unwrap().len() == 64);
+        assert!(preview["up"].get("text").is_none());
+        assert!(preview["up"].get("json").is_none());
     }
 }

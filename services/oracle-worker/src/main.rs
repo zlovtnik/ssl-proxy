@@ -7,6 +7,7 @@ mod log;
 mod pool;
 mod run_loop;
 mod time;
+mod window;
 mod worker;
 
 use std::{
@@ -22,7 +23,7 @@ pub(crate) const DEFAULT_AUDIT_STREAM_NAME: &str = "AUDIT_STREAM";
 pub(crate) const DEFAULT_SYNC_LOAD_TOPIC: &str = "sync.oracle.load";
 pub(crate) const DEFAULT_SYNC_RESULT_TOPIC: &str = "sync.oracle.result";
 pub(crate) const DEFAULT_SYNC_LOAD_CONSUMER: &str = "oracle-worker-load";
-pub(crate) const DEFAULT_ORACLE_WORKER_PARALLELISM: usize = 32;
+pub(crate) const DEFAULT_ORACLE_WORKER_PARALLELISM: usize = 3;
 
 fn main() {
     let mode = std_env::args().nth(1).unwrap_or_else(|| "run".to_string());

@@ -117,6 +117,136 @@ begin
 end;
 $$;
 
+create or replace function coordinator.record_scan_request_batch(
+  p_requests jsonb[],
+  p_payloads jsonb[],
+  p_payload_sha256s text[],
+  p_stream_names text[]
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_recorded_count integer := 0;
+begin
+  if cardinality(p_requests) <> cardinality(p_payloads)
+     or cardinality(p_requests) <> cardinality(p_payload_sha256s) then
+    raise exception 'record_scan_request_batch array length mismatch';
+  end if;
+
+  if exists (
+    with incoming as (
+      select raw.request->>'stream_name' as stream_name,
+             raw.request->>'dedupe_key' as dedupe_key
+        from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+    ),
+    configured_streams as (
+      select btrim(configured.stream_name) as stream_name
+        from unnest(p_stream_names) as configured(stream_name)
+       where btrim(configured.stream_name) <> ''
+    )
+    select 1
+      from incoming
+      join configured_streams on configured_streams.stream_name = incoming.stream_name
+     where nullif(dedupe_key, '') is null
+  ) then
+    raise exception 'scan request missing dedupe_key';
+  end if;
+
+  if exists (
+    with incoming as (
+      select raw.request->>'stream_name' as stream_name,
+             raw.request->>'payload_ref' as payload_ref
+        from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+    ),
+    configured_streams as (
+      select btrim(configured.stream_name) as stream_name
+        from unnest(p_stream_names) as configured(stream_name)
+       where btrim(configured.stream_name) <> ''
+    )
+    select 1
+      from incoming
+      join configured_streams on configured_streams.stream_name = incoming.stream_name
+     where nullif(payload_ref, '') is null
+  ) then
+    raise exception 'scan request missing payload_ref';
+  end if;
+
+  with incoming as (
+    select raw.request,
+           raw.payload,
+           raw.payload_sha256,
+           raw.request->>'stream_name' as stream_name,
+           raw.request->>'dedupe_key' as dedupe_key,
+           raw.request->>'payload_ref' as payload_ref,
+           raw.request->>'observed_at' as observed_at_text
+      from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  ),
+  configured_streams as (
+    select btrim(configured.stream_name) as stream_name
+      from unnest(p_stream_names) as configured(stream_name)
+     where btrim(configured.stream_name) <> ''
+  ),
+  valid as (
+    select incoming.*
+      from incoming
+      join configured_streams on configured_streams.stream_name = incoming.stream_name
+  ),
+  upserted as (
+    insert into sync_scan_ingest (
+      dedupe_key,
+      stream_name,
+      observed_at,
+      payload_ref,
+      payload,
+      payload_sha256,
+      status,
+      attempt_count,
+      last_error,
+      producer,
+      event_kind,
+      created_at,
+      updated_at
+    )
+    select dedupe_key,
+           stream_name,
+           observed_at_text::timestamptz,
+           payload_ref,
+           payload,
+           payload_sha256,
+           'pending',
+           0,
+           null,
+           'ssl-proxy',
+           nullif(payload->>'type', ''),
+           now(),
+           now()
+      from valid
+    on conflict (dedupe_key)
+    do update set
+      observed_at = excluded.observed_at,
+      payload_ref = excluded.payload_ref,
+      payload = coalesce(excluded.payload, sync_scan_ingest.payload),
+      payload_sha256 = excluded.payload_sha256,
+      producer = excluded.producer,
+      event_kind = coalesce(excluded.event_kind, sync_scan_ingest.event_kind),
+      status = case
+        when sync_scan_ingest.status in ('pending', 'failed') then 'pending'
+        else sync_scan_ingest.status
+      end,
+      last_error = case
+        when sync_scan_ingest.status in ('pending', 'failed') then null
+        else sync_scan_ingest.last_error
+      end,
+      updated_at = now()
+    returning 1
+  )
+  select count(*) into v_recorded_count from upserted;
+
+  return coalesce(v_recorded_count, 0);
+end;
+$$;
+
 drop function if exists coordinator.process_ingest_ledger(text[], integer, integer);
 
 create or replace function coordinator.process_ingest_ledger(
@@ -786,6 +916,81 @@ begin
     into v_summary;
 
   return coalesce(v_summary, jsonb_build_object('updated', false));
+end;
+$$;
+
+create or replace function coordinator.process_batch_results(result_jsons jsonb[])
+returns integer
+language plpgsql
+as $$
+declare
+  v_updated_count integer := 0;
+begin
+  with raw_result as (
+    select payload,
+           ordinality
+      from unnest(result_jsons) with ordinality as raw(payload, ordinality)
+     where nullif(payload->>'batch_id', '') is not null
+  ),
+  result as (
+    select distinct on ((payload->>'batch_id')::uuid)
+           (payload->>'batch_id')::uuid as batch_id,
+           payload
+      from raw_result
+     order by (payload->>'batch_id')::uuid, ordinality desc
+  ),
+  batch_update as (
+    update sync_batch batch
+       set status = case result.payload->>'status'
+                      when 'success' then 'completed'
+                      when 'completed' then 'completed'
+                      else 'failed'
+                    end,
+           row_count = coalesce((result.payload->>'row_count')::integer, row_count),
+           checksum = nullif(result.payload->>'checksum', ''),
+           last_error = nullif(result.payload->>'error_text', ''),
+           updated_at = now()
+      from result
+     where batch.batch_id = result.batch_id
+    returning batch.job_id, batch.batch_id, batch.status, batch.last_error
+  ),
+  error_insert as (
+    insert into sync_error (job_id, batch_id, error_class, error_text)
+    select job_id,
+           batch_id,
+           coalesce(nullif((select payload->>'error_class' from result where result.batch_id = batch_update.batch_id), ''), 'unknown'),
+           coalesce(last_error, 'oracle load failed')
+      from batch_update
+     where status = 'failed'
+    returning id
+  ),
+  affected_jobs as (
+    select distinct job_id from batch_update
+  ),
+  job_done as (
+    update sync_job job
+       set status = case
+                      when exists (
+                        select 1
+                          from sync_batch b
+                         where b.job_id = job.job_id
+                           and b.status = 'failed'
+                      ) then 'failed'
+                      else 'completed'
+                    end,
+           finished_at = now()
+     where job.job_id in (select job_id from affected_jobs)
+       and not exists (
+         select 1
+           from sync_batch b
+          where b.job_id = job.job_id
+            and b.status not in ('completed', 'failed')
+       )
+    returning job_id, status
+  )
+  select count(*) into v_updated_count from batch_update;
+
+  return coalesce(v_updated_count, 0);
 end;
 $$;
 

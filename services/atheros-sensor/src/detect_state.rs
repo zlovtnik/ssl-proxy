@@ -195,22 +195,61 @@ pub struct SignalTracker {
     last_by_bssid: HashMap<String, i8>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SignalAnomalyAlert {
+    pub schema_version: u32,
+    pub event_type: String,
+    pub observed_at: String,
+    pub sensor_id: String,
+    pub location_id: String,
+    pub source_mac: String,
+    pub bssid: Option<String>,
+    pub ssid: Option<String>,
+    pub channel: u8,
+    pub baseline_dbm: i8,
+    pub observed_dbm: i8,
+    pub dbm_delta: i16,
+    pub configured_delta: i8,
+}
+
 impl SignalTracker {
-    /// Observes a frame and returns true when the signal delta exceeds threshold. Returns true
-    /// on the second observation of a BSSID when the delta exceeds threshold; the first
-    /// observation has no baseline to compare against.
-    pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> bool {
+    /// Observes a frame and returns an alert when the signal delta exceeds threshold.
+    pub fn observe(&mut self, entry: &AuditEntry, threshold: i8) -> Option<SignalAnomalyAlert> {
         if threshold <= 0 {
-            return false;
+            return None;
         }
         let (Some(bssid), Some(signal)) =
             (entry.bssid.as_deref().map(normalize_mac), entry.signal_dbm)
         else {
-            return false;
+            return None;
         };
-        let previous = self.last_by_bssid.insert(bssid, signal);
-        previous
-            .is_some_and(|last| (i16::from(signal) - i16::from(last)).abs() >= i16::from(threshold))
+        let source_mac = entry
+            .source_mac
+            .as_deref()
+            .or(entry.bssid.as_deref())
+            .map(normalize_mac)?;
+        let previous = self.last_by_bssid.insert(bssid.clone(), signal);
+        let baseline = previous?;
+        let delta = i16::from(signal) - i16::from(baseline);
+        if delta.abs() < i16::from(threshold) {
+            return None;
+        }
+
+        Some(SignalAnomalyAlert {
+            schema_version: 1,
+            event_type: "wireless_signal_anomaly".to_string(),
+            observed_at: entry.observed_at.clone(),
+            sensor_id: entry.sensor_id.clone(),
+            location_id: entry.location_id.clone(),
+            source_mac,
+            bssid: Some(bssid),
+            ssid: entry.ssid.clone(),
+            channel: entry.channel,
+            baseline_dbm: baseline,
+            observed_dbm: signal,
+            dbm_delta: delta.abs(),
+            configured_delta: threshold,
+        })
     }
 }
 
@@ -552,6 +591,10 @@ impl AuthorizedNetworkCache {
         self.authorization_status(ssid, bssid, location_id) == AuthorizationStatus::Authorized
     }
 
+    pub fn entries(&self) -> &[AuthorizedWirelessNetwork] {
+        &self.entries
+    }
+
     pub fn is_known_ssid(&self, ssid: &str) -> bool {
         let ssid = ssid.trim().to_ascii_lowercase();
         self.entries.iter().any(|entry| {
@@ -832,7 +875,6 @@ mod tests {
     fn link_probe_to_network_matches_ssid() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
-        use crate::model::AuditEntry;
 
         let mut cache = AuthorizedNetworkCache::default();
         cache.entries = vec![AuthorizedWirelessNetwork {
@@ -860,7 +902,6 @@ mod tests {
     fn link_probe_to_network_case_insensitive() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
-        use crate::model::AuditEntry;
 
         let mut cache = AuthorizedNetworkCache::default();
         cache.entries = vec![AuthorizedWirelessNetwork {
@@ -884,7 +925,6 @@ mod tests {
     fn link_probe_to_network_no_match() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
-        use crate::model::AuditEntry;
 
         let mut cache = AuthorizedNetworkCache::default();
         cache.entries = vec![AuthorizedWirelessNetwork {
@@ -937,6 +977,33 @@ mod tests {
         assert_eq!(
             cache.authorization_status(Some("Guest"), Some("aa:bb:cc:dd:ee:ff"), "loc1"),
             AuthorizationStatus::Unauthorized
+        );
+    }
+
+    #[test]
+    fn attack_timeline_correlates_karma_and_bssid_spoofing() {
+        use super::AttackTimelineCorrelator;
+
+        let mut correlator = AttackTimelineCorrelator::default();
+        let mut entry = create_test_audit_entry();
+        entry.ssid = Some("CorpWiFi".to_string());
+        entry.observed_at = "2024-01-01T12:00:00Z".to_string();
+
+        assert!(correlator.observe(&entry, "karma_probe_response").is_none());
+
+        entry.observed_at = "2024-01-01T12:01:00Z".to_string();
+        let alert = correlator
+            .observe(&entry, "bssid_spoofing")
+            .expect("second correlated attack type should emit sequence alert");
+
+        assert_eq!(alert.event_type, "wireless_attack_sequence");
+        assert_eq!(alert.ssid, "CorpWiFi");
+        assert_eq!(
+            alert.attack_chain,
+            vec![
+                "bssid_spoofing".to_string(),
+                "karma_probe_response".to_string()
+            ]
         );
     }
 
@@ -1079,7 +1146,6 @@ mod tests {
     #[test]
     fn pmf_attack_not_detected_when_pmf_required() {
         use super::PmfAttackTracker;
-        use crate::model::AuditEntry;
         use crate::parse::SECURITY_PMF_REQUIRED;
 
         let mut tracker = PmfAttackTracker::new(3000);
