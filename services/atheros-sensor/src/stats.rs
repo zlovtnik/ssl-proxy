@@ -9,7 +9,10 @@ use crate::config::AppConfig;
 pub(crate) struct CaptureStats {
     pub(crate) packets_seen: u64,
     pub(crate) decoded_frames: u64,
+    /// Expected unsupported control frames.
     pub(crate) unsupported_frames: u64,
+    /// Malformed frames that failed structural 802.11 parsing.
+    pub(crate) malformed_frames: u64,
     /// Packets dropped before decode due to audit window overflow.
     pub(crate) audit_window_drops: u64,
     pub(crate) capture_errors: u64,
@@ -29,6 +32,8 @@ pub(crate) struct CaptureStats {
     /// Snapshot of the memory backlog length at the last bandwidth flush. Gauge, updated
     /// each flush cycle. Exposed as `atheros_memory_backlog_len`.
     pub(crate) memory_backlog_len: usize,
+    /// Current probe accumulator length, updated when probe state changes or flushes run.
+    pub(crate) probe_accumulator_len: usize,
 }
 
 impl CaptureStats {
@@ -44,11 +49,14 @@ impl CaptureStats {
             packets_seen = self.packets_seen,
             decoded_frames = self.decoded_frames,
             unsupported_frames = self.unsupported_frames,
+            malformed_frames = self.malformed_frames,
             audit_window_drops = self.audit_window_drops,
             capture_errors = self.capture_errors,
             pipeline_errors = self.pipeline_errors,
             mac_lookup_failures = self.mac_lookup_failures,
             channel_hop_count = self.channel_hop_count,
+            memory_backlog_len = self.memory_backlog_len,
+            probe_accumulator_len = self.probe_accumulator_len,
             publish_lag_ms = publish_lag_ms,
             "atheros sensor capture heartbeat"
         );

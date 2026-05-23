@@ -24,12 +24,15 @@ use std::time::Instant;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::model::AuditEntry;
 
 pub const BANDWIDTH_TOPIC: &str = "audit.wireless.bandwidth";
 pub const DEFAULT_BANDWIDTH_WINDOW_SECS: i64 = 60;
 pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
+const DEFAULT_TRAFFIC_BUCKET_MAX_ENTRIES: usize = 65_536;
+const ARRIVAL_RESERVOIR_SIZE: usize = 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FrameSizeHistogram {
@@ -118,7 +121,7 @@ struct TrafficKey {
     external_bssid: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct TrafficCounters {
     bytes: u64,
     frame_count: u64,
@@ -128,6 +131,23 @@ struct TrafficCounters {
     strongest_signal_dbm: Option<i8>,
     histogram: [u64; 4],
     arrival_times_ms: Vec<i64>,
+    arrival_reservoir_size: usize,
+}
+
+impl Default for TrafficCounters {
+    fn default() -> Self {
+        Self {
+            bytes: 0,
+            frame_count: 0,
+            retry_count: 0,
+            more_data_count: 0,
+            power_save_count: 0,
+            strongest_signal_dbm: None,
+            histogram: [0; 4],
+            arrival_times_ms: Vec::new(),
+            arrival_reservoir_size: ARRIVAL_RESERVOIR_SIZE,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,15 +158,21 @@ pub struct TrafficBucket {
     /// Wall-clock start of the current window (used for flush decision).
     wall_clock_start: Option<Instant>,
     entries: HashMap<TrafficKey, TrafficCounters>,
+    max_entries: usize,
 }
 
 impl TrafficBucket {
     pub fn new(window_secs: i64) -> Self {
+        Self::with_entry_limit(window_secs, DEFAULT_TRAFFIC_BUCKET_MAX_ENTRIES)
+    }
+
+    fn with_entry_limit(window_secs: i64, max_entries: usize) -> Self {
         Self {
             window: Duration::seconds(window_secs.max(1)),
             window_start: None,
             wall_clock_start: None,
             entries: HashMap::new(),
+            max_entries: max_entries.max(1),
         }
     }
 
@@ -184,6 +210,7 @@ impl TrafficBucket {
         let counters = self.entries.entry(key).or_default();
         counters.bytes = counters.bytes.saturating_add(bytes);
         counters.frame_count = counters.frame_count.saturating_add(1);
+        self.enforce_entry_limit();
 
         flushed
     }
@@ -266,6 +293,11 @@ impl TrafficBucket {
         counters
             .arrival_times_ms
             .push(observed_at.timestamp_millis());
+        if counters.arrival_times_ms.len() > counters.arrival_reservoir_size {
+            let drop_idx = fastrand::usize(..counters.arrival_times_ms.len());
+            counters.arrival_times_ms.swap_remove(drop_idx);
+        }
+        self.enforce_entry_limit();
         Ok(flushed)
     }
 
@@ -368,6 +400,21 @@ impl TrafficBucket {
             });
         }
         events
+    }
+
+    fn enforce_entry_limit(&mut self) {
+        if self.entries.len() <= self.max_entries {
+            return;
+        }
+
+        warn!(
+            entry_count = self.entries.len(),
+            limit = self.max_entries,
+            "traffic bucket entry limit reached; entry dropped"
+        );
+        if let Some(drop_key) = self.entries.keys().next().cloned() {
+            self.entries.remove(&drop_key);
+        }
     }
 }
 
@@ -546,5 +593,40 @@ mod tests {
     fn empty_flush_current_returns_empty() {
         let mut bucket = TrafficBucket::new(60);
         assert!(bucket.flush_current().is_empty());
+    }
+
+    #[test]
+    fn traffic_bucket_enforces_entry_limit() {
+        let mut bucket = TrafficBucket::with_entry_limit(60, 2);
+        let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
+
+        for index in 0..3 {
+            let mut entry = bandwidth_entry(base, index, 100, -42);
+            entry.source_mac = Some(format!("aa:bb:cc:dd:ee:{index:02x}"));
+            assert!(bucket.observe(&entry, false).unwrap().is_empty());
+        }
+
+        assert!(bucket.entries.len() <= 2);
+    }
+
+    #[test]
+    fn traffic_bucket_caps_arrival_time_samples() {
+        let mut bucket = TrafficBucket::new(60);
+        let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
+
+        for index in 0..1200 {
+            assert!(bucket
+                .observe(&bandwidth_entry(base, index, 100, -42), false)
+                .unwrap()
+                .is_empty());
+        }
+
+        let sample_len = bucket
+            .entries
+            .values()
+            .map(|counters| counters.arrival_times_ms.len())
+            .max()
+            .unwrap_or_default();
+        assert!(sample_len <= ARRIVAL_RESERVOIR_SIZE);
     }
 }
