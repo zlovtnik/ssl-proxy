@@ -2035,6 +2035,12 @@ begin
   );
 
   perform cron.schedule(
+    'vec-refresh-device-repetition-score',
+    '*/5 * * * *',
+    $cron$REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score;$cron$
+  );
+
+  perform cron.schedule(
     'vec-release-expired-leases',
     '* * * * *',
     $cron$select vec_release_expired_leases();$cron$

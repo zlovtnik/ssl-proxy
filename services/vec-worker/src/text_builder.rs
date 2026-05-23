@@ -557,6 +557,7 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<Emb
             mac_rotation_indicators
         FROM vec_behaviour_snapshots
         WHERE snapshot_id::text = $1
+           OR snapshot_key = $1
         "#,
     )
     .bind(&job.source_key)
@@ -570,7 +571,7 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<Emb
 
 #[derive(Debug, sqlx::FromRow)]
 struct BehaviourBatchRow {
-    snapshot_key: String,
+    query_key: String,
     embedding_text: Option<String>,
     text_summary: Option<String>,
     window_start: Option<chrono::DateTime<chrono::Utc>>,
@@ -600,7 +601,10 @@ async fn build_behaviour_windows_batch(
     let rows = sqlx::query_as::<_, BehaviourBatchRow>(
         r#"
         SELECT
-            snapshot_id::text AS snapshot_key,
+            CASE
+              WHEN snapshot_key = ANY($1::text[]) THEN snapshot_key
+              ELSE snapshot_id::text
+            END AS query_key,
             embedding_text,
             text_summary,
             window_start,
@@ -621,6 +625,7 @@ async fn build_behaviour_windows_batch(
             mac_rotation_indicators
         FROM vec_behaviour_snapshots
         WHERE snapshot_id::text = ANY($1::text[])
+           OR snapshot_key = ANY($1::text[])
         "#,
     )
     .bind(&keys)
@@ -649,7 +654,7 @@ async fn build_behaviour_windows_batch(
             unique_bssid_count: row.unique_bssid_count,
             mac_rotation_indicators: row.mac_rotation_indicators,
         };
-        out.insert(row.snapshot_key, behaviour_row_to_input(&behaviour_row));
+        out.insert(row.query_key, behaviour_row_to_input(&behaviour_row));
     }
     Ok(())
 }

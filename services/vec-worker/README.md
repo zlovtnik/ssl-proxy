@@ -71,7 +71,7 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `min(batch_size, VECTOR_EMBEDDING_REQUEST_BATCH_MAX)`
   - Number of texts sent to the provider in one `embed_many` HTTP call.
 - `VECTOR_EMBEDDING_REQUEST_BATCH_MAX`
-  - Default: `64`
+  - Default: `128`
   - Upper bound for the default request batch size when `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE` is unset.
 - `VECTOR_EMBEDDING_LEASE_SECONDS`
   - Default: `1800`
@@ -86,10 +86,10 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `8`
   - Reserved for future per-job prepare parallelism; source fetches use batched `ANY()` queries per chunk.
 - `VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES`
-  - Default: `8`
+  - Default: `16`
   - Limits concurrent per-job completion transactions when bulk complete falls back.
 - `VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS`
-  - Default: `1`
+  - Default: `4`
   - Maximum in-flight embedding HTTP requests across chunks (increase when the provider can serve parallel batches).
 - `DATABASE_POOL_MAX_CONNECTIONS`
   - Default: `max(prepares, completes, embed_requests) + 2`, floor `10`
@@ -483,4 +483,489 @@ The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_sna
 - `services/vec-worker/src/worker.rs` — leasing loop, batch processing, job lifecycle, shutdown
 - `services/vec-worker/src/db.rs` — Postgres access, job update, embedding upsert, worker heartbeat
 - `services/vec-worker/src/text_builder.rs` — source row reads and embedding text construction
+
 - `services/zig-coordinator/schema/postgres.sql` — Postgres table definitions and helper functions used by the worker
+
+# vec-worker: Performance & Correctness Recovery
+## From 55 jobs/min → target 2,000+ jobs/min
+
+---
+
+## Situation assessment from your queue metrics
+
+| Signal | Value | Diagnosis |
+|--------|-------|-----------|
+| `behaviour_window` jobs | 664 failed, 0 completed | **100% failure — broken, not slow** |
+| `event` jobs/min (15m avg) | 55.87 | Severely throttled vs architecture capacity |
+| `event` jobs/min (1h avg) | 7,215 / 60 = 120/min | Inconsistent — suggests intermittent stalls |
+| Currently leased | 0 | Worker idle between polls at time of snapshot |
+| ETA at current rate | 2026-05-29 | 8 days for 621K jobs — unacceptable |
+| Oldest remaining | 2026-05-16 | Jobs sitting for 5 days, not being processed |
+
+The 1h rate (120/min) vs 15m rate (55/min) tells you the worker is getting worse
+over time during this session, not better. This is either a memory pressure issue,
+a pool exhaustion issue, or the alert sweep introduced in the last change is blocking
+the embedding loop.
+
+---
+
+## Fix 1 — Behaviour window 100% failure (fix today, before anything else)
+
+664 jobs, 0 completions, 100% failure. This is a schema or query mismatch, not a
+performance issue. The most likely causes in order of probability:
+
+### 1a. The `vec_build_behaviour_snapshots` cron job is not running
+
+If the cron job (runs every 5 min per README) stopped, `vec_behaviour_snapshots`
+rows exist but have no `embedding_text` and no `text_summary`, and the fallback
+builder constructs empty or near-empty text. The worker may be failing on empty
+content or the SHA mismatch check.
+
+**Verify:**
+```sql
+-- Check if snapshots exist and have content
+SELECT
+  COUNT(*) AS total,
+  COUNT(embedding_text) AS has_embedding_text,
+  COUNT(text_summary) AS has_text_summary,
+  MAX(created_at) AS latest_created
+FROM vec_behaviour_snapshots;
+
+-- Check the actual last_error on failed jobs
+SELECT last_error, COUNT(*) FROM vec_embedding_jobs
+WHERE embedding_kind = 'behaviour_window'
+  AND status = 'failed'
+GROUP BY last_error
+ORDER BY COUNT(*) DESC
+LIMIT 10;
+```
+
+### 1b. The `snapshot_id::text` cast is producing wrong keys
+
+The query uses `WHERE snapshot_id::text = $1` but the job's `source_key` may have
+been stored with a different text representation (e.g., UUID with/without braces,
+or a bigint that doesn't match). One wrong cast causes 100% failure.
+
+**Verify:**
+```sql
+-- Cross-check: do job source_keys match snapshot_id::text?
+SELECT j.source_key, s.snapshot_id::text
+FROM vec_embedding_jobs j
+LEFT JOIN vec_behaviour_snapshots s
+  ON s.snapshot_id::text = j.source_key
+WHERE j.embedding_kind = 'behaviour_window'
+  AND j.status = 'failed'
+LIMIT 5;
+```
+
+### 1c. The `vec_build_behaviour_snapshots()` function changed its output schema
+
+If the snapshot table schema changed (e.g., `window_end` column added, or
+`mac_rotation_indicators` type changed), the `BehaviourWindowRow` sqlx struct
+will fail to deserialize and every job fails immediately on `text_build error`.
+
+**Fix:** Check the `last_error` from the query above. If it says
+`text_build error: behaviour_window query failed`, the struct is mismatched.
+Add `window_end` to the struct or check for column type changes.
+
+### Action
+
+```sql
+-- Re-queue all failed behaviour_window jobs after fixing the root cause
+UPDATE vec_embedding_jobs
+SET status = 'pending',
+    attempts = 0,
+    last_error = NULL,
+    due_at = NOW(),
+    updated_at = NOW()
+WHERE embedding_kind = 'behaviour_window'
+  AND status = 'failed';
+```
+
+---
+
+## Fix 2 — The alert sweep is killing throughput
+
+Looking at `worker.rs`, the alert sweep runs inside the main worker loop every
+10 iterations:
+
+```rust
+if iteration % 10 == 0 {
+    // ... release_expired_leases
+    let alert_cfg = AlertConfig::default();
+    if let Err(e) = alerts::run_alert_sweep(&pool, &alert_cfg).await {
+        warn!(error = %e, "alert sweep failed");
+    }
+}
+```
+
+And `check_near_duplicates` in `alerts.rs` queries `v_device_repetition_score`
+which is a **view** (not a materialized view). With 2.7M+ rows in `vec_embeddings`
+and `vec_similarity_results`, this view scan can take 10-60 seconds. It runs
+synchronously in the main loop, blocking lease → embed → complete for its entire
+duration.
+
+**The math:** If the sweep takes 30s and runs every 10 iterations at ~5s poll
+interval, it fires every ~50s and blocks for 30s of that — 60% of worker time
+is spent in the alert sweep.
+
+### Fix 2a — Move alert sweep to a background task
+
+```rust
+// In run_forever(), replace the inline alert sweep with a spawned task:
+if iteration % 10 == 0 {
+    match db::release_expired_leases(&pool).await {
+        Ok(released) if released > 0 => info!(released, "expired leases released"),
+        Err(e) => warn!(error = %e, "release_expired_leases failed"),
+        _ => {}
+    }
+    // Spawn alert sweep as background task — never blocks the embedding loop
+    let alert_pool = pool.clone();
+    tokio::spawn(async move {
+        let alert_cfg = AlertConfig::default();
+        if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
+            warn!(error = %e, "alert sweep failed (background)");
+        }
+    });
+}
+```
+
+### Fix 2b — Materialize the view
+
+If `v_device_repetition_score` is a plain view, convert it to a materialized view
+and refresh it from the background task instead of querying the live view:
+
+```sql
+-- Convert to materialized view (run once)
+CREATE MATERIALIZED VIEW v_device_repetition_score AS
+SELECT
+  source_mac,
+  COUNT(*) AS near_duplicate_pairs,
+  MIN(distance) AS min_distance,
+  AVG(distance) AS avg_distance,
+  COUNT(DISTINCT embedding_id_a) AS unique_events_implicated
+FROM vec_similarity_results
+WHERE relation_type = 'event_event'
+  AND distance < 0.05
+  AND created_at >= NOW() - INTERVAL '24 hours'
+GROUP BY source_mac;
+
+CREATE UNIQUE INDEX ON v_device_repetition_score(source_mac);
+```
+
+Then in the background sweep task:
+```sql
+REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score;
+```
+
+The `CONCURRENTLY` flag allows reads during the refresh (requires the unique index).
+
+---
+
+## Fix 3 — Batch size and concurrency are misconfigured for current workload
+
+The current default settings from `config.rs`:
+
+```
+batch_size: 64
+request_batch_size: min(64, 64) = 64
+max_concurrent_embed_requests: 1
+max_concurrent_prepares: 8  (unused — batch query does all prepares in one query)
+max_concurrent_completes: 8
+```
+
+With `max_concurrent_embed_requests: 1` and a single `embed_many` HTTP call per
+chunk, the pipeline is:
+
+```
+prepare_chunk (batch DB query) → embed_many (HTTP, SEQUENTIAL) → complete_chunk
+```
+
+The HTTP call to Ollama/llama.cpp is the bottleneck. With 64 texts per call and
+~500ms per call (rough estimate for nomic-embed-text), you get:
+`64 texts / 0.5s = 128 texts/s = ~128 jobs/min`
+
+Your actual 55/min is even below this, confirming the alert sweep overhead.
+
+### Recommended env config for a single worker
+
+```bash
+# Tune for Ollama with nomic-embed-text-v2-moe on a GPU
+VECTOR_EMBEDDING_BATCH_SIZE=256
+VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=64     # How many texts per HTTP call to Ollama
+VECTOR_EMBEDDING_REQUEST_BATCH_MAX=128
+VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4  # 4 parallel HTTP calls
+VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=16
+DATABASE_POOL_MAX_CONNECTIONS=24
+POLL_INTERVAL_SECONDS=1
+```
+
+With `max_concurrent_embed_requests=4`, the pipeline runs 4 embed HTTP calls
+simultaneously. At 64 texts each × 4 concurrent = 256 texts in flight.
+At 500ms/call: `256 / 0.5 = 512 jobs/min` from a single worker.
+
+### Important: Ollama must support parallel requests
+
+Check if Ollama is configured for parallel inference:
+```bash
+OLLAMA_NUM_PARALLEL=4   # Must be set in Ollama's environment
+OLLAMA_MAX_LOADED_MODELS=1
+```
+
+Without this, Ollama serializes requests internally and you get no benefit from
+`max_concurrent_embed_requests > 1`.
+
+For llama.cpp server, use `--parallel 4` in the server startup arguments.
+
+---
+
+## Fix 4 — The `process_jobs` pipeline has a sequencing bug under load
+
+In `worker.rs`, `process_jobs` pipelines prepare/embed/complete across chunks:
+
+```rust
+for i in 0..n {
+    let prepared = match next_prepare.take() { ... };
+    // ... spawn next prepare
+    let embedded = embed_chunk(...).await;        // AWAITED INLINE
+    // ... drain previous complete_handle
+    complete_handle = Some(tokio::spawn(complete_chunk(...)));
+}
+```
+
+The `embed_chunk` call is awaited inline, which means **the embedding semaphore
+is held for the full duration of the HTTP call, blocking the prepare of the next
+chunk**. With `max_concurrent_embed_requests=1`, the pipeline actually degrades
+to serial: prepare → embed → complete, with no true overlap.
+
+### Fix: Decouple embed from the loop using a channel
+
+This is a more significant refactor. The short-term fix is simply to increase
+`max_concurrent_embed_requests` and ensure Ollama supports it (Fix 3 above).
+
+The correct long-term pipeline is:
+
+```
+prepare_0 ──→ embed_0 ──→ complete_0
+         prepare_1 ──→ embed_1 ──→ complete_1
+                   prepare_2 ──→ embed_2 ──→ complete_2
+```
+
+All three stages run simultaneously with back-pressure via the semaphores.
+The current implementation does achieve this but only when
+`max_concurrent_embed_requests >= 2`. With the default of 1, it's purely serial.
+
+---
+
+## Fix 5 — `vec_complete_embedding_batch` may not exist
+
+The README references `vec_complete_embedding_batch($1::jsonb)` as a PostgreSQL
+function, and `db.rs` calls it. If this function is not defined in the schema
+(it was described as a migration `V021__vec_complete_embedding_batch.sql`), every
+bulk complete falls back to per-job transactions via `complete_jobs_fallback`.
+
+**Verify:**
+```sql
+SELECT proname, pronargs FROM pg_proc WHERE proname = 'vec_complete_embedding_batch';
+```
+
+If it returns 0 rows, the function is missing. Every batch of 64 jobs does 64
+individual `BEGIN / upsert / UPDATE / COMMIT` cycles instead of 1 batch call.
+At 64 transactions × ~5ms each = 320ms pure DB overhead per chunk, completely
+independent of the embedding latency.
+
+### Check the fallback rate from logs
+
+In your JSON logs, look for:
+```
+"bulk complete failed, falling back per job"
+"bulk complete returned 0, falling back per job"
+```
+
+If these appear frequently, the function is missing or broken and you're paying
+the per-job transaction cost on every single chunk.
+
+### Fix: Add the missing function
+
+```sql
+CREATE OR REPLACE FUNCTION vec_complete_embedding_batch(p_payload jsonb)
+RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_row jsonb;
+  v_count integer := 0;
+BEGIN
+  FOR v_row IN SELECT * FROM jsonb_array_elements(p_payload)
+  LOOP
+    -- Upsert the embedding
+    INSERT INTO vec_embeddings (
+      source_table, source_key, source_observed_at, source_stream_name,
+      source_sensor_id, source_location_id, source_mac,
+      embedding_model, embedding_kind, embedding_dimensions,
+      content_sha256, content_text, embedding, metadata,
+      embedded_at, created_at, updated_at
+    )
+    VALUES (
+      v_row->>'source_table',
+      v_row->>'source_key',
+      (v_row->>'source_observed_at')::timestamptz,
+      v_row->>'source_stream_name',
+      v_row->>'source_sensor_id',
+      v_row->>'source_location_id',
+      v_row->>'source_mac',
+      v_row->>'embedding_model',
+      v_row->>'embedding_kind',
+      (v_row->>'embedding_dimensions')::int,
+      v_row->>'content_sha256',
+      v_row->>'content_text',
+      (v_row->>'embedding')::vector,
+      (v_row->>'metadata')::jsonb,
+      NOW(), NOW(), NOW()
+    )
+    ON CONFLICT (source_table, source_key, embedding_model, embedding_kind)
+    DO UPDATE SET
+      source_observed_at = EXCLUDED.source_observed_at,
+      content_sha256 = EXCLUDED.content_sha256,
+      content_text = EXCLUDED.content_text,
+      embedding = EXCLUDED.embedding,
+      metadata = EXCLUDED.metadata,
+      embedded_at = NOW(),
+      updated_at = NOW();
+
+    -- Mark the job completed (lease-token verified)
+    UPDATE vec_embedding_jobs
+    SET status = 'completed',
+        content_sha256 = v_row->>'content_sha256',
+        completed_at = NOW(),
+        lease_token = NULL,
+        leased_at = NULL,
+        locked_by = NULL,
+        last_error = NULL,
+        updated_at = NOW()
+    WHERE job_id = (v_row->>'job_id')::bigint
+      AND lease_token IS NOT DISTINCT FROM v_row->>'lease_token';
+
+    IF FOUND THEN
+      v_count := v_count + 1;
+    END IF;
+  END LOOP;
+  RETURN v_count;
+END;
+$$;
+```
+
+---
+
+## Fix 6 — Run multiple worker replicas immediately
+
+While fixes 1–5 are being deployed, run 3–4 workers in parallel. This is the
+fastest way to drain the existing backlog and requires zero code changes.
+
+Each worker needs a unique `VECTOR_EMBEDDING_WORKER_NAME`. The `FOR UPDATE SKIP LOCKED`
+in `vec_lease_embedding_jobs` handles coordination automatically.
+
+```yaml
+# docker-compose or kubernetes — 4 replicas
+services:
+  vec-worker-1:
+    environment:
+      VECTOR_EMBEDDING_WORKER_NAME: worker-1
+      VECTOR_EMBEDDING_BATCH_SIZE: 128
+      VECTOR_EMBEDDING_REQUEST_BATCH_SIZE: 32
+      VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS: 2
+      POLL_INTERVAL_SECONDS: 1
+
+  vec-worker-2:
+    environment:
+      VECTOR_EMBEDDING_WORKER_NAME: worker-2
+      # ... same settings
+
+  vec-worker-3:
+    environment:
+      VECTOR_EMBEDDING_WORKER_NAME: worker-3
+
+  vec-worker-4:
+    environment:
+      VECTOR_EMBEDDING_WORKER_NAME: worker-4
+```
+
+At 4 workers × 200 jobs/min each (conservative after Fix 2+3) = **800 jobs/min**.
+621K remaining / 800 = ~13 hours to drain instead of 8 days.
+
+At 4 workers × 500 jobs/min each (after all fixes) = **2,000 jobs/min**.
+621K remaining / 2,000 = **~5 hours**.
+
+---
+
+## Fix 7 — Re-enable `VECTOR_EMBEDDINGS_ENABLED`
+
+This might sound obvious but: with `VECTOR_EMBEDDINGS_ENABLED=false` (the default),
+the worker runs but uses placeholder model values. Verify the workers actually
+have `VECTOR_EMBEDDINGS_ENABLED=true` set in production:
+
+```bash
+# Quick check — look at what the worker logs on startup
+grep "worker starting" your-log-stream | jq '.enabled'
+# Should be: true
+```
+
+---
+
+## Priority order — do these in sequence today
+
+| # | Fix | Time to implement | Expected impact |
+|---|-----|-------------------|-----------------|
+| **1** | Diagnose + fix behaviour_window 100% failure | 30 min | Unblocks 664 jobs, finds root cause |
+| **2** | Move alert sweep to background task | 1 hour | Removes the main bottleneck — expect 2–4× throughput immediately |
+| **3** | Add `vec_complete_embedding_batch` if missing | 30 min | Removes per-job transaction overhead |
+| **4** | Set `max_concurrent_embed_requests=2-4` + Ollama `NUM_PARALLEL` | 15 min config | 2–4× embed throughput |
+| **5** | Run 4 worker replicas | 15 min ops | Linear scaling on remaining backlog |
+| **6** | Materialize `v_device_repetition_score` | 1 hour | Permanent fix so alert sweep never blocks again |
+| **7** | Increase `VECTOR_EMBEDDING_BATCH_SIZE` to 256 | 5 min config | More work per poll cycle, fewer idle pauses |
+
+---
+
+## Expected throughput after all fixes
+
+| Scenario | Jobs/min | Time to clear 621K backlog |
+|----------|----------|---------------------------|
+| Current (broken) | 55 | 8 days |
+| Fix 2 only (remove alert block) | ~200 | ~52 hours |
+| Fix 2 + Fix 3 (concurrency) | ~400 | ~26 hours |
+| Fix 2 + 3 + 4 (bulk complete) | ~600 | ~17 hours |
+| All fixes + 4 replicas | ~2,400 | **~4.3 hours** |
+
+---
+
+## Monitoring query to run after deploying fixes
+
+```sql
+-- Paste this and run every 60 seconds to watch progress
+SELECT
+  embedding_kind,
+  COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+  COUNT(*) FILTER (WHERE status = 'leased') AS leased,
+  COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+  COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+  ROUND(
+    COUNT(*) FILTER (WHERE status = 'completed')::numeric /
+    NULLIF(COUNT(*), 0) * 100, 1
+  ) AS pct_done,
+  MAX(completed_at) AS latest_completion
+FROM vec_embedding_jobs
+GROUP BY embedding_kind
+ORDER BY embedding_kind;
+```
+
+And for live throughput (run every 30 seconds, compare delta):
+
+```sql
+SELECT
+  DATE_TRUNC('minute', completed_at) AS minute,
+  COUNT(*) AS completions_per_minute
+FROM vec_embedding_jobs
+WHERE completed_at > NOW() - INTERVAL '10 minutes'
+  AND status = 'completed'
+GROUP BY 1
+ORDER BY 1 DESC;
+```

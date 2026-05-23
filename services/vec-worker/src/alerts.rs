@@ -92,7 +92,7 @@ pub async fn check_near_duplicates(
         let result = sqlx::query(
             r#"
             INSERT INTO vec_alerts (alert_type, source_mac, score, metadata)
-            VALUES ('near_duplicate_cluster', $1, $2, $3::jsonb)
+            SELECT 'near_duplicate_cluster', $1, $2, $3::jsonb
             WHERE NOT EXISTS (
                 SELECT 1 FROM vec_alerts a
                 WHERE a.alert_type = 'near_duplicate_cluster'
@@ -129,11 +129,28 @@ pub async fn check_near_duplicates(
 }
 
 /// Run all configured alert checks in the correct order.
+///
+/// Refreshes `v_device_repetition_score` (materialized view) at the start of
+/// each sweep so that alert queries run against current data, not stale snapshots.
+/// The CONCURRENTLY flag allows reads during the refresh (requires the unique
+/// index on `source_mac`, which is created in V019).
 #[instrument(skip(pool))]
 pub async fn run_alert_sweep(
     pool: &PgPool,
     config: &AlertConfig,
 ) -> Result<(), WorkerError> {
+    // Refresh the materialized view before querying it so alerts are based on
+    // current data. REFRESH MATERIALIZED VIEW CONCURRENTLY requires a unique
+    // index, which V019 creates on (source_mac).
+    if let Err(e) = sqlx::query(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score",
+    )
+    .execute(pool)
+    .await
+    {
+        warn!(error = %e, "failed to refresh v_device_repetition_score, alert sweep may use stale data");
+    }
+
     let nd = check_near_duplicates(pool, config).await?;
     debug_assert!(nd <= usize::MAX);
     Ok(())
