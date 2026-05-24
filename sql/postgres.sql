@@ -1097,9 +1097,6 @@ create table if not exists vec_baseline_profiles (
   constraint vec_baseline_profiles_unique unique (bssid, metric)
 );
 
-create index if not exists vec_baseline_profiles_bssid_idx
-  on vec_baseline_profiles (bssid);
-
 create table if not exists vec_frame_sequences (
   session_key text primary key,
   source_mac text,
@@ -1147,6 +1144,7 @@ language plpgsql
 as $$
 declare
   v_count integer := 0;
+  v_row_count integer := 0;
 begin
   with base as (
     select
@@ -1294,6 +1292,7 @@ language plpgsql
 as $$
 declare
   v_count integer := 0;
+  v_row_count integer := 0;
 begin
   with current_assoc as (
     select
@@ -1411,7 +1410,8 @@ begin
       and a.metadata->>'ssid' = vc.ssid
   );
 
-  get diagnostics v_count = v_count + row_count;
+  get diagnostics v_row_count = row_count;
+  v_count := v_count + v_row_count;
 
   insert into vec_alerts (alert_type, source_mac, score, metadata)
   select
@@ -1433,7 +1433,8 @@ begin
       and a.metadata->>'reason' = 'fast_roaming'
   );
 
-  get diagnostics v_count = v_count + row_count;
+  get diagnostics v_row_count = row_count;
+  v_count := v_count + v_row_count;
   return v_count;
 end;
 $$;
@@ -1677,7 +1678,7 @@ begin
 end;
 $$;
 
-create view if not exists v_bssid_anomaly_score as
+create or replace view v_bssid_anomaly_score as
 with current_base as (
   select
     lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
@@ -1686,8 +1687,9 @@ with current_base as (
     ) as signal_dbm,
     coalesce(retry, false) as retry,
     coalesce(channel_number::text, payload->>'channel_number', payload->>'channel') as channel_number,
-    frame_subtype,
+    payload->>'frame_subtype' as frame_subtype,
     lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+    observed_at,
     date_bin(interval '15 minutes', observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start
   from sync_events_expanded
   where stream_name = 'wireless.audit'
@@ -1731,14 +1733,20 @@ current_metrics as (
     select
       bssid,
       window_start,
-      max(channel_count::numeric / sum(channel_count) over (partition by bssid, window_start)) as top_channel_share
+      max(channel_share) as top_channel_share
     from (
-      select bssid, window_start, channel_number, count(*)::bigint as channel_count
-      from current_base
-      where channel_number is not null
-      group by bssid, window_start, channel_number
-    ) channel_window
-    group by bssid, window_start, channel_number
+      select
+        bssid,
+        window_start,
+        channel_count::numeric / sum(channel_count) over (partition by bssid, window_start) as channel_share
+      from (
+        select bssid, window_start, channel_number, count(*)::bigint as channel_count
+        from current_base
+        where channel_number is not null
+        group by bssid, window_start, channel_number
+      ) channel_window
+    ) sub
+    group by bssid, window_start
   ) channel_dwell
   group by bssid
   union all
