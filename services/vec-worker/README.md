@@ -969,3 +969,467 @@ WHERE completed_at > NOW() - INTERVAL '10 minutes'
 GROUP BY 1
 ORDER BY 1 DESC;
 ```
+
+# AI/ML Enhancement Workmap
+## atheros-sensor + vec-worker — Decision-Quality Intelligence Roadmap
+
+---
+
+## Reading the Map
+
+Each section maps directly to your existing architecture. Items are ordered by ROI within each track. Prerequisites are noted inline. Effort estimates assume one senior engineer.
+
+---
+
+## Track 1 — Behavioral Baselines Per AP/Client
+**Target:** Replace static threshold rules with learned normal-behavior profiles.
+
+### 1.1 — Per-BSSID Baseline Model (vec-worker)
+**What:** For each BSSID, compute rolling statistics over `vec_behaviour_snapshots`: beacon interval variance, retry rate, signal IQR, channel dwell time, association timing.
+
+**Where to build:**
+- New table: `vec_baseline_profiles` (bssid, metric, p5, p50, p95, updated_at)
+- New cron job alongside `vec_build_behaviour_snapshots()`
+- New `embedding_kind = 'baseline_profile'` in `vec_embedding_jobs`
+
+**Actionable steps:**
+1. Add `vec_build_baseline_profiles()` SQL function — computes per-BSSID rolling percentiles from `sync_events` over a 7-day window.
+2. Add `build_baseline_profile` arm to `text_builder.rs` `build_text()` dispatch.
+3. Extend `vec_enqueue_embedding_jobs()` cron to enqueue `baseline_profile` jobs when a BSSID accumulates ≥ 50 new frames since last baseline.
+4. Add `BaselineProfileRow` sqlx struct matching the new table schema.
+5. Expose deviation score via new `v_bssid_anomaly_score` view: `(observed_metric - p50) / (p95 - p5)`.
+
+**Signal to embed:** `kind: baseline_profile\nbssid: {}\nbeacon_interval_p50: {}\nretry_rate_p95: {}\nsignal_iqr: {}\n...`
+
+---
+
+### 1.2 — Per-Client Roaming Baseline (atheros-sensor)
+**What:** Track per-client roaming paths and flag unusual transitions.
+
+**Where to build:** `detect_state.rs` — extend `ClientInventory` / `ClientProfile`.
+
+**Actionable steps:**
+1. Add `roaming_history: Vec<(bssid, channel, observed_at)>` to `ClientProfile` (cap at 32 entries, ring-buffer).
+2. Add `normal_roaming_pairs: HashSet<(String, String)>` populated after ≥ 3 observed transitions.
+3. In `ClientInventory::observe()`, when a new association frame arrives with a BSSID not in `normal_roaming_pairs`, push `"threat:unusual_roam"` tag to the entry.
+4. Expose roaming path in `ClientProfileSnapshot` for the `wireless.client.inventory` topic.
+---
+dev details
+
+Searched for regex `create table if not exists sync_events|sync_events_expanded|payload->>'bssid'|tsft|frame_subtype|association_request|destination_bssid` (`**/sql/postgres.sql`), 90 results
+
+I found the event schema and am pulling the relevant sync_events definitions to ground the baseline metric calculations.
+
+Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#60-60), lines 60 to 120
+
+Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#120-120), lines 120 to 190
+
+Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#190-190), lines 190 to 240
+
+Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#240-240), lines 240 to 320
+
+I’m checking the vec-worker text builder test section to align the new baseline kind with existing test patterns.
+
+Read [](file:///Users/rcs/git/ssl-proxy/services/vec-worker/src/text_builder.rs#740-740), lines 740 to 860
+
+I’m verifying whether the client inventory snapshot is strongly typed in the Oracle sink before finalizing the roaming snapshot changes.
+
+Read [](file:///Users/rcs/git/ssl-proxy/services/oracle-worker/src/worker/wireless_types.rs#120-120), lines 120 to 162
+
+Searched for regex `ClientInventorySnapshot|wireless_client_inventory|WirelessClientInventoryInsert|client_inventory_rows_from_values` (`**/services/oracle-worker/src/**/*.rs`), 36 results
+
+Read [](file:///Users/rcs/git/ssl-proxy/services/oracle-worker/src/worker/wireless_alert_transform.rs#150-150), lines 150 to 227
+
+I’ve got the implementation outline; now saving the plan to session memory and presenting it for review.
+
+Created memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
+
+I saved the plan, but I need to correct an edit artifact in the saved file first.
+
+Read memory [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
+
+Read memory [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
+
+Read memory [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
+
+I have the current saved text; rewriting it with the complete clean plan now.
+
+Updated memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
+
+Compacted conversationOptimized tool selection
+
+Read [](file:///memories/session)
+
+Created memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
+
+Read [](file:///memories)
+
+Created memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan2.md)
+
+## Plan: Baseline Profile + Roaming Baseline
+
+TL;DR: add a new `baseline_profile` embedding kind in `vec-worker` backed by a new Postgres baseline table + builder pipeline, and extend `atheros-sensor` inventory state to learn roaming pairs and flag unusual association transitions.
+
+### Implementation Steps
+
+1. postgres.sql
+   - Add `vec_baseline_profiles` table keyed by `(bssid, metric)`
+   - Extend `vec_embedding_jobs_kind_chk` to allow `'baseline_profile'`
+   - Add `vec_build_baseline_profiles(...)`
+     - compute per-BSSID metrics from `sync_events_expanded`
+     - upsert `p5`, `p50`, `p95`, `updated_at`
+   - Add `v_bssid_anomaly_score`
+   - Register a new pg_cron job in `vec_install_cron_jobs()`
+
+2. text_builder.rs
+   - Add `baseline_profile` to `build_text()` and `build_text_batch()`
+   - Create `BaselineProfileRow` sqlx struct
+   - Implement batch builder for baseline profiles from `vec_baseline_profiles`
+
+3. detect_state.rs
+   - Add roaming history tracking to `ClientProfile`
+   - Learn normal roaming pairs after ≥3 repeated transitions
+   - Tag unfamiliar new association transitions with `threat:unusual_roam`
+   - Expose roaming path in `ClientProfileSnapshot`
+
+4. Compatibility check
+   - Confirm oracle sink still accepts the updated client snapshot fields
+   - Keep inventory output backward-compatible in oracle-worker
+
+5. Tests
+   - Add targeted SQL + Rust tests for
+     - `vec_build_baseline_profiles()`
+     - baseline profile text builder
+     - roaming learning + unusual roam tagging
+
+### Relevant Files
+- postgres.sql
+- text_builder.rs
+- detect_state.rs
+- wireless_alert_transform.rs
+
+### Verification
+- compile and test changed services
+- verify new SQL objects and cron registration
+- confirm roaming state updates and tag emission
+
+I saved this plan in session memory at `/memories/session/plan2.md`.
+---
+
+## Track 2 — Sequence Models
+**Target:** Detect attack chains from frame transition patterns, not just individual frames.
+
+### 2.1 — Frame Sequence Buffer (atheros-sensor)
+**What:** Track per-session ordered frame-subtype sequences and score them against known-bad patterns.
+
+**Where to build:** New `SequenceTracker` in `detect_state.rs`, added to `PipelineState`.
+
+**Actionable steps:**
+1. Create `SequenceTracker` struct:
+   ```rust
+   struct SessionSequence {
+       frames: VecDeque<String>,      // subtype names, cap 32
+       first_seen: DateTime<Utc>,
+       last_seen: DateTime<Utc>,
+   }
+   sessions: HashMap<String, SessionSequence>  // key = session_key
+   ```
+2. In `PipelineState::new()`, add `sequence_tracker: SequenceTracker`.
+3. Call `sequence_tracker.observe(&entry)` in `process_packet()` after `client_inventory.observe()`.
+4. Implement `SequenceTracker::check_patterns()` — returns `Option<&str>` threat tag when sequence matches:
+   - `[probe_request, probe_response, deauthentication, reassociation_request, deauthentication]` → `"threat:roaming_suppression"`
+   - `[auth, deauth, auth, deauth, ...]` (≥ 3 cycles in 10s) → `"threat:auth_flood"`
+   - `[probe_response]` without prior `[beacon]` for that BSSID → `"threat:silent_rogue_ap"` (already partially in `RogueApTracker`, but sequence catches the stateless case)
+5. Publish matched sequences to new topic `wireless.alert.sequence` (reuse `publish_oracle_json`).
+
+---
+
+### 2.2 — Sequence Embeddings (vec-worker)
+**What:** Embed frame sequences as token strings; enable similarity search for novel attack patterns.
+
+**Actionable steps:**
+1. New table `vec_frame_sequences` — stores per-session compressed sequences (session_key, sequence_tokens, window_start, sensor_id).
+2. New `embedding_kind = 'frame_sequence'` in jobs table + `build_frame_sequence` arm in `text_builder.rs`.
+3. Embedding text format: `kind: frame_sequence\ntokens: BEACON AUTH ASSOC EAPOL EAPOL EAPOL EAPOL DATA_QOS\nchannel: 6\nwindow_secs: 30\n`
+4. New cron `vec_build_frame_sequences()` — materializes recent sequences from `sync_events` grouped by `session_key`.
+5. Add HNSW index for `embedding_kind = 'frame_sequence'` in `vec_materialize_similarity_pairs()`.
+
+---
+
+## Track 3 — Graph Intelligence
+**Target:** Detect rogue infrastructure, hidden repeaters, and coordinated spoofing via graph structure.
+
+### 3.1 — Infrastructure Graph Materialization (vec-worker / Postgres)
+**What:** Build AP–client–SSID association graph; detect unusual topology.
+
+**Actionable steps:**
+1. New table `vec_infrastructure_graph` — edges: `(node_a, node_a_type, node_b, node_b_type, edge_type, weight, last_seen)`.
+   - Edge types: `association`, `probe_target`, `roaming`, `rf_proximity`, `same_channel`
+   - Node types: `bssid`, `client_mac`, `ssid`, `vendor`
+2. New cron `vec_build_infrastructure_graph()` — materializes edges from `sync_events` in 1-hour windows.
+3. New SQL function `vec_detect_rogue_clusters()` — flags BSSIDs where:
+   - Degree centrality spikes (sudden many new clients)
+   - SSID is shared across ≥ 2 BSSIDs with different OUIs
+   - Client appears on ≥ 3 BSSIDs within 60s (impossible roaming speed)
+4. Expose results in `vec_alerts` with `alert_type = 'rogue_cluster'` via `alerts.rs`.
+5. New embedding kind `'infrastructure_subgraph'` — serialize ego-graph as text: `kind: infrastructure_subgraph\ncenter: {bssid}\nssid: {}\nclients: 14\nvendor_diversity: 3\n...`
+
+---
+
+### 3.2 — Channel Topology Anomaly (atheros-sensor)
+**What:** Detect BSSIDs appearing on channels inconsistent with their RF neighborhood.
+
+**Where to build:** Extend `RogueApTracker` in `detect_state.rs`.
+
+**Actionable steps:**
+1. Add `bssid_first_channel: HashMap<String, u8>` to `RogueApTracker`.
+2. In `RogueApTracker::observe()`, after `channel_conflict` detection, also check: if `bssid_first_channel[bssid]` is 5GHz-range (36+) but current frame is on 2.4GHz channel (1–14), push `"channel_band_conflict"` reason.
+3. Track `ap_vendor_by_bssid: HashMap<String, String>` — alert when same SSID is served by different vendor OUIs (`"vendor_conflict"` reason).
+
+---
+
+## Track 4 — Unsupervised Anomaly Detection
+**Target:** Score "how abnormal is this AP/client" without labeled attack data.
+
+### 4.1 — Isolation Forest Scorer (vec-worker)
+**What:** Train a per-embedding-kind anomaly scorer on the stored vector space; flag outliers.
+
+**Actionable steps:**
+1. New table `vec_anomaly_scores` — (embedding_id, score, method, computed_at).
+2. New cron `vec_score_anomalies()` — for each `embedding_kind`, uses pgvector's `<->` operator to compute average nearest-neighbor distance as a proxy isolation score:
+   ```sql
+   SELECT e.embedding_id,
+          AVG(e.embedding <-> n.embedding) AS isolation_score
+   FROM vec_embeddings e
+   CROSS JOIN LATERAL (
+     SELECT embedding FROM vec_embeddings
+     WHERE embedding_kind = e.embedding_kind
+       AND embedding_id != e.embedding_id
+     ORDER BY embedding <-> e.embedding
+     LIMIT 10
+   ) n
+   GROUP BY e.embedding_id;
+   ```
+3. Rows where `isolation_score > mean + 2.5 * stddev` → insert into `vec_alerts` with `alert_type = 'embedding_outlier'`.
+4. Expose score in `vec_worker_state` metrics.
+5. Wire into `alerts.rs` as `check_embedding_outliers()` alongside `check_near_duplicates()`.
+
+---
+
+### 4.2 — Timing Vector Anomaly (atheros-sensor)
+**What:** Flag frames with impossible or scripted timing patterns.
+
+**Where to build:** New `TimingAnomalyDetector` in `detect_state.rs`.
+
+**Actionable steps:**
+1. Track `inter_frame_deltas: HashMap<String, Vec<i64>>` (session_key → last 64 TSFT deltas in µs).
+2. Compute coefficient of variation (stddev/mean) over the window.
+3. Alert conditions:
+   - CV < 0.02 (hyper-regular, scripted) → `"threat:scripted_timing"`
+   - Delta = 0 (exact duplicate TSFT) → `"threat:replay_timing"` (complements existing `dedupe_or_replay_suspect`)
+   - Delta > 500ms for a `DATA` frame session → `"threat:session_stall"`
+4. Add `TimingAnomalyDetector` to `PipelineState`, observe in `process_packet()`.
+5. Publish timing anomaly events to `wireless.alert.timing_anomaly`.
+
+---
+
+## Track 5 — RF "Language Model" (Token Prediction)
+**Target:** Learn normal wireless grammar; score sequences by surprise (perplexity).
+
+### 5.1 — Next-Event Prediction Baseline (vec-worker)
+**What:** Store per-session n-gram transition counts; score new sequences by log-probability.
+
+**Actionable steps:**
+1. New table `vec_transition_model` — (prev_token, next_token, embedding_kind, count, last_updated).
+   - Token = `frame_subtype` (one of ~12 values)
+2. New cron `vec_update_transition_model()` — aggregates ordered `frame_subtype` sequences from `sync_events` into bigram counts (rolling 24h window).
+3. New SQL function `vec_score_sequence(p_tokens text[])` → returns log-probability using Laplace-smoothed bigram model.
+4. Wire into `vec_detect_rogue_clusters()` — sequences with log-prob < -15 get flagged.
+5. Extend `EmbeddingInput.text` for `frame_sequence` kind to include `log_prob: {score}` so the embedding model can weight sequence rarity.
+
+---
+
+## Track 6 — Contextual Risk Scoring
+**Target:** Replace single-signal alerts with multi-factor inference scores.
+
+### 6.1 — Composite Risk Score (vec-worker / Postgres)
+**What:** Combine deauth count, signal anomaly, SSID typosquat distance, vendor mismatch, and embedding outlier score into a single AP risk score.
+
+**Actionable steps:**
+1. New view `v_ap_risk_score`:
+   ```sql
+   SELECT bssid,
+     (deauth_score * 0.25
+      + signal_anomaly_score * 0.20
+      + typosquat_score * 0.20
+      + vendor_mismatch_score * 0.15
+      + embedding_outlier_score * 0.20) AS composite_risk,
+     ...
+   FROM ... -- joins vec_anomaly_scores, vec_alerts, vec_similarity_pairs
+   ```
+2. Materialized as `mv_ap_risk_score`, refreshed every 5 min alongside `v_device_repetition_score`.
+3. New `check_high_risk_aps()` in `alerts.rs` — inserts `alert_type = 'high_risk_ap'` when `composite_risk > 0.75`.
+4. Add `composite_risk` to `vec_worker_state` metrics log every 10 iterations.
+
+---
+
+### 6.2 — Per-Frame Risk Tag (atheros-sensor)
+**What:** Instead of binary threat tags, attach a risk score field to `AuditEntry`.
+
+**Actionable steps:**
+1. Add `risk_score: Option<f32>` to `AuditEntry` model (`model.rs`).
+2. In `process_packet()`, compute `risk_score` from count of `threat:*` tags (e.g., 1 tag → 0.3, 2 → 0.6, 3+ → 0.9).
+3. Include in `WirelessBandwidthEvent` — add `max_risk_score: Option<f32>` to `TrafficBucket` accumulation.
+4. Downstream consumers can filter on `risk_score >= 0.6` rather than parsing tag lists.
+
+---
+
+## Track 7 — Time-Aware Embeddings
+**Target:** Encode temporal context in embedding vectors so similar sequences at different times are handled correctly.
+
+### 7.1 — Temporal Feature Injection (vec-worker)
+**What:** Prepend time-context lines to all embedding text so vectors encode "when" not just "what."
+
+**Actionable steps:**
+1. In `event_row_to_input()` and `behaviour_row_to_input()` in `text_builder.rs`, add temporal lines after `kind: event`:
+   ```
+   hour_of_day: 14
+   day_of_week: tuesday
+   is_weekend: false
+   is_business_hours: true
+   ```
+2. Derive from `source_observed_at` using `chrono` — add helper `fn temporal_context_lines(dt: DateTime<Utc>) -> Vec<String>`.
+3. Add `burst_velocity` to behaviour_window text: `events_per_minute: {event_count / window_duration_mins:.1}`.
+4. Update `content_sha256` computation to include temporal lines — triggers re-embedding on time-context changes (handled automatically by `vec_reembed_changed_jobs`).
+
+---
+
+### 7.2 — Burst Detection (atheros-sensor)
+**What:** Detect automated/scripted behavior via inter-arrival time burstiness.
+
+**Where to build:** Reuse `inter_arrival_p50_ms` already computed in `TrafficBucket` (`audit/bandwidth.rs`).
+
+**Actionable steps:**
+1. In `WirelessBandwidthEvent`, add `inter_arrival_cv: Option<f32>` (coefficient of variation of inter-arrival times).
+2. Compute in `drain_window()` from `arrival_times_ms` reservoir (already sampled).
+3. In `process_packet()`, when bandwidth events are flushed with `inter_arrival_cv < 0.05`, push `"threat:burst_automated"` to the corresponding session's next frame.
+4. Include `inter_arrival_cv` in the bandwidth topic payload for downstream ML consumers.
+
+---
+
+## Track 8 — Device Identity Resolution
+**Target:** Link randomized MACs to persistent device identities.
+
+### 8.1 — Capability Fingerprint Correlation (atheros-sensor)
+**What:** Use IE fingerprint + timing + signal continuity to group randomized MACs.
+
+**Where to build:** New `DeviceIdentityResolver` in `detect_state.rs`.
+
+**Actionable steps:**
+1. Maintain `fingerprint_to_candidates: HashMap<String, Vec<(String, DateTime<Utc>)>>` (device_fingerprint → list of (mac, last_seen)).
+2. In `process_packet()`, for each probe request: look up `device_fingerprint` in the map. If multiple MACs share the fingerprint and their last-seen times don't overlap (sequential, not concurrent), push `"identity:likely_same_device"` and `adjacent_mac_hint`-style correlation.
+3. Publish correlation events to `wireless.alert.identity_correlation` when confidence ≥ 2 matching fingerprints.
+4. Feed correlation into `vec_infrastructure_graph` as `edge_type = 'mac_alias'`.
+
+---
+
+### 8.2 — Probe Sequence Fingerprint (atheros-sensor)
+**What:** Use the ordered set of probed SSIDs as a device fingerprint (devices probe a consistent SSID list).
+
+**Where to build:** Extend `ClientInventory` in `detect_state.rs`.
+
+**Actionable steps:**
+1. Add `probe_sequence_hash: Option<String>` to `ClientProfile` — computed as SHA-256 of sorted `probe_ssids` after ≥ 5 probes.
+2. Maintain `probe_hash_to_macs: HashMap<String, HashSet<String>>` at the inventory level.
+3. When two MACs accumulate the same hash, push `"identity:probe_fingerprint_match"` tag and emit a correlation event.
+4. Expose `probe_sequence_hash` in `ClientProfileSnapshot` for downstream use.
+
+---
+
+## Track 9 — Explainable AI Layer
+**Target:** Every alert includes human-readable explanation alongside the score.
+
+### 9.1 — Alert Explanation Fields (atheros-sensor)
+**What:** Replace bare threat tags with structured explanation objects.
+
+**Actionable steps:**
+1. Add `explanation: Vec<AlertExplanation>` to `RogueApAlert`, `DeauthFloodAlert`, `AttackSequenceAlert`:
+   ```rust
+   struct AlertExplanation {
+       factor: String,        // "beacon_interval_variance"
+       observed: String,      // "412ms ± 89ms"
+       baseline: String,      // "normal: 100ms ± 5ms"
+       contribution: f32,     // 0.35
+   }
+   ```
+2. In `RogueApTracker::observe()`, for each reason added, push a corresponding `AlertExplanation` with the observed value vs. baseline.
+3. Serialize `explanation` as a JSON array in the published alert payload.
+4. Consumers (the dashboard, vec-worker alert sweep) can render explanations without re-querying.
+
+---
+
+### 9.2 — Alert Explanation in vec-worker (vec-worker)
+**What:** When `check_high_risk_aps()` fires, include factor breakdown in `vec_alerts.metadata`.
+
+**Actionable steps:**
+1. Extend `v_ap_risk_score` view to expose per-factor scores as JSONB column `factor_breakdown`.
+2. In `check_high_risk_aps()` in `alerts.rs`, include `factor_breakdown` in the `metadata` insert.
+3. Add `explanation_text: Option<String>` to `CompleteBatchRow` — vec-worker can optionally store a natural-language summary alongside the vector.
+
+---
+
+## Track 10 — Synthetic RF Simulation
+**Target:** Generate labeled training data for model evaluation and rare-event coverage.
+
+### 10.1 — Synthetic Event Generator (vec-worker / test infrastructure)
+**What:** A Rust binary (or feature-flagged module) that generates realistic `sync_events` rows covering attack scenarios.
+
+**Actionable steps:**
+1. New file `services/vec-worker/src/synthetic.rs` (behind `#[cfg(feature = "synthetic")]`).
+2. Implement `generate_rogue_ap_scenario(bssid, ssid, n_frames) -> Vec<SyncEventRow>` — produces interleaved beacon + deauth + reassoc frames with plausible TSFT values.
+3. Implement `generate_deauth_flood(bssid, target_mac, count) -> Vec<SyncEventRow>`.
+4. Implement `generate_karma_sequence(ssid, n_clients) -> Vec<SyncEventRow>` — probe_request followed by probe_response from rogue BSSID.
+5. CLI subcommand `vec-worker synthetic --scenario rogue_ap --count 1000 --seed 42` — inserts rows into `sync_events` with `stream_name = 'synthetic'`.
+6. Use generated data to benchmark `vec_score_anomalies()` recall on known-attack rows.
+
+---
+
+## Quick-Win Upgrades (1–2 days each, no new infra)
+
+### QW-1 — `inter_arrival_cv` in bandwidth events
+**File:** `audit/bandwidth.rs` — `drain_window()`. Add CV computation from existing `arrival_times_ms` reservoir. Zero new dependencies.
+
+### QW-2 — Temporal context in embedding text
+**File:** `vec-worker/src/text_builder.rs` — `event_row_to_input()`. Add 4 lines: `hour_of_day`, `day_of_week`, `is_weekend`, `is_business_hours`. Zero new dependencies.
+
+### QW-3 — Risk score field on `AuditEntry`
+**File:** `model.rs` + `parse/frame.rs` `to_audit_entry()`. Add `risk_score: Option<f32>`, compute from threat tag count. Backward-compatible (serde default = None).
+
+### QW-4 — Alert explanation struct on existing alerts
+**File:** `detect_state.rs`. Add `explanation: Vec<String>` (simplest form) to `RogueApAlert` before building the full `AlertExplanation` struct. Can be upgraded incrementally.
+
+### QW-5 — `device_fingerprint` correlation in `ClientInventory`
+**File:** `detect_state.rs` — `ClientInventory::observe()`. Already has `device_fingerprint` on `AuditEntry`. Just maintain `fingerprint_to_macs: HashMap<String, Vec<String>>` and log when a new MAC shares a fingerprint.
+
+---
+
+## Implementation Order
+
+| Phase | Items | Estimated effort | Dependency |
+|-------|-------|-----------------|------------|
+| **Phase 0** (quick wins) | QW-1 through QW-5 | 1 week | None |
+| **Phase 1** (highest ROI) | 4.2, 6.2, 7.2, 1.2, 2.1 | 3 weeks | Phase 0 |
+| **Phase 2** (vec-worker enhancements) | 4.1, 7.1, 9.2, 2.2 | 3 weeks | Phase 1 |
+| **Phase 3** (graph + scoring) | 3.1, 3.2, 6.1, 5.1 | 4 weeks | Phase 2 |
+| **Phase 4** (advanced identity + simulation) | 1.1, 8.1, 8.2, 10.1 | 4 weeks | Phase 3 |
+| **Phase 5** (sequence models) | 2.1 extension, 9.1, 5.1 extension | 3 weeks | Phase 4 |
+
+---
+
+## Key Invariants to Preserve
+
+- **Wall-clock flush discipline** — any new detector in `detect_state.rs` must use `Instant`-based cooldowns (not frame timestamps) for suppress/alert decisions, matching existing `RogueApTracker` / `DeauthFloodTracker` patterns.
+- **No blocking on the pcap hot path** — sequence trackers, timing detectors, and identity resolvers must be O(1) amortized per frame. Defer any O(n) computation to the inventory flush tick.
+- **Backpressure-aware MAC lookup** — all new Redpanda lookups must check `backlog_pct > 80` and skip gracefully, matching the existing pattern in `process_packet()`.
+- **Content SHA-256 invalidation** — any change to `text_builder.rs` that alters embedding text must be followed by running `SELECT vec_reembed_changed_jobs(p_limit => 100000)` in production to re-queue stale embeddings.
+- **Alert cooldowns** — all new `vec_alerts` inserts must use the `WHERE NOT EXISTS (... created_at > NOW() - INTERVAL '1 hour')` guard matching `check_near_duplicates()`.

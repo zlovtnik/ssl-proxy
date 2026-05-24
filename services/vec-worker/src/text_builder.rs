@@ -35,6 +35,8 @@ pub async fn build_text(
         "event" => build_event(pool, job).await,
         "device" => build_device(pool, job).await,
         "behaviour_window" => build_behaviour_window(pool, job).await,
+        "baseline_profile" => build_baseline_profile(pool, job).await,
+        "frame_sequence" => build_frame_sequence(pool, job).await,
         other => Err(WorkerError::text_build(format!(
             "unsupported embedding_kind: '{}'",
             other
@@ -64,12 +66,16 @@ pub async fn build_text_batch(
     let mut events = Vec::new();
     let mut devices = Vec::new();
     let mut behaviours = Vec::new();
+    let mut baseline_profiles = Vec::new();
+    let mut frame_sequences = Vec::new();
 
     for job in jobs {
         match job.embedding_kind.as_str() {
             "event" => events.push(job),
             "device" => devices.push(job),
             "behaviour_window" => behaviours.push(job),
+            "baseline_profile" => baseline_profiles.push(job),
+            "frame_sequence" => frame_sequences.push(job),
             other => {
                 return Err(WorkerError::text_build(format!(
                     "unsupported embedding_kind: '{other}'"
@@ -87,6 +93,12 @@ pub async fn build_text_batch(
     }
     if !behaviours.is_empty() {
         build_behaviour_windows_batch(pool, &behaviours, &mut out).await?;
+    }
+    if !baseline_profiles.is_empty() {
+        build_baseline_profiles_batch(pool, &baseline_profiles, &mut out).await?;
+    }
+    if !frame_sequences.is_empty() {
+        build_frame_sequences_batch(pool, &frame_sequences, &mut out).await?;
     }
     Ok(out)
 }
@@ -684,6 +696,271 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
 
     EmbeddingInput {
         text,
+        source_observed_at: row.window_start,
+        source_stream_name: None,
+        source_sensor_id: row.sensor_id.clone(),
+        source_location_id: row.location_id.clone(),
+        source_mac: row.source_mac.clone(),
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BaselineProfileRow {
+    bssid: String,
+    metric: String,
+    p5: Option<f64>,
+    p50: Option<f64>,
+    p95: Option<f64>,
+    updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BaselineProfileBatchRow {
+    query_key: String,
+    bssid: String,
+    metric: String,
+    p5: Option<f64>,
+    p50: Option<f64>,
+    p95: Option<f64>,
+    updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn build_baseline_profile(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let rows = sqlx::query_as::<_, BaselineProfileRow>(
+        r#"
+        SELECT
+            bssid,
+            metric,
+            p5,
+            p50,
+            p95,
+            updated_at
+        FROM vec_baseline_profiles
+        WHERE bssid = $1
+        "#,
+    )
+    .bind(&job.source_key)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("baseline_profile query failed: {e}")))?;
+
+    if rows.is_empty() {
+        return Err(WorkerError::text_build(format!(
+            "baseline_profile not found: {}",
+            job.source_key
+        )));
+    }
+
+    Ok(baseline_profile_rows_to_input(&rows))
+}
+
+async fn build_baseline_profiles_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, BaselineProfileBatchRow>(
+        r#"
+        SELECT
+            bssid AS query_key,
+            bssid,
+            metric,
+            p5,
+            p50,
+            p95,
+            updated_at
+        FROM vec_baseline_profiles
+        WHERE bssid = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("baseline_profile batch query failed: {e}")))?;
+
+    let mut grouped: HashMap<String, Vec<BaselineProfileBatchRow>> = HashMap::new();
+    for row in rows {
+        grouped.entry(row.query_key.clone()).or_default().push(row);
+    }
+
+    for job in jobs {
+        if let Some(rows) = grouped.get(&job.source_key) {
+            let baseline_rows: Vec<BaselineProfileRow> = rows
+                .iter()
+                .map(|row| BaselineProfileRow {
+                    bssid: row.bssid.clone(),
+                    metric: row.metric.clone(),
+                    p5: row.p5,
+                    p50: row.p50,
+                    p95: row.p95,
+                    updated_at: row.updated_at,
+                })
+                .collect();
+            let row_refs: Vec<&BaselineProfileRow> = baseline_rows.iter().collect();
+            out.insert(job.source_key.clone(), baseline_profile_rows_to_input_ref(&row_refs));
+        }
+    }
+
+    Ok(())
+}
+
+fn baseline_profile_rows_to_input(rows: &[BaselineProfileRow]) -> EmbeddingInput {
+    let row_refs: Vec<&BaselineProfileRow> = rows.iter().collect();
+    baseline_profile_rows_to_input_ref(&row_refs)
+}
+
+fn baseline_profile_rows_to_input_ref(rows: &[&BaselineProfileRow]) -> EmbeddingInput {
+    let mut metrics = rows.to_vec();
+    metrics.sort_by(|left, right| left.metric.cmp(&right.metric));
+
+    let mut lines = vec!["kind: baseline_profile".to_string()];
+    if let Some(first) = metrics.first() {
+        lines.push(format!("bssid: {}", first.bssid));
+    }
+    for row in metrics {
+        let mut metric_text = format!("metric: {}", row.metric);
+        if let Some(value) = row.p5 {
+            metric_text.push_str(&format!(" p5: {}", value));
+        }
+        if let Some(value) = row.p50 {
+            metric_text.push_str(&format!(" p50: {}", value));
+        }
+        if let Some(value) = row.p95 {
+            metric_text.push_str(&format!(" p95: {}", value));
+        }
+        lines.push(metric_text);
+    }
+
+    let source_observed_at = rows
+        .iter()
+        .filter_map(|row| row.updated_at)
+        .max();
+
+    EmbeddingInput {
+        text: lines.join("\n"),
+        source_observed_at,
+        source_stream_name: None,
+        source_sensor_id: None,
+        source_location_id: None,
+        source_mac: Some(rows[0].bssid.clone()),
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FrameSequenceRow {
+    session_key: String,
+    source_mac: Option<String>,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    window_end: Option<chrono::DateTime<chrono::Utc>>,
+    sequence_tokens: String,
+    frame_count: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FrameSequenceBatchRow {
+    query_key: String,
+    session_key: String,
+    source_mac: Option<String>,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    window_end: Option<chrono::DateTime<chrono::Utc>>,
+    sequence_tokens: String,
+    frame_count: i64,
+}
+
+async fn build_frame_sequence(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let row = sqlx::query_as::<_, FrameSequenceRow>(
+        r#"
+        SELECT
+            session_key,
+            source_mac,
+            sensor_id,
+            location_id,
+            window_start,
+            window_end,
+            sequence_tokens,
+            frame_count
+        FROM vec_frame_sequences
+        WHERE session_key = $1
+        "#,
+    )
+    .bind(&job.source_key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("frame_sequence query failed: {e}")))?
+    .ok_or_else(|| WorkerError::text_build(format!("frame_sequence not found: {}", job.source_key)))?;
+
+    Ok(frame_sequence_row_to_input(&row))
+}
+
+async fn build_frame_sequences_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, FrameSequenceBatchRow>(
+        r#"
+        SELECT
+            session_key AS query_key,
+            session_key,
+            source_mac,
+            sensor_id,
+            location_id,
+            window_start,
+            window_end,
+            sequence_tokens,
+            frame_count
+        FROM vec_frame_sequences
+        WHERE session_key = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("frame_sequence batch query failed: {e}")))?;
+
+    for row in rows {
+        out.insert(row.query_key.clone(), frame_sequence_row_to_input(&FrameSequenceRow {
+            session_key: row.session_key.clone(),
+            source_mac: row.source_mac.clone(),
+            sensor_id: row.sensor_id.clone(),
+            location_id: row.location_id.clone(),
+            window_start: row.window_start,
+            window_end: row.window_end,
+            sequence_tokens: row.sequence_tokens.clone(),
+            frame_count: row.frame_count,
+        }));
+    }
+    Ok(())
+}
+
+fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
+    let mut lines = vec!["kind: frame_sequence".to_string()];
+    lines.push(format!("tokens: {}", row.sequence_tokens));
+    if let Some(start) = row.window_start {
+        if let Some(end) = row.window_end {
+            let duration_secs = (end - start).num_seconds();
+            lines.push(format!("window_secs: {}", duration_secs));
+        }
+    }
+    if let Some(source_mac) = &row.source_mac {
+        lines.push(format!("source_mac: {}", source_mac));
+    }
+    lines.push(format!("frame_count: {}", row.frame_count));
+
+    EmbeddingInput {
+        text: lines.join("\n"),
         source_observed_at: row.window_start,
         source_stream_name: None,
         source_sensor_id: row.sensor_id.clone(),

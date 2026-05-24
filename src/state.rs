@@ -367,7 +367,9 @@ impl AppState {
             ptr_cache: DashMap::new(),
             publisher: std::sync::Arc::new(crate::transport::SyncPublisher::new(&config.sync)),
             forensic: crate::forensic::ForensicState::new(config.proxy.forensic_sentry_enabled),
-            dashboard_event_queue: Mutex::new(VecDeque::with_capacity(DASHBOARD_EVENT_QUEUE_CAPACITY)),
+            dashboard_event_queue: Mutex::new(VecDeque::with_capacity(
+                DASHBOARD_EVENT_QUEUE_CAPACITY,
+            )),
             config,
 
             last_bytes_up: AtomicU64::new(0),

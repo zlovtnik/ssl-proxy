@@ -70,8 +70,9 @@ use crate::{
     config::AppConfig,
     detect_state::{
         AttackTimelineCorrelator, AuthorizationStatus, AuthorizedNetworkCache, ClientInventory,
-        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker, ATTACK_SEQUENCE_TOPIC,
-        CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
+        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SequenceTracker,
+        SignalTracker, ATTACK_SEQUENCE_TOPIC, SEQUENCE_ALERT_TOPIC, CLIENT_INVENTORY_TOPIC,
+        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
@@ -375,6 +376,7 @@ struct PipelineState {
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
     attack_timeline_correlator: AttackTimelineCorrelator,
+    sequence_tracker: SequenceTracker,
     pmf_attack_tracker: PmfAttackTracker,
     pmf_reconnect_window_ms: i64,
     authorized_network_cache: AuthorizedNetworkCache,
@@ -470,6 +472,7 @@ impl PipelineState {
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
             attack_timeline_correlator: AttackTimelineCorrelator::default(),
+            sequence_tracker: SequenceTracker::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
             pmf_reconnect_window_ms,
             authorized_network_cache: AuthorizedNetworkCache::new(
@@ -945,7 +948,20 @@ async fn process_packet(
             .tags
             .push("enrichment:authorized_network_unknown".to_string());
     }
-    pipeline.client_inventory.observe(&entry);
+    pipeline.client_inventory.observe(&mut entry);
+    if let Some(alert) = pipeline.sequence_tracker.observe(&entry) {
+        if let Err(error) = publish_oracle_json(
+            publish_client,
+            "publish_sequence_alert",
+            SEQUENCE_ALERT_TOPIC,
+            &alert,
+            &alert.observed_at,
+        )
+        .await
+        {
+            warn!(%error, "sequence alert publish failed");
+        }
+    }
 
     // Accumulate probe observations for batched flush
     if entry.frame_subtype == "probe_request" {

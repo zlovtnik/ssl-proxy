@@ -340,7 +340,10 @@ impl std::fmt::Debug for SyncConfig {
             .field("sasl_username", &self.sasl_username)
             .field(
                 "sasl_password",
-                &self.sasl_password.as_ref().map(|_| "[REDACTED]".to_string()),
+                &self
+                    .sasl_password
+                    .as_ref()
+                    .map(|_| "[REDACTED]".to_string()),
             )
             .field("ssl_ca_location", &self.ssl_ca_location)
             .field("ssl_certificate_location", &self.ssl_certificate_location)
@@ -775,8 +778,10 @@ impl SyncConfig {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        let sasl_password =
-            read_secret("SYNC_REDPANDA_SASL_PASSWORD", "SYNC_REDPANDA_SASL_PASSWORD_FILE");
+        let sasl_password = read_secret(
+            "SYNC_REDPANDA_SASL_PASSWORD",
+            "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+        );
         let (sasl_username, sasl_password) = match (sasl_username, sasl_password) {
             (Some(username), Some(password)) => (Some(username), Some(password)),
             (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSaslPassword),

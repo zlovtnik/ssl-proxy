@@ -128,6 +128,20 @@ pub async fn check_near_duplicates(
     Ok(inserted)
 }
 
+#[instrument(skip(pool))]
+pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
+    let inserted: i64 = sqlx::query_scalar(
+        "SELECT vec_detect_rogue_clusters()",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| WorkerError::alerts(format!("rogue cluster query failed: {e}")))?;
+
+    let inserted = inserted.max(0) as usize;
+    info!(inserted, "rogue cluster alert sweep complete");
+    Ok(inserted)
+}
+
 /// Run all configured alert checks in the correct order.
 ///
 /// Refreshes `v_device_repetition_score` (materialized view) at the start of
@@ -153,6 +167,9 @@ pub async fn run_alert_sweep(
 
     let nd = check_near_duplicates(pool, config).await?;
     debug_assert!(nd <= usize::MAX);
+
+    let rc = check_rogue_clusters(pool).await?;
+    debug_assert!(rc <= usize::MAX);
     Ok(())
 }
 

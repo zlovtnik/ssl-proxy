@@ -494,8 +494,12 @@ mod tests {
         state.flush_dashboard_event_queue();
 
         assert_eq!(state.dashboard_event_queue_len(), 0);
-        let raw = rx.try_recv().expect("queued dashboard event should be delivered");
-        assert!(raw.contains("\"type\":\"tunnel_open\"") || raw.contains("\"type\": \"tunnel_open\""));
+        let raw = rx
+            .try_recv()
+            .expect("queued dashboard event should be delivered");
+        assert!(
+            raw.contains("\"type\":\"tunnel_open\"") || raw.contains("\"type\": \"tunnel_open\"")
+        );
     }
 
     #[tokio::test]

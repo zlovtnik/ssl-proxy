@@ -171,7 +171,7 @@ create table if not exists wireless_frames (
   updated_at timestamptz not null default now()
 );
 
-create view if not exists sync_events_expanded as
+create or replace view sync_events_expanded as
 select
   e.dedupe_key,
   e.stream_name,

@@ -71,8 +71,7 @@ pub fn should_publish_payload_audit(topic: &str) -> bool {
 mod tests {
     use super::{
         parse_payload_ref, should_publish_payload_audit, should_publish_scan_request,
-        PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX,
-        PAYLOAD_AUDIT_TOPIC,
+        PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX, PAYLOAD_AUDIT_TOPIC,
     };
 
     #[test]
