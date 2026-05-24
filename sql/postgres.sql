@@ -1018,7 +1018,7 @@ create table if not exists vec_embeddings (
   embedded_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window')),
+  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
   constraint vec_embeddings_dimensions_chk check (embedding_dimensions > 0),
   constraint chk_embedding_dims_matches_embedding_dimensions check (vector_dims(embedding) = embedding_dimensions),
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
@@ -1044,6 +1044,12 @@ create index if not exists vec_embeddings_device_hnsw_768_idx
 create index if not exists vec_embeddings_behaviour_hnsw_768_idx
   on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
   where embedding_kind = 'behaviour_window'
+    and embedding_model = 'nomic-embed-text-v2-moe'
+    and embedding_dimensions = 768;
+
+create index if not exists vec_embeddings_frame_sequence_hnsw_768_idx
+  on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
+  where embedding_kind = 'frame_sequence'
     and embedding_model = 'nomic-embed-text-v2-moe'
     and embedding_dimensions = 768;
 
@@ -1078,6 +1084,689 @@ create index if not exists vec_behaviour_snapshots_mac_time_idx
 create index if not exists vec_behaviour_snapshots_location_time_idx
   on vec_behaviour_snapshots (location_id, window_start desc);
 
+create table if not exists vec_baseline_profiles (
+  baseline_id bigserial primary key,
+  bssid text not null,
+  metric text not null,
+  p5 numeric not null,
+  p50 numeric not null,
+  p95 numeric not null,
+  sample_count bigint not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_baseline_profiles_unique unique (bssid, metric)
+);
+
+create index if not exists vec_baseline_profiles_bssid_idx
+  on vec_baseline_profiles (bssid);
+
+create table if not exists vec_frame_sequences (
+  session_key text primary key,
+  source_mac text,
+  location_id text,
+  sensor_id text,
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  sequence_tokens text not null,
+  frame_count bigint not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists vec_frame_sequences_sensor_idx
+  on vec_frame_sequences (sensor_id, window_start desc);
+
+create index if not exists vec_frame_sequences_location_idx
+  on vec_frame_sequences (location_id, window_start desc);
+
+create table if not exists vec_infrastructure_graph (
+  edge_id bigserial primary key,
+  node_a text not null,
+  node_a_type text not null check (node_a_type in ('bssid', 'client_mac', 'ssid', 'vendor')),
+  node_b text not null,
+  node_b_type text not null check (node_b_type in ('bssid', 'client_mac', 'ssid', 'vendor')),
+  edge_type text not null check (edge_type in ('association', 'probe_target', 'roaming', 'rf_proximity', 'same_channel', 'vendor_link')),
+  weight numeric not null default 1,
+  last_seen timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_infrastructure_graph_unique unique (node_a, node_a_type, node_b, node_b_type, edge_type)
+);
+
+create index if not exists vec_infrastructure_graph_node_a_idx
+  on vec_infrastructure_graph (node_a_type, node_a, edge_type, last_seen desc);
+
+create index if not exists vec_infrastructure_graph_node_b_idx
+  on vec_infrastructure_graph (node_b_type, node_b, edge_type, last_seen desc);
+
+create or replace function vec_build_infrastructure_graph(
+  p_from timestamptz default now() - interval '1 hour',
+  p_to timestamptz default now()
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with base as (
+    select
+      lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      lower(nullif(coalesce(ssid, payload->>'ssid'), '')) as ssid,
+      lower(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g')) as normalized_bssid,
+      observed_at,
+      channel_number,
+      stream_name,
+      sensor_id,
+      location_id
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+  ),
+  association_edges as (
+    select
+      bssid as node_a,
+      'bssid'::text as node_a_type,
+      source_mac as node_b,
+      'client_mac'::text as node_b_type,
+      'association'::text as edge_type,
+      count(*)::numeric as weight,
+      max(observed_at) as last_seen
+    from base
+    where source_mac is not null
+    group by bssid, source_mac
+  ),
+  probe_edges as (
+    select
+      source_mac as node_a,
+      'client_mac'::text as node_a_type,
+      ssid as node_b,
+      'ssid'::text as node_b_type,
+      'probe_target'::text as edge_type,
+      count(*)::numeric as weight,
+      max(observed_at) as last_seen
+    from base
+    where ssid is not null
+      and source_mac is not null
+    group by source_mac, ssid
+  ),
+  roaming_edges as (
+    select
+      source_mac as node_a,
+      'client_mac'::text as node_a_type,
+      bssid as node_b,
+      'bssid'::text as node_b_type,
+      'roaming'::text as edge_type,
+      count(*)::numeric as weight,
+      max(observed_at) as last_seen
+    from (
+      select distinct source_mac, bssid, observed_at
+      from base
+      where source_mac is not null
+        and bssid is not null
+    ) sub
+    group by source_mac, bssid
+  ),
+  vendor_edges as (
+    select
+      bssid as node_a,
+      'bssid'::text as node_a_type,
+      substr(normalized_bssid, 1, 6) as node_b,
+      'vendor'::text as node_b_type,
+      'vendor_link'::text as edge_type,
+      count(*)::numeric as weight,
+      max(observed_at) as last_seen
+    from base
+    where normalized_bssid is not null
+    group by bssid, substr(normalized_bssid, 1, 6)
+  ),
+  same_channel_edges as (
+    select
+      b1.bssid as node_a,
+      'bssid'::text as node_a_type,
+      b2.bssid as node_b,
+      'bssid'::text as node_b_type,
+      'same_channel'::text as edge_type,
+      count(*)::numeric as weight,
+      max(greatest(b1.observed_at, b2.observed_at)) as last_seen
+    from base b1
+    join base b2
+      on b1.sensor_id is not distinct from b2.sensor_id
+     and b1.channel_number is not distinct from b2.channel_number
+     and b1.bssid < b2.bssid
+     and abs(extract(epoch from b1.observed_at - b2.observed_at)) <= 10
+    group by b1.bssid, b2.bssid
+  ),
+  rf_proximity_edges as (
+    select
+      b1.bssid as node_a,
+      'bssid'::text as node_a_type,
+      b2.bssid as node_b,
+      'bssid'::text as node_b_type,
+      'rf_proximity'::text as edge_type,
+      count(*)::numeric as weight,
+      max(greatest(b1.observed_at, b2.observed_at)) as last_seen
+    from base b1
+    join base b2
+      on b1.sensor_id is not distinct from b2.sensor_id
+     and b1.bssid < b2.bssid
+     and abs(extract(epoch from b1.observed_at - b2.observed_at)) <= 10
+    group by b1.bssid, b2.bssid
+  ),
+  all_edges as (
+    select * from association_edges
+    union all
+    select * from probe_edges
+    union all
+    select * from roaming_edges
+    union all
+    select * from vendor_edges
+    union all
+    select * from same_channel_edges
+    union all
+    select * from rf_proximity_edges
+  )
+  insert into vec_infrastructure_graph (
+    node_a, node_a_type, node_b, node_b_type, edge_type, weight, last_seen, updated_at
+  )
+  select
+    node_a, node_a_type, node_b, node_b_type, edge_type, sum(weight), max(last_seen), now()
+  from all_edges
+  group by node_a, node_a_type, node_b, node_b_type, edge_type
+  on conflict (node_a, node_a_type, node_b, node_b_type, edge_type) do update set
+    weight = vec_infrastructure_graph.weight + excluded.weight,
+    last_seen = greatest(vec_infrastructure_graph.last_seen, excluded.last_seen),
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function vec_detect_rogue_clusters(
+  p_from timestamptz default now() - interval '1 hour',
+  p_to timestamptz default now()
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with current_assoc as (
+    select
+      lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      observed_at
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+      and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
+  ),
+  current_counts as (
+    select bssid, count(distinct source_mac) as client_count
+    from current_assoc
+    group by bssid
+  ),
+  previous_counts as (
+    select lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
+           count(distinct lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))) as client_count
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from - interval '1 hour'
+      and observed_at < p_from
+      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+      and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
+    group by bssid
+  ),
+  suspicious_bssids as (
+    select
+      c.bssid,
+      c.client_count as current_clients,
+      coalesce(p.client_count, 0) as previous_clients
+    from current_counts c
+    left join previous_counts p using (bssid)
+    where c.client_count >= 20
+      and c.client_count >= greatest(coalesce(p.client_count, 0) * 2, 10)
+  ),
+  vendor_conflicts as (
+    select
+      ssid,
+      array_agg(distinct bssid) as bssids,
+      array_agg(distinct substr(regexp_replace(bssid, '[:\-]', '', 'g'), 1, 6)) as vendor_ouis,
+      count(distinct substr(regexp_replace(bssid, '[:\-]', '', 'g'), 1, 6)) as vendor_count
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(ssid, payload->>'ssid'), '') is not null
+      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+    group by ssid
+    having count(distinct substr(regexp_replace(bssid, '[:\-]', '', 'g'), 1, 6)) >= 2
+  ),
+  fast_roamers as (
+    select
+      source_mac,
+      min(observed_at) as first_seen,
+      max(observed_at) as last_seen,
+      count(distinct bssid) as distinct_bssids
+    from (
+      select
+        lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+        lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
+        observed_at
+      from sync_events_expanded
+      where stream_name = 'wireless.audit'
+        and observed_at >= p_from
+        and observed_at < p_to
+        and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
+        and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+    ) t
+    group by source_mac
+    having count(distinct bssid) >= 3
+       and max(observed_at) - min(observed_at) <= interval '60 seconds'
+  )
+  insert into vec_alerts (alert_type, source_mac, score, metadata)
+  select
+    'rogue_cluster'::text,
+    s.bssid,
+    greatest(s.current_clients::double precision, 1.0),
+    jsonb_build_object(
+      'reason', 'degree_spike',
+      'current_clients', s.current_clients,
+      'previous_clients', s.previous_clients
+    )
+  from suspicious_bssids s
+  where not exists (
+    select 1 from vec_alerts a
+    where a.alert_type = 'rogue_cluster'
+      and a.source_mac is not distinct from s.bssid
+      and a.created_at > now() - interval '1 hour'
+  );
+
+  get diagnostics v_count = row_count;
+
+  insert into vec_alerts (alert_type, source_mac, score, metadata)
+  select
+    'rogue_cluster'::text,
+    NULL,
+    greatest(vc.vendor_count::double precision, 1.0),
+    jsonb_build_object(
+      'reason', 'vendor_conflict',
+      'ssid', vc.ssid,
+      'bssids', vc.bssids,
+      'vendor_ouis', vc.vendor_ouis
+    )
+  from vendor_conflicts vc
+  where not exists (
+    select 1 from vec_alerts a
+    where a.alert_type = 'rogue_cluster'
+      and a.source_mac is null
+      and a.created_at > now() - interval '1 hour'
+      and a.metadata->>'reason' = 'vendor_conflict'
+      and a.metadata->>'ssid' = vc.ssid
+  );
+
+  get diagnostics v_count = v_count + row_count;
+
+  insert into vec_alerts (alert_type, source_mac, score, metadata)
+  select
+    'rogue_cluster'::text,
+    f.source_mac,
+    greatest(f.distinct_bssids::double precision, 1.0),
+    jsonb_build_object(
+      'reason', 'fast_roaming',
+      'distinct_bssids', f.distinct_bssids,
+      'first_seen', f.first_seen,
+      'last_seen', f.last_seen
+    )
+  from fast_roamers f
+  where not exists (
+    select 1 from vec_alerts a
+    where a.alert_type = 'rogue_cluster'
+      and a.source_mac is not distinct from f.source_mac
+      and a.created_at > now() - interval '1 hour'
+      and a.metadata->>'reason' = 'fast_roaming'
+  );
+
+  get diagnostics v_count = v_count + row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function vec_build_baseline_profiles(
+  p_from timestamptz default now() - interval '2 hours',
+  p_to timestamptz default now()
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with prepared as (
+    select
+      session_key,
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(location_id, payload->>'location_id'), '') as location_id,
+      nullif(coalesce(sensor_id, payload->>'sensor_id'), '') as sensor_id,
+      min(observed_at) as window_start,
+      max(observed_at) as window_end,
+      string_agg(upper(regexp_replace(coalesce(frame_subtype, payload->>'frame_subtype'), '-', '_', 'g')), ' ' order by observed_at) as sequence_tokens,
+      count(*)::bigint as frame_count
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
+      and coalesce(frame_subtype, payload->>'frame_subtype') is not null
+    group by nullif(coalesce(session_key, payload->>'session_key'), '')
+  )
+  insert into vec_frame_sequences (
+    session_key,
+    source_mac,
+    location_id,
+    sensor_id,
+    window_start,
+    window_end,
+    sequence_tokens,
+    frame_count,
+    created_at,
+    updated_at
+  )
+  select
+    session_key,
+    source_mac,
+    location_id,
+    sensor_id,
+    window_start,
+    window_end,
+    sequence_tokens,
+    frame_count,
+    now(),
+    now()
+  from prepared
+  on conflict (session_key) do update set
+    source_mac = excluded.source_mac,
+    location_id = excluded.location_id,
+    sensor_id = excluded.sensor_id,
+    window_start = excluded.window_start,
+    window_end = excluded.window_end,
+    sequence_tokens = excluded.sequence_tokens,
+    frame_count = excluded.frame_count,
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function vec_build_baseline_profiles(
+  p_from timestamptz default now() - interval '7 days',
+  p_to timestamptz default now(),
+  p_window interval default interval '15 minutes'
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with base as (
+    select
+      lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
+      observed_at,
+      coalesce(signal_dbm,
+        case when payload->>'signal_dbm' ~ '^-?[0-9]+$' then (payload->>'signal_dbm')::integer end
+      ) as signal_dbm,
+      coalesce(retry, false) as retry,
+      coalesce(channel_number::text, payload->>'channel_number', payload->>'channel') as channel_number,
+      frame_subtype,
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+  ),
+  beacon_intervals as (
+    select
+      bssid,
+      extract(epoch from observed_at - lag(observed_at) over (partition by bssid order by observed_at)) * 1000.0 as interval_ms
+    from base
+    where frame_subtype = 'beacon'
+  ),
+  beacon_metrics as (
+    select
+      bssid,
+      'beacon_interval_ms'::text as metric,
+      percentile_cont(0.05) within group (order by interval_ms) as p5,
+      percentile_cont(0.5) within group (order by interval_ms) as p50,
+      percentile_cont(0.95) within group (order by interval_ms) as p95,
+      count(*) as sample_count
+    from beacon_intervals
+    where interval_ms is not null and interval_ms > 0
+    group by bssid
+  ),
+  retry_window as (
+    select
+      bssid,
+      date_bin(p_window, observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start,
+      avg((retry::int)::numeric) as retry_rate
+    from base
+    group by bssid, window_start
+  ),
+  retry_metrics as (
+    select
+      bssid,
+      'retry_rate'::text as metric,
+      percentile_cont(0.05) within group (order by retry_rate) as p5,
+      percentile_cont(0.5) within group (order by retry_rate) as p50,
+      percentile_cont(0.95) within group (order by retry_rate) as p95,
+      count(*) as sample_count
+    from retry_window
+    group by bssid
+  ),
+  signal_window as (
+    select
+      bssid,
+      date_bin(p_window, observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start,
+      percentile_cont(0.25) within group (order by signal_dbm) as q25,
+      percentile_cont(0.75) within group (order by signal_dbm) as q75
+    from base
+    where signal_dbm is not null
+    group by bssid, window_start
+  ),
+  signal_metrics as (
+    select
+      bssid,
+      'signal_iqr_dbm'::text as metric,
+      percentile_cont(0.05) within group (order by q75 - q25) as p5,
+      percentile_cont(0.5) within group (order by q75 - q25) as p50,
+      percentile_cont(0.95) within group (order by q75 - q25) as p95,
+      count(*) as sample_count
+    from signal_window
+    where q25 is not null and q75 is not null
+    group by bssid
+  ),
+  channel_window as (
+    select
+      bssid,
+      date_bin(p_window, observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start,
+      channel_number,
+      count(*)::bigint as channel_count
+    from base
+    where channel_number is not null
+    group by bssid, window_start, channel_number
+  ),
+  channel_dwell as (
+    select
+      bssid,
+      window_start,
+      max(channel_share) as top_channel_share
+    from (
+      select
+        bssid,
+        window_start,
+        channel_count::numeric / sum(channel_count) over (partition by bssid, window_start) as channel_share
+      from channel_window
+    ) sub
+    group by bssid, window_start
+  ),
+  channel_metrics as (
+    select
+      bssid,
+      'channel_dwell_ratio'::text as metric,
+      percentile_cont(0.05) within group (order by top_channel_share) as p5,
+      percentile_cont(0.5) within group (order by top_channel_share) as p50,
+      percentile_cont(0.95) within group (order by top_channel_share) as p95,
+      count(*) as sample_count
+    from channel_dwell
+    group by bssid
+  ),
+  assoc_deltas as (
+    select
+      bssid,
+      extract(epoch from observed_at - lag(observed_at) over (partition by bssid, source_mac order by observed_at)) as delta_secs
+    from base
+    where frame_subtype in ('association_request', 'reassociation_request')
+      and source_mac is not null
+  ),
+  assoc_metrics as (
+    select
+      bssid,
+      'association_timing_secs'::text as metric,
+      percentile_cont(0.05) within group (order by delta_secs) as p5,
+      percentile_cont(0.5) within group (order by delta_secs) as p50,
+      percentile_cont(0.95) within group (order by delta_secs) as p95,
+      count(*) as sample_count
+    from assoc_deltas
+    where delta_secs is not null and delta_secs >= 0
+    group by bssid
+  ),
+  metrics as (
+    select * from beacon_metrics
+    union all
+    select * from retry_metrics
+    union all
+    select * from signal_metrics
+    union all
+    select * from channel_metrics
+    union all
+    select * from assoc_metrics
+  )
+  insert into vec_baseline_profiles (
+    bssid, metric, p5, p50, p95, sample_count, created_at, updated_at
+  )
+  select
+    bssid, metric, p5, p50, p95, sample_count, now(), now()
+  from metrics
+  on conflict (bssid, metric) do update set
+    p5 = excluded.p5,
+    p50 = excluded.p50,
+    p95 = excluded.p95,
+    sample_count = excluded.sample_count,
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create view if not exists v_bssid_anomaly_score as
+with current_base as (
+  select
+    lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
+    coalesce(signal_dbm,
+      case when payload->>'signal_dbm' ~ '^-?[0-9]+$' then (payload->>'signal_dbm')::integer end
+    ) as signal_dbm,
+    coalesce(retry, false) as retry,
+    coalesce(channel_number::text, payload->>'channel_number', payload->>'channel') as channel_number,
+    frame_subtype,
+    lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+    date_bin(interval '15 minutes', observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start
+  from sync_events_expanded
+  where stream_name = 'wireless.audit'
+    and observed_at >= now() - interval '1 hour'
+    and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+),
+current_metrics as (
+  select bssid, 'beacon_interval_ms' as metric, percentile_cont(0.5) within group (order by interval_ms) as observed_metric
+  from (
+    select
+      bssid,
+      extract(epoch from observed_at - lag(observed_at) over (partition by bssid order by observed_at)) * 1000.0 as interval_ms
+    from current_base
+    where frame_subtype = 'beacon'
+  ) beacon_intervals
+  where interval_ms is not null and interval_ms > 0
+  group by bssid
+  union all
+  select bssid, 'retry_rate' as metric, percentile_cont(0.5) within group (order by retry_rate) as observed_metric
+  from (
+    select bssid, window_start, avg((retry::int)::numeric) as retry_rate
+    from current_base
+    group by bssid, window_start
+  ) retry_window
+  group by bssid
+  union all
+  select bssid, 'signal_iqr_dbm' as metric, percentile_cont(0.5) within group (order by q75 - q25) as observed_metric
+  from (
+    select bssid, window_start,
+      percentile_cont(0.25) within group (order by signal_dbm) as q25,
+      percentile_cont(0.75) within group (order by signal_dbm) as q75
+    from current_base
+    where signal_dbm is not null
+    group by bssid, window_start
+  ) signal_window
+  where q25 is not null and q75 is not null
+  group by bssid
+  union all
+  select bssid, 'channel_dwell_ratio' as metric, percentile_cont(0.5) within group (order by top_channel_share) as observed_metric
+  from (
+    select
+      bssid,
+      window_start,
+      max(channel_count::numeric / sum(channel_count) over (partition by bssid, window_start)) as top_channel_share
+    from (
+      select bssid, window_start, channel_number, count(*)::bigint as channel_count
+      from current_base
+      where channel_number is not null
+      group by bssid, window_start, channel_number
+    ) channel_window
+    group by bssid, window_start, channel_number
+  ) channel_dwell
+  group by bssid
+  union all
+  select bssid, 'association_timing_secs' as metric, percentile_cont(0.5) within group (order by delta_secs) as observed_metric
+  from (
+    select
+      bssid,
+      extract(epoch from observed_at - lag(observed_at) over (partition by bssid, source_mac order by observed_at)) as delta_secs
+    from current_base
+    where frame_subtype in ('association_request', 'reassociation_request')
+      and source_mac is not null
+  ) assoc_deltas
+  where delta_secs is not null and delta_secs >= 0
+  group by bssid
+)
+select
+  cm.bssid,
+  cm.metric,
+  cm.observed_metric,
+  bp.p5,
+  bp.p50,
+  bp.p95,
+  case when bp.p95 > bp.p5 then (cm.observed_metric - bp.p50) / nullif(bp.p95 - bp.p5, 0) else null end as anomaly_score
+from current_metrics cm
+join vec_baseline_profiles bp
+  on bp.bssid = cm.bssid
+  and bp.metric = cm.metric;
+
 create table if not exists vec_similarity_pairs (
   pair_id bigserial primary key,
   pair_kind text not null,
@@ -1104,7 +1793,7 @@ create table if not exists vec_similarity_pairs (
   computed_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_similarity_pairs_kind_chk check (pair_kind in ('event_event', 'device_device', 'cross_sensor')),
+  constraint vec_similarity_pairs_kind_chk check (pair_kind in ('event_event', 'device_device', 'cross_sensor', 'sequence_sequence')),
   constraint vec_similarity_pairs_order_chk check (left_embedding_id < right_embedding_id),
   constraint vec_similarity_pairs_distance_chk check (cosine_distance >= 0),
   constraint vec_similarity_pairs_similarity_chk check (cosine_similarity <= 1),
@@ -1139,7 +1828,7 @@ create table if not exists vec_embedding_jobs (
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window')),
+  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
   constraint vec_embedding_jobs_status_chk check (status in ('pending', 'leased', 'completed', 'failed')),
   constraint vec_embedding_jobs_attempts_chk check (attempts >= 0 and max_attempts > 0),
   constraint vec_embedding_jobs_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
@@ -1422,6 +2111,49 @@ begin
     where existing.embedding_id is null
        or source.updated_at > existing.embedded_at
   ),
+  graph_jobs as (
+    select
+      'vec_infrastructure_graph'::text as source_table,
+      source_key,
+      p_model as embedding_model,
+      'infrastructure_subgraph'::text as embedding_kind,
+      15 as priority
+    from (
+      select distinct node_a as source_key
+      from vec_infrastructure_graph
+      where node_a_type = 'bssid'
+      union
+      select distinct node_b as source_key
+      from vec_infrastructure_graph
+      where node_b_type = 'bssid'
+    ) keys
+  ),
+  baseline_jobs as (
+    select
+      'vec_baseline_profiles'::text as source_table,
+      bp.bssid as source_key,
+      p_model as embedding_model,
+      'baseline_profile'::text as embedding_kind,
+      25 as priority
+    from vec_baseline_profiles bp
+    left join lateral (
+      select count(*) as new_frame_count
+      from sync_events_expanded source
+      where stream_name = 'wireless.audit'
+        and lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) = bp.bssid
+        and observed_at > bp.updated_at
+    ) frames on true
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_baseline_profiles'
+     and existing.source_key = bp.bssid
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'baseline_profile'
+    where frames.new_frame_count >= 50
+      and (
+        existing.embedding_id is null
+        or bp.updated_at > existing.embedded_at
+      )
+  ),
   inserted as (
     insert into vec_embedding_jobs (
       source_table, source_key, embedding_model, embedding_kind, priority, status, due_at, created_at, updated_at
@@ -1433,6 +2165,10 @@ begin
       select * from device_jobs
       union all
       select * from behaviour_jobs
+      union all
+      select * from baseline_jobs
+      union all
+      select * from graph_jobs
     ) jobs
     on conflict (source_table, source_key, embedding_model, embedding_kind) do update set
       status = 'pending',
@@ -2016,6 +2752,24 @@ begin
     'vec-build-behaviour-snapshots',
     '*/5 * * * *',
     $cron$select vec_build_behaviour_snapshots();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-build-baseline-profiles',
+    '*/15 * * * *',
+    $cron$select vec_build_baseline_profiles();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-build-infrastructure-graph',
+    '*/5 * * * *',
+    $cron$select vec_build_infrastructure_graph();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-detect-rogue-clusters',
+    '*/5 * * * *',
+    $cron$select vec_detect_rogue_clusters();$cron$
   );
 
   perform cron.schedule(
