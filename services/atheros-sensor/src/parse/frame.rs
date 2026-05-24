@@ -250,6 +250,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         raw_frame: Some(STANDARD.encode(frame_bytes)),
         band: band.to_string(),
         tags,
+        risk_score: None,
         security_flags: ie_metadata.security_flags,
         wps_device_name: ie_metadata.wps_device_name,
         wps_manufacturer: ie_metadata.wps_manufacturer,
@@ -356,6 +357,15 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     tags.push(format!("channel:{}", enriched.channel));
     tags.push(format!("reg_domain:{}", enriched.reg_domain));
     add_audit_threat_tags(&frame, &mut tags);
+
+    let threat_count = tags.iter().filter(|t| t.starts_with("threat:")).count();
+    let risk_score = match threat_count {
+        0 => None,
+        1 => Some(0.3),
+        2 => Some(0.6),
+        _ => Some(0.9),
+    };
+
     let username = frame.username_hint.clone();
     let identity_source = match (username.as_ref(), frame.identity_source_hint.clone()) {
         (Some(_), Some(source)) => source,
@@ -411,6 +421,7 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         raw_len: frame.raw_len,
         raw_frame: frame.raw_frame,
         tags,
+        risk_score,
         security_flags: frame.security_flags,
         wps_device_name: frame.wps_device_name,
         wps_manufacturer: frame.wps_manufacturer,

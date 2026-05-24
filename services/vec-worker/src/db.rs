@@ -584,6 +584,21 @@ pub async fn release_expired_leases(pool: &PgPool) -> Result<i32, sqlx::Error> {
     Ok(row.0)
 }
 
+#[instrument(skip(pool))]
+pub async fn count_high_risk_aps(
+    pool: &PgPool,
+    threshold: f64,
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM mv_ap_risk_score WHERE composite_risk > $1",
+    )
+    .bind(threshold)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

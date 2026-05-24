@@ -1194,6 +1194,7 @@ mod tests {
             inter_arrival_p50_ms: Some(500),
             wall_clock_delta_ms: None,
             window_is_partial: false,
+            max_risk_score: None,
             published_at: None,
         };
 

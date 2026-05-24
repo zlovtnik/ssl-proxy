@@ -1116,6 +1116,135 @@ create index if not exists vec_frame_sequences_sensor_idx
 create index if not exists vec_frame_sequences_location_idx
   on vec_frame_sequences (location_id, window_start desc);
 
+-- Track 5.1: Bigram transition model for sequence scoring
+create table if not exists vec_transition_model (
+  id bigserial primary key,
+  prev_token text not null,
+  next_token text not null,
+  embedding_kind text not null default 'frame_sequence',
+  count bigint not null default 0,
+  last_updated timestamptz not null default now(),
+  constraint vec_transition_model_unique unique (prev_token, next_token, embedding_kind)
+);
+
+create index if not exists vec_transition_model_prev_idx
+  on vec_transition_model (prev_token, embedding_kind);
+
+-- Update transition counts from ordered frame_subtype sequences in sync_events
+-- over a rolling 24-hour window. Uses Laplace-smoothed bigrams.
+create or replace function vec_update_transition_model()
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with windowed as (
+    select
+      coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype,
+      coalesce(session_key, payload->>'session_key') as session_key,
+      observed_at
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= now() - interval '24 hours'
+      and coalesce(session_key, payload->>'session_key') is not null
+      and coalesce(frame_subtype, payload->>'frame_subtype') is not null
+  ),
+  ordered as (
+    select
+      session_key,
+      frame_subtype,
+      lag(frame_subtype) over (partition by session_key order by observed_at) as prev_subtype
+    from windowed
+  ),
+  bigrams as (
+    select upper(regexp_replace(prev_subtype, '-', '_', 'g'))::text as prev_token,
+           upper(regexp_replace(frame_subtype, '-', '_', 'g'))::text as next_token
+    from ordered
+    where prev_subtype is not null
+  )
+  insert into vec_transition_model (prev_token, next_token, embedding_kind, count, last_updated)
+  select prev_token, next_token, 'frame_sequence', count(*)::bigint, now()
+  from bigrams
+  group by prev_token, next_token
+  on conflict (prev_token, next_token, embedding_kind) do update set
+    count = vec_transition_model.count + excluded.count,
+    last_updated = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- Score a sequence of tokens using the Laplace-smoothed bigram log-probability.
+-- Tokens are passed as a text array. Returns the sum of log2( P(next|prev) )
+-- where P(next|prev) = (count(prev, next) + 1) / (total_from(prev) + vocab_size).
+-- Sequences shorter than 2 tokens return 0 (no score).
+create or replace function vec_score_sequence(p_tokens text[])
+returns double precision
+language plpgsql
+as $$
+declare
+  v_log_prob double precision := 0.0;
+  v_total bigint;
+  v_vocab_size bigint;
+  v_prev text;
+  v_next text;
+  v_count bigint;
+  v_prob double precision;
+begin
+  if array_length(p_tokens, 1) < 2 then
+    return 0.0;
+  end if;
+
+  -- Compute vocabulary size (distinct tokens seen in either position)
+  select count(distinct token)::bigint into v_vocab_size
+  from (
+    select prev_token as token from vec_transition_model where embedding_kind = 'frame_sequence'
+    union
+    select next_token as token from vec_transition_model where embedding_kind = 'frame_sequence'
+  ) vocab;
+
+  -- Fallback: if no model exists, use uniform probability over a default vocab of 16
+  if v_vocab_size is null or v_vocab_size = 0 then
+    v_vocab_size := 16;
+  end if;
+
+  for i in 2 .. array_upper(p_tokens, 1) loop
+    v_prev := p_tokens[i - 1];
+    v_next := p_tokens[i];
+
+    -- Count of this specific bigram
+    select count into v_count
+    from vec_transition_model
+    where prev_token = v_prev
+      and next_token = v_next
+      and embedding_kind = 'frame_sequence';
+
+    if not found then
+      v_count := 0;
+    end if;
+
+    -- Total count of all bigrams starting with v_prev
+    select coalesce(sum(count), 0)::bigint into v_total
+    from vec_transition_model
+    where prev_token = v_prev
+      and embedding_kind = 'frame_sequence';
+
+    if v_total is null or v_total = 0 then
+      -- Unknown prefix: use Laplace-smooth uniform across vocab
+      v_prob := 1.0 / v_vocab_size;
+    else
+      v_prob := (v_count + 1.0) / (v_total + v_vocab_size);
+    end if;
+
+    v_log_prob := v_log_prob + log(2, v_prob);
+  end loop;
+
+  return v_log_prob;
+end;
+$$;
+
 create table if not exists vec_infrastructure_graph (
   edge_id bigserial primary key,
   node_a text not null,
@@ -1435,6 +1564,171 @@ begin
 
   get diagnostics v_row_count = row_count;
   v_count := v_count + v_row_count;
+
+  -- Track 5.1: Sequence anomaly detection — flag sessions with log-prob < -15
+  with session_sequences as (
+    select
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(session_key, payload->>'session_key'), '') as session_key,
+      string_agg(upper(regexp_replace(coalesce(frame_subtype, payload->>'frame_subtype'), '-', '_', 'g')), ' ' order by observed_at) as tokens
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
+      and coalesce(frame_subtype, payload->>'frame_subtype') is not null
+    group by nullif(coalesce(session_key, payload->>'session_key'), ''),
+             lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))
+    having count(*) >= 3
+  ),
+  scored_sequences as (
+    select
+      session_key,
+      source_mac,
+      tokens,
+      vec_score_sequence(regexp_split_to_array(tokens, E'\\s+')) as log_prob
+    from session_sequences
+  )
+  insert into vec_alerts (alert_type, source_mac, score, metadata)
+  select
+    'rogue_cluster'::text,
+    ss.source_mac,
+    greatest(abs(ss.log_prob)::double precision, 1.0),
+    jsonb_build_object(
+      'reason', 'sequence_anomaly',
+      'session_key', ss.session_key,
+      'log_prob', ss.log_prob,
+      'threshold', -15
+    )
+  from scored_sequences ss
+  where ss.log_prob < -15
+    and not exists (
+      select 1 from vec_alerts a
+      where a.alert_type = 'rogue_cluster'
+        and a.source_mac is not distinct from ss.source_mac
+        and a.created_at > now() - interval '1 hour'
+        and a.metadata->>'reason' = 'sequence_anomaly'
+    );
+
+  get diagnostics v_row_count = row_count;
+  v_count := v_count + v_row_count;
+  return v_count;
+end;
+$$;
+
+-- Track 6.1: Composite AP risk score combining deauth, signal, typosquat,
+-- vendor mismatch, and embedding outlier signals into a single score.
+create or replace view v_ap_risk_score as
+with deauth_scores as (
+  select
+    coalesce(source_mac, metadata->>'bssid') as bssid,
+    score as deauth_score
+  from vec_alerts
+  where alert_type in ('rogue_cluster', 'deauth_flood')
+    and created_at >= now() - interval '1 hour'
+),
+signal_anomaly_scores as (
+  select
+    coalesce(source_mac, metadata->>'bssid') as bssid,
+    score as signal_anomaly_score
+  from vec_alerts
+  where alert_type in ('signal_anomaly', 'rogue_cluster')
+    and metadata->>'reason' in ('signal_jump', 'channel_band_conflict')
+    and created_at >= now() - interval '1 hour'
+),
+typosquat_scores as (
+  select
+    coalesce(source_mac, metadata->>'bssid') as bssid,
+    score as typosquat_score
+  from vec_alerts
+  where alert_type = 'rogue_cluster'
+    and metadata->>'reason' in ('ssid_typosquat', 'vendor_conflict', 'bssid_spoofing')
+    and created_at >= now() - interval '1 hour'
+),
+vendor_mismatch_scores as (
+  select
+    lower(substr(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g'), 1, 6)) as bssid_oui,
+    count(distinct lower(substr(regexp_replace(bssid, '[:\-]', '', 'g'), 1, 6)))::double precision as vendor_mismatch_score
+  from sync_events_expanded
+  where stream_name = 'wireless.audit'
+    and observed_at >= now() - interval '1 hour'
+    and nullif(coalesce(ssid, payload->>'ssid'), '') is not null
+    and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
+    and lower(substr(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g'), 1, 6)) is not null
+  group by bssid_oui
+),
+embedding_outlier_scores as (
+  select
+    coalesce(p.left_source_mac, p.right_source_mac) as bssid,
+    max(p.cosine_distance) as embedding_outlier_score
+  from vec_similarity_pairs p
+  where p.computed_at >= now() - interval '1 hour'
+    and p.cosine_distance > 0.15
+  group by coalesce(p.left_source_mac, p.right_source_mac)
+),
+all_bssids as (
+  select distinct coalesce(source_mac, metadata->>'bssid') as bssid from vec_alerts
+  union
+  select distinct left_source_mac from vec_similarity_pairs where left_source_mac is not null
+  union
+  select distinct right_source_mac from vec_similarity_pairs where right_source_mac is not null
+)
+select
+  a.bssid,
+  coalesce(d.deauth_score, 0::double precision) as deauth_score,
+  coalesce(s.signal_anomaly_score, 0::double precision) as signal_anomaly_score,
+  coalesce(t.typosquat_score, 0::double precision) as typosquat_score,
+  coalesce(v.vendor_mismatch_score, 0::double precision) as vendor_mismatch_score,
+  coalesce(e.embedding_outlier_score, 0::double precision) as embedding_outlier_score,
+  (coalesce(d.deauth_score, 0::double precision) * 0.25
+   + coalesce(s.signal_anomaly_score, 0::double precision) * 0.20
+   + coalesce(t.typosquat_score, 0::double precision) * 0.20
+   + coalesce(v.vendor_mismatch_score, 0::double precision) * 0.15
+   + coalesce(e.embedding_outlier_score, 0::double precision) * 0.20) as composite_risk
+from all_bssids a
+left join deauth_scores d on d.bssid = a.bssid
+left join signal_anomaly_scores s on s.bssid = a.bssid
+left join typosquat_scores t on t.bssid = a.bssid
+left join vendor_mismatch_scores v on v.bssid_oui = lower(substr(regexp_replace(a.bssid, '[:\-]', '', 'g'), 1, 6))
+left join embedding_outlier_scores e on e.bssid = a.bssid;
+
+-- Materialized for 5-minute refresh alongside v_device_repetition_score
+create materialized view if not exists mv_ap_risk_score as
+select * from v_ap_risk_score;
+
+create unique index if not exists idx_mv_ap_risk_score_bssid on mv_ap_risk_score (bssid);
+
+-- Check for high-risk APs and insert alerts when composite_risk exceeds threshold
+create or replace function check_high_risk_aps(p_threshold double precision default 0.75)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer;
+begin
+  insert into vec_alerts (alert_type, source_mac, score, metadata)
+  select
+    'high_risk_ap'::text,
+    r.bssid,
+    r.composite_risk,
+    jsonb_build_object(
+      'composite_risk', r.composite_risk,
+      'deauth_score', r.deauth_score,
+      'signal_anomaly_score', r.signal_anomaly_score,
+      'typosquat_score', r.typosquat_score,
+      'vendor_mismatch_score', r.vendor_mismatch_score,
+      'embedding_outlier_score', r.embedding_outlier_score
+    )
+  from mv_ap_risk_score r
+  where r.composite_risk > p_threshold
+    and not exists (
+      select 1 from vec_alerts a
+      where a.alert_type = 'high_risk_ap'
+        and a.source_mac is not distinct from r.bssid
+        and a.created_at > now() - interval '1 hour'
+    );
+
+  get diagnostics v_count = row_count;
   return v_count;
 end;
 $$;
@@ -2808,6 +3102,18 @@ begin
     'vec-reap-stale-workers',
     '*/5 * * * *',
     $cron$select vec_reap_stale_workers();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-update-transition-model',
+    '*/15 * * * *',
+    $cron$select vec_update_transition_model();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-refresh-ap-risk-score',
+    '*/5 * * * *',
+    $cron$REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score; SELECT check_high_risk_aps();$cron$
   );
 end;
 $$;

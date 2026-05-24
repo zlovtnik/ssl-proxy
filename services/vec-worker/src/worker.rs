@@ -90,6 +90,12 @@ pub async fn run_forever(
                     warn!(error = %e, "alert sweep failed (background)");
                 }
             });
+
+            // Periodic composite risk logging for AP population.
+            match db::count_high_risk_aps(&pool, 0.75).await {
+                Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
+                Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
+            }
         }
 
         if config.once {

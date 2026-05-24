@@ -348,6 +348,12 @@ pub struct RogueApTracker {
     ssid_by_bssid: HashMap<String, String>,
     channels_by_bssid: HashMap<String, HashSet<u8>>,
     recent_alerts: HashMap<String, Instant>,
+    /// First channel observed for each BSSID. Used to detect a BSSID that
+    /// appears on a channel band inconsistent with its original band.
+    bssid_first_channel: HashMap<String, u8>,
+    /// Vendor OUI (first 6 hex chars of BSSID) by BSSID. Used to detect
+    /// the same SSID being served by different hardware vendors.
+    ap_vendor_by_bssid: HashMap<String, String>,
 }
 
 impl RogueApTracker {
@@ -390,6 +396,45 @@ impl RogueApTracker {
             channels.insert(entry.channel);
             if channels.len() > 1 {
                 reasons.push("channel_conflict".to_string());
+            }
+
+            // Track first-seen channel for band-conflict detection.
+            // If the BSSID was first seen on a 5GHz channel (>= 36) but
+            // the current frame is on a 2.4GHz channel (1-14), flag it.
+            use std::collections::hash_map::Entry as MapEntry;
+            let current_ch = entry.channel;
+            match self.bssid_first_channel.entry(bssid.clone()) {
+                MapEntry::Occupied(occ) => {
+                    let first_ch = *occ.get();
+                    let first_is_5ghz = first_ch >= 36;
+                    let current_is_2ghz = current_ch >= 1 && current_ch <= 14;
+                    if first_is_5ghz && current_is_2ghz {
+                        reasons.push("channel_band_conflict".to_string());
+                    }
+                }
+                MapEntry::Vacant(vac) => {
+                    vac.insert(current_ch);
+                }
+            }
+
+            // Vendor OUI conflict detection: extract the OUI (first 6 hex digits)
+            // from the BSSID, track by BSSID, and check if any other BSSID
+            // serving the same SSID has a different OUI.
+            if let Some(ssid) = ssid {
+                // Normalize BSSID by removing colons/hyphens, take first 6 chars
+                let normalized = bssid.replace([':', '-', '.'], "");
+                let oui = &normalized[..normalized.len().min(6)];
+                self.ap_vendor_by_bssid.insert(bssid.clone(), oui.to_string());
+
+                // Check for vendor conflict: same SSID, different BSSID, different OUI
+                let has_conflict = self.ap_vendor_by_bssid.iter().any(|(other_bssid, other_oui)| {
+                    other_bssid != bssid
+                        && other_oui != oui
+                        && self.ssid_by_bssid.get(other_bssid).map_or(false, |s| s == ssid)
+                });
+                if has_conflict {
+                    reasons.push("vendor_conflict".to_string());
+                }
             }
         }
         if reasons.is_empty() {
@@ -1377,6 +1422,7 @@ mod tests {
             raw_len: 100,
             raw_frame: None,
             tags: vec![],
+            risk_score: None,
             security_flags: 0x02,
             wps_device_name: None,
             wps_manufacturer: None,
@@ -1532,6 +1578,7 @@ mod tests {
             raw_len: 100,
             raw_frame: None,
             tags: vec![],
+            risk_score: None,
             security_flags: 0,
             wps_device_name: None,
             wps_manufacturer: None,

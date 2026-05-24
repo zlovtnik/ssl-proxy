@@ -53,7 +53,7 @@ impl Default for FrameSizeHistogram {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WirelessBandwidthEvent {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -89,6 +89,9 @@ pub struct WirelessBandwidthEvent {
     /// windows occur during idle periods and at shutdown.
     #[serde(default)]
     pub window_is_partial: bool,
+    /// Highest risk score seen in this traffic window.
+    #[serde(default)]
+    pub max_risk_score: Option<f32>,
     /// RFC3339 wall-clock timestamp at the moment this event was serialized
     /// and enqueued for publish. Allows downstream consumers to compute
     /// `published_at - window_end` as a drift metric per event.
@@ -132,6 +135,7 @@ struct TrafficCounters {
     histogram: [u64; 4],
     arrival_times_ms: Vec<i64>,
     arrival_reservoir_size: usize,
+    max_risk_score: Option<f32>,
 }
 
 impl Default for TrafficCounters {
@@ -146,6 +150,7 @@ impl Default for TrafficCounters {
             histogram: [0; 4],
             arrival_times_ms: Vec::new(),
             arrival_reservoir_size: ARRIVAL_RESERVOIR_SIZE,
+            max_risk_score: None,
         }
     }
 }
@@ -282,6 +287,12 @@ impl TrafficBucket {
                     .unwrap_or(signal),
             );
         }
+        if let Some(score) = entry.risk_score {
+            counters.max_risk_score = Some(match counters.max_risk_score {
+                Some(current) => current.max(score),
+                None => score,
+            });
+        }
         let size = entry.raw_len as u64;
         match size {
             0..=99 => counters.histogram[0] += 1,
@@ -396,6 +407,7 @@ impl TrafficBucket {
                 inter_arrival_p50_ms,
                 wall_clock_delta_ms: Some(wall_clock_delta_ms),
                 window_is_partial,
+                max_risk_score: counters.max_risk_score,
                 published_at: None,
             });
         }

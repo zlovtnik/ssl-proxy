@@ -37,6 +37,7 @@ pub async fn build_text(
         "behaviour_window" => build_behaviour_window(pool, job).await,
         "baseline_profile" => build_baseline_profile(pool, job).await,
         "frame_sequence" => build_frame_sequence(pool, job).await,
+        "infrastructure_subgraph" => build_infrastructure_subgraph(pool, job).await,
         other => Err(WorkerError::text_build(format!(
             "unsupported embedding_kind: '{}'",
             other
@@ -68,6 +69,7 @@ pub async fn build_text_batch(
     let mut behaviours = Vec::new();
     let mut baseline_profiles = Vec::new();
     let mut frame_sequences = Vec::new();
+    let mut infrastructure_subgraphs = Vec::new();
 
     for job in jobs {
         match job.embedding_kind.as_str() {
@@ -76,6 +78,7 @@ pub async fn build_text_batch(
             "behaviour_window" => behaviours.push(job),
             "baseline_profile" => baseline_profiles.push(job),
             "frame_sequence" => frame_sequences.push(job),
+            "infrastructure_subgraph" => infrastructure_subgraphs.push(job),
             other => {
                 return Err(WorkerError::text_build(format!(
                     "unsupported embedding_kind: '{other}'"
@@ -99,6 +102,9 @@ pub async fn build_text_batch(
     }
     if !frame_sequences.is_empty() {
         build_frame_sequences_batch(pool, &frame_sequences, &mut out).await?;
+    }
+    if !infrastructure_subgraphs.is_empty() {
+        build_infrastructure_subgraphs_batch(pool, &infrastructure_subgraphs, &mut out).await?;
     }
     Ok(out)
 }
@@ -873,6 +879,14 @@ struct FrameSequenceBatchRow {
     window_end: Option<chrono::DateTime<chrono::Utc>>,
     sequence_tokens: String,
     frame_count: i64,
+    log_prob: Option<f64>,
+}
+
+fn insert_log_prob_line(text: &mut String, score: f64) {
+    if let Some(pos) = text.rfind("frame_count:") {
+        let (before, after) = text.split_at(pos);
+        *text = format!("{}log_prob: {:.6}\n{}", before, score, after);
+    }
 }
 
 async fn build_frame_sequence(
@@ -900,7 +914,25 @@ async fn build_frame_sequence(
     .map_err(|e| WorkerError::text_build(format!("frame_sequence query failed: {e}")))?
     .ok_or_else(|| WorkerError::text_build(format!("frame_sequence not found: {}", job.source_key)))?;
 
-    Ok(frame_sequence_row_to_input(&row))
+    let mut input = frame_sequence_row_to_input(&row);
+
+    // Append log_prob score for the embedding model to weight sequence rarity
+    let tokens: Vec<&str> = row.sequence_tokens.split_whitespace().collect();
+    if tokens.len() >= 2 {
+        match sqlx::query_scalar::<_, f64>("SELECT vec_score_sequence($1::text[])")
+            .bind(&tokens)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(score) => insert_log_prob_line(&mut input.text, score),
+            Err(e) => {
+                // Non-fatal: log_prob is informational, don't fail the job
+                tracing::warn!(error = %e, session_key = %row.session_key, "failed to compute log_prob");
+            }
+        }
+    }
+
+    Ok(input)
 }
 
 async fn build_frame_sequences_batch(
@@ -920,7 +952,8 @@ async fn build_frame_sequences_batch(
             window_start,
             window_end,
             sequence_tokens,
-            frame_count
+            frame_count,
+            vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+')) AS log_prob
         FROM vec_frame_sequences
         WHERE session_key = ANY($1::text[])
         "#,
@@ -931,7 +964,7 @@ async fn build_frame_sequences_batch(
     .map_err(|e| WorkerError::text_build(format!("frame_sequence batch query failed: {e}")))?;
 
     for row in rows {
-        out.insert(row.query_key.clone(), frame_sequence_row_to_input(&FrameSequenceRow {
+        let mut input = frame_sequence_row_to_input(&FrameSequenceRow {
             session_key: row.session_key.clone(),
             source_mac: row.source_mac.clone(),
             sensor_id: row.sensor_id.clone(),
@@ -940,7 +973,13 @@ async fn build_frame_sequences_batch(
             window_end: row.window_end,
             sequence_tokens: row.sequence_tokens.clone(),
             frame_count: row.frame_count,
-        }));
+        });
+
+        if let Some(score) = row.log_prob {
+            insert_log_prob_line(&mut input.text, score);
+        }
+
+        out.insert(row.query_key.clone(), input);
     }
     Ok(())
 }
@@ -959,6 +998,12 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     }
     lines.push(format!("frame_count: {}", row.frame_count));
 
+    // Note: log_prob is appended by the builder callers (build_frame_sequence /
+    // build_frame_sequences_batch) which have access to a PgPool to invoke
+    // vec_score_sequence(). See those functions for the score injection.
+    // When computed, a "log_prob: {score}" line is inserted between source_mac
+    // and frame_count.
+
     EmbeddingInput {
         text: lines.join("\n"),
         source_observed_at: row.window_start,
@@ -966,6 +1011,196 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
         source_sensor_id: row.sensor_id.clone(),
         source_location_id: row.location_id.clone(),
         source_mac: row.source_mac.clone(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure subgraph builder
+// ---------------------------------------------------------------------------
+
+/// Row returned by the ego-graph query for a single BSSID.
+#[derive(Debug, sqlx::FromRow)]
+struct InfrastructureGraphRow {
+    node_a: String,
+    node_a_type: String,
+    node_b: String,
+    node_b_type: String,
+    edge_type: String,
+    weight: Option<f64>,
+    last_seen: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Build embedding text for an infrastructure subgraph centered on a BSSID.
+///
+/// Queries `vec_infrastructure_graph` for all edges where the BSSID appears as
+/// either `node_a` or `node_b` and serializes the ego-graph as structured text.
+async fn build_infrastructure_subgraph(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let bssid = &job.source_key;
+
+    let rows = sqlx::query_as::<_, InfrastructureGraphRow>(
+        r#"
+        SELECT
+            node_a, node_a_type,
+            node_b, node_b_type,
+            edge_type, weight::float8, last_seen
+        FROM vec_infrastructure_graph
+        WHERE node_a = $1 OR node_b = $1
+        ORDER BY weight DESC, last_seen DESC
+        "#,
+    )
+    .bind(bssid)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("infrastructure_graph query failed: {e}")))?;
+
+    if rows.is_empty() {
+        return Err(WorkerError::text_build(format!(
+            "infrastructure_subgraph not found: {bssid}"
+        )));
+    }
+
+    Ok(build_ego_graph_input(bssid, &rows))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct InfrastructureGraphBatchRow {
+    query_key: String,
+    node_a: String,
+    node_a_type: String,
+    node_b: String,
+    node_b_type: String,
+    edge_type: String,
+    weight: Option<f64>,
+    last_seen: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn build_infrastructure_subgraphs_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+
+    let rows = sqlx::query_as::<_, InfrastructureGraphBatchRow>(
+        r#"
+        SELECT
+            CASE WHEN node_a = ANY($1::text[]) THEN node_a ELSE node_b END AS query_key,
+            node_a, node_a_type,
+            node_b, node_b_type,
+            edge_type, weight::float8, last_seen
+        FROM vec_infrastructure_graph
+        WHERE node_a = ANY($1::text[]) OR node_b = ANY($1::text[])
+        ORDER BY weight DESC, last_seen DESC
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("infrastructure_graph batch query failed: {e}")))?;
+
+    // Group rows by query_key
+    let mut grouped: HashMap<String, Vec<InfrastructureGraphRow>> = HashMap::new();
+    for row in rows {
+        let graph_row = InfrastructureGraphRow {
+            node_a: row.node_a,
+            node_a_type: row.node_a_type,
+            node_b: row.node_b,
+            node_b_type: row.node_b_type,
+            edge_type: row.edge_type,
+            weight: row.weight,
+            last_seen: row.last_seen,
+        };
+        grouped.entry(row.query_key).or_default().push(graph_row);
+    }
+
+    for job in jobs {
+        if let Some(rows) = grouped.get(&job.source_key) {
+            out.insert(job.source_key.clone(), build_ego_graph_input(&job.source_key, rows));
+        }
+    }
+
+    Ok(())
+}
+
+/// Build an ego-graph text representation from infrastructure graph edges.
+///
+/// Format:
+/// ```text
+/// kind: infrastructure_subgraph
+/// center: aa:bb:cc:dd:ee:ff
+/// clients: 14
+/// vendor_diversity: 3
+/// edges: association:14, probe_target:5, roaming:3, ...
+/// ```
+fn build_ego_graph_input(bssid: &str, rows: &[InfrastructureGraphRow]) -> EmbeddingInput {
+    let mut lines = vec![
+        "kind: infrastructure_subgraph".to_string(),
+        format!("center: {bssid}"),
+    ];
+
+    // Count distinct clients (client_mac neighbors via association)
+    let mut client_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // Count distinct edge types
+    let mut edge_type_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    // Collect all unique SSID neighbors
+    let mut ssid_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // Collect all unique vendor OUIs
+    let mut vendor_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    for row in rows {
+        let neighbor = if row.node_a == bssid {
+            (&row.node_b as &str, &row.node_b_type as &str)
+        } else {
+            (&row.node_a as &str, &row.node_a_type as &str)
+        };
+
+        match neighbor.1 {
+            "client_mac" if row.edge_type == "association" => {
+                client_set.insert(neighbor.0);
+            }
+            "ssid" if row.edge_type == "probe_target" => {
+                ssid_set.insert(neighbor.0);
+            }
+            "vendor" => {
+                vendor_set.insert(neighbor.0);
+            }
+            _ => {}
+        }
+
+        *edge_type_counts.entry(&row.edge_type).or_insert(0) += 1usize;
+    }
+
+    if !ssid_set.is_empty() {
+        lines.push(format!("ssid: {}", ssid_set.len()));
+    }
+    if !client_set.is_empty() {
+        lines.push(format!("clients: {}", client_set.len()));
+    }
+    if !vendor_set.is_empty() {
+        lines.push(format!("vendor_diversity: {}", vendor_set.len()));
+    }
+
+    // Serialize edge type distribution
+    let mut edge_parts: Vec<String> = edge_type_counts
+        .into_iter()
+        .map(|(et, count)| format!("{et}:{count}"))
+        .collect();
+    edge_parts.sort();
+    lines.push(format!("edges: {}", edge_parts.join(",")));
+
+    // Find max last_seen for the source time
+    let last_seen = rows.iter().filter_map(|r| r.last_seen).max();
+
+    EmbeddingInput {
+        text: lines.join("\n"),
+        source_observed_at: last_seen,
+        source_stream_name: None,
+        source_sensor_id: None,
+        source_location_id: None,
+        source_mac: Some(bssid.to_string()),
     }
 }
 
