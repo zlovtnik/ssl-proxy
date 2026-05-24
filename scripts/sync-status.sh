@@ -30,12 +30,12 @@ docker run --rm --network "${COMPOSE_PROJECT}_default" --entrypoint rpk "${REDPA
 echo
 echo "== postgres sync counts =="
 docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
-select 'sync_scan_ingest' table_name, count(*) from sync_scan_ingest
-union all select 'sync_cursor', count(*) from sync_cursor
-union all select 'sync_job', count(*) from sync_job
-union all select 'sync_batch', count(*) from sync_batch
-union all select 'sync_error', count(*) from sync_error
-union all select 'audit_backlog', count(*) from audit_backlog
+select 'sync_events' table_name, count(*) from sync_events
+union all select 'sync_cursors', count(*) from sync_cursors
+union all select 'sync_jobs', count(*) from sync_jobs
+union all select 'sync_batches', count(*) from sync_batches
+union all select 'sync_errors', count(*) from sync_errors
+union all select 'sync_backlog', count(*) from sync_backlog
 order by table_name;
 " || true
 
@@ -43,7 +43,7 @@ echo
 echo "== recent ingest =="
 docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
 select observed_at, stream_name, status, producer, event_kind, left(dedupe_key, 16) as dedupe
-from sync_scan_ingest
+from sync_events
 order by updated_at desc
 limit 10;
 " || true
@@ -57,7 +57,7 @@ select
   count(*),
   min(observed_at) as oldest,
   max(observed_at) as newest
-from sync_scan_ingest
+from sync_events
 where stream_name = 'wireless.audit'
   and observed_at >= now() - interval '24 hours'
 group by status, stream_name
@@ -72,7 +72,7 @@ select
   payload->>'source_mac' as source_mac,
   payload->'tags' as threat_tags,
   observed_at
-from sync_scan_ingest
+from sync_events
 where stream_name = 'wireless.audit'
   and payload::text like '%threat:%'
 order by observed_at desc

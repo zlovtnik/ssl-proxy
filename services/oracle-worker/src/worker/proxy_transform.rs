@@ -52,7 +52,7 @@ pub(crate) fn blocked_event_rows_from_values(
         if let Some(blocked_row) = blocked_event_insert_from_value(row, &proxy_row)? {
             inserts.push(BlockedEventInsert {
                 row_sequence: i64::try_from(index + 1)
-                    .map_err(|_| "blocked_events row_sequence exceeds i64".to_string())?,
+                    .map_err(|_| "proxy blocked rollup row_sequence exceeds i64".to_string())?,
                 ..blocked_row
             });
         }

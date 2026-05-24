@@ -112,7 +112,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
-      - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
+      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
       - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
@@ -299,7 +299,7 @@ services:
     environment:
       - VECTOR_EMBEDDING_WORKER_NAME=worker-1
       - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
-      - DATABASE_POOL_MAX_CONNECTIONS=24
+      - DATABASE_POOL_MAX_CONNECTIONS=6
       - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
@@ -324,7 +324,7 @@ services:
     environment:
       - VECTOR_EMBEDDING_WORKER_NAME=worker-2
       - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
-      - DATABASE_POOL_MAX_CONNECTIONS=24
+      - DATABASE_POOL_MAX_CONNECTIONS=6
       - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
@@ -349,7 +349,7 @@ services:
     environment:
       - VECTOR_EMBEDDING_WORKER_NAME=worker-3
       - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
-      - DATABASE_POOL_MAX_CONNECTIONS=24
+      - DATABASE_POOL_MAX_CONNECTIONS=6
       - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
@@ -374,7 +374,7 @@ services:
     environment:
       - VECTOR_EMBEDDING_WORKER_NAME=worker-4
       - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
-      - DATABASE_POOL_MAX_CONNECTIONS=24
+      - DATABASE_POOL_MAX_CONNECTIONS=6
       - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
@@ -577,6 +577,10 @@ services:
       - shared_preload_libraries=pg_cron
       - -c
       - cron.database_name=sync
+      - -c
+      - max_connections=64
+      - -c
+      - listen_addresses=*
     restart: unless-stopped
     deploy:
       resources:
@@ -599,7 +603,7 @@ services:
       retries: 5
     volumes:
       # /docker-entrypoint-initdb.d is intentionally unused; zig-coordinator
-      # applies services/zig-coordinator/schema/postgres.sql with psql.
+      # applies sql/postgres.sql with psql.
       - postgres-data:/var/lib/postgresql/data
 
 volumes:

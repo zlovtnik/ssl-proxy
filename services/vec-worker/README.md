@@ -11,7 +11,7 @@ Its main responsibilities are:
 
 - Lease pending embedding jobs from `vec_embedding_jobs`
 - Build embedding text and metadata from the source tables:
-  - `sync_scan_ingest` for event embeddings
+  - `sync_events` for event embeddings
   - `devices` for device embeddings
   - `vec_behaviour_snapshots` for behaviour window embeddings
 - Embed text using an external provider: Ollama or llama.cpp
@@ -125,7 +125,7 @@ Relevant columns:
 - `job_id` — primary key
 - `source_table`, `source_key`
   - identify the row to embed
-  - `source_table` is one of: `sync_scan_ingest`, `devices`, `vec_behaviour_snapshots`
+  - `source_table` is one of: `sync_events`, `devices`, `vec_behaviour_snapshots`
   - `source_key` is the primary key value of that row as text
 - `embedding_model` — model name used for this job
 - `embedding_kind` — one of `event`, `device`, `behaviour_window`
@@ -215,7 +215,7 @@ Usage by vec worker:
 - when a positive `rows_processed` value is reported, it is added to the existing counter
 - `last_cursor` and run timestamps are merged with `COALESCE` so older values are preserved when absent
 
-### `sync_scan_ingest`
+### `sync_events`
 
 This is the source audit table for event embeddings.
 
@@ -355,7 +355,7 @@ The worker supports three embedding kinds.
 
 ### `event`
 
-- Source: `sync_scan_ingest` row where `dedupe_key = source_key`
+- Source: `sync_events` row where `dedupe_key = source_key`
 - Builds text from semantic event fields (frame type, app protocol, transport protocol, security flags, DNS/mDNS names, WPS fields, device fingerprint, handshake captured, protected state, signal, retry, power save, etc.)
 - Includes `kind: event` as the first line
 - Populates `EmbeddingInput` metadata from `observed_at`, `stream_name`, `sensor_id`, `location_id`, and `source_mac`
@@ -440,7 +440,7 @@ If replicas contend on leases but the queue stays deep, increase `VECTOR_EMBEDDI
 
 ## External dependencies: PSQL cron jobs
 
-The vec-worker is a **consumer** of embedding jobs - it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `services/zig-coordinator/schema/postgres.sql` (lines 2004-2045). `pg_cron` must be installed and the `cron` schema available.
+The vec-worker is a **consumer** of embedding jobs - it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `sql/postgres.sql` (lines 2004-2045). `pg_cron` must be installed and the `cron` schema available.
 
 Without these cron jobs the worker would run forever, lease nothing, and produce zero output.
 
@@ -448,9 +448,9 @@ Without these cron jobs the worker would run forever, lease nothing, and produce
 
 | # | Name | Schedule | Function | Produces | Consumed by worker |
 |---|------|----------|----------|----------|--------------------|
-| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_scan_ingest` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` -> inserts/updates `pending` rows into `vec_embedding_jobs` | Yes - this is the sole source of work items |
+| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_events` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` -> inserts/updates `pending` rows into `vec_embedding_jobs` | Yes - this is the sole source of work items |
 | 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes - the worker reads `embedding_text` / `text_summary` from this table |
-| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search -> `vec_similarity_pairs`, marks dedupe suspects on `sync_scan_ingest`, creates shadow IT alerts | No - consumes worker output |
+| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search -> `vec_similarity_pairs`, marks dedupe suspects on `wireless_frames`, creates shadow IT alerts | No - consumes worker output |
 | 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping - the worker also does this internally every 10 iterations |
 | 5 | `vec-reap-stale-workers` | `*/5 * * * *` (every 5 min) | `vec_reap_stale_workers()` | Marks dead worker heartbeats in `vec_worker_state` as `stale` | No - observability only |
 
@@ -471,7 +471,7 @@ SELECT vec_reembed_changed_jobs(p_limit => 1000);
 ### Where the cron definitions live
 
 ```text
-services/zig-coordinator/schema/postgres.sql  ->  vec_install_cron_jobs()  (end of file)
+sql/postgres.sql  ->  vec_install_cron_jobs()  (end of file)
 ```
 
 The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_snapshots`, `vec_materialize_similarity_pairs`, `vec_release_expired_leases`, `vec_reap_stale_workers`) are defined in the same file, lines 1175–2002.
@@ -484,7 +484,7 @@ The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_sna
 - `services/vec-worker/src/db.rs` — Postgres access, job update, embedding upsert, worker heartbeat
 - `services/vec-worker/src/text_builder.rs` — source row reads and embedding text construction
 
-- `services/zig-coordinator/schema/postgres.sql` — Postgres table definitions and helper functions used by the worker
+- `sql/postgres.sql` — Postgres table definitions and helper functions used by the worker
 
 # vec-worker: Performance & Correctness Recovery
 ## From 55 jobs/min → target 2,000+ jobs/min

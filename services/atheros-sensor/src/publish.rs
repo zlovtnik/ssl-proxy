@@ -1,7 +1,7 @@
 //! Two-tier persistence strategy for wireless audit event publishing.
 //!
 //! Implements a dual-path publish pipeline: primary path publishes to Redpanda; fallback path
-//! asks the coordinator to save audit_backlog retry rows. When Redpanda
+//! asks the coordinator to save sync_backlog retry rows. When Redpanda
 //! is unavailable, a circuit breaker opens and events are queued in an in-memory backlog until
 //! connectivity is restored. The circuit breaker uses exponential backoff, with automatic
 //! re-probing after the backoff timeout elapses. When the memory backlog cannot be flushed,

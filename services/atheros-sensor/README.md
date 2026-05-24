@@ -10,7 +10,7 @@ sync-plane used by this repository.
 - Uses Redpanda through `SYNC_REDPANDA_BOOTSTRAP_SERVERS`; the zig-coordinator owns all Postgres access.
 - Publishes the raw audit payload on topic `wireless.audit`.
 - Publishes a matching `sync.scan.request` message with `stream_name=wireless.audit`.
-- Asks the coordinator to persist `audit_backlog` rows when Redpanda publish paths fail.
+- Asks the coordinator to persist `sync_backlog` rows when Redpanda publish paths fail.
 
 ## Environment
 

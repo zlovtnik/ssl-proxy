@@ -148,7 +148,7 @@ async fn build_event(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput
             COALESCE(wps_model_name, payload->>'wps_model_name') AS wps_model_name,
             COALESCE(device_fingerprint, payload->>'device_fingerprint') AS device_fingerprint,
             COALESCE(handshake_captured::text, payload->>'handshake_captured') AS handshake_captured
-        FROM sync_scan_ingest
+        FROM sync_events_expanded
         WHERE dedupe_key = $1
         "#,
     )
@@ -226,7 +226,7 @@ async fn build_events_batch(
             COALESCE(wps_model_name, payload->>'wps_model_name') AS wps_model_name,
             COALESCE(device_fingerprint, payload->>'device_fingerprint') AS device_fingerprint,
             COALESCE(handshake_captured::text, payload->>'handshake_captured') AS handshake_captured
-        FROM sync_scan_ingest
+        FROM sync_events_expanded
         WHERE dedupe_key = ANY($1::text[])
         "#,
     )
