@@ -59,13 +59,13 @@ as $$
   end
 $$;
 
-create table sync_cursors (
+create table if not exists sync_cursors (
   stream_name text primary key,
   cursor_value text not null,
   updated_at timestamptz not null default now()
 );
 
-create table sync_events (
+create table if not exists sync_events (
   dedupe_key text primary key,
   stream_name text not null,
   observed_at timestamptz not null,
@@ -82,7 +82,7 @@ create table sync_events (
   constraint chk_sync_events_status check (status in ('pending','processing','batched','failed'))
 );
 
-create table wireless_frames (
+create table if not exists wireless_frames (
   dedupe_key text primary key references sync_events(dedupe_key) on delete cascade,
   sensor_id text,
   location_id text,
@@ -253,7 +253,7 @@ select
 from sync_events e
 left join wireless_frames f on f.dedupe_key = e.dedupe_key;
 
-create table sync_jobs (
+create table if not exists sync_jobs (
   job_id uuid primary key,
   stream_name text not null references sync_cursors(stream_name) deferrable initially deferred,
   status text not null,
@@ -264,7 +264,7 @@ create table sync_jobs (
   constraint chk_sync_jobs_status check (status in ('pending','running','completed','failed'))
 );
 
-create table sync_batches (
+create table if not exists sync_batches (
   batch_id uuid primary key,
   job_id uuid not null references sync_jobs(job_id),
   batch_no integer not null,
@@ -282,7 +282,7 @@ create table sync_batches (
   constraint chk_sync_batches_status check (status in ('pending','processing','dispatched','completed','failed'))
 );
 
-create table sync_errors (
+create table if not exists sync_errors (
   id bigserial primary key,
   job_id uuid references sync_jobs(job_id),
   batch_id uuid references sync_batches(batch_id),
@@ -291,7 +291,7 @@ create table sync_errors (
   created_at timestamptz not null default now()
 );
 
-create table sync_backlog (
+create table if not exists sync_backlog (
   dedupe_key text primary key,
   stream_name text not null,
   payload jsonb not null,
@@ -303,7 +303,7 @@ create table sync_backlog (
   constraint chk_sync_backlog_status check (status in ('pending','synced','sync_failed','failed'))
 );
 
-create table wireless_authorized_networks (
+create table if not exists wireless_authorized_networks (
   id bigserial primary key,
   ssid text,
   bssid text,
@@ -320,7 +320,7 @@ create table wireless_authorized_networks (
   )
 );
 
-create table wireless_clients (
+create table if not exists wireless_clients (
   ssid text not null,
   client_mac text not null,
   known_bssid text,
@@ -331,7 +331,7 @@ create table wireless_clients (
   primary key (ssid, client_mac)
 );
 
-create table wireless_shadow_alerts (
+create table if not exists wireless_shadow_alerts (
   source_mac text primary key,
   first_occurred_at timestamptz not null,
   last_occurred_at timestamptz not null,
@@ -349,7 +349,7 @@ create table wireless_shadow_alerts (
   constraint wireless_shadow_alerts_source_mac_format_chk check (source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$')
 );
 
-create table devices (
+create table if not exists devices (
   mac_id text primary key,
   wg_pubkey text,
   claim_token_hash text,
@@ -367,45 +367,45 @@ create table devices (
   )
 );
 
-create index sync_events_status_idx on sync_events (status, observed_at);
-create index sync_events_stream_idx on sync_events (stream_name, observed_at);
-create index sync_events_ready_idx on sync_events (status, stream_name, observed_at) where status in ('pending', 'failed');
-create index sync_events_processing_idx on sync_events (updated_at) where status = 'processing';
-create index sync_jobs_stream_name_idx on sync_jobs (stream_name);
-create index sync_jobs_status_created_at_idx on sync_jobs (status, created_at);
-create index sync_batches_job_batch_no_idx on sync_batches (job_id, batch_no);
-create index sync_batches_status_idx on sync_batches (status);
-create index sync_batches_pending_idx on sync_batches (status, batch_id) where status = 'pending';
-create index sync_batches_dispatch_lease_idx on sync_batches (status, updated_at) where status in ('dispatched', 'failed');
-create index sync_errors_job_id_idx on sync_errors (job_id);
-create index sync_errors_batch_id_idx on sync_errors (batch_id);
-create index sync_backlog_status_idx on sync_backlog (status, updated_at);
-create index wireless_authorized_networks_enabled_idx on wireless_authorized_networks (enabled, location_id);
-create unique index wireless_authorized_networks_match_idx on wireless_authorized_networks (coalesce(lower(ssid), ''), coalesce(lower(bssid), ''), coalesce(location_id, ''));
-create index wireless_clients_client_mac_idx on wireless_clients (client_mac);
-create index wireless_clients_last_seen_idx on wireless_clients (last_seen desc);
-create index wireless_clients_known_bssid_idx on wireless_clients (known_bssid) where known_bssid is not null;
-create index wireless_shadow_alerts_open_idx on wireless_shadow_alerts (last_occurred_at desc) where resolved_at is null;
-create index devices_wg_pubkey_idx on devices (wg_pubkey);
-create index devices_username_idx on devices (username, last_seen desc);
-create index wireless_frames_ssid_idx on wireless_frames (ssid);
-create index wireless_frames_source_mac_idx on wireless_frames (lower(source_mac));
-create index wireless_frames_bssid_idx on wireless_frames (lower(bssid));
-create index wireless_frames_destination_bssid_idx on wireless_frames (lower(destination_bssid));
-create index wireless_frames_schema_version_idx on wireless_frames (schema_version);
-create index wireless_frames_signal_idx on wireless_frames (signal_dbm) where signal_dbm is not null;
-create index wireless_frames_src_ip_idx on wireless_frames (src_ip) where src_ip is not null;
-create index wireless_frames_dst_ip_idx on wireless_frames (dst_ip) where dst_ip is not null;
-create index wireless_frames_app_protocol_idx on wireless_frames (app_protocol) where app_protocol is not null;
-create index wireless_frames_session_key_idx on wireless_frames (session_key) where session_key is not null;
-create index wireless_frames_fingerprint_idx on wireless_frames (frame_fingerprint) where frame_fingerprint is not null;
-create index wireless_frames_search_tsv_idx on wireless_frames using gin (search_tsv);
-create index wireless_frames_common_search_idx on wireless_frames using gin ((
+create index if not exists sync_events_status_idx on sync_events (status, observed_at);
+create index if not exists sync_events_stream_idx on sync_events (stream_name, observed_at);
+create index if not exists sync_events_ready_idx on sync_events (status, stream_name, observed_at) where status in ('pending', 'failed');
+create index if not exists sync_events_processing_idx on sync_events (updated_at) where status = 'processing';
+create index if not exists sync_jobs_stream_name_idx on sync_jobs (stream_name);
+create index if not exists sync_jobs_status_created_at_idx on sync_jobs (status, created_at);
+create index if not exists sync_batches_job_batch_no_idx on sync_batches (job_id, batch_no);
+create index if not exists sync_batches_status_idx on sync_batches (status);
+create index if not exists sync_batches_pending_idx on sync_batches (status, batch_id) where status = 'pending';
+create index if not exists sync_batches_dispatch_lease_idx on sync_batches (status, updated_at) where status in ('dispatched', 'failed');
+create index if not exists sync_errors_job_id_idx on sync_errors (job_id);
+create index if not exists sync_errors_batch_id_idx on sync_errors (batch_id);
+create index if not exists sync_backlog_status_idx on sync_backlog (status, updated_at);
+create index if not exists wireless_authorized_networks_enabled_idx on wireless_authorized_networks (enabled, location_id);
+create unique index if not exists wireless_authorized_networks_match_idx on wireless_authorized_networks (coalesce(lower(ssid), ''), coalesce(lower(bssid), ''), coalesce(location_id, ''));
+create index if not exists wireless_clients_client_mac_idx on wireless_clients (client_mac);
+create index if not exists wireless_clients_last_seen_idx on wireless_clients (last_seen desc);
+create index if not exists wireless_clients_known_bssid_idx on wireless_clients (known_bssid) where known_bssid is not null;
+create index if not exists wireless_shadow_alerts_open_idx on wireless_shadow_alerts (last_occurred_at desc) where resolved_at is null;
+create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
+create index if not exists devices_username_idx on devices (username, last_seen desc);
+create index if not exists wireless_frames_ssid_idx on wireless_frames (ssid);
+create index if not exists wireless_frames_source_mac_idx on wireless_frames (lower(source_mac));
+create index if not exists wireless_frames_bssid_idx on wireless_frames (lower(bssid));
+create index if not exists wireless_frames_destination_bssid_idx on wireless_frames (lower(destination_bssid));
+create index if not exists wireless_frames_schema_version_idx on wireless_frames (schema_version);
+create index if not exists wireless_frames_signal_idx on wireless_frames (signal_dbm) where signal_dbm is not null;
+create index if not exists wireless_frames_src_ip_idx on wireless_frames (src_ip) where src_ip is not null;
+create index if not exists wireless_frames_dst_ip_idx on wireless_frames (dst_ip) where dst_ip is not null;
+create index if not exists wireless_frames_app_protocol_idx on wireless_frames (app_protocol) where app_protocol is not null;
+create index if not exists wireless_frames_session_key_idx on wireless_frames (session_key) where session_key is not null;
+create index if not exists wireless_frames_fingerprint_idx on wireless_frames (frame_fingerprint) where frame_fingerprint is not null;
+create index if not exists wireless_frames_search_tsv_idx on wireless_frames using gin (search_tsv);
+create index if not exists wireless_frames_common_search_idx on wireless_frames using gin ((
   lower(coalesce(sensor_id, '')) || ' ' || lower(coalesce(source_mac, '')) || ' ' || lower(coalesce(ssid, ''))
 ) gin_trgm_ops);
-create index wireless_frames_device_fingerprint_idx on wireless_frames (device_fingerprint) where device_fingerprint is not null;
-create index wireless_frames_security_flags_idx on wireless_frames (security_flags) where security_flags <> 0;
-create index wireless_frames_handshake_captured_idx on wireless_frames (dedupe_key) where handshake_captured;
+create index if not exists wireless_frames_device_fingerprint_idx on wireless_frames (device_fingerprint) where device_fingerprint is not null;
+create index if not exists wireless_frames_security_flags_idx on wireless_frames (security_flags) where security_flags <> 0;
+create index if not exists wireless_frames_handshake_captured_idx on wireless_frames (dedupe_key) where handshake_captured;
 
 create or replace function coordinator.upsert_wireless_frame_from_payload(
   p_dedupe_key text,
@@ -999,7 +999,7 @@ begin
   end if;
 end $$;
 
-create table vec_embeddings (
+create table if not exists vec_embeddings (
   embedding_id bigserial primary key,
   source_table text not null,
   source_key text not null,
@@ -1024,30 +1024,30 @@ create table vec_embeddings (
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
 );
 
-create index vec_embeddings_source_idx
+create index if not exists vec_embeddings_source_idx
   on vec_embeddings (source_table, source_key);
-create index vec_embeddings_kind_model_idx
+create index if not exists vec_embeddings_kind_model_idx
   on vec_embeddings (embedding_kind, embedding_model, embedded_at desc);
-create index vec_embeddings_source_mac_idx
+create index if not exists vec_embeddings_source_mac_idx
   on vec_embeddings (lower(source_mac), source_observed_at desc)
   where source_mac is not null;
-create index vec_embeddings_event_hnsw_768_idx
+create index if not exists vec_embeddings_event_hnsw_768_idx
   on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
   where embedding_kind = 'event'
     and embedding_model = 'nomic-embed-text-v2-moe'
     and embedding_dimensions = 768;
-create index vec_embeddings_device_hnsw_768_idx
+create index if not exists vec_embeddings_device_hnsw_768_idx
   on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
   where embedding_kind = 'device'
     and embedding_model = 'nomic-embed-text-v2-moe'
     and embedding_dimensions = 768;
-create index vec_embeddings_behaviour_hnsw_768_idx
+create index if not exists vec_embeddings_behaviour_hnsw_768_idx
   on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
   where embedding_kind = 'behaviour_window'
     and embedding_model = 'nomic-embed-text-v2-moe'
     and embedding_dimensions = 768;
 
-create table vec_behaviour_snapshots (
+create table if not exists vec_behaviour_snapshots (
   snapshot_id bigserial primary key,
   snapshot_key text not null unique,
   source_mac text not null,
@@ -1073,12 +1073,12 @@ create table vec_behaviour_snapshots (
   constraint vec_behaviour_snapshots_window_chk check (window_end > window_start)
 );
 
-create index vec_behaviour_snapshots_mac_time_idx
+create index if not exists vec_behaviour_snapshots_mac_time_idx
   on vec_behaviour_snapshots (source_mac, window_start desc);
-create index vec_behaviour_snapshots_location_time_idx
+create index if not exists vec_behaviour_snapshots_location_time_idx
   on vec_behaviour_snapshots (location_id, window_start desc);
 
-create table vec_similarity_pairs (
+create table if not exists vec_similarity_pairs (
   pair_id bigserial primary key,
   pair_kind text not null,
   embedding_model text not null,
@@ -1111,16 +1111,16 @@ create table vec_similarity_pairs (
   constraint vec_similarity_pairs_unique unique (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id)
 );
 
-create index vec_similarity_pairs_kind_idx
+create index if not exists vec_similarity_pairs_kind_idx
   on vec_similarity_pairs (pair_kind, embedding_model, embedding_kind, cosine_similarity desc);
-create index vec_similarity_pairs_left_source_idx
+create index if not exists vec_similarity_pairs_left_source_idx
   on vec_similarity_pairs (left_source_table, left_source_key);
-create index vec_similarity_pairs_right_source_idx
+create index if not exists vec_similarity_pairs_right_source_idx
   on vec_similarity_pairs (right_source_table, right_source_key);
-create index vec_similarity_pairs_mac_idx
+create index if not exists vec_similarity_pairs_mac_idx
   on vec_similarity_pairs (left_source_mac, right_source_mac, computed_at desc);
 
-create table vec_embedding_jobs (
+create table if not exists vec_embedding_jobs (
   job_id bigserial primary key,
   source_table text not null,
   source_key text not null,
@@ -1145,19 +1145,19 @@ create table vec_embedding_jobs (
   constraint vec_embedding_jobs_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
 );
 
-create index vec_embedding_jobs_pending_idx
+create index if not exists vec_embedding_jobs_pending_idx
   on vec_embedding_jobs (priority, due_at, job_id)
   where status in ('pending', 'failed')
     and attempts < max_attempts;
-create index vec_embedding_jobs_lease_idx
+create index if not exists vec_embedding_jobs_lease_idx
   on vec_embedding_jobs (leased_at, priority, job_id)
   where status = 'leased'
     and attempts < max_attempts;
-create index vec_embedding_jobs_completion_idx
+create index if not exists vec_embedding_jobs_completion_idx
   on vec_embedding_jobs (job_id, lease_token)
   where status in ('pending', 'leased', 'failed');
 
-create table vec_worker_state (
+create table if not exists vec_worker_state (
   worker_name text primary key,
   status text not null default 'idle',
   last_cursor text,
@@ -2057,7 +2057,7 @@ $$;
 -- Since a pair has a left and right side, we union both sides to count how many
 -- times a device appears as a near-duplicate participant.
 
-CREATE MATERIALIZED VIEW v_device_repetition_score AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS v_device_repetition_score AS
 WITH device_pairs AS (
     -- Left side: device is the left member of the pair
     SELECT
@@ -2097,7 +2097,7 @@ ORDER BY near_duplicate_pairs DESC;
 COMMENT ON MATERIALIZED VIEW v_device_repetition_score IS
   'Daily device repetition scores from near-duplicate event_event pairs in vec_similarity_pairs (cosine_distance < 0.05). Refresh with REFRESH MATERIALIZED VIEW CONCURRENTLY.';
 
-CREATE UNIQUE INDEX idx_v_device_repetition_score_mac
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v_device_repetition_score_mac
   ON v_device_repetition_score (source_mac);
 -- V020: Create vec_alerts table for actionable alert feed
 --
@@ -2107,7 +2107,7 @@ CREATE UNIQUE INDEX idx_v_device_repetition_score_mac
 -- - new_device: first-seen device with embedding profile
 -- - device_fingerprint_change: WPS identity or fingerprint shift
 
-CREATE TABLE vec_alerts (
+CREATE TABLE IF NOT EXISTS vec_alerts (
     id BIGSERIAL PRIMARY KEY,
     alert_type TEXT NOT NULL,
     source_mac TEXT,
@@ -2118,13 +2118,13 @@ CREATE TABLE vec_alerts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_vec_alerts_type_created
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_created
     ON vec_alerts (alert_type, created_at DESC);
 
-CREATE INDEX idx_vec_alerts_mac
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_mac
     ON vec_alerts (source_mac);
 
-CREATE INDEX idx_vec_alerts_created
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_created
     ON vec_alerts (created_at DESC);
 
 COMMENT ON TABLE vec_alerts IS
@@ -2212,7 +2212,7 @@ COMMENT ON FUNCTION vec_reembed_changed_jobs IS
 -- idx_vec_alerts_created) are left in place since they may serve other
 -- query patterns.
 
-CREATE INDEX idx_vec_alerts_type_mac_created
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_mac_created
     ON vec_alerts (alert_type, source_mac, created_at DESC);
 
 create or replace function coordinator.ensure_cursor(
@@ -2681,14 +2681,14 @@ begin
   stale_recovered as (
     update sync_batches batch
        set status = case
-                      when batch.attempt_count >= v_max_attempts then 'failed'
-                      else 'pending'
-                    end,
+                     when batch.attempt_count >= v_max_attempts then 'failed'
+                     else 'pending'
+                   end,
            last_error = case
-                          when batch.attempt_count >= v_max_attempts
-                          then 'sync.oracle.load dispatch lease expired'
-                          else 'sync.oracle.load dispatch lease expired; retrying'
-                        end,
+                         when batch.attempt_count >= v_max_attempts
+                         then 'sync.oracle.load dispatch lease expired'
+                         else 'sync.oracle.load dispatch lease expired; retrying'
+                       end,
            updated_at = now()
       from stale_dispatched
      where batch.batch_id = stale_dispatched.batch_id
@@ -2728,14 +2728,14 @@ begin
   job_update as (
     update sync_jobs job
        set status = case
-                      when exists (
-                        select 1
-                          from recovered
-                         where recovered.job_id = job.job_id
-                           and recovered.status = 'failed'
-                      ) then 'failed'
-                      else 'pending'
-                    end,
+                     when exists (
+                       select 1
+                         from recovered
+                        where recovered.job_id = job.job_id
+                          and recovered.status = 'failed'
+                     ) then 'failed'
+                     else 'pending'
+                   end,
            finished_at = case
                            when exists (
                              select 1
@@ -2825,9 +2825,9 @@ begin
     update sync_batches batch
        set attempt_count = batch.attempt_count + 1,
            status = case
-                      when batch.attempt_count + 1 >= v_max_attempts then 'failed'
-                      else 'pending'
-                    end,
+                     when batch.attempt_count + 1 >= v_max_attempts then 'failed'
+                     else 'pending'
+                   end,
            last_error = nullif(p_error_text, ''),
            updated_at = now()
      where batch.batch_id = v_batch_id
@@ -2851,14 +2851,14 @@ begin
   job_update as (
     update sync_jobs job
        set status = case
-                      when exists (
-                        select 1
-                          from batch_update
-                         where batch_update.job_id = job.job_id
-                           and batch_update.status = 'failed'
-                      ) then 'failed'
-                      else 'pending'
-                    end,
+                     when exists (
+                       select 1
+                         from batch_update
+                        where batch_update.job_id = job.job_id
+                          and batch_update.status = 'failed'
+                     ) then 'failed'
+                     else 'pending'
+                   end,
            finished_at = case
                            when exists (
                              select 1
@@ -3087,10 +3087,10 @@ begin
   batch_update as (
     update sync_batches batch
        set status = case result.payload->>'status'
-                      when 'success' then 'completed'
-                      when 'completed' then 'completed'
-                      else 'failed'
-                    end,
+                     when 'success' then 'completed'
+                     when 'completed' then 'completed'
+                     else 'failed'
+                   end,
            row_count = coalesce((result.payload->>'row_count')::integer, row_count),
            checksum = nullif(result.payload->>'checksum', ''),
            last_error = nullif(result.payload->>'error_text', ''),
@@ -3112,14 +3112,14 @@ begin
   job_done as (
     update sync_jobs job
        set status = case
-                      when exists (
-                        select 1
-                          from sync_batches b
-                         where b.job_id = job.job_id
-                           and b.status = 'failed'
-                      ) then 'failed'
-                      else 'completed'
-                    end,
+                     when exists (
+                       select 1
+                         from sync_batches b
+                        where b.job_id = job.job_id
+                          and b.status = 'failed'
+                     ) then 'failed'
+                     else 'completed'
+                   end,
            finished_at = now()
      where job.job_id in (select job_id from batch_update)
        and not exists (
@@ -3167,10 +3167,10 @@ begin
   batch_update as (
     update sync_batches batch
        set status = case result.payload->>'status'
-                      when 'success' then 'completed'
-                      when 'completed' then 'completed'
-                      else 'failed'
-                    end,
+                     when 'success' then 'completed'
+                     when 'completed' then 'completed'
+                     else 'failed'
+                   end,
            row_count = coalesce((result.payload->>'row_count')::integer, row_count),
            checksum = nullif(result.payload->>'checksum', ''),
            last_error = nullif(result.payload->>'error_text', ''),
@@ -3195,14 +3195,14 @@ begin
   job_done as (
     update sync_jobs job
        set status = case
-                      when exists (
-                        select 1
-                          from sync_batches b
-                         where b.job_id = job.job_id
-                           and b.status = 'failed'
-                      ) then 'failed'
-                      else 'completed'
-                    end,
+                     when exists (
+                       select 1
+                         from sync_batches b
+                        where b.job_id = job.job_id
+                          and b.status = 'failed'
+                     ) then 'failed'
+                     else 'completed'
+                   end,
            finished_at = now()
      where job.job_id in (select job_id from affected_jobs)
        and not exists (
