@@ -1412,7 +1412,7 @@ begin
 end;
 $$;
 
-CREATE OR REPLACE FUNCTION public.vec_detect_rogue_clusters(
+create or replace function vec_detect_rogue_clusters(
   p_from timestamp with time zone DEFAULT (now() - '01:00:00'::interval),
   p_to   timestamp with time zone DEFAULT now()
 )
