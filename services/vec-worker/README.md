@@ -1014,58 +1014,6 @@ Each section maps directly to your existing architecture. Items are ordered by R
 3. In `ClientInventory::observe()`, when a new association frame arrives with a BSSID not in `normal_roaming_pairs`, push `"threat:unusual_roam"` tag to the entry.
 4. Expose roaming path in `ClientProfileSnapshot` for the `wireless.client.inventory` topic.
 ---
-dev details
-
-Searched for regex `create table if not exists sync_events|sync_events_expanded|payload->>'bssid'|tsft|frame_subtype|association_request|destination_bssid` (`**/sql/postgres.sql`), 90 results
-
-I found the event schema and am pulling the relevant sync_events definitions to ground the baseline metric calculations.
-
-Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#60-60), lines 60 to 120
-
-Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#120-120), lines 120 to 190
-
-Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#190-190), lines 190 to 240
-
-Read [](file:///Users/rcs/git/ssl-proxy/sql/postgres.sql#240-240), lines 240 to 320
-
-I’m checking the vec-worker text builder test section to align the new baseline kind with existing test patterns.
-
-Read [](file:///Users/rcs/git/ssl-proxy/services/vec-worker/src/text_builder.rs#740-740), lines 740 to 860
-
-I’m verifying whether the client inventory snapshot is strongly typed in the Oracle sink before finalizing the roaming snapshot changes.
-
-Read [](file:///Users/rcs/git/ssl-proxy/services/oracle-worker/src/worker/wireless_types.rs#120-120), lines 120 to 162
-
-Searched for regex `ClientInventorySnapshot|wireless_client_inventory|WirelessClientInventoryInsert|client_inventory_rows_from_values` (`**/services/oracle-worker/src/**/*.rs`), 36 results
-
-Read [](file:///Users/rcs/git/ssl-proxy/services/oracle-worker/src/worker/wireless_alert_transform.rs#150-150), lines 150 to 227
-
-I’ve got the implementation outline; now saving the plan to session memory and presenting it for review.
-
-Created memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
-
-I saved the plan, but I need to correct an edit artifact in the saved file first.
-
-Read memory [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
-
-Read memory [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
-
-Read memory [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
-
-I have the current saved text; rewriting it with the complete clean plan now.
-
-Updated memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
-
-Compacted conversationOptimized tool selection
-
-Read [](file:///memories/session)
-
-Created memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan.md)
-
-Read [](file:///memories)
-
-Created memory file [](file:///Users/rcs/Library/Application%20Support/Code/User/workspaceStorage/4f47ab261c7160507c24ddefaf7e69d5/GitHub.copilot-chat/memory-tool/memories/YzI5YTQwMWEtMzEzZS00NDZmLTg4ZjQtNjFmNTUyM2VlMTY3/plan2.md)
-
 ## Plan: Baseline Profile + Roaming Baseline
 
 TL;DR: add a new `baseline_profile` embedding kind in `vec-worker` backed by a new Postgres baseline table + builder pipeline, and extend `atheros-sensor` inventory state to learn roaming pairs and flag unusual association transitions.
@@ -1112,8 +1060,6 @@ TL;DR: add a new `baseline_profile` embedding kind in `vec-worker` backed by a n
 - compile and test changed services
 - verify new SQL objects and cron registration
 - confirm roaming state updates and tag emission
-
-I saved this plan in session memory at `/memories/session/plan2.md`.
 ---
 
 ## Track 2 — Sequence Models

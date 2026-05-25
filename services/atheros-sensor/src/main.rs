@@ -849,7 +849,7 @@ async fn process_packet(
                 }
                 _ => {
                     stats.lock().unwrap().malformed_frames += 1;
-                    warn!(
+                    debug!(
                         error = %error,
                         packet_len,
                         first_bytes = %hex_prefix(&packet.data, 8),
@@ -1230,6 +1230,7 @@ async fn process_packet(
         ssid = ?entry.ssid,
         "captured wifi frame"
     );
+    entry.risk_score = crate::parse::recompute_risk_score(&entry.tags);
     match publish_entry(publish_state, backlog, publish_client, entry).await {
         Ok(()) | Err(PublishError::Queued(_)) => {}
         Err(error) => return Err(error.into()),

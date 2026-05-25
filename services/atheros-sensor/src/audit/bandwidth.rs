@@ -77,7 +77,12 @@ pub struct WirelessBandwidthEvent {
     pub threshold_exceeded: bool,
     #[serde(default)]
     pub frame_size_histogram: FrameSizeHistogram,
+    #[serde(default)]
     pub inter_arrival_p50_ms: Option<u64>,
+    /// Coefficient of variation (CV) of inter-arrival times = stddev / mean.
+    /// Higher values indicate burstier traffic patterns. None when < 2 samples.
+    #[serde(default)]
+    pub inter_arrival_cv: Option<f64>,
     /// Milliseconds between wall-clock time and the frame timestamp at flush time.
     /// Positive values mean the frame timestamp is behind wall clock (the common case
     /// for backlog or delayed processing). This gives operators a per-window health
@@ -377,6 +382,7 @@ impl TrafficBucket {
         let mut events = Vec::with_capacity(self.entries.len());
         for (key, counters) in self.entries.drain() {
             let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
+            let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
             events.push(WirelessBandwidthEvent {
                 schema_version: 1,
                 event_type: "wireless_bandwidth_window".to_string(),
@@ -405,6 +411,7 @@ impl TrafficBucket {
                     range_1000_1500: counters.histogram[3],
                 },
                 inter_arrival_p50_ms,
+                inter_arrival_cv,
                 wall_clock_delta_ms: Some(wall_clock_delta_ms),
                 window_is_partial,
                 max_risk_score: counters.max_risk_score,
@@ -464,6 +471,39 @@ fn calculate_p50_inter_arrival(times_ms: &[i64]) -> Option<u64> {
     }
     intervals.sort_unstable();
     Some(intervals[intervals.len() / 2])
+}
+
+/// Computes the coefficient of variation (CV = stddev / mean) of inter-arrival
+/// intervals from a reservoir of arrival timestamps (millisecond epoch values).
+/// Returns `None` when there are fewer than 2 timestamps.
+fn calculate_inter_arrival_cv(times_ms: &[i64]) -> Option<f64> {
+    if times_ms.len() < 2 {
+        return None;
+    }
+    let mut sorted = times_ms.to_vec();
+    sorted.sort_unstable();
+    let intervals: Vec<u64> = sorted
+        .windows(2)
+        .filter_map(|w| {
+            let delta = w[1] - w[0];
+            if delta >= 0 { Some(delta as u64) } else { None }
+        })
+        .collect();
+    if intervals.len() < 2 {
+        return None;
+    }
+    let n = intervals.len() as f64;
+    let sum: u64 = intervals.iter().sum();
+    let mean = sum as f64 / n;
+    if mean <= 0.0 {
+        return None;
+    }
+    let variance = intervals.iter().map(|v| {
+        let diff = *v as f64 - mean;
+        diff * diff
+    }).sum::<f64>() / n;
+    let stddev = variance.sqrt();
+    Some(stddev / mean)
 }
 
 #[cfg(test)]

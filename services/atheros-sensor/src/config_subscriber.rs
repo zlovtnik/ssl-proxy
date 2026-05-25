@@ -180,7 +180,9 @@ async fn run_subscriber_once(
         tokio::time::sleep(Duration::from_secs(3600)).await;
         return Ok(());
     };
-    if redpanda_bootstrap_servers.starts_with("tls://") {
+    if redpanda_bootstrap_servers.starts_with("tls://")
+        || redpanda_security_protocol_uses_tls(config)
+    {
         return Err(
             "audit config subscriber supports plain redpanda:// endpoints only".to_string(),
         );
@@ -404,7 +406,9 @@ where
         tokio::time::sleep(Duration::from_secs(3600)).await;
         return Ok(());
     };
-    if redpanda_bootstrap_servers.starts_with("tls://") {
+    if redpanda_bootstrap_servers.starts_with("tls://")
+        || redpanda_security_protocol_uses_tls(config)
+    {
         return Err("config subscriber supports plain redpanda:// endpoints only".to_string());
     }
     let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;

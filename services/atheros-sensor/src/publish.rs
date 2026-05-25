@@ -108,6 +108,7 @@ pub struct PublishState {
     circuit_breaker_failure_count: u32,
     circuit_breaker_initial_timeout_ms: u64,
     circuit_breaker_max_timeout_ms: u64,
+    circuit_open_last_warn_bucket: Option<u64>,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
     memory_backlog_capacity: NonZeroUsize,
     journal_path: Option<PathBuf>,
@@ -121,6 +122,7 @@ impl Default for PublishState {
             circuit_breaker_failure_count: 0,
             circuit_breaker_initial_timeout_ms: CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS,
             circuit_breaker_max_timeout_ms: CIRCUIT_BREAKER_MAX_TIMEOUT_MS,
+            circuit_open_last_warn_bucket: None,
             memory_backlog: LruCache::new(NonZeroUsize::new(DEFAULT_MEMORY_BACKLOG_SIZE).unwrap()),
             memory_backlog_capacity: NonZeroUsize::new(DEFAULT_MEMORY_BACKLOG_SIZE).unwrap(),
             journal_path: None,
@@ -148,6 +150,7 @@ impl PublishState {
             circuit_breaker_failure_count: 0,
             circuit_breaker_initial_timeout_ms: initial_timeout,
             circuit_breaker_max_timeout_ms: max_timeout,
+            circuit_open_last_warn_bucket: None,
             memory_backlog: LruCache::new(capacity),
             memory_backlog_capacity: capacity,
             journal_path,
@@ -196,19 +199,6 @@ impl PublishState {
         let Some(ref journal_path) = self.journal_path else {
             return;
         };
-        if let Ok(meta) = std::fs::metadata(journal_path) {
-            if meta.len() > MAX_JOURNAL_BYTES {
-                warn!(
-                    journal_path = %journal_path.display(),
-                    size_bytes = meta.len(),
-                    "publish journal exceeds 32 MB limit; skipping append to prevent disk fill"
-                );
-                return;
-            }
-        }
-        if let Some(parent) = journal_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let entry = serde_json::json!({
             "dedupe_key": dedupe_key,
             "stream_name": stream_name,
@@ -217,6 +207,21 @@ impl PublishState {
             "timestamp": ssl_proxy::time::now_rfc3339(),
         });
         let line = serde_json::to_string(&entry).unwrap_or_default();
+        if let Ok(meta) = std::fs::metadata(journal_path) {
+            let pending_bytes = line.as_bytes().len() as u64 + 1; // +1 for trailing newline
+            if meta.len() + pending_bytes > MAX_JOURNAL_BYTES {
+                warn!(
+                    journal_path = %journal_path.display(),
+                    size_bytes = meta.len(),
+                    pending_bytes,
+                    "publish journal would exceed 32 MB limit; skipping append to prevent disk fill"
+                );
+                return;
+            }
+        }
+        if let Some(parent) = journal_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Err(e) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -492,7 +497,10 @@ fn circuit_breaker_is_open(
             if let Some(opened_at) = state.circuit_breaker_opened_at {
                 let elapsed = opened_at.elapsed();
                 let timeout = state.circuit_breaker_timeout();
-                if elapsed.as_secs() % 60 < 2 {
+                const WARN_BUCKET_SIZE: u64 = 60;
+                let bucket_id = elapsed.as_secs() / WARN_BUCKET_SIZE;
+                if state.circuit_open_last_warn_bucket != Some(bucket_id) {
+                    state.circuit_open_last_warn_bucket = Some(bucket_id);
                     warn!(
                         circuit_open_secs = elapsed.as_secs(),
                         circuit_timeout_ms = timeout.as_millis() as u64,
@@ -1192,6 +1200,7 @@ mod tests {
             threshold_exceeded: false,
             frame_size_histogram: Default::default(),
             inter_arrival_p50_ms: Some(500),
+            inter_arrival_cv: None,
             wall_clock_delta_ms: None,
             window_is_partial: false,
             max_risk_score: None,

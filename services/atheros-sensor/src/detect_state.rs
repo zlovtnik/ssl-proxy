@@ -104,6 +104,10 @@ struct ClientProfile {
 #[derive(Default)]
 pub struct ClientInventory {
     clients: HashMap<String, ClientProfile>,
+    /// Maps device_fingerprint strings to the list of MAC addresses that have
+    /// exhibited that fingerprint. Used to detect MAC address sharing or
+    /// spoofing when the same fingerprint appears from different MACs.
+    fingerprint_to_macs: HashMap<String, Vec<String>>,
 }
 
 impl ClientInventory {
@@ -144,6 +148,9 @@ impl ClientInventory {
             return;
         };
         let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
+        // Clone source_mac before it's moved into clients.entry() below,
+        // since it's needed again for fingerprint-to-MAC tracking.
+        let source_mac_owned = source_mac.clone();
         let profile = self
             .clients
             .entry(source_mac)
@@ -172,7 +179,7 @@ impl ClientInventory {
             .map(normalize_mac);
         if matches!(
             entry.frame_subtype.as_str(),
-            "association_request" | "reassociation_request"
+            "association_request"
         ) {
             if let Some(bssid) = association_bssid {
                 if let Some(prev_bssid) = &profile.last_bssid {
@@ -183,7 +190,7 @@ impl ClientInventory {
                             .entry(pair.clone())
                             .or_default();
                         *count = count.saturating_add(1);
-                        if *count >= 3 {
+                        if *count >= 2 {
                             profile.normal_roaming_pairs.insert(pair.clone());
                         }
                         if !profile.normal_roaming_pairs.contains(&pair)
@@ -221,6 +228,23 @@ impl ClientInventory {
             profile.recent_probes.retain(|time| *time >= cutoff);
             if profile.recent_probes.len() >= 20 {
                 profile.excessive_probing = true;
+            }
+        }
+
+        // Track device_fingerprint -> MAC correlations.
+        if let Some(fp) = &entry.device_fingerprint {
+            let normalized_fp = fp.trim().to_ascii_lowercase();
+            if !normalized_fp.is_empty() {
+                let macs = self.fingerprint_to_macs.entry(normalized_fp).or_default();
+                if !macs.iter().any(|m| *m == source_mac_owned) {
+                    macs.push(source_mac_owned.clone());
+                    tracing::info!(
+                        device_fingerprint = %fp,
+                        mac = %source_mac_owned,
+                        known_macs = macs.len(),
+                        "device_fingerprint shared by new MAC"
+                    );
+                }
             }
         }
     }
@@ -341,6 +365,9 @@ pub struct RogueApAlert {
     pub ssid: Option<String>,
     pub channel: u8,
     pub reasons: Vec<String>,
+    /// Human-readable explanations for each reason, populated at alert creation.
+    #[serde(default)]
+    pub explanation: Vec<String>,
 }
 
 #[derive(Default)]
@@ -467,8 +494,22 @@ impl RogueApTracker {
             bssid,
             ssid: ssid.map(str::to_string),
             channel: entry.channel,
+            explanation: reasons.iter().map(|r| explain_reason(r)).collect(),
             reasons,
         })
+    }
+}
+
+/// Maps a detection reason tag to a human-readable explanation.
+fn explain_reason(reason: &str) -> String {
+    match reason {
+        "open_authorized_ssid" => "Known SSID broadcasting without encryption".into(),
+        "ssid_typosquat" => "SSID is an edit-distance match to a known network (potential typosquatting)".into(),
+        "bssid_spoofing" => "BSSID changed its SSID mapping since last observation".into(),
+        "channel_conflict" => "Same BSSID observed on multiple channels".into(),
+        "channel_band_conflict" => "BSSID originally on 5 GHz now seen on 2.4 GHz".into(),
+        "vendor_conflict" => "Same SSID served by different hardware vendors".into(),
+        other => format!("Unrecognised detection reason: {other}"),
     }
 }
 
@@ -868,7 +909,7 @@ impl SequenceTracker {
             sequence.frames.pop_front();
         }
 
-        if subtype == "auth" || subtype == "deauthentication" {
+        if subtype == "authentication" || subtype == "deauthentication" {
             sequence.auth_deauth_events.push((observed_at, subtype.to_string()));
             let cutoff = observed_at - chrono::Duration::seconds(10);
             sequence
@@ -932,11 +973,11 @@ impl SequenceTracker {
             .map(|(_, subtype)| subtype)
             .collect();
         let pattern = [
-            "auth",
+            "authentication",
             "deauthentication",
-            "auth",
+            "authentication",
             "deauthentication",
-            "auth",
+            "authentication",
             "deauthentication",
         ];
         if recent.iter().rev().map(|s| s.as_str()).eq(pattern) {

@@ -301,6 +301,10 @@ fn event_row_to_input(row: &EventRow) -> EmbeddingInput {
         };
         append_value(&mut lines, field, value.as_deref());
     }
+    // Temporal context from observed_at (when available).
+    if let Some(dt) = row.observed_at {
+        lines.extend(temporal_context_lines(dt));
+    }
     let text = lines.join("\n");
     EmbeddingInput {
         text,
@@ -680,10 +684,41 @@ async fn build_behaviour_windows_batch(
 fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
     let text = if let Some(ref et) = row.embedding_text {
         if !et.is_empty() {
-            et.clone()
+            // Prepend temporal context when using pre-built text (may be stale without it).
+            let mut lines: Vec<String> = Vec::new();
+            lines.push("kind: behaviour_window".to_string());
+            if let Some(dt) = row.window_start {
+                lines.extend(temporal_context_lines(dt));
+            }
+            for line in et.lines() {
+                if line.starts_with("kind:") {
+                    continue;
+                }
+                lines.push(line.to_string());
+            }
+            // Add burst_velocity
+            if let Some(epm) = events_per_minute(row) {
+                lines.push(format!("events_per_minute: {epm:.1}"));
+            }
+            lines.join("\n")
         } else if let Some(ref ts) = row.text_summary {
             if !ts.is_empty() {
-                ts.clone()
+                // Prepend temporal context to text_summary as well.
+                let mut lines: Vec<String> = Vec::new();
+                lines.push("kind: behaviour_window".to_string());
+                if let Some(dt) = row.window_start {
+                    lines.extend(temporal_context_lines(dt));
+                }
+                for line in ts.lines() {
+                    if line.starts_with("kind:") {
+                        continue;
+                    }
+                    lines.push(line.to_string());
+                }
+                if let Some(epm) = events_per_minute(row) {
+                    lines.push(format!("events_per_minute: {epm:.1}"));
+                }
+                lines.join("\n")
             } else {
                 build_snapshot_fallback(row)
             }
@@ -692,7 +727,21 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
         }
     } else if let Some(ref ts) = row.text_summary {
         if !ts.is_empty() {
-            ts.clone()
+            let mut lines: Vec<String> = Vec::new();
+            lines.push("kind: behaviour_window".to_string());
+            if let Some(dt) = row.window_start {
+                lines.extend(temporal_context_lines(dt));
+            }
+            for line in ts.lines() {
+                if line.starts_with("kind:") {
+                    continue;
+                }
+                lines.push(line.to_string());
+            }
+            if let Some(epm) = events_per_minute(row) {
+                lines.push(format!("events_per_minute: {epm:.1}"));
+            }
+            lines.join("\n")
         } else {
             build_snapshot_fallback(row)
         }
@@ -1207,6 +1256,10 @@ fn build_ego_graph_input(bssid: &str, rows: &[InfrastructureGraphRow]) -> Embedd
 /// Build a fallback text from individual snapshot fields when no pre-built text exists.
 fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
     let mut lines = vec!["kind: behaviour_window".to_string()];
+    // Add temporal context right after the kind line.
+    if let Some(dt) = row.window_start {
+        lines.extend(temporal_context_lines(dt));
+    }
     for field in SNAPSHOT_FIELDS {
         let val: Option<String> = match *field {
             "source_mac" => row.source_mac.clone(),
@@ -1232,6 +1285,10 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
                 lines.push(format!("{}: {}", field, v));
             }
         }
+    }
+    // Add burst_velocity at the end.
+    if let Some(epm) = events_per_minute(row) {
+        lines.push(format!("events_per_minute: {epm:.1}"));
     }
     lines.join("\n")
 }
@@ -1294,6 +1351,44 @@ fn normalize_wps_name(name: &str) -> String {
     }
 
     s
+}
+
+/// Produce four temporal-context lines for a given UTC datetime.
+///
+/// Returns lines like:
+/// ```text
+/// hour_of_day: 14
+/// day_of_week: Tuesday
+/// is_weekend: false
+/// is_business_hours: true
+/// ```
+fn temporal_context_lines(dt: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+    use chrono::{Datelike, Timelike};
+    let hour = dt.hour();
+    let day_name = dt.format("%A").to_string();
+    let is_weekend = matches!(dt.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun);
+    let is_business_hours = !is_weekend && hour >= 9 && hour < 17;
+    vec![
+        format!("hour_of_day: {}", hour),
+        format!("day_of_week: {}", day_name),
+        format!("is_weekend: {}", is_weekend),
+        format!("is_business_hours: {}", is_business_hours),
+    ]
+}
+
+/// Compute `events_per_minute` for a behaviour window row.
+///
+/// Returns `None` when `event_count` or `window_start`/`window_end` are missing,
+/// or when the window duration is zero.
+fn events_per_minute(row: &BehaviourWindowRow) -> Option<f64> {
+    let count = row.event_count? as f64;
+    let start = row.window_start?;
+    let end = row.window_end?;
+    let duration_mins = (end - start).num_minutes().max(0) as f64;
+    if duration_mins <= 0.0 {
+        return None;
+    }
+    Some(count / duration_mins)
 }
 
 /// Normalise a JSON value for text output, matching the Ruby `normalize_json`.

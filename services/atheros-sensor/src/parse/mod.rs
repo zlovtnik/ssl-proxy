@@ -36,7 +36,7 @@ pub use decrypt::try_decrypt_frame;
 #[allow(unused_imports)]
 pub use frame::ParseError;
 #[doc(inline)]
-pub use frame::{attach_context, decode_frame, to_audit_entry};
+pub use frame::{attach_context, decode_frame, recompute_risk_score, to_audit_entry};
 #[doc(inline)]
 pub use handshake::HandshakeMonitor;
 #[doc(inline)]
