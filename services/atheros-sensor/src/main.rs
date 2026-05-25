@@ -1208,6 +1208,10 @@ async fn process_packet(
             }
         }
     } // end of skip_mac_lookup else block
+    // Check for burst traffic signatures before observe() triggers a drain.
+    // We collect burst MACs from the previous drain so that when a new frame
+    // from a low-CV source arrives, we tag it immediately.
+    let burst_macs = pipeline.traffic_bucket.take_burst_macs();
     let bandwidth_events = match pipeline.traffic_bucket.observe(&entry, external_bssid) {
         Ok(events) => events,
         Err(error) => {
@@ -1221,6 +1225,15 @@ async fn process_packet(
             Vec::new()
         }
     };
+    // Tag the current frame if its source MAC had a low CV in the drained window.
+    if let Some(ref src_mac) = entry.source_mac {
+        let normalized = src_mac.trim().to_ascii_lowercase();
+        if burst_macs.contains(&normalized)
+            && !entry.tags.contains(&"threat:burst_automated".to_string())
+        {
+            entry.tags.push("threat:burst_automated".to_string());
+        }
+    }
     publish_bandwidth_events(publish_client, bandwidth_events).await;
     info!(
         target: "wireless_audit",

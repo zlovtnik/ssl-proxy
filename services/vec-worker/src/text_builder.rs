@@ -1136,11 +1136,16 @@ async fn build_infrastructure_subgraphs_batch(
     let rows = sqlx::query_as::<_, InfrastructureGraphBatchRow>(
         r#"
         SELECT
-            CASE WHEN node_a = ANY($1::text[]) THEN node_a ELSE node_b END AS query_key,
+            endpoint AS query_key,
             node_a, node_a_type,
             node_b, node_b_type,
             edge_type, weight::float8, last_seen
         FROM vec_infrastructure_graph
+        CROSS JOIN LATERAL (
+            SELECT node_a AS endpoint WHERE node_a = ANY($1::text[])
+            UNION ALL
+            SELECT node_b AS endpoint WHERE node_b = ANY($1::text[])
+        ) endpoints
         WHERE node_a = ANY($1::text[]) OR node_b = ANY($1::text[])
         ORDER BY weight DESC, last_seen DESC
         "#,
@@ -1384,7 +1389,8 @@ fn events_per_minute(row: &BehaviourWindowRow) -> Option<f64> {
     let count = row.event_count? as f64;
     let start = row.window_start?;
     let end = row.window_end?;
-    let duration_mins = (end - start).num_minutes().max(0) as f64;
+    let duration_secs = (end - start).to_std().ok().map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let duration_mins = duration_secs / 60.0;
     if duration_mins <= 0.0 {
         return None;
     }

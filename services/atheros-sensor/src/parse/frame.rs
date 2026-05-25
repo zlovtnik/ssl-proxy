@@ -249,8 +249,8 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         raw_len: frame_bytes.len(),
         raw_frame: Some(STANDARD.encode(frame_bytes)),
         band: band.to_string(),
-        tags,
-        risk_score: None,
+        tags: tags.clone(),
+        risk_score: recompute_risk_score(&tags),
         security_flags: ie_metadata.security_flags,
         wps_device_name: ie_metadata.wps_device_name,
         wps_manufacturer: ie_metadata.wps_manufacturer,
@@ -353,7 +353,7 @@ pub fn attach_context(frame: WifiFrame, context: &AuditContext) -> EnrichedFrame
 
 /// Recomputes the risk score from the current set of tags.
 /// Counts tags starting with `"threat:"` and maps the count to a score:
-/// 0 → None, 1 → 0.3, 2 → 0.6, 3+ → 0.9.
+/// 0 -> None, 1 -> 0.3, 2 -> 0.6, 3+ -> 0.9.
 pub fn recompute_risk_score(tags: &[String]) -> Option<f32> {
     let threat_count = tags.iter().filter(|t| t.starts_with("threat:")).count();
     match threat_count {
@@ -425,8 +425,8 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         from_ds: Some(frame.from_ds),
         raw_len: frame.raw_len,
         raw_frame: frame.raw_frame,
-        tags,
-        risk_score: None,
+        tags: tags.clone(),
+        risk_score: recompute_risk_score(&tags),
         security_flags: frame.security_flags,
         wps_device_name: frame.wps_device_name,
         wps_manufacturer: frame.wps_manufacturer,

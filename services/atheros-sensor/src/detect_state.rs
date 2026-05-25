@@ -41,6 +41,17 @@ use crate::backlog::{AuthorizedWirelessNetwork, RedpandaBacklog};
 use crate::model::AuditEntry;
 use crate::parse::SECURITY_PMF_REQUIRED;
 
+/// Structured explanation for a single detection factor. Each entry captures
+/// what was observed, what was expected (baseline), and how much this factor
+/// contributed to the alert (0.0–1.0).
+#[derive(Clone, Debug, Serialize)]
+pub struct AlertExplanation {
+    pub factor: String,
+    pub observed: f64,
+    pub baseline: f64,
+    pub contribution: f64,
+}
+
 pub const CLIENT_INVENTORY_TOPIC: &str = "wireless.client.inventory";
 pub const ROGUE_AP_TOPIC: &str = "wireless.alert.rogue_ap";
 pub const DEAUTH_FLOOD_TOPIC: &str = "wireless.alert.deauth_flood";
@@ -365,6 +376,9 @@ pub struct RogueApAlert {
     pub ssid: Option<String>,
     pub channel: u8,
     pub reasons: Vec<String>,
+    /// Structured factor breakdown for each detection reason.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
     /// Human-readable explanations for each reason, populated at alert creation.
     #[serde(default)]
     pub explanation: Vec<String>,
@@ -494,9 +508,30 @@ impl RogueApTracker {
             bssid,
             ssid: ssid.map(str::to_string),
             channel: entry.channel,
+            factor_breakdown: reasons.iter().map(|r| rogue_ap_explanation(r)).collect(),
             explanation: reasons.iter().map(|r| explain_reason(r)).collect(),
             reasons,
         })
+    }
+}
+
+/// Builds a structured `AlertExplanation` for a single rogue-AP detection reason.
+/// Uses fixed baselines where applicable (e.g. normal encryption = present, single channel = 1).
+fn rogue_ap_explanation(reason: &str) -> AlertExplanation {
+    let (baseline, observed, contribution) = match reason {
+        "open_authorized_ssid" => (1.0, 0.0, 1.0),   // expected encrypted (1), found open (0)
+        "ssid_typosquat"       => (1.0, 0.0, 0.9),    // expected exact match (1), found typosquat (0)
+        "bssid_spoofing"       => (1.0, 0.0, 0.8),    // expected stable mapping (1), found changed (0)
+        "channel_conflict"     => (1.0, 2.0, 0.7),    // expected single channel (1), found multiple (≥2)
+        "channel_band_conflict" => (1.0, 2.0, 0.6),   // expected consistent band (1), found band switch (2)
+        "vendor_conflict"      => (1.0, 2.0, 0.5),    // expected single vendor (1), found multiple (≥2)
+        _ => (1.0, 1.0, 0.0),
+    };
+    AlertExplanation {
+        factor: reason.to_string(),
+        observed,
+        baseline,
+        contribution,
     }
 }
 
@@ -524,6 +559,12 @@ pub struct DeauthFloodAlert {
     pub bssid: Option<String>,
     pub frame_count: u64,
     pub window_secs: u64,
+    /// Structured factor breakdown for each detection factor.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each detection factor.
+    #[serde(default)]
+    pub explanation: Vec<String>,
 }
 
 #[derive(Default)]
@@ -582,6 +623,11 @@ impl DeauthFloodTracker {
             return None;
         }
         self.last_alerts.insert(key, now);
+        let contribution = if threshold > 0 {
+            (frame_count as f64) / (threshold as f64).min(frame_count as f64)
+        } else {
+            1.0
+        };
         Some(DeauthFloodAlert {
             schema_version: 1,
             event_type: "wireless_deauth_flood".to_string(),
@@ -592,6 +638,15 @@ impl DeauthFloodTracker {
             bssid: entry.bssid.clone(),
             frame_count: frame_count as u64,
             window_secs,
+            factor_breakdown: vec![AlertExplanation {
+                factor: "deauth_frame_count".to_string(),
+                observed: frame_count as f64,
+                baseline: threshold as f64,
+                contribution: contribution.min(1.0),
+            }],
+            explanation: vec![
+                format!("deauth_frame_count: {} in {}s window (threshold: {})", frame_count, window_secs, threshold),
+            ],
         })
     }
 }
@@ -834,6 +889,12 @@ pub struct AttackSequenceAlert {
     pub attack_chain: Vec<String>,
     pub first_event_at: String,
     pub last_event_at: String,
+    /// Structured factor breakdown for each detection factor.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each detection factor.
+    #[serde(default)]
+    pub explanation: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -851,6 +912,12 @@ pub struct SequenceAlert {
     pub sequence: Vec<String>,
     pub first_event_at: String,
     pub last_event_at: String,
+    /// Structured factor breakdown for each detection factor.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each detection factor.
+    #[serde(default)]
+    pub explanation: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -994,6 +1061,7 @@ impl SequenceTracker {
         first_seen: DateTime<Utc>,
         last_seen: DateTime<Utc>,
     ) -> SequenceAlert {
+        let seq_contribution = (sequence_tokens.len() as f64).min(32.0) / 32.0;
         SequenceAlert {
             schema_version: 1,
             event_type: "wireless_sequence_alert".to_string(),
@@ -1004,10 +1072,19 @@ impl SequenceTracker {
             source_mac: entry.source_mac.clone(),
             bssid: entry.bssid.clone(),
             ssid: entry.ssid.clone(),
-            attack_tag,
-            sequence: sequence_tokens,
+            attack_tag: attack_tag.clone(),
+            sequence: sequence_tokens.clone(),
             first_event_at: ssl_proxy::time::rfc3339_from_utc(first_seen),
             last_event_at: ssl_proxy::time::rfc3339_from_utc(last_seen),
+            factor_breakdown: vec![AlertExplanation {
+                factor: attack_tag.clone(),
+                observed: sequence_tokens.len() as f64,
+                baseline: 1.0,
+                contribution: seq_contribution,
+            }],
+            explanation: vec![
+                format!("attack_tag: {} with {} frames in sequence (session: {})", attack_tag, sequence_tokens.len(), session_key),
+            ],
         }
     }
 }
@@ -1085,6 +1162,8 @@ impl AttackTimelineCorrelator {
             let mut chain: Vec<_> = events.iter().map(|e| e.attack_type.clone()).collect();
             chain.sort();
             chain.dedup();
+            let chain_str = chain.join(", ");
+            let contribution = if has_karma && has_spoofing { 1.0 } else { 0.0 };
             Some(AttackSequenceAlert {
                 schema_version: 1,
                 event_type: "wireless_attack_sequence".to_string(),
@@ -1095,6 +1174,23 @@ impl AttackTimelineCorrelator {
                 attack_chain: chain,
                 first_event_at: ssl_proxy::time::rfc3339_from_utc(first),
                 last_event_at: ssl_proxy::time::rfc3339_from_utc(last),
+                factor_breakdown: vec![
+                    AlertExplanation {
+                        factor: "karma_probe_response".to_string(),
+                        observed: if has_karma { 1.0 } else { 0.0 },
+                        baseline: 0.0,
+                        contribution: if has_karma { 0.5 } else { 0.0 },
+                    },
+                    AlertExplanation {
+                        factor: "bssid_spoofing".to_string(),
+                        observed: if has_spoofing { 1.0 } else { 0.0 },
+                        baseline: 0.0,
+                        contribution: if has_spoofing { 0.5 } else { 0.0 },
+                    },
+                ],
+                explanation: vec![
+                    format!("combined_attacks: {} against SSID '{}' within {}s window", chain_str, ssid, ATTACK_CORRELATION_WINDOW.as_secs()),
+                ],
             })
         } else {
             None

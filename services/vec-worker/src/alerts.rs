@@ -148,7 +148,7 @@ pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
 /// with `alert_type = 'high_risk_ap'` when `composite_risk > 0.75`.
 #[instrument(skip(pool))]
 pub async fn check_high_risk_aps(pool: &PgPool) -> Result<usize, WorkerError> {
-    let inserted: i64 = sqlx::query_scalar(
+    let inserted: i8 = sqlx::query_scalar(
         "SELECT check_high_risk_aps()",
     )
     .fetch_one(pool)

@@ -18,7 +18,7 @@
 //! giving operators a per-window health signal. `window_is_partial` is true when the flush
 //! was triggered by the periodic timer rather than by an incoming frame crossing the boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use chrono::{DateTime, Duration, Utc};
@@ -169,6 +169,9 @@ pub struct TrafficBucket {
     wall_clock_start: Option<Instant>,
     entries: HashMap<TrafficKey, TrafficCounters>,
     max_entries: usize,
+    /// Source MACs from the most recent drain that had inter_arrival_cv < 0.05,
+    /// indicating automated (non-human) burst traffic. Cleared on each drain.
+    burst_macs: HashSet<String>,
 }
 
 impl TrafficBucket {
@@ -183,7 +186,15 @@ impl TrafficBucket {
             wall_clock_start: None,
             entries: HashMap::new(),
             max_entries: max_entries.max(1),
+            burst_macs: HashSet::new(),
         }
+    }
+
+    /// Returns the set of source MACs that exhibited low inter-arrival CV (< 0.05)
+    /// in the most recent drain, indicating automated burst traffic. Clears the
+    /// set after returning so each burst set is consumed exactly once.
+    pub fn take_burst_macs(&mut self) -> HashSet<String> {
+        std::mem::take(&mut self.burst_macs)
     }
 
     /// Counts raw bytes for frames that cannot be parsed into structured audit entries.
@@ -379,10 +390,17 @@ impl TrafficBucket {
         let window_end = window_start + self.window;
         // Cap at Utc::now() to avoid future timestamps from clock skew.
         let window_end = window_end.min(Utc::now());
+        self.burst_macs.clear();
         let mut events = Vec::with_capacity(self.entries.len());
         for (key, counters) in self.entries.drain() {
             let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
             let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
+            // Track source MACs with very low CV — they indicate automated burst traffic.
+            if let Some(cv) = inter_arrival_cv {
+                if cv < 0.05 {
+                    self.burst_macs.insert(key.source_mac.clone());
+                }
+            }
             events.push(WirelessBandwidthEvent {
                 schema_version: 1,
                 event_type: "wireless_bandwidth_window".to_string(),

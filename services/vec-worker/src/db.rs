@@ -95,6 +95,9 @@ pub struct CompleteBatchRow {
     /// pgvector literal, e.g. `[1.0,2.0,...]`.
     pub embedding: String,
     pub metadata: serde_json::Value,
+    /// Human-readable alert explanation text, populated for alert-type embedding jobs.
+    #[serde(default)]
+    pub explanation_text: Option<String>,
 }
 
 /// Open a new connection pool to the PostgreSQL database.
@@ -468,6 +471,7 @@ pub fn complete_batch_row(
         content_text: input.text.clone(),
         embedding: format_vector_literal(vector),
         metadata: build_metadata(input),
+        explanation_text: None,
     }
 }
 

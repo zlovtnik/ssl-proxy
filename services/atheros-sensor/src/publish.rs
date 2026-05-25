@@ -207,17 +207,18 @@ impl PublishState {
             "timestamp": ssl_proxy::time::now_rfc3339(),
         });
         let line = serde_json::to_string(&entry).unwrap_or_default();
-        if let Ok(meta) = std::fs::metadata(journal_path) {
-            let pending_bytes = line.as_bytes().len() as u64 + 1; // +1 for trailing newline
-            if meta.len() + pending_bytes > MAX_JOURNAL_BYTES {
-                warn!(
-                    journal_path = %journal_path.display(),
-                    size_bytes = meta.len(),
-                    pending_bytes,
-                    "publish journal would exceed 32 MB limit; skipping append to prevent disk fill"
-                );
-                return;
-            }
+        let pending_bytes = line.as_bytes().len() as u64 + 1; // +1 for trailing newline
+        let existing_size = std::fs::metadata(journal_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if pending_bytes > MAX_JOURNAL_BYTES || existing_size + pending_bytes > MAX_JOURNAL_BYTES {
+            warn!(
+                journal_path = %journal_path.display(),
+                size_bytes = existing_size,
+                pending_bytes,
+                "publish journal would exceed 32 MB limit; skipping append to prevent disk fill"
+            );
+            return;
         }
         if let Some(parent) = journal_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -532,6 +533,7 @@ fn circuit_breaker_is_open(
             }
             state.circuit_breaker_state = CircuitBreakerState::HalfOpen;
             state.circuit_breaker_opened_at = None;
+            state.circuit_open_last_warn_bucket = None;
             info!(
                 dedupe_key,
                 "backlog circuit breaker probe starting (half-open)"
@@ -558,6 +560,7 @@ fn queue_in_memory_after_backlog_failure(
         s.circuit_breaker_state = CircuitBreakerState::Open;
         s.circuit_breaker_opened_at = Some(Instant::now());
         s.circuit_breaker_failure_count = s.circuit_breaker_failure_count.saturating_add(1);
+        s.circuit_open_last_warn_bucket = None;
         error!(
             dedupe_key = %dedupe_key,
             publish_error = %error,
@@ -714,6 +717,7 @@ fn close_backlog_circuit_breaker(state: &SharedPublishState) {
         s.circuit_breaker_state = CircuitBreakerState::Closed;
         s.circuit_breaker_opened_at = None;
         s.circuit_breaker_failure_count = 0;
+        s.circuit_open_last_warn_bucket = None;
         info!("backlog circuit breaker closed, backlog resumed");
     }
 }
