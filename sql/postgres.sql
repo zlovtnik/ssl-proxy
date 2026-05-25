@@ -1412,6 +1412,8 @@ begin
 end;
 $$;
 
+drop function if exists vec_detect_rogue_clusters(timestamp with time zone, timestamp with time zone);
+
 create or replace function vec_detect_rogue_clusters(
   p_from timestamp with time zone DEFAULT (now() - '01:00:00'::interval),
   p_to   timestamp with time zone DEFAULT now()
