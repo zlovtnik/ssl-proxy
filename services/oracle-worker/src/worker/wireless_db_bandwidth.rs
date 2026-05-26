@@ -10,7 +10,7 @@ pub(crate) fn insert_wireless_bandwidth_transaction(
     rows: &[WirelessBandwidthInsert],
 ) -> Result<u64, String> {
     const SQL: &str = r#"
-        merge into WL_BW_WINDOWS tgt
+        merge into WIRELESS_BANDWIDTH_WINDOWS tgt
         using (
             select :1 BATCH_ID, :2 ROW_SEQUENCE, :3 SCHEMA_VERSION, :4 WINDOW_START,
                    :5 WINDOW_END, :6 SENSOR_ID, :7 LOCATION_ID, :8 INTERFACE,
@@ -74,17 +74,17 @@ pub(crate) fn insert_wireless_bandwidth_transaction(
         ];
         connection.execute(SQL, &params).map_err(|error| {
             format!(
-                "merge WL_BW_WINDOWS row_sequence={}: {}",
+                "merge WIRELESS_BANDWIDTH_WINDOWS row_sequence={}: {}",
                 row.row_sequence,
                 error_chain(&error)
             )
         })?;
     }
     connection
-        .execute("BEGIN WL_BW_MERGE_ALERTS(:1); END;", &[&batch_id])
-        .map_err(|error| format!("call WL_BW_MERGE_ALERTS: {}", error_chain(&error)))?;
+        .execute("BEGIN WIRELESS_MERGE_BANDWIDTH_ALERTS(:1); END;", &[&batch_id])
+        .map_err(|error| format!("call WIRELESS_MERGE_BANDWIDTH_ALERTS: {}", error_chain(&error)))?;
     connection
         .commit()
-        .map_err(|error| format!("commit WL_BW_WINDOWS batch: {}", error_chain(&error)))?;
+        .map_err(|error| format!("commit WIRELESS_BANDWIDTH_WINDOWS batch: {}", error_chain(&error)))?;
     Ok(rows.len() as u64)
 }

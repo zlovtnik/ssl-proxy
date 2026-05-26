@@ -25,13 +25,13 @@ pub(crate) fn insert_wireless_audit_frames_transaction(
     ];
     connection
         .execute(
-            "BEGIN WL_UPSERT_SENSOR(:1, :2, :3, :4, :5); END;",
+            "BEGIN WIRELESS_UPSERT_SENSOR(:1, :2, :3, :4, :5); END;",
             &sensor_params,
         )
-        .map_err(|error| format!("call WL_UPSERT_SENSOR: {}", error_chain(&error)))?;
+        .map_err(|error| format!("call WIRELESS_UPSERT_SENSOR: {}", error_chain(&error)))?;
 
     const SQL: &str = r#"
-        merge into WL_AUDIT_FRAMES tgt
+        merge into WIRELESS_AUDIT_FRAMES tgt
         using (
             select :1 BATCH_ID, :2 ROW_SEQUENCE, :3 EVENT_TYPE, :4 OBSERVED_AT,
                    :5 SENSOR_ID, :6 LOCATION_ID, :7 INTERFACE, :8 CHANNEL,
@@ -106,7 +106,7 @@ pub(crate) fn insert_wireless_audit_frames_transaction(
         ];
         connection.execute(SQL, &params).map_err(|error| {
             format!(
-                "merge WL_AUDIT_FRAMES row_sequence={}: {}",
+                "merge WIRELESS_AUDIT_FRAMES row_sequence={}: {}",
                 row.row_sequence,
                 error_chain(&error)
             )
@@ -114,6 +114,6 @@ pub(crate) fn insert_wireless_audit_frames_transaction(
     }
     connection
         .commit()
-        .map_err(|error| format!("commit WL_AUDIT_FRAMES batch: {}", error_chain(&error)))?;
+        .map_err(|error| format!("commit WIRELESS_AUDIT_FRAMES batch: {}", error_chain(&error)))?;
     Ok(rows.len() as u64)
 }

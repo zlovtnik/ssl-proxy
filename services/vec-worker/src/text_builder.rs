@@ -35,6 +35,9 @@ pub async fn build_text(
         "event" => build_event(pool, job).await,
         "device" => build_device(pool, job).await,
         "behaviour_window" => build_behaviour_window(pool, job).await,
+        "baseline_profile" => build_baseline_profile(pool, job).await,
+        "frame_sequence" => build_frame_sequence(pool, job).await,
+        "infrastructure_subgraph" => build_infrastructure_subgraph(pool, job).await,
         other => Err(WorkerError::text_build(format!(
             "unsupported embedding_kind: '{}'",
             other
@@ -64,12 +67,18 @@ pub async fn build_text_batch(
     let mut events = Vec::new();
     let mut devices = Vec::new();
     let mut behaviours = Vec::new();
+    let mut baseline_profiles = Vec::new();
+    let mut frame_sequences = Vec::new();
+    let mut infrastructure_subgraphs = Vec::new();
 
     for job in jobs {
         match job.embedding_kind.as_str() {
             "event" => events.push(job),
             "device" => devices.push(job),
             "behaviour_window" => behaviours.push(job),
+            "baseline_profile" => baseline_profiles.push(job),
+            "frame_sequence" => frame_sequences.push(job),
+            "infrastructure_subgraph" => infrastructure_subgraphs.push(job),
             other => {
                 return Err(WorkerError::text_build(format!(
                     "unsupported embedding_kind: '{other}'"
@@ -87,6 +96,15 @@ pub async fn build_text_batch(
     }
     if !behaviours.is_empty() {
         build_behaviour_windows_batch(pool, &behaviours, &mut out).await?;
+    }
+    if !baseline_profiles.is_empty() {
+        build_baseline_profiles_batch(pool, &baseline_profiles, &mut out).await?;
+    }
+    if !frame_sequences.is_empty() {
+        build_frame_sequences_batch(pool, &frame_sequences, &mut out).await?;
+    }
+    if !infrastructure_subgraphs.is_empty() {
+        build_infrastructure_subgraphs_batch(pool, &infrastructure_subgraphs, &mut out).await?;
     }
     Ok(out)
 }
@@ -148,7 +166,7 @@ async fn build_event(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput
             COALESCE(wps_model_name, payload->>'wps_model_name') AS wps_model_name,
             COALESCE(device_fingerprint, payload->>'device_fingerprint') AS device_fingerprint,
             COALESCE(handshake_captured::text, payload->>'handshake_captured') AS handshake_captured
-        FROM sync_scan_ingest
+        FROM sync_events_expanded
         WHERE dedupe_key = $1
         "#,
     )
@@ -226,7 +244,7 @@ async fn build_events_batch(
             COALESCE(wps_model_name, payload->>'wps_model_name') AS wps_model_name,
             COALESCE(device_fingerprint, payload->>'device_fingerprint') AS device_fingerprint,
             COALESCE(handshake_captured::text, payload->>'handshake_captured') AS handshake_captured
-        FROM sync_scan_ingest
+        FROM sync_events_expanded
         WHERE dedupe_key = ANY($1::text[])
         "#,
     )
@@ -282,6 +300,10 @@ fn event_row_to_input(row: &EventRow) -> EmbeddingInput {
             row.get_field(field).map(|s| s.to_string())
         };
         append_value(&mut lines, field, value.as_deref());
+    }
+    // Temporal context from observed_at (when available).
+    if let Some(dt) = row.observed_at {
+        lines.extend(temporal_context_lines(dt));
     }
     let text = lines.join("\n");
     EmbeddingInput {
@@ -547,9 +569,9 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<Emb
             event_count,
             protocol_mix,
             frame_type_distribution,
-            signal_min_dbm,
-            signal_max_dbm,
-            signal_avg_dbm,
+            signal_min_dbm::float8,
+            signal_max_dbm::float8,
+            signal_avg_dbm::float8,
             retry_count,
             protected_count,
             unprotected_count,
@@ -557,6 +579,7 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<Emb
             mac_rotation_indicators
         FROM vec_behaviour_snapshots
         WHERE snapshot_id::text = $1
+           OR snapshot_key = $1
         "#,
     )
     .bind(&job.source_key)
@@ -570,7 +593,7 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<Emb
 
 #[derive(Debug, sqlx::FromRow)]
 struct BehaviourBatchRow {
-    snapshot_key: String,
+    query_key: String,
     embedding_text: Option<String>,
     text_summary: Option<String>,
     window_start: Option<chrono::DateTime<chrono::Utc>>,
@@ -600,7 +623,10 @@ async fn build_behaviour_windows_batch(
     let rows = sqlx::query_as::<_, BehaviourBatchRow>(
         r#"
         SELECT
-            snapshot_id::text AS snapshot_key,
+            CASE
+              WHEN snapshot_key = ANY($1::text[]) THEN snapshot_key
+              ELSE snapshot_id::text
+            END AS query_key,
             embedding_text,
             text_summary,
             window_start,
@@ -611,9 +637,9 @@ async fn build_behaviour_windows_batch(
             event_count,
             protocol_mix,
             frame_type_distribution,
-            signal_min_dbm,
-            signal_max_dbm,
-            signal_avg_dbm,
+            signal_min_dbm::float8,
+            signal_max_dbm::float8,
+            signal_avg_dbm::float8,
             retry_count,
             protected_count,
             unprotected_count,
@@ -621,6 +647,7 @@ async fn build_behaviour_windows_batch(
             mac_rotation_indicators
         FROM vec_behaviour_snapshots
         WHERE snapshot_id::text = ANY($1::text[])
+           OR snapshot_key = ANY($1::text[])
         "#,
     )
     .bind(&keys)
@@ -649,7 +676,7 @@ async fn build_behaviour_windows_batch(
             unique_bssid_count: row.unique_bssid_count,
             mac_rotation_indicators: row.mac_rotation_indicators,
         };
-        out.insert(row.snapshot_key, behaviour_row_to_input(&behaviour_row));
+        out.insert(row.query_key, behaviour_row_to_input(&behaviour_row));
     }
     Ok(())
 }
@@ -657,10 +684,41 @@ async fn build_behaviour_windows_batch(
 fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
     let text = if let Some(ref et) = row.embedding_text {
         if !et.is_empty() {
-            et.clone()
+            // Prepend temporal context when using pre-built text (may be stale without it).
+            let mut lines: Vec<String> = Vec::new();
+            lines.push("kind: behaviour_window".to_string());
+            if let Some(dt) = row.window_start {
+                lines.extend(temporal_context_lines(dt));
+            }
+            for line in et.lines() {
+                if line.starts_with("kind:") {
+                    continue;
+                }
+                lines.push(line.to_string());
+            }
+            // Add burst_velocity
+            if let Some(epm) = events_per_minute(row) {
+                lines.push(format!("events_per_minute: {epm:.1}"));
+            }
+            lines.join("\n")
         } else if let Some(ref ts) = row.text_summary {
             if !ts.is_empty() {
-                ts.clone()
+                // Prepend temporal context to text_summary as well.
+                let mut lines: Vec<String> = Vec::new();
+                lines.push("kind: behaviour_window".to_string());
+                if let Some(dt) = row.window_start {
+                    lines.extend(temporal_context_lines(dt));
+                }
+                for line in ts.lines() {
+                    if line.starts_with("kind:") {
+                        continue;
+                    }
+                    lines.push(line.to_string());
+                }
+                if let Some(epm) = events_per_minute(row) {
+                    lines.push(format!("events_per_minute: {epm:.1}"));
+                }
+                lines.join("\n")
             } else {
                 build_snapshot_fallback(row)
             }
@@ -669,7 +727,21 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
         }
     } else if let Some(ref ts) = row.text_summary {
         if !ts.is_empty() {
-            ts.clone()
+            let mut lines: Vec<String> = Vec::new();
+            lines.push("kind: behaviour_window".to_string());
+            if let Some(dt) = row.window_start {
+                lines.extend(temporal_context_lines(dt));
+            }
+            for line in ts.lines() {
+                if line.starts_with("kind:") {
+                    continue;
+                }
+                lines.push(line.to_string());
+            }
+            if let Some(epm) = events_per_minute(row) {
+                lines.push(format!("events_per_minute: {epm:.1}"));
+            }
+            lines.join("\n")
         } else {
             build_snapshot_fallback(row)
         }
@@ -687,9 +759,511 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
     }
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct BaselineProfileRow {
+    bssid: String,
+    metric: String,
+    p5: Option<f64>,
+    p50: Option<f64>,
+    p95: Option<f64>,
+    updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BaselineProfileBatchRow {
+    query_key: String,
+    bssid: String,
+    metric: String,
+    p5: Option<f64>,
+    p50: Option<f64>,
+    p95: Option<f64>,
+    updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn build_baseline_profile(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let rows = sqlx::query_as::<_, BaselineProfileRow>(
+        r#"
+        SELECT
+            bssid,
+            metric,
+            p5,
+            p50,
+            p95,
+            updated_at
+        FROM vec_baseline_profiles
+        WHERE bssid = $1
+        "#,
+    )
+    .bind(&job.source_key)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("baseline_profile query failed: {e}")))?;
+
+    if rows.is_empty() {
+        return Err(WorkerError::text_build(format!(
+            "baseline_profile not found: {}",
+            job.source_key
+        )));
+    }
+
+    Ok(baseline_profile_rows_to_input(&rows))
+}
+
+async fn build_baseline_profiles_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, BaselineProfileBatchRow>(
+        r#"
+        SELECT
+            bssid AS query_key,
+            bssid,
+            metric,
+            p5,
+            p50,
+            p95,
+            updated_at
+        FROM vec_baseline_profiles
+        WHERE bssid = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("baseline_profile batch query failed: {e}")))?;
+
+    let mut grouped: HashMap<String, Vec<BaselineProfileBatchRow>> = HashMap::new();
+    for row in rows {
+        grouped.entry(row.query_key.clone()).or_default().push(row);
+    }
+
+    for job in jobs {
+        if let Some(rows) = grouped.get(&job.source_key) {
+            let baseline_rows: Vec<BaselineProfileRow> = rows
+                .iter()
+                .map(|row| BaselineProfileRow {
+                    bssid: row.bssid.clone(),
+                    metric: row.metric.clone(),
+                    p5: row.p5,
+                    p50: row.p50,
+                    p95: row.p95,
+                    updated_at: row.updated_at,
+                })
+                .collect();
+            let row_refs: Vec<&BaselineProfileRow> = baseline_rows.iter().collect();
+            out.insert(job.source_key.clone(), baseline_profile_rows_to_input_ref(&row_refs));
+        }
+    }
+
+    Ok(())
+}
+
+fn baseline_profile_rows_to_input(rows: &[BaselineProfileRow]) -> EmbeddingInput {
+    let row_refs: Vec<&BaselineProfileRow> = rows.iter().collect();
+    baseline_profile_rows_to_input_ref(&row_refs)
+}
+
+fn baseline_profile_rows_to_input_ref(rows: &[&BaselineProfileRow]) -> EmbeddingInput {
+    let mut metrics = rows.to_vec();
+    metrics.sort_by(|left, right| left.metric.cmp(&right.metric));
+
+    let mut lines = vec!["kind: baseline_profile".to_string()];
+    if let Some(first) = metrics.first() {
+        lines.push(format!("bssid: {}", first.bssid));
+    }
+    for row in metrics {
+        let mut metric_text = format!("metric: {}", row.metric);
+        if let Some(value) = row.p5 {
+            metric_text.push_str(&format!(" p5: {}", value));
+        }
+        if let Some(value) = row.p50 {
+            metric_text.push_str(&format!(" p50: {}", value));
+        }
+        if let Some(value) = row.p95 {
+            metric_text.push_str(&format!(" p95: {}", value));
+        }
+        lines.push(metric_text);
+    }
+
+    let source_observed_at = rows
+        .iter()
+        .filter_map(|row| row.updated_at)
+        .max();
+
+    EmbeddingInput {
+        text: lines.join("\n"),
+        source_observed_at,
+        source_stream_name: None,
+        source_sensor_id: None,
+        source_location_id: None,
+        source_mac: Some(rows[0].bssid.clone()),
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FrameSequenceRow {
+    session_key: String,
+    source_mac: Option<String>,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    window_end: Option<chrono::DateTime<chrono::Utc>>,
+    sequence_tokens: String,
+    frame_count: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FrameSequenceBatchRow {
+    query_key: String,
+    session_key: String,
+    source_mac: Option<String>,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    window_end: Option<chrono::DateTime<chrono::Utc>>,
+    sequence_tokens: String,
+    frame_count: i64,
+    log_prob: Option<f64>,
+}
+
+fn insert_log_prob_line(text: &mut String, score: f64) {
+    if let Some(pos) = text.rfind("frame_count:") {
+        let (before, after) = text.split_at(pos);
+        *text = format!("{}log_prob: {:.6}\n{}", before, score, after);
+    }
+}
+
+async fn build_frame_sequence(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let row = sqlx::query_as::<_, FrameSequenceRow>(
+        r#"
+        SELECT
+            session_key,
+            source_mac,
+            sensor_id,
+            location_id,
+            window_start,
+            window_end,
+            sequence_tokens,
+            frame_count
+        FROM vec_frame_sequences
+        WHERE session_key = $1
+        "#,
+    )
+    .bind(&job.source_key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("frame_sequence query failed: {e}")))?
+    .ok_or_else(|| WorkerError::text_build(format!("frame_sequence not found: {}", job.source_key)))?;
+
+    let mut input = frame_sequence_row_to_input(&row);
+
+    // Append log_prob score for the embedding model to weight sequence rarity
+    let tokens: Vec<&str> = row.sequence_tokens.split_whitespace().collect();
+    if tokens.len() >= 2 {
+        match sqlx::query_scalar::<_, f64>("SELECT vec_score_sequence($1::text[])")
+            .bind(&tokens)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(score) => insert_log_prob_line(&mut input.text, score),
+            Err(e) => {
+                // Non-fatal: log_prob is informational, don't fail the job
+                tracing::warn!(error = %e, session_key = %row.session_key, "failed to compute log_prob");
+            }
+        }
+    }
+
+    Ok(input)
+}
+
+async fn build_frame_sequences_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, FrameSequenceBatchRow>(
+        r#"
+        SELECT
+            session_key AS query_key,
+            session_key,
+            source_mac,
+            sensor_id,
+            location_id,
+            window_start,
+            window_end,
+            sequence_tokens,
+            frame_count,
+            vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+')) AS log_prob
+        FROM vec_frame_sequences
+        WHERE session_key = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("frame_sequence batch query failed: {e}")))?;
+
+    for row in rows {
+        let mut input = frame_sequence_row_to_input(&FrameSequenceRow {
+            session_key: row.session_key.clone(),
+            source_mac: row.source_mac.clone(),
+            sensor_id: row.sensor_id.clone(),
+            location_id: row.location_id.clone(),
+            window_start: row.window_start,
+            window_end: row.window_end,
+            sequence_tokens: row.sequence_tokens.clone(),
+            frame_count: row.frame_count,
+        });
+
+        if let Some(score) = row.log_prob {
+            insert_log_prob_line(&mut input.text, score);
+        }
+
+        out.insert(row.query_key.clone(), input);
+    }
+    Ok(())
+}
+
+fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
+    let mut lines = vec!["kind: frame_sequence".to_string()];
+    lines.push(format!("tokens: {}", row.sequence_tokens));
+    if let Some(start) = row.window_start {
+        if let Some(end) = row.window_end {
+            let duration_secs = (end - start).num_seconds();
+            lines.push(format!("window_secs: {}", duration_secs));
+        }
+    }
+    if let Some(source_mac) = &row.source_mac {
+        lines.push(format!("source_mac: {}", source_mac));
+    }
+    lines.push(format!("frame_count: {}", row.frame_count));
+
+    // Note: log_prob is appended by the builder callers (build_frame_sequence /
+    // build_frame_sequences_batch) which have access to a PgPool to invoke
+    // vec_score_sequence(). See those functions for the score injection.
+    // When computed, a "log_prob: {score}" line is inserted between source_mac
+    // and frame_count.
+
+    EmbeddingInput {
+        text: lines.join("\n"),
+        source_observed_at: row.window_start,
+        source_stream_name: None,
+        source_sensor_id: row.sensor_id.clone(),
+        source_location_id: row.location_id.clone(),
+        source_mac: row.source_mac.clone(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure subgraph builder
+// ---------------------------------------------------------------------------
+
+/// Row returned by the ego-graph query for a single BSSID.
+#[derive(Debug, sqlx::FromRow)]
+struct InfrastructureGraphRow {
+    node_a: String,
+    node_a_type: String,
+    node_b: String,
+    node_b_type: String,
+    edge_type: String,
+    weight: Option<f64>,
+    last_seen: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Build embedding text for an infrastructure subgraph centered on a BSSID.
+///
+/// Queries `vec_infrastructure_graph` for all edges where the BSSID appears as
+/// either `node_a` or `node_b` and serializes the ego-graph as structured text.
+async fn build_infrastructure_subgraph(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let bssid = &job.source_key;
+
+    let rows = sqlx::query_as::<_, InfrastructureGraphRow>(
+        r#"
+        SELECT
+            node_a, node_a_type,
+            node_b, node_b_type,
+            edge_type, weight::float8, last_seen
+        FROM vec_infrastructure_graph
+        WHERE node_a = $1 OR node_b = $1
+        ORDER BY weight DESC, last_seen DESC
+        "#,
+    )
+    .bind(bssid)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("infrastructure_graph query failed: {e}")))?;
+
+    if rows.is_empty() {
+        return Err(WorkerError::text_build(format!(
+            "infrastructure_subgraph not found: {bssid}"
+        )));
+    }
+
+    Ok(build_ego_graph_input(bssid, &rows))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct InfrastructureGraphBatchRow {
+    query_key: String,
+    node_a: String,
+    node_a_type: String,
+    node_b: String,
+    node_b_type: String,
+    edge_type: String,
+    weight: Option<f64>,
+    last_seen: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn build_infrastructure_subgraphs_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+
+    let rows = sqlx::query_as::<_, InfrastructureGraphBatchRow>(
+        r#"
+        SELECT
+            endpoint AS query_key,
+            node_a, node_a_type,
+            node_b, node_b_type,
+            edge_type, weight::float8, last_seen
+        FROM vec_infrastructure_graph
+        CROSS JOIN LATERAL (
+            SELECT node_a AS endpoint WHERE node_a = ANY($1::text[])
+            UNION ALL
+            SELECT node_b AS endpoint WHERE node_b = ANY($1::text[])
+        ) endpoints
+        ORDER BY weight DESC, last_seen DESC
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("infrastructure_graph batch query failed: {e}")))?;
+
+    // Group rows by query_key
+    let mut grouped: HashMap<String, Vec<InfrastructureGraphRow>> = HashMap::new();
+    for row in rows {
+        let graph_row = InfrastructureGraphRow {
+            node_a: row.node_a,
+            node_a_type: row.node_a_type,
+            node_b: row.node_b,
+            node_b_type: row.node_b_type,
+            edge_type: row.edge_type,
+            weight: row.weight,
+            last_seen: row.last_seen,
+        };
+        grouped.entry(row.query_key).or_default().push(graph_row);
+    }
+
+    for job in jobs {
+        if let Some(rows) = grouped.get(&job.source_key) {
+            out.insert(job.source_key.clone(), build_ego_graph_input(&job.source_key, rows));
+        }
+    }
+
+    Ok(())
+}
+
+/// Build an ego-graph text representation from infrastructure graph edges.
+///
+/// Format:
+/// ```text
+/// kind: infrastructure_subgraph
+/// center: aa:bb:cc:dd:ee:ff
+/// clients: 14
+/// vendor_diversity: 3
+/// edges: association:14, probe_target:5, roaming:3, ...
+/// ```
+fn build_ego_graph_input(bssid: &str, rows: &[InfrastructureGraphRow]) -> EmbeddingInput {
+    let mut lines = vec![
+        "kind: infrastructure_subgraph".to_string(),
+        format!("center: {bssid}"),
+    ];
+
+    // Count distinct clients (client_mac neighbors via association)
+    let mut client_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // Count distinct edge types
+    let mut edge_type_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    // Collect all unique SSID neighbors
+    let mut ssid_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // Collect all unique vendor OUIs
+    let mut vendor_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    for row in rows {
+        let neighbor = if row.node_a == bssid {
+            (&row.node_b as &str, &row.node_b_type as &str)
+        } else {
+            (&row.node_a as &str, &row.node_a_type as &str)
+        };
+
+        match neighbor.1 {
+            "client_mac" if row.edge_type == "association" => {
+                client_set.insert(neighbor.0);
+            }
+            "ssid" if row.edge_type == "probe_target" => {
+                ssid_set.insert(neighbor.0);
+            }
+            "vendor" => {
+                vendor_set.insert(neighbor.0);
+            }
+            _ => {}
+        }
+
+        *edge_type_counts.entry(&row.edge_type).or_insert(0) += 1usize;
+    }
+
+    if !ssid_set.is_empty() {
+        lines.push(format!("ssid: {}", ssid_set.len()));
+    }
+    if !client_set.is_empty() {
+        lines.push(format!("clients: {}", client_set.len()));
+    }
+    if !vendor_set.is_empty() {
+        lines.push(format!("vendor_diversity: {}", vendor_set.len()));
+    }
+
+    // Serialize edge type distribution
+    let mut edge_parts: Vec<String> = edge_type_counts
+        .into_iter()
+        .map(|(et, count)| format!("{et}:{count}"))
+        .collect();
+    edge_parts.sort();
+    lines.push(format!("edges: {}", edge_parts.join(",")));
+
+    // Find max last_seen for the source time
+    let last_seen = rows.iter().filter_map(|r| r.last_seen).max();
+
+    EmbeddingInput {
+        text: lines.join("\n"),
+        source_observed_at: last_seen,
+        source_stream_name: None,
+        source_sensor_id: None,
+        source_location_id: None,
+        source_mac: Some(bssid.to_string()),
+    }
+}
+
 /// Build a fallback text from individual snapshot fields when no pre-built text exists.
 fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
     let mut lines = vec!["kind: behaviour_window".to_string()];
+    // Add temporal context right after the kind line.
+    if let Some(dt) = row.window_start {
+        lines.extend(temporal_context_lines(dt));
+    }
     for field in SNAPSHOT_FIELDS {
         let val: Option<String> = match *field {
             "source_mac" => row.source_mac.clone(),
@@ -715,6 +1289,10 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
                 lines.push(format!("{}: {}", field, v));
             }
         }
+    }
+    // Add burst_velocity at the end.
+    if let Some(epm) = events_per_minute(row) {
+        lines.push(format!("events_per_minute: {epm:.1}"));
     }
     lines.join("\n")
 }
@@ -777,6 +1355,45 @@ fn normalize_wps_name(name: &str) -> String {
     }
 
     s
+}
+
+/// Produce four temporal-context lines for a given UTC datetime.
+///
+/// Returns lines like:
+/// ```text
+/// hour_of_day: 14
+/// day_of_week: Tuesday
+/// is_weekend: false
+/// is_business_hours: true
+/// ```
+fn temporal_context_lines(dt: chrono::DateTime<chrono::Utc>) -> Vec<String> {
+    use chrono::{Datelike, Timelike};
+    let hour = dt.hour();
+    let day_name = dt.format("%A").to_string();
+    let is_weekend = matches!(dt.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun);
+    let is_business_hours = !is_weekend && hour >= 9 && hour < 17;
+    vec![
+        format!("hour_of_day: {}", hour),
+        format!("day_of_week: {}", day_name),
+        format!("is_weekend: {}", is_weekend),
+        format!("is_business_hours: {}", is_business_hours),
+    ]
+}
+
+/// Compute `events_per_minute` for a behaviour window row.
+///
+/// Returns `None` when `event_count` or `window_start`/`window_end` are missing,
+/// or when the window duration is zero.
+fn events_per_minute(row: &BehaviourWindowRow) -> Option<f64> {
+    let count = row.event_count? as f64;
+    let start = row.window_start?;
+    let end = row.window_end?;
+    let duration_secs = (end - start).to_std().ok().map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let duration_mins = duration_secs / 60.0;
+    if duration_mins <= 0.0 {
+        return None;
+    }
+    Some(count / duration_mins)
 }
 
 /// Normalise a JSON value for text output, matching the Ruby `normalize_json`.

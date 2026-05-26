@@ -112,7 +112,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
-      - SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
+      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
       - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
@@ -243,8 +243,8 @@ services:
     command: ["bin/rails", "db:migrate"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
+      - SYNC_DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
 
   integration-console-heatmap-refresh:
@@ -297,18 +297,97 @@ services:
       dockerfile: services/vec-worker/Dockerfile
     restart: unless-stopped
     environment:
-      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=debug,sqlx=warn}
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - VECTOR_EMBEDDING_WORKER_NAME=worker-1
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
+      - DATABASE_POOL_MAX_CONNECTIONS=6
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
+      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
       - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
       - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
       - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
-      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-512}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-512}
+      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-256}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-64}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
       - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-1800}
-      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-5}
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-1}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-1}
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-16}
+
+  vec-worker-2:
+    profiles:
+      - vector
+    build:
+      context: .
+      dockerfile: services/vec-worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - VECTOR_EMBEDDING_WORKER_NAME=worker-2
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
+      - DATABASE_POOL_MAX_CONNECTIONS=6
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
+      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
+      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
+      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
+      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
+      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-256}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-64}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
+      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-1800}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-1}
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-16}
+
+  vec-worker-3:
+    profiles:
+      - vector
+    build:
+      context: .
+      dockerfile: services/vec-worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - VECTOR_EMBEDDING_WORKER_NAME=worker-3
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
+      - DATABASE_POOL_MAX_CONNECTIONS=6
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
+      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
+      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
+      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
+      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
+      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-256}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-64}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
+      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-1800}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-1}
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-16}
+
+  vec-worker-4:
+    profiles:
+      - vector
+    build:
+      context: .
+      dockerfile: services/vec-worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      - VECTOR_EMBEDDING_WORKER_NAME=worker-4
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
+      - DATABASE_POOL_MAX_CONNECTIONS=6
+      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
+      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
+      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
+      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
+      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
+      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-256}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-64}
+      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
+      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-1800}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-1}
+      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-16}
 
   atheros-sensor:
     depends_on:
@@ -493,10 +572,24 @@ services:
     command:
       - postgres
       - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
       - shared_preload_libraries=pg_cron
       - -c
       - cron.database_name=sync
+      - -c
+      - max_connections=64
+      - -c
+      - listen_addresses=*
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 16G
+        reservations:
+          cpus: '0.5'
+          memory: 8G
     environment:
       POSTGRES_DB: sync
       POSTGRES_USER: sync
@@ -510,7 +603,7 @@ services:
       retries: 5
     volumes:
       # /docker-entrypoint-initdb.d is intentionally unused; zig-coordinator
-      # applies services/zig-coordinator/schema/postgres.sql with psql.
+      # applies sql/postgres.sql with psql.
       - postgres-data:/var/lib/postgresql/data
 
 volumes:

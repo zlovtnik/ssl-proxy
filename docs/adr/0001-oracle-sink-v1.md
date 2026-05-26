@@ -9,7 +9,7 @@ Accepted on 2026-04-17.
 - Delivery is at-least-once with dedupe in Postgres.
 - The coordinator advances a monotonic Postgres-backed work cursor.
 - The proxy emits `sync.scan.request`.
-- The coordinator owns `sync_job`, `sync_batch`, retries, and cursor advancement.
+- The coordinator owns `sync_jobs`, `sync_batches`, retries, and cursor advancement.
 - The worker owns Oracle connectivity, per-batch commit, and `sync.oracle.result`.
 
 ## Consequences

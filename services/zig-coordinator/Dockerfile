@@ -38,8 +38,7 @@ COPY --from=redpanda-tools /opt/redpanda/libexec/rpk /usr/local/bin/rpk
 RUN rpk --version
 COPY services/zig-coordinator/bin/redpanda /usr/local/bin/redpanda
 RUN chmod +x /usr/local/bin/redpanda && redpanda --compat-version
-COPY services/zig-coordinator/schema ./schema
-COPY services/zig-coordinator/src/postgres ./src/postgres
+COPY sql ./sql
 COPY docker/redpanda ./docker/redpanda
-ENV SYNC_SCHEMA_FILE=/app/src/postgres/schema.sql
+ENV SYNC_SCHEMA_FILE=/app/sql/postgres.sql
 CMD ["/usr/local/bin/zig-coordinator", "run"]

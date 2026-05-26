@@ -16,7 +16,7 @@ pub(crate) fn upsert_blocked_events_transaction(
     }
 
     const UPSERT_SQL: &str = r#"
-        merge into blocked_events be
+        merge into PROXY_BLOCKED_HOST_ROLLUPS be
         using (
             select
                 :1 as host,
@@ -129,7 +129,7 @@ pub(crate) fn upsert_blocked_events_transaction(
         ];
         connection.execute(UPSERT_SQL, &params).map_err(|error| {
             format!(
-                "upsert blocked_events row host={}: {}",
+                "upsert PROXY_BLOCKED_HOST_ROLLUPS row host={}: {}",
                 row.host,
                 error_chain(&error)
             )

@@ -31,7 +31,7 @@
 //! `entries`; the stale data remains readable until the next `refresh_if_needed` call
 //! successfully reloads from the coordinator.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -41,10 +41,22 @@ use crate::backlog::{AuthorizedWirelessNetwork, RedpandaBacklog};
 use crate::model::AuditEntry;
 use crate::parse::SECURITY_PMF_REQUIRED;
 
+/// Structured explanation for a single detection factor. Each entry captures
+/// what was observed, what was expected (baseline), and how much this factor
+/// contributed to the alert (0.0-1.0).
+#[derive(Clone, Debug, Serialize)]
+pub struct AlertExplanation {
+    pub factor: String,
+    pub observed: f64,
+    pub baseline: f64,
+    pub contribution: f64,
+}
+
 pub const CLIENT_INVENTORY_TOPIC: &str = "wireless.client.inventory";
 pub const ROGUE_AP_TOPIC: &str = "wireless.alert.rogue_ap";
 pub const DEAUTH_FLOOD_TOPIC: &str = "wireless.alert.deauth_flood";
 pub const ATTACK_SEQUENCE_TOPIC: &str = "wireless.alert.attack_sequence";
+pub const SEQUENCE_ALERT_TOPIC: &str = "wireless.alert.sequence";
 const ROGUE_AP_ALERT_TTL: Duration = Duration::from_secs(60);
 const ATTACK_CORRELATION_WINDOW: Duration = Duration::from_secs(300);
 const ATTACK_SEQUENCE_COOLDOWN: Duration = Duration::from_secs(60);
@@ -67,6 +79,21 @@ pub struct ClientProfileSnapshot {
     pub excessive_probing: bool,
     pub channels: Vec<u8>,
     pub last_signal_dbm: Option<i8>,
+    pub roaming_history: Vec<ClientRoamingSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ClientRoamingSnapshot {
+    pub bssid: String,
+    pub channel: u8,
+    pub observed_at: String,
+}
+
+#[derive(Clone, Debug)]
+struct RoamEvent {
+    pub bssid: String,
+    pub channel: u8,
+    pub observed_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,11 +106,19 @@ struct ClientProfile {
     excessive_probing: bool,
     channels: HashSet<u8>,
     last_signal_dbm: Option<i8>,
+    roaming_history: Vec<RoamEvent>,
+    normal_roaming_pairs: HashSet<(String, String)>,
+    roam_transition_counts: HashMap<(String, String), u32>,
+    last_bssid: Option<String>,
 }
 
 #[derive(Default)]
 pub struct ClientInventory {
     clients: HashMap<String, ClientProfile>,
+    /// Maps device_fingerprint strings to the list of MAC addresses that have
+    /// exhibited that fingerprint. Used to detect MAC address sharing or
+    /// spoofing when the same fingerprint appears from different MACs.
+    fingerprint_to_macs: HashMap<String, Vec<String>>,
 }
 
 impl ClientInventory {
@@ -119,11 +154,14 @@ impl ClientInventory {
     /// Observes a frame and updates client profile. The excessive_probing flag latches to true
     /// once a client sends >=20 probe requests within any 60-second window and is never reset
     /// to false within the same session (inventory flush required to clear).
-    pub fn observe(&mut self, entry: &AuditEntry) {
+    pub fn observe(&mut self, entry: &mut AuditEntry) {
         let Some(source_mac) = entry.source_mac.as_deref().map(normalize_mac) else {
             return;
         };
         let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
+        // Clone source_mac before it's moved into clients.entry() below,
+        // since it's needed again for fingerprint-to-MAC tracking.
+        let source_mac_owned = source_mac.clone();
         let profile = self
             .clients
             .entry(source_mac)
@@ -136,10 +174,56 @@ impl ClientInventory {
                 excessive_probing: false,
                 channels: HashSet::new(),
                 last_signal_dbm: None,
+                roaming_history: Vec::new(),
+                normal_roaming_pairs: HashSet::new(),
+                roam_transition_counts: HashMap::new(),
+                last_bssid: None,
             });
         profile.last_seen = observed_at;
         profile.channels.insert(entry.channel);
         profile.last_signal_dbm = entry.signal_dbm;
+
+        let association_bssid = entry
+            .bssid
+            .as_deref()
+            .or(entry.destination_bssid.as_deref())
+            .map(normalize_mac);
+        if matches!(
+            entry.frame_subtype.as_str(),
+            "association_request"
+        ) {
+            if let Some(bssid) = association_bssid {
+                if let Some(prev_bssid) = &profile.last_bssid {
+                    if prev_bssid != &bssid {
+                        let pair = (prev_bssid.clone(), bssid.clone());
+                        let count = profile
+                            .roam_transition_counts
+                            .entry(pair.clone())
+                            .or_default();
+                        *count = count.saturating_add(1);
+                        if *count >= 2 {
+                            profile.normal_roaming_pairs.insert(pair.clone());
+                        }
+                        if !profile.normal_roaming_pairs.contains(&pair)
+                            && !entry.tags.contains(&"threat:unusual_roam".to_string())
+                        {
+                            entry.tags.push("threat:unusual_roam".to_string());
+                        }
+                    }
+                }
+
+                profile.last_bssid = Some(bssid.clone());
+                profile.roaming_history.push(RoamEvent {
+                    bssid,
+                    channel: entry.channel,
+                    observed_at,
+                });
+                if profile.roaming_history.len() > 32 {
+                    profile.roaming_history.remove(0);
+                }
+            }
+        }
+
         if entry.frame_subtype == "probe_request" {
             profile.probe_count = profile.probe_count.saturating_add(1);
             if let Some(ssid) = entry
@@ -157,6 +241,23 @@ impl ClientInventory {
                 profile.excessive_probing = true;
             }
         }
+
+        // Track device_fingerprint -> MAC correlations.
+        if let Some(fp) = &entry.device_fingerprint {
+            let normalized_fp = fp.trim().to_ascii_lowercase();
+            if !normalized_fp.is_empty() {
+                let macs = self.fingerprint_to_macs.entry(normalized_fp).or_default();
+                if !macs.iter().any(|m| *m == source_mac_owned) {
+                    macs.push(source_mac_owned.clone());
+                    tracing::info!(
+                        device_fingerprint = %fp,
+                        mac = %source_mac_owned,
+                        known_macs = macs.len(),
+                        "device_fingerprint shared by new MAC"
+                    );
+                }
+            }
+        }
     }
 
     pub fn snapshot(&self) -> ClientInventorySnapshot {
@@ -168,6 +269,15 @@ impl ClientInventory {
                 probe_ssids.sort();
                 let mut channels: Vec<_> = profile.channels.iter().copied().collect();
                 channels.sort_unstable();
+                let roaming_history = profile
+                    .roaming_history
+                    .iter()
+                    .map(|event| ClientRoamingSnapshot {
+                        bssid: event.bssid.clone(),
+                        channel: event.channel,
+                        observed_at: ssl_proxy::time::rfc3339_from_utc(event.observed_at),
+                    })
+                    .collect();
                 ClientProfileSnapshot {
                     source_mac: source_mac.clone(),
                     first_seen: ssl_proxy::time::rfc3339_from_utc(profile.first_seen),
@@ -177,6 +287,7 @@ impl ClientInventory {
                     excessive_probing: profile.excessive_probing,
                     channels,
                     last_signal_dbm: profile.last_signal_dbm,
+                    roaming_history,
                 }
             })
             .collect::<Vec<_>>();
@@ -265,6 +376,12 @@ pub struct RogueApAlert {
     pub ssid: Option<String>,
     pub channel: u8,
     pub reasons: Vec<String>,
+    /// Structured factor breakdown for each detection reason.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each reason, populated at alert creation.
+    #[serde(default)]
+    pub explanation: Vec<String>,
 }
 
 #[derive(Default)]
@@ -272,6 +389,12 @@ pub struct RogueApTracker {
     ssid_by_bssid: HashMap<String, String>,
     channels_by_bssid: HashMap<String, HashSet<u8>>,
     recent_alerts: HashMap<String, Instant>,
+    /// First channel observed for each BSSID. Used to detect a BSSID that
+    /// appears on a channel band inconsistent with its original band.
+    bssid_first_channel: HashMap<String, u8>,
+    /// Vendor OUI (first 6 hex chars of BSSID) by BSSID. Used to detect
+    /// the same SSID being served by different hardware vendors.
+    ap_vendor_by_bssid: HashMap<String, String>,
 }
 
 impl RogueApTracker {
@@ -315,6 +438,45 @@ impl RogueApTracker {
             if channels.len() > 1 {
                 reasons.push("channel_conflict".to_string());
             }
+
+            // Track first-seen channel for band-conflict detection.
+            // If the BSSID was first seen on a 5GHz channel (>= 36) but
+            // the current frame is on a 2.4GHz channel (1-14), flag it.
+            use std::collections::hash_map::Entry as MapEntry;
+            let current_ch = entry.channel;
+            match self.bssid_first_channel.entry(bssid.clone()) {
+                MapEntry::Occupied(occ) => {
+                    let first_ch = *occ.get();
+                    let first_is_5ghz = first_ch >= 36;
+                    let current_is_2ghz = current_ch >= 1 && current_ch <= 14;
+                    if first_is_5ghz && current_is_2ghz {
+                        reasons.push("channel_band_conflict".to_string());
+                    }
+                }
+                MapEntry::Vacant(vac) => {
+                    vac.insert(current_ch);
+                }
+            }
+
+            // Vendor OUI conflict detection: extract the OUI (first 6 hex digits)
+            // from the BSSID, track by BSSID, and check if any other BSSID
+            // serving the same SSID has a different OUI.
+            if let Some(ssid) = ssid {
+                // Normalize BSSID by removing colons/hyphens, take first 6 chars
+                let normalized = bssid.replace([':', '-', '.'], "");
+                let oui = &normalized[..normalized.len().min(6)];
+                self.ap_vendor_by_bssid.insert(bssid.clone(), oui.to_string());
+
+                // Check for vendor conflict: same SSID, different BSSID, different OUI
+                let has_conflict = self.ap_vendor_by_bssid.iter().any(|(other_bssid, other_oui)| {
+                    other_bssid != bssid
+                        && other_oui != oui
+                        && self.ssid_by_bssid.get(other_bssid).map_or(false, |s| s == ssid)
+                });
+                if has_conflict {
+                    reasons.push("vendor_conflict".to_string());
+                }
+            }
         }
         if reasons.is_empty() {
             return None;
@@ -346,8 +508,43 @@ impl RogueApTracker {
             bssid,
             ssid: ssid.map(str::to_string),
             channel: entry.channel,
+            factor_breakdown: reasons.iter().map(|r| rogue_ap_explanation(r)).collect(),
+            explanation: reasons.iter().map(|r| explain_reason(r)).collect(),
             reasons,
         })
+    }
+}
+
+/// Builds a structured `AlertExplanation` for a single rogue-AP detection reason.
+/// Uses fixed baselines where applicable (e.g. normal encryption = present, single channel = 1).
+fn rogue_ap_explanation(reason: &str) -> AlertExplanation {
+    let (baseline, observed, contribution) = match reason {
+        "open_authorized_ssid" => (1.0, 0.0, 1.0),   // expected encrypted (1), found open (0)
+        "ssid_typosquat"       => (1.0, 0.0, 0.9),    // expected exact match (1), found typosquat (0)
+        "bssid_spoofing"       => (1.0, 0.0, 0.8),    // expected stable mapping (1), found changed (0)
+        "channel_conflict"     => (1.0, 2.0, 0.7),    // expected single channel (1), found multiple (≥2)
+        "channel_band_conflict" => (1.0, 2.0, 0.6),   // expected consistent band (1), found band switch (2)
+        "vendor_conflict"      => (1.0, 2.0, 0.5),    // expected single vendor (1), found multiple (≥2)
+        _ => (1.0, 1.0, 0.0),
+    };
+    AlertExplanation {
+        factor: reason.to_string(),
+        observed,
+        baseline,
+        contribution,
+    }
+}
+
+/// Maps a detection reason tag to a human-readable explanation.
+fn explain_reason(reason: &str) -> String {
+    match reason {
+        "open_authorized_ssid" => "Known SSID broadcasting without encryption".into(),
+        "ssid_typosquat" => "SSID is an edit-distance match to a known network (potential typosquatting)".into(),
+        "bssid_spoofing" => "BSSID changed its SSID mapping since last observation".into(),
+        "channel_conflict" => "Same BSSID observed on multiple channels".into(),
+        "channel_band_conflict" => "BSSID originally on 5 GHz now seen on 2.4 GHz".into(),
+        "vendor_conflict" => "Same SSID served by different hardware vendors".into(),
+        other => format!("Unrecognised detection reason: {other}"),
     }
 }
 
@@ -362,6 +559,12 @@ pub struct DeauthFloodAlert {
     pub bssid: Option<String>,
     pub frame_count: u64,
     pub window_secs: u64,
+    /// Structured factor breakdown for each detection factor.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each detection factor.
+    #[serde(default)]
+    pub explanation: Vec<String>,
 }
 
 #[derive(Default)]
@@ -420,6 +623,11 @@ impl DeauthFloodTracker {
             return None;
         }
         self.last_alerts.insert(key, now);
+        let contribution = if threshold > 0 {
+            (frame_count as f64) / (threshold as f64).min(frame_count as f64)
+        } else {
+            1.0
+        };
         Some(DeauthFloodAlert {
             schema_version: 1,
             event_type: "wireless_deauth_flood".to_string(),
@@ -430,6 +638,15 @@ impl DeauthFloodTracker {
             bssid: entry.bssid.clone(),
             frame_count: frame_count as u64,
             window_secs,
+            factor_breakdown: vec![AlertExplanation {
+                factor: "deauth_frame_count".to_string(),
+                observed: frame_count as f64,
+                baseline: threshold as f64,
+                contribution: contribution.min(1.0),
+            }],
+            explanation: vec![
+                format!("deauth_frame_count: {} in {}s window (threshold: {})", frame_count, window_secs, threshold),
+            ],
         })
     }
 }
@@ -672,6 +889,227 @@ pub struct AttackSequenceAlert {
     pub attack_chain: Vec<String>,
     pub first_event_at: String,
     pub last_event_at: String,
+    /// Structured factor breakdown for each detection factor.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each detection factor.
+    #[serde(default)]
+    pub explanation: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SequenceAlert {
+    pub schema_version: u32,
+    pub event_type: String,
+    pub observed_at: String,
+    pub sensor_id: String,
+    pub location_id: String,
+    pub session_key: String,
+    pub source_mac: Option<String>,
+    pub bssid: Option<String>,
+    pub ssid: Option<String>,
+    pub attack_tag: String,
+    pub sequence: Vec<String>,
+    pub first_event_at: String,
+    pub last_event_at: String,
+    /// Structured factor breakdown for each detection factor.
+    #[serde(default)]
+    pub factor_breakdown: Vec<AlertExplanation>,
+    /// Human-readable explanations for each detection factor.
+    #[serde(default)]
+    pub explanation: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct SessionSequence {
+    frames: VecDeque<String>,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+    seen_beacon_bssids: HashSet<String>,
+    auth_deauth_events: Vec<(DateTime<Utc>, String)>,
+    emitted_tags: HashSet<String>,
+}
+
+#[derive(Default)]
+pub struct SequenceTracker {
+    sessions: HashMap<String, SessionSequence>,
+}
+
+impl SequenceTracker {
+    pub fn observe(&mut self, entry: &AuditEntry) -> Option<SequenceAlert> {
+        let session_key = entry
+            .session_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
+        let sequence = self.sessions.entry(session_key.to_string()).or_insert_with(||
+            SessionSequence {
+                frames: VecDeque::new(),
+                first_seen: observed_at,
+                last_seen: observed_at,
+                seen_beacon_bssids: HashSet::new(),
+                auth_deauth_events: Vec::new(),
+                emitted_tags: HashSet::new(),
+            }
+        );
+        sequence.last_seen = observed_at;
+
+        let subtype = entry.frame_subtype.as_str();
+        if let Some(bssid) = entry.bssid.as_deref().map(normalize_mac) {
+            if subtype == "beacon" {
+                sequence.seen_beacon_bssids.insert(bssid);
+            }
+        }
+
+        let mut alert_tag = None;
+        if subtype == "probe_response" {
+            if let Some(bssid) = entry.bssid.as_deref().map(normalize_mac) {
+                if !sequence.seen_beacon_bssids.contains(&bssid) {
+                    alert_tag = Some("threat:silent_rogue_ap".to_string());
+                }
+            }
+        }
+
+        sequence.frames.push_back(subtype.to_string());
+        while sequence.frames.len() > 32 {
+            sequence.frames.pop_front();
+        }
+
+        if subtype == "authentication" || subtype == "deauthentication" {
+            sequence.auth_deauth_events.push((observed_at, subtype.to_string()));
+            let cutoff = observed_at - chrono::Duration::seconds(10);
+            sequence
+                .auth_deauth_events
+                .retain(|(timestamp, _)| *timestamp >= cutoff);
+        }
+
+        if alert_tag.is_none() {
+            alert_tag = SequenceTracker::check_roaming_suppression(sequence);
+        }
+        if alert_tag.is_none() {
+            alert_tag = SequenceTracker::check_auth_flood(sequence);
+        }
+
+        if let Some(tag) = alert_tag {
+            if !sequence.emitted_tags.insert(tag.clone()) {
+                return None;
+            }
+            self.prune_stale_sessions(observed_at);
+            return Some(SequenceTracker::build_sequence_alert(
+                series_to_tokens(&sequence.frames),
+                session_key,
+                entry,
+                tag,
+                sequence.first_seen,
+                sequence.last_seen,
+            ));
+        }
+
+        self.prune_stale_sessions(observed_at);
+
+        None
+    }
+
+    /// Prunes stale sessions older than one hour to keep memory bounded.
+    fn prune_stale_sessions(&mut self, observed_at: DateTime<Utc>) {
+        if self.sessions.len() > 4096 {
+            let cutoff = observed_at - chrono::Duration::hours(1);
+            self.sessions.retain(|_, seq| seq.last_seen >= cutoff);
+        }
+    }
+
+    fn check_roaming_suppression(sequence: &SessionSequence) -> Option<String> {
+        let pattern = [
+            "probe_request",
+            "probe_response",
+            "deauthentication",
+            "reassociation_request",
+            "deauthentication",
+        ];
+        if ends_with_pattern(&sequence.frames, &pattern) {
+            return Some("threat:roaming_suppression".to_string());
+        }
+        None
+    }
+
+    fn check_auth_flood(sequence: &SessionSequence) -> Option<String> {
+        if sequence.auth_deauth_events.len() < 6 {
+            return None;
+        }
+        let recent: Vec<&String> = sequence
+            .auth_deauth_events
+            .iter()
+            .rev()
+            .take(6)
+            .map(|(_, subtype)| subtype)
+            .collect();
+        let pattern = [
+            "authentication",
+            "deauthentication",
+            "authentication",
+            "deauthentication",
+            "authentication",
+            "deauthentication",
+        ];
+        if recent.iter().rev().map(|s| s.as_str()).eq(pattern) {
+            return Some("threat:auth_flood".to_string());
+        }
+        None
+    }
+
+    fn build_sequence_alert(
+        sequence_tokens: Vec<String>,
+        session_key: &str,
+        entry: &AuditEntry,
+        attack_tag: String,
+        first_seen: DateTime<Utc>,
+        last_seen: DateTime<Utc>,
+    ) -> SequenceAlert {
+        let seq_contribution = (sequence_tokens.len() as f64).min(32.0) / 32.0;
+        SequenceAlert {
+            schema_version: 1,
+            event_type: "wireless_sequence_alert".to_string(),
+            observed_at: entry.observed_at.clone(),
+            sensor_id: entry.sensor_id.clone(),
+            location_id: entry.location_id.clone(),
+            session_key: session_key.to_string(),
+            source_mac: entry.source_mac.clone(),
+            bssid: entry.bssid.clone(),
+            ssid: entry.ssid.clone(),
+            attack_tag: attack_tag.clone(),
+            sequence: sequence_tokens.clone(),
+            first_event_at: ssl_proxy::time::rfc3339_from_utc(first_seen),
+            last_event_at: ssl_proxy::time::rfc3339_from_utc(last_seen),
+            factor_breakdown: vec![AlertExplanation {
+                factor: attack_tag.clone(),
+                observed: sequence_tokens.len() as f64,
+                baseline: 1.0,
+                contribution: seq_contribution,
+            }],
+            explanation: vec![
+                format!("attack_tag: {} with {} frames in sequence (session: {})", attack_tag, sequence_tokens.len(), session_key),
+            ],
+        }
+    }
+}
+
+fn ends_with_pattern(frames: &VecDeque<String>, pattern: &[&str]) -> bool {
+    if frames.len() < pattern.len() {
+        return false;
+    }
+    frames
+        .iter()
+        .rev()
+        .zip(pattern.iter().rev())
+        .all(|(actual, expected)| actual.as_str() == *expected)
+}
+
+fn series_to_tokens(frames: &VecDeque<String>) -> Vec<String> {
+    frames
+        .iter()
+        .map(|subtype| subtype.replace('-', "_").to_ascii_uppercase())
+        .collect()
 }
 
 #[derive(Debug)]
@@ -729,6 +1167,8 @@ impl AttackTimelineCorrelator {
             let mut chain: Vec<_> = events.iter().map(|e| e.attack_type.clone()).collect();
             chain.sort();
             chain.dedup();
+            let chain_str = chain.join(", ");
+            let contribution = if has_karma && has_spoofing { 1.0 } else { 0.0 };
             Some(AttackSequenceAlert {
                 schema_version: 1,
                 event_type: "wireless_attack_sequence".to_string(),
@@ -739,6 +1179,23 @@ impl AttackTimelineCorrelator {
                 attack_chain: chain,
                 first_event_at: ssl_proxy::time::rfc3339_from_utc(first),
                 last_event_at: ssl_proxy::time::rfc3339_from_utc(last),
+                factor_breakdown: vec![
+                    AlertExplanation {
+                        factor: "karma_probe_response".to_string(),
+                        observed: if has_karma { 1.0 } else { 0.0 },
+                        baseline: 0.0,
+                        contribution: if has_karma { 0.5 } else { 0.0 },
+                    },
+                    AlertExplanation {
+                        factor: "bssid_spoofing".to_string(),
+                        observed: if has_spoofing { 1.0 } else { 0.0 },
+                        baseline: 0.0,
+                        contribution: if has_spoofing { 0.5 } else { 0.0 },
+                    },
+                ],
+                explanation: vec![
+                    format!("combined_attacks: {} against SSID '{}' within {}s window", chain_str, ssid, ATTACK_CORRELATION_WINDOW.as_secs()),
+                ],
             })
         } else {
             None
@@ -945,6 +1402,53 @@ mod tests {
     }
 
     #[test]
+    fn client_inventory_records_roaming_history_and_learns_normal_roams() {
+        use super::ClientInventory;
+
+        let mut inventory = ClientInventory::default();
+
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "association_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.bssid = Some("aa:bb:cc:dd:ee:01".to_string());
+        inventory.observe(&mut entry);
+        assert!(!entry.tags.contains(&"threat:unusual_roam".to_string()));
+
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "association_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.bssid = Some("aa:bb:cc:dd:ee:02".to_string());
+        inventory.observe(&mut entry);
+        assert!(entry.tags.contains(&"threat:unusual_roam".to_string()));
+
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "association_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.bssid = Some("aa:bb:cc:dd:ee:01".to_string());
+        inventory.observe(&mut entry);
+        assert!(entry.tags.contains(&"threat:unusual_roam".to_string()));
+
+        let mut entry = create_test_audit_entry();
+        entry.frame_subtype = "association_request".to_string();
+        entry.source_mac = Some("11:22:33:44:55:66".to_string());
+        entry.bssid = Some("aa:bb:cc:dd:ee:02".to_string());
+        inventory.observe(&mut entry);
+        assert!(!entry.tags.contains(&"threat:unusual_roam".to_string()));
+
+        let snapshot = inventory.snapshot();
+        assert_eq!(snapshot.clients.len(), 1);
+        assert_eq!(snapshot.clients[0].roaming_history.len(), 4);
+        assert_eq!(
+            snapshot.clients[0].roaming_history[0].bssid,
+            "aa:bb:cc:dd:ee:01"
+        );
+        assert_eq!(
+            snapshot.clients[0].roaming_history[1].bssid,
+            "aa:bb:cc:dd:ee:02"
+        );
+    }
+
+    #[test]
     fn authorization_status_is_unknown_until_cache_loads() {
         use super::{AuthorizationStatus, AuthorizedNetworkCache};
 
@@ -1060,6 +1564,7 @@ mod tests {
             raw_len: 100,
             raw_frame: None,
             tags: vec![],
+            risk_score: None,
             security_flags: 0x02,
             wps_device_name: None,
             wps_manufacturer: None,
@@ -1215,6 +1720,7 @@ mod tests {
             raw_len: 100,
             raw_frame: None,
             tags: vec![],
+            risk_score: None,
             security_flags: 0,
             wps_device_name: None,
             wps_manufacturer: None,

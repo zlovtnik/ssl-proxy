@@ -80,7 +80,7 @@ pub async fn check_near_duplicates(
 
     let mut inserted = 0usize;
     for row in &rows {
-        let mac = row.source_mac.as_deref().unwrap_or("unknown");
+        let mac = row.source_mac.as_deref();
         let meta = serde_json::json!(NearDuplicateMeta {
             near_duplicate_pairs: row.near_duplicate_pairs.unwrap_or(0),
             min_distance: row.min_distance.unwrap_or(1.0),
@@ -92,7 +92,7 @@ pub async fn check_near_duplicates(
         let result = sqlx::query(
             r#"
             INSERT INTO vec_alerts (alert_type, source_mac, score, metadata)
-            VALUES ('near_duplicate_cluster', $1, $2, $3::jsonb)
+            SELECT 'near_duplicate_cluster', $1, $2, $3::jsonb
             WHERE NOT EXISTS (
                 SELECT 1 FROM vec_alerts a
                 WHERE a.alert_type = 'near_duplicate_cluster'
@@ -128,14 +128,85 @@ pub async fn check_near_duplicates(
     Ok(inserted)
 }
 
+#[instrument(skip(pool))]
+pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
+    let inserted: i32 = sqlx::query_scalar(
+        "SELECT vec_detect_rogue_clusters()",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| WorkerError::alerts(format!("rogue cluster query failed: {e}")))?;
+
+    let inserted = inserted.max(0) as usize;
+    info!(inserted, "rogue cluster alert sweep complete");
+    Ok(inserted)
+}
+
+/// Track 6.1: Check for high-risk APs using the composite risk score.
+///
+/// Calls `check_high_risk_aps()` which inserts alerts into `vec_alerts`
+/// with `alert_type = 'high_risk_ap'` when `composite_risk > 0.75`.
+#[instrument(skip(pool))]
+pub async fn check_high_risk_aps(pool: &PgPool) -> Result<usize, WorkerError> {
+    let inserted: i32 = sqlx::query_scalar(
+        "SELECT check_high_risk_aps()",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| WorkerError::alerts(format!("high_risk_ap query failed: {e}")))?;
+
+    let inserted = inserted.max(0) as usize;
+    if inserted > 0 {
+        info!(inserted, "high-risk AP alerts inserted");
+    }
+    Ok(inserted)
+}
+
 /// Run all configured alert checks in the correct order.
+///
+/// Refreshes `v_device_repetition_score` and `mv_ap_risk_score` (materialized views)
+/// at the start of each sweep so that alert queries run against current data,
+/// not stale snapshots. The CONCURRENTLY flag allows reads during the refresh
+/// (requires the unique index on `source_mac`, which is created in V019).
 #[instrument(skip(pool))]
 pub async fn run_alert_sweep(
     pool: &PgPool,
     config: &AlertConfig,
 ) -> Result<(), WorkerError> {
-    let nd = check_near_duplicates(pool, config).await?;
+    // Refresh the materialized view before querying it so alerts are based on
+    // current data. REFRESH MATERIALIZED VIEW CONCURRENTLY requires a unique
+    // index, which V019 creates on (source_mac).
+    if let Err(e) = sqlx::query(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score",
+    )
+    .execute(pool)
+    .await
+    {
+        warn!(error = %e, "failed to refresh v_device_repetition_score, alert sweep may use stale data");
+    }
+
+    // Refresh the AP risk score materialized view
+    if let Err(e) = sqlx::query(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score",
+    )
+    .execute(pool)
+    .await
+    {
+        warn!(error = %e, "failed to refresh mv_ap_risk_score, alert sweep may use stale data");
+    }
+
+    let nd = check_near_duplicates(pool, config).await
+        .unwrap_or_else(|e| { warn!(error = %e, "near_duplicate check failed"); 0 });
     debug_assert!(nd <= usize::MAX);
+
+    let rc = check_rogue_clusters(pool).await
+        .unwrap_or_else(|e| { warn!(error = %e, "rogue cluster check failed"); 0 });
+    debug_assert!(rc <= usize::MAX);
+
+    let hra = check_high_risk_aps(pool).await
+        .unwrap_or_else(|e| { warn!(error = %e, "high_risk_ap check failed"); 0 });
+    debug_assert!(hra <= usize::MAX);
+
     Ok(())
 }
 

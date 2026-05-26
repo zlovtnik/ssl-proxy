@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Instant;
+use std::collections::VecDeque;
 use tokio::signal;
 use tokio::sync::{watch, Semaphore};
 use tokio::task::JoinHandle;
@@ -80,10 +81,20 @@ pub async fn run_forever(
                 _ => {}
             }
 
-            // Periodic alert sweep every 10 iterations
-            let alert_cfg = AlertConfig::default();
-            if let Err(e) = alerts::run_alert_sweep(&pool, &alert_cfg).await {
-                warn!(error = %e, "alert sweep failed");
+            // Periodic alert sweep every 10 iterations; run in the background so it
+            // does not block the main embed/complete loop.
+            let alert_pool = pool.clone();
+            tokio::spawn(async move {
+                let alert_cfg = AlertConfig::default();
+                if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
+                    warn!(error = %e, "alert sweep failed (background)");
+                }
+            });
+
+            // Periodic composite risk logging for AP population.
+            match db::count_high_risk_aps(&pool, 0.75).await {
+                Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
+                Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
             }
         }
 
@@ -176,6 +187,8 @@ pub async fn process_jobs(
     let mut failed = 0usize;
     let mut next_prepare: Option<JoinHandle<PrepareChunkResult>> = None;
     let mut complete_handle: Option<JoinHandle<CompleteChunkResult>> = None;
+    // Queue of in-flight embed tasks (preserves chunk order)
+    let mut embed_handles: VecDeque<JoinHandle<EmbeddedChunkResult>> = VecDeque::new();
 
     for i in 0..n {
         let chunk = chunks[i].clone();
@@ -192,7 +205,40 @@ pub async fn process_jobs(
             }));
         }
 
-        let embedded = embed_chunk(config, pool, embedder, prepared, &embed_sem).await;
+        // Spawn embed task so preparation can continue while embedding runs.
+        let cfg_clone = config.clone();
+        let pool_clone = pool.clone();
+        let embedder_clone = embedder.clone();
+        let embed_sem_clone = Arc::clone(&embed_sem);
+        let embed_handle = tokio::spawn(async move {
+            embed_chunk(&cfg_clone, &pool_clone, &embedder_clone, prepared, &embed_sem_clone).await
+        });
+        embed_handles.push_back(embed_handle);
+
+        // If the oldest embed task finished, consume it and spawn its completion.
+        if let Some(front) = embed_handles.front() {
+            if front.is_finished() {
+                let handle = embed_handles.pop_front().unwrap();
+                let embedded = handle.await.unwrap_or_else(|e| panic!("embed panicked: {e}"));
+
+                if let Some(handle) = complete_handle.take() {
+                    let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));
+                    succeeded += result.succeeded;
+                    failed += result.failed;
+                }
+
+                let cfg = config.clone();
+                let pool = pool.clone();
+                complete_handle = Some(tokio::spawn(async move {
+                    complete_chunk(&cfg, &pool, embedded).await
+                }));
+            }
+        }
+    }
+
+    // Drain remaining embed tasks in order, spawning completes as each finishes.
+    while let Some(handle) = embed_handles.pop_front() {
+        let embedded = handle.await.unwrap_or_else(|e| panic!("embed panicked: {e}"));
 
         if let Some(handle) = complete_handle.take() {
             let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));

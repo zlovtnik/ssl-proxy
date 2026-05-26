@@ -18,18 +18,21 @@
 //! giving operators a per-window health signal. `window_is_partial` is true when the flush
 //! was triggered by the periodic timer rather than by an incoming frame crossing the boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::model::AuditEntry;
 
 pub const BANDWIDTH_TOPIC: &str = "audit.wireless.bandwidth";
 pub const DEFAULT_BANDWIDTH_WINDOW_SECS: i64 = 60;
 pub const EXTERNAL_BANDWIDTH_THRESHOLD_BYTES: u64 = 500 * 1024 * 1024;
+const DEFAULT_TRAFFIC_BUCKET_MAX_ENTRIES: usize = 65_536;
+const ARRIVAL_RESERVOIR_SIZE: usize = 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FrameSizeHistogram {
@@ -50,7 +53,7 @@ impl Default for FrameSizeHistogram {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WirelessBandwidthEvent {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -74,7 +77,12 @@ pub struct WirelessBandwidthEvent {
     pub threshold_exceeded: bool,
     #[serde(default)]
     pub frame_size_histogram: FrameSizeHistogram,
+    #[serde(default)]
     pub inter_arrival_p50_ms: Option<u64>,
+    /// Coefficient of variation (CV) of inter-arrival times = stddev / mean.
+    /// Higher values indicate burstier traffic patterns. None when < 2 samples.
+    #[serde(default)]
+    pub inter_arrival_cv: Option<f64>,
     /// Milliseconds between wall-clock time and the frame timestamp at flush time.
     /// Positive values mean the frame timestamp is behind wall clock (the common case
     /// for backlog or delayed processing). This gives operators a per-window health
@@ -86,6 +94,9 @@ pub struct WirelessBandwidthEvent {
     /// windows occur during idle periods and at shutdown.
     #[serde(default)]
     pub window_is_partial: bool,
+    /// Highest risk score seen in this traffic window.
+    #[serde(default)]
+    pub max_risk_score: Option<f32>,
     /// RFC3339 wall-clock timestamp at the moment this event was serialized
     /// and enqueued for publish. Allows downstream consumers to compute
     /// `published_at - window_end` as a drift metric per event.
@@ -118,7 +129,7 @@ struct TrafficKey {
     external_bssid: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct TrafficCounters {
     bytes: u64,
     frame_count: u64,
@@ -128,6 +139,25 @@ struct TrafficCounters {
     strongest_signal_dbm: Option<i8>,
     histogram: [u64; 4],
     arrival_times_ms: Vec<i64>,
+    arrival_reservoir_size: usize,
+    max_risk_score: Option<f32>,
+}
+
+impl Default for TrafficCounters {
+    fn default() -> Self {
+        Self {
+            bytes: 0,
+            frame_count: 0,
+            retry_count: 0,
+            more_data_count: 0,
+            power_save_count: 0,
+            strongest_signal_dbm: None,
+            histogram: [0; 4],
+            arrival_times_ms: Vec::new(),
+            arrival_reservoir_size: ARRIVAL_RESERVOIR_SIZE,
+            max_risk_score: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,16 +168,33 @@ pub struct TrafficBucket {
     /// Wall-clock start of the current window (used for flush decision).
     wall_clock_start: Option<Instant>,
     entries: HashMap<TrafficKey, TrafficCounters>,
+    max_entries: usize,
+    /// Source MACs from the most recent drain that had inter_arrival_cv < 0.05,
+    /// indicating automated (non-human) burst traffic. Cleared on each drain.
+    burst_macs: HashSet<String>,
 }
 
 impl TrafficBucket {
     pub fn new(window_secs: i64) -> Self {
+        Self::with_entry_limit(window_secs, DEFAULT_TRAFFIC_BUCKET_MAX_ENTRIES)
+    }
+
+    fn with_entry_limit(window_secs: i64, max_entries: usize) -> Self {
         Self {
             window: Duration::seconds(window_secs.max(1)),
             window_start: None,
             wall_clock_start: None,
             entries: HashMap::new(),
+            max_entries: max_entries.max(1),
+            burst_macs: HashSet::new(),
         }
+    }
+
+    /// Returns the set of source MACs that exhibited low inter-arrival CV (< 0.05)
+    /// in the most recent drain, indicating automated burst traffic. Clears the
+    /// set after returning so each burst set is consumed exactly once.
+    pub fn take_burst_macs(&mut self) -> HashSet<String> {
+        std::mem::take(&mut self.burst_macs)
     }
 
     /// Counts raw bytes for frames that cannot be parsed into structured audit entries.
@@ -184,6 +231,7 @@ impl TrafficBucket {
         let counters = self.entries.entry(key).or_default();
         counters.bytes = counters.bytes.saturating_add(bytes);
         counters.frame_count = counters.frame_count.saturating_add(1);
+        self.enforce_entry_limit();
 
         flushed
     }
@@ -255,6 +303,12 @@ impl TrafficBucket {
                     .unwrap_or(signal),
             );
         }
+        if let Some(score) = entry.risk_score {
+            counters.max_risk_score = Some(match counters.max_risk_score {
+                Some(current) => current.max(score),
+                None => score,
+            });
+        }
         let size = entry.raw_len as u64;
         match size {
             0..=99 => counters.histogram[0] += 1,
@@ -266,6 +320,11 @@ impl TrafficBucket {
         counters
             .arrival_times_ms
             .push(observed_at.timestamp_millis());
+        if counters.arrival_times_ms.len() > counters.arrival_reservoir_size {
+            let drop_idx = fastrand::usize(..counters.arrival_times_ms.len());
+            counters.arrival_times_ms.swap_remove(drop_idx);
+        }
+        self.enforce_entry_limit();
         Ok(flushed)
     }
 
@@ -331,9 +390,17 @@ impl TrafficBucket {
         let window_end = window_start + self.window;
         // Cap at Utc::now() to avoid future timestamps from clock skew.
         let window_end = window_end.min(Utc::now());
+        self.burst_macs.clear();
         let mut events = Vec::with_capacity(self.entries.len());
         for (key, counters) in self.entries.drain() {
             let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
+            let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
+            // Track source MACs with very low CV - they indicate automated burst traffic.
+            if let Some(cv) = inter_arrival_cv {
+                if cv < 0.05 {
+                    self.burst_macs.insert(key.source_mac.clone());
+                }
+            }
             events.push(WirelessBandwidthEvent {
                 schema_version: 1,
                 event_type: "wireless_bandwidth_window".to_string(),
@@ -362,12 +429,29 @@ impl TrafficBucket {
                     range_1000_1500: counters.histogram[3],
                 },
                 inter_arrival_p50_ms,
+                inter_arrival_cv,
                 wall_clock_delta_ms: Some(wall_clock_delta_ms),
                 window_is_partial,
+                max_risk_score: counters.max_risk_score,
                 published_at: None,
             });
         }
         events
+    }
+
+    fn enforce_entry_limit(&mut self) {
+        if self.entries.len() <= self.max_entries {
+            return;
+        }
+
+        warn!(
+            entry_count = self.entries.len(),
+            limit = self.max_entries,
+            "traffic bucket entry limit reached; entry dropped"
+        );
+        if let Some(drop_key) = self.entries.keys().next().cloned() {
+            self.entries.remove(&drop_key);
+        }
     }
 }
 
@@ -405,6 +489,39 @@ fn calculate_p50_inter_arrival(times_ms: &[i64]) -> Option<u64> {
     }
     intervals.sort_unstable();
     Some(intervals[intervals.len() / 2])
+}
+
+/// Computes the coefficient of variation (CV = stddev / mean) of inter-arrival
+/// intervals from a reservoir of arrival timestamps (millisecond epoch values).
+/// Returns `None` when there are fewer than 2 timestamps.
+fn calculate_inter_arrival_cv(times_ms: &[i64]) -> Option<f64> {
+    if times_ms.len() < 2 {
+        return None;
+    }
+    let mut sorted = times_ms.to_vec();
+    sorted.sort_unstable();
+    let intervals: Vec<u64> = sorted
+        .windows(2)
+        .filter_map(|w| {
+            let delta = w[1] - w[0];
+            if delta >= 0 { Some(delta as u64) } else { None }
+        })
+        .collect();
+    if intervals.len() < 2 {
+        return None;
+    }
+    let n = intervals.len() as f64;
+    let sum: u64 = intervals.iter().sum();
+    let mean = sum as f64 / n;
+    if mean <= 0.0 {
+        return None;
+    }
+    let variance = intervals.iter().map(|v| {
+        let diff = *v as f64 - mean;
+        diff * diff
+    }).sum::<f64>() / n;
+    let stddev = variance.sqrt();
+    Some(stddev / mean)
 }
 
 #[cfg(test)]
@@ -546,5 +663,40 @@ mod tests {
     fn empty_flush_current_returns_empty() {
         let mut bucket = TrafficBucket::new(60);
         assert!(bucket.flush_current().is_empty());
+    }
+
+    #[test]
+    fn traffic_bucket_enforces_entry_limit() {
+        let mut bucket = TrafficBucket::with_entry_limit(60, 2);
+        let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
+
+        for index in 0..3 {
+            let mut entry = bandwidth_entry(base, index, 100, -42);
+            entry.source_mac = Some(format!("aa:bb:cc:dd:ee:{index:02x}"));
+            assert!(bucket.observe(&entry, false).unwrap().is_empty());
+        }
+
+        assert!(bucket.entries.len() <= 2);
+    }
+
+    #[test]
+    fn traffic_bucket_caps_arrival_time_samples() {
+        let mut bucket = TrafficBucket::new(60);
+        let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
+
+        for index in 0..1200 {
+            assert!(bucket
+                .observe(&bandwidth_entry(base, index, 100, -42), false)
+                .unwrap()
+                .is_empty());
+        }
+
+        let sample_len = bucket
+            .entries
+            .values()
+            .map(|counters| counters.arrival_times_ms.len())
+            .max()
+            .unwrap_or_default();
+        assert!(sample_len <= ARRIVAL_RESERVOIR_SIZE);
     }
 }

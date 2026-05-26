@@ -43,7 +43,7 @@ For threat-centric review and control-gap tracking, use the companion [Threat Mo
 - `outbox://...` references point to spooled `.json` payload files in the shared sync outbox volume. Coordinators and workers must reject files that do not parse as JSON.
 - Proxy `payload_preview` fields must stay readable: schema v2 uses JSON/text direction objects or metadata-only omission for binary/non-UTF-8 captures; nested base64 body previews are not allowed.
 - `sync.oracle.load` is the coordinator-to-worker batch dispatch topic. The coordinator dedupes in Postgres, advances cursors, and publishes load batches.
-- `sync.oracle.result` is the worker-to-coordinator result topic. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batch`, `sync_job`, and `sync_error`.
+- `sync.oracle.result` is the worker-to-coordinator result topic. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batches`, `sync_jobs`, and `sync_errors`.
 - `sync-publish` refers to the proxy-side publish path that prepares payload references and emits `sync.scan.request`; it must never call Oracle directly.
 
 ## Execution Mode (How We’ll Run This) {#execution-mode}
@@ -77,21 +77,21 @@ To make this workmap operational (not just aspirational), execute in these lanes
 | Task | Detail |
 |------|--------|
 | **1.1.1** Parse `Proxy-Authorization` username into all event payloads | Extract `username` from Basic auth header in `main.rs` service closure and propagate it through `handle()` and `handle_transparent()` via a new `identity: Option<String>` field on `EmitPayload`. |
-| **1.1.2** Add `user_id` / `client_cert_cn` to `ConnectionSessionOpenEvent` | Extend `src/db/types.rs` `ConnectionSessionOpenEvent` with `user_id: Option<String>` and add column via `sql/V007__session_user_id.sql`. |
+| **1.1.2** Add `user_id` / `client_cert_cn` to `ConnectionSessionOpenEvent` | Extend `src/db/types.rs` `ConnectionSessionOpenEvent` with `user_id: Option<String>` and add column via `sql/oracle.sql`. |
 | **1.1.3** Correlate WireGuard peer public key → username | Store a `DashMap<String, String>` (pubkey → username) in `AppState`, populated on WireGuard handshake events. Emit `wg_peer` field on all tunnel events. |
 | **1.1.4** Config: `IDENTITY_HEADER` env var | Allow operators to specify a custom header (e.g. `X-Authenticated-User`) injected by an upstream SSO reverse proxy, read in `ProxyConfig::from_env()`. |
 | **1.1.5** MFA claim enforcement for privileged/admin access | Require an upstream MFA claim (e.g. `amr`/`acr`) for admin routes and high-risk control-plane actions. Deny when claim is absent and emit a compliance audit event. |
 
 ### 1.2 — Logical User Session (multi-tunnel grouping)
 
-**Files:** `src/state.rs`, `src/db/types.rs`, `sql/V008__user_sessions.sql`
+**Files:** `src/state.rs`, `src/db/types.rs`, `sql/oracle.sql`
 
 | Task | Detail |
 |------|--------|
 | **1.2.1** New `UserSession` struct in `AppState` | A `DashMap<String, UserSession>` keyed by `user_id`. Each `UserSession` holds: `session_uuid`, `first_seen`, `last_seen`, `tunnel_count`, `bytes_up`, `bytes_down`, `blocked_count`, `transaction_signals`. |
 | **1.2.2** `user_sessions` Oracle table | Columns: `session_uuid`, `user_id`, `peer_ip`, `wg_peer_pubkey`, `started_at`, `last_activity_at`, `tunnel_count`, `bytes_up`, `bytes_down`, `blocked_count`, `risk_tier`, `created_at`. |
-| **1.2.3** Flush `user_sessions` via `spawn_oracle_flusher` | Extend the existing 60-second Oracle flusher in `dashboard.rs` to upsert `user_sessions` rows alongside `blocked_events`. |
-| **1.2.4** `session_id` foreign key on `connection_sessions` | Add `user_session_uuid VARCHAR2(36)` to `connection_sessions` via `sql/V009__conn_sessions_user_fk.sql`. |
+| **1.2.3** Flush `user_sessions` via `spawn_oracle_flusher` | Extend the existing 60-second Oracle flusher in `dashboard.rs` to upsert `user_sessions` rows alongside `PROXY_BLOCKED_HOST_ROLLUPS`. |
+| **1.2.4** `session_id` foreign key on `PROXY_CONNECTION_SESSIONS` | Add `user_session_uuid VARCHAR2(36)` to `PROXY_CONNECTION_SESSIONS` via `sql/oracle.sql`. |
 
 ### 1.3 — Transaction & Financial Signal Detection
 
@@ -101,7 +101,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 |------|--------|
 | **1.3.1** Extend `classify()` with financial/transaction categories | Add patterns: `"payment"`, `"banking"`, `"auth-oauth"`, `"api-graphql"`, `"api-rest-post"`. Detect domains: `stripe.com`, `braintree.com`, `paypal.com`, `plaid.com`, `*.bank*`, `*checkout*`, `*payment*`. |
 | **1.3.2** HTTP method sniffing for plaintext 80/tcp tunnels | `capture_plaintext_payloads` defaults to `false` and may only be enabled after documented legal/compliance sign-off. When enabled and `orig_dst.port() == 80`, inspect first 16 bytes of `up_buf` for `POST `, `PUT `, `PATCH ` — set `transaction_signal = true` on the session. |
-| **1.3.3** `transaction_signals` JSONB column on `connection_sessions` | `sql/V010__transaction_signals.sql` adds `transaction_signals CLOB CHECK (transaction_signals IS JSON)` to `connection_sessions`. Populated with: `{ method, path_prefix, is_financial, category }`. |
+| **1.3.3** `transaction_signals` JSONB column on `PROXY_CONNECTION_SESSIONS` | `sql/oracle.sql` adds `transaction_signals CLOB CHECK (transaction_signals IS JSON)` to `PROXY_CONNECTION_SESSIONS`. Populated with: `{ method, path_prefix, is_financial, category }`. |
 | **1.3.4** `TransactionSignal` event type in `DbEvent` enum | New variant `DbEvent::TransactionSignal(TransactionSignalEvent)` in `src/db/types.rs` with dedicated insert path in `src/db/inserts.rs` writing to a `transaction_signals` table. |
 
 ---
@@ -141,10 +141,10 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 | Task | Detail |
 |------|--------|
-| **2.3.1** `blocklist_domains` Oracle table | `sql/V011__blocklist_domains.sql`: `domain VARCHAR2(253) PK`, `sources CLOB IS JSON`, `first_added TIMESTAMP`, `last_seen TIMESTAMP`, `hit_count NUMBER`, `removed_at TIMESTAMP`, `category VARCHAR2(64)`. |
+| **2.3.1** `blocklist_domains` Oracle table | `sql/oracle.sql`: `domain VARCHAR2(253) PK`, `sources CLOB IS JSON`, `first_added TIMESTAMP`, `last_seen TIMESTAMP`, `hit_count NUMBER`, `removed_at TIMESTAMP`, `category VARCHAR2(64)`. |
 | **2.3.2** Bulk upsert on each successful refresh | After merging sources, batch-upsert all domains into `blocklist_domains`. Use `MERGE` on `domain`, updating `last_seen`, `sources`, incrementing nothing (hit counts updated separately). Batch size: 500 rows per statement. |
 | **2.3.3** Hit counter increment on block event | In `record_host_block()` in `state.rs`, enqueue a `DbEvent::BlocklistHit { domain }` that the writer batches and applies as `UPDATE blocklist_domains SET hit_count = hit_count + 1`. |
-| **2.3.4** Blocklist diff view | `sql/V012__blocklist_diff.sql`: `v_blocklist_changes` view showing domains added or removed in the last 24 hours by comparing `first_added` and `removed_at` against `SYSTIMESTAMP - INTERVAL '1' DAY`. |
+| **2.3.4** Blocklist diff view | `sql/oracle.sql`: `v_blocklist_changes` view showing domains added or removed in the last 24 hours by comparing `first_added` and `removed_at` against `SYSTIMESTAMP - INTERVAL '1' DAY`. |
 
 ### 2.4 — Artifact Integrity & Allowlisting (Gap Closure)
 
@@ -167,8 +167,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 | Task | Detail |
 |------|--------|
 | **3.1.1** Capture response `Content-Type`, `Content-Length`, status codes in `proxy.rs` | After `state.client.request()`, extract `content-type`, `content-length`, `x-cache`, `cf-cache-status` response headers. Add to `EmitPayload.extra` JSON and to `ProxyEvent` via new `response_content_type: Option<String>` and `response_content_length: Option<i64>` fields. |
-| **3.1.2** `proxy_events` column additions | `sql/V013__proxy_events_response_meta.sql`: add `response_content_type VARCHAR2(128)`, `response_content_length NUMBER`, `response_cache_status VARCHAR2(32)`. |
-| **3.1.3** Detect API vs browser traffic | Classify requests by `Accept` header: `application/json` → `api`, `text/html` → `browser`, `*/*` → `mixed`. Add `traffic_class VARCHAR2(16)` to `proxy_events`. |
+| **3.1.2** `PROXY_EVENTS` column additions | `sql/oracle.sql`: add `response_content_type VARCHAR2(128)`, `response_content_length NUMBER`, `response_cache_status VARCHAR2(32)`. |
+| **3.1.3** Detect API vs browser traffic | Classify requests by `Accept` header: `application/json` → `api`, `text/html` → `browser`, `*/*` → `mixed`. Add `traffic_class VARCHAR2(16)` to `PROXY_EVENTS`. |
 
 ### 3.2 — Cache/Object Storage Integration (MinIO)
 
@@ -178,8 +178,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 |------|--------|
 | **3.2.1** Add `opendal` for MinIO | Use `opendal = { version = "0.48", features = ["services-s3"] }`. Gate behind `payload-store` feature. |
 | **3.2.2** `PayloadStore` abstraction | `src/cache.rs`: `async fn store_payload(session_id: &str, direction: Direction, data: &[u8]) -> Result<String>` returns object key. Writes to MinIO bucket `ssl-proxy-payloads/YYYY/MM/DD/{session_id}/{direction}`. |
-| **3.2.3** Async payload offload after tunnel close | When `capture_plaintext_payloads` is true and `up_buf` / `down_buf` are non-empty, `tokio::spawn` a task to upload to MinIO. Store the returned object key in `payload_audit.payload_object_key`. |
-| **3.2.4** `payload_object_key` column | `sql/V014__payload_object_key.sql`: `ALTER TABLE payload_audit ADD (payload_object_key VARCHAR2(512))`. Remove `payload_bytes RAW(8192)` from hot-path writes — only store the object key in Oracle; raw bytes live in MinIO. |
+| **3.2.3** Async payload offload after tunnel close | When `capture_plaintext_payloads` is true and `up_buf` / `down_buf` are non-empty, `tokio::spawn` a task to upload to MinIO. Store the returned object key in `PROXY_PAYLOAD_AUDIT.payload_object_key`. |
+| **3.2.4** `payload_object_key` column | `sql/oracle.sql`: `ALTER TABLE PROXY_PAYLOAD_AUDIT ADD (payload_object_key VARCHAR2(512))`. Remove `payload_bytes RAW(8192)` from hot-path writes — only store the object key in Oracle; raw bytes live in MinIO. |
 | **3.2.5** `MINIO_ENDPOINT`, `MINIO_BUCKET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` env vars | Add to `Config`. `PayloadStore` is disabled (no-op) when `MINIO_ENDPOINT` is absent. |
 
 ### 3.3 — Scraping / Data Exfiltration Behavioral Detection
@@ -189,7 +189,7 @@ To make this workmap operational (not just aspirational), execute in these lanes
 | Task | Detail |
 |------|--------|
 | **3.3.1** Request velocity per user per domain | Track `requests_per_minute: u32` on `HostStats` per `(user_id, domain)` key. Flag as `SCRAPING_SUSPECT` when a single user hits the same domain > 300 req/min by default, with per-domain allowlist/config override. |
-| **3.3.2** `scraping_signals` table | `sql/V015__scraping_signals.sql`: columns `user_id`, `target_host`, `requests_in_window`, `window_start`, `peak_hz`, `verdict` (`SUSPECT`/`CONFIRMED`/`CLEARED`), `created_at`. Flushed by Oracle flusher every 60 s. |
+| **3.3.2** `scraping_signals` table | `sql/oracle.sql`: columns `user_id`, `target_host`, `requests_in_window`, `window_start`, `peak_hz`, `verdict` (`SUSPECT`/`CONFIRMED`/`CLEARED`), `created_at`. Flushed by Oracle flusher every 60 s. |
 | **3.3.3** `bytes_down` anomaly detection | When `bytes_down > 50 MB` in a single session, emit a `high_volume_egress` event with user_id, host, and bytes_down. Write to a new `egress_anomaly_events` table. |
 | **3.3.4** Sequential subdomain sweep detection | Detect when a user opens > 10 TCP sessions to different subdomains of the same root domain within 30 seconds — emit `subdomain_sweep` signal. |
 
@@ -268,9 +268,9 @@ To make this workmap operational (not just aspirational), execute in these lanes
 | Task | Detail |
 |------|--------|
 | **5.2.1** Separate `compliance_events` Oracle table | Immutable records — no UPDATE ever. Columns: `id`, `event_time`, `user_id`, `event_type` (`tunnel_open`, `tunnel_close`, `block`, `transaction_detected`, `scraping_detected`), `host`, `session_uuid`, `bytes_up`, `bytes_down`, `peer_ip`, `wg_peer_pubkey`, `category`, `verdict`, `raw_json CLOB IS JSON`. |
-| **5.2.2** Dual-write on all block and transaction events | `events.rs` `emit_serializable()` writes to both `proxy_events` (operational) and `compliance_events` (legal hold) for events where `blocked == true || transaction_signal == true`. |
+| **5.2.2** Dual-write on all block and transaction events | `events.rs` `emit_serializable()` writes to both `PROXY_EVENTS` (operational) and `compliance_events` (legal hold) for events where `blocked == true || transaction_signal == true`. |
 | **5.2.3** 7-year retention policy in `data_retention_policy` | Insert row: `('COMPLIANCE_EVENTS', 2555, 'EVENT_TIME', 'Legal hold — 7 year minimum')`. |
-| **5.2.4** Migration V016 | Apply and document `sql/V016__compliance_events.sql` for compliance event storage and retention policy bootstrap. |
+| **5.2.4** Migration V016 | Apply and document `sql/oracle.sql` for compliance event storage and retention policy bootstrap. |
 
 ### 5.3 — Dashboard Enhancements
 
@@ -309,17 +309,17 @@ To make this workmap operational (not just aspirational), execute in these lanes
 ### Database Migrations (ordered)
 
 ```sql
-sql/V007__session_user_id.sql
-sql/V008__user_sessions.sql
-sql/V009__conn_sessions_user_fk.sql
-sql/V010__transaction_signals.sql
-sql/V011__blocklist_domains.sql
-sql/V012__blocklist_diff.sql
-sql/V013__proxy_events_response_meta.sql
-sql/V014__payload_object_key.sql
-sql/V015__scraping_signals.sql
-sql/V016__compliance_events.sql
-sql/V017__egress_anomaly_events.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
+sql/oracle.sql
 ```
 
 All migrations follow the existing idempotent PL/SQL `DECLARE / IF v_count = 0 THEN` pattern.

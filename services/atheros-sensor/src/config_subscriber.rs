@@ -41,9 +41,10 @@ pub const SENSOR_CONFIG_TOPIC: &str = "wireless.config.sensor";
 const REDPANDA_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn redpanda_security_protocol_uses_tls(config: &SyncConfig) -> bool {
-    config.security_protocol.as_deref().is_some_and(|protocol| {
-        protocol.to_ascii_uppercase().contains("SSL")
-    })
+    config
+        .security_protocol
+        .as_deref()
+        .is_some_and(|protocol| protocol.to_ascii_uppercase().contains("SSL"))
 }
 
 pub fn supports_config_subscriber_transport(config: &SyncConfig) -> bool {
@@ -179,7 +180,9 @@ async fn run_subscriber_once(
         tokio::time::sleep(Duration::from_secs(3600)).await;
         return Ok(());
     };
-    if false || redpanda_bootstrap_servers.starts_with("tls://") {
+    if redpanda_bootstrap_servers.starts_with("tls://")
+        || redpanda_security_protocol_uses_tls(config)
+    {
         return Err(
             "audit config subscriber supports plain redpanda:// endpoints only".to_string(),
         );
@@ -403,7 +406,9 @@ where
         tokio::time::sleep(Duration::from_secs(3600)).await;
         return Ok(());
     };
-    if false || redpanda_bootstrap_servers.starts_with("tls://") {
+    if redpanda_bootstrap_servers.starts_with("tls://")
+        || redpanda_security_protocol_uses_tls(config)
+    {
         return Err("config subscriber supports plain redpanda:// endpoints only".to_string());
     }
     let endpoint = parse_redpanda_endpoint(redpanda_bootstrap_servers)?;

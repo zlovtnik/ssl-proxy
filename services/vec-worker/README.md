@@ -11,7 +11,7 @@ Its main responsibilities are:
 
 - Lease pending embedding jobs from `vec_embedding_jobs`
 - Build embedding text and metadata from the source tables:
-  - `sync_scan_ingest` for event embeddings
+  - `sync_events` for event embeddings
   - `devices` for device embeddings
   - `vec_behaviour_snapshots` for behaviour window embeddings
 - Embed text using an external provider: Ollama or llama.cpp
@@ -71,7 +71,7 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `min(batch_size, VECTOR_EMBEDDING_REQUEST_BATCH_MAX)`
   - Number of texts sent to the provider in one `embed_many` HTTP call.
 - `VECTOR_EMBEDDING_REQUEST_BATCH_MAX`
-  - Default: `64`
+  - Default: `128`
   - Upper bound for the default request batch size when `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE` is unset.
 - `VECTOR_EMBEDDING_LEASE_SECONDS`
   - Default: `1800`
@@ -86,10 +86,10 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `8`
   - Reserved for future per-job prepare parallelism; source fetches use batched `ANY()` queries per chunk.
 - `VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES`
-  - Default: `8`
+  - Default: `16`
   - Limits concurrent per-job completion transactions when bulk complete falls back.
 - `VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS`
-  - Default: `1`
+  - Default: `4`
   - Maximum in-flight embedding HTTP requests across chunks (increase when the provider can serve parallel batches).
 - `DATABASE_POOL_MAX_CONNECTIONS`
   - Default: `max(prepares, completes, embed_requests) + 2`, floor `10`
@@ -125,7 +125,7 @@ Relevant columns:
 - `job_id` — primary key
 - `source_table`, `source_key`
   - identify the row to embed
-  - `source_table` is one of: `sync_scan_ingest`, `devices`, `vec_behaviour_snapshots`
+  - `source_table` is one of: `sync_events`, `devices`, `vec_behaviour_snapshots`
   - `source_key` is the primary key value of that row as text
 - `embedding_model` — model name used for this job
 - `embedding_kind` — one of `event`, `device`, `behaviour_window`
@@ -215,7 +215,7 @@ Usage by vec worker:
 - when a positive `rows_processed` value is reported, it is added to the existing counter
 - `last_cursor` and run timestamps are merged with `COALESCE` so older values are preserved when absent
 
-### `sync_scan_ingest`
+### `sync_events`
 
 This is the source audit table for event embeddings.
 
@@ -355,7 +355,7 @@ The worker supports three embedding kinds.
 
 ### `event`
 
-- Source: `sync_scan_ingest` row where `dedupe_key = source_key`
+- Source: `sync_events` row where `dedupe_key = source_key`
 - Builds text from semantic event fields (frame type, app protocol, transport protocol, security flags, DNS/mDNS names, WPS fields, device fingerprint, handshake captured, protected state, signal, retry, power save, etc.)
 - Includes `kind: event` as the first line
 - Populates `EmbeddingInput` metadata from `observed_at`, `stream_name`, `sensor_id`, `location_id`, and `source_mac`
@@ -440,7 +440,7 @@ If replicas contend on leases but the queue stays deep, increase `VECTOR_EMBEDDI
 
 ## External dependencies: PSQL cron jobs
 
-The vec-worker is a **consumer** of embedding jobs — it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `services/zig-coordinator/schema/postgres.sql` (lines 2004–2045). `pg_cron` must be installed and the `cron` schema available.
+The vec-worker is a **consumer** of embedding jobs - it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `sql/postgres.sql` (lines 2004-2045). `pg_cron` must be installed and the `cron` schema available.
 
 Without these cron jobs the worker would run forever, lease nothing, and produce zero output.
 
@@ -448,21 +448,21 @@ Without these cron jobs the worker would run forever, lease nothing, and produce
 
 | # | Name | Schedule | Function | Produces | Consumed by worker |
 |---|------|----------|----------|----------|--------------------|
-| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_scan_ingest` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` → inserts/updates `pending` rows into `vec_embedding_jobs` | Yes — this is the sole source of work items |
-| 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes — the worker reads `embedding_text` / `text_summary` from this table |
-| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search → `vec_similarity_pairs`, marks dedupe suspects on `sync_scan_ingest`, creates shadow IT alerts | No — consumes worker output |
-| 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping — the worker also does this internally every 10 iterations |
-| 5 | `vec-reap-stale-workers` | `*/5 * * * *` (every 5 min) | `vec_reap_stale_workers()` | Marks dead worker heartbeats in `vec_worker_state` as `stale` | No — observability only |
+| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_events` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` -> inserts/updates `pending` rows into `vec_embedding_jobs` | Yes - this is the sole source of work items |
+| 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes - the worker reads `embedding_text` / `text_summary` from this table |
+| 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search -> `vec_similarity_pairs`, marks dedupe suspects on `wireless_frames`, creates shadow IT alerts | No - consumes worker output |
+| 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping - the worker also does this internally every 10 iterations |
+| 5 | `vec-reap-stale-workers` | `*/5 * * * *` (every 5 min) | `vec_reap_stale_workers()` | Marks dead worker heartbeats in `vec_worker_state` as `stale` | No - observability only |
 
 Jobs #1, #2, and #4 are directly required for the worker to function. If any of them stop running, the embedding pipeline stalls:
 
-- **#1 missing** → `vec_embedding_jobs` stays empty → worker leases nothing
-- **#2 missing** → behaviour window jobs fail because `vec_behaviour_snapshots` rows are never created
-- **#4 missing** → jobs orphaned by a crashed worker are never reclaimed, causing permanent queue stalls
+- **#1 missing** -> `vec_embedding_jobs` stays empty -> worker leases nothing
+- **#2 missing** -> behaviour window jobs fail because `vec_behaviour_snapshots` rows are never created
+- **#4 missing** -> jobs orphaned by a crashed worker are never reclaimed, causing permanent queue stalls
 
 ### Re-embedding on text builder changes
 
-Migration `V021__vec_reembed_jobs_function.sql` adds `vec_reembed_changed_jobs(p_limit)` — a helper function that re-queues embedding jobs for rows whose stored `content_sha256` no longer matches the SHA-256 of `content_text`. It is **not** scheduled by cron; it is an on-demand function to be called manually (or via a one-shot job) after text builder changes are deployed:
+Migration `V021__vec_reembed_jobs_function.sql` adds `vec_reembed_changed_jobs(p_limit)` - a helper function that re-queues embedding jobs for rows whose stored `content_sha256` no longer matches the SHA-256 of `content_text`. It is **not** scheduled by cron; it is an on-demand function to be called manually (or via a one-shot job) after text builder changes are deployed:
 
 ```sql
 SELECT vec_reembed_changed_jobs(p_limit => 1000);
@@ -470,8 +470,8 @@ SELECT vec_reembed_changed_jobs(p_limit => 1000);
 
 ### Where the cron definitions live
 
-```
-services/zig-coordinator/schema/postgres.sql  →  vec_install_cron_jobs()  (end of file)
+```text
+sql/postgres.sql  ->  vec_install_cron_jobs()  (end of file)
 ```
 
 The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_snapshots`, `vec_materialize_similarity_pairs`, `vec_release_expired_leases`, `vec_reap_stale_workers`) are defined in the same file, lines 1175–2002.
@@ -483,4 +483,523 @@ The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_sna
 - `services/vec-worker/src/worker.rs` — leasing loop, batch processing, job lifecycle, shutdown
 - `services/vec-worker/src/db.rs` — Postgres access, job update, embedding upsert, worker heartbeat
 - `services/vec-worker/src/text_builder.rs` — source row reads and embedding text construction
-- `services/zig-coordinator/schema/postgres.sql` — Postgres table definitions and helper functions used by the worker
+
+- `sql/postgres.sql` — Postgres table definitions and helper functions used by the worker
+
+# vec-worker: Performance & Correctness Recovery
+## From 55 jobs/min → target 2,000+ jobs/min
+
+---
+
+## Situation assessment from your queue metrics
+
+| Signal | Value | Diagnosis |
+|--------|-------|-----------|
+| `behaviour_window` jobs | 664 failed, 0 completed | **100% failure — broken, not slow** |
+| `event` jobs/min (15m avg) | 55.87 | Severely throttled vs architecture capacity |
+| `event` jobs/min (1h avg) | 7,215 / 60 = 120/min | Inconsistent — suggests intermittent stalls |
+| Currently leased | 0 | Worker idle between polls at time of snapshot |
+| ETA at current rate | 2026-05-29 | 8 days for 621K jobs — unacceptable |
+| Oldest remaining | 2026-05-16 | Jobs sitting for 5 days, not being processed |
+
+The 1h rate (120/min) vs 15m rate (55/min) tells you the worker is getting worse
+over time during this session, not better. This is either a memory pressure issue,
+a pool exhaustion issue, or the alert sweep introduced in the last change is blocking
+the embedding loop.
+
+# vec-worker: Frame Sequences & Null Column Fix Workmap
+
+**Scope:** `vec_frame_sequences` empty, `vec_transition_model` empty, null columns
+propagating from `wireless_authorized_networks` / `sync_events_expanded` into
+embedded text and alert logic.
+
+---
+
+## Root Cause Inventory
+
+### RC-1 — `vec_build_baseline_profiles` is defined twice and clobbers `vec_frame_sequences` population
+
+`postgres.sql` contains **two `CREATE OR REPLACE FUNCTION vec_build_baseline_profiles`**
+definitions. The first one (lines ~1990–2030) is actually the frame sequence builder —
+it inserts into `vec_frame_sequences` — but it is named `vec_build_baseline_profiles`
+with the signature `(p_from, p_to)`. The second definition (lines ~2050+) is the real
+baseline profile builder with `(p_from, p_to, p_window)`.
+
+Because the second definition has a different signature, **both functions coexist**.
+The cron job registered as `vec-build-baseline-profiles` calls
+`vec_build_baseline_profiles()` (zero args), which resolves to whichever overload
+PostgreSQL picks — in practice neither populates `vec_frame_sequences` because the
+cron name and the function name are mismatched: the cron job that should call the
+frame-sequence builder does not exist.
+
+The `vec_install_cron_jobs()` block registers:
+- `vec-build-baseline-profiles` → `vec_build_baseline_profiles()` ✓ (baseline)
+- **No cron job exists for `vec_build_frame_sequences()`** ✗
+
+`vec_frame_sequences` is therefore **never populated by any cron job**.
+
+### RC-2 — `vec_enqueue_embedding_jobs` enqueues `frame_sequence` jobs against `session_key` but the builder mismatches
+
+`vec_enqueue_embedding_jobs` does not enqueue `frame_sequence` jobs at all — there is
+no `frame_sequence_jobs` CTE in the function body. The `text_builder.rs` dispatches on
+`"frame_sequence"` but no jobs are ever created, so the builder is dead code.
+
+### RC-3 — `wireless_authorized_networks` columns surface as null in `sync_events_expanded`
+
+`sync_events_expanded` is a plain view joining `sync_events` and `wireless_frames`.
+`wireless_frames` stores `location_id` and `sensor_id` as nullable text, populated via
+`coordinator.upsert_wireless_frame_from_payload` using `nullif(payload->>'...', '')`.
+
+When the sensor does not send `location_id` or `sensor_id` in the payload (older schema
+versions, or the field is empty string), the columns are null in both `wireless_frames`
+and consequently in `sync_events_expanded`. The behaviour snapshot builder, text
+builder, and alert functions all use `COALESCE(column, payload->>'column')` — but if
+the payload field is also absent or empty, null propagates into:
+
+- `vec_behaviour_snapshots.location_id` / `sensor_id`
+- `vec_frame_sequences.location_id` / `sensor_id`
+- `EmbeddingInput.source_sensor_id` / `source_location_id`
+- `CompleteBatchRow.source_sensor_id` / `source_location_id`
+- `vec_alerts.sensor_id` / `location_id`
+
+The `wireless_authorized_networks` table is unrelated to the null propagation — it is
+only consulted by `coordinator.generate_shadow_alerts()` for authorized-network
+lookups. Its `location_id` being null is intentional (null = match any location). The
+confusion likely arises because `v_device_repetition_score` and `v_ap_risk_score` join
+through `vec_similarity_pairs` which stores null `left_sensor_id` / `right_sensor_id`
+when the source row had null values.
+
+### RC-4 — `vec_transition_model` is never populated before `vec_score_sequence` is called
+
+The cron job `vec-update-transition-model` is registered (every 15 min) but
+`vec_update_transition_model()` aggregates from `sync_events_expanded` using
+`payload->>'frame_subtype'`. The `frame_subtype` field is stored in
+`wireless_frames.frame_subtype` but the expanded view accesses it as
+`payload->>'frame_subtype'` (JSONB extraction). If the field was inserted into
+the `wireless_frames` column (not left in the payload JSONB), the extraction
+returns null and the CTE produces zero rows, so the model stays empty.
+
+In `text_builder.rs`, `build_frame_sequences_batch` calls
+`vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+'))` inline in
+the SQL — this returns `0.0` for every sequence when the transition model is empty
+(the vocab-size fallback sets `v_vocab_size = 16` but all bigram counts are 0, so
+every bigram gets uniform probability and the log-prob is non-zero but meaningless).
+The bigger issue is that with an empty `vec_frame_sequences`, no jobs are ever created
+for this kind.
+
+### RC-5 — `build_ego_graph_input` produces a Cartesian-product LATERAL that can generate duplicate `query_key` rows
+
+In `build_infrastructure_subgraphs_batch`, the LATERAL subquery emitting `endpoint`
+unions `node_a` and `node_b` for every matching row, which means a single edge where
+both `node_a` and `node_b` are in the key set generates **two rows** with the same
+underlying edge data but different `query_key` values. This is correct for grouping
+but means the `grouped` HashMap accumulates duplicate edge structs, inflating client /
+vendor counts in the embedded text.
+
+---
+
+## Fix Workmap
+
+Each fix is independent. Order follows impact.
+
+---
+
+### Fix 1 — Add the missing `vec_build_frame_sequences` cron job and rename the mislabeled function
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** The first overload of `vec_build_baseline_profiles(p_from, p_to)` is
+actually a frame-sequence builder (it inserts into `vec_frame_sequences`). It is
+never called by the cron schedule. The real baseline builder is the second overload.
+
+**Steps:**
+
+1. Rename the first `vec_build_baseline_profiles(p_from, p_to)` function to
+   `vec_build_frame_sequences(p_from, p_to)` throughout the file.
+
+2. Drop the old mislabeled overload before creating the renamed one:
+
+```sql
+DROP FUNCTION IF EXISTS vec_build_baseline_profiles(timestamptz, timestamptz);
+
+CREATE OR REPLACE FUNCTION vec_build_frame_sequences(
+  p_from timestamptz DEFAULT now() - interval '2 hours',
+  p_to   timestamptz DEFAULT now()
+)
+RETURNS integer
+LANGUAGE plpgsql
+AS $$
+-- (body unchanged — same INSERT INTO vec_frame_sequences CTE)
+$$;
+```
+
+3. In `vec_install_cron_jobs()`, add the missing schedule:
+
+```sql
+PERFORM cron.schedule(
+  'vec-build-frame-sequences',
+  '*/5 * * * *',
+  $cron$SELECT vec_build_frame_sequences();$cron$
+);
+```
+
+4. Verify no other callers reference the old name:
+
+```sql
+SELECT proname, pronargs, proargtypes
+FROM pg_proc
+WHERE proname = 'vec_build_baseline_profiles';
+-- Should return exactly one row (the 3-arg baseline version)
+```
+
+---
+
+### Fix 2 — Add `frame_sequence` job enqueuing to `vec_enqueue_embedding_jobs`
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** `vec_enqueue_embedding_jobs` has no CTE for `frame_sequence` jobs, so
+`vec_frame_sequences` rows are never queued for embedding even after Fix 1 populates
+the table.
+
+**Steps:**
+
+Add a `frame_sequence_jobs` CTE inside `vec_enqueue_embedding_jobs`, mirroring the
+`behaviour_jobs` pattern:
+
+```sql
+frame_sequence_jobs AS (
+  SELECT
+    'vec_frame_sequences'::text AS source_table,
+    fs.session_key               AS source_key,
+    p_model                      AS embedding_model,
+    'frame_sequence'::text       AS embedding_kind,
+    18                           AS priority
+  FROM vec_frame_sequences fs
+  LEFT JOIN vec_embeddings existing
+    ON existing.source_table  = 'vec_frame_sequences'
+   AND existing.source_key    = fs.session_key
+   AND existing.embedding_model = p_model
+   AND existing.embedding_kind  = 'frame_sequence'
+  WHERE existing.embedding_id IS NULL
+     OR fs.updated_at > existing.embedded_at
+),
+```
+
+Then include `frame_sequence_jobs` in the final UNION inside `jobs`:
+
+```sql
+UNION ALL
+SELECT * FROM frame_sequence_jobs
+```
+
+---
+
+### Fix 3 — Fix `vec_update_transition_model` to read from the column, not just the payload
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** The function uses `payload->>'frame_subtype'` but `frame_subtype` is a
+parsed column on `wireless_frames` (and therefore on `sync_events_expanded`). When
+the field was parsed and stored in the column, the payload accessor returns null.
+
+**Steps:**
+
+Replace the JSONB extraction with a COALESCE that prefers the parsed column:
+
+```sql
+-- Before (in vec_update_transition_model windowed CTE):
+coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype
+
+-- The existing query already aliases a field named frame_subtype from
+-- sync_events_expanded. Confirm the column is present in the view and
+-- remove the payload fallback only when confirmed:
+SELECT frame_subtype, payload->>'frame_subtype'
+FROM sync_events_expanded
+WHERE stream_name = 'wireless.audit'
+  AND observed_at >= now() - interval '1 hour'
+LIMIT 10;
+```
+
+If the column is consistently populated, simplify to:
+
+```sql
+COALESCE(
+  NULLIF(frame_subtype, ''),
+  NULLIF(payload->>'frame_subtype', '')
+) AS frame_subtype
+```
+
+The same fix applies to `vec_build_frame_sequences` (the renamed function from Fix 1):
+
+```sql
+-- In the prepared CTE of vec_build_frame_sequences:
+COALESCE(
+  NULLIF(frame_subtype, ''),
+  NULLIF(payload->>'frame_subtype', '')
+) AS frame_subtype
+```
+
+Add a diagnostic query to confirm population before relying on the model:
+
+```sql
+SELECT COUNT(*) FROM vec_transition_model;
+-- If 0 after a manual SELECT vec_update_transition_model():
+-- run the column audit above to confirm the root cause.
+```
+
+---
+
+### Fix 4 — Null-safe location_id / sensor_id in all vec_ builder functions
+
+**Files:** `sql/postgres.sql`, `services/vec-worker/src/text_builder.rs`
+
+**Problem:** When `location_id` or `sensor_id` is null in the source row, it propagates
+through `EmbeddingInput` into `CompleteBatchRow` and then into `vec_embeddings` and
+`vec_alerts`. This is mostly harmless for storage but breaks alert cooldown deduplication
+when the `WHERE ... AND sensor_id = $sensor_id` predicate is used with nulls.
+
+**SQL side — `vec_build_behaviour_snapshots`:** already uses `min(sensor_id) FILTER
+(WHERE sensor_id IS NOT NULL)`, so this is handled. No change needed there.
+
+**SQL side — `vec_build_frame_sequences` (renamed Fix 1 function):** the `prepared` CTE
+uses bare `sensor_id` and `location_id` fields. Add explicit null-filter coalescing:
+
+```sql
+-- In the prepared CTE grouping:
+MIN(NULLIF(COALESCE(sensor_id, payload->>'sensor_id'), '')) AS sensor_id,
+MIN(NULLIF(COALESCE(location_id, payload->>'location_id'), '')) AS location_id,
+```
+
+**Rust side — `text_builder.rs`:** `frame_sequence_row_to_input` skips the sensor/location
+lines when values are `None` — this is correct behavior. No change needed.
+
+**Alert cooldown queries — `alerts.rs`:** the `IS NOT DISTINCT FROM` operator already
+handles null equality correctly in `check_near_duplicates`. No change needed there.
+
+**Verify the null volume before and after:**
+
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE sensor_id IS NULL)     AS null_sensor,
+  COUNT(*) FILTER (WHERE location_id IS NULL)   AS null_location,
+  COUNT(*)                                       AS total
+FROM vec_frame_sequences;
+```
+
+---
+
+### Fix 5 — Deduplicate LATERAL endpoint expansion in `build_infrastructure_subgraphs_batch`
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** The LATERAL in `build_infrastructure_subgraphs_batch` emits one row per
+matching endpoint per edge. When a `bssid` appears as both `node_a` and `node_b` in
+different edges, the same edge struct is added twice to the grouped HashMap, doubling
+client/vendor counts.
+
+**Steps:**
+
+Replace the LATERAL with a simpler `WHERE` clause that uses `DISTINCT ON` to emit each
+edge once per matching query key:
+
+```sql
+-- Replace the existing LATERAL block with:
+SELECT DISTINCT ON (
+    LEAST(node_a, node_b),
+    GREATEST(node_a, node_b),
+    edge_type,
+    endpoint
+  )
+  endpoint AS query_key,
+  node_a, node_a_type,
+  node_b, node_b_type,
+  edge_type, weight::float8, last_seen
+FROM vec_infrastructure_graph
+CROSS JOIN LATERAL (
+  VALUES
+    (CASE WHEN node_a = ANY($1::text[]) THEN node_a END),
+    (CASE WHEN node_b = ANY($1::text[]) THEN node_b END)
+) AS endpoints(endpoint)
+WHERE endpoint IS NOT NULL
+ORDER BY
+  LEAST(node_a, node_b),
+  GREATEST(node_a, node_b),
+  edge_type,
+  endpoint,
+  last_seen DESC;
+```
+
+This guarantees one row per (edge, matching-key) combination, eliminating the
+inflation.
+
+---
+
+### Fix 6 — Register `frame_sequence` HNSW index for `vec_similarity_pairs` matching
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** `vec_similarity_pairs` has a `sequence_sequence` pair kind in its check
+constraint but `vec_materialize_similarity_pairs` never generates `sequence_sequence`
+pairs. Without HNSW-driven similarity search for frame sequences, the MAC-rotation and
+attack-pattern detection tracks (Track 2.2) cannot function.
+
+**Steps:**
+
+The HNSW index `vec_embeddings_frame_sequence_hnsw_768_idx` already exists in the
+schema. Add a `sequence_sequence` block to `vec_materialize_similarity_pairs` mirroring
+the `event_event` block:
+
+```sql
+-- Inside vec_materialize_similarity_pairs, after the behaviour_window block:
+WITH seq_candidates AS (
+  SELECT
+    LEAST(e1.embedding_id, neighbor.embedding_id)    AS left_embedding_id,
+    GREATEST(e1.embedding_id, neighbor.embedding_id) AS right_embedding_id,
+    MIN(neighbor.cosine_distance)                    AS cosine_distance
+  FROM vec_embeddings e1
+  JOIN LATERAL (
+    SELECT
+      e2.embedding_id,
+      (e2.embedding::vector(768) <=> e1.embedding::vector(768)) AS cosine_distance
+    FROM vec_embeddings e2
+    WHERE e2.embedding_kind       = 'frame_sequence'
+      AND e2.embedding_model      = p_model
+      AND e2.embedding_dimensions = 768
+      AND e2.embedding_id        <> e1.embedding_id
+    ORDER BY e2.embedding::vector(768) <=> e1.embedding::vector(768)
+    LIMIT GREATEST(p_top_k, 1)
+  ) neighbor ON TRUE
+  WHERE e1.embedding_kind       = 'frame_sequence'
+    AND e1.embedding_model      = p_model
+    AND e1.embedding_dimensions = 768
+    AND neighbor.cosine_distance <= 0.10  -- tunable threshold
+  GROUP BY
+    LEAST(e1.embedding_id, neighbor.embedding_id),
+    GREATEST(e1.embedding_id, neighbor.embedding_id)
+)
+INSERT INTO vec_similarity_pairs (
+  pair_kind, embedding_model, embedding_kind,
+  left_embedding_id, right_embedding_id,
+  left_source_table, left_source_key, left_source_mac,
+  left_sensor_id, left_location_id, left_observed_at,
+  right_source_table, right_source_key, right_source_mac,
+  right_sensor_id, right_location_id, right_observed_at,
+  cosine_distance, cosine_similarity, rank, evidence,
+  computed_at, created_at, updated_at
+)
+SELECT
+  'sequence_sequence', p_model, 'frame_sequence',
+  c.left_embedding_id, c.right_embedding_id,
+  le.source_table, le.source_key, le.source_mac,
+  le.source_sensor_id, le.source_location_id, le.source_observed_at,
+  re.source_table, re.source_key, re.source_mac,
+  re.source_sensor_id, re.source_location_id, re.source_observed_at,
+  c.cosine_distance,
+  1 - c.cosine_distance,
+  1,
+  jsonb_build_object('detector', 'similar_frame_sequence', 'threshold', 0.10),
+  now(), now(), now()
+FROM seq_candidates c
+JOIN vec_embeddings le ON le.embedding_id = c.left_embedding_id
+JOIN vec_embeddings re ON re.embedding_id = c.right_embedding_id
+ON CONFLICT (pair_kind, embedding_model, embedding_kind,
+             left_embedding_id, right_embedding_id)
+DO UPDATE SET
+  cosine_distance  = EXCLUDED.cosine_distance,
+  cosine_similarity = EXCLUDED.cosine_similarity,
+  computed_at      = now(),
+  updated_at       = now();
+```
+
+---
+
+## Verification Queries
+
+Run these in order after deploying fixes. All should return non-zero row counts
+within 10–15 minutes of cron execution.
+
+```sql
+-- 1. Confirm vec_build_frame_sequences is correctly named
+SELECT proname, pronargs
+FROM pg_proc
+WHERE proname IN ('vec_build_frame_sequences', 'vec_build_baseline_profiles');
+
+-- 2. Confirm cron jobs are registered
+SELECT jobname, schedule, command
+FROM cron.job
+WHERE jobname LIKE 'vec-%'
+ORDER BY jobname;
+
+-- 3. Manually trigger frame sequence build and inspect
+SELECT vec_build_frame_sequences();
+SELECT COUNT(*), MIN(window_start), MAX(window_end) FROM vec_frame_sequences;
+
+-- 4. Manually trigger transition model update and inspect
+SELECT vec_update_transition_model();
+SELECT COUNT(*) FROM vec_transition_model;
+SELECT SUM(count) AS total_bigrams FROM vec_transition_model;
+
+-- 5. Confirm frame_sequence jobs are being enqueued
+SELECT vec_enqueue_embedding_jobs();
+SELECT embedding_kind, COUNT(*), MIN(due_at), MAX(due_at)
+FROM vec_embedding_jobs
+GROUP BY embedding_kind
+ORDER BY embedding_kind;
+
+-- 6. Confirm null rate in frame sequences after Fix 4
+SELECT
+  COUNT(*) FILTER (WHERE sensor_id IS NULL)   AS null_sensor,
+  COUNT(*) FILTER (WHERE location_id IS NULL) AS null_location,
+  COUNT(*) AS total
+FROM vec_frame_sequences;
+
+-- 7. Confirm vec_score_sequence returns meaningful values after model population
+SELECT vec_score_sequence(ARRAY['BEACON', 'AUTH', 'ASSOC_REQ', 'EAPOL', 'DATA_QOS']);
+-- Expect a negative log-prob, e.g. -5.2 to -12.0 for a common sequence
+
+-- 8. Spot-check infrastructure graph ego-graph for duplicate inflation
+SELECT node_a, COUNT(*) AS edge_count
+FROM vec_infrastructure_graph
+WHERE node_a_type = 'bssid'
+GROUP BY node_a
+ORDER BY edge_count DESC
+LIMIT 5;
+-- Compare with what build_ego_graph_input reports for the same bssid
+```
+
+---
+
+## Deployment Order
+
+| Step | Action | Risk |
+|------|--------|------|
+| 1 | Run verification queries above to establish baseline counts | None |
+| 2 | Apply Fix 3 (column vs payload COALESCE) — safest, additive only | Low |
+| 3 | Apply Fix 1 (rename function + add cron) — requires DROP of mislabeled overload | Medium — brief window where frame sequences not built |
+| 4 | Apply Fix 2 (add frame_sequence to enqueue function) | Low |
+| 5 | Apply Fix 4 (null-safe location/sensor in frame sequences) | Low |
+| 6 | Apply Fix 5 (deduplicate LATERAL) | Low |
+| 7 | Apply Fix 6 (sequence_sequence similarity pairs) | Low |
+| 8 | `SELECT vec_build_frame_sequences()` manually to backfill | None |
+| 9 | `SELECT vec_update_transition_model()` manually to bootstrap | None |
+| 10 | `SELECT vec_enqueue_embedding_jobs()` manually to queue backfill | None |
+| 11 | Run verification queries again — confirm all counts non-zero | None |
+| 12 | Monitor `batch timing` logs in vec-worker for `frame_sequence` jobs appearing | None |
+
+---
+
+## One-liner Backfill After Deploy
+
+```sql
+-- Run once after all fixes are applied to bootstrap the pipeline end-to-end
+DO $$
+BEGIN
+  PERFORM vec_build_frame_sequences(NOW() - INTERVAL '7 days', NOW());
+  PERFORM vec_update_transition_model();
+  PERFORM vec_build_baseline_profiles(NOW() - INTERVAL '7 days', NOW());
+  PERFORM vec_enqueue_embedding_jobs();
+  RAISE NOTICE 'Backfill complete. Check vec_frame_sequences, vec_transition_model, and vec_embedding_jobs.';
+END;
+$$;
+```

@@ -1,7 +1,7 @@
 //! Two-tier persistence strategy for wireless audit event publishing.
 //!
 //! Implements a dual-path publish pipeline: primary path publishes to Redpanda; fallback path
-//! asks the coordinator to save audit_backlog retry rows. When Redpanda
+//! asks the coordinator to save sync_backlog retry rows. When Redpanda
 //! is unavailable, a circuit breaker opens and events are queued in an in-memory backlog until
 //! connectivity is restored. The circuit breaker uses exponential backoff, with automatic
 //! re-probing after the backoff timeout elapses. When the memory backlog cannot be flushed,
@@ -88,6 +88,7 @@ impl PublishClient for SyncPublisherClient {
 const CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS: u64 = 10_000;
 const CIRCUIT_BREAKER_MAX_TIMEOUT_MS: u64 = 320_000;
 const DEFAULT_MEMORY_BACKLOG_SIZE: usize = 1024;
+const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
 
 type MemoryBacklogEntry = (String, String, String, String);
 pub type SharedPublishState = Arc<Mutex<PublishState>>;
@@ -107,6 +108,7 @@ pub struct PublishState {
     circuit_breaker_failure_count: u32,
     circuit_breaker_initial_timeout_ms: u64,
     circuit_breaker_max_timeout_ms: u64,
+    circuit_open_last_warn_bucket: Option<u64>,
     memory_backlog: LruCache<String, MemoryBacklogEntry>,
     memory_backlog_capacity: NonZeroUsize,
     journal_path: Option<PathBuf>,
@@ -120,6 +122,7 @@ impl Default for PublishState {
             circuit_breaker_failure_count: 0,
             circuit_breaker_initial_timeout_ms: CIRCUIT_BREAKER_INITIAL_TIMEOUT_MS,
             circuit_breaker_max_timeout_ms: CIRCUIT_BREAKER_MAX_TIMEOUT_MS,
+            circuit_open_last_warn_bucket: None,
             memory_backlog: LruCache::new(NonZeroUsize::new(DEFAULT_MEMORY_BACKLOG_SIZE).unwrap()),
             memory_backlog_capacity: NonZeroUsize::new(DEFAULT_MEMORY_BACKLOG_SIZE).unwrap(),
             journal_path: None,
@@ -147,6 +150,7 @@ impl PublishState {
             circuit_breaker_failure_count: 0,
             circuit_breaker_initial_timeout_ms: initial_timeout,
             circuit_breaker_max_timeout_ms: max_timeout,
+            circuit_open_last_warn_bucket: None,
             memory_backlog: LruCache::new(capacity),
             memory_backlog_capacity: capacity,
             journal_path,
@@ -177,11 +181,15 @@ impl PublishState {
                 String::new(),
             ),
         ) {
-            warn!(
+            error!(
                 evicted_dedupe_key = %evicted_key,
                 evicted_stream_name = %evicted_stream,
                 memory_backlog_capacity = self.memory_backlog_capacity.get(),
-                "memory backlog full; evicted oldest entry"
+                circuit_breaker = ?self.circuit_breaker_state,
+                circuit_open_ms = self
+                    .circuit_breaker_opened_at
+                    .map(|opened_at| opened_at.elapsed().as_millis() as u64),
+                "memory backlog eviction -- oldest audit entry lost; Redpanda likely unreachable"
             );
         }
         self.memory_backlog.len()
@@ -191,9 +199,6 @@ impl PublishState {
         let Some(ref journal_path) = self.journal_path else {
             return;
         };
-        if let Some(parent) = journal_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let entry = serde_json::json!({
             "dedupe_key": dedupe_key,
             "stream_name": stream_name,
@@ -202,6 +207,22 @@ impl PublishState {
             "timestamp": ssl_proxy::time::now_rfc3339(),
         });
         let line = serde_json::to_string(&entry).unwrap_or_default();
+        let pending_bytes = line.as_bytes().len() as u64 + 1; // +1 for trailing newline
+        let existing_size = std::fs::metadata(journal_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if pending_bytes > MAX_JOURNAL_BYTES || existing_size + pending_bytes > MAX_JOURNAL_BYTES {
+            warn!(
+                journal_path = %journal_path.display(),
+                size_bytes = existing_size,
+                pending_bytes,
+                "publish journal would exceed 32 MB limit; skipping append to prevent disk fill"
+            );
+            return;
+        }
+        if let Some(parent) = journal_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Err(e) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -228,6 +249,14 @@ impl PublishState {
 
     pub fn memory_backlog_capacity(&self) -> NonZeroUsize {
         self.memory_backlog_capacity
+    }
+
+    pub fn journal_bytes(&self) -> u64 {
+        self.journal_path
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).ok())
+            .map(|meta| meta.len())
+            .unwrap_or(0)
     }
 }
 
@@ -467,8 +496,22 @@ fn circuit_breaker_is_open(
         CircuitBreakerState::Closed => false,
         CircuitBreakerState::Open => {
             if let Some(opened_at) = state.circuit_breaker_opened_at {
+                let elapsed = opened_at.elapsed();
                 let timeout = state.circuit_breaker_timeout();
-                if opened_at.elapsed() < timeout {
+                const WARN_BUCKET_SIZE: u64 = 60;
+                let bucket_id = elapsed.as_secs() / WARN_BUCKET_SIZE;
+                if state.circuit_open_last_warn_bucket != Some(bucket_id) {
+                    state.circuit_open_last_warn_bucket = Some(bucket_id);
+                    warn!(
+                        circuit_open_secs = elapsed.as_secs(),
+                        circuit_timeout_ms = timeout.as_millis() as u64,
+                        failure_count = state.circuit_breaker_failure_count,
+                        memory_backlog_len = state.memory_backlog.len(),
+                        memory_backlog_cap = state.memory_backlog_capacity.get(),
+                        "Redpanda circuit breaker still open -- audit entries accumulating in memory"
+                    );
+                }
+                if elapsed < timeout {
                     let memory_backlog_entries = state.put_memory_backlog(
                         dedupe_key.to_string(),
                         stream_name.to_string(),
@@ -480,7 +523,7 @@ fn circuit_breaker_is_open(
                         dedupe_key,
                         publish_error = %error,
                         memory_backlog_entries,
-                        circuit_open_for_ms = opened_at.elapsed().as_millis() as u64,
+                        circuit_open_for_ms = elapsed.as_millis() as u64,
                         circuit_breaker_timeout_ms = timeout.as_millis() as u64,
                         failure_count = state.circuit_breaker_failure_count,
                         "backlog circuit breaker open; queued audit entry in memory"
@@ -490,6 +533,7 @@ fn circuit_breaker_is_open(
             }
             state.circuit_breaker_state = CircuitBreakerState::HalfOpen;
             state.circuit_breaker_opened_at = None;
+            state.circuit_open_last_warn_bucket = None;
             info!(
                 dedupe_key,
                 "backlog circuit breaker probe starting (half-open)"
@@ -516,6 +560,7 @@ fn queue_in_memory_after_backlog_failure(
         s.circuit_breaker_state = CircuitBreakerState::Open;
         s.circuit_breaker_opened_at = Some(Instant::now());
         s.circuit_breaker_failure_count = s.circuit_breaker_failure_count.saturating_add(1);
+        s.circuit_open_last_warn_bucket = None;
         error!(
             dedupe_key = %dedupe_key,
             publish_error = %error,
@@ -672,6 +717,7 @@ fn close_backlog_circuit_breaker(state: &SharedPublishState) {
         s.circuit_breaker_state = CircuitBreakerState::Closed;
         s.circuit_breaker_opened_at = None;
         s.circuit_breaker_failure_count = 0;
+        s.circuit_open_last_warn_bucket = None;
         info!("backlog circuit breaker closed, backlog resumed");
     }
 }
@@ -1158,8 +1204,10 @@ mod tests {
             threshold_exceeded: false,
             frame_size_histogram: Default::default(),
             inter_arrival_p50_ms: Some(500),
+            inter_arrival_cv: None,
             wall_clock_delta_ms: None,
             window_is_partial: false,
+            max_risk_score: None,
             published_at: None,
         };
 
@@ -1322,6 +1370,26 @@ mod tests {
 
         state.circuit_breaker_failure_count = 3;
         assert_eq!(state.circuit_breaker_timeout(), Duration::from_millis(20));
+    }
+
+    #[test]
+    fn journal_append_skips_when_size_limit_is_exceeded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let journal_path = temp_dir.path().join("publish.jsonl");
+        let file = std::fs::File::create(&journal_path).unwrap();
+        file.set_len(MAX_JOURNAL_BYTES + 1).unwrap();
+        let state = PublishState::shared_with_config(
+            NonZeroUsize::new(64).unwrap(),
+            Some(journal_path),
+            5,
+            20,
+        );
+
+        {
+            let state = state.lock().unwrap();
+            state.journal_append("dedupe-1", WIRELESS_AUDIT_TOPIC, "{}", "unavailable");
+            assert_eq!(state.journal_bytes(), MAX_JOURNAL_BYTES + 1);
+        }
     }
 
     #[tokio::test]

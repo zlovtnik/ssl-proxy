@@ -9,7 +9,7 @@ pub(crate) fn insert_wireless_client_inventory_transaction(
     rows: &[WirelessClientInventoryInsert],
 ) -> Result<u64, String> {
     const SQL: &str = r#"
-        merge into WL_CLIENT_INVENTORY tgt
+        merge into WIRELESS_CLIENT_INVENTORY tgt
         using (
             select :1 SENSOR_ID, :2 LOCATION_ID, :3 SNAPSHOT_AT, :4 CLIENT_MAC,
                    :5 BSSID, :6 SSID, :7 DEVICE_ID, :8 USERNAME, :9 IDENTITY_SOURCE,
@@ -60,7 +60,7 @@ pub(crate) fn insert_wireless_client_inventory_transaction(
         ];
         connection.execute(SQL, &params).map_err(|error| {
             format!(
-                "merge WL_CLIENT_INVENTORY client_mac={}: {}",
+                "merge WIRELESS_CLIENT_INVENTORY client_mac={}: {}",
                 row.client_mac,
                 error_chain(&error)
             )
@@ -68,7 +68,7 @@ pub(crate) fn insert_wireless_client_inventory_transaction(
     }
     connection
         .commit()
-        .map_err(|error| format!("commit WL_CLIENT_INVENTORY batch: {}", error_chain(&error)))?;
+        .map_err(|error| format!("commit WIRELESS_CLIENT_INVENTORY batch: {}", error_chain(&error)))?;
     Ok(rows.len() as u64)
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn insert_wireless_probe_requests_transaction(
     rows: &[WirelessProbeRequestInsert],
 ) -> Result<u64, String> {
     const SQL: &str = r#"
-        merge into WL_PROBE_REQUESTS tgt
+        merge into WIRELESS_PROBE_REQUESTS tgt
         using (
             select :1 BATCH_ID, :2 CLIENT_MAC, :3 SSID, :4 KNOWN_BSSID,
                    :5 FIRST_SEEN, :6 LAST_SEEN, :7 PROBE_COUNT
@@ -113,7 +113,7 @@ pub(crate) fn insert_wireless_probe_requests_transaction(
         ];
         connection.execute(SQL, &params).map_err(|error| {
             format!(
-                "merge WL_PROBE_REQUESTS row_sequence={}: {}",
+                "merge WIRELESS_PROBE_REQUESTS row_sequence={}: {}",
                 row.row_sequence,
                 error_chain(&error)
             )
@@ -121,6 +121,6 @@ pub(crate) fn insert_wireless_probe_requests_transaction(
     }
     connection
         .commit()
-        .map_err(|error| format!("commit WL_PROBE_REQUESTS batch: {}", error_chain(&error)))?;
+        .map_err(|error| format!("commit WIRELESS_PROBE_REQUESTS batch: {}", error_chain(&error)))?;
     Ok(rows.len() as u64)
 }

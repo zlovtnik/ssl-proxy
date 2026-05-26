@@ -70,15 +70,16 @@ use crate::{
     config::AppConfig,
     detect_state::{
         AttackTimelineCorrelator, AuthorizationStatus, AuthorizedNetworkCache, ClientInventory,
-        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SignalTracker, ATTACK_SEQUENCE_TOPIC,
-        CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
+        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SequenceTracker,
+        SignalTracker, ATTACK_SEQUENCE_TOPIC, SEQUENCE_ALERT_TOPIC, CLIENT_INVENTORY_TOPIC,
+        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
     model::{AuditContext, EnrichedFrame, RawPacket},
     parse::{
         attach_context, decode_frame, to_audit_entry, try_decrypt_frame, HandshakeMonitor,
-        IdentityCache,
+        IdentityCache, ParseError,
     },
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
@@ -93,10 +94,19 @@ const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
 const SIGNAL_ANOMALY_TOPIC: &str = "wireless.alert.signal_anomaly";
 const PMF_ATTACK_TOPIC: &str = "wireless.alert.pmf_attack";
+const SENSOR_HEARTBEAT_TOPIC: &str = "wireless.sensor.heartbeat";
 const BACKLOG_RECONCILE_INTERVAL_SECS: u64 = 60;
 const BACKLOG_PRUNE_INTERVAL_SECS: u64 = 3_600;
 const BACKLOG_PRUNE_MAX_ATTEMPTS: i32 = 10;
 const BACKLOG_PRUNE_MAX_AGE_HOURS: i64 = 72;
+
+fn hex_prefix(data: &[u8], n: usize) -> String {
+    data.iter()
+        .take(n)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 async fn run_healthcheck() -> Result<(), SensorError> {
     // Verify config loads correctly
@@ -247,7 +257,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                         stats.lag_total_ms = stats.lag_total_ms.saturating_add(lag_ms);
                         stats.lag_count += 1;
                     }
-                    Ok(PipelineOutcome::UnsupportedFrame) => handles.stats.lock().unwrap().unsupported_frames += 1,
+                    Ok(PipelineOutcome::UnsupportedFrame) => {}
                     Err(error) => {
                         handles.stats.lock().unwrap().pipeline_errors += 1;
                         error!(%error, "wireless packet pipeline failed");
@@ -255,7 +265,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                 }
             }
             _ = tick_capture_heartbeat(&mut heartbeat) => {
-                handles.stats.lock().unwrap().log(&handles.device, &handles.config);
+                log_and_publish_capture_heartbeat(&handles);
             }
             _ = bandwidth_flush.tick() => {
                 let ttl = Duration::from_secs(handles.config.handshake_ttl_secs);
@@ -279,6 +289,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     let mut stats = handles.stats.lock().unwrap();
                     stats.bandwidth_window_lag_ms = median_lag;
                     stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
+                    stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
                 }
                 publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
             }
@@ -312,11 +323,19 @@ async fn run_sensor() -> Result<(), SensorError> {
                     })
                     .collect::<Vec<_>>();
                 if let Err(error) = handles.backlog.flush_probe_batch(&batch).await {
-                    warn!(%error, "probe batch publish failed; reinserting for retry");
+                    warn!(
+                        %error,
+                        probe_count = probes_to_flush.len(),
+                        "probe batch flush failed; reinserting for retry"
+                    );
                     for (key, obs) in probes_to_flush {
                         pipeline_state.probe_accumulator.insert(key, obs);
                     }
+                } else {
+                    debug!(probe_count = batch.len(), "probe batch flushed");
                 }
+                handles.stats.lock().unwrap().probe_accumulator_len =
+                    pipeline_state.probe_accumulator.len();
             }
         }
     }
@@ -357,6 +376,7 @@ struct PipelineState {
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
     attack_timeline_correlator: AttackTimelineCorrelator,
+    sequence_tracker: SequenceTracker,
     pmf_attack_tracker: PmfAttackTracker,
     pmf_reconnect_window_ms: i64,
     authorized_network_cache: AuthorizedNetworkCache,
@@ -452,6 +472,7 @@ impl PipelineState {
             rogue_ap_tracker: RogueApTracker::default(),
             deauth_flood_tracker: DeauthFloodTracker::default(),
             attack_timeline_correlator: AttackTimelineCorrelator::default(),
+            sequence_tracker: SequenceTracker::default(),
             pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
             pmf_reconnect_window_ms,
             authorized_network_cache: AuthorizedNetworkCache::new(
@@ -815,7 +836,27 @@ async fn process_packet(
     let mut wifi_frame = match decode_frame(&packet) {
         Ok(frame) => frame,
         Err(error) => {
-            trace!(%error, len = packet_len, "counted raw bytes for unsupported frame");
+            trace!(
+                error = %error,
+                packet_len,
+                first_bytes = %hex_prefix(&packet.data, 8),
+                observed_at = %packet.observed_at,
+                "unsupported frame -- bytes counted to raw bucket"
+            );
+            match &error {
+                ParseError::UnsupportedControlFrame => {
+                    stats.lock().unwrap().unsupported_frames += 1;
+                }
+                _ => {
+                    stats.lock().unwrap().malformed_frames += 1;
+                    debug!(
+                        error = %error,
+                        packet_len,
+                        first_bytes = %hex_prefix(&packet.data, 8),
+                        "malformed 802.11 frame dropped"
+                    );
+                }
+            }
             pipeline.traffic_bucket.observe_raw(
                 packet_len,
                 packet.observed_at,
@@ -907,7 +948,20 @@ async fn process_packet(
             .tags
             .push("enrichment:authorized_network_unknown".to_string());
     }
-    pipeline.client_inventory.observe(&entry);
+    pipeline.client_inventory.observe(&mut entry);
+    if let Some(alert) = pipeline.sequence_tracker.observe(&entry) {
+        if let Err(error) = publish_oracle_json(
+            publish_client,
+            "publish_sequence_alert",
+            SEQUENCE_ALERT_TOPIC,
+            &alert,
+            &alert.observed_at,
+        )
+        .await
+        {
+            warn!(%error, "sequence alert publish failed");
+        }
+    }
 
     // Accumulate probe observations for batched flush
     if entry.frame_subtype == "probe_request" {
@@ -948,6 +1002,7 @@ async fn process_packet(
                     last_seen: observed_at,
                     probe_count: 1,
                 });
+            stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
         }
     }
 
@@ -955,7 +1010,7 @@ async fn process_packet(
     // drain and flush immediately rather than waiting for the next inventory_flush tick.
     const MAX_PROBE_ACCUMULATOR_SIZE: usize = 8192;
     if pipeline.probe_accumulator.len() > MAX_PROBE_ACCUMULATOR_SIZE {
-        let probes_to_flush: Vec<_> = pipeline.probe_accumulator.drain().collect();
+        let mut probes_to_flush: Vec<_> = pipeline.probe_accumulator.drain().collect();
         let batch = probes_to_flush
             .iter()
             .map(|((ssid, client_mac), obs)| ProbeFlushObservation {
@@ -968,11 +1023,20 @@ async fn process_packet(
             })
             .collect::<Vec<_>>();
         if let Err(error) = backlog.flush_probe_batch(&batch).await {
-            warn!(%error, "probe batch early flush failed; reinserting for retry");
-            for (key, obs) in probes_to_flush {
+            warn!(
+                %error,
+                probe_count = probes_to_flush.len(),
+                "probe batch early flush failed; dropping half to prevent unbounded growth"
+            );
+            probes_to_flush.sort_by_key(|(_, obs)| obs.last_seen);
+            let keep = probes_to_flush.len() / 2;
+            for (key, obs) in probes_to_flush.into_iter().skip(keep) {
                 pipeline.probe_accumulator.insert(key, obs);
             }
+        } else {
+            debug!(probe_count = batch.len(), "probe batch flushed");
         }
+        stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
     }
     if entry
         .tags
@@ -1144,13 +1208,32 @@ async fn process_packet(
             }
         }
     } // end of skip_mac_lookup else block
+    // First, let the traffic bucket observe the current frame so it can
+    // compute risk scores and detect low-CV burst traffic. Then obtain
+    // burst MACs from the *previous* drain window for tagging.
     let bandwidth_events = match pipeline.traffic_bucket.observe(&entry, external_bssid) {
         Ok(events) => events,
         Err(error) => {
-            warn!(%error, "wireless bandwidth bucket update failed; continuing audit publish");
+            error!(
+                %error,
+                frame_subtype = %entry.frame_subtype,
+                observed_at = %entry.observed_at,
+                sensor_id = %entry.sensor_id,
+                "bandwidth bucket rejected frame -- timestamp unparseable; frame not counted"
+            );
             Vec::new()
         }
     };
+    let burst_macs = pipeline.traffic_bucket.take_burst_macs();
+    // Tag the current frame if its source MAC had a low CV in the drained window.
+    if let Some(ref src_mac) = entry.source_mac {
+        let normalized = src_mac.trim().to_ascii_lowercase();
+        if burst_macs.contains(&normalized)
+            && !entry.tags.contains(&"threat:burst_automated".to_string())
+        {
+            entry.tags.push("threat:burst_automated".to_string());
+        }
+    }
     publish_bandwidth_events(publish_client, bandwidth_events).await;
     info!(
         target: "wireless_audit",
@@ -1160,6 +1243,7 @@ async fn process_packet(
         ssid = ?entry.ssid,
         "captured wifi frame"
     );
+    entry.risk_score = crate::parse::recompute_risk_score(&entry.tags);
     match publish_entry(publish_state, backlog, publish_client, entry).await {
         Ok(()) | Err(PublishError::Queued(_)) => {}
         Err(error) => return Err(error.into()),
@@ -1170,7 +1254,7 @@ async fn process_packet(
 fn bandwidth_flush_interval() -> tokio::time::Interval {
     let interval = Duration::from_secs(DEFAULT_BANDWIDTH_WINDOW_SECS as u64);
     let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     interval
 }
 
@@ -1282,6 +1366,7 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         let mut stats = handles.stats.lock().unwrap();
         stats.bandwidth_window_lag_ms = median_lag;
         stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
+        stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
     }
     publish_bandwidth_events(&*handles.publish_client, events).await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
@@ -1368,6 +1453,44 @@ fn init_tracing(
         .init();
 
     (filter_source, audit_window_active)
+}
+
+fn log_and_publish_capture_heartbeat(handles: &SensorHandles) {
+    let (backlog_len, circuit_breaker) = {
+        let publish_state = handles.publish_state.lock().unwrap();
+        (
+            publish_state.memory_backlog_len(),
+            format!("{:?}", publish_state.circuit_breaker_state),
+        )
+    };
+    let stats_snapshot = {
+        let mut stats = handles.stats.lock().unwrap();
+        stats.memory_backlog_len = backlog_len;
+        stats.log(&handles.device, &handles.config);
+        stats.clone()
+    };
+    let sensor_id = handles
+        .context
+        .read()
+        .map(|context| context.sensor_id.clone())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let heartbeat = serde_json::json!({
+        "event_type": "sensor_heartbeat",
+        "observed_at": ssl_proxy::time::now_rfc3339(),
+        "sensor_id": sensor_id,
+        "location_id": handles.config.location_id.clone(),
+        "packets_seen": stats_snapshot.packets_seen,
+        "decoded_frames": stats_snapshot.decoded_frames,
+        "backlog_len": stats_snapshot.memory_backlog_len,
+        "circuit_breaker": circuit_breaker,
+    });
+
+    if let Err(error) = handles
+        .publish_client
+        .enqueue_message(SENSOR_HEARTBEAT_TOPIC, &heartbeat.to_string())
+    {
+        warn!(%error, "heartbeat publish failed");
+    }
 }
 
 /// Creates an interval for periodic heartbeat logging, or None if disabled.

@@ -249,7 +249,8 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         raw_len: frame_bytes.len(),
         raw_frame: Some(STANDARD.encode(frame_bytes)),
         band: band.to_string(),
-        tags,
+        tags: tags.clone(),
+        risk_score: recompute_risk_score(&tags),
         security_flags: ie_metadata.security_flags,
         wps_device_name: ie_metadata.wps_device_name,
         wps_manufacturer: ie_metadata.wps_manufacturer,
@@ -350,12 +351,26 @@ pub fn attach_context(frame: WifiFrame, context: &AuditContext) -> EnrichedFrame
     }
 }
 
+/// Recomputes the risk score from the current set of tags.
+/// Counts tags starting with `"threat:"` and maps the count to a score:
+/// 0 -> None, 1 -> 0.3, 2 -> 0.6, 3+ -> 0.9.
+pub fn recompute_risk_score(tags: &[String]) -> Option<f32> {
+    let threat_count = tags.iter().filter(|t| t.starts_with("threat:")).count();
+    match threat_count {
+        0 => None,
+        1 => Some(0.3_f32),
+        2 => Some(0.6_f32),
+        _ => Some(0.9_f32),
+    }
+}
+
 pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     let mut frame = enriched.frame;
     let mut tags = std::mem::take(&mut frame.tags);
     tags.push(format!("channel:{}", enriched.channel));
     tags.push(format!("reg_domain:{}", enriched.reg_domain));
     add_audit_threat_tags(&frame, &mut tags);
+
     let username = frame.username_hint.clone();
     let identity_source = match (username.as_ref(), frame.identity_source_hint.clone()) {
         (Some(_), Some(source)) => source,
@@ -410,7 +425,8 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         from_ds: Some(frame.from_ds),
         raw_len: frame.raw_len,
         raw_frame: frame.raw_frame,
-        tags,
+        tags: tags.clone(),
+        risk_score: recompute_risk_score(&tags),
         security_flags: frame.security_flags,
         wps_device_name: frame.wps_device_name,
         wps_manufacturer: frame.wps_manufacturer,
@@ -486,6 +502,8 @@ fn frame_subtype_name(frame_type: u8, subtype: u8) -> &'static str {
         0 => match subtype {
             0 => "association_request",
             1 => "association_response",
+            2 => "reassociation_request",
+            3 => "reassociation_response",
             4 => "probe_request",
             5 => "probe_response",
             8 => "beacon",

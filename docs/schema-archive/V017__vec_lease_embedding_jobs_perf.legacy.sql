@@ -96,7 +96,7 @@ begin
       and due_at <= now()
     order by leased_at asc, priority asc, job_id asc
     for update skip locked
-    limit v_limit
+    limit greatest(0, v_limit - v_count)
   )
   update vec_embedding_jobs job
      set status = 'leased',

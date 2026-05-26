@@ -95,6 +95,8 @@ pub struct CompleteBatchRow {
     /// pgvector literal, e.g. `[1.0,2.0,...]`.
     pub embedding: String,
     pub metadata: serde_json::Value,
+    /// Human-readable alert explanation text, populated for alert-type embedding jobs.
+    pub explanation_text: Option<String>,
 }
 
 /// Open a new connection pool to the PostgreSQL database.
@@ -468,6 +470,7 @@ pub fn complete_batch_row(
         content_text: input.text.clone(),
         embedding: format_vector_literal(vector),
         metadata: build_metadata(input),
+        explanation_text: None,
     }
 }
 
@@ -580,6 +583,21 @@ pub async fn release_expired_leases(pool: &PgPool) -> Result<i32, sqlx::Error> {
     let row: (i32,) = sqlx::query_as("SELECT vec_release_expired_leases()")
         .fetch_one(pool)
         .await?;
+
+    Ok(row.0)
+}
+
+#[instrument(skip(pool))]
+pub async fn count_high_risk_aps(
+    pool: &PgPool,
+    threshold: f64,
+) -> Result<i64, sqlx::Error> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM mv_ap_risk_score WHERE composite_risk > $1",
+    )
+    .bind(threshold)
+    .fetch_one(pool)
+    .await?;
 
     Ok(row.0)
 }

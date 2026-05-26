@@ -234,6 +234,7 @@ pub struct WifiFrame {
     pub raw_frame: Option<String>,
     pub band: String,
     pub tags: Vec<String>,
+    pub risk_score: Option<f32>,
     pub security_flags: u32,
     pub wps_device_name: Option<String>,
     pub wps_manufacturer: Option<String>,
@@ -314,7 +315,7 @@ pub struct EnrichedFrame {
     pub frame: WifiFrame,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AuditEntry {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -362,6 +363,8 @@ pub struct AuditEntry {
     pub raw_len: usize,
     pub raw_frame: Option<String>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub risk_score: Option<f32>,
     #[serde(default)]
     pub security_flags: u32,
     pub wps_device_name: Option<String>,

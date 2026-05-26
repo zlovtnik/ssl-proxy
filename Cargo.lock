@@ -95,6 +95,7 @@ dependencies = [
  "ccm",
  "chrono",
  "chrono-tz",
+ "fastrand",
  "futures",
  "hmac",
  "http-body-util",

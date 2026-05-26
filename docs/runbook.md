@@ -168,7 +168,7 @@ All views are optimized for ADB columnar storage.
 
 ### 7. Compose Startup Log Notes
 
-- `zig-coordinator` is the sync control-plane service. On startup it applies the Postgres sync schema with `psql -f /app/schema/postgres.sql`; confirm this line appears with `docker compose logs zig-coordinator`.
+- `zig-coordinator` is the sync control-plane service. On startup it applies the Postgres sync schema with `psql -f /app/sql/postgres.sql`; confirm this line appears with `docker compose logs zig-coordinator`.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
@@ -198,8 +198,8 @@ Manual checks:
 docker compose run --rm redpanda-init rpk topic describe sync.scan.request --brokers redpanda:9092
 docker compose run --rm redpanda-init rpk topic describe sync.oracle.load --brokers redpanda:9092
 docker compose run --rm redpanda-init rpk group describe zig-coordinator-scan --brokers redpanda:9092
-docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_scan_ingest group by status"
-docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_job; select count(*) from sync_batch;"
+docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_events group by status"
+docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_jobs; select count(*) from sync_batches;"
 ```
 
 If `oracle-worker` logs `worker_load classification=poison` or `unsupported stream_name wireless.audit`, confirm the worker is subscribed to the load topic and that only `proxy.events` is configured for Oracle dispatch:
@@ -207,7 +207,7 @@ If `oracle-worker` logs `worker_load classification=poison` or `unsupported stre
 ```sh
 docker compose run --rm redpanda-init rpk group describe oracle-worker-load --brokers redpanda:9092
 docker compose exec -T zig-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
-docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batch batch join sync_job job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
+docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batches batch join sync_jobs job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
 ```
 
 Recovery path:
