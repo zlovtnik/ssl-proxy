@@ -995,14 +995,22 @@ impl SequenceTracker {
             if !sequence.emitted_tags.insert(tag.clone()) {
                 return None;
             }
+
+            // Extract data needed for the alert while we still hold the mutable
+            // borrow to `sequence`. This ensures `prune_stale_sessions()` can
+            // borrow `&mut self` without triggering E0499.
+            let sequence_tokens = series_to_tokens(&sequence.frames);
+            let first_seen = sequence.first_seen;
+            let last_seen = sequence.last_seen;
+
             self.prune_stale_sessions(observed_at);
             return Some(SequenceTracker::build_sequence_alert(
-                series_to_tokens(&sequence.frames),
+                sequence_tokens,
                 session_key,
                 entry,
                 tag,
-                sequence.first_seen,
-                sequence.last_seen,
+                first_seen,
+                last_seen,
             ));
         }
 
@@ -1168,7 +1176,7 @@ impl AttackTimelineCorrelator {
             chain.sort();
             chain.dedup();
             let chain_str = chain.join(", ");
-            let contribution = if has_karma && has_spoofing { 1.0 } else { 0.0 };
+            let _contribution = if has_karma && has_spoofing { 1.0 } else { 0.0 };
             Some(AttackSequenceAlert {
                 schema_version: 1,
                 event_type: "wireless_attack_sequence".to_string(),
