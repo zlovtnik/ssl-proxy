@@ -507,875 +507,499 @@ over time during this session, not better. This is either a memory pressure issu
 a pool exhaustion issue, or the alert sweep introduced in the last change is blocking
 the embedding loop.
 
----
+# vec-worker: Frame Sequences & Null Column Fix Workmap
 
-## Fix 1 — Behaviour window 100% failure (fix today, before anything else)
-
-664 jobs, 0 completions, 100% failure. This is a schema or query mismatch, not a
-performance issue. The most likely causes in order of probability:
-
-### 1a. The `vec_build_behaviour_snapshots` cron job is not running
-
-If the cron job (runs every 5 min per README) stopped, `vec_behaviour_snapshots`
-rows exist but have no `embedding_text` and no `text_summary`, and the fallback
-builder constructs empty or near-empty text. The worker may be failing on empty
-content or the SHA mismatch check.
-
-**Verify:**
-```sql
--- Check if snapshots exist and have content
-SELECT
-  COUNT(*) AS total,
-  COUNT(embedding_text) AS has_embedding_text,
-  COUNT(text_summary) AS has_text_summary,
-  MAX(created_at) AS latest_created
-FROM vec_behaviour_snapshots;
-
--- Check the actual last_error on failed jobs
-SELECT last_error, COUNT(*) FROM vec_embedding_jobs
-WHERE embedding_kind = 'behaviour_window'
-  AND status = 'failed'
-GROUP BY last_error
-ORDER BY COUNT(*) DESC
-LIMIT 10;
-```
-
-### 1b. The `snapshot_id::text` cast is producing wrong keys
-
-The query uses `WHERE snapshot_id::text = $1` but the job's `source_key` may have
-been stored with a different text representation (e.g., UUID with/without braces,
-or a bigint that doesn't match). One wrong cast causes 100% failure.
-
-**Verify:**
-```sql
--- Cross-check: do job source_keys match snapshot_id::text?
-SELECT j.source_key, s.snapshot_id::text
-FROM vec_embedding_jobs j
-LEFT JOIN vec_behaviour_snapshots s
-  ON s.snapshot_id::text = j.source_key
-WHERE j.embedding_kind = 'behaviour_window'
-  AND j.status = 'failed'
-LIMIT 5;
-```
-
-### 1c. The `vec_build_behaviour_snapshots()` function changed its output schema
-
-If the snapshot table schema changed (e.g., `window_end` column added, or
-`mac_rotation_indicators` type changed), the `BehaviourWindowRow` sqlx struct
-will fail to deserialize and every job fails immediately on `text_build error`.
-
-**Fix:** Check the `last_error` from the query above. If it says
-`text_build error: behaviour_window query failed`, the struct is mismatched.
-Add `window_end` to the struct or check for column type changes.
-
-### Action
-
-```sql
--- Re-queue all failed behaviour_window jobs after fixing the root cause
-UPDATE vec_embedding_jobs
-SET status = 'pending',
-    attempts = 0,
-    last_error = NULL,
-    due_at = NOW(),
-    updated_at = NOW()
-WHERE embedding_kind = 'behaviour_window'
-  AND status = 'failed';
-```
+**Scope:** `vec_frame_sequences` empty, `vec_transition_model` empty, null columns
+propagating from `wireless_authorized_networks` / `sync_events_expanded` into
+embedded text and alert logic.
 
 ---
 
-## Fix 2 — The alert sweep is killing throughput
+## Root Cause Inventory
 
-Looking at `worker.rs`, the alert sweep runs inside the main worker loop every
-10 iterations:
+### RC-1 — `vec_build_baseline_profiles` is defined twice and clobbers `vec_frame_sequences` population
 
-```rust
-if iteration % 10 == 0 {
-    // ... release_expired_leases
-    let alert_cfg = AlertConfig::default();
-    if let Err(e) = alerts::run_alert_sweep(&pool, &alert_cfg).await {
-        warn!(error = %e, "alert sweep failed");
-    }
-}
-```
+`postgres.sql` contains **two `CREATE OR REPLACE FUNCTION vec_build_baseline_profiles`**
+definitions. The first one (lines ~1990–2030) is actually the frame sequence builder —
+it inserts into `vec_frame_sequences` — but it is named `vec_build_baseline_profiles`
+with the signature `(p_from, p_to)`. The second definition (lines ~2050+) is the real
+baseline profile builder with `(p_from, p_to, p_window)`.
 
-And `check_near_duplicates` in `alerts.rs` queries `v_device_repetition_score`
-which is a **view** (not a materialized view). With 2.7M+ rows in `vec_embeddings`
-and `vec_similarity_results`, this view scan can take 10-60 seconds. It runs
-synchronously in the main loop, blocking lease → embed → complete for its entire
-duration.
+Because the second definition has a different signature, **both functions coexist**.
+The cron job registered as `vec-build-baseline-profiles` calls
+`vec_build_baseline_profiles()` (zero args), which resolves to whichever overload
+PostgreSQL picks — in practice neither populates `vec_frame_sequences` because the
+cron name and the function name are mismatched: the cron job that should call the
+frame-sequence builder does not exist.
 
-**The math:** If the sweep takes 30s and runs every 10 iterations at ~5s poll
-interval, it fires every ~50s and blocks for 30s of that — 60% of worker time
-is spent in the alert sweep.
+The `vec_install_cron_jobs()` block registers:
+- `vec-build-baseline-profiles` → `vec_build_baseline_profiles()` ✓ (baseline)
+- **No cron job exists for `vec_build_frame_sequences()`** ✗
 
-### Fix 2a — Move alert sweep to a background task
+`vec_frame_sequences` is therefore **never populated by any cron job**.
 
-```rust
-// In run_forever(), replace the inline alert sweep with a spawned task:
-if iteration % 10 == 0 {
-    match db::release_expired_leases(&pool).await {
-        Ok(released) if released > 0 => info!(released, "expired leases released"),
-        Err(e) => warn!(error = %e, "release_expired_leases failed"),
-        _ => {}
-    }
-    // Spawn alert sweep as background task — never blocks the embedding loop
-    let alert_pool = pool.clone();
-    tokio::spawn(async move {
-        let alert_cfg = AlertConfig::default();
-        if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
-            warn!(error = %e, "alert sweep failed (background)");
-        }
-    });
-}
-```
+### RC-2 — `vec_enqueue_embedding_jobs` enqueues `frame_sequence` jobs against `session_key` but the builder mismatches
 
-### Fix 2b — Materialize the view
+`vec_enqueue_embedding_jobs` does not enqueue `frame_sequence` jobs at all — there is
+no `frame_sequence_jobs` CTE in the function body. The `text_builder.rs` dispatches on
+`"frame_sequence"` but no jobs are ever created, so the builder is dead code.
 
-If `v_device_repetition_score` is a plain view, convert it to a materialized view
-and refresh it from the background task instead of querying the live view:
+### RC-3 — `wireless_authorized_networks` columns surface as null in `sync_events_expanded`
 
-```sql
--- Convert to materialized view (run once)
-CREATE MATERIALIZED VIEW v_device_repetition_score AS
-SELECT
-  source_mac,
-  COUNT(*) AS near_duplicate_pairs,
-  MIN(distance) AS min_distance,
-  AVG(distance) AS avg_distance,
-  COUNT(DISTINCT embedding_id_a) AS unique_events_implicated
-FROM vec_similarity_results
-WHERE relation_type = 'event_event'
-  AND distance < 0.05
-  AND created_at >= NOW() - INTERVAL '24 hours'
-GROUP BY source_mac;
+`sync_events_expanded` is a plain view joining `sync_events` and `wireless_frames`.
+`wireless_frames` stores `location_id` and `sensor_id` as nullable text, populated via
+`coordinator.upsert_wireless_frame_from_payload` using `nullif(payload->>'...', '')`.
 
-CREATE UNIQUE INDEX ON v_device_repetition_score(source_mac);
-```
+When the sensor does not send `location_id` or `sensor_id` in the payload (older schema
+versions, or the field is empty string), the columns are null in both `wireless_frames`
+and consequently in `sync_events_expanded`. The behaviour snapshot builder, text
+builder, and alert functions all use `COALESCE(column, payload->>'column')` — but if
+the payload field is also absent or empty, null propagates into:
 
-Then in the background sweep task:
-```sql
-REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score;
-```
+- `vec_behaviour_snapshots.location_id` / `sensor_id`
+- `vec_frame_sequences.location_id` / `sensor_id`
+- `EmbeddingInput.source_sensor_id` / `source_location_id`
+- `CompleteBatchRow.source_sensor_id` / `source_location_id`
+- `vec_alerts.sensor_id` / `location_id`
 
-The `CONCURRENTLY` flag allows reads during the refresh (requires the unique index).
+The `wireless_authorized_networks` table is unrelated to the null propagation — it is
+only consulted by `coordinator.generate_shadow_alerts()` for authorized-network
+lookups. Its `location_id` being null is intentional (null = match any location). The
+confusion likely arises because `v_device_repetition_score` and `v_ap_risk_score` join
+through `vec_similarity_pairs` which stores null `left_sensor_id` / `right_sensor_id`
+when the source row had null values.
 
----
+### RC-4 — `vec_transition_model` is never populated before `vec_score_sequence` is called
 
-## Fix 3 — Batch size and concurrency are misconfigured for current workload
+The cron job `vec-update-transition-model` is registered (every 15 min) but
+`vec_update_transition_model()` aggregates from `sync_events_expanded` using
+`payload->>'frame_subtype'`. The `frame_subtype` field is stored in
+`wireless_frames.frame_subtype` but the expanded view accesses it as
+`payload->>'frame_subtype'` (JSONB extraction). If the field was inserted into
+the `wireless_frames` column (not left in the payload JSONB), the extraction
+returns null and the CTE produces zero rows, so the model stays empty.
 
-The current default settings from `config.rs`:
+In `text_builder.rs`, `build_frame_sequences_batch` calls
+`vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+'))` inline in
+the SQL — this returns `0.0` for every sequence when the transition model is empty
+(the vocab-size fallback sets `v_vocab_size = 16` but all bigram counts are 0, so
+every bigram gets uniform probability and the log-prob is non-zero but meaningless).
+The bigger issue is that with an empty `vec_frame_sequences`, no jobs are ever created
+for this kind.
 
-```
-batch_size: 64
-request_batch_size: min(64, 64) = 64
-max_concurrent_embed_requests: 1
-max_concurrent_prepares: 8  (unused — batch query does all prepares in one query)
-max_concurrent_completes: 8
-```
+### RC-5 — `build_ego_graph_input` produces a Cartesian-product LATERAL that can generate duplicate `query_key` rows
 
-With `max_concurrent_embed_requests: 1` and a single `embed_many` HTTP call per
-chunk, the pipeline is:
-
-```
-prepare_chunk (batch DB query) → embed_many (HTTP, SEQUENTIAL) → complete_chunk
-```
-
-The HTTP call to Ollama/llama.cpp is the bottleneck. With 64 texts per call and
-~500ms per call (rough estimate for nomic-embed-text), you get:
-`64 texts / 0.5s = 128 texts/s = ~128 jobs/min`
-
-Your actual 55/min is even below this, confirming the alert sweep overhead.
-
-### Recommended env config for a single worker
-
-```bash
-# Tune for Ollama with nomic-embed-text-v2-moe on a GPU
-VECTOR_EMBEDDING_BATCH_SIZE=256
-VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=64     # How many texts per HTTP call to Ollama
-VECTOR_EMBEDDING_REQUEST_BATCH_MAX=128
-VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4  # 4 parallel HTTP calls
-VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=16
-DATABASE_POOL_MAX_CONNECTIONS=24
-POLL_INTERVAL_SECONDS=1
-```
-
-With `max_concurrent_embed_requests=4`, the pipeline runs 4 embed HTTP calls
-simultaneously. At 64 texts each × 4 concurrent = 256 texts in flight.
-At 500ms/call: `256 / 0.5 = 512 jobs/min` from a single worker.
-
-### Important: Ollama must support parallel requests
-
-Check if Ollama is configured for parallel inference:
-```bash
-OLLAMA_NUM_PARALLEL=4   # Must be set in Ollama's environment
-OLLAMA_MAX_LOADED_MODELS=1
-```
-
-Without this, Ollama serializes requests internally and you get no benefit from
-`max_concurrent_embed_requests > 1`.
-
-For llama.cpp server, use `--parallel 4` in the server startup arguments.
+In `build_infrastructure_subgraphs_batch`, the LATERAL subquery emitting `endpoint`
+unions `node_a` and `node_b` for every matching row, which means a single edge where
+both `node_a` and `node_b` are in the key set generates **two rows** with the same
+underlying edge data but different `query_key` values. This is correct for grouping
+but means the `grouped` HashMap accumulates duplicate edge structs, inflating client /
+vendor counts in the embedded text.
 
 ---
 
-## Fix 4 — The `process_jobs` pipeline has a sequencing bug under load
+## Fix Workmap
 
-In `worker.rs`, `process_jobs` pipelines prepare/embed/complete across chunks:
-
-```rust
-for i in 0..n {
-    let prepared = match next_prepare.take() { ... };
-    // ... spawn next prepare
-    let embedded = embed_chunk(...).await;        // AWAITED INLINE
-    // ... drain previous complete_handle
-    complete_handle = Some(tokio::spawn(complete_chunk(...)));
-}
-```
-
-The `embed_chunk` call is awaited inline, which means **the embedding semaphore
-is held for the full duration of the HTTP call, blocking the prepare of the next
-chunk**. With `max_concurrent_embed_requests=1`, the pipeline actually degrades
-to serial: prepare → embed → complete, with no true overlap.
-
-### Fix: Decouple embed from the loop using a channel
-
-This is a more significant refactor. The short-term fix is simply to increase
-`max_concurrent_embed_requests` and ensure Ollama supports it (Fix 3 above).
-
-The correct long-term pipeline is:
-
-```
-prepare_0 ──→ embed_0 ──→ complete_0
-         prepare_1 ──→ embed_1 ──→ complete_1
-                   prepare_2 ──→ embed_2 ──→ complete_2
-```
-
-All three stages run simultaneously with back-pressure via the semaphores.
-The current implementation does achieve this but only when
-`max_concurrent_embed_requests >= 2`. With the default of 1, it's purely serial.
+Each fix is independent. Order follows impact.
 
 ---
 
-## Fix 5 — `vec_complete_embedding_batch` may not exist
+### Fix 1 — Add the missing `vec_build_frame_sequences` cron job and rename the mislabeled function
 
-The README references `vec_complete_embedding_batch($1::jsonb)` as a PostgreSQL
-function, and `db.rs` calls it. If this function is not defined in the schema
-(it was described as a migration `V021__vec_complete_embedding_batch.sql`), every
-bulk complete falls back to per-job transactions via `complete_jobs_fallback`.
+**Files:** `sql/postgres.sql`
 
-**Verify:**
-```sql
-SELECT proname, pronargs FROM pg_proc WHERE proname = 'vec_complete_embedding_batch';
-```
+**Problem:** The first overload of `vec_build_baseline_profiles(p_from, p_to)` is
+actually a frame-sequence builder (it inserts into `vec_frame_sequences`). It is
+never called by the cron schedule. The real baseline builder is the second overload.
 
-If it returns 0 rows, the function is missing. Every batch of 64 jobs does 64
-individual `BEGIN / upsert / UPDATE / COMMIT` cycles instead of 1 batch call.
-At 64 transactions × ~5ms each = 320ms pure DB overhead per chunk, completely
-independent of the embedding latency.
+**Steps:**
 
-### Check the fallback rate from logs
+1. Rename the first `vec_build_baseline_profiles(p_from, p_to)` function to
+   `vec_build_frame_sequences(p_from, p_to)` throughout the file.
 
-In your JSON logs, look for:
-```
-"bulk complete failed, falling back per job"
-"bulk complete returned 0, falling back per job"
-```
-
-If these appear frequently, the function is missing or broken and you're paying
-the per-job transaction cost on every single chunk.
-
-### Fix: Add the missing function
+2. Drop the old mislabeled overload before creating the renamed one:
 
 ```sql
-CREATE OR REPLACE FUNCTION vec_complete_embedding_batch(p_payload jsonb)
+DROP FUNCTION IF EXISTS vec_build_baseline_profiles(timestamptz, timestamptz);
+
+CREATE OR REPLACE FUNCTION vec_build_frame_sequences(
+  p_from timestamptz DEFAULT now() - interval '2 hours',
+  p_to   timestamptz DEFAULT now()
+)
 RETURNS integer
-LANGUAGE plpgsql AS $$
-DECLARE
-  v_row jsonb;
-  v_count integer := 0;
-BEGIN
-  FOR v_row IN SELECT * FROM jsonb_array_elements(p_payload)
-  LOOP
-    -- Upsert the embedding
-    INSERT INTO vec_embeddings (
-      source_table, source_key, source_observed_at, source_stream_name,
-      source_sensor_id, source_location_id, source_mac,
-      embedding_model, embedding_kind, embedding_dimensions,
-      content_sha256, content_text, embedding, metadata,
-      embedded_at, created_at, updated_at
-    )
-    VALUES (
-      v_row->>'source_table',
-      v_row->>'source_key',
-      (v_row->>'source_observed_at')::timestamptz,
-      v_row->>'source_stream_name',
-      v_row->>'source_sensor_id',
-      v_row->>'source_location_id',
-      v_row->>'source_mac',
-      v_row->>'embedding_model',
-      v_row->>'embedding_kind',
-      (v_row->>'embedding_dimensions')::int,
-      v_row->>'content_sha256',
-      v_row->>'content_text',
-      (v_row->>'embedding')::vector,
-      (v_row->>'metadata')::jsonb,
-      NOW(), NOW(), NOW()
-    )
-    ON CONFLICT (source_table, source_key, embedding_model, embedding_kind)
-    DO UPDATE SET
-      source_observed_at = EXCLUDED.source_observed_at,
-      content_sha256 = EXCLUDED.content_sha256,
-      content_text = EXCLUDED.content_text,
-      embedding = EXCLUDED.embedding,
-      metadata = EXCLUDED.metadata,
-      embedded_at = NOW(),
-      updated_at = NOW();
-
-    -- Mark the job completed (lease-token verified)
-    UPDATE vec_embedding_jobs
-    SET status = 'completed',
-        content_sha256 = v_row->>'content_sha256',
-        completed_at = NOW(),
-        lease_token = NULL,
-        leased_at = NULL,
-        locked_by = NULL,
-        last_error = NULL,
-        updated_at = NOW()
-    WHERE job_id = (v_row->>'job_id')::bigint
-      AND lease_token IS NOT DISTINCT FROM v_row->>'lease_token';
-
-    IF FOUND THEN
-      v_count := v_count + 1;
-    END IF;
-  END LOOP;
-  RETURN v_count;
-END;
+LANGUAGE plpgsql
+AS $$
+-- (body unchanged — same INSERT INTO vec_frame_sequences CTE)
 $$;
 ```
 
----
-
-## Fix 6 — Run multiple worker replicas immediately
-
-While fixes 1–5 are being deployed, run 3–4 workers in parallel. This is the
-fastest way to drain the existing backlog and requires zero code changes.
-
-Each worker needs a unique `VECTOR_EMBEDDING_WORKER_NAME`. The `FOR UPDATE SKIP LOCKED`
-in `vec_lease_embedding_jobs` handles coordination automatically.
-
-```yaml
-# docker-compose or kubernetes — 4 replicas
-services:
-  vec-worker-1:
-    environment:
-      VECTOR_EMBEDDING_WORKER_NAME: worker-1
-      VECTOR_EMBEDDING_BATCH_SIZE: 128
-      VECTOR_EMBEDDING_REQUEST_BATCH_SIZE: 32
-      VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS: 2
-      POLL_INTERVAL_SECONDS: 1
-
-  vec-worker-2:
-    environment:
-      VECTOR_EMBEDDING_WORKER_NAME: worker-2
-      # ... same settings
-
-  vec-worker-3:
-    environment:
-      VECTOR_EMBEDDING_WORKER_NAME: worker-3
-
-  vec-worker-4:
-    environment:
-      VECTOR_EMBEDDING_WORKER_NAME: worker-4
-```
-
-At 4 workers × 200 jobs/min each (conservative after Fix 2+3) = **800 jobs/min**.
-621K remaining / 800 = ~13 hours to drain instead of 8 days.
-
-At 4 workers × 500 jobs/min each (after all fixes) = **2,000 jobs/min**.
-621K remaining / 2,000 = **~5 hours**.
-
----
-
-## Fix 7 — Re-enable `VECTOR_EMBEDDINGS_ENABLED`
-
-This might sound obvious but: with `VECTOR_EMBEDDINGS_ENABLED=false` (the default),
-the worker runs but uses placeholder model values. Verify the workers actually
-have `VECTOR_EMBEDDINGS_ENABLED=true` set in production:
-
-```bash
-# Quick check — look at what the worker logs on startup
-grep "worker starting" your-log-stream | jq '.enabled'
-# Should be: true
-```
-
----
-
-## Priority order — do these in sequence today
-
-| # | Fix | Time to implement | Expected impact |
-|---|-----|-------------------|-----------------|
-| **1** | Diagnose + fix behaviour_window 100% failure | 30 min | Unblocks 664 jobs, finds root cause |
-| **2** | Move alert sweep to background task | 1 hour | Removes the main bottleneck — expect 2–4× throughput immediately |
-| **3** | Add `vec_complete_embedding_batch` if missing | 30 min | Removes per-job transaction overhead |
-| **4** | Set `max_concurrent_embed_requests=2-4` + Ollama `NUM_PARALLEL` | 15 min config | 2–4× embed throughput |
-| **5** | Run 4 worker replicas | 15 min ops | Linear scaling on remaining backlog |
-| **6** | Materialize `v_device_repetition_score` | 1 hour | Permanent fix so alert sweep never blocks again |
-| **7** | Increase `VECTOR_EMBEDDING_BATCH_SIZE` to 256 | 5 min config | More work per poll cycle, fewer idle pauses |
-
----
-
-## Expected throughput after all fixes
-
-| Scenario | Jobs/min | Time to clear 621K backlog |
-|----------|----------|---------------------------|
-| Current (broken) | 55 | 8 days |
-| Fix 2 only (remove alert block) | ~200 | ~52 hours |
-| Fix 2 + Fix 3 (concurrency) | ~400 | ~26 hours |
-| Fix 2 + 3 + 4 (bulk complete) | ~600 | ~17 hours |
-| All fixes + 4 replicas | ~2,400 | **~4.3 hours** |
-
----
-
-## Monitoring query to run after deploying fixes
+3. In `vec_install_cron_jobs()`, add the missing schedule:
 
 ```sql
--- Paste this and run every 60 seconds to watch progress
+PERFORM cron.schedule(
+  'vec-build-frame-sequences',
+  '*/5 * * * *',
+  $cron$SELECT vec_build_frame_sequences();$cron$
+);
+```
+
+4. Verify no other callers reference the old name:
+
+```sql
+SELECT proname, pronargs, proargtypes
+FROM pg_proc
+WHERE proname = 'vec_build_baseline_profiles';
+-- Should return exactly one row (the 3-arg baseline version)
+```
+
+---
+
+### Fix 2 — Add `frame_sequence` job enqueuing to `vec_enqueue_embedding_jobs`
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** `vec_enqueue_embedding_jobs` has no CTE for `frame_sequence` jobs, so
+`vec_frame_sequences` rows are never queued for embedding even after Fix 1 populates
+the table.
+
+**Steps:**
+
+Add a `frame_sequence_jobs` CTE inside `vec_enqueue_embedding_jobs`, mirroring the
+`behaviour_jobs` pattern:
+
+```sql
+frame_sequence_jobs AS (
+  SELECT
+    'vec_frame_sequences'::text AS source_table,
+    fs.session_key               AS source_key,
+    p_model                      AS embedding_model,
+    'frame_sequence'::text       AS embedding_kind,
+    18                           AS priority
+  FROM vec_frame_sequences fs
+  LEFT JOIN vec_embeddings existing
+    ON existing.source_table  = 'vec_frame_sequences'
+   AND existing.source_key    = fs.session_key
+   AND existing.embedding_model = p_model
+   AND existing.embedding_kind  = 'frame_sequence'
+  WHERE existing.embedding_id IS NULL
+     OR fs.updated_at > existing.embedded_at
+),
+```
+
+Then include `frame_sequence_jobs` in the final UNION inside `jobs`:
+
+```sql
+UNION ALL
+SELECT * FROM frame_sequence_jobs
+```
+
+---
+
+### Fix 3 — Fix `vec_update_transition_model` to read from the column, not just the payload
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** The function uses `payload->>'frame_subtype'` but `frame_subtype` is a
+parsed column on `wireless_frames` (and therefore on `sync_events_expanded`). When
+the field was parsed and stored in the column, the payload accessor returns null.
+
+**Steps:**
+
+Replace the JSONB extraction with a COALESCE that prefers the parsed column:
+
+```sql
+-- Before (in vec_update_transition_model windowed CTE):
+coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype
+
+-- The existing query already aliases a field named frame_subtype from
+-- sync_events_expanded. Confirm the column is present in the view and
+-- remove the payload fallback only when confirmed:
+SELECT frame_subtype, payload->>'frame_subtype'
+FROM sync_events_expanded
+WHERE stream_name = 'wireless.audit'
+  AND observed_at >= now() - interval '1 hour'
+LIMIT 10;
+```
+
+If the column is consistently populated, simplify to:
+
+```sql
+COALESCE(
+  NULLIF(frame_subtype, ''),
+  NULLIF(payload->>'frame_subtype', '')
+) AS frame_subtype
+```
+
+The same fix applies to `vec_build_frame_sequences` (the renamed function from Fix 1):
+
+```sql
+-- In the prepared CTE of vec_build_frame_sequences:
+COALESCE(
+  NULLIF(frame_subtype, ''),
+  NULLIF(payload->>'frame_subtype', '')
+) AS frame_subtype
+```
+
+Add a diagnostic query to confirm population before relying on the model:
+
+```sql
+SELECT COUNT(*) FROM vec_transition_model;
+-- If 0 after a manual SELECT vec_update_transition_model():
+-- run the column audit above to confirm the root cause.
+```
+
+---
+
+### Fix 4 — Null-safe location_id / sensor_id in all vec_ builder functions
+
+**Files:** `sql/postgres.sql`, `services/vec-worker/src/text_builder.rs`
+
+**Problem:** When `location_id` or `sensor_id` is null in the source row, it propagates
+through `EmbeddingInput` into `CompleteBatchRow` and then into `vec_embeddings` and
+`vec_alerts`. This is mostly harmless for storage but breaks alert cooldown deduplication
+when the `WHERE ... AND sensor_id = $sensor_id` predicate is used with nulls.
+
+**SQL side — `vec_build_behaviour_snapshots`:** already uses `min(sensor_id) FILTER
+(WHERE sensor_id IS NOT NULL)`, so this is handled. No change needed there.
+
+**SQL side — `vec_build_frame_sequences` (renamed Fix 1 function):** the `prepared` CTE
+uses bare `sensor_id` and `location_id` fields. Add explicit null-filter coalescing:
+
+```sql
+-- In the prepared CTE grouping:
+MIN(NULLIF(COALESCE(sensor_id, payload->>'sensor_id'), '')) AS sensor_id,
+MIN(NULLIF(COALESCE(location_id, payload->>'location_id'), '')) AS location_id,
+```
+
+**Rust side — `text_builder.rs`:** `frame_sequence_row_to_input` skips the sensor/location
+lines when values are `None` — this is correct behavior. No change needed.
+
+**Alert cooldown queries — `alerts.rs`:** the `IS NOT DISTINCT FROM` operator already
+handles null equality correctly in `check_near_duplicates`. No change needed there.
+
+**Verify the null volume before and after:**
+
+```sql
 SELECT
-  embedding_kind,
-  COUNT(*) FILTER (WHERE status = 'pending') AS pending,
-  COUNT(*) FILTER (WHERE status = 'leased') AS leased,
-  COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-  COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-  ROUND(
-    COUNT(*) FILTER (WHERE status = 'completed')::numeric /
-    NULLIF(COUNT(*), 0) * 100, 1
-  ) AS pct_done,
-  MAX(completed_at) AS latest_completion
+  COUNT(*) FILTER (WHERE sensor_id IS NULL)     AS null_sensor,
+  COUNT(*) FILTER (WHERE location_id IS NULL)   AS null_location,
+  COUNT(*)                                       AS total
+FROM vec_frame_sequences;
+```
+
+---
+
+### Fix 5 — Deduplicate LATERAL endpoint expansion in `build_infrastructure_subgraphs_batch`
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** The LATERAL in `build_infrastructure_subgraphs_batch` emits one row per
+matching endpoint per edge. When a `bssid` appears as both `node_a` and `node_b` in
+different edges, the same edge struct is added twice to the grouped HashMap, doubling
+client/vendor counts.
+
+**Steps:**
+
+Replace the LATERAL with a simpler `WHERE` clause that uses `DISTINCT ON` to emit each
+edge once per matching query key:
+
+```sql
+-- Replace the existing LATERAL block with:
+SELECT DISTINCT ON (
+    LEAST(node_a, node_b),
+    GREATEST(node_a, node_b),
+    edge_type,
+    endpoint
+  )
+  endpoint AS query_key,
+  node_a, node_a_type,
+  node_b, node_b_type,
+  edge_type, weight::float8, last_seen
+FROM vec_infrastructure_graph
+CROSS JOIN LATERAL (
+  VALUES
+    (CASE WHEN node_a = ANY($1::text[]) THEN node_a END),
+    (CASE WHEN node_b = ANY($1::text[]) THEN node_b END)
+) AS endpoints(endpoint)
+WHERE endpoint IS NOT NULL
+ORDER BY
+  LEAST(node_a, node_b),
+  GREATEST(node_a, node_b),
+  edge_type,
+  endpoint,
+  last_seen DESC;
+```
+
+This guarantees one row per (edge, matching-key) combination, eliminating the
+inflation.
+
+---
+
+### Fix 6 — Register `frame_sequence` HNSW index for `vec_similarity_pairs` matching
+
+**Files:** `sql/postgres.sql`
+
+**Problem:** `vec_similarity_pairs` has a `sequence_sequence` pair kind in its check
+constraint but `vec_materialize_similarity_pairs` never generates `sequence_sequence`
+pairs. Without HNSW-driven similarity search for frame sequences, the MAC-rotation and
+attack-pattern detection tracks (Track 2.2) cannot function.
+
+**Steps:**
+
+The HNSW index `vec_embeddings_frame_sequence_hnsw_768_idx` already exists in the
+schema. Add a `sequence_sequence` block to `vec_materialize_similarity_pairs` mirroring
+the `event_event` block:
+
+```sql
+-- Inside vec_materialize_similarity_pairs, after the behaviour_window block:
+WITH seq_candidates AS (
+  SELECT
+    LEAST(e1.embedding_id, neighbor.embedding_id)    AS left_embedding_id,
+    GREATEST(e1.embedding_id, neighbor.embedding_id) AS right_embedding_id,
+    MIN(neighbor.cosine_distance)                    AS cosine_distance
+  FROM vec_embeddings e1
+  JOIN LATERAL (
+    SELECT
+      e2.embedding_id,
+      (e2.embedding::vector(768) <=> e1.embedding::vector(768)) AS cosine_distance
+    FROM vec_embeddings e2
+    WHERE e2.embedding_kind       = 'frame_sequence'
+      AND e2.embedding_model      = p_model
+      AND e2.embedding_dimensions = 768
+      AND e2.embedding_id        <> e1.embedding_id
+    ORDER BY e2.embedding::vector(768) <=> e1.embedding::vector(768)
+    LIMIT GREATEST(p_top_k, 1)
+  ) neighbor ON TRUE
+  WHERE e1.embedding_kind       = 'frame_sequence'
+    AND e1.embedding_model      = p_model
+    AND e1.embedding_dimensions = 768
+    AND neighbor.cosine_distance <= 0.10  -- tunable threshold
+  GROUP BY
+    LEAST(e1.embedding_id, neighbor.embedding_id),
+    GREATEST(e1.embedding_id, neighbor.embedding_id)
+)
+INSERT INTO vec_similarity_pairs (
+  pair_kind, embedding_model, embedding_kind,
+  left_embedding_id, right_embedding_id,
+  left_source_table, left_source_key, left_source_mac,
+  left_sensor_id, left_location_id, left_observed_at,
+  right_source_table, right_source_key, right_source_mac,
+  right_sensor_id, right_location_id, right_observed_at,
+  cosine_distance, cosine_similarity, rank, evidence,
+  computed_at, created_at, updated_at
+)
+SELECT
+  'sequence_sequence', p_model, 'frame_sequence',
+  c.left_embedding_id, c.right_embedding_id,
+  le.source_table, le.source_key, le.source_mac,
+  le.source_sensor_id, le.source_location_id, le.source_observed_at,
+  re.source_table, re.source_key, re.source_mac,
+  re.source_sensor_id, re.source_location_id, re.source_observed_at,
+  c.cosine_distance,
+  1 - c.cosine_distance,
+  1,
+  jsonb_build_object('detector', 'similar_frame_sequence', 'threshold', 0.10),
+  now(), now(), now()
+FROM seq_candidates c
+JOIN vec_embeddings le ON le.embedding_id = c.left_embedding_id
+JOIN vec_embeddings re ON re.embedding_id = c.right_embedding_id
+ON CONFLICT (pair_kind, embedding_model, embedding_kind,
+             left_embedding_id, right_embedding_id)
+DO UPDATE SET
+  cosine_distance  = EXCLUDED.cosine_distance,
+  cosine_similarity = EXCLUDED.cosine_similarity,
+  computed_at      = now(),
+  updated_at       = now();
+```
+
+---
+
+## Verification Queries
+
+Run these in order after deploying fixes. All should return non-zero row counts
+within 10–15 minutes of cron execution.
+
+```sql
+-- 1. Confirm vec_build_frame_sequences is correctly named
+SELECT proname, pronargs
+FROM pg_proc
+WHERE proname IN ('vec_build_frame_sequences', 'vec_build_baseline_profiles');
+
+-- 2. Confirm cron jobs are registered
+SELECT jobname, schedule, command
+FROM cron.job
+WHERE jobname LIKE 'vec-%'
+ORDER BY jobname;
+
+-- 3. Manually trigger frame sequence build and inspect
+SELECT vec_build_frame_sequences();
+SELECT COUNT(*), MIN(window_start), MAX(window_end) FROM vec_frame_sequences;
+
+-- 4. Manually trigger transition model update and inspect
+SELECT vec_update_transition_model();
+SELECT COUNT(*) FROM vec_transition_model;
+SELECT SUM(count) AS total_bigrams FROM vec_transition_model;
+
+-- 5. Confirm frame_sequence jobs are being enqueued
+SELECT vec_enqueue_embedding_jobs();
+SELECT embedding_kind, COUNT(*), MIN(due_at), MAX(due_at)
 FROM vec_embedding_jobs
 GROUP BY embedding_kind
 ORDER BY embedding_kind;
+
+-- 6. Confirm null rate in frame sequences after Fix 4
+SELECT
+  COUNT(*) FILTER (WHERE sensor_id IS NULL)   AS null_sensor,
+  COUNT(*) FILTER (WHERE location_id IS NULL) AS null_location,
+  COUNT(*) AS total
+FROM vec_frame_sequences;
+
+-- 7. Confirm vec_score_sequence returns meaningful values after model population
+SELECT vec_score_sequence(ARRAY['BEACON', 'AUTH', 'ASSOC_REQ', 'EAPOL', 'DATA_QOS']);
+-- Expect a negative log-prob, e.g. -5.2 to -12.0 for a common sequence
+
+-- 8. Spot-check infrastructure graph ego-graph for duplicate inflation
+SELECT node_a, COUNT(*) AS edge_count
+FROM vec_infrastructure_graph
+WHERE node_a_type = 'bssid'
+GROUP BY node_a
+ORDER BY edge_count DESC
+LIMIT 5;
+-- Compare with what build_ego_graph_input reports for the same bssid
 ```
 
-And for live throughput (run every 30 seconds, compare delta):
+---
+
+## Deployment Order
+
+| Step | Action | Risk |
+|------|--------|------|
+| 1 | Run verification queries above to establish baseline counts | None |
+| 2 | Apply Fix 3 (column vs payload COALESCE) — safest, additive only | Low |
+| 3 | Apply Fix 1 (rename function + add cron) — requires DROP of mislabeled overload | Medium — brief window where frame sequences not built |
+| 4 | Apply Fix 2 (add frame_sequence to enqueue function) | Low |
+| 5 | Apply Fix 4 (null-safe location/sensor in frame sequences) | Low |
+| 6 | Apply Fix 5 (deduplicate LATERAL) | Low |
+| 7 | Apply Fix 6 (sequence_sequence similarity pairs) | Low |
+| 8 | `SELECT vec_build_frame_sequences()` manually to backfill | None |
+| 9 | `SELECT vec_update_transition_model()` manually to bootstrap | None |
+| 10 | `SELECT vec_enqueue_embedding_jobs()` manually to queue backfill | None |
+| 11 | Run verification queries again — confirm all counts non-zero | None |
+| 12 | Monitor `batch timing` logs in vec-worker for `frame_sequence` jobs appearing | None |
+
+---
+
+## One-liner Backfill After Deploy
 
 ```sql
-SELECT
-  DATE_TRUNC('minute', completed_at) AS minute,
-  COUNT(*) AS completions_per_minute
-FROM vec_embedding_jobs
-WHERE completed_at > NOW() - INTERVAL '10 minutes'
-  AND status = 'completed'
-GROUP BY 1
-ORDER BY 1 DESC;
+-- Run once after all fixes are applied to bootstrap the pipeline end-to-end
+DO $$
+BEGIN
+  PERFORM vec_build_frame_sequences(NOW() - INTERVAL '7 days', NOW());
+  PERFORM vec_update_transition_model();
+  PERFORM vec_build_baseline_profiles(NOW() - INTERVAL '7 days', NOW());
+  PERFORM vec_enqueue_embedding_jobs();
+  RAISE NOTICE 'Backfill complete. Check vec_frame_sequences, vec_transition_model, and vec_embedding_jobs.';
+END;
+$$;
 ```
-
-# AI/ML Enhancement Workmap
-## atheros-sensor + vec-worker — Decision-Quality Intelligence Roadmap
-
----
-
-## Reading the Map
-
-Each section maps directly to your existing architecture. Items are ordered by ROI within each track. Prerequisites are noted inline. Effort estimates assume one senior engineer.
-
----
-
-## Track 1 — Behavioral Baselines Per AP/Client
-**Target:** Replace static threshold rules with learned normal-behavior profiles.
-
-### 1.1 — Per-BSSID Baseline Model (vec-worker)
-**What:** For each BSSID, compute rolling statistics over `vec_behaviour_snapshots`: beacon interval variance, retry rate, signal IQR, channel dwell time, association timing.
-
-**Where to build:**
-- New table: `vec_baseline_profiles` (bssid, metric, p5, p50, p95, updated_at)
-- New cron job alongside `vec_build_behaviour_snapshots()`
-- New `embedding_kind = 'baseline_profile'` in `vec_embedding_jobs`
-
-**Actionable steps:**
-1. Add `vec_build_baseline_profiles()` SQL function — computes per-BSSID rolling percentiles from `sync_events` over a 7-day window.
-2. Add `build_baseline_profile` arm to `text_builder.rs` `build_text()` dispatch.
-3. Extend `vec_enqueue_embedding_jobs()` cron to enqueue `baseline_profile` jobs when a BSSID accumulates ≥ 50 new frames since last baseline.
-4. Add `BaselineProfileRow` sqlx struct matching the new table schema.
-5. Expose deviation score via new `v_bssid_anomaly_score` view: `(observed_metric - p50) / (p95 - p5)`.
-
-**Signal to embed:** `kind: baseline_profile\nbssid: {}\nbeacon_interval_p50: {}\nretry_rate_p95: {}\nsignal_iqr: {}\n...`
-
----
-
-### 1.2 — Per-Client Roaming Baseline (atheros-sensor)
-**What:** Track per-client roaming paths and flag unusual transitions.
-
-**Where to build:** `detect_state.rs` — extend `ClientInventory` / `ClientProfile`.
-
-**Actionable steps:**
-1. Add `roaming_history: Vec<(bssid, channel, observed_at)>` to `ClientProfile` (cap at 32 entries, ring-buffer).
-2. Add `normal_roaming_pairs: HashSet<(String, String)>` populated after ≥ 3 observed transitions.
-3. In `ClientInventory::observe()`, when a new association frame arrives with a BSSID not in `normal_roaming_pairs`, push `"threat:unusual_roam"` tag to the entry.
-4. Expose roaming path in `ClientProfileSnapshot` for the `wireless.client.inventory` topic.
----
-## Plan: Baseline Profile + Roaming Baseline
-
-TL;DR: add a new `baseline_profile` embedding kind in `vec-worker` backed by a new Postgres baseline table + builder pipeline, and extend `atheros-sensor` inventory state to learn roaming pairs and flag unusual association transitions.
-
-### Implementation Steps
-
-1. postgres.sql
-   - Add `vec_baseline_profiles` table keyed by `(bssid, metric)`
-   - Extend `vec_embedding_jobs_kind_chk` to allow `'baseline_profile'`
-   - Add `vec_build_baseline_profiles(...)`
-     - compute per-BSSID metrics from `sync_events_expanded`
-     - upsert `p5`, `p50`, `p95`, `updated_at`
-   - Add `v_bssid_anomaly_score`
-   - Register a new pg_cron job in `vec_install_cron_jobs()`
-
-2. text_builder.rs
-   - Add `baseline_profile` to `build_text()` and `build_text_batch()`
-   - Create `BaselineProfileRow` sqlx struct
-   - Implement batch builder for baseline profiles from `vec_baseline_profiles`
-
-3. detect_state.rs
-   - Add roaming history tracking to `ClientProfile`
-   - Learn normal roaming pairs after ≥3 repeated transitions
-   - Tag unfamiliar new association transitions with `threat:unusual_roam`
-   - Expose roaming path in `ClientProfileSnapshot`
-
-4. Compatibility check
-   - Confirm oracle sink still accepts the updated client snapshot fields
-   - Keep inventory output backward-compatible in oracle-worker
-
-5. Tests
-   - Add targeted SQL + Rust tests for
-     - `vec_build_baseline_profiles()`
-     - baseline profile text builder
-     - roaming learning + unusual roam tagging
-
-### Relevant Files
-- postgres.sql
-- text_builder.rs
-- detect_state.rs
-- wireless_alert_transform.rs
-
-### Verification
-- compile and test changed services
-- verify new SQL objects and cron registration
-- confirm roaming state updates and tag emission
----
-
-## Track 2 — Sequence Models
-**Target:** Detect attack chains from frame transition patterns, not just individual frames.
-
-### 2.1 — Frame Sequence Buffer (atheros-sensor)
-**What:** Track per-session ordered frame-subtype sequences and score them against known-bad patterns.
-
-**Where to build:** New `SequenceTracker` in `detect_state.rs`, added to `PipelineState`.
-
-**Actionable steps:**
-1. Create `SequenceTracker` struct:
-   ```rust
-   struct SessionSequence {
-       frames: VecDeque<String>,      // subtype names, cap 32
-       first_seen: DateTime<Utc>,
-       last_seen: DateTime<Utc>,
-   }
-   sessions: HashMap<String, SessionSequence>  // key = session_key
-   ```
-2. In `PipelineState::new()`, add `sequence_tracker: SequenceTracker`.
-3. Call `sequence_tracker.observe(&entry)` in `process_packet()` after `client_inventory.observe()`.
-4. Implement `SequenceTracker::check_patterns()` — returns `Option<&str>` threat tag when sequence matches:
-   - `[probe_request, probe_response, deauthentication, reassociation_request, deauthentication]` → `"threat:roaming_suppression"`
-   - `[auth, deauth, auth, deauth, ...]` (≥ 3 cycles in 10s) → `"threat:auth_flood"`
-   - `[probe_response]` without prior `[beacon]` for that BSSID → `"threat:silent_rogue_ap"` (already partially in `RogueApTracker`, but sequence catches the stateless case)
-5. Publish matched sequences to new topic `wireless.alert.sequence` (reuse `publish_oracle_json`).
-
----
-
-### 2.2 — Sequence Embeddings (vec-worker)
-**What:** Embed frame sequences as token strings; enable similarity search for novel attack patterns.
-
-**Actionable steps:**
-1. New table `vec_frame_sequences` — stores per-session compressed sequences (session_key, sequence_tokens, window_start, sensor_id).
-2. New `embedding_kind = 'frame_sequence'` in jobs table + `build_frame_sequence` arm in `text_builder.rs`.
-3. Embedding text format: `kind: frame_sequence\ntokens: BEACON AUTH ASSOC EAPOL EAPOL EAPOL EAPOL DATA_QOS\nchannel: 6\nwindow_secs: 30\n`
-4. New cron `vec_build_frame_sequences()` — materializes recent sequences from `sync_events` grouped by `session_key`.
-5. Add HNSW index for `embedding_kind = 'frame_sequence'` in `vec_materialize_similarity_pairs()`.
-
----
-
-## Track 3 — Graph Intelligence
-**Target:** Detect rogue infrastructure, hidden repeaters, and coordinated spoofing via graph structure.
-
-### 3.1 — Infrastructure Graph Materialization (vec-worker / Postgres)
-**What:** Build AP–client–SSID association graph; detect unusual topology.
-
-**Actionable steps:**
-1. New table `vec_infrastructure_graph` — edges: `(node_a, node_a_type, node_b, node_b_type, edge_type, weight, last_seen)`.
-   - Edge types: `association`, `probe_target`, `roaming`, `rf_proximity`, `same_channel`
-   - Node types: `bssid`, `client_mac`, `ssid`, `vendor`
-2. New cron `vec_build_infrastructure_graph()` — materializes edges from `sync_events` in 1-hour windows.
-3. New SQL function `vec_detect_rogue_clusters()` — flags BSSIDs where:
-   - Degree centrality spikes (sudden many new clients)
-   - SSID is shared across ≥ 2 BSSIDs with different OUIs
-   - Client appears on ≥ 3 BSSIDs within 60s (impossible roaming speed)
-4. Expose results in `vec_alerts` with `alert_type = 'rogue_cluster'` via `alerts.rs`.
-5. New embedding kind `'infrastructure_subgraph'` — serialize ego-graph as text: `kind: infrastructure_subgraph\ncenter: {bssid}\nssid: {}\nclients: 14\nvendor_diversity: 3\n...`
-
----
-
-### 3.2 — Channel Topology Anomaly (atheros-sensor)
-**What:** Detect BSSIDs appearing on channels inconsistent with their RF neighborhood.
-
-**Where to build:** Extend `RogueApTracker` in `detect_state.rs`.
-
-**Actionable steps:**
-1. Add `bssid_first_channel: HashMap<String, u8>` to `RogueApTracker`.
-2. In `RogueApTracker::observe()`, after `channel_conflict` detection, also check: if `bssid_first_channel[bssid]` is 5GHz-range (36+) but current frame is on 2.4GHz channel (1–14), push `"channel_band_conflict"` reason.
-3. Track `ap_vendor_by_bssid: HashMap<String, String>` — alert when same SSID is served by different vendor OUIs (`"vendor_conflict"` reason).
-
----
-
-## Track 4 — Unsupervised Anomaly Detection
-**Target:** Score "how abnormal is this AP/client" without labeled attack data.
-
-### 4.1 — Isolation Forest Scorer (vec-worker)
-**What:** Train a per-embedding-kind anomaly scorer on the stored vector space; flag outliers.
-
-**Actionable steps:**
-1. New table `vec_anomaly_scores` — (embedding_id, score, method, computed_at).
-2. New cron `vec_score_anomalies()` — for each `embedding_kind`, uses pgvector's `<->` operator to compute average nearest-neighbor distance as a proxy isolation score:
-   ```sql
-   SELECT e.embedding_id,
-          AVG(e.embedding <-> n.embedding) AS isolation_score
-   FROM vec_embeddings e
-   CROSS JOIN LATERAL (
-     SELECT embedding FROM vec_embeddings
-     WHERE embedding_kind = e.embedding_kind
-       AND embedding_id != e.embedding_id
-     ORDER BY embedding <-> e.embedding
-     LIMIT 10
-   ) n
-   GROUP BY e.embedding_id;
-   ```
-3. Rows where `isolation_score > mean + 2.5 * stddev` → insert into `vec_alerts` with `alert_type = 'embedding_outlier'`.
-4. Expose score in `vec_worker_state` metrics.
-5. Wire into `alerts.rs` as `check_embedding_outliers()` alongside `check_near_duplicates()`.
-
----
-
-### 4.2 — Timing Vector Anomaly (atheros-sensor)
-**What:** Flag frames with impossible or scripted timing patterns.
-
-**Where to build:** New `TimingAnomalyDetector` in `detect_state.rs`.
-
-**Actionable steps:**
-1. Track `inter_frame_deltas: HashMap<String, Vec<i64>>` (session_key → last 64 TSFT deltas in µs).
-2. Compute coefficient of variation (stddev/mean) over the window.
-3. Alert conditions:
-   - CV < 0.02 (hyper-regular, scripted) → `"threat:scripted_timing"`
-   - Delta = 0 (exact duplicate TSFT) → `"threat:replay_timing"` (complements existing `dedupe_or_replay_suspect`)
-   - Delta > 500ms for a `DATA` frame session → `"threat:session_stall"`
-4. Add `TimingAnomalyDetector` to `PipelineState`, observe in `process_packet()`.
-5. Publish timing anomaly events to `wireless.alert.timing_anomaly`.
-
----
-
-## Track 5 — RF "Language Model" (Token Prediction)
-**Target:** Learn normal wireless grammar; score sequences by surprise (perplexity).
-
-### 5.1 — Next-Event Prediction Baseline (vec-worker)
-**What:** Store per-session n-gram transition counts; score new sequences by log-probability.
-
-**Actionable steps:**
-1. New table `vec_transition_model` — (prev_token, next_token, embedding_kind, count, last_updated).
-   - Token = `frame_subtype` (one of ~12 values)
-2. New cron `vec_update_transition_model()` — aggregates ordered `frame_subtype` sequences from `sync_events` into bigram counts (rolling 24h window).
-3. New SQL function `vec_score_sequence(p_tokens text[])` → returns log-probability using Laplace-smoothed bigram model.
-4. Wire into `vec_detect_rogue_clusters()` — sequences with log-prob < -15 get flagged.
-5. Extend `EmbeddingInput.text` for `frame_sequence` kind to include `log_prob: {score}` so the embedding model can weight sequence rarity.
-
----
-
-## Track 6 — Contextual Risk Scoring
-**Target:** Replace single-signal alerts with multi-factor inference scores.
-
-### 6.1 — Composite Risk Score (vec-worker / Postgres)
-**What:** Combine deauth count, signal anomaly, SSID typosquat distance, vendor mismatch, and embedding outlier score into a single AP risk score.
-
-**Actionable steps:**
-1. New view `v_ap_risk_score`:
-   ```sql
-   SELECT bssid,
-     (deauth_score * 0.25
-      + signal_anomaly_score * 0.20
-      + typosquat_score * 0.20
-      + vendor_mismatch_score * 0.15
-      + embedding_outlier_score * 0.20) AS composite_risk,
-     ...
-   FROM ... -- joins vec_anomaly_scores, vec_alerts, vec_similarity_pairs
-   ```
-2. Materialized as `mv_ap_risk_score`, refreshed every 5 min alongside `v_device_repetition_score`.
-3. New `check_high_risk_aps()` in `alerts.rs` — inserts `alert_type = 'high_risk_ap'` when `composite_risk > 0.75`.
-4. Add `composite_risk` to `vec_worker_state` metrics log every 10 iterations.
-
----
-
-### 6.2 — Per-Frame Risk Tag (atheros-sensor)
-**What:** Instead of binary threat tags, attach a risk score field to `AuditEntry`.
-
-**Actionable steps:**
-1. Add `risk_score: Option<f32>` to `AuditEntry` model (`model.rs`).
-2. In `process_packet()`, compute `risk_score` from count of `threat:*` tags (e.g., 1 tag → 0.3, 2 → 0.6, 3+ → 0.9).
-3. Include in `WirelessBandwidthEvent` — add `max_risk_score: Option<f32>` to `TrafficBucket` accumulation.
-4. Downstream consumers can filter on `risk_score >= 0.6` rather than parsing tag lists.
-
----
-
-## Track 7 — Time-Aware Embeddings
-**Target:** Encode temporal context in embedding vectors so similar sequences at different times are handled correctly.
-
-### 7.1 — Temporal Feature Injection (vec-worker)
-**What:** Prepend time-context lines to all embedding text so vectors encode "when" not just "what."
-
-**Actionable steps:**
-1. In `event_row_to_input()` and `behaviour_row_to_input()` in `text_builder.rs`, add temporal lines after `kind: event`:
-   ```
-   hour_of_day: 14
-   day_of_week: tuesday
-   is_weekend: false
-   is_business_hours: true
-   ```
-2. Derive from `source_observed_at` using `chrono` — add helper `fn temporal_context_lines(dt: DateTime<Utc>) -> Vec<String>`.
-3. Add `burst_velocity` to behaviour_window text: `events_per_minute: {event_count / window_duration_mins:.1}`.
-4. Update `content_sha256` computation to include temporal lines — triggers re-embedding on time-context changes (handled automatically by `vec_reembed_changed_jobs`).
-
----
-
-### 7.2 — Burst Detection (atheros-sensor)
-**What:** Detect automated/scripted behavior via inter-arrival time burstiness.
-
-**Where to build:** Reuse `inter_arrival_p50_ms` already computed in `TrafficBucket` (`audit/bandwidth.rs`).
-
-**Actionable steps:**
-1. In `WirelessBandwidthEvent`, add `inter_arrival_cv: Option<f32>` (coefficient of variation of inter-arrival times).
-2. Compute in `drain_window()` from `arrival_times_ms` reservoir (already sampled).
-3. In `process_packet()`, when bandwidth events are flushed with `inter_arrival_cv < 0.05`, push `"threat:burst_automated"` to the corresponding session's next frame.
-4. Include `inter_arrival_cv` in the bandwidth topic payload for downstream ML consumers.
-
----
-
-## Track 8 — Device Identity Resolution
-**Target:** Link randomized MACs to persistent device identities.
-
-### 8.1 — Capability Fingerprint Correlation (atheros-sensor)
-**What:** Use IE fingerprint + timing + signal continuity to group randomized MACs.
-
-**Where to build:** New `DeviceIdentityResolver` in `detect_state.rs`.
-
-**Actionable steps:**
-1. Maintain `fingerprint_to_candidates: HashMap<String, Vec<(String, DateTime<Utc>)>>` (device_fingerprint → list of (mac, last_seen)).
-2. In `process_packet()`, for each probe request: look up `device_fingerprint` in the map. If multiple MACs share the fingerprint and their last-seen times don't overlap (sequential, not concurrent), push `"identity:likely_same_device"` and `adjacent_mac_hint`-style correlation.
-3. Publish correlation events to `wireless.alert.identity_correlation` when confidence ≥ 2 matching fingerprints.
-4. Feed correlation into `vec_infrastructure_graph` as `edge_type = 'mac_alias'`.
-
----
-
-### 8.2 — Probe Sequence Fingerprint (atheros-sensor)
-**What:** Use the ordered set of probed SSIDs as a device fingerprint (devices probe a consistent SSID list).
-
-**Where to build:** Extend `ClientInventory` in `detect_state.rs`.
-
-**Actionable steps:**
-1. Add `probe_sequence_hash: Option<String>` to `ClientProfile` — computed as SHA-256 of sorted `probe_ssids` after ≥ 5 probes.
-2. Maintain `probe_hash_to_macs: HashMap<String, HashSet<String>>` at the inventory level.
-3. When two MACs accumulate the same hash, push `"identity:probe_fingerprint_match"` tag and emit a correlation event.
-4. Expose `probe_sequence_hash` in `ClientProfileSnapshot` for downstream use.
-
----
-
-## Track 9 — Explainable AI Layer
-**Target:** Every alert includes human-readable explanation alongside the score.
-
-### 9.1 — Alert Explanation Fields (atheros-sensor)
-**What:** Replace bare threat tags with structured explanation objects.
-
-**Actionable steps:**
-1. Add `explanation: Vec<AlertExplanation>` to `RogueApAlert`, `DeauthFloodAlert`, `AttackSequenceAlert`:
-   ```rust
-   struct AlertExplanation {
-       factor: String,        // "beacon_interval_variance"
-       observed: String,      // "412ms ± 89ms"
-       baseline: String,      // "normal: 100ms ± 5ms"
-       contribution: f32,     // 0.35
-   }
-   ```
-2. In `RogueApTracker::observe()`, for each reason added, push a corresponding `AlertExplanation` with the observed value vs. baseline.
-3. Serialize `explanation` as a JSON array in the published alert payload.
-4. Consumers (the dashboard, vec-worker alert sweep) can render explanations without re-querying.
-
----
-
-### 9.2 — Alert Explanation in vec-worker (vec-worker)
-**What:** When `check_high_risk_aps()` fires, include factor breakdown in `vec_alerts.metadata`.
-
-**Actionable steps:**
-1. Extend `v_ap_risk_score` view to expose per-factor scores as JSONB column `factor_breakdown`.
-2. In `check_high_risk_aps()` in `alerts.rs`, include `factor_breakdown` in the `metadata` insert.
-3. Add `explanation_text: Option<String>` to `CompleteBatchRow` — vec-worker can optionally store a natural-language summary alongside the vector.
-
----
-
-## Track 10 — Synthetic RF Simulation
-**Target:** Generate labeled training data for model evaluation and rare-event coverage.
-
-### 10.1 — Synthetic Event Generator (vec-worker / test infrastructure)
-**What:** A Rust binary (or feature-flagged module) that generates realistic `sync_events` rows covering attack scenarios.
-
-**Actionable steps:**
-1. New file `services/vec-worker/src/synthetic.rs` (behind `#[cfg(feature = "synthetic")]`).
-2. Implement `generate_rogue_ap_scenario(bssid, ssid, n_frames) -> Vec<SyncEventRow>` — produces interleaved beacon + deauth + reassoc frames with plausible TSFT values.
-3. Implement `generate_deauth_flood(bssid, target_mac, count) -> Vec<SyncEventRow>`.
-4. Implement `generate_karma_sequence(ssid, n_clients) -> Vec<SyncEventRow>` — probe_request followed by probe_response from rogue BSSID.
-5. CLI subcommand `vec-worker synthetic --scenario rogue_ap --count 1000 --seed 42` — inserts rows into `sync_events` with `stream_name = 'synthetic'`.
-6. Use generated data to benchmark `vec_score_anomalies()` recall on known-attack rows.
-
----
-
-## Quick-Win Upgrades (1–2 days each, no new infra)
-
-### QW-1 — `inter_arrival_cv` in bandwidth events
-**File:** `audit/bandwidth.rs` — `drain_window()`. Add CV computation from existing `arrival_times_ms` reservoir. Zero new dependencies.
-
-### QW-2 — Temporal context in embedding text
-**File:** `vec-worker/src/text_builder.rs` — `event_row_to_input()`. Add 4 lines: `hour_of_day`, `day_of_week`, `is_weekend`, `is_business_hours`. Zero new dependencies.
-
-### QW-3 — Risk score field on `AuditEntry`
-**File:** `model.rs` + `parse/frame.rs` `to_audit_entry()`. Add `risk_score: Option<f32>`, compute from threat tag count. Backward-compatible (serde default = None).
-
-### QW-4 — Alert explanation struct on existing alerts
-**File:** `detect_state.rs`. Add `explanation: Vec<String>` (simplest form) to `RogueApAlert` before building the full `AlertExplanation` struct. Can be upgraded incrementally.
-
-### QW-5 — `device_fingerprint` correlation in `ClientInventory`
-**File:** `detect_state.rs` — `ClientInventory::observe()`. Already has `device_fingerprint` on `AuditEntry`. Just maintain `fingerprint_to_macs: HashMap<String, Vec<String>>` and log when a new MAC shares a fingerprint.
-
----
-
-## Implementation Order
-
-| Phase | Items | Estimated effort | Dependency |
-|-------|-------|-----------------|------------|
-| **Phase 0** (quick wins) | QW-1 through QW-5 | 1 week | None |
-| **Phase 1** (highest ROI) | 4.2, 6.2, 7.2, 1.2, 2.1 | 3 weeks | Phase 0 |
-| **Phase 2** (vec-worker enhancements) | 4.1, 7.1, 9.2, 2.2 | 3 weeks | Phase 1 |
-| **Phase 3** (graph + scoring) | 3.1, 3.2, 6.1, 5.1 | 4 weeks | Phase 2 |
-| **Phase 4** (advanced identity + simulation) | 1.1, 8.1, 8.2, 10.1 | 4 weeks | Phase 3 |
-| **Phase 5** (sequence models) | 2.1 extension, 9.1, 5.1 extension | 3 weeks | Phase 4 |
-
----
-
-## Key Invariants to Preserve
-
-- **Wall-clock flush discipline** — any new detector in `detect_state.rs` must use `Instant`-based cooldowns (not frame timestamps) for suppress/alert decisions, matching existing `RogueApTracker` / `DeauthFloodTracker` patterns.
-- **No blocking on the pcap hot path** — sequence trackers, timing detectors, and identity resolvers must be O(1) amortized per frame. Defer any O(n) computation to the inventory flush tick.
-- **Backpressure-aware MAC lookup** — all new Redpanda lookups must check `backlog_pct > 80` and skip gracefully, matching the existing pattern in `process_packet()`.
-- **Content SHA-256 invalidation** — any change to `text_builder.rs` that alters embedding text must be followed by running `SELECT vec_reembed_changed_jobs(p_limit => 100000)` in production to re-queue stale embeddings.
-- **Alert cooldowns** — all new `vec_alerts` inserts must use the `WHERE NOT EXISTS (... created_at > NOW() - INTERVAL '1 hour')` guard matching `check_near_duplicates()`.

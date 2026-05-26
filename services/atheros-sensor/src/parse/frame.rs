@@ -502,6 +502,8 @@ fn frame_subtype_name(frame_type: u8, subtype: u8) -> &'static str {
         0 => match subtype {
             0 => "association_request",
             1 => "association_response",
+            2 => "reassociation_request",
+            3 => "reassociation_response",
             4 => "probe_request",
             5 => "probe_response",
             8 => "beacon",

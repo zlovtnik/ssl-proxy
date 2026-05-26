@@ -1146,7 +1146,6 @@ async fn build_infrastructure_subgraphs_batch(
             UNION ALL
             SELECT node_b AS endpoint WHERE node_b = ANY($1::text[])
         ) endpoints
-        WHERE node_a = ANY($1::text[]) OR node_b = ANY($1::text[])
         ORDER BY weight DESC, last_seen DESC
         "#,
     )

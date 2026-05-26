@@ -96,7 +96,6 @@ pub struct CompleteBatchRow {
     pub embedding: String,
     pub metadata: serde_json::Value,
     /// Human-readable alert explanation text, populated for alert-type embedding jobs.
-    #[serde(default)]
     pub explanation_text: Option<String>,
 }
 

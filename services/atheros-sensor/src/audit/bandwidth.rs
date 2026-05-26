@@ -395,7 +395,7 @@ impl TrafficBucket {
         for (key, counters) in self.entries.drain() {
             let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
             let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
-            // Track source MACs with very low CV — they indicate automated burst traffic.
+            // Track source MACs with very low CV - they indicate automated burst traffic.
             if let Some(cv) = inter_arrival_cv {
                 if cv < 0.05 {
                     self.burst_macs.insert(key.source_mac.clone());

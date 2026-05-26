@@ -1238,7 +1238,7 @@ begin
       v_prob := (v_count + 1.0) / (v_total + v_vocab_size);
     end if;
 
-    v_log_prob := v_log_prob + log(2, v_prob);
+    v_log_prob := v_log_prob + log(2.0::numeric, v_prob::numeric);
   end loop;
 
   return v_log_prob;
@@ -2625,24 +2625,28 @@ begin
     r.embedding::vector,
     coalesce(r.metadata, '{}'::jsonb),
     now(), now(), now()
-  from jsonb_to_recordset(p_payload) as r(
-    job_id bigint,
-    lease_token text,
-    source_table text,
-    source_key text,
-    source_observed_at timestamptz,
-    source_stream_name text,
-    source_sensor_id text,
-    source_location_id text,
-    source_mac text,
-    embedding_model text,
-    embedding_kind text,
-    embedding_dimensions integer,
-    content_sha256 text,
-    content_text text,
-    embedding text,
-    metadata jsonb
-  )
+  from (
+    select *
+    from jsonb_to_recordset(p_payload) as r(
+      job_id bigint,
+      lease_token text,
+      source_table text,
+      source_key text,
+      source_observed_at timestamptz,
+      source_stream_name text,
+      source_sensor_id text,
+      source_location_id text,
+      source_mac text,
+      embedding_model text,
+      embedding_kind text,
+      embedding_dimensions integer,
+      content_sha256 text,
+      content_text text,
+      embedding text,
+      metadata jsonb
+    )
+    order by r.job_id asc
+  ) r
   on conflict (source_table, source_key, embedding_model, embedding_kind)
   do update set
     source_observed_at = excluded.source_observed_at,

@@ -130,7 +130,7 @@ pub async fn check_near_duplicates(
 
 #[instrument(skip(pool))]
 pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
-    let inserted: i64 = sqlx::query_scalar(
+    let inserted: i32 = sqlx::query_scalar(
         "SELECT vec_detect_rogue_clusters()",
     )
     .fetch_one(pool)
@@ -148,7 +148,7 @@ pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
 /// with `alert_type = 'high_risk_ap'` when `composite_risk > 0.75`.
 #[instrument(skip(pool))]
 pub async fn check_high_risk_aps(pool: &PgPool) -> Result<usize, WorkerError> {
-    let inserted: i8 = sqlx::query_scalar(
+    let inserted: i32 = sqlx::query_scalar(
         "SELECT check_high_risk_aps()",
     )
     .fetch_one(pool)
@@ -195,13 +195,16 @@ pub async fn run_alert_sweep(
         warn!(error = %e, "failed to refresh mv_ap_risk_score, alert sweep may use stale data");
     }
 
-    let nd = check_near_duplicates(pool, config).await?;
+    let nd = check_near_duplicates(pool, config).await
+        .unwrap_or_else(|e| { warn!(error = %e, "near_duplicate check failed"); 0 });
     debug_assert!(nd <= usize::MAX);
 
-    let rc = check_rogue_clusters(pool).await?;
+    let rc = check_rogue_clusters(pool).await
+        .unwrap_or_else(|e| { warn!(error = %e, "rogue cluster check failed"); 0 });
     debug_assert!(rc <= usize::MAX);
 
-    let hra = check_high_risk_aps(pool).await?;
+    let hra = check_high_risk_aps(pool).await
+        .unwrap_or_else(|e| { warn!(error = %e, "high_risk_ap check failed"); 0 });
     debug_assert!(hra <= usize::MAX);
 
     Ok(())

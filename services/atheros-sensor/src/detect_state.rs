@@ -43,7 +43,7 @@ use crate::parse::SECURITY_PMF_REQUIRED;
 
 /// Structured explanation for a single detection factor. Each entry captures
 /// what was observed, what was expected (baseline), and how much this factor
-/// contributed to the alert (0.0–1.0).
+/// contributed to the alert (0.0-1.0).
 #[derive(Clone, Debug, Serialize)]
 pub struct AlertExplanation {
     pub factor: String,
@@ -995,6 +995,7 @@ impl SequenceTracker {
             if !sequence.emitted_tags.insert(tag.clone()) {
                 return None;
             }
+            self.prune_stale_sessions(observed_at);
             return Some(SequenceTracker::build_sequence_alert(
                 series_to_tokens(&sequence.frames),
                 session_key,
@@ -1005,13 +1006,17 @@ impl SequenceTracker {
             ));
         }
 
-        // Keep memory bounded by dropping stale sessions older than one hour.
+        self.prune_stale_sessions(observed_at);
+
+        None
+    }
+
+    /// Prunes stale sessions older than one hour to keep memory bounded.
+    fn prune_stale_sessions(&mut self, observed_at: DateTime<Utc>) {
         if self.sessions.len() > 4096 {
             let cutoff = observed_at - chrono::Duration::hours(1);
             self.sessions.retain(|_, seq| seq.last_seen >= cutoff);
         }
-
-        None
     }
 
     fn check_roaming_suppression(sequence: &SessionSequence) -> Option<String> {
