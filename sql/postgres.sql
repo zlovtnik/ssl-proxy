@@ -1785,8 +1785,8 @@ declare
 begin
   with prepared as (
     select
-      session_key,
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(session_key, payload->>'session_key'), '') as session_key,
+      min(lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))) as source_mac,
       min(nullif(coalesce(location_id, payload->>'location_id'), '')) as location_id,
       min(nullif(coalesce(sensor_id, payload->>'sensor_id'), '')) as sensor_id,
       min(observed_at) as window_start,
@@ -2745,6 +2745,8 @@ begin
 end;
 $$;
 
+drop function if exists vec_materialize_similarity_pairs(text, integer, double precision, double precision);
+
 create or replace function vec_materialize_similarity_pairs(
   p_model text default 'nomic-embed-text-v2-moe',
   p_top_k integer default 10,
@@ -3218,7 +3220,7 @@ begin
   perform cron.schedule(
     'vec-materialize-similarity-pairs',
     '*/5 * * * *',
-    $cron$select vec_materialize_similarity_pairs();$cron$
+    $cron$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.92::double precision, 0.10::double precision);$cron$
   );
 
   perform cron.schedule(
