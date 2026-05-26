@@ -89,6 +89,7 @@ create table if not exists wireless_frames (
   username text,
   schema_version integer not null default 1,
   frame_type text,
+  frame_subtype text,
   source_mac text,
   bssid text,
   destination_bssid text,
@@ -171,7 +172,19 @@ create table if not exists wireless_frames (
   updated_at timestamptz not null default now()
 );
 
-create or replace view sync_events_expanded as
+alter table wireless_frames add column if not exists frame_subtype text;
+
+update wireless_frames wf
+set frame_subtype = nullif(se.payload->>'frame_subtype', '')
+from sync_events se
+where se.dedupe_key = wf.dedupe_key
+  and wf.frame_subtype is null
+  and nullif(se.payload->>'frame_subtype', '') is not null;
+
+-- CREATE OR REPLACE cannot insert columns mid-list; dependents are recreated below.
+drop view if exists sync_events_expanded cascade;
+
+create view sync_events_expanded as
 select
   e.dedupe_key,
   e.stream_name,
@@ -189,6 +202,7 @@ select
   f.username,
   f.schema_version,
   f.frame_type,
+  f.frame_subtype,
   f.source_mac,
   f.bssid,
   f.destination_bssid,
@@ -421,7 +435,7 @@ begin
   end if;
 
   insert into wireless_frames (
-    dedupe_key, sensor_id, location_id, username, schema_version, frame_type,
+    dedupe_key, sensor_id, location_id, username, schema_version, frame_type, frame_subtype,
     source_mac, bssid, destination_bssid, ssid, signal_dbm, fragment_number,
     channel_number, signal_status, adjacent_mac_hint, qos_tid, qos_eosp,
     qos_ack_policy, qos_ack_policy_label, qos_amsdu, llc_oui, ethertype,
@@ -441,6 +455,7 @@ begin
     nullif(p_payload->>'username', ''),
     coalesce(coordinator.safe_int(p_payload->>'schema_version'), 1),
     nullif(p_payload->>'frame_type', ''),
+    nullif(p_payload->>'frame_subtype', ''),
     lower(nullif(p_payload->>'source_mac', '')),
     lower(nullif(p_payload->>'bssid', '')),
     lower(nullif(coalesce(p_payload->>'destination_bssid', p_payload->>'destination_mac'), '')),
@@ -508,6 +523,7 @@ begin
     username = excluded.username,
     schema_version = excluded.schema_version,
     frame_type = excluded.frame_type,
+    frame_subtype = excluded.frame_subtype,
     source_mac = excluded.source_mac,
     bssid = excluded.bssid,
     destination_bssid = excluded.destination_bssid,
@@ -586,7 +602,7 @@ select
   coalesce(ssi.bssid, ssi.payload->>'bssid') as bssid,
   coalesce(ssi.destination_bssid, ssi.payload->>'destination_bssid', ssi.payload->>'bssid') as destination_bssid,
   coalesce(ssi.ssid, ssi.payload->>'ssid') as ssid,
-  ssi.payload->>'frame_subtype' as frame_subtype,
+  coalesce(ssi.frame_subtype, ssi.payload->>'frame_subtype') as frame_subtype,
   coalesce(ssi.signal_dbm::text, ssi.payload->>'signal_dbm') as signal_dbm,
   ssi.payload->>'noise_dbm' as noise_dbm,
   ssi.payload->>'frequency_mhz' as frequency_mhz,
@@ -1141,14 +1157,20 @@ declare
 begin
   with windowed as (
     select
-      coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype,
+      coalesce(
+        nullif(frame_subtype, ''),
+        nullif(payload->>'frame_subtype', '')
+      ) as frame_subtype,
       coalesce(session_key, payload->>'session_key') as session_key,
       observed_at
     from sync_events_expanded
     where stream_name = 'wireless.audit'
       and observed_at >= now() - interval '24 hours'
       and coalesce(session_key, payload->>'session_key') is not null
-      and coalesce(frame_subtype, payload->>'frame_subtype') is not null
+      and coalesce(
+        nullif(frame_subtype, ''),
+        nullif(payload->>'frame_subtype', '')
+      ) is not null
   ),
   ordered as (
     select
@@ -1238,7 +1260,7 @@ begin
       v_prob := (v_count + 1.0) / (v_total + v_vocab_size);
     end if;
 
-    v_log_prob := v_log_prob + log(2.0::numeric, v_prob::numeric);
+    v_log_prob := v_log_prob + (ln(v_prob) / ln(2.0));
   end loop;
 
   return v_log_prob;
@@ -1749,7 +1771,9 @@ begin
 end;
 $$;
 
-create or replace function vec_build_baseline_profiles(
+drop function if exists vec_build_baseline_profiles(timestamptz, timestamptz);
+
+create or replace function vec_build_frame_sequences(
   p_from timestamptz default now() - interval '2 hours',
   p_to timestamptz default now()
 )
@@ -1763,18 +1787,30 @@ begin
     select
       session_key,
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
-      nullif(coalesce(location_id, payload->>'location_id'), '') as location_id,
-      nullif(coalesce(sensor_id, payload->>'sensor_id'), '') as sensor_id,
+      min(nullif(coalesce(location_id, payload->>'location_id'), '')) as location_id,
+      min(nullif(coalesce(sensor_id, payload->>'sensor_id'), '')) as sensor_id,
       min(observed_at) as window_start,
       max(observed_at) as window_end,
-      string_agg(upper(regexp_replace(coalesce(frame_subtype, payload->>'frame_subtype'), '-', '_', 'g')), ' ' order by observed_at) as sequence_tokens,
+      string_agg(
+        upper(regexp_replace(
+          coalesce(
+            nullif(frame_subtype, ''),
+            nullif(payload->>'frame_subtype', '')
+          ),
+          '-', '_', 'g'
+        )),
+        ' ' order by observed_at
+      ) as sequence_tokens,
       count(*)::bigint as frame_count
     from sync_events_expanded
     where stream_name = 'wireless.audit'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
-      and coalesce(frame_subtype, payload->>'frame_subtype') is not null
+      and coalesce(
+        nullif(frame_subtype, ''),
+        nullif(payload->>'frame_subtype', '')
+      ) is not null
     group by nullif(coalesce(session_key, payload->>'session_key'), '')
   )
   insert into vec_frame_sequences (
@@ -1836,7 +1872,7 @@ begin
       ) as signal_dbm,
       coalesce(retry, false) as retry,
       coalesce(channel_number::text, payload->>'channel_number', payload->>'channel') as channel_number,
-      frame_subtype,
+      coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype,
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac
     from sync_events_expanded
     where stream_name = 'wireless.audit'
@@ -2429,6 +2465,22 @@ begin
     where existing.embedding_id is null
        or source.updated_at > existing.embedded_at
   ),
+  frame_sequence_jobs as (
+    select
+      'vec_frame_sequences'::text as source_table,
+      fs.session_key::text as source_key,
+      p_model as embedding_model,
+      'frame_sequence'::text as embedding_kind,
+      18 as priority
+    from vec_frame_sequences fs
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_frame_sequences'
+     and existing.source_key = fs.session_key
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'frame_sequence'
+    where existing.embedding_id is null
+       or fs.updated_at > existing.embedded_at
+  ),
   graph_jobs as (
     select
       'vec_infrastructure_graph'::text as source_table,
@@ -2483,6 +2535,8 @@ begin
       select * from device_jobs
       union all
       select * from behaviour_jobs
+      union all
+      select * from frame_sequence_jobs
       union all
       select * from baseline_jobs
       union all
@@ -2695,7 +2749,8 @@ create or replace function vec_materialize_similarity_pairs(
   p_model text default 'nomic-embed-text-v2-moe',
   p_top_k integer default 10,
   p_event_dup_distance_threshold double precision default 0.05,
-  p_behaviour_similarity_threshold double precision default 0.92
+  p_behaviour_similarity_threshold double precision default 0.92,
+  p_sequence_similarity_threshold double precision default 0.10
 )
 returns integer
 language plpgsql
@@ -2860,6 +2915,60 @@ begin
     1 - candidates.cosine_distance,
     1,
     jsonb_build_object('threshold', p_behaviour_similarity_threshold, 'detector', 'mac_rotation_suspected'),
+    now(), now(), now()
+  from candidates
+  join vec_embeddings left_e on left_e.embedding_id = candidates.left_embedding_id
+  join vec_embeddings right_e on right_e.embedding_id = candidates.right_embedding_id
+  on conflict (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id) do update set
+    cosine_distance = excluded.cosine_distance,
+    cosine_similarity = excluded.cosine_similarity,
+    evidence = excluded.evidence,
+    computed_at = now(),
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
+  with candidates as (
+    select
+      least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
+      greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
+      min(neighbor.cosine_distance) as cosine_distance
+    from vec_embeddings e1
+    join lateral (
+      select
+        e2.embedding_id,
+        (e2.embedding::vector(768) <=> e1.embedding::vector(768)) as cosine_distance
+      from vec_embeddings e2
+      where e2.embedding_kind = 'frame_sequence'
+        and e2.embedding_model = p_model
+        and e2.embedding_dimensions = 768
+        and e2.embedding_id <> e1.embedding_id
+      order by e2.embedding::vector(768) <=> e1.embedding::vector(768)
+      limit greatest(p_top_k, 1)
+    ) neighbor on true
+    where e1.embedding_kind = 'frame_sequence'
+      and e1.embedding_model = p_model
+      and e1.embedding_dimensions = 768
+      and neighbor.cosine_distance <= p_sequence_similarity_threshold
+    group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
+  )
+  insert into vec_similarity_pairs (
+    pair_kind, embedding_model, embedding_kind,
+    left_embedding_id, right_embedding_id,
+    left_source_table, left_source_key, left_source_mac, left_sensor_id, left_location_id, left_observed_at,
+    right_source_table, right_source_key, right_source_mac, right_sensor_id, right_location_id, right_observed_at,
+    cosine_distance, cosine_similarity, rank, evidence, computed_at, created_at, updated_at
+  )
+  select
+    'sequence_sequence', p_model, 'frame_sequence',
+    candidates.left_embedding_id, candidates.right_embedding_id,
+    left_e.source_table, left_e.source_key, left_e.source_mac, left_e.source_sensor_id, left_e.source_location_id, left_e.source_observed_at,
+    right_e.source_table, right_e.source_key, right_e.source_mac, right_e.source_sensor_id, right_e.source_location_id, right_e.source_observed_at,
+    candidates.cosine_distance,
+    1 - candidates.cosine_distance,
+    1,
+    jsonb_build_object('detector', 'similar_frame_sequence', 'threshold', p_sequence_similarity_threshold),
     now(), now(), now()
   from candidates
   join vec_embeddings left_e on left_e.embedding_id = candidates.left_embedding_id
@@ -3074,6 +3183,12 @@ begin
     'vec-build-behaviour-snapshots',
     '*/5 * * * *',
     $cron$select vec_build_behaviour_snapshots();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-build-frame-sequences',
+    '*/5 * * * *',
+    $cron$select vec_build_frame_sequences();$cron$
   );
 
   perform cron.schedule(
