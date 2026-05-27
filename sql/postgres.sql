@@ -381,6 +381,112 @@ create table if not exists devices (
   )
 );
 
+-- Track 2: MAC-rotated devices tracked as a single identity cluster.
+-- Multiple devices (different mac_ids) that belong to the same physical
+-- device are grouped into one cluster. The mac_ids array stores all
+-- associated MACs, and size is a denormalized count for fast querying.
+create table if not exists device_identity_clusters (
+  cluster_id    bigserial primary key,
+  cluster_name  text,                        -- optional human-readable label
+  mac_ids       text[] not null default '{}', -- array of associated mac_ids
+  size          integer not null default 1,   -- number of MACs in the cluster
+  first_seen    timestamptz not null default now(),
+  last_seen     timestamptz not null default now(),
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- GIN index for fast membership lookups via ANY(mac_ids)
+create index if not exists idx_device_identity_clusters_mac_ids
+  on device_identity_clusters using gin (mac_ids);
+
+-- Function to assign or find a cluster for a given MAC.
+-- Returns the cluster_id the MAC belongs to (creating one if needed).
+-- Uses rotation indicators from vec_behaviour_snapshots to identify
+-- related MACs that belong to the same physical device.
+create or replace function vec_assign_device_cluster(
+  p_mac_id text
+) returns bigint
+language plpgsql
+as $$
+declare
+  v_cluster_id bigint;
+  v_related_macs text[];
+begin
+  -- 1. If the MAC already belongs to a cluster, return it.
+  select cluster_id into v_cluster_id
+  from device_identity_clusters
+  where p_mac_id = any(mac_ids);
+
+  if found then
+    -- Bump last_seen
+    update device_identity_clusters
+    set last_seen = now(),
+        updated_at = now()
+    where cluster_id = v_cluster_id;
+    return v_cluster_id;
+  end if;
+
+  -- 2. Look for related MACs via rotation indicators in behaviour snapshots.
+  --    Find other source_macs that share rotation indicators with this MAC
+  --    within the last 24 hours.
+  with related as (
+    select distinct lb.source_mac as related_mac
+    from vec_behaviour_snapshots lb
+    where lb.source_mac = p_mac_id
+      and lb.window_start > now() - interval '24 hours'
+      and lb.mac_rotation_indicators is not null
+      and lb.mac_rotation_indicators != '{}'::jsonb
+    intersect
+    select distinct rb.source_mac
+    from vec_behaviour_snapshots rb
+    where rb.source_mac != p_mac_id
+      and rb.window_start > now() - interval '24 hours'
+      and rb.mac_rotation_indicators is not null
+      and rb.mac_rotation_indicators != '{}'::jsonb
+  )
+  select array_agg(related_mac) into v_related_macs from related;
+
+  -- 3. Check if any of the related MACs already belong to a cluster.
+  if v_related_macs is not null and array_length(v_related_macs, 1) > 0 then
+    select cluster_id into v_cluster_id
+    from device_identity_clusters
+    where mac_ids && v_related_macs
+    limit 1;
+  end if;
+
+  -- 4. If no existing cluster found, create one.
+  if v_cluster_id is null then
+    insert into device_identity_clusters (
+      mac_ids, size, first_seen, last_seen, created_at, updated_at
+    )
+    values (
+      array_append(coalesce(v_related_macs, '{}'::text[]), p_mac_id),
+      coalesce(array_length(v_related_macs, 1), 0) + 1,
+      now(), now(), now(), now()
+    )
+    returning cluster_id into v_cluster_id;
+  else
+    -- 5. Merge this MAC into the existing cluster.
+    update device_identity_clusters
+    set mac_ids = array_append(
+          array(select distinct unnest(mac_ids || array[p_mac_id])),
+          p_mac_id
+        ),
+        size = (
+          select count(distinct m)
+          from unnest(mac_ids || array[p_mac_id]) as m
+        ),
+        last_seen = now(),
+        updated_at = now()
+    where cluster_id = v_cluster_id
+      and not (p_mac_id = any(mac_ids));
+  end if;
+
+  return v_cluster_id;
+end;
+$$;
+
 create index if not exists sync_events_status_idx on sync_events (status, observed_at);
 create index if not exists sync_events_stream_idx on sync_events (stream_name, observed_at);
 create index if not exists sync_events_ready_idx on sync_events (status, stream_name, observed_at) where status in ('pending', 'failed');
@@ -1744,11 +1850,26 @@ as $$
 declare
   v_count integer;
 begin
-  insert into vec_alerts (alert_type, source_mac, score, metadata)
+  insert into vec_alerts (alert_type, source_mac, score, explanation_text, metadata)
   select
     'high_risk_ap'::text,
     r.bssid,
     r.composite_risk,
+    concat(
+      'High-risk AP ', r.bssid, ': composite_risk=',
+      round(r.composite_risk::numeric, 2), ' exceeded threshold ',
+      round(p_threshold::numeric, 2), '. ',
+      'Contributing factors: deauth_score=',
+      round(r.deauth_score::numeric, 2),
+      ', signal_anomaly_score=',
+      round(r.signal_anomaly_score::numeric, 2),
+      ', typosquat_score=',
+      round(r.typosquat_score::numeric, 2),
+      ', vendor_mismatch_score=',
+      round(r.vendor_mismatch_score::numeric, 2),
+      ', embedding_outlier_score=',
+      round(r.embedding_outlier_score::numeric, 2), '.'
+    ),
     jsonb_build_object(
       'composite_risk', r.composite_risk,
       'deauth_score', r.deauth_score,
@@ -1783,35 +1904,54 @@ as $$
 declare
   v_count integer := 0;
 begin
-  with prepared as (
+  with base as (
     select
-      nullif(coalesce(session_key, payload->>'session_key'), '') as session_key,
-      min(lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))) as source_mac,
-      min(nullif(coalesce(location_id, payload->>'location_id'), '')) as location_id,
-      min(nullif(coalesce(sensor_id, payload->>'sensor_id'), '')) as sensor_id,
-      min(observed_at) as window_start,
-      max(observed_at) as window_end,
-      string_agg(
-        upper(regexp_replace(
-          coalesce(
-            nullif(frame_subtype, ''),
-            nullif(payload->>'frame_subtype', '')
-          ),
-          '-', '_', 'g'
-        )),
-        ' ' order by observed_at
-      ) as sequence_tokens,
-      count(*)::bigint as frame_count
+      -- Prefer real session_key from payload; fall back to synthetic key
+      -- derived from (source_mac, bssid, minute) so events with no session
+      -- identifier still get grouped into meaningful frame sequences.
+      coalesce(
+        nullif(coalesce(session_key, payload->>'session_key'), ''),
+        md5(
+          coalesce(lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')), '')
+          || '|'
+          || coalesce(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '')
+          || '|'
+          || to_char(date_trunc('minute', observed_at), 'YYYY-MM-DD HH24:MI:SS')
+        )
+      ) as session_key,
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(location_id, payload->>'location_id'), '') as location_id,
+      nullif(coalesce(sensor_id, payload->>'sensor_id'), '') as sensor_id,
+      observed_at,
+      coalesce(
+        nullif(frame_subtype, ''),
+        nullif(payload->>'frame_subtype', '')
+      ) as frame_subtype_value
     from sync_events_expanded
     where stream_name = 'wireless.audit'
       and observed_at >= p_from
       and observed_at < p_to
-      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
       and coalesce(
         nullif(frame_subtype, ''),
         nullif(payload->>'frame_subtype', '')
       ) is not null
-    group by nullif(coalesce(session_key, payload->>'session_key'), '')
+  ),
+  prepared as (
+    select
+      session_key,
+      min(source_mac) as source_mac,
+      min(location_id) as location_id,
+      min(sensor_id) as sensor_id,
+      min(observed_at) as window_start,
+      max(observed_at) as window_end,
+      string_agg(
+        upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
+        ' ' order by observed_at
+      ) as sequence_tokens,
+      count(*)::bigint as frame_count
+    from base
+    where session_key is not null
+    group by session_key
   )
   insert into vec_frame_sequences (
     session_key,
@@ -2287,6 +2427,21 @@ begin
     from frame_counts
     group by source_mac, location_id, window_start
   ),
+  cross_mac as (
+    select
+      location_id,
+      window_start,
+      bool_and(
+        (get_byte(decode(split_part(source_mac, ':', 1), 'hex'), 0) & 2) = 2
+      ) as is_locally_administered,
+      count(distinct source_mac) filter (
+        where (get_byte(decode(split_part(source_mac, ':', 1), 'hex'), 0) & 2) = 2
+      )::bigint as la_mac_count,
+      max(signal_dbm) - min(signal_dbm) as signal_range_dbm
+    from base
+    where signal_dbm is not null
+    group by location_id, window_start
+  ),
   prepared as (
     select
       md5(r.source_mac || '|' || coalesce(r.location_id, '') || '|' || r.window_start::text || '|' || r.window_end::text) as snapshot_key,
@@ -2310,7 +2465,16 @@ begin
         'device_fingerprint_count', r.device_fingerprint_count,
         'unique_bssid_count', r.unique_bssid_count,
         'protected_ratio', case when r.event_count = 0 then 0 else round((r.protected_count::numeric / r.event_count::numeric), 4) end,
-        'retry_ratio', case when r.event_count = 0 then 0 else round((r.retry_count::numeric / r.event_count::numeric), 4) end
+        'retry_ratio', case when r.event_count = 0 then 0 else round((r.retry_count::numeric / r.event_count::numeric), 4) end,
+        'is_locally_administered', coalesce(cm.is_locally_administered, false),
+        'la_mac_count_in_window', coalesce(cm.la_mac_count, 0),
+        'signal_range_dbm', coalesce(cm.signal_range_dbm, 0),
+        'rotation_confidence', case
+          when coalesce(cm.la_mac_count, 0) >= 3
+           and coalesce(cm.signal_range_dbm, 999) < 20
+          then least(1.0, round(coalesce(cm.la_mac_count, 0)::numeric / 5.0, 2))
+          else 0
+        end
       ) as mac_rotation_indicators,
       concat_ws(
         E'\n',
@@ -2329,7 +2493,19 @@ begin
         'retry_count: ' || r.retry_count::text,
         'protected_count: ' || r.protected_count::text,
         'unprotected_count: ' || r.unprotected_count::text,
-        'unique_bssid_count: ' || r.unique_bssid_count::text
+        'unique_bssid_count: ' || r.unique_bssid_count::text,
+        'la_mac_count_in_window: ' || coalesce(cm.la_mac_count, 0)::text,
+        'is_locally_administered: ' || coalesce(cm.is_locally_administered, false)::text,
+        'signal_range_dbm: ' || coalesce(cm.signal_range_dbm::text, 'unknown'),
+        'rotation_confidence: ' || coalesce(
+          case
+            when coalesce(cm.la_mac_count, 0) >= 3
+             and coalesce(cm.signal_range_dbm, 999) < 20
+            then least(1.0, round(coalesce(cm.la_mac_count, 0)::numeric / 5.0, 2))
+            else 0
+          end,
+          0
+        )::text
       ) as text_summary,
       -- Identity-stripped text for dense embedding: behavioural signal only
       concat_ws(
@@ -2346,7 +2522,19 @@ begin
         'retry_count: ' || r.retry_count::text,
         'protected_count: ' || r.protected_count::text,
         'unprotected_count: ' || r.unprotected_count::text,
-        'unique_bssid_count: ' || r.unique_bssid_count::text
+        'unique_bssid_count: ' || r.unique_bssid_count::text,
+        'la_mac_count_in_window: ' || coalesce(cm.la_mac_count, 0)::text,
+        'is_locally_administered: ' || coalesce(cm.is_locally_administered, false)::text,
+        'signal_range_dbm: ' || coalesce(cm.signal_range_dbm::text, 'unknown'),
+        'rotation_confidence: ' || coalesce(
+          case
+            when coalesce(cm.la_mac_count, 0) >= 3
+             and coalesce(cm.signal_range_dbm, 999) < 20
+            then least(1.0, round(coalesce(cm.la_mac_count, 0)::numeric / 5.0, 2))
+            else 0
+          end,
+          0
+        )::text
       ) as embedding_text
     from rollup r
     left join protocol_json p
@@ -2357,6 +2545,9 @@ begin
       on f.source_mac = r.source_mac
      and f.location_id is not distinct from r.location_id
      and f.window_start = r.window_start
+    left join cross_mac cm
+      on cm.location_id is not distinct from r.location_id
+     and cm.window_start = r.window_start
   )
   insert into vec_behaviour_snapshots (
     snapshot_key, source_mac, location_id, sensor_id, window_start, window_end,
@@ -3013,7 +3204,7 @@ begin
     destination_bssid, ssid, sensor_id, location_id, signal_dbm,
     reason, evidence, resolved_at, created_at, updated_at
   )
-  select
+  select distinct on (right_snapshot.source_mac)
     right_snapshot.source_mac,
     least(left_snapshot.window_start, right_snapshot.window_start),
     greatest(left_snapshot.window_end, right_snapshot.window_end),
@@ -3043,6 +3234,7 @@ begin
     and pair.cosine_similarity >= p_behaviour_similarity_threshold
     and left_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
     and right_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+  order by right_snapshot.source_mac, pair.cosine_similarity desc
   on conflict (source_mac) do update set
     last_occurred_at = greatest(wireless_shadow_alerts.last_occurred_at, excluded.last_occurred_at),
     occurrence_count = coalesce(wireless_shadow_alerts.occurrence_count, 0) + case
@@ -3295,7 +3487,7 @@ SELECT
     AVG(cosine_distance) AS avg_distance,
     COUNT(DISTINCT embedding_id) AS unique_events_implicated
 FROM device_pairs
-WHERE computed_at >= NOW() - INTERVAL '24 hours'
+WHERE computed_at >= NOW() - INTERVAL '7 days'
 GROUP BY source_mac
 ORDER BY near_duplicate_pairs DESC;
 
@@ -3319,9 +3511,12 @@ CREATE TABLE IF NOT EXISTS vec_alerts (
     sensor_id TEXT,
     location_id TEXT,
     score DOUBLE PRECISION,
+    explanation_text TEXT,
     metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE vec_alerts ADD COLUMN IF NOT EXISTS explanation_text TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_created
     ON vec_alerts (alert_type, created_at DESC);
