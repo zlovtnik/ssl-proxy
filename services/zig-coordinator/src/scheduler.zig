@@ -51,7 +51,7 @@ pub const Service = struct {
             .allocator = allocator,
             .io = io,
             .cfg = cfg,
-            .database = db.Client.init(allocator, io, cfg.database_url, cfg.sync_schema_file),
+            .database = db.Client.init(allocator, io, cfg.database_url),
             .last_shadow_audit_ts = null,
             .inflight = 0,
         };
@@ -91,19 +91,6 @@ pub const Service = struct {
 
         logging.info()
             .stringSafe("event", "healthcheck")
-            .stringSafe("status", "ok")
-            .int("duration_ms", elapsedMs(start_ts, self.io))
-            .log();
-    }
-
-    pub fn bootstrap(self: *Service) Error!void {
-        const start_ts = std.Io.Timestamp.now(self.io, .awake);
-        logging.info().stringSafe("event", "bootstrap").stringSafe("status", "start").log();
-
-        try self.runLoggedStep("bootstrap_step", "apply_schema", Service.applySchema);
-
-        logging.info()
-            .stringSafe("event", "bootstrap")
             .stringSafe("status", "ok")
             .int("duration_ms", elapsedMs(start_ts, self.io))
             .log();
@@ -205,10 +192,6 @@ pub const Service = struct {
         had_work = (try sync_handlers.runShadowAudit(self.allocator, self.io, self.cfg, &self.database, &self.last_shadow_audit_ts, SHADOW_AUDIT_INTERVAL_MS)) or had_work;
         had_work = (try wireless_handlers.run(self.allocator, self.io, self.cfg, &self.database)) or had_work;
         return had_work;
-    }
-
-    fn applySchema(self: *Service) Error!void {
-        try self.database.applySchema();
     }
 
     fn checkDatabaseConnectivity(self: *Service) Error!void {

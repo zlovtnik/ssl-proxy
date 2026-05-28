@@ -74,7 +74,6 @@ pub fn main(init: std.process.Init) !void {
         return error.InvalidArgument;
     }
 
-    try service.bootstrap();
     try service.healthcheck();
     const cursor = try service.ensureCursors();
     defer allocator.free(cursor);

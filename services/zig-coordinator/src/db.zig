@@ -6,7 +6,6 @@ const INLINE_SQL_ARG_LIMIT = 96 * 1024;
 pub const Error = error{
     OutOfMemory,
     DatabaseCheckFailed,
-    SchemaApplyFailed,
     CursorEnsureFailed,
     CursorLookupFailed,
     IngestProcessFailed,
@@ -27,40 +26,17 @@ pub const Client = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     database_url: []const u8,
-    schema_file: []const u8,
 
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
         database_url: []const u8,
-        schema_file: []const u8,
     ) Client {
         return .{
             .allocator = allocator,
             .io = io,
             .database_url = database_url,
-            .schema_file = schema_file,
         };
-    }
-
-    pub fn applySchema(self: *Client) Error!void {
-        const argv = [_][]const u8{
-            "psql",
-            self.database_url,
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-f",
-            self.schema_file,
-        };
-        var result = command.exec(self.allocator, self.io, &argv) catch {
-            return error.SchemaApplyFailed;
-        };
-        defer result.deinit(self.allocator);
-
-        if (!command.isSuccess(result)) {
-            command.logFailure("psql", result);
-            return error.SchemaApplyFailed;
-        }
     }
 
     pub fn checkConnectivity(self: *Client) Error!void {
