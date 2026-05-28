@@ -40,6 +40,7 @@ pub const Service = struct {
     cfg: config.Config,
     database: db.Client,
     last_shadow_audit_ts: ?std.Io.Timestamp,
+    inflight: u64,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -52,6 +53,7 @@ pub const Service = struct {
             .cfg = cfg,
             .database = db.Client.init(allocator, io, cfg.database_url, cfg.sync_schema_file),
             .last_shadow_audit_ts = null,
+            .inflight = 0,
         };
     }
 
@@ -128,6 +130,7 @@ pub const Service = struct {
     pub fn run(self: *Service, shutdown: *std.atomic.Value(bool), shutdown_signal: *std.atomic.Value(u32)) !void {
         const start_ts = std.Io.Timestamp.now(self.io, .awake);
         var last_heartbeat_ts = start_ts;
+        var consecutive_idle: u32 = 0;
 
         while (!shutdown.load(.acquire)) {
             const had_work = self.runIteration() catch |err| {
@@ -143,7 +146,11 @@ pub const Service = struct {
                 .log();
 
             if (!had_work) {
-                sleepUnlessShutdown(self.io, shutdown, self.cfg.idle_sleep_ms);
+                consecutive_idle += 1;
+                const sleep_ms = if (consecutive_idle >= 3) self.cfg.idle_sleep_backoff_ms else self.cfg.idle_sleep_ms;
+                sleepUnlessShutdown(self.io, shutdown, sleep_ms);
+            } else {
+                consecutive_idle = 0;
             }
             maybeLogHeartbeat(start_ts, &last_heartbeat_ts, self.io);
         }
@@ -161,7 +168,29 @@ pub const Service = struct {
 
     fn runIteration(self: *Service) Error!bool {
         var had_work = false;
-        had_work = (try sync_handlers.drainScanRequests(self.allocator, self.io, self.cfg, &self.database)) or had_work;
+
+        // DB-driven backpressure — skip scan pull when ingest queue is too long.
+        const budget: u64 = @as(u64, self.cfg.ingest_batch_size) * 2;
+        const pending_count = db_sync.pendingLedgerCount(&self.database) catch 0;
+
+        // Adaptive pull window — shrink fetch_count when DB is falling behind.
+        const effective_scan_count: usize = if (pending_count >= budget)
+            @max(1, budget -| pending_count)
+        else
+            self.cfg.scan_fetch_count;
+
+        if (pending_count >= budget) {
+            logging.info()
+                .stringSafe("event", "backpressure")
+                .stringSafe("status", "throttled")
+                .int("pending_count", pending_count)
+                .int("budget", budget)
+                .int("effective_scan_count", effective_scan_count)
+                .int("inflight", self.inflight)
+                .log();
+        }
+
+        had_work = (try sync_handlers.drainScanRequests(self.allocator, self.io, self.cfg, &self.database, effective_scan_count, &self.inflight)) or had_work;
         had_work = (try db_sync.processIngestLedger(
             &self.database,
             self.cfg.stream_names_csv,

@@ -21,7 +21,7 @@ use tracing::instrument;
 /// The runtime config `max_input_tokens` (default 512) provides a coarser
 /// character-level safety net in `prepare_chunk`; the helpers here enforce
 /// word-level budget at text construction time.
-pub const MAX_TOKENS: usize = 512;
+pub const MAX_TOKENS: usize = 384;
 
 /// Tokens consumed by fixed structural lines common to all builders
 /// (kind, hour_of_day, day_of_week, is_weekend, is_business_hours, one spare).
@@ -29,13 +29,13 @@ pub const MAX_TOKENS: usize = 512;
 const OVERHEAD_TOKENS: usize = 16;
 
 /// Effective token budget available for variable-length content.
-const CONTENT_TOKEN_BUDGET: usize = MAX_TOKENS - OVERHEAD_TOKENS; // 496
+const CONTENT_TOKEN_BUDGET: usize = MAX_TOKENS - OVERHEAD_TOKENS;
 
 /// Conservative words-to-tokens multiplier denominator.
-/// 2 words per 3 tokens means we never exceed MAX_TOKENS even if every
-/// word tokenises as 1.5 tokens (worst case for mixed-case / hyphenated text).
+/// 1 word per 3 tokens means we never exceed MAX_TOKENS even if every
+/// word tokenises as 3 tokens (worst case for WiFi data with BPE tokenizer).
 const WORDS_PER_TOKEN_DENOM: usize = 3;
-const WORDS_PER_TOKEN_NUM: usize = 2;
+const WORDS_PER_TOKEN_NUM: usize = 1;
 
 /// Maximum whitespace-separated words allowed in a variable-length field.
 #[inline]
@@ -1151,7 +1151,7 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
 
     // Frame subtypes are single uppercase words — each is ~1 token.
     // Reserve OVERHEAD_TOKENS for the fixed structural lines; the rest goes to tokens.
-    let token_word_budget = MAX_TOKENS - OVERHEAD_TOKENS; // 496 words
+    let token_word_budget = MAX_TOKENS - OVERHEAD_TOKENS;
     let truncated_tokens = truncate_token_sequence(&row.sequence_tokens, token_word_budget);
     lines.push(format!("tokens: {}", truncated_tokens));
 
@@ -1622,25 +1622,27 @@ mod tests {
 
     #[test]
     fn truncate_token_sequence_no_op_when_short() {
+        let budget = MAX_TOKENS - OVERHEAD_TOKENS;
         let tokens = "BEACON AUTH ASSOC_REQ EAPOL DATA_QOS";
-        assert_eq!(truncate_token_sequence(tokens, 496), tokens);
+        assert_eq!(truncate_token_sequence(tokens, budget), tokens);
     }
 
     #[test]
     fn truncate_token_sequence_truncates_and_annotates() {
+        let budget = MAX_TOKENS - OVERHEAD_TOKENS; // 368
         let tokens: String = (0..600).map(|_| "BEACON").collect::<Vec<_>>().join(" ");
-        let result = truncate_token_sequence(&tokens, 496);
+        let result = truncate_token_sequence(&tokens, budget);
         assert!(
-            result.contains("(+104 truncated)"),
+            result.contains("(+232 truncated)"),
             "expected truncation annotation, got: {}",
             &result[..result.len().min(80)]
         );
-        // Should not exceed budget (496 content words + annotation words)
+        // Should not exceed budget (368 content words + annotation words)
         let content_words = result
             .split_whitespace()
             .take_while(|w| !w.starts_with("(+"))
             .count();
-        assert_eq!(content_words, 496);
+        assert_eq!(content_words, budget);
     }
 
     #[test]
@@ -1667,13 +1669,14 @@ mod tests {
     }
 
     #[test]
-    fn word_budget_512_is_341() {
-        assert_eq!(word_budget(512), 341);
+    fn word_budget_512_is_170() {
+        // (512 * 1) / 3 = 170 words at the 3-tokens-per-word ratio
+        assert_eq!(word_budget(512), 170);
     }
 
     #[test]
-    fn frame_sequence_token_budget_is_496() {
+    fn frame_sequence_token_budget_is_368() {
         // Verify the direct budget for frame sequences (1 token per word, no multiplier)
-        assert_eq!(MAX_TOKENS - OVERHEAD_TOKENS, 496);
+        assert_eq!(MAX_TOKENS - OVERHEAD_TOKENS, 368);
     }
 }

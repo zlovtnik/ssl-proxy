@@ -387,8 +387,10 @@ async fn prepare_chunk(config: &Config, pool: &PgPool, jobs: Vec<EmbeddingJob>) 
         }
     };
 
-    // Truncation guard: 3 chars ~ 1 token for nomic-embed-text-v2-moe BPE tokenizer
-    let max_chars = config.max_input_tokens.saturating_mul(3);
+    // Truncation guard: ≈ 1.5 chars per token for BPE tokenizer on structured WiFi data.
+    // MAC addrs, hex, and underscore tokens (ASSOC_REQ) can inflate to 3+ chars per token,
+    // so 3/2 gives headroom under the provider's context limit.
+    let max_chars = config.max_input_tokens.saturating_mul(3) / 2;
     let mut truncated_count = 0usize;
     let mut prepared = Vec::with_capacity(jobs.len());
     let mut failed = 0usize;

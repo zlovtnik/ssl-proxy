@@ -9,6 +9,21 @@ pub const ScanRequestRecord = struct {
     payload_sha256: []const u8,
 };
 
+pub fn pendingLedgerCount(client: *db.Client) db.Error!u64 {
+    const argv = [_][]const u8{
+        "psql",                                             client.database_url,
+        "-v",                                               "ON_ERROR_STOP=1",
+        "-qAt",                                             "-c",
+        "select coordinator.pending_ledger_count()::text;",
+    };
+    const output = client.runScalar(&argv, "psql", error.IngestProcessFailed, false) catch |err| return err;
+    defer if (output) |value| client.allocator.free(value);
+    if (output) |value| {
+        return std.fmt.parseInt(u64, value, 10) catch error.IngestProcessFailed;
+    }
+    return 0;
+}
+
 pub fn processIngestLedger(
     client: *db.Client,
     stream_names_csv: []const u8,
