@@ -1638,7 +1638,7 @@ mod tests {
         // Should not exceed budget (496 content words + annotation words)
         let content_words = result
             .split_whitespace()
-            .take_while(|w| !w.starts_with("(+)"))
+            .take_while(|w| !w.starts_with("(+"))
             .count();
         assert_eq!(content_words, 496);
     }
