@@ -289,11 +289,19 @@ impl Config {
         };
 
         let alert_pool_max_connections = match std::env::var("ALERT_POOL_MAX_CONNECTIONS") {
-            Ok(v) => v.parse::<u32>().map_err(|_| {
-                WorkerError::config(format!(
-                    "ALERT_POOL_MAX_CONNECTIONS must be a valid u32, got '{v}'"
-                ))
-            })?,
+            Ok(v) => {
+                let n: u32 = v.parse().map_err(|_| {
+                    WorkerError::config(format!(
+                        "ALERT_POOL_MAX_CONNECTIONS must be a valid u32, got '{v}'"
+                    ))
+                })?;
+                if n == 0 {
+                    return Err(WorkerError::config(format!(
+                        "ALERT_POOL_MAX_CONNECTIONS must be >= 1, got '{n}'"
+                    )));
+                }
+                n
+            }
             Err(_) => 4,
         };
 

@@ -36,7 +36,7 @@ begin
   -- 1. If the MAC already belongs to a cluster, return it.
   select cluster_id into v_cluster_id
   from device_identity_clusters
-  where p_mac_id = any(mac_ids);
+  where mac_ids @> ARRAY[p_mac_id];
 
   if found then
     -- Bump last_seen
@@ -49,19 +49,19 @@ begin
 
   -- 2. Look for related MACs via rotation indicators in behaviour snapshots.
   --    Find other source_macs that share rotation indicators with this MAC
-  --    within the last 24 hours.
+  --    within the last 24 hours (using jsonb containment: rb's indicators
+  --    contain all of lb's indicators, suggesting the same device).
   with related as (
-    select distinct lb.source_mac as related_mac
+    select distinct rb.source_mac as related_mac
     from vec_behaviour_snapshots lb
+    join vec_behaviour_snapshots rb
+      on rb.mac_rotation_indicators @> lb.mac_rotation_indicators
+     and rb.source_mac != lb.source_mac
+     and rb.window_start > now() - interval '24 hours'
     where lb.source_mac = p_mac_id
       and lb.window_start > now() - interval '24 hours'
       and lb.mac_rotation_indicators is not null
       and lb.mac_rotation_indicators != '{}'::jsonb
-    intersect
-    select distinct rb.source_mac
-    from vec_behaviour_snapshots rb
-    where rb.source_mac != p_mac_id
-      and rb.window_start > now() - interval '24 hours'
       and rb.mac_rotation_indicators is not null
       and rb.mac_rotation_indicators != '{}'::jsonb
   )
@@ -89,9 +89,8 @@ begin
   else
     -- 5. Merge this MAC into the existing cluster.
     update device_identity_clusters
-    set mac_ids = array_append(
-          array(select distinct unnest(mac_ids || array[p_mac_id])),
-          p_mac_id
+    set mac_ids = (
+          select array(select distinct unnest(mac_ids || array[p_mac_id]))
         ),
         size = (
           select count(distinct m)
