@@ -42,8 +42,14 @@ const PreparedScanRecord = struct {
     }
 };
 
-pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client) !bool {
-    const batch = try service_redpanda.pullScanBatch(allocator, io, cfg, cfg.scan_fetch_count);
+pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config, database: *db.Client, fetch_count: usize, inflight: ?*u64) !bool {
+    // Inflight watermark guard — stop pulling if too many messages are in flight.
+    const max_inflight = @as(u64, cfg.ingest_batch_size) * 4;
+    if (inflight) |ir| {
+        if (ir.* >= max_inflight) return false;
+    }
+
+    const batch = try service_redpanda.pullScanBatch(allocator, io, cfg, fetch_count);
     if (batch.items.len == 0) return false;
     defer service_redpanda.freeBatch(allocator, batch);
 
@@ -61,6 +67,11 @@ pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.C
 
     if (records.items.len == 0) return true;
 
+    // Count pulled messages as inflight before the DB write.
+    if (inflight) |ir| {
+        ir.* += records.items.len;
+    }
+
     const db_records = try allocator.alloc(db_sync.ScanRequestRecord, records.items.len);
     defer allocator.free(db_records);
     for (records.items, 0..) |record, idx| {
@@ -73,6 +84,12 @@ pub fn drainScanRequests(allocator: std.mem.Allocator, io: std.Io, cfg: config.C
 
     const recorded = try db_sync.recordScanRequests(database, db_records, cfg.stream_names_csv);
     logRecordedScanRequests(records.items, recorded);
+
+    // Decrement inflight by the prepared count (all records we planned to write).
+    if (inflight) |ir| {
+        ir.* -= records.items.len;
+    }
+
     return true;
 }
 

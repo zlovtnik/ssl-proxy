@@ -72,21 +72,33 @@ pub struct Config {
     pub request_batch_max: usize,
     /// Override for `PgPool` max connections; when unset, derived from concurrency knobs.
     pub database_pool_max_connections: Option<u32>,
+    /// Connection pool size for the alert sweep pool (default: 4).
+    pub alert_pool_max_connections: u32,
     /// Run a single pass and exit (set by CLI `--once` flag).
     pub once: bool,
+    /// Maximum allowed tokens per input text sent to the embedding provider.
+    /// Texts longer than `max_input_tokens * 4` characters are truncated at a line
+    /// boundary.  Default: 512  (matches llama.cpp default `physical_batch`).
+    /// Increase if your provider can handle longer individual inputs.
+    pub max_input_tokens: usize,
 }
 
 impl Config {
-    /// Effective Postgres pool size: env override or `max(prepares, completes, embed) + 2`, floor 10.
+    /// Effective Postgres pool size: env override or sum of concurrent activities + headroom, floor 10.
+    ///
+    /// Concurrent activities that each hold a connection simultaneously:
+    ///   - complete fallback transactions:       max_concurrent_completes
+    ///   - prepare batch queries (per-kind):     max_concurrent_prepares
+    ///   - system: lease, state, reaper, count:  4
+    /// Alert sweep is on a separate pool, not counted here.
     pub fn effective_pool_max_connections(&self) -> u32 {
         if let Some(n) = self.database_pool_max_connections {
             return n.max(1);
         }
         let derived = self
-            .max_concurrent_prepares
-            .max(self.max_concurrent_completes)
-            .max(self.max_concurrent_embed_requests)
-            .saturating_add(2);
+            .max_concurrent_completes
+            .saturating_add(self.max_concurrent_prepares)
+            .saturating_add(4); // lease + mark_worker_state + release_expired_leases + headroom
         (derived.max(10)) as u32
     }
 
@@ -276,6 +288,22 @@ impl Config {
             Err(_) => None,
         };
 
+        let alert_pool_max_connections = match std::env::var("ALERT_POOL_MAX_CONNECTIONS") {
+            Ok(v) => v.parse::<u32>().map_err(|_| {
+                WorkerError::config(format!(
+                    "ALERT_POOL_MAX_CONNECTIONS must be a valid u32, got '{v}'"
+                ))
+            })?,
+            Err(_) => 4,
+        };
+
+        let max_input_tokens = read_usize("VECTOR_EMBEDDING_MAX_INPUT_TOKENS", 512)?;
+        if max_input_tokens == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_MAX_INPUT_TOKENS must be >= 1",
+            ));
+        }
+
         Ok(Self {
             embeddings_enabled,
             provider,
@@ -293,7 +321,9 @@ impl Config {
             max_concurrent_embed_requests,
             request_batch_max,
             database_pool_max_connections,
+            alert_pool_max_connections,
             once: false,
+            max_input_tokens,
         })
     }
 }
@@ -326,9 +356,18 @@ impl std::fmt::Debug for SanitizedConfig<'_> {
             .field("request_batch_max", &self.inner.request_batch_max)
             .field(
                 "database_pool_max_connections",
+                &self.inner.database_pool_max_connections,
+            )
+            .field(
+                "alert_pool_max_connections",
+                &self.inner.alert_pool_max_connections,
+            )
+            .field(
+                "effective_pool_max_connections",
                 &self.inner.effective_pool_max_connections(),
             )
             .field("once", &self.inner.once)
+            .field("max_input_tokens", &self.inner.max_input_tokens)
             .finish()
     }
 }
@@ -368,9 +407,18 @@ impl std::fmt::Debug for Config {
             .field("request_batch_max", &self.request_batch_max)
             .field(
                 "database_pool_max_connections",
+                &self.database_pool_max_connections,
+            )
+            .field(
+                "alert_pool_max_connections",
+                &self.alert_pool_max_connections,
+            )
+            .field(
+                "effective_pool_max_connections",
                 &self.effective_pool_max_connections(),
             )
             .field("once", &self.once)
+            .field("max_input_tokens", &self.max_input_tokens)
             .finish()
     }
 }
@@ -508,7 +556,7 @@ mod tests {
         assert_eq!(cfg.max_concurrent_completes, 16);
         assert_eq!(cfg.max_concurrent_embed_requests, 4);
         assert_eq!(cfg.poll_interval_secs, 5);
-        assert_eq!(cfg.effective_pool_max_connections(), 18);
+        assert_eq!(cfg.effective_pool_max_connections(), 28);
 
         drop(guard);
     }

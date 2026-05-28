@@ -73,6 +73,9 @@ Required values and defaults are defined in `src/config.rs`.
 - `VECTOR_EMBEDDING_REQUEST_BATCH_MAX`
   - Default: `128`
   - Upper bound for the default request batch size when `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE` is unset.
+- `VECTOR_EMBEDDING_MAX_INPUT_TOKENS`
+  - Default: `512`
+  - Maximum estimated token count per individual input text before it is truncated at a line boundary. The character limit is derived as `max_input_tokens × 4` (conservative BPE estimate of ~4 chars/token for English text). Truncated texts have `[truncated]` appended. Matches the llama.cpp server default `physical_batch` (512). Increase if your provider can handle longer individual inputs (e.g., llama.cpp started with `--physical-batch 2048`).
 - `VECTOR_EMBEDDING_LEASE_SECONDS`
   - Default: `1800`
   - Lease duration for jobs in seconds.
@@ -515,491 +518,632 @@ embedded text and alert logic.
 
 ---
 
-## Root Cause Inventory
+# vec-worker Intelligence Workmap
+## From Noisy Deduplication → Actionable Device Intelligence
 
-### RC-1 — `vec_build_baseline_profiles` is defined twice and clobbers `vec_frame_sequences` population
+**Status as of 2026-05-26**
 
-`postgres.sql` contains **two `CREATE OR REPLACE FUNCTION vec_build_baseline_profiles`**
-definitions. The first one (lines ~1990–2030) is actually the frame sequence builder —
-it inserts into `vec_frame_sequences` — but it is named `vec_build_baseline_profiles`
-with the signature `(p_from, p_to)`. The second definition (lines ~2050+) is the real
-baseline profile builder with `(p_from, p_to, p_window)`.
-
-Because the second definition has a different signature, **both functions coexist**.
-The cron job registered as `vec-build-baseline-profiles` calls
-`vec_build_baseline_profiles()` (zero args), which resolves to whichever overload
-PostgreSQL picks — in practice neither populates `vec_frame_sequences` because the
-cron name and the function name are mismatched: the cron job that should call the
-frame-sequence builder does not exist.
-
-The `vec_install_cron_jobs()` block registers:
-- `vec-build-baseline-profiles` → `vec_build_baseline_profiles()` ✓ (baseline)
-- **No cron job exists for `vec_build_frame_sequences()`** ✗
-
-`vec_frame_sequences` is therefore **never populated by any cron job**.
-
-### RC-2 — `vec_enqueue_embedding_jobs` enqueues `frame_sequence` jobs against `session_key` but the builder mismatches
-
-`vec_enqueue_embedding_jobs` does not enqueue `frame_sequence` jobs at all — there is
-no `frame_sequence_jobs` CTE in the function body. The `text_builder.rs` dispatches on
-`"frame_sequence"` but no jobs are ever created, so the builder is dead code.
-
-### RC-3 — `wireless_authorized_networks` columns surface as null in `sync_events_expanded`
-
-`sync_events_expanded` is a plain view joining `sync_events` and `wireless_frames`.
-`wireless_frames` stores `location_id` and `sensor_id` as nullable text, populated via
-`coordinator.upsert_wireless_frame_from_payload` using `nullif(payload->>'...', '')`.
-
-When the sensor does not send `location_id` or `sensor_id` in the payload (older schema
-versions, or the field is empty string), the columns are null in both `wireless_frames`
-and consequently in `sync_events_expanded`. The behaviour snapshot builder, text
-builder, and alert functions all use `COALESCE(column, payload->>'column')` — but if
-the payload field is also absent or empty, null propagates into:
-
-- `vec_behaviour_snapshots.location_id` / `sensor_id`
-- `vec_frame_sequences.location_id` / `sensor_id`
-- `EmbeddingInput.source_sensor_id` / `source_location_id`
-- `CompleteBatchRow.source_sensor_id` / `source_location_id`
-- `vec_alerts.sensor_id` / `location_id`
-
-The `wireless_authorized_networks` table is unrelated to the null propagation — it is
-only consulted by `coordinator.generate_shadow_alerts()` for authorized-network
-lookups. Its `location_id` being null is intentional (null = match any location). The
-confusion likely arises because `v_device_repetition_score` and `v_ap_risk_score` join
-through `vec_similarity_pairs` which stores null `left_sensor_id` / `right_sensor_id`
-when the source row had null values.
-
-### RC-4 — `vec_transition_model` is never populated before `vec_score_sequence` is called
-
-The cron job `vec-update-transition-model` is registered (every 15 min) but
-`vec_update_transition_model()` aggregates from `sync_events_expanded` using
-`payload->>'frame_subtype'`. The `frame_subtype` field is stored in
-`wireless_frames.frame_subtype` but the expanded view accesses it as
-`payload->>'frame_subtype'` (JSONB extraction). If the field was inserted into
-the `wireless_frames` column (not left in the payload JSONB), the extraction
-returns null and the CTE produces zero rows, so the model stays empty.
-
-In `text_builder.rs`, `build_frame_sequences_batch` calls
-`vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+'))` inline in
-the SQL — this returns `0.0` for every sequence when the transition model is empty
-(the vocab-size fallback sets `v_vocab_size = 16` but all bigram counts are 0, so
-every bigram gets uniform probability and the log-prob is non-zero but meaningless).
-The bigger issue is that with an empty `vec_frame_sequences`, no jobs are ever created
-for this kind.
-
-### RC-5 — `build_ego_graph_input` produces a Cartesian-product LATERAL that can generate duplicate `query_key` rows
-
-In `build_infrastructure_subgraphs_batch`, the LATERAL subquery emitting `endpoint`
-unions `node_a` and `node_b` for every matching row, which means a single edge where
-both `node_a` and `node_b` are in the key set generates **two rows** with the same
-underlying edge data but different `query_key` values. This is correct for grouping
-but means the `grouped` HashMap accumulates duplicate edge structs, inflating client /
-vendor counts in the embedded text.
+The similarity pipeline is working at the event level (cosine distance 0.017–0.035 on
+`event_event` pairs is real signal). The problems are architectural: the things that
+matter most — device identity across MACs, frame sequence anomaly scoring, and the
+`v_device_repetition_score` view — are either empty or producing noise the rest of the
+stack can't consume. This document is a bottom-up fix plan with no repetition and
+no wishful thinking.
 
 ---
 
-## Fix Workmap
+## Why `v_device_repetition_score` Is Empty
 
-Each fix is independent. Order follows impact.
+This is the most important thing to fix first, because every downstream alert and
+dashboard depends on it.
 
----
+The view queries `vec_similarity_pairs` for `event_event` pairs and groups by
+`source_mac`. The data above shows `event_event` pairs *do exist*, all associated
+with MAC `30:93:bc:81:b3:de`. But the view is empty. The reason is almost certainly
+one of:
 
-### Fix 1 — Add the missing `vec_build_frame_sequences` cron job and rename the mislabeled function
+1. **`left_source_mac` / `right_source_mac` are NULL** in the similarity pairs rows,
+   even though the events themselves have `source_mac` populated. The builder uses
+   `COALESCE(sensor_id, payload->>'sensor_id')` for sensor but the MAC fields come from
+   `sync_events_expanded.source_mac` — if that column was null at embedding time, the
+   similarity pair stored a null MAC and the `GROUP BY source_mac` collapses to nothing.
 
-**Files:** `sql/postgres.sql`
+2. **The materialized view refresh is failing silently** because
+   `REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score` requires a unique
+   index on `source_mac`. If that index was added after the first refresh created the
+   view without it, concurrent refresh throws an error that `run_alert_sweep` swallows
+   with a `warn!` and continues.
 
-**Problem:** The first overload of `vec_build_baseline_profiles(p_from, p_to)` is
-actually a frame-sequence builder (it inserts into `vec_frame_sequences`). It is
-never called by the cron schedule. The real baseline builder is the second overload.
-
-**Steps:**
-
-1. Rename the first `vec_build_baseline_profiles(p_from, p_to)` function to
-   `vec_build_frame_sequences(p_from, p_to)` throughout the file.
-
-2. Drop the old mislabeled overload before creating the renamed one:
+**Diagnostic queries to run first:**
 
 ```sql
-DROP FUNCTION IF EXISTS vec_build_baseline_profiles(timestamptz, timestamptz);
+-- 1. Confirm MAC fields in the pairs that exist
+SELECT
+  pair_id,
+  left_source_mac,
+  right_source_mac,
+  left_source_table,
+  cosine_distance
+FROM vec_similarity_pairs
+WHERE pair_kind = 'event_event'
+LIMIT 10;
+1	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0000000596046394
+2	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.007044434547424316
+3	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0000001192092896
+4	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0000001192092807
+5	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0
+6	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0
+7	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0
+8	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0
+9	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0
+10	a4:97:33:fb:af:fb	a4:97:33:fb:af:fb	sync_events	0.0
 
-CREATE OR REPLACE FUNCTION vec_build_frame_sequences(
-  p_from timestamptz DEFAULT now() - interval '2 hours',
-  p_to   timestamptz DEFAULT now()
+-- 2. Confirm the unique index exists
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'v_device_repetition_score';
+idx_v_device_repetition_score_mac	CREATE UNIQUE INDEX idx_v_device_repetition_score_mac ON public.v_device_repetition_score USING btree (source_mac)
+-- 3. Try a manual non-concurrent refresh to surface the real error
+REFRESH MATERIALIZED VIEW v_device_repetition_score;
+Updated Rows	0
+Execute time	0.936s
+Start time	Tue May 26 21:08:21 EDT 2026
+Finish time	Tue May 26 21:08:22 EDT 2026
+Query	SELECT
+	  pair_id,
+-- 4. Confirm what the view actually queries
+SELECT pg_get_viewdef('v_device_repetition_score', true);
+```
+ WITH device_pairs AS (
+         SELECT p.left_source_mac AS source_mac,
+            p.cosine_distance,
+            p.left_embedding_id AS embedding_id,
+            p.computed_at
+           FROM vec_similarity_pairs p
+          WHERE p.pair_kind = 'event_event'::text AND p.cosine_distance < 0.05::double precision AND p.left_source_mac IS NOT NULL
+        UNION ALL
+         SELECT p.right_source_mac AS source_mac,
+            p.cosine_distance,
+            p.right_embedding_id AS embedding_id,
+            p.computed_at
+           FROM vec_similarity_pairs p
+          WHERE p.pair_kind = 'event_event'::text AND p.cosine_distance < 0.05::double precision AND p.right_source_mac IS NOT NULL
+        )
+ SELECT source_mac,
+    count(*) AS near_duplicate_pairs,
+    min(cosine_distance) AS min_distance,
+    avg(cosine_distance) AS avg_distance,
+    count(DISTINCT embedding_id) AS unique_events_implicated
+   FROM device_pairs
+  WHERE computed_at >= (now() - '24:00:00'::interval)
+  GROUP BY source_mac
+  ORDER BY (count(*)) DESC;
+**Fix A — if MACs are NULL in similarity pairs:**
+
+The `vec_complete_embedding_batch` function populates `source_mac` from
+`CompleteBatchRow.source_mac`, which comes from `EmbeddingInput.source_mac`,
+which comes from `event_row_to_input` → `LOWER(COALESCE(source_mac, payload->>'source_mac'))`.
+
+If this is NULL it means `sync_events_expanded` has no `source_mac` column or it
+was empty at the time. Check:
+
+```sql
+SELECT
+  dedupe_key,
+  source_mac,
+  payload->>'source_mac' AS payload_mac
+FROM sync_events_expanded
+WHERE dedupe_key = 'becd69ee37f8d9ca345f08ebe06b93447cb0a75d241e70d45628982cd8ecf38e';
+```
+
+If the column is there but the already-embedded rows have null MACs in
+`vec_embeddings`, re-embed them:
+
+```sql
+-- Mark affected embeddings for re-embedding
+UPDATE vec_embedding_jobs
+SET status = 'pending',
+    due_at = now(),
+    lease_token = NULL,
+    leased_at = NULL,
+    locked_by = NULL,
+    last_error = 'mac_null_reembed'
+WHERE source_table = 'sync_events'
+  AND source_key IN (
+    SELECT source_key FROM vec_embeddings
+    WHERE embedding_kind = 'event'
+      AND source_mac IS NULL
+  );
+```
+
+**Fix B — if the concurrent refresh index is missing:**
+
+```sql
+-- Check if the matview has a unique index
+\d v_device_repetition_score
+
+-- If not, create one (adjust column name to match actual schema):
+CREATE UNIQUE INDEX v_device_repetition_score_mac_idx
+ON v_device_repetition_score (source_mac);
+```
+
+---
+
+## Device Identity Across Multiple MACs
+
+This is the core intelligence gap. A device using MAC randomization (all those
+`a2:`, `6a:`, `be:`, `c6:` prefixed locally-administered MACs in the behaviour
+window data) shows up as dozens of independent "devices" when it's one physical
+device. The vec system has all the signal needed to fix this — it's just not wired up.
+
+### What the data already contains
+
+The behaviour window data shows the pattern clearly:
+
+- `6a:6f:a4:d7:40:18` — management frame, signal -88 dBm, `unknown` protocol
+- `a2:36:dd:55:ef:f6` — management frame, signal -70 dBm
+- `be:10:79:73:db:06` — management frame, signal -75 dBm
+- `a6:15:d2:01:19:fc` — management frame, signal -82 dBm
+- `c6:bb:84:35:f2:a9` — data frames, signal -90 dBm, **fully protected**
+
+The second bit of each MAC's first octet being `1` means locally administered
+(i.e., randomized). Multiple randomized MACs at similar signal strengths in the same
+15-minute window, same sensor, same location — this is one device probing under
+different identities.
+
+The `mac_rotation_indicators` JSONB field in `vec_behaviour_snapshots` exists for
+exactly this. The question is whether it's being populated.
+
+### Track 1 — Populate `mac_rotation_indicators` correctly
+
+The field should contain signals that let the model (and similarity search) recognize
+rotation patterns. Currently it likely stores ratio values but not the cross-MAC
+linking signals.
+
+**What to store in `mac_rotation_indicators`:**
+
+```json
+{
+  "is_locally_administered": true,
+  "la_mac_count_in_window": 4,
+  "signal_dbm_range": 18,
+  "concurrent_la_macs_same_sensor": ["6a:6f:a4:d7:40:18", "a2:36:dd:55:ef:f6"],
+  "oui_vendor": null,
+  "rotation_confidence": 0.87
+}
+```
+
+The rotation confidence can be computed from:
+- All four MACs being LA (`is_locally_administered` bit set) → high signal
+- Signal strength variance < 20 dBm across MACs → same physical location
+- Temporal overlap in the same 15-minute window → likely same device
+- No SSID association (management frames only, no data) → still probing
+
+**SQL change in `vec_build_behaviour_snapshots`:**
+
+```sql
+-- In the CTE that builds mac_rotation_indicators, add:
+jsonb_build_object(
+  'is_locally_administered',
+    bool_and((get_byte(decode(split_part(source_mac, ':', 1), 'hex'), 0) & 2) = 2),
+  'la_mac_count_in_window',
+    COUNT(DISTINCT source_mac) FILTER (
+      WHERE (get_byte(decode(split_part(source_mac, ':', 1), 'hex'), 0) & 2) = 2
+    ),
+  'signal_range_dbm',
+    MAX(signal_dbm) - MIN(signal_dbm),
+  'rotation_confidence',
+    CASE
+      WHEN COUNT(DISTINCT source_mac) >= 3
+       AND (MAX(signal_dbm) - MIN(signal_dbm)) < 20
+      THEN ROUND(LEAST(1.0, COUNT(DISTINCT source_mac)::numeric / 5), 2)
+      ELSE 0
+    END
+) AS mac_rotation_indicators
+```
+
+### Track 2 — Cross-MAC device grouping table
+
+The vector similarity approach (embedding behaviour windows and finding near-duplicates)
+is the right direction, but the output needs a concrete grouping table, not just pairs.
+
+**New table: `device_identity_clusters`**
+
+```sql
+CREATE TABLE device_identity_clusters (
+  cluster_id          bigserial PRIMARY KEY,
+  canonical_mac       text NOT NULL,        -- most-seen or oldest MAC in group
+  member_macs         text[] NOT NULL,      -- all MACs believed to be same device
+  confidence          numeric(5,4) NOT NULL,
+  evidence_kind       text NOT NULL,        -- 'signal_proximity', 'sequence_similarity', 'behaviour_match'
+  sensor_id           text,
+  location_id         text,
+  first_seen          timestamptz,
+  last_seen           timestamptz,
+  created_at          timestamptz DEFAULT now(),
+  updated_at          timestamptz DEFAULT now()
+);
+
+CREATE UNIQUE INDEX device_identity_clusters_canonical_idx
+  ON device_identity_clusters (canonical_mac);
+
+CREATE INDEX device_identity_clusters_member_idx
+  ON device_identity_clusters USING GIN (member_macs);
+```
+
+**Population function: `vec_build_device_clusters()`**
+
+The logic:
+
+1. Find all `behaviour_window` pairs in `vec_similarity_pairs` where
+   `cosine_distance < 0.15` (behaviour windows that look nearly identical).
+2. For each pair where both MACs are locally administered, check signal proximity
+   (within 15 dBm) and same sensor/location/window overlap.
+3. Use union-find to group transitively connected MACs.
+4. Upsert into `device_identity_clusters`.
+
+```sql
+CREATE OR REPLACE FUNCTION vec_build_device_clusters(
+  p_distance_threshold numeric DEFAULT 0.15,
+  p_signal_threshold   numeric DEFAULT 15.0
 )
 RETURNS integer
 LANGUAGE plpgsql
 AS $$
--- (body unchanged — same INSERT INTO vec_frame_sequences CTE)
-$$;
-```
-
-3. In `vec_install_cron_jobs()`, add the missing schedule:
-
-```sql
-PERFORM cron.schedule(
-  'vec-build-frame-sequences',
-  '*/5 * * * *',
-  $cron$SELECT vec_build_frame_sequences();$cron$
-);
-```
-
-4. Verify no other callers reference the old name:
-
-```sql
-SELECT proname, pronargs, proargtypes
-FROM pg_proc
-WHERE proname = 'vec_build_baseline_profiles';
--- Should return exactly one row (the 3-arg baseline version)
-```
-
----
-
-### Fix 2 — Add `frame_sequence` job enqueuing to `vec_enqueue_embedding_jobs`
-
-**Files:** `sql/postgres.sql`
-
-**Problem:** `vec_enqueue_embedding_jobs` has no CTE for `frame_sequence` jobs, so
-`vec_frame_sequences` rows are never queued for embedding even after Fix 1 populates
-the table.
-
-**Steps:**
-
-Add a `frame_sequence_jobs` CTE inside `vec_enqueue_embedding_jobs`, mirroring the
-`behaviour_jobs` pattern:
-
-```sql
-frame_sequence_jobs AS (
-  SELECT
-    'vec_frame_sequences'::text AS source_table,
-    fs.session_key               AS source_key,
-    p_model                      AS embedding_model,
-    'frame_sequence'::text       AS embedding_kind,
-    18                           AS priority
-  FROM vec_frame_sequences fs
-  LEFT JOIN vec_embeddings existing
-    ON existing.source_table  = 'vec_frame_sequences'
-   AND existing.source_key    = fs.session_key
-   AND existing.embedding_model = p_model
-   AND existing.embedding_kind  = 'frame_sequence'
-  WHERE existing.embedding_id IS NULL
-     OR fs.updated_at > existing.embedded_at
-),
-```
-
-Then include `frame_sequence_jobs` in the final UNION inside `jobs`:
-
-```sql
-UNION ALL
-SELECT * FROM frame_sequence_jobs
-```
-
----
-
-### Fix 3 — Fix `vec_update_transition_model` to read from the column, not just the payload
-
-**Files:** `sql/postgres.sql`
-
-**Problem:** The function uses `payload->>'frame_subtype'` but `frame_subtype` is a
-parsed column on `wireless_frames` (and therefore on `sync_events_expanded`). When
-the field was parsed and stored in the column, the payload accessor returns null.
-
-**Steps:**
-
-Replace the JSONB extraction with a COALESCE that prefers the parsed column:
-
-```sql
--- Before (in vec_update_transition_model windowed CTE):
-coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype
-
--- The existing query already aliases a field named frame_subtype from
--- sync_events_expanded. Confirm the column is present in the view and
--- remove the payload fallback only when confirmed:
-SELECT frame_subtype, payload->>'frame_subtype'
-FROM sync_events_expanded
-WHERE stream_name = 'wireless.audit'
-  AND observed_at >= now() - interval '1 hour'
-LIMIT 10;
-```
-
-If the column is consistently populated, simplify to:
-
-```sql
-COALESCE(
-  NULLIF(frame_subtype, ''),
-  NULLIF(payload->>'frame_subtype', '')
-) AS frame_subtype
-```
-
-The same fix applies to `vec_build_frame_sequences` (the renamed function from Fix 1):
-
-```sql
--- In the prepared CTE of vec_build_frame_sequences:
-COALESCE(
-  NULLIF(frame_subtype, ''),
-  NULLIF(payload->>'frame_subtype', '')
-) AS frame_subtype
-```
-
-Add a diagnostic query to confirm population before relying on the model:
-
-```sql
-SELECT COUNT(*) FROM vec_transition_model;
--- If 0 after a manual SELECT vec_update_transition_model():
--- run the column audit above to confirm the root cause.
-```
-
----
-
-### Fix 4 — Null-safe location_id / sensor_id in all vec_ builder functions
-
-**Files:** `sql/postgres.sql`, `services/vec-worker/src/text_builder.rs`
-
-**Problem:** When `location_id` or `sensor_id` is null in the source row, it propagates
-through `EmbeddingInput` into `CompleteBatchRow` and then into `vec_embeddings` and
-`vec_alerts`. This is mostly harmless for storage but breaks alert cooldown deduplication
-when the `WHERE ... AND sensor_id = $sensor_id` predicate is used with nulls.
-
-**SQL side — `vec_build_behaviour_snapshots`:** already uses `min(sensor_id) FILTER
-(WHERE sensor_id IS NOT NULL)`, so this is handled. No change needed there.
-
-**SQL side — `vec_build_frame_sequences` (renamed Fix 1 function):** the `prepared` CTE
-uses bare `sensor_id` and `location_id` fields. Add explicit null-filter coalescing:
-
-```sql
--- In the prepared CTE grouping:
-MIN(NULLIF(COALESCE(sensor_id, payload->>'sensor_id'), '')) AS sensor_id,
-MIN(NULLIF(COALESCE(location_id, payload->>'location_id'), '')) AS location_id,
-```
-
-**Rust side — `text_builder.rs`:** `frame_sequence_row_to_input` skips the sensor/location
-lines when values are `None` — this is correct behavior. No change needed.
-
-**Alert cooldown queries — `alerts.rs`:** the `IS NOT DISTINCT FROM` operator already
-handles null equality correctly in `check_near_duplicates`. No change needed there.
-
-**Verify the null volume before and after:**
-
-```sql
-SELECT
-  COUNT(*) FILTER (WHERE sensor_id IS NULL)     AS null_sensor,
-  COUNT(*) FILTER (WHERE location_id IS NULL)   AS null_location,
-  COUNT(*)                                       AS total
-FROM vec_frame_sequences;
-```
-
----
-
-### Fix 5 — Deduplicate LATERAL endpoint expansion in `build_infrastructure_subgraphs_batch`
-
-**Files:** `sql/postgres.sql`
-
-**Problem:** The LATERAL in `build_infrastructure_subgraphs_batch` emits one row per
-matching endpoint per edge. When a `bssid` appears as both `node_a` and `node_b` in
-different edges, the same edge struct is added twice to the grouped HashMap, doubling
-client/vendor counts.
-
-**Steps:**
-
-Replace the LATERAL with a simpler `WHERE` clause that uses `DISTINCT ON` to emit each
-edge once per matching query key:
-
-```sql
--- Replace the existing LATERAL block with:
-SELECT DISTINCT ON (
-    LEAST(node_a, node_b),
-    GREATEST(node_a, node_b),
-    edge_type,
-    endpoint
-  )
-  endpoint AS query_key,
-  node_a, node_a_type,
-  node_b, node_b_type,
-  edge_type, weight::float8, last_seen
-FROM vec_infrastructure_graph
-CROSS JOIN LATERAL (
-  VALUES
-    (CASE WHEN node_a = ANY($1::text[]) THEN node_a END),
-    (CASE WHEN node_b = ANY($1::text[]) THEN node_b END)
-) AS endpoints(endpoint)
-WHERE endpoint IS NOT NULL
-ORDER BY
-  LEAST(node_a, node_b),
-  GREATEST(node_a, node_b),
-  edge_type,
-  endpoint,
-  last_seen DESC;
-```
-
-This guarantees one row per (edge, matching-key) combination, eliminating the
-inflation.
-
----
-
-### Fix 6 — Register `frame_sequence` HNSW index for `vec_similarity_pairs` matching
-
-**Files:** `sql/postgres.sql`
-
-**Problem:** `vec_similarity_pairs` has a `sequence_sequence` pair kind in its check
-constraint but `vec_materialize_similarity_pairs` never generates `sequence_sequence`
-pairs. Without HNSW-driven similarity search for frame sequences, the MAC-rotation and
-attack-pattern detection tracks (Track 2.2) cannot function.
-
-**Steps:**
-
-The HNSW index `vec_embeddings_frame_sequence_hnsw_768_idx` already exists in the
-schema. Add a `sequence_sequence` block to `vec_materialize_similarity_pairs` mirroring
-the `event_event` block:
-
-```sql
--- Inside vec_materialize_similarity_pairs, after the behaviour_window block:
-WITH seq_candidates AS (
-  SELECT
-    LEAST(e1.embedding_id, neighbor.embedding_id)    AS left_embedding_id,
-    GREATEST(e1.embedding_id, neighbor.embedding_id) AS right_embedding_id,
-    MIN(neighbor.cosine_distance)                    AS cosine_distance
-  FROM vec_embeddings e1
-  JOIN LATERAL (
-    SELECT
-      e2.embedding_id,
-      (e2.embedding::vector(768) <=> e1.embedding::vector(768)) AS cosine_distance
-    FROM vec_embeddings e2
-    WHERE e2.embedding_kind       = 'frame_sequence'
-      AND e2.embedding_model      = p_model
-      AND e2.embedding_dimensions = 768
-      AND e2.embedding_id        <> e1.embedding_id
-    ORDER BY e2.embedding::vector(768) <=> e1.embedding::vector(768)
-    LIMIT GREATEST(p_top_k, 1)
-  ) neighbor ON TRUE
-  WHERE e1.embedding_kind       = 'frame_sequence'
-    AND e1.embedding_model      = p_model
-    AND e1.embedding_dimensions = 768
-    AND neighbor.cosine_distance <= 0.10  -- tunable threshold
-  GROUP BY
-    LEAST(e1.embedding_id, neighbor.embedding_id),
-    GREATEST(e1.embedding_id, neighbor.embedding_id)
-)
-INSERT INTO vec_similarity_pairs (
-  pair_kind, embedding_model, embedding_kind,
-  left_embedding_id, right_embedding_id,
-  left_source_table, left_source_key, left_source_mac,
-  left_sensor_id, left_location_id, left_observed_at,
-  right_source_table, right_source_key, right_source_mac,
-  right_sensor_id, right_location_id, right_observed_at,
-  cosine_distance, cosine_similarity, rank, evidence,
-  computed_at, created_at, updated_at
-)
-SELECT
-  'sequence_sequence', p_model, 'frame_sequence',
-  c.left_embedding_id, c.right_embedding_id,
-  le.source_table, le.source_key, le.source_mac,
-  le.source_sensor_id, le.source_location_id, le.source_observed_at,
-  re.source_table, re.source_key, re.source_mac,
-  re.source_sensor_id, re.source_location_id, re.source_observed_at,
-  c.cosine_distance,
-  1 - c.cosine_distance,
-  1,
-  jsonb_build_object('detector', 'similar_frame_sequence', 'threshold', 0.10),
-  now(), now(), now()
-FROM seq_candidates c
-JOIN vec_embeddings le ON le.embedding_id = c.left_embedding_id
-JOIN vec_embeddings re ON re.embedding_id = c.right_embedding_id
-ON CONFLICT (pair_kind, embedding_model, embedding_kind,
-             left_embedding_id, right_embedding_id)
-DO UPDATE SET
-  cosine_distance  = EXCLUDED.cosine_distance,
-  cosine_similarity = EXCLUDED.cosine_similarity,
-  computed_at      = now(),
-  updated_at       = now();
-```
-
----
-
-## Verification Queries
-
-Run these in order after deploying fixes. All should return non-zero row counts
-within 10–15 minutes of cron execution.
-
-```sql
--- 1. Confirm vec_build_frame_sequences is correctly named
-SELECT proname, pronargs
-FROM pg_proc
-WHERE proname IN ('vec_build_frame_sequences', 'vec_build_baseline_profiles');
-
--- 2. Confirm cron jobs are registered
-SELECT jobname, schedule, command
-FROM cron.job
-WHERE jobname LIKE 'vec-%'
-ORDER BY jobname;
-
--- 3. Manually trigger frame sequence build and inspect
-SELECT vec_build_frame_sequences();
-SELECT COUNT(*), MIN(window_start), MAX(window_end) FROM vec_frame_sequences;
-
--- 4. Manually trigger transition model update and inspect
-SELECT vec_update_transition_model();
-SELECT COUNT(*) FROM vec_transition_model;
-SELECT SUM(count) AS total_bigrams FROM vec_transition_model;
-
--- 5. Confirm frame_sequence jobs are being enqueued
-SELECT vec_enqueue_embedding_jobs();
-SELECT embedding_kind, COUNT(*), MIN(due_at), MAX(due_at)
-FROM vec_embedding_jobs
-GROUP BY embedding_kind
-ORDER BY embedding_kind;
-
--- 6. Confirm null rate in frame sequences after Fix 4
-SELECT
-  COUNT(*) FILTER (WHERE sensor_id IS NULL)   AS null_sensor,
-  COUNT(*) FILTER (WHERE location_id IS NULL) AS null_location,
-  COUNT(*) AS total
-FROM vec_frame_sequences;
-
--- 7. Confirm vec_score_sequence returns meaningful values after model population
-SELECT vec_score_sequence(ARRAY['BEACON', 'AUTH', 'ASSOC_REQ', 'EAPOL', 'DATA_QOS']);
--- Expect a negative log-prob, e.g. -5.2 to -12.0 for a common sequence
-
--- 8. Spot-check infrastructure graph ego-graph for duplicate inflation
-SELECT node_a, COUNT(*) AS edge_count
-FROM vec_infrastructure_graph
-WHERE node_a_type = 'bssid'
-GROUP BY node_a
-ORDER BY edge_count DESC
-LIMIT 5;
--- Compare with what build_ego_graph_input reports for the same bssid
-```
-
----
-
-## Deployment Order
-
-| Step | Action | Risk |
-|------|--------|------|
-| 1 | Run verification queries above to establish baseline counts | None |
-| 2 | Apply Fix 3 (column vs payload COALESCE) — safest, additive only | Low |
-| 3 | Apply Fix 1 (rename function + add cron) — requires DROP of mislabeled overload | Medium — brief window where frame sequences not built |
-| 4 | Apply Fix 2 (add frame_sequence to enqueue function) | Low |
-| 5 | Apply Fix 4 (null-safe location/sensor in frame sequences) | Low |
-| 6 | Apply Fix 5 (deduplicate LATERAL) | Low |
-| 7 | Apply Fix 6 (sequence_sequence similarity pairs) | Low |
-| 8 | `SELECT vec_build_frame_sequences()` manually to backfill | None |
-| 9 | `SELECT vec_update_transition_model()` manually to bootstrap | None |
-| 10 | `SELECT vec_enqueue_embedding_jobs()` manually to queue backfill | None |
-| 11 | Run verification queries again — confirm all counts non-zero | None |
-| 12 | Monitor `batch timing` logs in vec-worker for `frame_sequence` jobs appearing | None |
-
----
-
-## One-liner Backfill After Deploy
-
-```sql
--- Run once after all fixes are applied to bootstrap the pipeline end-to-end
-DO $$
+DECLARE
+  v_inserted integer := 0;
 BEGIN
-  PERFORM vec_build_frame_sequences(NOW() - INTERVAL '7 days', NOW());
-  PERFORM vec_update_transition_model();
-  PERFORM vec_build_baseline_profiles(NOW() - INTERVAL '7 days', NOW());
-  PERFORM vec_enqueue_embedding_jobs();
-  RAISE NOTICE 'Backfill complete. Check vec_frame_sequences, vec_transition_model, and vec_embedding_jobs.';
+  WITH candidate_pairs AS (
+    SELECT
+      sp.left_source_mac  AS mac_a,
+      sp.right_source_mac AS mac_b,
+      sp.cosine_distance,
+      le.source_sensor_id,
+      le.source_location_id,
+      ABS(
+        (le.metadata->>'signal_avg_dbm')::numeric -
+        (re.metadata->>'signal_avg_dbm')::numeric
+      ) AS signal_delta
+    FROM vec_similarity_pairs sp
+    JOIN vec_embeddings le ON le.embedding_id = sp.left_embedding_id
+    JOIN vec_embeddings re ON re.embedding_id = sp.right_embedding_id
+    WHERE sp.pair_kind = 'behaviour_behaviour'
+      AND sp.cosine_distance < p_distance_threshold
+      AND sp.left_source_mac IS NOT NULL
+      AND sp.right_source_mac IS NOT NULL
+      AND sp.left_source_mac <> sp.right_source_mac
+      -- Both locally administered
+      AND (get_byte(decode(split_part(sp.left_source_mac,  ':', 1), 'hex'), 0) & 2) = 2
+      AND (get_byte(decode(split_part(sp.right_source_mac, ':', 1), 'hex'), 0) & 2) = 2
+  ),
+  filtered AS (
+    SELECT mac_a, mac_b, source_sensor_id, source_location_id
+    FROM candidate_pairs
+    WHERE signal_delta <= p_signal_threshold
+       OR signal_delta IS NULL  -- missing signal is neutral, not disqualifying
+  ),
+  -- Simple grouping: treat each pair as an edge, pick the lexicographically
+  -- smallest MAC as canonical for this batch.
+  grouped AS (
+    SELECT
+      LEAST(mac_a, mac_b) AS canonical_mac,
+      array_agg(DISTINCT mac_a ORDER BY mac_a) ||
+      array_agg(DISTINCT mac_b ORDER BY mac_b) AS raw_members,
+      source_sensor_id,
+      source_location_id,
+      COUNT(*) AS evidence_count
+    FROM filtered
+    GROUP BY LEAST(mac_a, mac_b), source_sensor_id, source_location_id
+  )
+  INSERT INTO device_identity_clusters (
+    canonical_mac, member_macs, confidence,
+    evidence_kind, sensor_id, location_id,
+    created_at, updated_at
+  )
+  SELECT
+    canonical_mac,
+    ARRAY(SELECT DISTINCT unnest(raw_members) ORDER BY 1),
+    LEAST(1.0, evidence_count::numeric / 5),
+    'behaviour_match',
+    source_sensor_id,
+    source_location_id,
+    now(), now()
+  FROM grouped
+  ON CONFLICT (canonical_mac) DO UPDATE SET
+    member_macs = EXCLUDED.member_macs,
+    confidence  = EXCLUDED.confidence,
+    updated_at  = now();
+
+  GET DIAGNOSTICS v_inserted = ROW_COUNT;
+  RETURN v_inserted;
 END;
 $$;
 ```
+
+Schedule in `vec_install_cron_jobs()`:
+
+```sql
+PERFORM cron.schedule(
+  'vec-build-device-clusters',
+  '*/10 * * * *',
+  $cron$SELECT vec_build_device_clusters();$cron$
+);
+```
+
+### Track 3 — Surface clusters in the Rust worker
+
+In `text_builder.rs`, the `build_device` function currently only looks at the single
+`devices` row. It should also pull from `device_identity_clusters` and include the
+cluster context:
+
+```rust
+// After fetching the device row, check for cluster membership
+let cluster = sqlx::query!(
+    r#"
+    SELECT canonical_mac, member_macs, confidence
+    FROM device_identity_clusters
+    WHERE canonical_mac = $1
+       OR $1 = ANY(member_macs)
+    "#,
+    &job.source_key
+)
+.fetch_optional(pool)
+.await
+.ok()
+.flatten();
+
+if let Some(c) = cluster {
+    lines.push(format!("identity_cluster_size: {}", c.member_macs.len()));
+    lines.push(format!("identity_confidence: {:.2}", c.confidence));
+    // Don't include the actual MACs — identity-stripped means no MAC leakage
+}
+```
+
+---
+
+## Frame Sequences — Making Them Actually Useful
+
+The current state (per the existing workmap) is that `vec_frame_sequences` is empty
+because the cron job was never registered. After the rename fix (Fix 1 in the prior
+document) populates the table, the sequences will still produce garbage scores because
+`vec_transition_model` is empty. Here's how to make the sequences meaningful once the
+table is populated.
+
+### What a useful frame sequence actually looks like
+
+The behaviour window data shows the problem directly:
+
+```
+6a:6f:a4:d7:40:18 — 1 event, management, unknown protocol
+a2:36:dd:55:ef:f6 — 1 event, management, unknown protocol
+c6:bb:84:35:f2:a9 — 2 events, data, unknown protocol, fully protected
+```
+
+A sequence of `[PROBE_REQ, PROBE_REQ, ASSOC_REQ, EAPOL, DATA_QOS]` is normal
+802.11 association. A sequence of `[PROBE_REQ, AUTH, DEAUTH, AUTH, DEAUTH, AUTH]`
+is a deauth attack or a client fighting for a connection. A sequence of
+`[BEACON, BEACON, BEACON, ...(200 times)]` is a rogue AP flooding.
+
+The `sequence_tokens` field needs to store *meaningful* tokens — frame subtypes,
+not just frame types. The `rogue_cluster` alerts above show exactly this:
+`62:e1:1d:2e:c6:f4` has `log_prob: -246` against a threshold of -15, which is
+a real anomaly (a 231-sigma sequence). But it only triggered because the transition
+model was seeded. The issue is reproducibility.
+
+### Track 4 — Normalize sequence token vocabulary
+
+The transition model is only useful if the token vocabulary is stable and small.
+Currently `sequence_tokens` is likely raw frame subtypes from the payload, which
+includes numeric codes, vendor-specific strings, and mixed case.
+
+**Normalized token mapping (add to `vec_build_frame_sequences`):**
+
+```sql
+-- In the prepared CTE, replace raw frame_subtype with a normalized token:
+CASE
+  WHEN frame_subtype ILIKE '%probe_req%'    THEN 'PROBE_REQ'
+  WHEN frame_subtype ILIKE '%probe_resp%'   THEN 'PROBE_RESP'
+  WHEN frame_subtype ILIKE '%beacon%'       THEN 'BEACON'
+  WHEN frame_subtype ILIKE '%auth%'
+   AND frame_subtype NOT ILIKE '%deauth%'   THEN 'AUTH'
+  WHEN frame_subtype ILIKE '%deauth%'       THEN 'DEAUTH'
+  WHEN frame_subtype ILIKE '%assoc_req%'    THEN 'ASSOC_REQ'
+  WHEN frame_subtype ILIKE '%assoc_resp%'   THEN 'ASSOC_RESP'
+  WHEN frame_subtype ILIKE '%reassoc%'      THEN 'REASSOC'
+  WHEN frame_subtype ILIKE '%disassoc%'     THEN 'DISASSOC'
+  WHEN frame_subtype ILIKE '%eapol%'        THEN 'EAPOL'
+  WHEN frame_subtype ILIKE '%data%'
+   AND frame_type   ILIKE '%data%'          THEN 'DATA'
+  WHEN frame_subtype ILIKE '%null%'         THEN 'NULL_DATA'
+  WHEN frame_subtype ILIKE '%action%'       THEN 'ACTION'
+  ELSE 'OTHER'
+END AS normalized_token
+```
+
+With a vocabulary of ~13 tokens, the transition model converges quickly and scores
+are meaningful. Without normalization, every new vendor string creates a new bigram
+that will never have count > 1 and scores collapse to uniform.
+
+### Track 5 — Alert threshold calibration
+
+The current threshold of `-15` is too tight for the normalized vocabulary. With 13
+tokens and real traffic, a normal 10-frame sequence scores around `-20` to `-35`
+(log probability of 10 bigrams, each ~0.1–0.2 probability). The `-246` score for
+`62:e1:1d:2e:c6:f4` is genuinely anomalous.
+
+After normalizing the vocabulary and rebuilding the transition model:
+
+```sql
+-- Calibrate threshold from real data
+SELECT
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY (metadata->>'log_prob')::numeric) AS p95,
+  percentile_cont(0.99) WITHIN GROUP (ORDER BY (metadata->>'log_prob')::numeric) AS p99,
+  AVG((metadata->>'log_prob')::numeric) AS avg_score,
+  STDDEV((metadata->>'log_prob')::numeric) AS stddev_score
+FROM vec_similarity_pairs
+WHERE pair_kind = 'sequence_sequence';
+```
+
+Set the alert threshold to `mean - 3*stddev` of the real distribution.
+Update `vec_detect_rogue_clusters()` accordingly.
+
+---
+
+## What Makes the Similarity Pairs Actually Valuable
+
+The `event_event` pairs for `30:93:bc:81:b3:de` at cosine distances 0.017–0.035
+are excellent — these are the same device (Spectrum router/modem based on SSID
+`MySpectrumWiFid8-2G`) sending near-identical beacon/probe responses ~20–40 seconds
+apart. This is normal AP behavior. The current threshold of `0.05` catches these.
+
+What the system **should** be doing with this but isn't:
+
+### Track 6 — Distinguish normal repetition from attack repetition
+
+The near-duplicate sweep marks everything above the threshold as a
+`near_duplicate_cluster` alert. But an AP sending beacons every 100ms is expected.
+What's anomalous is:
+
+- A *client* (not AP) sending near-duplicate management frames rapidly
+- A device with a *randomized MAC* sending near-duplicate frames (suggests scripted attack)
+- Near-duplicate frames from *different* MACs (suggests MAC spoofing)
+
+**Add `source_mac_is_ap` classification to similarity pairs:**
+
+```sql
+-- In vec_materialize_similarity_pairs, add to the evidence JSONB:
+jsonb_build_object(
+  'detector', 'near_duplicate_event',
+  'threshold', 0.05,
+  'left_mac_is_la',  (get_byte(decode(split_part(left_source_mac,  ':', 1), 'hex'), 0) & 2) = 2,
+  'right_mac_is_la', (get_byte(decode(split_part(right_source_mac, ':', 1), 'hex'), 0) & 2) = 2,
+  'is_cross_mac',    left_source_mac <> right_source_mac
+)
+```
+
+Then in `check_near_duplicates`, filter the alert by whether the repetition is
+suspicious:
+
+```sql
+-- Only alert when the repeating device has a locally-administered MAC
+-- OR when events come from different MACs (cross-MAC duplicate = spoofing suspect)
+WHERE near_duplicate_pairs >= $1
+  AND (
+    -- LA MAC repeating its own frames rapidly
+    (metadata->>'left_mac_is_la')::boolean = true
+    -- OR different MACs sending identical frames (spoofing / replay)
+    OR (metadata->>'is_cross_mac')::boolean = true
+  )
+```
+
+This will clear the false-positive noise from `30:93:bc:81:b3:de` (a stable AP with
+a manufacturer MAC sending normal beacons) while keeping alerts for the randomized
+MACs in the behaviour window data.
+
+### Track 7 — `high_risk_ap` score decomposition
+
+Alert 1145 for `ee:fc:2d:6c:df:24` has `deauth_score: 21.2` and `composite_risk: 5.3`
+but `typosquat_score: 0`, `vendor_mismatch_score: 0`, `embedding_outlier_score: 0`.
+The risk is entirely from deauth frames. The alert is real but the score decomposition
+in the metadata is more useful than the composite alone.
+
+**Change the alert text in `check_high_risk_aps` to include the dominant signal:**
+
+```rust
+// In alerts.rs, after inserting the alert, add a structured explanation:
+let dominant = find_dominant_risk_factor(&metadata);
+// → "deauth_storm" / "typosquatting" / "vendor_mismatch" / "outlier_embedding"
+info!(
+    source_mac = mac,
+    dominant_risk = dominant,
+    composite_risk,
+    "high-risk AP alert inserted"
+);
+```
+
+This also feeds the `explanation_text` field in `CompleteBatchRow` which currently
+sits unused (always `None`).
+
+---
+
+## Implementation Order
+
+Ordered by: fix broken things first, then add signal, then refine.
+
+| # | Track | Change | Risk | Expected outcome |
+|---|-------|--------|------|-----------------|
+| 1 | Diagnostic | Run the 4 diagnostic queries for `v_device_repetition_score` | None | Identify whether MAC-null or missing index is the root cause |
+| 2 | Fix A or B | Fix MAC propagation **or** create unique index | Low | `v_device_repetition_score` becomes non-empty |
+| 3 | Frame seqs | Apply prior workmap Fix 1–4 (rename, cron, column COALESCE, null-safe) | Medium | `vec_frame_sequences` starts populating |
+| 4 | Track 4 | Normalize frame sequence vocabulary to 13-token set | Low | Transition model scores become meaningful |
+| 5 | Track 5 | Rebuild transition model, calibrate alert threshold | None | Rogue cluster alerts become reliable |
+| 6 | Track 1 | Improve `mac_rotation_indicators` in snapshot builder | Low | Behaviour window embeddings carry rotation signal |
+| 7 | Track 2 | Add `device_identity_clusters` table and function | Medium | MAC-rotated devices tracked as single identity |
+| 8 | Track 3 | Surface cluster context in device text builder | Low | Device embeddings include cluster-size signal |
+| 9 | Track 6 | Filter near-duplicate alerts by LA-MAC / cross-MAC | Low | Eliminates AP beacon noise from alerts |
+| 10 | Track 7 | Populate `explanation_text` in high-risk AP alerts | Low | Alert metadata becomes actionable |
+
+---
+
+## Verification After Each Track
+
+```sql
+-- After Track 2: confirm repetition score has rows
+SELECT COUNT(*), AVG(near_duplicate_pairs) FROM v_device_repetition_score;
+
+-- After Track 3+4: confirm sequences have normalized tokens
+SELECT DISTINCT unnest(string_to_array(sequence_tokens, ' ')) AS token
+FROM vec_frame_sequences LIMIT 30;
+-- Should return only the 13 normalized tokens
+
+-- After Track 5: confirm transition model is non-trivial
+SELECT COUNT(*) FROM vec_transition_model;
+SELECT SUM(count) AS total_bigrams FROM vec_transition_model;
+-- Expect > 1000 bigrams for a healthy model
+
+-- After Track 6: confirm rotation indicators are populated
+SELECT
+  source_mac,
+  mac_rotation_indicators->>'la_mac_count_in_window' AS la_count,
+  mac_rotation_indicators->>'rotation_confidence'    AS confidence
+FROM vec_behaviour_snapshots
+WHERE (mac_rotation_indicators->>'la_mac_count_in_window')::int > 1
+ORDER BY confidence DESC
+LIMIT 20;
+
+-- After Track 7: confirm device clusters are forming
+SELECT
+  canonical_mac,
+  array_length(member_macs, 1) AS cluster_size,
+  confidence
+FROM device_identity_clusters
+ORDER BY cluster_size DESC
+LIMIT 10;
+
+-- After Track 9: confirm near-duplicate alerts no longer fire for stable APs
+SELECT source_mac, COUNT(*) AS alert_count
+FROM vec_alerts
+WHERE alert_type = 'near_duplicate_cluster'
+  AND created_at > now() - interval '1 hour'
+GROUP BY source_mac
+ORDER BY alert_count DESC;
+-- Stable AP MACs like 30:93:bc:81:b3:de should not appear here
+```
+
+---
+
+## The Actual Goal
+
+After all tracks are complete:
+
+- A device using MAC randomization (like the `6a:`, `a2:`, `be:`, `a6:` MACs in the
+  behaviour data) will appear as **one entry** in `device_identity_clusters` with
+  confidence proportional to how many matching signals exist.
+- `v_device_repetition_score` will be non-empty and will correctly distinguish
+  a stable AP (high repetition, low risk) from a randomized client sending
+  near-duplicate probes (high risk).
+- Frame sequences will score anomalies against a calibrated baseline, so
+  the `-246` log-prob for `62:e1:1d:2e:c6:f4` means something and the
+  alert fires reliably instead of intermittently.
+- The `high_risk_ap` alert for `ee:fc:2d:6c:df:24` will include a human-readable
+  explanation of *why* it scored high (`deauth_storm`), not just a number.

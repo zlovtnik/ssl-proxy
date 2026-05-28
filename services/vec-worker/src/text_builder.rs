@@ -11,6 +11,88 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::instrument;
 
+// ---------------------------------------------------------------------------
+// Token budget
+// ---------------------------------------------------------------------------
+
+/// Hard token limit for the configured embedding model.
+/// Matches `VECTOR_EMBEDDING_DIMENSIONS`-adjacent models (nomic-embed-text,
+/// all-minilm, bge-small, etc.) which share a 512-token context window.
+/// The runtime config `max_input_tokens` (default 512) provides a coarser
+/// character-level safety net in `prepare_chunk`; the helpers here enforce
+/// word-level budget at text construction time.
+pub const MAX_TOKENS: usize = 384;
+
+/// Tokens consumed by fixed structural lines common to all builders
+/// (kind, hour_of_day, day_of_week, is_weekend, is_business_hours, one spare).
+/// Keep this conservative — it is subtracted from the per-field budget.
+const OVERHEAD_TOKENS: usize = 16;
+
+/// Effective token budget available for variable-length content.
+const CONTENT_TOKEN_BUDGET: usize = MAX_TOKENS - OVERHEAD_TOKENS;
+
+/// Conservative words-to-tokens multiplier denominator.
+/// 1 word per 3 tokens means we never exceed MAX_TOKENS even if every
+/// word tokenises as 3 tokens (worst case for WiFi data with BPE tokenizer).
+const WORDS_PER_TOKEN_DENOM: usize = 3;
+const WORDS_PER_TOKEN_NUM: usize = 1;
+
+/// Maximum whitespace-separated words allowed in a variable-length field.
+#[inline]
+fn word_budget(token_budget: usize) -> usize {
+    (token_budget * WORDS_PER_TOKEN_NUM) / WORDS_PER_TOKEN_DENOM
+}
+
+/// Truncate a space-separated token string to at most `max_words` words.
+/// Appends `(+N truncated)` when truncation occurs so the model is aware.
+///
+/// Example:
+/// ```text
+/// // 500-word sequence truncated to 300:
+/// "BEACON AUTH ASSOC_REQ ... (already 300 words) ... (+200 truncated)"
+/// ```
+fn truncate_token_sequence(tokens: &str, max_words: usize) -> String {
+    let words: Vec<&str> = tokens.split_whitespace().collect();
+    if words.len() <= max_words {
+        return tokens.to_string();
+    }
+    let dropped = words.len() - max_words;
+    tracing::warn!(
+        original_word_count = words.len(),
+        max_words,
+        dropped,
+        "frame_sequence token sequence truncated to fit model context window"
+    );
+    format!("{} (+{} truncated)", words[..max_words].join(" "), dropped)
+}
+
+/// Truncate a free-form string to at most `max_words` whitespace-separated words.
+/// Appends `...` when truncation occurs.
+fn truncate_words(s: &str, max_words: usize) -> String {
+    let words: Vec<&str> = s.split_whitespace().collect();
+    if words.len() <= max_words {
+        return s.to_string();
+    }
+    format!("{}...", words[..max_words].join(" "))
+}
+
+/// Clamp the entire assembled text to MAX_TOKENS worth of words.
+/// Applied as a final safety net after all per-field truncation.
+/// Splits on whitespace, keeps the first N words, rejoins with single spaces.
+fn clamp_text(text: &str) -> String {
+    let max_words = word_budget(MAX_TOKENS);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= max_words {
+        return text.to_string();
+    }
+    tracing::debug!(
+        original_word_count = words.len(),
+        max_words,
+        "embedding text clamped to token budget (defensive)"
+    );
+    format!("{}...", words[..max_words].join(" "))
+}
+
 /// Build the embedding text and metadata for a job.
 ///
 /// Dispatches to the correct builder based on `job.embedding_kind`.
@@ -305,7 +387,7 @@ fn event_row_to_input(row: &EventRow) -> EmbeddingInput {
     if let Some(dt) = row.observed_at {
         lines.extend(temporal_context_lines(dt));
     }
-    let text = lines.join("\n");
+    let text = clamp_text(&lines.join("\n"));
     EmbeddingInput {
         text,
         source_observed_at: row.observed_at,
@@ -388,6 +470,7 @@ const DEVICE_FIELDS: &[&str] = &[
     // wg_pubkey intentionally excluded — no semantic value, leaks infra topology
     "first_seen",
     "last_seen",
+    "cluster_size",
 ];
 
 #[derive(Debug, sqlx::FromRow)]
@@ -400,14 +483,18 @@ struct DeviceRow {
     mac_hint: Option<String>,
     first_seen: Option<chrono::DateTime<chrono::Utc>>,
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    cluster_size: Option<i32>,
 }
 
 async fn build_device(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput, WorkerError> {
     let row = sqlx::query_as::<_, DeviceRow>(
         r#"
-        SELECT mac_id, display_name, username, hostname, os_hint, mac_hint, first_seen, last_seen
-        FROM devices
-        WHERE mac_id = $1
+        SELECT d.mac_id, d.display_name, d.username, d.hostname, d.os_hint, d.mac_hint,
+               d.first_seen, d.last_seen,
+               COALESCE(dic.size, 1) AS cluster_size
+        FROM devices d
+        LEFT JOIN device_identity_clusters dic ON d.mac_id = ANY(dic.mac_ids)
+        WHERE d.mac_id = $1
         "#,
     )
     .bind(&job.source_key)
@@ -429,6 +516,7 @@ struct DeviceBatchRow {
     mac_hint: Option<String>,
     first_seen: Option<chrono::DateTime<chrono::Utc>>,
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    cluster_size: Option<i32>,
 }
 
 async fn build_devices_batch(
@@ -439,9 +527,12 @@ async fn build_devices_batch(
     let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
     let rows = sqlx::query_as::<_, DeviceBatchRow>(
         r#"
-        SELECT mac_id, display_name, username, hostname, os_hint, mac_hint, first_seen, last_seen
-        FROM devices
-        WHERE mac_id = ANY($1::text[])
+        SELECT d.mac_id, d.display_name, d.username, d.hostname, d.os_hint, d.mac_hint,
+               d.first_seen, d.last_seen,
+               COALESCE(dic.size, 1) AS cluster_size
+        FROM devices d
+        LEFT JOIN device_identity_clusters dic ON d.mac_id = ANY(dic.mac_ids)
+        WHERE d.mac_id = ANY($1::text[])
         "#,
     )
     .bind(&keys)
@@ -459,6 +550,7 @@ async fn build_devices_batch(
             mac_hint: row.mac_hint,
             first_seen: row.first_seen,
             last_seen: row.last_seen,
+            cluster_size: row.cluster_size,
         };
         out.insert(row.mac_id, device_row_to_input(&device_row));
     }
@@ -481,10 +573,17 @@ fn device_row_to_input(row: &DeviceRow) -> EmbeddingInput {
                     }
                 }
             }
+            "cluster_size" => {
+                if let Some(size) = row.cluster_size {
+                    if size > 1 {
+                        lines.push(format!("{}: {}", field, size));
+                    }
+                }
+            }
             _ => append_value(&mut lines, field, row.get_field(field)),
         }
     }
-    let text = lines.join("\n");
+    let text = clamp_text(&lines.join("\n"));
     EmbeddingInput {
         text,
         source_observed_at: row.last_seen,
@@ -700,7 +799,7 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
             if let Some(epm) = events_per_minute(row) {
                 lines.push(format!("events_per_minute: {epm:.1}"));
             }
-            lines.join("\n")
+            clamp_text(&lines.join("\n"))
         } else if let Some(ref ts) = row.text_summary {
             if !ts.is_empty() {
                 // Prepend temporal context to text_summary as well.
@@ -718,7 +817,7 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
                 if let Some(epm) = events_per_minute(row) {
                     lines.push(format!("events_per_minute: {epm:.1}"));
                 }
-                lines.join("\n")
+                clamp_text(&lines.join("\n"))
             } else {
                 build_snapshot_fallback(row)
             }
@@ -741,7 +840,7 @@ fn behaviour_row_to_input(row: &BehaviourWindowRow) -> EmbeddingInput {
             if let Some(epm) = events_per_minute(row) {
                 lines.push(format!("events_per_minute: {epm:.1}"));
             }
-            lines.join("\n")
+            clamp_text(&lines.join("\n"))
         } else {
             build_snapshot_fallback(row)
         }
@@ -872,11 +971,24 @@ fn baseline_profile_rows_to_input_ref(rows: &[&BaselineProfileRow]) -> Embedding
     let mut metrics = rows.to_vec();
     metrics.sort_by(|left, right| left.metric.cmp(&right.metric));
 
+    // Each metric line is ~8 tokens (metric name + 3 percentile values).
+    // Budget: (CONTENT_TOKEN_BUDGET - 4 fixed lines) / 8 tokens per line.
+    const MAX_METRIC_LINES: usize = (CONTENT_TOKEN_BUDGET - 4) / 8; // ~61 metrics
+
     let mut lines = vec!["kind: baseline_profile".to_string()];
     if let Some(first) = metrics.first() {
         lines.push(format!("bssid: {}", first.bssid));
     }
-    for row in metrics {
+    for (i, row) in metrics.iter().enumerate() {
+        if i >= MAX_METRIC_LINES {
+            lines.push(format!("(+{} metrics truncated)", metrics.len() - MAX_METRIC_LINES));
+            tracing::warn!(
+                original_metric_count = metrics.len(),
+                max_metric_lines = MAX_METRIC_LINES,
+                "baseline_profile metrics truncated to fit model context window"
+            );
+            break;
+        }
         let mut metric_text = format!("metric: {}", row.metric);
         if let Some(value) = row.p5 {
             metric_text.push_str(&format!(" p5: {}", value));
@@ -896,7 +1008,7 @@ fn baseline_profile_rows_to_input_ref(rows: &[&BaselineProfileRow]) -> Embedding
         .max();
 
     EmbeddingInput {
-        text: lines.join("\n"),
+        text: clamp_text(&lines.join("\n")),
         source_observed_at,
         source_stream_name: None,
         source_sensor_id: None,
@@ -934,7 +1046,8 @@ struct FrameSequenceBatchRow {
 fn insert_log_prob_line(text: &mut String, score: f64) {
     if let Some(pos) = text.rfind("frame_count:") {
         let (before, after) = text.split_at(pos);
-        *text = format!("{}log_prob: {:.6}\n{}", before, score, after);
+        let new_text = format!("{}log_prob: {:.6}\n{}", before, score, after);
+        *text = clamp_text(&new_text);
     }
 }
 
@@ -1035,7 +1148,13 @@ async fn build_frame_sequences_batch(
 
 fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     let mut lines = vec!["kind: frame_sequence".to_string()];
-    lines.push(format!("tokens: {}", row.sequence_tokens));
+
+    // Frame subtypes are single uppercase words — each is ~1 token.
+    // Reserve OVERHEAD_TOKENS for the fixed structural lines; the rest goes to tokens.
+    let token_word_budget = MAX_TOKENS - OVERHEAD_TOKENS;
+    let truncated_tokens = truncate_token_sequence(&row.sequence_tokens, token_word_budget);
+    lines.push(format!("tokens: {}", truncated_tokens));
+
     if let Some(start) = row.window_start {
         if let Some(end) = row.window_end {
             let duration_secs = (end - start).num_seconds();
@@ -1054,7 +1173,7 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     // and frame_count.
 
     EmbeddingInput {
-        text: lines.join("\n"),
+        text: clamp_text(&lines.join("\n")), // defensive final clamp
         source_observed_at: row.window_start,
         source_stream_name: None,
         source_sensor_id: row.sensor_id.clone(),
@@ -1135,24 +1254,34 @@ async fn build_infrastructure_subgraphs_batch(
 
     let rows = sqlx::query_as::<_, InfrastructureGraphBatchRow>(
         r#"
-        SELECT
+        SELECT DISTINCT ON (
+            LEAST(node_a, node_b),
+            GREATEST(node_a, node_b),
+            edge_type,
+            endpoint
+          )
             endpoint AS query_key,
             node_a, node_a_type,
             node_b, node_b_type,
             edge_type, weight::float8, last_seen
         FROM vec_infrastructure_graph
         CROSS JOIN LATERAL (
-            SELECT node_a AS endpoint WHERE node_a = ANY($1::text[])
-            UNION ALL
-            SELECT node_b AS endpoint WHERE node_b = ANY($1::text[])
-        ) endpoints
-        ORDER BY weight DESC, last_seen DESC
+          VALUES
+            (CASE WHEN node_a = ANY($1::text[]) THEN node_a END),
+            (CASE WHEN node_b = ANY($1::text[]) THEN node_b END)
+        ) AS endpoints(endpoint)
+        WHERE endpoint IS NOT NULL
+        ORDER BY
+          LEAST(node_a, node_b),
+          GREATEST(node_a, node_b),
+          edge_type,
+          endpoint,
+          last_seen DESC
         "#,
     )
-    .bind(&keys)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| WorkerError::text_build(format!("infrastructure_graph batch query failed: {e}")))?;
+    .bind(&keys).fetch_all(pool).await
+        .map_err(|e|
+            WorkerError::text_build(format!("infrastructure_graph batch query failed: {e}")))?;
 
     // Group rows by query_key
     let mut grouped: HashMap<String, Vec<InfrastructureGraphRow>> = HashMap::new();
@@ -1248,7 +1377,7 @@ fn build_ego_graph_input(bssid: &str, rows: &[InfrastructureGraphRow]) -> Embedd
     let last_seen = rows.iter().filter_map(|r| r.last_seen).max();
 
     EmbeddingInput {
-        text: lines.join("\n"),
+        text: clamp_text(&lines.join("\n")),
         source_observed_at: last_seen,
         source_stream_name: None,
         source_sensor_id: None,
@@ -1259,6 +1388,10 @@ fn build_ego_graph_input(bssid: &str, rows: &[InfrastructureGraphRow]) -> Embedd
 
 /// Build a fallback text from individual snapshot fields when no pre-built text exists.
 fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
+    // Each of the three JSON fields gets at most 1/4 of the content budget.
+    // The rest (3/4) is reserved for scalar fields, temporal context, and kind line.
+    let json_field_budget = word_budget(CONTENT_TOKEN_BUDGET / 4);
+
     let mut lines = vec!["kind: behaviour_window".to_string()];
     // Add temporal context right after the kind line.
     if let Some(dt) = row.window_start {
@@ -1272,8 +1405,12 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
             "window_start" => row.window_start.as_ref().map(|dt| dt.to_rfc3339()),
             "window_end" => row.window_end.as_ref().map(|dt| dt.to_rfc3339()),
             "event_count" => row.event_count.map(|v| v.to_string()),
-            "protocol_mix" => row.protocol_mix.as_ref().map(normalize_json),
-            "frame_type_distribution" => row.frame_type_distribution.as_ref().map(normalize_json),
+            "protocol_mix" => row.protocol_mix.as_ref().map(|v| {
+                truncate_words(&normalize_json(v), json_field_budget)
+            }),
+            "frame_type_distribution" => row.frame_type_distribution.as_ref().map(|v| {
+                truncate_words(&normalize_json(v), json_field_budget)
+            }),
             "signal_min_dbm" => row.signal_min_dbm.map(|v| v.to_string()),
             "signal_max_dbm" => row.signal_max_dbm.map(|v| v.to_string()),
             "signal_avg_dbm" => row.signal_avg_dbm.map(|v| v.to_string()),
@@ -1281,7 +1418,9 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
             "protected_count" => row.protected_count.map(|v| v.to_string()),
             "unprotected_count" => row.unprotected_count.map(|v| v.to_string()),
             "unique_bssid_count" => row.unique_bssid_count.map(|v| v.to_string()),
-            "mac_rotation_indicators" => row.mac_rotation_indicators.as_ref().map(normalize_json),
+            "mac_rotation_indicators" => row.mac_rotation_indicators.as_ref().map(|v| {
+                truncate_words(&normalize_json(v), json_field_budget)
+            }),
             _ => None,
         };
         if let Some(ref v) = val {
@@ -1294,7 +1433,7 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
     if let Some(epm) = events_per_minute(row) {
         lines.push(format!("events_per_minute: {epm:.1}"));
     }
-    lines.join("\n")
+    clamp_text(&lines.join("\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,5 +1618,65 @@ mod tests {
         // A name that's already clean should remain unchanged (minus lowercasing)
         assert_eq!(normalize_wps_name("Google Chromecast"), "google chromecast");
         assert_eq!(normalize_wps_name("Amazon Fire Stick"), "amazon fire stick");
+    }
+
+    #[test]
+    fn truncate_token_sequence_no_op_when_short() {
+        let budget = MAX_TOKENS - OVERHEAD_TOKENS;
+        let tokens = "BEACON AUTH ASSOC_REQ EAPOL DATA_QOS";
+        assert_eq!(truncate_token_sequence(tokens, budget), tokens);
+    }
+
+    #[test]
+    fn truncate_token_sequence_truncates_and_annotates() {
+        let budget = MAX_TOKENS - OVERHEAD_TOKENS; // 368
+        let tokens: String = (0..600).map(|_| "BEACON").collect::<Vec<_>>().join(" ");
+        let result = truncate_token_sequence(&tokens, budget);
+        assert!(
+            result.contains("(+232 truncated)"),
+            "expected truncation annotation, got: {}",
+            &result[..result.len().min(80)]
+        );
+        // Should not exceed budget (368 content words + annotation words)
+        let content_words = result
+            .split_whitespace()
+            .take_while(|w| !w.starts_with("(+"))
+            .count();
+        assert_eq!(content_words, budget);
+    }
+
+    #[test]
+    fn clamp_text_no_op_when_within_budget() {
+        let text = "kind: frame_sequence\ntokens: BEACON AUTH\nframe_count: 2";
+        assert_eq!(clamp_text(text), text);
+    }
+
+    #[test]
+    fn clamp_text_clamps_oversized_text() {
+        let long_value: String = (0..500)
+            .map(|i| format!("word{}", i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let text = format!("kind: event\nfield: {}", long_value);
+        let clamped = clamp_text(&text);
+        let word_count = clamped.split_whitespace().count();
+        assert!(
+            word_count <= word_budget(MAX_TOKENS),
+            "clamped text has {} words, expected <= {}",
+            word_count,
+            word_budget(MAX_TOKENS)
+        );
+    }
+
+    #[test]
+    fn word_budget_512_is_170() {
+        // (512 * 1) / 3 = 170 words at the 3-tokens-per-word ratio
+        assert_eq!(word_budget(512), 170);
+    }
+
+    #[test]
+    fn frame_sequence_token_budget_is_368() {
+        // Verify the direct budget for frame sequences (1 token per word, no multiplier)
+        assert_eq!(MAX_TOKENS - OVERHEAD_TOKENS, 368);
     }
 }

@@ -32,6 +32,7 @@ use tracing::{debug, debug_span, error, info, info_span, warn};
 pub async fn run_forever(
     config: Config,
     pool: PgPool,
+    alert_pool: PgPool,
     embedder: EmbeddingClient,
 ) -> Result<(), WorkerError> {
     let _startup = info_span!(
@@ -48,6 +49,8 @@ pub async fn run_forever(
     install_signal_handler(shutdown_tx);
 
     let mut iteration: u64 = 0;
+    let mut consecutive_permanent_failures: u32 = 0;
+    const PERMANENT_FAILURE_CIRCUIT_BREAKER: u32 = 5;
 
     loop {
         if *shutdown_rx.borrow() {
@@ -56,9 +59,35 @@ pub async fn run_forever(
         }
 
         match run_once(&config, &pool, &embedder).await {
-            Ok(count) => {
-                info!(rows_processed = count, "run_once summary");
-                if count == 0 {
+            Ok(result) => {
+                info!(
+                    rows_processed = result.processed,
+                    permanent_failures = result.permanent_failures,
+                    rows_leased = result.rows_leased,
+                    "run_once summary"
+                );
+
+                // Track permanent (4xx) embed failures for circuit breaker.
+                // Reset on any successful processing; increment when all leased
+                // jobs in the batch hit permanent errors (e.g. oversized payload
+                // against a misconfigured llama.cpp).
+                if result.processed > 0 {
+                    consecutive_permanent_failures = 0;
+                } else if result.permanent_failures > 0 {
+                    consecutive_permanent_failures += 1;
+                    if consecutive_permanent_failures >= PERMANENT_FAILURE_CIRCUIT_BREAKER {
+                        error!(
+                            consecutive_permanent_failures,
+                            "circuit breaker tripped: too many consecutive permanent embed failures. \
+                             Check VECTOR_EMBEDDING_MODEL, token limits, and provider health. \
+                             Sleeping 60s before retry."
+                        );
+                        consecutive_permanent_failures = 0;
+                        sleep_or_shutdown(60, shutdown_rx.clone()).await;
+                    }
+                }
+
+                if result.processed == 0 && result.permanent_failures == 0 {
                     debug!("no jobs leased, sleeping");
                     sleep_or_shutdown(config.poll_interval_secs, shutdown_rx.clone()).await;
                 }
@@ -81,20 +110,35 @@ pub async fn run_forever(
                 _ => {}
             }
 
-            // Periodic alert sweep every 10 iterations; run in the background so it
-            // does not block the main embed/complete loop.
-            let alert_pool = pool.clone();
-            tokio::spawn(async move {
-                let alert_cfg = AlertConfig::default();
-                if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
-                    warn!(error = %e, "alert sweep failed (background)");
-                }
-            });
-
-            // Periodic composite risk logging for AP population.
-            match db::count_high_risk_aps(&pool, 0.75).await {
-                Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
-                Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
+            // Periodic alert sweep every 10 iterations; run in the background on
+            // the dedicated alert pool so it cannot starve the embed/complete loop.
+            //
+            // Skip the sweep when the main pool is under pressure — if idle
+            // connections are scarce, the embed/complete pipeline needs them
+            // more than the observability sweep does.  The sweep will run on a
+            // later iteration when headroom is available.
+            const ALERT_MIN_FREE_CONNECTIONS: usize = 3;
+            let idle = pool.num_idle();
+            if idle >= ALERT_MIN_FREE_CONNECTIONS {
+                let alert_pool = alert_pool.clone();
+                tokio::spawn(async move {
+                    let alert_cfg = AlertConfig::default();
+                    if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
+                        warn!(error = %e, "alert sweep failed (background)");
+                    }
+                    // count_high_risk_aps also uses the alert pool so the main loop
+                    // is never blocked by a COUNT(*) on mv_ap_risk_score.
+                    match db::count_high_risk_aps(&alert_pool, 0.75).await {
+                        Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
+                        Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
+                    }
+                });
+            } else {
+                debug!(
+                    idle_connections = idle,
+                    min_required = ALERT_MIN_FREE_CONNECTIONS,
+                    "skipping alert sweep — pool under pressure"
+                );
             }
         }
 
@@ -108,12 +152,23 @@ pub async fn run_forever(
     Ok(())
 }
 
+/// Result of a single `run_once` pass.
+pub struct RunOnceResult {
+    /// Number of jobs that were successfully completed.
+    pub processed: usize,
+    /// Number of jobs that failed with a permanent error (e.g. 400 Bad Request).
+    /// These jobs will not be retried.
+    pub permanent_failures: usize,
+    /// Total number of jobs that were leased in this pass.
+    pub rows_leased: usize,
+}
+
 /// Execute a single pass: update worker state, lease jobs, process them, then idle.
 pub async fn run_once(
     config: &Config,
     pool: &PgPool,
     embedder: &EmbeddingClient,
-) -> Result<usize, WorkerError> {
+) -> Result<RunOnceResult, WorkerError> {
     let _run_once = debug_span!("run_once").entered();
     let started_at = chrono::Utc::now();
 
@@ -146,10 +201,14 @@ pub async fn run_once(
             ..running_params
         };
         db::mark_worker_state(pool, &idle_params).await?;
-        return Ok(0);
+        return Ok(RunOnceResult {
+            processed: 0,
+            permanent_failures: 0,
+            rows_leased: 0,
+        });
     }
 
-    let processed = process_jobs(config, pool, embedder, jobs).await;
+    let (processed, permanent_failures) = process_jobs(config, pool, embedder, jobs).await;
 
     let idle_params = WorkerStateParams {
         status: "idle".to_string(),
@@ -161,16 +220,22 @@ pub async fn run_once(
         warn!(error = %e, "mark_worker_state(idle) failed");
     }
 
-    Ok(processed)
+    Ok(RunOnceResult {
+        processed,
+        permanent_failures,
+        rows_leased,
+    })
 }
 
 /// Process leased jobs with pipelined prepare / embed / complete across request chunks.
+///
+/// Returns `(succeeded, permanent_failures)`.
 pub async fn process_jobs(
     config: &Config,
     pool: &PgPool,
     embedder: &EmbeddingClient,
     jobs: Vec<EmbeddingJob>,
-) -> usize {
+) -> (usize, usize) {
     let chunks: Vec<Vec<EmbeddingJob>> = jobs
         .chunks(config.request_batch_size)
         .map(|c| c.to_vec())
@@ -179,12 +244,13 @@ pub async fn process_jobs(
     let n = chunks.len();
 
     if n == 0 {
-        return 0;
+        return (0, 0);
     }
 
     let embed_sem = Arc::new(Semaphore::new(config.max_concurrent_embed_requests.max(1)));
     let mut succeeded = 0usize;
     let mut failed = 0usize;
+    let mut permanent_failed = 0usize;
     let mut next_prepare: Option<JoinHandle<PrepareChunkResult>> = None;
     let mut complete_handle: Option<JoinHandle<CompleteChunkResult>> = None;
     // Queue of in-flight embed tasks (preserves chunk order)
@@ -194,14 +260,15 @@ pub async fn process_jobs(
         let chunk = chunks[i].clone();
         let prepared = match next_prepare.take() {
             Some(handle) => handle.await.unwrap_or_else(|e| panic!("prepare panicked: {e}")),
-            None => prepare_chunk(pool, chunk).await,
+            None => prepare_chunk(config, pool, chunk).await,
         };
 
         if i + 1 < n {
             let next_chunk = chunks[i + 1].clone();
             let pool = pool.clone();
+            let cfg = config.clone();
             next_prepare = Some(tokio::spawn(async move {
-                prepare_chunk(&pool, next_chunk).await
+                prepare_chunk(&cfg, &pool, next_chunk).await
             }));
         }
 
@@ -227,6 +294,8 @@ pub async fn process_jobs(
                     failed += result.failed;
                 }
 
+                permanent_failed += embedded.permanent_failed;
+
                 let cfg = config.clone();
                 let pool = pool.clone();
                 complete_handle = Some(tokio::spawn(async move {
@@ -246,6 +315,8 @@ pub async fn process_jobs(
             failed += result.failed;
         }
 
+        permanent_failed += embedded.permanent_failed;
+
         let cfg = config.clone();
         let pool = pool.clone();
         complete_handle = Some(tokio::spawn(async move {
@@ -259,8 +330,8 @@ pub async fn process_jobs(
         failed += result.failed;
     }
 
-    debug!(total, succeeded, failed, "process_jobs done");
-    succeeded
+    debug!(total, succeeded, failed, permanent_failed, "process_jobs done");
+    (succeeded, permanent_failed)
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +353,9 @@ struct PrepareChunkResult {
 struct EmbeddedChunkResult {
     items: Vec<(PreparedJob, Vec<f32>)>,
     failed: usize,
+    /// Jobs that failed with a permanent error (e.g. 400 Bad Request) and
+    /// will not be retried.  Subset of `failed` when the error was permanent.
+    permanent_failed: usize,
     prepare_ms: u64,
     embed_ms: u64,
 }
@@ -291,7 +365,7 @@ struct CompleteChunkResult {
     failed: usize,
 }
 
-async fn prepare_chunk(pool: &PgPool, jobs: Vec<EmbeddingJob>) -> PrepareChunkResult {
+async fn prepare_chunk(config: &Config, pool: &PgPool, jobs: Vec<EmbeddingJob>) -> PrepareChunkResult {
     let start = Instant::now();
     let batch_size = jobs.len();
 
@@ -313,16 +387,34 @@ async fn prepare_chunk(pool: &PgPool, jobs: Vec<EmbeddingJob>) -> PrepareChunkRe
         }
     };
 
+    // Truncation guard: ≈ 1.5 chars per token for BPE tokenizer on structured WiFi data.
+    // MAC addrs, hex, and underscore tokens (ASSOC_REQ) can inflate to 3+ chars per token,
+    // so 3/2 gives headroom under the provider's context limit.
+    let max_chars = config.max_input_tokens.saturating_mul(3) / 2;
+    let mut truncated_count = 0usize;
     let mut prepared = Vec::with_capacity(jobs.len());
     let mut failed = 0usize;
 
     for job in jobs {
         match inputs.get(&job.source_key) {
             Some(input) => {
+                let mut trimmed = input.clone();
+                if trimmed.text.len() > max_chars {
+                    // Truncate at the last newline before the character limit so we don't
+                    // cut a line in the middle (preserving the structured field format).
+                    let limit = max_chars;
+                    let cut = trimmed.text[..limit]
+                        .rfind('\n')
+                        .unwrap_or(limit);
+                    trimmed.text.truncate(cut);
+                    trimmed.text.push_str("\n[truncated]");
+                    truncated_count += 1;
+                }
+                let content_sha256 = sha256_hex(&trimmed.text);
                 prepared.push(PreparedJob {
                     job,
-                    input: input.clone(),
-                    content_sha256: sha256_hex(&input.text),
+                    input: trimmed,
+                    content_sha256,
                 });
             }
             None => {
@@ -336,6 +428,9 @@ async fn prepare_chunk(pool: &PgPool, jobs: Vec<EmbeddingJob>) -> PrepareChunkRe
     }
 
     let prepare_ms = start.elapsed().as_millis() as u64;
+    if truncated_count > 0 {
+        debug!(truncated_count, max_input_tokens = config.max_input_tokens, "inputs truncated to fit max_input_tokens");
+    }
     debug!(batch_size, prepare_ms, prepared = prepared.len(), failed, "prepare_chunk done");
 
     PrepareChunkResult {
@@ -360,6 +455,7 @@ async fn embed_chunk(
         return EmbeddedChunkResult {
             items: Vec::new(),
             failed,
+            permanent_failed: 0,
             prepare_ms,
             embed_ms: 0,
         };
@@ -376,15 +472,30 @@ async fn embed_chunk(
     let embeddings = match embedder.embed_many(&texts).await {
         Ok(emb) => emb,
         Err(e) => {
-            error!(error = %e, "embed_many failed, failing entire chunk");
+            let permanent = is_permanent_embed_error(&e);
+            if permanent {
+                error!(
+                    error = %e,
+                    permanent = true,
+                    "embed_many failed with permanent error — marking jobs failed immediately"
+                );
+            } else {
+                error!(error = %e, permanent = false, "embed_many failed, failing chunk");
+            }
+            let mut perm_fails = 0usize;
             for p in &prepared_chunk.prepared {
-                if fail_job_with_error(pool, &p.job, &e.to_string()).await {
+                if permanent {
+                    fail_job_permanent(pool, &p.job, &e.to_string()).await;
+                    failed += 1;
+                    perm_fails += 1;
+                } else if fail_job_with_error(pool, &p.job, &e.to_string()).await {
                     failed += 1;
                 }
             }
             return EmbeddedChunkResult {
                 items: Vec::new(),
                 failed,
+                permanent_failed: perm_fails,
                 prepare_ms,
                 embed_ms: start.elapsed().as_millis() as u64,
             };
@@ -412,6 +523,7 @@ async fn embed_chunk(
     EmbeddedChunkResult {
         items,
         failed,
+        permanent_failed: 0,
         prepare_ms,
         embed_ms,
     }
@@ -493,7 +605,14 @@ async fn complete_jobs_fallback(
     pool: &PgPool,
     items: &[(PreparedJob, Vec<f32>)],
 ) -> (usize, usize) {
-    let semaphore = Arc::new(Semaphore::new(config.max_concurrent_completes));
+    // Cap fallback concurrency so at least 6 connections remain for
+    // lease/state/prepare operations running in parallel.
+    let pool_max = config.effective_pool_max_connections() as usize;
+    let safe_concurrency = config
+        .max_concurrent_completes
+        .min(pool_max.saturating_sub(6))
+        .max(1);
+    let semaphore = Arc::new(Semaphore::new(safe_concurrency));
     let mut tasks: FuturesUnordered<_> = items
         .iter()
         .map(|(prepared, vector)| {
@@ -574,6 +693,25 @@ async fn complete_job_pipeline(
     Ok(())
 }
 
+/// Returns true for HTTP errors that are permanent and should not be retried.
+///
+/// A 400 Bad Request from an embedding provider means the payload is invalid
+/// (oversized, malformed JSON, unsupported model parameter).  Retrying with
+/// the same payload will always produce the same result — waste of attempts
+/// and pool connections.
+///
+/// 5xx errors and network failures are transient and should retry normally.
+fn is_permanent_embed_error(e: &WorkerError) -> bool {
+    match e {
+        WorkerError::Http(re) => re
+            .status()
+            .map(|s| s.is_client_error()) // 4xx — permanent
+            .unwrap_or(false),
+        WorkerError::DimensionMismatch { .. } => true, // model mismatch — permanent
+        _ => false,
+    }
+}
+
 async fn fail_job_with_error(pool: &PgPool, job: &EmbeddingJob, message: &str) -> bool {
     db::fail_job(
         pool,
@@ -585,6 +723,21 @@ async fn fail_job_with_error(pool: &PgPool, job: &EmbeddingJob, message: &str) -
     )
     .await
     .is_ok()
+}
+
+/// Mark a job as permanently failed by setting attempts = max_attempts before
+/// calling fail_job.  This bypasses the retry backoff for errors that are known
+/// to be unrecoverable (e.g. 400 Bad Request with oversized payload).
+async fn fail_job_permanent(pool: &PgPool, job: &EmbeddingJob, message: &str) {
+    let _ = db::fail_job(
+        pool,
+        job.job_id,
+        job.lease_token.as_deref(),
+        job.max_attempts, // force exhausted so status = 'failed'
+        job.max_attempts,
+        message,
+    )
+    .await;
 }
 
 fn sha256_hex(text: &str) -> String {

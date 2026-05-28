@@ -1,0 +1,15 @@
+apiVersion: v2
+name: ssl-proxy
+description: SSL Proxy with Kubernetes auto-scaling for coordinator, oracle-worker, and vec-worker
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - wireguard
+  - proxy
+  - redpanda
+  - oracle
+  - vector-embeddings
+  - auto-scaling
+maintainers:
+  - name: ssl-proxy-team

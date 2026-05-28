@@ -1,0 +1,163 @@
+1{{- if .Values.zigCoordinator.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-coordinator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zig-coordinator
+spec:
+  type: {{ .Values.zigCoordinator.service.type }}
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: zig-coordinator
+  ports:
+    - name: metrics
+      port: {{ .Values.zigCoordinator.metrics.port }}
+      targetPort: {{ .Values.zigCoordinator.metrics.port }}
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-coordinator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zig-coordinator
+spec:
+  replicas: {{ .Values.zigCoordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: zig-coordinator
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: zig-coordinator
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
+      containers:
+        - name: zig-coordinator
+          image: {{ .Values.zigCoordinator.image.repository }}:{{ .Values.zigCoordinator.image.tag }}
+          imagePullPolicy: {{ .Values.zigCoordinator.image.pullPolicy }}
+          env:
+            # Postgres
+            - name: DATABASE_URL
+              value: {{ include "ssl-proxy.postgresUrl" . }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.passwordSecret.name }}
+                  key: {{ .Values.postgres.passwordSecret.key }}
+            # Redpanda
+            - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+            - name: SYNC_REDPANDA_TOPIC_MANIFEST
+              value: "/app/docker/redpanda/topics.manifest"
+            - name: SYNC_SCHEMA_FILE
+              value: "/app/sql/postgres.sql"
+            # Topics
+            - name: SYNC_SCAN_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_SCAN_TOPIC
+            - name: SYNC_LOAD_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_LOAD_TOPIC
+            - name: SYNC_RESULT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_RESULT_TOPIC
+            # Consumer groups
+            - name: SYNC_SCAN_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_SCAN_CONSUMER
+            - name: SYNC_LOAD_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_LOAD_CONSUMER
+            - name: SYNC_RESULT_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_RESULT_CONSUMER
+            # Stream names
+            - name: SYNC_STREAM_NAME
+              value: "proxy.events"
+            - name: SYNC_STREAM_NAMES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_STREAM_NAMES
+            - name: SYNC_ORACLE_STREAM_NAMES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_ORACLE_STREAM_NAMES
+            - name: AUDIT_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: AUDIT_STREAM_NAME
+            - name: SYNC_RESULT_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: SYNC_RESULT_STREAM_NAME
+            - name: SYNC_OUTBOX_DIR
+              value: "/sync-outbox"
+          ports:
+            - containerPort: {{ .Values.zigCoordinator.metrics.port }}
+              protocol: TCP
+              name: metrics
+          {{- with .Values.zigCoordinator.healthcheck.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.zigCoordinator.resources | nindent 12 }}
+          volumeMounts:
+            - name: topics-manifest
+              mountPath: /app/docker/redpanda
+              readOnly: true
+            - name: sql-schema
+              mountPath: /app/sql
+              readOnly: true
+            - name: sync-outbox
+              mountPath: /sync-outbox
+      volumes:
+        - name: topics-manifest
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
+        - name: sql-schema
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-sql-schema
+        - name: sync-outbox
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

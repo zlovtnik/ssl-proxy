@@ -1,0 +1,70 @@
+---
+# Common configuration shared across services
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+data:
+  # Redpanda
+  SYNC_REDPANDA_BOOTSTRAP_SERVERS: {{ include "ssl-proxy.redpandaBootstrapServers" . | quote }}
+  # Sync topics
+  SYNC_SCAN_TOPIC: {{ .Values.zigCoordinator.topics.scanTopic | quote }}
+  SYNC_LOAD_TOPIC: {{ .Values.zigCoordinator.topics.loadTopic | quote }}
+  SYNC_RESULT_TOPIC: {{ .Values.zigCoordinator.topics.resultTopic | quote }}
+  # Consumer groups
+  SYNC_SCAN_CONSUMER: {{ .Values.zigCoordinator.consumers.scanConsumer | quote }}
+  SYNC_LOAD_CONSUMER: {{ .Values.zigCoordinator.consumers.loadConsumer | quote }}
+  SYNC_RESULT_CONSUMER: {{ .Values.zigCoordinator.consumers.resultConsumer | quote }}
+  # Stream names
+  SYNC_STREAM_NAMES: {{ .Values.zigCoordinator.streams.syncStreamNames | quote }}
+  SYNC_ORACLE_STREAM_NAMES: {{ .Values.zigCoordinator.streams.oracleStreamNames | quote }}
+  AUDIT_STREAM_NAME: {{ .Values.zigCoordinator.streams.auditStreamName | quote }}
+  SYNC_RESULT_STREAM_NAME: {{ .Values.zigCoordinator.streams.resultStreamName | quote }}
+
+---
+# Redpanda topic manifest ConfigMap (mounted by zig-coordinator for topic validation)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+data:
+  topics.manifest: |
+    # topic|partitions|replicas|retention.ms|retention.bytes
+    # NOTE: Partition count set to {{ .Values.zigCoordinator.topicPartitions }} to support up to 5 replicas
+    sync.scan.request|{{ .Values.zigCoordinator.topicPartitions }}|3|2592000000|-1
+    sync.oracle.load|{{ .Values.zigCoordinator.topicPartitions }}|3|2592000000|-1
+    sync.oracle.result|{{ .Values.zigCoordinator.topicPartitions }}|3|2592000000|-1
+    proxy.payload_audit|3|3|2592000000|-1
+    wireless.audit|3|3|2592000000|-1
+    wireless.mac.seen|3|3|2592000000|-1
+    wireless.audit.enriched|3|3|2592000000|-1
+    wireless.audit.config|1|3|2592000000|-1
+    wireless.config.authorized_networks|1|3|2592000000|-1
+    wireless.config.sensor|1|3|2592000000|-1
+    wireless.client.inventory|3|3|2592000000|-1
+    audit.threat.shadow_device|3|3|2592000000|-1
+    wireless.mac.registry|1|3|2592000000|-1
+    wireless.backlog.save|3|3|2592000000|-1
+    wireless.backlog.list|3|3|2592000000|-1
+    wireless.backlog.synced|3|3|2592000000|-1
+    wireless.backlog.prune|3|3|2592000000|-1
+    wireless.backlog.list.reply|3|3|300000|-1
+    wireless.backlog.prune.reply|3|3|300000|-1
+    wireless.mac.lookup|3|3|2592000000|-1
+    wireless.mac.lookup.reply|3|3|300000|-1
+    wireless.networks.authorized|3|3|2592000000|-1
+    wireless.networks.authorized.reply|3|3|300000|-1
+    wireless.probe.flush|3|3|3600000|-1
+    audit.wireless.bandwidth|3|3|604800000|-1
+    wireless.alert.rogue_ap|3|3|2592000000|-1
+    wireless.alert.deauth_flood|3|3|2592000000|-1
+    wireless.alert.signal_anomaly|3|3|2592000000|-1
+    wireless.alert.pmf_attack|3|3|2592000000|-1
+    wireless.alert.attack_sequence|3|3|2592000000|-1
+    wifi.alert.handshake|3|3|2592000000|-1
