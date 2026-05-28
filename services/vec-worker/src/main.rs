@@ -69,6 +69,7 @@ async fn main() {
         dimensions = config.dimensions,
         enabled = config.embeddings_enabled,
         once = config.once,
+        max_input_tokens = config.max_input_tokens,
         "worker starting"
     );
 
@@ -80,14 +81,72 @@ async fn main() {
         return;
     }
 
-    // Connect to PostgreSQL.
-    let pool = match db::connect(&config.database_url, config.effective_pool_max_connections()).await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("database connection failed: {}", e);
-            eprintln!("Database connection failed: {}", e);
-            std::process::exit(1);
+    // Connect to PostgreSQL with retry — Docker Compose startup races should not
+    // kill the process on the first failure.
+    let pool = {
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            match db::connect(&config.database_url, config.effective_pool_max_connections()).await {
+                Ok(p) => break p,
+                Err(e) if attempt < 10 => {
+                    let wait = std::time::Duration::from_secs(attempt as u64 * 2);
+                    tracing::warn!(
+                        attempt,
+                        error = %e,
+                        wait_secs = wait.as_secs(),
+                        "database connection failed, retrying"
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        attempt,
+                        error = %e,
+                        "database connection failed after {} attempts",
+                        attempt
+                    );
+                    eprintln!("Database connection failed after {} attempts: {}", attempt, e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    };
+
+    // Connect the alert sweep pool — separate from the main worker pool so
+    // long-running REFRESH MATERIALIZED VIEW calls cannot starve the embed
+    // pipeline (Fix 2). Uses min_connections=1 (alert pool is smaller).
+    let alert_pool = {
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            match db::connect_with_options(
+                &config.database_url,
+                config.alert_pool_max_connections,
+                1,
+            ).await {
+                Ok(p) => break p,
+                Err(e) if attempt < 10 => {
+                    let wait = std::time::Duration::from_secs(attempt as u64 * 2);
+                    tracing::warn!(
+                        attempt,
+                        error = %e,
+                        wait_secs = wait.as_secs(),
+                        "alert pool connection failed, retrying"
+                    );
+                    tokio::time::sleep(wait).await;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        attempt,
+                        error = %e,
+                        "alert pool connection failed after {} attempts",
+                        attempt
+                    );
+                    eprintln!("Alert pool connection failed after {} attempts: {}", attempt, e);
+                    std::process::exit(1);
+                }
+            }
         }
     };
 
@@ -102,7 +161,7 @@ async fn main() {
     };
 
     // Run the worker loop.
-    if let Err(e) = vec_worker::worker::run_forever(config, pool, embedder).await {
+    if let Err(e) = vec_worker::worker::run_forever(config, pool, alert_pool, embedder).await {
         tracing::error!("worker error: {}", e);
         eprintln!("Worker error: {}", e);
         std::process::exit(1);

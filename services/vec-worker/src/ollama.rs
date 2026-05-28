@@ -14,7 +14,7 @@
 use crate::WorkerError;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // ---------------------------------------------------------------------------
 // Client
@@ -153,7 +153,16 @@ async fn try_embed_many(
     let elapsed_ms = start.elapsed().as_millis() as u64;
     info!(elapsed_ms, "embed_many completed");
 
-    let response = response.error_for_status()?;
+    let status = response.status();
+    if !status.is_success() {
+        error!(
+            http_status = status.as_u16(),
+            url = %url,
+            model = %client.model,
+            "embedding provider returned error status"
+        );
+        return Err(WorkerError::Http(response.error_for_status().unwrap_err()));
+    }
     let embed_resp: EmbedResponse = response.json().await?; // WorkerError::Http
 
     let count = embed_resp.embeddings.len();

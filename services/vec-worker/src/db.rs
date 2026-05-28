@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use std::time::Duration;
 use tracing::instrument;
 
 // ---------------------------------------------------------------------------
@@ -99,15 +100,35 @@ pub struct CompleteBatchRow {
     pub explanation_text: Option<String>,
 }
 
-/// Open a new connection pool to the PostgreSQL database.
+/// Open a new connection pool with explicit timeouts and warm-up.
 ///
-/// Call once at startup and share the pool via `Arc` or injection.
+/// Sets `acquire_timeout(10s)` — fail fast instead of silently waiting 30s.
+/// Sets `idle_timeout(300s)` — reclaim idle connections after 5 minutes.
+/// Sets `max_lifetime(1800s)` — force connection recycling every 30 minutes.
+/// Sets `min_connections` to pre-warm the pool and avoid cold-start thundering herd.
 #[instrument(skip(database_url))]
-pub async fn connect(database_url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
+pub async fn connect_with_options(
+    database_url: &str,
+    max_connections: u32,
+    min_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(max_connections.max(1))
+        .min_connections(min_connections.min(max_connections.max(1)))
+        .acquire_timeout(Duration::from_secs(10))
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(1800))
         .connect(database_url)
         .await
+}
+
+/// Open a new connection pool to the PostgreSQL database (convenience wrapper).
+///
+/// Uses `min_connections=3` to pre-warm the pool. Call once at startup and
+/// share the pool via `Arc` or injection.
+#[instrument(skip(database_url))]
+pub async fn connect(database_url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
+    connect_with_options(database_url, max_connections, 3).await
 }
 
 // ---------------------------------------------------------------------------

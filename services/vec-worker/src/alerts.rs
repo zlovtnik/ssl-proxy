@@ -99,6 +99,16 @@ pub async fn check_near_duplicates(
                   AND a.source_mac IS NOT DISTINCT FROM $1
                   AND a.created_at > NOW() - INTERVAL '1 hour'
             )
+              -- Track 6: Exclude locally-administered MACs (AP beacon noise)
+              AND NOT (
+                $1 IS NOT NULL
+                AND (get_byte(decode(split_part($1, ':', 1), 'hex'), 0) & 2) = 2
+              )
+              -- Track 6: Exclude MACs that are known AP BSSIDs (from risk scoring)
+              AND NOT EXISTS (
+                SELECT 1 FROM mv_ap_risk_score ap
+                WHERE ap.bssid = $1
+              )
             "#,
         )
         .bind(mac)

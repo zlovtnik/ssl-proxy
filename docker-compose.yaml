@@ -297,6 +297,7 @@ services:
       dockerfile: services/vec-worker/Dockerfile
     restart: unless-stopped
     environment:
+      - VECTOR_EMBEDDING_MAX_INPUT_TOKENS=512
       - VECTOR_EMBEDDING_WORKER_NAME=worker-1
       - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
       - DATABASE_POOL_MAX_CONNECTIONS=6
@@ -322,6 +323,7 @@ services:
       dockerfile: services/vec-worker/Dockerfile
     restart: unless-stopped
     environment:
+      - VECTOR_EMBEDDING_MAX_INPUT_TOKENS=512
       - VECTOR_EMBEDDING_WORKER_NAME=worker-2
       - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=4
       - DATABASE_POOL_MAX_CONNECTIONS=6
