@@ -134,6 +134,82 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
+  zig-coordinator-2:
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/zig-coordinator/Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
+      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
+      - SYNC_STREAM_NAME=proxy.events
+      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
+      - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
+      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
+      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
+      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      - SYNC_OUTBOX_DIR=/sync-outbox
+    volumes:
+      - sync-outbox:/sync-outbox
+      - ./docker/redpanda:/app/docker/redpanda:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+  zig-coordinator-3:
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/zig-coordinator/Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
+      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
+      - SYNC_STREAM_NAME=proxy.events
+      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
+      - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
+      - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
+      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
+      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
+      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
+      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      - SYNC_OUTBOX_DIR=/sync-outbox
+    volumes:
+      - sync-outbox:/sync-outbox
+      - ./docker/redpanda:/app/docker/redpanda:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zig-coordinator", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   oracle-worker:
     depends_on:
