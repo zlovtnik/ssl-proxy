@@ -34,10 +34,10 @@ spec:
       port: {{ .Values.proxy.service.policyPort }}
       targetPort: {{ .Values.proxy.service.policyPort }}
       protocol: TCP
-{{- if and .Values.monitoring.enabled .Values.proxy.service.adminPort }}
+{{- if and .Values.monitoring.enabled .Values.proxy.service.metricsPort }}
     - name: metrics
-      port: {{ .Values.proxy.service.adminPort }}
-      targetPort: {{ .Values.proxy.service.adminPort }}
+      port: {{ .Values.proxy.service.metricsPort }}
+      targetPort: {{ .Values.proxy.service.metricsPort }}
       protocol: TCP
 {{- end }}
 ---
@@ -148,7 +148,7 @@ spec:
             {{- toYaml .Values.proxy.resources | nindent 12 }}
           volumeMounts:
             - name: config
-              mountPath: /config
+              mountPath: /config/topics
             - name: sync-outbox
               mountPath: /sync-outbox
           securityContext:

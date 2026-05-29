@@ -705,7 +705,10 @@ fn is_permanent_embed_error(e: &WorkerError) -> bool {
     match e {
         WorkerError::Http(re) => re
             .status()
-            .map(|s| s.is_client_error()) // 4xx — permanent
+            .map(|s| {
+                // 429 Too Many Requests is retriable, all other 4xx are permanent.
+                s.is_client_error() && s != reqwest::StatusCode::TOO_MANY_REQUESTS
+            })
             .unwrap_or(false),
         WorkerError::DimensionMismatch { .. } => true, // model mismatch — permanent
         _ => false,

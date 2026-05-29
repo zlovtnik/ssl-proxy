@@ -1,0 +1,64 @@
+package com.sslproxy.coordinator.route;
+
+import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.processor.ScanRecordProcessor;
+import org.apache.camel.LoggingLevel;
+import org.apache.camel.builder.RouteBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/**
+ * Consumes scan requests from sync.scan.request via Kafka consumer group.
+ * Directly replaces sync_handlers.zig drainScanRequests() and CLI-based
+ * service_redpanda.zig pullScanBatch().
+ *
+ * With Camel Kafka, the consumer group handles offset management automatically,
+ * replacing the manual cursor logic in the Zig version.
+ *
+ * Each message is processed by ScanRecordProcessor which:
+ * - Deserializes the ScanRequest JSON
+ * - Resolves the payload_ref (inline://json/ or outbox://)
+ * - Computes SHA-256 of the payload
+ * - Accumulates into batches and flushes to DB via record_scan_request_batch()
+ */
+@Component
+public class ScanRequestRoute extends RouteBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(ScanRequestRoute.class);
+
+    private final CoordinatorProperties props;
+    private final ScanRecordProcessor scanRecordProcessor;
+
+    public ScanRequestRoute(CoordinatorProperties props,
+                            ScanRecordProcessor scanRecordProcessor) {
+        this.props = props;
+        this.scanRecordProcessor = scanRecordProcessor;
+    }
+
+    @Override
+    public void configure() {
+        // Error handling — record failures and continue
+        onException(Exception.class)
+                .log(LoggingLevel.ERROR, "event=scan_request_ingest status=error error=${exception.message}")
+                .continued(true);
+
+        // Consume from sync.scan.request with the zig-coordinator-scan consumer group
+        from("kafka:{{coordinator.scan-topic}}"
+                + "?groupId={{coordinator.scan-consumer}}"
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.scan-fetch-count}}"
+                + "&consumersCount=1"
+                + "&breakOnFirstError=true")
+        .routeId("scan-request-consumer")
+        .log(LoggingLevel.TRACE, "Received scan request: ${body}")
+        .process(scanRecordProcessor);
+
+        // Timer-based flush for partial batches — ensures records don't sit in the
+        // accumulator indefinitely when Kafka delivers fewer messages than the batch size
+        from("timer:scan-flush?period=1000&daemon=true")
+                .routeId("scan-request-flush-timer")
+                .bean(scanRecordProcessor, "flushPending")
+                .log(LoggingLevel.TRACE, "event=scan_request_flush_timer status=tick");
+    }
+}

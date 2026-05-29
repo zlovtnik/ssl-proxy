@@ -1,4 +1,4 @@
-1{{- if .Values.zigCoordinator.enabled }}
+{{- if .Values.javaCoordinator.enabled }}
 ---
 apiVersion: v1
 kind: Service
@@ -7,16 +7,20 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.labels" . | nindent 4 }}
-    app.kubernetes.io/component: zig-coordinator
+    app.kubernetes.io/component: java-coordinator
 spec:
-  type: {{ .Values.zigCoordinator.service.type }}
+  type: {{ .Values.javaCoordinator.service.type }}
   selector:
     {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: zig-coordinator
+    app.kubernetes.io/component: java-coordinator
   ports:
+    - name: http
+      port: {{ .Values.javaCoordinator.service.port }}
+      targetPort: 8080
+      protocol: TCP
     - name: metrics
-      port: {{ .Values.zigCoordinator.metrics.port }}
-      targetPort: {{ .Values.zigCoordinator.metrics.port }}
+      port: {{ .Values.javaCoordinator.service.port }}
+      targetPort: 8080
       protocol: TCP
 ---
 apiVersion: apps/v1
@@ -26,18 +30,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.labels" . | nindent 4 }}
-    app.kubernetes.io/component: zig-coordinator
+    app.kubernetes.io/component: java-coordinator
 spec:
-  replicas: {{ .Values.zigCoordinator.replicas }}
+  replicas: {{ .Values.javaCoordinator.replicas }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: zig-coordinator
+      app.kubernetes.io/component: java-coordinator
   template:
     metadata:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: zig-coordinator
+        app.kubernetes.io/component: java-coordinator
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -45,9 +49,9 @@ spec:
     spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
       containers:
-        - name: zig-coordinator
-          image: {{ .Values.zigCoordinator.image.repository }}:{{ .Values.zigCoordinator.image.tag }}
-          imagePullPolicy: {{ .Values.zigCoordinator.image.pullPolicy }}
+        - name: java-coordinator
+          image: {{ .Values.javaCoordinator.image.repository }}:{{ .Values.javaCoordinator.image.tag }}
+          imagePullPolicy: {{ .Values.javaCoordinator.image.pullPolicy }}
           env:
             # Postgres
             - name: DATABASE_URL
@@ -125,21 +129,18 @@ spec:
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
           ports:
-            - containerPort: {{ .Values.zigCoordinator.metrics.port }}
+            - containerPort: 8080
               protocol: TCP
-              name: metrics
-          {{- with .Values.zigCoordinator.healthcheck.livenessProbe }}
+              name: http
+          {{- with .Values.javaCoordinator.healthcheck.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           resources:
-            {{- toYaml .Values.zigCoordinator.resources | nindent 12 }}
+            {{- toYaml .Values.javaCoordinator.resources | nindent 12 }}
           volumeMounts:
             - name: topics-manifest
               mountPath: /app/docker/redpanda
-              readOnly: true
-            - name: sql-schema
-              mountPath: /app/sql
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
@@ -147,9 +148,6 @@ spec:
         - name: topics-manifest
           configMap:
             name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
-        - name: sql-schema
-          configMap:
-            name: {{ include "ssl-proxy.fullname" . }}-sql-schema
         - name: sync-outbox
           emptyDir: {}
       {{- with .Values.nodeSelector }}

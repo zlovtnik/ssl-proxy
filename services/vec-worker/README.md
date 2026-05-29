@@ -75,7 +75,7 @@ Required values and defaults are defined in `src/config.rs`.
   - Upper bound for the default request batch size when `VECTOR_EMBEDDING_REQUEST_BATCH_SIZE` is unset.
 - `VECTOR_EMBEDDING_MAX_INPUT_TOKENS`
   - Default: `512`
-  - Maximum estimated token count per individual input text before it is truncated at a line boundary. The character limit is derived as `max_input_tokens × 4` (conservative BPE estimate of ~4 chars/token for English text). Truncated texts have `[truncated]` appended. Matches the llama.cpp server default `physical_batch` (512). Increase if your provider can handle longer individual inputs (e.g., llama.cpp started with `--physical-batch 2048`).
+  - Maximum estimated token count per individual input text before it is truncated at a line boundary. The character limit is derived as `max_input_tokens × 1.5` (i.e., `max_input_tokens * 3/2`), matching the `prepare_chunk` implementation which truncates at `max_input_tokens * 3 / 2` characters. Truncated texts have `[truncated]` appended. Matches the llama.cpp server default `physical_batch` (512). Increase if your provider can handle longer individual inputs (e.g., llama.cpp started with `--physical-batch 2048`).
 - `VECTOR_EMBEDDING_LEASE_SECONDS`
   - Default: `1800`
   - Lease duration for jobs in seconds.
@@ -913,7 +913,7 @@ table is populated.
 
 The behaviour window data shows the problem directly:
 
-```
+```text
 6a:6f:a4:d7:40:18 — 1 event, management, unknown protocol
 a2:36:dd:55:ef:f6 — 1 event, management, unknown protocol
 c6:bb:84:35:f2:a9 — 2 events, data, unknown protocol, fully protected

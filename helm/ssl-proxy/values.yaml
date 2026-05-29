@@ -85,6 +85,8 @@ proxy:
     wgInternalPort: 51820
     # -- Admin API HTTP port
     adminPort: 3002
+    # -- Metrics HTTP port (separate from adminPort to avoid duplicate port numbers)
+    metricsPort: 3003
     # -- Policy enforcement port
     policyPort: 3001
     annotations: {}
@@ -142,16 +144,16 @@ proxy:
       timeoutSeconds: 5
       failureThreshold: 3
 
-# Zig Coordinator (scan/load/result pipeline)
-zigCoordinator:
+# Java Coordinator (scan/load/result pipeline)
+javaCoordinator:
   enabled: true
   replicas: 1
   image:
-    repository: zig-coordinator
+    repository: java-coordinator
     tag: latest
     pullPolicy: IfNotPresent
   service:
-    port: 9090
+    port: 8080
     type: ClusterIP
   # Resource limits
   resources:
@@ -177,23 +179,41 @@ zigCoordinator:
     oracleStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
     auditStreamName: "AUDIT_STREAM"
     resultStreamName: "ORACLE_RESULT_STREAM"
+    wirelessBacklogStreamName: "WIRELESS_BACKLOG_STREAM"
+    wirelessMacStreamName: "WIRELESS_MAC_STREAM"
+    wirelessNetworksStreamName: "WIRELESS_NETWORKS_STREAM"
+    wirelessProbeStreamName: "WIRELESS_PROBE_STREAM"
+  # Wireless consumer groups
+  wirelessConsumers:
+    backlogSaveConsumer: "wireless-backlog-save"
+    backlogListConsumer: "wireless-backlog-list"
+    backlogSyncedConsumer: "wireless-backlog-synced"
+    backlogPruneConsumer: "wireless-backlog-prune"
+    macLookupConsumer: "wireless-mac-lookup"
+    networksAuthorizedConsumer: "wireless-networks-authorized"
+    probeFlushConsumer: "wireless-probe-flush"
+  # Wireless reply topics
+  wirelessReplyTopics:
+    backlogListReplyTopic: "wireless.backlog.list.reply"
+    backlogPruneReplyTopic: "wireless.backlog.prune.reply"
+    macLookupReplyTopic: "wireless.mac.lookup.reply"
+    networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
   # Topic partition count (must be >= max replicas)
   topicPartitions: 5
-  # Health check
+  # Health check — Spring Boot Actuator
   healthcheck:
     livenessProbe:
-      exec:
-        command:
-          - /usr/local/bin/zig-coordinator
-          - healthcheck
-      initialDelaySeconds: 20
+      httpGet:
+        path: /actuator/health
+        port: 8080
+      initialDelaySeconds: 30
       periodSeconds: 30
       timeoutSeconds: 10
       failureThreshold: 5
-  # Metrics endpoint
+  # Metrics endpoint (embedded in Actuator)
   metrics:
     enabled: true
-    port: 9090
+    port: 8080
 
 # Oracle Worker
 oracleWorker:
@@ -384,8 +404,8 @@ keda:
   # -- Set to true to deploy KEDA ScaledObjects (requires KEDA operator in cluster)
   enabled: true
 
-  # Zig Coordinator auto-scaling (based on Redpanda consumer lag)
-  zigCoordinator:
+  # Java Coordinator auto-scaling (based on Redpanda consumer lag)
+  javaCoordinator:
     enabled: true
     minReplicas: 1
     maxReplicas: 5

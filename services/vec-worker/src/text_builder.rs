@@ -1172,8 +1172,13 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     // When computed, a "log_prob: {score}" line is inserted between source_mac
     // and frame_count.
 
+    // Tokens are already truncated to token_word_budget (1 word ≈ 1 token for
+    // frame subtypes like BEACON, AUTH, etc.), so re-clamping with the generic
+    // word_budget(MAX_TOKENS) = 128 words would double-truncate.  We use the full
+    // text as-is; truncate_token_sequence above handles the budget precisely.
+    let text = lines.join("\n");
     EmbeddingInput {
-        text: clamp_text(&lines.join("\n")), // defensive final clamp
+        text,
         source_observed_at: row.window_start,
         source_stream_name: None,
         source_sensor_id: row.sensor_id.clone(),
