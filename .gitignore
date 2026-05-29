@@ -20,6 +20,14 @@ Thumbs.db
 .gradle/
 *.bak
 
+# Java / Gradle
+services/zig-coordinator/.gradle/
+services/zig-coordinator/bin/
+services/zig-coordinator/out/
+services/zig-coordinator/.classpath
+services/zig-coordinator/.project
+services/zig-coordinator/.settings/
+
 # Environment overrides
 .env
 .env.*
