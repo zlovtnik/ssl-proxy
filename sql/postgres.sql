@@ -2847,31 +2847,25 @@ begin
     return 0;
   end if;
 
-  insert into vec_embeddings (
-    source_table, source_key, source_observed_at, source_stream_name,
-    source_sensor_id, source_location_id, source_mac,
-    embedding_model, embedding_kind, embedding_dimensions,
-    content_sha256, content_text, embedding, metadata,
-    embedded_at, created_at, updated_at
-  )
-  select
-    r.source_table,
-    r.source_key,
-    r.source_observed_at,
-    r.source_stream_name,
-    r.source_sensor_id,
-    r.source_location_id,
-    r.source_mac,
-    r.embedding_model,
-    r.embedding_kind,
-    r.embedding_dimensions,
-    r.content_sha256,
-    r.content_text,
-    r.embedding::vector,
-    coalesce(r.metadata, '{}'::jsonb),
-    now(), now(), now()
-  from (
-    select *
+  with payload_rows as materialized (
+    -- Parse the payload once and reuse the rows for both statements.
+    select
+      r.job_id,
+      r.lease_token,
+      r.source_table,
+      r.source_key,
+      r.source_observed_at,
+      r.source_stream_name,
+      r.source_sensor_id,
+      r.source_location_id,
+      r.source_mac,
+      r.embedding_model,
+      r.embedding_kind,
+      r.embedding_dimensions,
+      r.content_sha256,
+      r.content_text,
+      r.embedding,
+      coalesce(r.metadata, '{}'::jsonb) as metadata
     from jsonb_to_recordset(p_payload) as r(
       job_id bigint,
       lease_token text,
@@ -2890,48 +2884,90 @@ begin
       embedding text,
       metadata jsonb
     )
-    order by r.job_id asc
-  ) r
-  on conflict (source_table, source_key, embedding_model, embedding_kind)
-  do update set
-    source_observed_at = excluded.source_observed_at,
-    source_stream_name = excluded.source_stream_name,
-    source_sensor_id = excluded.source_sensor_id,
-    source_location_id = excluded.source_location_id,
-    source_mac = excluded.source_mac,
-    embedding_dimensions = excluded.embedding_dimensions,
-    content_sha256 = excluded.content_sha256,
-    content_text = excluded.content_text,
-    embedding = excluded.embedding,
-    metadata = excluded.metadata,
-    embedded_at = now(),
-    updated_at = now();
+    order by
+      r.source_table,
+      r.source_key,
+      r.embedding_model,
+      r.embedding_kind,
+      r.job_id
+  ),
+  inserted as (
+    insert into vec_embeddings (
+      source_table, source_key, source_observed_at, source_stream_name,
+      source_sensor_id, source_location_id, source_mac,
+      embedding_model, embedding_kind, embedding_dimensions,
+      content_sha256, content_text, embedding, metadata,
+      embedded_at, created_at, updated_at
+    )
+    select
+      p.source_table,
+      p.source_key,
+      p.source_observed_at,
+      p.source_stream_name,
+      p.source_sensor_id,
+      p.source_location_id,
+      p.source_mac,
+      p.embedding_model,
+      p.embedding_kind,
+      p.embedding_dimensions,
+      p.content_sha256,
+      p.content_text,
+      p.embedding::vector,
+      p.metadata,
+      now(), now(), now()
+    from payload_rows p
+    order by
+      p.source_table,
+      p.source_key,
+      p.embedding_model,
+      p.embedding_kind,
+      p.job_id
+    on conflict (source_table, source_key, embedding_model, embedding_kind)
+    do update set
+      source_observed_at = excluded.source_observed_at,
+      source_stream_name = excluded.source_stream_name,
+      source_sensor_id = excluded.source_sensor_id,
+      source_location_id = excluded.source_location_id,
+      source_mac = excluded.source_mac,
+      embedding_dimensions = excluded.embedding_dimensions,
+      content_sha256 = excluded.content_sha256,
+      content_text = excluded.content_text,
+      embedding = excluded.embedding,
+      metadata = excluded.metadata,
+      embedded_at = now(),
+      updated_at = now()
+    returning 1
+  ),
+  locked as (
+    -- Lock job rows in the same key order as vec_lease_embedding_jobs.
+    select
+      j.job_id,
+      p.lease_token,
+      p.content_sha256
+    from vec_embedding_jobs j
+    join payload_rows p
+      on p.job_id = j.job_id
+    where j.lease_token is not distinct from p.lease_token
+    order by j.job_id asc
+    for update
+  ),
+  updated as (
+    update vec_embedding_jobs j
+       set status = 'completed',
+           content_sha256 = locked.content_sha256,
+           completed_at = now(),
+           lease_token = null,
+           leased_at = null,
+           locked_by = null,
+           last_error = null,
+           updated_at = now()
+      from locked
+     where j.job_id = locked.job_id
+       and j.lease_token is not distinct from locked.lease_token
+    returning 1
+  )
+  select count(*) into v_count from updated;
 
-  -- UPDATE jobs in job_id ASC order to enforce consistent lock ordering
-  -- with vec_lease_embedding_jobs (which also orders by job_id ASC).
-  -- This prevents deadlock cycles when both functions run concurrently.
-  update vec_embedding_jobs j
-     set status = 'completed',
-         content_sha256 = r.content_sha256,
-         completed_at = now(),
-         lease_token = null,
-         leased_at = null,
-         locked_by = null,
-         last_error = null,
-         updated_at = now()
-    from (
-      select r.job_id, r.lease_token, r.content_sha256
-        from jsonb_to_recordset(p_payload) as r(
-          job_id bigint,
-          lease_token text,
-          content_sha256 text
-        )
-       order by r.job_id asc
-    ) r
-   where j.job_id = r.job_id
-     and j.lease_token is not distinct from r.lease_token;
-
-  get diagnostics v_count = row_count;
   return v_count;
 end;
 $$;
