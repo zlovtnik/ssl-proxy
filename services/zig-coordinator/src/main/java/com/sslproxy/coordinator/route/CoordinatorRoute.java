@@ -22,13 +22,13 @@ import org.springframework.stereotype.Component;
  * Main coordinator route that implements the core loop from scheduler.zig.
  *
  * The loop runs on a timer and orchestrates:
- * 1. Adaptive pull window — shrink Kafka consumer fetch size when DB falls behind
- * 2. Backpressure check — suspend scan consumer when pending ledger exceeds budget
- * 3. Ingest ledger processing — processIngestLedger()
- * 4. Stale batch recovery — recoverStaleDispatchedBatches()
- * 5. Batch dispatch — getNextBatch() → publish to sync.oracle.load
- * 6. Shadow audit — generateShadowAlerts() (rate-limited to 10s intervals)
- * 7. Heartbeat & metrics — record counters, emit heartbeat log
+ * 1. Adaptive pull window - shrink Kafka consumer fetch size when DB falls behind
+ * 2. Backpressure check - suspend scan consumer when pending ledger exceeds budget
+ * 3. Ingest ledger processing - processIngestLedger()
+ * 4. Stale batch recovery - recoverStaleDispatchedBatches()
+ * 5. Batch dispatch - getNextBatch() -> publish to sync.oracle.load
+ * 6. Shadow audit - generateShadowAlerts() (rate-limited to 10s intervals)
+ * 7. Heartbeat & metrics - record counters, emit heartbeat log
  *
  * Steps 2 and 6 are standalone Kafka consumers (ScanRequestRoute, OracleResultRoute)
  * and are kept as lightweight pass-throughs in the main loop for monitoring parity.
@@ -74,18 +74,18 @@ public class CoordinatorRoute extends RouteBuilder {
 
     @Override
     public void configure() {
-        // Error handler for the main route — log and continue
+        // Error handler for the main route - log and continue
         onException(Exception.class)
                 .log("event=route_error error=${exception.message}")
                 .continued(true);
 
         // =====================================================================
-        // Main loop — runs on a timer matching the Zig idle_sleep pattern.
+        // Main loop - runs on a timer matching the Zig idle_sleep pattern.
         //
         // Phase 4 additions:
-        //   1. direct:adaptivePull     ← shrink Kafka fetch when DB is behind
-        //   2. direct:backpressureV2   ← centralised BackpressureService (budget * 4)
-        //   3. direct:heartbeat        ← Micrometer metrics + heartbeat log
+        //   1. direct:adaptivePull     <- shrink Kafka fetch when DB is behind
+        //   2. direct:backpressureV2   <- centralised BackpressureService (budget * 4)
+        //   3. direct:heartbeat        <- Micrometer metrics + heartbeat log
         // =====================================================================
         from("timer:coordinator-loop?period={{coordinator.idle-sleep-ms}}&daemon=true")
                 .routeId("coordinator-main-loop")
@@ -102,7 +102,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 .to("direct:heartbeat");
 
         // =====================================================================
-        // Adaptive pull — shrink Kafka consumer maxPollRecords when DB falls
+        // Adaptive pull - shrink Kafka consumer maxPollRecords when DB falls
         // behind the backpressure budget thresholds.
         // =====================================================================
         from("direct:adaptivePull")
@@ -112,7 +112,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 });
 
         // =====================================================================
-        // Backpressure — uses BackpressureService with budget = ingest_batch_size * 4.
+        // Backpressure - uses BackpressureService with budget = ingest_batch_size * 4.
         //
         // When pendingLedgerCount >= budget, the scan-request-consumer route is
         // suspended to stop ingesting new scan requests. It is resumed when the
@@ -128,7 +128,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 });
 
         // =====================================================================
-        // Scan request processing — lightweight pass-through.
+        // Scan request processing - lightweight pass-through.
         // The actual Kafka consumption and DB ingestion is handled by
         // ScanRequestRoute (scan-request-consumer) running independently.
         // =====================================================================
@@ -137,7 +137,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 .log(LoggingLevel.TRACE, "event=scan_requests status=delegated");
 
         // =====================================================================
-        // Ingest processing — fully delegates to IngestProcessor
+        // Ingest processing - fully delegates to IngestProcessor
         // Mirrors scheduler.zig: processIngestLedger() call
         // =====================================================================
         from("direct:processIngest")
@@ -150,7 +150,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 });
 
         // =====================================================================
-        // Stale batch recovery — fully delegates to StaleBatchRecoveryProcessor
+        // Stale batch recovery - fully delegates to StaleBatchRecoveryProcessor
         // Mirrors scheduler.zig: recoverStaleDispatchedBatches() call
         // =====================================================================
         from("direct:recoverStaleBatches")
@@ -158,7 +158,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 .process(staleBatchRecoveryProcessor);
 
         // =====================================================================
-        // Batch dispatch loop — dispatches up to dispatch_batch_size batches.
+        // Batch dispatch loop - dispatches up to dispatch_batch_size batches.
         // Records metrics for each successfully dispatched batch.
         // Mirrors scheduler.zig: dispatchNextBatch() called in a loop
         // =====================================================================
@@ -171,13 +171,13 @@ public class CoordinatorRoute extends RouteBuilder {
                             .process(exchange -> metricsService.recordBatchDispatched())
                             .endChoice()
                         .when(simple("${body} == false"))
-                            .stop() // No more batches — exit loop early
+                            .log(LoggingLevel.TRACE, "event=batch_dispatch status=no_more_batches")
                         .endChoice()
                     .end()
                 .end();
 
         // =====================================================================
-        // Result handling — lightweight pass-through.
+        // Result handling - lightweight pass-through.
         // The actual Kafka consumption and DB ingestion is handled by
         // OracleResultRoute (oracle-result-consumer) running independently.
         // =====================================================================
@@ -186,7 +186,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 .log(LoggingLevel.TRACE, "event=results status=delegated");
 
         // =====================================================================
-        // Shadow audit — rate-limited to 10 second intervals
+        // Shadow audit - rate-limited to 10 second intervals
         // Uses ShadowAuditProcessor which tracks lastRunTimestamp internally
         // Mirrors scheduler.zig: runShadowAudit() with SHADOW_AUDIT_INTERVAL_MS
         // =====================================================================
@@ -200,7 +200,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 .end();
 
         // =====================================================================
-        // Wireless operations — delegated to independent Kafka consumer routes
+        // Wireless operations - delegated to independent Kafka consumer routes
         // in WirelessRoutes.java (7 wireless handlers each with their own
         // consumer group). This pass-through provides loop timing parity with
         // the Zig wireless_handlers.zig run() call.
@@ -210,7 +210,7 @@ public class CoordinatorRoute extends RouteBuilder {
                 .log(LoggingLevel.TRACE, "event=wireless status=delegated consumers=7");
 
         // =====================================================================
-        // Heartbeat — records loop counter and emits heartbeat log with
+        // Heartbeat - records loop counter and emits heartbeat log with
         // pending ledger count, backpressure status, and other metrics.
         // =====================================================================
         from("direct:heartbeat")

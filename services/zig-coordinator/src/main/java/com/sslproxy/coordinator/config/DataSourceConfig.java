@@ -1,0 +1,101 @@
+package com.sslproxy.coordinator.config;
+
+import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+
+import javax.sql.DataSource;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+
+@Configuration(proxyBeanMethods = false)
+public class DataSourceConfig {
+
+    @Bean
+    @ConditionalOnMissingBean(DataSource.class)
+    @ConfigurationProperties("spring.datasource.hikari")
+    public HikariDataSource dataSource(Environment env) {
+        DatabaseUrl databaseUrl = normalizeDatabaseUrl(firstNonBlank(
+                env.getProperty("JDBC_DATABASE_URL"),
+                env.getProperty("DATABASE_URL"),
+                env.getProperty("spring.datasource.url"),
+                "jdbc:postgresql://localhost:5432/sync"
+        ));
+
+        HikariDataSource dataSource = new HikariDataSource();
+        dataSource.setJdbcUrl(databaseUrl.jdbcUrl());
+        dataSource.setUsername(firstNonBlank(
+                env.getProperty("POSTGRES_USER"),
+                databaseUrl.username(),
+                env.getProperty("spring.datasource.username"),
+                "sync"
+        ));
+        dataSource.setPassword(firstNonBlank(
+                env.getProperty("POSTGRES_PASSWORD"),
+                databaseUrl.password(),
+                env.getProperty("spring.datasource.password"),
+                ""
+        ));
+        dataSource.setDriverClassName(env.getProperty(
+                "spring.datasource.driver-class-name",
+                "org.postgresql.Driver"
+        ));
+        return dataSource;
+    }
+
+    static DatabaseUrl normalizeDatabaseUrl(String rawUrl) {
+        if (rawUrl.startsWith("jdbc:postgresql://")) {
+            return new DatabaseUrl(rawUrl, null, null);
+        }
+
+        if (rawUrl.startsWith("postgres://") || rawUrl.startsWith("postgresql://")) {
+            URI uri = URI.create(rawUrl);
+            StringBuilder jdbcUrl = new StringBuilder("jdbc:postgresql://");
+            jdbcUrl.append(uri.getHost());
+            if (uri.getPort() > -1) {
+                jdbcUrl.append(':').append(uri.getPort());
+            }
+            jdbcUrl.append(uri.getRawPath() == null || uri.getRawPath().isEmpty()
+                    ? "/sync"
+                    : uri.getRawPath());
+            if (uri.getRawQuery() != null && !uri.getRawQuery().isEmpty()) {
+                jdbcUrl.append('?').append(uri.getRawQuery());
+            }
+
+            String username = null;
+            String password = null;
+            String userInfo = uri.getRawUserInfo();
+            if (userInfo != null && !userInfo.isEmpty()) {
+                String[] parts = userInfo.split(":", 2);
+                username = decode(parts[0]);
+                if (parts.length > 1) {
+                    password = decode(parts[1]);
+                }
+            }
+
+            return new DatabaseUrl(jdbcUrl.toString(), username, password);
+        }
+
+        throw new IllegalArgumentException("Unsupported PostgreSQL URL scheme: " + rawUrl);
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static String decode(String value) {
+        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    record DatabaseUrl(String jdbcUrl, String username, String password) {
+    }
+}

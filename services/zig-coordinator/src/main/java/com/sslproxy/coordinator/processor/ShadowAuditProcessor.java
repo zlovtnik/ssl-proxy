@@ -36,7 +36,7 @@ public class ShadowAuditProcessor implements Processor {
     public void process(Exchange exchange) {
         long now = System.currentTimeMillis();
         if (now - lastRunTimestamp < SHADOW_AUDIT_INTERVAL_MS) {
-            // Rate-limited — skip this tick
+            // Rate-limited - skip this tick
             exchange.getIn().setBody(false);
             return;
         }

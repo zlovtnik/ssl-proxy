@@ -2,6 +2,7 @@ package com.sslproxy.coordinator.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.stereotype.Component;
 
 /**
  * Maps all coordinator configuration from environment variables.
@@ -9,6 +10,7 @@ import org.springframework.validation.annotation.Validated;
  */
 @ConfigurationProperties(prefix = "coordinator")
 @Validated
+@Component
 public class CoordinatorProperties {
 
     // === Stream configuration ===

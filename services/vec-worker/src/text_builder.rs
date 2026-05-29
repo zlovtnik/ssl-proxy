@@ -1,4 +1,4 @@
-//! Text content builder — maps an `EmbeddingJob` to its embedding text and metadata.
+//! Text content builder - maps an `EmbeddingJob` to its embedding text and metadata.
 //!
 //! This module mirrors the Ruby `VectorEmbeddings::TextBuilder` reference implementation.
 //! Each `embedding_kind` ("event", "device", "behaviour_window") has a dedicated build
@@ -25,7 +25,7 @@ pub const MAX_TOKENS: usize = 384;
 
 /// Tokens consumed by fixed structural lines common to all builders
 /// (kind, hour_of_day, day_of_week, is_weekend, is_business_hours, one spare).
-/// Keep this conservative — it is subtracted from the per-field budget.
+/// Keep this conservative - it is subtracted from the per-field budget.
 const OVERHEAD_TOKENS: usize = 16;
 
 /// Effective token budget available for variable-length content.
@@ -195,7 +195,7 @@ pub async fn build_text_batch(
 // Event builder
 // ---------------------------------------------------------------------------
 
-/// Semantic-only fields for events — excludes MACs, IPs, sensor/location identity.
+/// Semantic-only fields for events - excludes MACs, IPs, sensor/location identity.
 const EVENT_SEMANTIC_FIELDS: &[&str] = &[
     "frame_type",
     "frame_subtype",
@@ -467,7 +467,7 @@ const DEVICE_FIELDS: &[&str] = &[
     "hostname",
     "os_hint",
     "mac_hint",
-    // wg_pubkey intentionally excluded — no semantic value, leaks infra topology
+    // wg_pubkey intentionally excluded - no semantic value, leaks infra topology
     "first_seen",
     "last_seen",
     "cluster_size",
@@ -1046,8 +1046,7 @@ struct FrameSequenceBatchRow {
 fn insert_log_prob_line(text: &mut String, score: f64) {
     if let Some(pos) = text.rfind("frame_count:") {
         let (before, after) = text.split_at(pos);
-        let new_text = format!("{}log_prob: {:.6}\n{}", before, score, after);
-        *text = clamp_text(&new_text);
+        *text = format!("{}log_prob: {:.6}\n{}", before, score, after);
     }
 }
 
@@ -1149,7 +1148,7 @@ async fn build_frame_sequences_batch(
 fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     let mut lines = vec!["kind: frame_sequence".to_string()];
 
-    // Frame subtypes are single uppercase words — each is ~1 token.
+    // Frame subtypes are single uppercase words - each is ~1 token.
     // Reserve OVERHEAD_TOKENS for the fixed structural lines; the rest goes to tokens.
     let token_word_budget = MAX_TOKENS - OVERHEAD_TOKENS;
     let truncated_tokens = truncate_token_sequence(&row.sequence_tokens, token_word_budget);
@@ -1172,7 +1171,7 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     // When computed, a "log_prob: {score}" line is inserted between source_mac
     // and frame_count.
 
-    // Tokens are already truncated to token_word_budget (1 word ≈ 1 token for
+    // Tokens are already truncated to token_word_budget (1 word ~ 1 token for
     // frame subtypes like BEACON, AUTH, etc.), so re-clamping with the generic
     // word_budget(MAX_TOKENS) = 128 words would double-truncate.  We use the full
     // text as-is; truncate_token_sequence above handles the budget precisely.
@@ -1677,6 +1676,29 @@ mod tests {
     fn word_budget_512_is_170() {
         // (512 * 1) / 3 = 170 words at the 3-tokens-per-word ratio
         assert_eq!(word_budget(512), 170);
+    }
+
+    #[test]
+    fn insert_log_prob_line_does_not_reclamp_frame_sequence_text() {
+        let tokens = (0..(MAX_TOKENS - OVERHEAD_TOKENS))
+            .map(|_| "BEACON")
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut text = format!(
+            "kind: frame_sequence\ntokens: {}\nsource_mac: aa:bb:cc:dd:ee:ff\nframe_count: {}",
+            tokens,
+            MAX_TOKENS - OVERHEAD_TOKENS
+        );
+
+        insert_log_prob_line(&mut text, -12.345678);
+
+        assert!(text.contains("log_prob: -12.345678"));
+        assert!(text.contains("frame_count: 368"));
+        let content_words = text
+            .split_whitespace()
+            .filter(|word| *word == "BEACON")
+            .count();
+        assert_eq!(content_words, MAX_TOKENS - OVERHEAD_TOKENS);
     }
 
     #[test]

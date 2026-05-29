@@ -200,12 +200,12 @@ javaCoordinator:
     networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
   # Topic partition count (must be >= max replicas)
   topicPartitions: 5
-  # Health check — Spring Boot Actuator
+  # Health check - Spring Boot Actuator
   healthcheck:
     livenessProbe:
       httpGet:
         path: /actuator/health
-        port: 8080
+        port: 8081
       initialDelaySeconds: 30
       periodSeconds: 30
       timeoutSeconds: 10

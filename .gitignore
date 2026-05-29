@@ -16,6 +16,10 @@ Thumbs.db
 *.tmp
 *.temp
 
+# Build and backup artifacts
+.gradle/
+*.bak
+
 # Environment overrides
 .env
 .env.*

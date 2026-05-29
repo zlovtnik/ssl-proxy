@@ -33,8 +33,7 @@ public class OracleResultRoute extends RouteBuilder {
     @Override
     public void configure() {
         onException(Exception.class)
-                .log(LoggingLevel.ERROR, "event=batch_result_ingest status=error error=${exception.message}")
-                .continued(true);
+                .log(LoggingLevel.ERROR, "event=batch_result_ingest status=error error=${exception.message}");
 
         // Consume from sync.oracle.result with the zig-coordinator-result consumer group
         from("kafka:{{coordinator.result-topic}}"
@@ -47,7 +46,7 @@ public class OracleResultRoute extends RouteBuilder {
         .log(LoggingLevel.TRACE, "Received Oracle result: ${body}")
         .process(resultProcessor);
 
-        // Timer-based flush for partial batches — ensures results don't sit in the
+        // Timer-based flush for partial batches - ensures results don't sit in the
         // accumulator indefinitely when Kafka delivers fewer messages than the batch size
         from("timer:result-flush?period=1000&daemon=true")
                 .routeId("oracle-result-flush-timer")

@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -49,14 +48,15 @@ public class PayloadResolver {
 
         if (payloadRef.startsWith(INLINE_PREFIX)) {
             String encoded = payloadRef.substring(INLINE_PREFIX.length());
+            byte[] decoded;
             try {
-                byte[] decoded = Base64.getUrlDecoder().decode(encoded);
-                validateJson(decoded);
-                return decoded;
+                decoded = Base64.getUrlDecoder().decode(encoded);
             } catch (IllegalArgumentException e) {
-                log.error("Failed to decode inline payload: {}", e.getMessage());
+                log.error("Invalid inline payload encoding: {}", e.getMessage());
                 throw new IllegalArgumentException("Invalid inline payload encoding", e);
             }
+            validateJson(decoded);
+            return decoded;
         }
 
         if (payloadRef.startsWith(OUTBOX_PREFIX)) {
@@ -65,7 +65,7 @@ public class PayloadResolver {
                 throw new IllegalArgumentException("Unsafe outbox locator: " + locator);
             }
             try {
-                Path outboxPath = Paths.get(outboxDir);
+                Path outboxPath = Paths.get(outboxDir).toAbsolutePath().normalize();
                 Path filePath = outboxPath.resolve(locator).normalize();
 
                 // Ensure the resolved path is still within the outbox directory
@@ -73,8 +73,13 @@ public class PayloadResolver {
                     throw new IllegalArgumentException("Path traversal detected: " + locator);
                 }
 
+                Path realOutboxPath = outboxPath.toRealPath();
                 if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
                     throw new IllegalArgumentException("Outbox file not found or not readable: " + locator);
+                }
+                Path realFilePath = filePath.toRealPath();
+                if (!realFilePath.startsWith(realOutboxPath)) {
+                    throw new IllegalArgumentException("Path traversal detected: " + locator);
                 }
 
                 long fileSize = Files.size(filePath);

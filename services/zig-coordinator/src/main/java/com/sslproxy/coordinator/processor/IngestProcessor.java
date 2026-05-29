@@ -9,7 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Processes the ingest ledger — transitions sync_events from pending→processing→batched.
+ * Processes the ingest ledger -- transitions sync_events from pending->processing->batched.
  *
  * Mirrors scheduler.zig's processIngestLedger() call within runIteration().
  * Calls coordinator.process_ingest_ledger() stored procedure.

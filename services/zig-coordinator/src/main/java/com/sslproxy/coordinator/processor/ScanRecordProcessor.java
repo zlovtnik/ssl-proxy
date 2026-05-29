@@ -36,7 +36,7 @@ public class ScanRecordProcessor implements Processor {
     private final DatabaseService databaseService;
     private final CoordinatorProperties props;
 
-    /** In-memory batch accumulator — flushes when full or on timeout. */
+    /** In-memory batch accumulator - flushes when full or on timeout. */
     private final List<DatabaseService.ScanRequestRecord> pending = new ArrayList<>();
 
     public ScanRecordProcessor(ObjectMapper objectMapper,
@@ -76,7 +76,7 @@ public class ScanRecordProcessor implements Processor {
                             scanRequest.getDedupeKey(),
                             scanRequest.getPayloadRef(),
                             e.getMessage());
-                    // Zig stores null payload/sha256 on resolve failure — match that behavior
+                    // Zig stores null payload/sha256 on resolve failure - match that behavior
                     resolvedPayloadJson = null;
                     payloadSha256 = null;
                 }
@@ -88,11 +88,14 @@ public class ScanRecordProcessor implements Processor {
                     payloadSha256
             );
 
+            boolean shouldFlush;
             synchronized (pending) {
                 pending.add(record);
-                if (pending.size() >= props.getScanFetchCount()) {
-                    flushPending();
-                }
+                shouldFlush = pending.size() >= props.getScanFetchCount();
+            }
+
+            if (shouldFlush) {
+                flushPending();
             }
         } catch (Exception e) {
             log.error("event=scan_request_deserialize_failed error=\"{}\" body={}",
@@ -122,7 +125,7 @@ public class ScanRecordProcessor implements Processor {
         } catch (Exception e) {
             log.error("event=scan_request_ingest status=failed batch_size={} error=\"{}\"",
                     batch.size(), e.getMessage());
-            // Re-add failed records to pending for retry — at-least-once semantics
+            // Re-add failed records to pending for retry - at-least-once semantics
             synchronized (pending) {
                 pending.addAll(0, batch);
             }
