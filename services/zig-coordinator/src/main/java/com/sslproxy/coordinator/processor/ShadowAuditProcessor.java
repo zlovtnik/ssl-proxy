@@ -42,9 +42,10 @@ public class ShadowAuditProcessor implements Processor {
         }
 
         try {
-            var result = databaseService.generateShadowAlerts();
-            if (result.isPresent() && !result.get().isEmpty()) {
-                log.info("event=shadow_audit status=alerts_generated result=\"{}\"", result.get());
+            var alerts = databaseService.generateShadowAlerts();
+            if (!alerts.isEmpty()) {
+                log.info("event=shadow_audit status=alerts_generated count={} result=\"{}\"",
+                        alerts.size(), alerts);
             }
             lastRunTimestamp = now;
             exchange.getIn().setBody(true);

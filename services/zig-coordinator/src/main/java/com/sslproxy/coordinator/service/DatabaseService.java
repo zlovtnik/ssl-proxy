@@ -243,12 +243,11 @@ public class DatabaseService {
      * Generates shadow device alerts.
      * coordinator.generate_shadow_alerts()
      */
-    public Optional<String> generateShadowAlerts() {
-        String result = jdbc.queryForObject(
+    public List<String> generateShadowAlerts() {
+        return jdbc.queryForList(
                 "SELECT coordinator.generate_shadow_alerts()::text",
                 String.class
         );
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
     // ========== Wireless: Backlog ==========
