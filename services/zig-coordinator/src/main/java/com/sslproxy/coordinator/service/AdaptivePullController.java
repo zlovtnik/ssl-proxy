@@ -57,7 +57,8 @@ public class AdaptivePullController {
         int targetPull = props.getScanFetchCount(); // default: configured value
 
         if (pendingCount >= upperThreshold) {
-            targetPull = Math.max(MIN_PULL_RECORDS, (int) Math.max(MIN_PULL_RECORDS, budget - pendingCount));
+            int desired = (int) (budget - pendingCount);
+            targetPull = Math.max(MIN_PULL_RECORDS, desired);
             log.info("event=adaptive_pull status=shrink pending_count={} upper_threshold={} "
                             + "new_max_poll_records={}",
                     pendingCount, upperThreshold, targetPull);
@@ -73,27 +74,34 @@ public class AdaptivePullController {
 
     /**
      * Applies the maxPollRecords value to the Kafka endpoint for the given route.
-     * Walks endpoints on the route to find the Kafka consumer endpoint.
+     * Restarts the route so the Kafka consumer applies the updated endpoint config.
      */
     private void applyMaxPollRecords(String routeId, int maxPollRecords) {
         try {
             var route = camelContext.getRoute(routeId);
             if (route == null) return;
 
-            for (var endpoint : camelContext.getEndpoints()) {
-                if (endpoint instanceof KafkaEndpoint kafkaEndpoint) {
-                    String epUri = endpoint.getEndpointUri();
-                    // Only adjust the scan consumer endpoint
-                    if (epUri.contains("scan.request")) {
-                        KafkaConfiguration config = kafkaEndpoint.getConfiguration();
-                        int current = config.getMaxPollRecords() != null ? config.getMaxPollRecords() : 0;
-                        if (current != maxPollRecords) {
-                            config.setMaxPollRecords(maxPollRecords);
-                            log.info("event=adaptive_pull_endpoint status=adjusted route={} "
-                                            + "old_max_poll_records={} new_max_poll_records={}",
-                                    routeId, current, maxPollRecords);
-                        }
+            if (route.getEndpoint() instanceof KafkaEndpoint kafkaEndpoint) {
+                KafkaConfiguration config = kafkaEndpoint.getConfiguration();
+                int current = config.getMaxPollRecords() != null ? config.getMaxPollRecords() : 0;
+                if (current != maxPollRecords) {
+                    var routeController = camelContext.getRouteController();
+                    var status = routeController.getRouteStatus(routeId);
+                    boolean wasSuspended = status != null && status.isSuspended();
+
+                    config.setMaxPollRecords(maxPollRecords);
+                    log.info("event=adaptive_pull_endpoint status=adjusted route={} "
+                                    + "old_max_poll_records={} new_max_poll_records={}",
+                            routeId, current, maxPollRecords);
+
+                    routeController.stopRoute(routeId);
+                    routeController.startRoute(routeId);
+                    if (wasSuspended) {
+                        routeController.suspendRoute(routeId);
                     }
+                    log.info("event=adaptive_pull_endpoint status=restarted route={} "
+                                    + "was_suspended={}",
+                            routeId, wasSuspended);
                 }
             }
         } catch (Exception e) {

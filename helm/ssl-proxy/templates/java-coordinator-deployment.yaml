@@ -7,20 +7,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.labels" . | nindent 4 }}
-    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/component: zig-coordinator
 spec:
   type: {{ .Values.javaCoordinator.service.type }}
   selector:
     {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/component: zig-coordinator
   ports:
     - name: http
       port: {{ .Values.javaCoordinator.service.port }}
-      targetPort: 8080
-      protocol: TCP
-    - name: metrics
-      port: {{ .Values.javaCoordinator.service.port }}
-      targetPort: 8080
+      targetPort: 8081
       protocol: TCP
 ---
 apiVersion: apps/v1
@@ -30,18 +26,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.labels" . | nindent 4 }}
-    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/component: zig-coordinator
 spec:
   replicas: {{ .Values.javaCoordinator.replicas }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: java-coordinator
+      app.kubernetes.io/component: zig-coordinator
   template:
     metadata:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: java-coordinator
+        app.kubernetes.io/component: zig-coordinator
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -126,10 +122,88 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: SYNC_RESULT_STREAM_NAME
+            # Wireless stream names
+            - name: WIRELESS_BACKLOG_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_STREAM_NAME
+            - name: WIRELESS_MAC_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_MAC_STREAM_NAME
+            - name: WIRELESS_NETWORKS_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_NETWORKS_STREAM_NAME
+            - name: WIRELESS_PROBE_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_PROBE_STREAM_NAME
+            # Wireless consumer groups
+            - name: WIRELESS_BACKLOG_SAVE_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_SAVE_CONSUMER
+            - name: WIRELESS_BACKLOG_LIST_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_LIST_CONSUMER
+            - name: WIRELESS_BACKLOG_SYNCED_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_SYNCED_CONSUMER
+            - name: WIRELESS_BACKLOG_PRUNE_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_PRUNE_CONSUMER
+            - name: WIRELESS_MAC_LOOKUP_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_MAC_LOOKUP_CONSUMER
+            - name: WIRELESS_NETWORKS_AUTHORIZED_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_NETWORKS_AUTHORIZED_CONSUMER
+            - name: WIRELESS_PROBE_FLUSH_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_PROBE_FLUSH_CONSUMER
+            # Wireless reply topics
+            - name: WIRELESS_BACKLOG_LIST_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_LIST_REPLY_TOPIC
+            - name: WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC
+            - name: WIRELESS_MAC_LOOKUP_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_MAC_LOOKUP_REPLY_TOPIC
+            - name: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
           ports:
-            - containerPort: 8080
+            - containerPort: 8081
               protocol: TCP
               name: http
           {{- with .Values.javaCoordinator.healthcheck.livenessProbe }}

@@ -2,11 +2,13 @@ package com.sslproxy.coordinator.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.springframework.stereotype.Component;
 
 /**
  * Represents a batch dispatch payload sent to sync.oracle.load topic.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
+@Component
 public class DispatchPayload {
 
     @JsonProperty("job_id")

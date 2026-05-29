@@ -50,12 +50,14 @@ public class CoordinatorApplication {
             for (var route : camelContext.getRoutes()) {
                 String routeId = route.getRouteId();
                 if (routeController.getRouteStatus(routeId).isStarted()) {
-                    routeController.suspendRoute(routeId, 10, TimeUnit.SECONDS);
+                    routeController.suspendRoute(routeId, 30, TimeUnit.SECONDS);
                     log.info("event=route_suspend route={} status=suspended", routeId);
                 }
             }
 
             // Stop Camel context with 30s timeout for in-flight exchanges
+            camelContext.getShutdownStrategy().setTimeUnit(TimeUnit.SECONDS);
+            camelContext.getShutdownStrategy().setTimeout(30);
             log.info("event=shutdown status=stopping_camel timeout_seconds=30");
             camelContext.shutdown();
 

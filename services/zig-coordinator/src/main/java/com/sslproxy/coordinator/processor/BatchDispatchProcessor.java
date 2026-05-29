@@ -11,6 +11,7 @@ import org.apache.camel.ProducerTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Optional;
 
@@ -31,6 +32,8 @@ public class BatchDispatchProcessor implements Processor {
 
     private final DatabaseService databaseService;
     private final CoordinatorProperties props;
+
+    @Autowired
     private final ObjectMapper objectMapper;
     private final ProducerTemplate producerTemplate;
 
@@ -49,7 +52,7 @@ public class BatchDispatchProcessor implements Processor {
         try {
             Optional<String> batchJsonOpt = databaseService.getNextBatch();
             if (batchJsonOpt.isEmpty() || batchJsonOpt.get().isEmpty()) {
-                // No batch to dispatch — set body to false so caller knows no work was done
+                // No batch to dispatch -- set body to false so caller knows no work was done
                 exchange.getIn().setBody(false);
                 return;
             }

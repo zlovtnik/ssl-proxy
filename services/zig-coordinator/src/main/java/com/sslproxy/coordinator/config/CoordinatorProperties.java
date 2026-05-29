@@ -2,6 +2,7 @@ package com.sslproxy.coordinator.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.stereotype.Component;
 
 /**
  * Maps all coordinator configuration from environment variables.
@@ -9,6 +10,7 @@ import org.springframework.validation.annotation.Validated;
  */
 @ConfigurationProperties(prefix = "coordinator")
 @Validated
+@Component
 public class CoordinatorProperties {
 
     // === Stream configuration ===
@@ -70,10 +72,10 @@ public class CoordinatorProperties {
     private int batchMaxAttempts = 5;
 
     // === Batch tuning for high-throughput consumption ===
-    private int scanFetchCount = 500;
-    private int resultFetchCount = 200;
+    private int scanFetchCount = 1000;
+    private int resultFetchCount = 400;
     private int ingestBatchSize = 1000;
-    private int dispatchBatchSize = 50;
+    private int dispatchBatchSize = 100;
     private int idleSleepMs = 250;
     private int idleSleepBackoffMs = 1000;
 

@@ -42,11 +42,20 @@ public class ResultProcessor implements Processor {
             return;
         }
 
+        boolean shouldFlush;
         synchronized (pending) {
-            pending.add(resultJson);
-            if (pending.size() >= props.getResultFetchCount()) {
-                flushPending();
+            int maxPending = maxPendingResults();
+            if (pending.size() >= maxPending) {
+                log.error("event=batch_result_ingest status=rejected reason=pending_limit "
+                        + "pending_count={} max_pending={}", pending.size(), maxPending);
+                throw new IllegalStateException("Pending result accumulator is full");
             }
+            pending.add(resultJson);
+            shouldFlush = pending.size() >= props.getResultFetchCount();
+        }
+
+        if (shouldFlush) {
+            flushPending();
         }
     }
 
@@ -70,10 +79,16 @@ public class ResultProcessor implements Processor {
         } catch (Exception e) {
             log.error("event=batch_result_ingest status=failed batch_size={} error=\"{}\"",
                     batch.size(), e.getMessage());
-            // Re-add for retry — at-least-once semantics
+            // Re-add for retry - at-least-once semantics
             synchronized (pending) {
                 pending.addAll(0, batch);
             }
+            throw new IllegalStateException("Failed to process batch results", e);
         }
+    }
+
+    private int maxPendingResults() {
+        int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
+        return Math.max(props.getResultFetchCount(), props.getResultFetchCount() * multiplier);
     }
 }

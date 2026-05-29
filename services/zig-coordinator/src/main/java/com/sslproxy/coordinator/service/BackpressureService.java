@@ -58,8 +58,8 @@ public class BackpressureService {
     /**
      * Runs a full backpressure check:
      * 1. Reads pendingLedgerCount
-     * 2. If pending >= budget → suspend scan-request-consumer
-     * 3. If pending <= recoveryThreshold and suspended → resume scan-request-consumer
+     * 2. If pending >= budget -> suspend scan-request-consumer
+     * 3. If pending <= recoveryThreshold and suspended -> resume scan-request-consumer
      * 4. Records metrics and logs
      *
      * @return the pending ledger count
@@ -72,23 +72,23 @@ public class BackpressureService {
         metricsService.recordPendingLedgerCount(pendingCount);
 
         if (pendingCount >= budget) {
-            metricsService.recordBackpressureActive(true);
             if (!consumerSuspended) {
-                suspendScanConsumer();
-                consumerSuspended = true;
+                consumerSuspended = suspendScanConsumer();
             }
+            metricsService.recordBackpressureActive(consumerSuspended);
             log.info("event=backpressure status=throttled "
                             + "pending_count={} budget={} multiplier={} consumer_suspended={}",
-                    pendingCount, budget, props.getBackpressureBudgetMultiplier(), true);
+                    pendingCount, budget, props.getBackpressureBudgetMultiplier(), consumerSuspended);
         } else if (pendingCount <= recoveryThreshold && consumerSuspended) {
-            metricsService.recordBackpressureActive(false);
-            resumeScanConsumer();
-            consumerSuspended = false;
+            if (resumeScanConsumer()) {
+                consumerSuspended = false;
+            }
+            metricsService.recordBackpressureActive(consumerSuspended);
             log.info("event=backpressure status=recovered "
                             + "pending_count={} recovery_threshold={} consumer_resumed={}",
-                    pendingCount, recoveryThreshold, true);
+                    pendingCount, recoveryThreshold, !consumerSuspended);
         } else {
-            metricsService.recordBackpressureActive(false);
+            metricsService.recordBackpressureActive(consumerSuspended);
         }
 
         return pendingCount;
@@ -97,26 +97,30 @@ public class BackpressureService {
     /**
      * Suspends the scan-request-consumer route so it stops polling Kafka.
      */
-    private void suspendScanConsumer() {
+    private boolean suspendScanConsumer() {
         try {
             camelContext.getRouteController().suspendRoute("scan-request-consumer");
             log.info("event=route_suspend route=scan-request-consumer status=suspended");
+            return true;
         } catch (Exception e) {
             log.error("event=route_suspend route=scan-request-consumer status=failed error=\"{}\"",
                     e.getMessage());
+            return false;
         }
     }
 
     /**
      * Resumes the scan-request-consumer route.
      */
-    private void resumeScanConsumer() {
+    private boolean resumeScanConsumer() {
         try {
             camelContext.getRouteController().resumeRoute("scan-request-consumer");
             log.info("event=route_resume route=scan-request-consumer status=resumed");
+            return true;
         } catch (Exception e) {
             log.error("event=route_resume route=scan-request-consumer status=failed error=\"{}\"",
                     e.getMessage());
+            return false;
         }
     }
 

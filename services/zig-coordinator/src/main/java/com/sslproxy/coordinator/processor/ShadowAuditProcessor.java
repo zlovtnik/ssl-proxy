@@ -36,15 +36,16 @@ public class ShadowAuditProcessor implements Processor {
     public void process(Exchange exchange) {
         long now = System.currentTimeMillis();
         if (now - lastRunTimestamp < SHADOW_AUDIT_INTERVAL_MS) {
-            // Rate-limited — skip this tick
+            // Rate-limited - skip this tick
             exchange.getIn().setBody(false);
             return;
         }
 
         try {
-            var result = databaseService.generateShadowAlerts();
-            if (result.isPresent() && !result.get().isEmpty()) {
-                log.info("event=shadow_audit status=alerts_generated result=\"{}\"", result.get());
+            var alerts = databaseService.generateShadowAlerts();
+            if (!alerts.isEmpty()) {
+                log.info("event=shadow_audit status=alerts_generated count={} result=\"{}\"",
+                        alerts.size(), alerts);
             }
             lastRunTimestamp = now;
             exchange.getIn().setBody(true);

@@ -129,7 +129,7 @@ public class DatabaseService {
             List<ScanRequestRecord> chunk = records.subList(start, end);
 
             String requestJsonArray = toJsonbArray(chunk, r -> r.requestJson);
-            String payloadJsonArray = toJsonbArray(chunk, r -> r.payloadJson != null ? r.payloadJson : null);
+            String payloadJsonArray = toJsonbArray(chunk, r -> r.payloadJson);
             String shaArray = toTextArray(chunk, r -> r.payloadSha256);
             String streamNames = normalizeCsv(props.getStreamNames());
 
@@ -243,12 +243,11 @@ public class DatabaseService {
      * Generates shadow device alerts.
      * coordinator.generate_shadow_alerts()
      */
-    public Optional<String> generateShadowAlerts() {
-        String result = jdbc.queryForObject(
+    public List<String> generateShadowAlerts() {
+        return jdbc.queryForList(
                 "SELECT coordinator.generate_shadow_alerts()::text",
                 String.class
         );
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
     // ========== Wireless: Backlog ==========
@@ -341,50 +340,37 @@ public class DatabaseService {
     }
 
     /**
-     * Builds a Postgres text array literal from a list of strings.
-     */
-    private String toTextArray(List<String> items) {
-        StringBuilder sb = new StringBuilder("{");
-        for (int i = 0; i < items.size(); i++) {
-            if (i > 0) sb.append(',');
-            sb.append(escapeSqlLiteral(items.get(i)));
-        }
-        sb.append('}');
-        return sb.toString();
-    }
-
-    /**
-     * Builds a Postgres JSONB array literal: '{"a","b","c"}'::jsonb[]
+     * Builds a Postgres jsonb[] SQL array literal.
      */
     private String toJsonbArray(List<ScanRequestRecord> records, java.util.function.Function<ScanRequestRecord, String> extractor) {
-        StringBuilder sb = new StringBuilder("[");
+        StringBuilder sb = new StringBuilder("{");
         for (int i = 0; i < records.size(); i++) {
             if (i > 0) sb.append(',');
             String val = extractor.apply(records.get(i));
             if (val == null) {
                 sb.append("null");
             } else {
-                sb.append(val);
+                sb.append(escapeSqlLiteral(val));
             }
         }
-        sb.append(']');
+        sb.append('}');
         return sb.toString();
     }
 
     /**
-     * Builds a JSONB array literal from a list of JSON strings.
+     * Builds a Postgres jsonb[] SQL array literal from a list of JSON strings.
      */
     private String toJsonbArray(List<String> items) {
-        StringBuilder sb = new StringBuilder("[");
+        StringBuilder sb = new StringBuilder("{");
         for (int i = 0; i < items.size(); i++) {
             if (i > 0) sb.append(',');
             if (items.get(i) == null) {
                 sb.append("null");
             } else {
-                sb.append(items.get(i));
+                sb.append(escapeSqlLiteral(items.get(i)));
             }
         }
-        sb.append(']');
+        sb.append('}');
         return sb.toString();
     }
 

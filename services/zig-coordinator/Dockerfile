@@ -1,6 +1,6 @@
 # =============================================================================
-# Java Coordinator — Dockerfile
-# Multi-stage build: Gradle + JDK → slim JRE runtime
+# Java Coordinator - Dockerfile
+# Multi-stage build: Gradle + JDK to slim JRE runtime
 # =============================================================================
 
 # ---- Stage 1: Build with Gradle + JDK 21 ----
@@ -21,16 +21,26 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
+RUN addgroup -S coordinator \
+    && adduser -S -G coordinator coordinator
+
 # Copy the built fat JAR
-COPY --from=builder /app/build/libs/*.jar /app/java-coordinator.jar
+COPY --chown=coordinator:coordinator --from=builder /app/build/libs/*.jar /app/java-coordinator.jar
 
 # Copy SQL schema (used by the init/healthcheck logic)
-COPY sql /app/sql
-COPY docker/redpanda /app/docker/redpanda
+COPY --chown=coordinator:coordinator sql /app/sql
+COPY --chown=coordinator:coordinator docker/redpanda /app/docker/redpanda
 
-EXPOSE 8080
+RUN chown coordinator:coordinator /app \
+    && chmod 500 /app \
+    && chmod 400 /app/java-coordinator.jar \
+    && chmod -R a=rX /app/sql /app/docker/redpanda
+
+EXPOSE 8081
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=20s \
-  CMD wget -qO- http://localhost:8080/actuator/health || exit 1
+  CMD wget -qO- http://localhost:8081/actuator/health || exit 1
+
+USER coordinator
 
 ENTRYPOINT ["java", "-jar", "/app/java-coordinator.jar"]

@@ -39,13 +39,16 @@ public class WirelessRoutes extends RouteBuilder {
     private final CoordinatorProperties props;
     private final DatabaseService db;
     private final ObjectMapper objectMapper;
+    private final ProducerTemplate producerTemplate;
 
     public WirelessRoutes(CoordinatorProperties props,
                           DatabaseService db,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          ProducerTemplate producerTemplate) {
         this.props = props;
         this.db = db;
         this.objectMapper = objectMapper;
+        this.producerTemplate = producerTemplate;
     }
 
     @Override
@@ -86,8 +89,7 @@ public class WirelessRoutes extends RouteBuilder {
             Optional<String> list = db.listPendingBacklog();
             String result = list.orElse("[]");
 
-            ProducerTemplate producer = exchange.getContext().createProducerTemplate();
-            producer.sendBody("kafka:" + replyTopic, result);
+            producerTemplate.sendBody("kafka:" + replyTopic, result);
 
             log.info("event=backlog_list status=ok reply_topic={} payload_bytes={}",
                     replyTopic, result.length());
@@ -136,8 +138,7 @@ public class WirelessRoutes extends RouteBuilder {
             long count = deleted.map(Long::parseLong).orElse(0L);
             String reply = String.format("{\"pruned\":%d}", count);
 
-            ProducerTemplate producer = exchange.getContext().createProducerTemplate();
-            producer.sendBody("kafka:" + replyTopic, reply);
+            producerTemplate.sendBody("kafka:" + replyTopic, reply);
 
             log.info("event=backlog_prune status=ok reply_topic={} deleted_count={}",
                     replyTopic, count);
@@ -168,8 +169,7 @@ public class WirelessRoutes extends RouteBuilder {
             Optional<String> device = db.lookupDeviceByMac(mac);
             String result = device.orElse("null");
 
-            ProducerTemplate producer = exchange.getContext().createProducerTemplate();
-            producer.sendBody("kafka:" + replyTopic, result);
+            producerTemplate.sendBody("kafka:" + replyTopic, result);
 
             log.info("event=mac_lookup status=ok mac={} reply_topic={} found={}",
                     mac, replyTopic, device.isPresent());
@@ -192,8 +192,7 @@ public class WirelessRoutes extends RouteBuilder {
             Optional<String> networks = db.listAuthorizedNetworks();
             String result = networks.orElse("[]");
 
-            ProducerTemplate producer = exchange.getContext().createProducerTemplate();
-            producer.sendBody("kafka:" + replyTopic, result);
+            producerTemplate.sendBody("kafka:" + replyTopic, result);
 
             log.info("event=networks_authorized status=ok reply_topic={} payload_bytes={}",
                     replyTopic, result.length());
