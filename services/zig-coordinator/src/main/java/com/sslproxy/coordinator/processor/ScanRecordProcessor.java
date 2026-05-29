@@ -90,6 +90,12 @@ public class ScanRecordProcessor implements Processor {
 
             boolean shouldFlush;
             synchronized (pending) {
+                int maxPending = maxPendingResults();
+                if (pending.size() >= maxPending) {
+                    pending.remove(0);
+                    log.error("event=scan_request_ingest status=dropped_oldest reason=pending_limit "
+                            + "pending_count={} max_pending={}", pending.size(), maxPending);
+                }
                 pending.add(record);
                 shouldFlush = pending.size() >= props.getScanFetchCount();
             }
@@ -125,10 +131,28 @@ public class ScanRecordProcessor implements Processor {
         } catch (Exception e) {
             log.error("event=scan_request_ingest status=failed batch_size={} error=\"{}\"",
                     batch.size(), e.getMessage());
-            // Re-add failed records to pending for retry - at-least-once semantics
+            // Re-add failed records for retry while enforcing a bounded accumulator.
             synchronized (pending) {
-                pending.addAll(0, batch);
+                int maxPending = maxPendingResults();
+                int available = Math.max(0, maxPending - pending.size());
+                int toRequeue = Math.min(batch.size(), available);
+
+                if (toRequeue > 0) {
+                    pending.addAll(0, batch.subList(0, toRequeue));
+                }
+
+                int dropped = batch.size() - toRequeue;
+                if (dropped > 0) {
+                    log.error("event=scan_request_ingest status=dropped reason=pending_limit "
+                                    + "dropped_count={} pending_count={} max_pending={}",
+                            dropped, pending.size(), maxPending);
+                }
             }
         }
+    }
+
+    private int maxPendingResults() {
+        int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
+        return Math.max(props.getScanFetchCount(), props.getScanFetchCount() * multiplier);
     }
 }

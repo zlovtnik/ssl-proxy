@@ -1,0 +1,46 @@
+-- object: v_wireless_threats
+-- folder: views
+-- depends_on: v_wireless_audit_with_devices
+drop view if exists v_wireless_threats;
+
+create view v_wireless_threats as
+select
+  observed_at,
+  coalesce(ssid, payload->>'ssid') as ssid,
+  coalesce(bssid, payload->>'bssid') as bssid,
+  coalesce(destination_bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
+  coalesce(source_mac, payload->>'source_mac') as source_mac,
+  coalesce(sensor_id, payload->>'sensor_id') as sensor_id,
+  payload->>'transmitter_mac' as transmitter_mac,
+  payload->>'receiver_mac' as receiver_mac,
+  payload->>'frame_subtype' as frame_subtype,
+  coalesce(signal_dbm::text, payload->>'signal_dbm') as signal_dbm,
+  payload->>'noise_dbm' as noise_dbm,
+  payload->>'frequency_mhz' as frequency_mhz,
+  payload->>'data_rate_kbps' as data_rate_kbps,
+  coalesce(raw_len::text, payload->>'raw_len') as raw_len,
+  coalesce(frame_control_flags::text, payload->>'frame_control_flags') as frame_control_flags,
+  coalesce(more_data::text, payload->>'more_data') as more_data,
+  coalesce(retry::text, payload->>'retry') as retry,
+  coalesce(power_save::text, payload->>'power_save') as power_save,
+  coalesce(protected::text, payload->>'protected') as protected,
+  coalesce(location_id, payload->>'location_id') as location_id,
+  payload->>'identity_source' as identity_source,
+  coalesce(username, payload->>'username') as username,
+  payload->'tags' as tags,
+  security_flags,
+  wps_device_name,
+  wps_manufacturer,
+  wps_model_name,
+  device_fingerprint,
+  handshake_captured
+from sync_events_expanded
+where stream_name = 'wireless.audit'
+  and (
+    payload->'tags' ? 'threat:potential_evil_twin'
+    or payload->'tags' ? 'threat:karma_probe_response'
+    or payload->'tags' ? 'threat:deauth_flood'
+    or payload->'tags' ? 'threat:deauth_frame'
+    or handshake_captured
+  )
+order by observed_at desc;

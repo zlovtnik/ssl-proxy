@@ -169,6 +169,11 @@ All views are optimized for ADB columnar storage.
 ### 7. Compose Startup Log Notes
 
 - `zig-coordinator` is the sync control-plane service. On startup it applies the Postgres sync schema with `psql -f /app/sql/postgres.sql`; confirm this line appears with `docker compose logs zig-coordinator`.
+- `sql/postgres.sql` is now a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Regenerate split files from `sql/postgres.source.sql` with `scripts/split_postgres_schema.py`.
+- `services/db-migrator` is the canonical CLI for schema ordering and validation:
+  - `cargo run -p db-migrator -- list --sql-dir ./sql`
+  - `cargo run -p db-migrator -- validate --sql-dir ./sql`
+  - `cargo run -p db-migrator -- apply --sql-dir ./sql --database-url "$DATABASE_URL"`
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.

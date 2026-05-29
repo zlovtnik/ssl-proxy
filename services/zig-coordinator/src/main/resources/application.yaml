@@ -71,6 +71,8 @@ coordinator:
   idle-sleep-ms: ${SYNC_IDLE_SLEEP_MS:250}
   idle-sleep-backoff-ms: ${SYNC_IDLE_SLEEP_BACKOFF_MS:1000}
   backpressure-budget-multiplier: ${SYNC_BACKPRESSURE_BUDGET_MULTIPLIER:4}
+  adaptive-pull-change-threshold: ${SYNC_ADAPTIVE_PULL_CHANGE_THRESHOLD:50}
+  adaptive-pull-min-restart-interval-ms: ${SYNC_ADAPTIVE_PULL_MIN_RESTART_INTERVAL_MS:10000}
 
 # =============================================================================
 # Apache Camel

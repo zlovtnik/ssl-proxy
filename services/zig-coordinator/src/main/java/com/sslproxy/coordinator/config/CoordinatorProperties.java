@@ -81,6 +81,8 @@ public class CoordinatorProperties {
 
     // === Backpressure & adaptive pull ===
     private int backpressureBudgetMultiplier = 4;
+    private int adaptivePullChangeThreshold = 50;
+    private int adaptivePullMinRestartIntervalMs = 10_000;
 
     // === Health check ===
     private String mode = "run";
@@ -215,6 +217,12 @@ public class CoordinatorProperties {
 
     public int getBackpressureBudgetMultiplier() { return backpressureBudgetMultiplier; }
     public void setBackpressureBudgetMultiplier(int backpressureBudgetMultiplier) { this.backpressureBudgetMultiplier = backpressureBudgetMultiplier; }
+
+    public int getAdaptivePullChangeThreshold() { return adaptivePullChangeThreshold; }
+    public void setAdaptivePullChangeThreshold(int adaptivePullChangeThreshold) { this.adaptivePullChangeThreshold = adaptivePullChangeThreshold; }
+
+    public int getAdaptivePullMinRestartIntervalMs() { return adaptivePullMinRestartIntervalMs; }
+    public void setAdaptivePullMinRestartIntervalMs(int adaptivePullMinRestartIntervalMs) { this.adaptivePullMinRestartIntervalMs = adaptivePullMinRestartIntervalMs; }
 
     public String getMode() { return mode; }
     public void setMode(String mode) { this.mode = mode; }
