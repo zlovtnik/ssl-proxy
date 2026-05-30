@@ -12,6 +12,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_behaviour_snapshots') then
+    return 0;
+  end if;
+
   with base as (
     select
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
@@ -33,6 +37,7 @@ begin
       coalesce(device_fingerprint, payload->>'device_fingerprint') as device_fingerprint
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
@@ -229,6 +234,10 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_behaviour_snapshots');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_behaviour_snapshots');
+  raise;
 end;
 $$;

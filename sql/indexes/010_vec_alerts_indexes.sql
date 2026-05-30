@@ -10,6 +10,10 @@ CREATE INDEX IF NOT EXISTS idx_vec_alerts_mac
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_created
     ON vec_alerts (created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_metadata_bssid
+    ON vec_alerts ((metadata->>'bssid'))
+    WHERE metadata->>'bssid' IS NOT NULL;
+
 -- V022: Add composite index for vec_alerts near-duplicate dedupe predicate
 --
 -- check_near_duplicates filters by alert_type, source_mac, and recent

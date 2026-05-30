@@ -10,6 +10,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_update_transition_model') then
+    return 0;
+  end if;
+
   with windowed as (
     select
       coalesce(
@@ -20,6 +24,7 @@ begin
       observed_at
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= now() - interval '24 hours'
       and coalesce(session_key, payload->>'session_key') is not null
       and coalesce(
@@ -49,6 +54,10 @@ begin
     last_updated = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_update_transition_model');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_update_transition_model');
+  raise;
 end;
 $$;

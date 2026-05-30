@@ -11,6 +11,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_frame_sequences') then
+    return 0;
+  end if;
+
   with base as (
     select
       -- Prefer real session_key from payload; fall back to synthetic key
@@ -36,6 +40,7 @@ begin
       ) as frame_subtype_value
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and coalesce(
@@ -95,6 +100,10 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_frame_sequences');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_frame_sequences');
+  raise;
 end;
 $$;

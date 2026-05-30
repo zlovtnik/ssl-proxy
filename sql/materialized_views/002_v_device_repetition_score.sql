@@ -47,3 +47,6 @@ ORDER BY near_duplicate_pairs DESC;
 
 COMMENT ON MATERIALIZED VIEW v_device_repetition_score IS
   'Daily device repetition scores from near-duplicate event_event pairs in vec_similarity_pairs (cosine_distance < 0.05). Refresh with REFRESH MATERIALIZED VIEW CONCURRENTLY.';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v_device_repetition_score_mac
+  ON v_device_repetition_score (source_mac);

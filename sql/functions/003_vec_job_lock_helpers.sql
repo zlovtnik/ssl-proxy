@@ -1,0 +1,31 @@
+-- object: vec job lock helpers
+-- folder: functions
+-- depends_on: vec_job_locks
+create or replace function vec_try_begin_job(p_job_name text)
+returns boolean
+language plpgsql
+as $$
+begin
+  if not pg_try_advisory_xact_lock(hashtext(p_job_name)::bigint) then
+    raise notice '% already running, skipping', p_job_name;
+    return false;
+  end if;
+
+  insert into vec_job_locks (job_name, locked_at, locked_by)
+  values (p_job_name, now(), pg_backend_pid()::text)
+  on conflict (job_name) do update
+    set locked_at = excluded.locked_at,
+        locked_by = excluded.locked_by;
+
+  return true;
+end;
+$$;
+
+create or replace function vec_finish_job(p_job_name text)
+returns void
+language plpgsql
+as $$
+begin
+  delete from vec_job_locks where job_name = p_job_name;
+end;
+$$;

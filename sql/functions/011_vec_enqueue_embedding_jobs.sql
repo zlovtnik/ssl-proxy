@@ -10,6 +10,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
+    return 0;
+  end if;
+
   with cursor_state as (
     select coalesce(
       (select cursor_value::timestamptz
@@ -33,6 +37,7 @@ begin
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'event'
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and (
         existing.embedding_id is null
         or source.updated_at > existing.embedded_at
@@ -117,10 +122,19 @@ begin
     from vec_baseline_profiles bp
     left join lateral (
       select count(*) as new_frame_count
-      from sync_events_expanded source
-      where stream_name = 'wireless.audit'
-        and lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) = bp.bssid
-        and observed_at > bp.updated_at
+      from (
+        select dedupe_key
+        from wireless_frames source
+        where source.bssid is not null
+          and lower(source.bssid) = bp.bssid
+          and source.updated_at > bp.updated_at
+        union
+        select dedupe_key
+        from wireless_frames source
+        where source.destination_bssid is not null
+          and lower(source.destination_bssid) = bp.bssid
+          and source.updated_at > bp.updated_at
+      ) source
     ) frames on true
     left join vec_embeddings existing
       on existing.source_table = 'vec_baseline_profiles'
@@ -170,10 +184,15 @@ begin
     now()
   from sync_events_expanded
   where stream_name = 'wireless.audit'
+    and status = 'batched'
   on conflict (stream_name) do update set
     cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
     updated_at = now();
 
+  perform vec_finish_job('vec_enqueue_embedding_jobs');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_enqueue_embedding_jobs');
+  raise;
 end;
 $$;

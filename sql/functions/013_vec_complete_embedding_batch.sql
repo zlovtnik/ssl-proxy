@@ -109,12 +109,16 @@ begin
       j.job_id,
       p.lease_token,
       p.content_sha256
-    from vec_embedding_jobs j
-    join payload_rows p
-      on p.job_id = j.job_id
+    from (
+      select job_id, lease_token, content_sha256
+      from payload_rows
+      order by job_id asc
+    ) p
+    join vec_embedding_jobs j
+      on j.job_id = p.job_id
     where j.lease_token is not distinct from p.lease_token
     order by j.job_id asc
-    for update
+    for update skip locked
   ),
   updated as (
     update vec_embedding_jobs j

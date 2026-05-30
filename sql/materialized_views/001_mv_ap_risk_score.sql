@@ -4,3 +4,6 @@
 -- Materialized for 5-minute refresh alongside v_device_repetition_score
 create materialized view if not exists mv_ap_risk_score as
 select * from v_ap_risk_score;
+
+create unique index if not exists idx_mv_ap_risk_score_bssid
+  on mv_ap_risk_score (bssid);

@@ -33,6 +33,7 @@
 \ir tables/020_vec_embedding_jobs.sql
 \ir tables/021_vec_worker_state.sql
 \ir tables/022_vec_alerts.sql
+\ir tables/023_vec_job_locks.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -50,6 +51,7 @@
 -- functions
 \ir functions/001_sync_stable_uuid.sql
 \ir functions/002_coordinator_safe_helpers.sql
+\ir functions/003_vec_job_lock_helpers.sql
 \ir functions/003_upsert_wireless_frame.sql
 \ir functions/004_vec_update_transition_model.sql
 \ir functions/005_vec_score_sequence.sql
@@ -63,6 +65,7 @@
 \ir functions/013_vec_complete_embedding_batch.sql
 \ir functions/014_vec_materialize_similarity_pairs.sql
 \ir functions/015_vec_reembed_changed_jobs.sql
+\ir functions/040_vec_apply_similarity_flags.sql
 \ir functions/016_vec_release_expired_leases.sql
 \ir functions/017_vec_reap_stale_workers.sql
 \ir functions/018_vec_assign_device_cluster.sql

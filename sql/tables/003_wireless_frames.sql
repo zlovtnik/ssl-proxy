@@ -12,6 +12,9 @@ create table if not exists wireless_frames (
   source_mac text,
   bssid text,
   destination_bssid text,
+  bssid_oui text generated always as (
+    nullif(lower(substr(regexp_replace(coalesce(bssid, destination_bssid, ''), '[:\-]', '', 'g'), 1, 6)), '')
+  ) stored,
   ssid text,
   signal_dbm integer,
   fragment_number integer,
@@ -92,6 +95,11 @@ create table if not exists wireless_frames (
 );
 
 alter table wireless_frames add column if not exists frame_subtype text;
+
+alter table wireless_frames add column if not exists bssid_oui text
+  generated always as (
+    nullif(lower(substr(regexp_replace(coalesce(bssid, destination_bssid, ''), '[:\-]', '', 'g'), 1, 6)), '')
+  ) stored;
 
 update wireless_frames wf
 set frame_subtype = nullif(se.payload->>'frame_subtype', '')
