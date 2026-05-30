@@ -2,7 +2,7 @@ groups:
   - name: observability-critical
     rules:
       - alert: ServiceDown
-        expr: up{job=~"ssl-proxy|java-coordinator|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|pushgateway",rollout_status!="planned"} == 0
+        expr: up{job=~"ssl-proxy|java-coordinator|oracle-worker|integration-console-web|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|pushgateway"} == 0
         for: 2m
         labels:
           severity: critical
@@ -12,7 +12,7 @@ groups:
           description: "Prometheus has reported {{ $labels.instance }} as down for more than 2 minutes."
 
       - alert: ScrapeFailures
-        expr: sum by (job) (up{rollout_status!="planned"} == 0) > 0
+        expr: sum by (job) (up == 0) > 0
         for: 5m
         labels:
           severity: critical

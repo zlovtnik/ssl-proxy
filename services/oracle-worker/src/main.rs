@@ -4,6 +4,7 @@ mod env;
 mod healthcheck;
 mod infra;
 mod log;
+mod metrics;
 mod pool;
 mod run_loop;
 mod time;
@@ -47,10 +48,12 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let started = Instant::now();
+    metrics::init(started);
     healthcheck::healthcheck("run")?;
     thread::sleep(Duration::from_millis(500));
     println!("service={SERVICE_NAME} event=ready mode=run status=ok");
     let config = Arc::new(config::RunConfig::load()?);
+    metrics::spawn_server(config.metrics_port)?;
     let pool = pool::build_oracle_pool(&config)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

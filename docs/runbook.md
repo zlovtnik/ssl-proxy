@@ -294,6 +294,8 @@ docker compose up -d prometheus loki promtail jaeger otel-collector grafana post
 docker compose ps
 curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health, instance: .labels.instance}'
 curl -s "http://127.0.0.1:16686/api/services" | jq
+curl -s http://127.0.0.1:3003/metrics | head -n 30
+curl -s http://127.0.0.1:9090/api/v1/query --data-urlencode 'query=observability_job_last_run_unixtime' | jq
 ```
 
 Scope guardrail: this rollout excludes vector-profile services (`vec-worker*`, `ollama`) and does not change `vector.toml`.

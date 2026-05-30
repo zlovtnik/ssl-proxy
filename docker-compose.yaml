@@ -262,6 +262,7 @@ services:
       - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
       - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
       - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
+      - ORACLE_WORKER_METRICS_PORT=${ORACLE_WORKER_METRICS_PORT:-9464}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=oracle-worker
@@ -326,7 +327,7 @@ services:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: unless-stopped
-    command: ["bin/rails", "runner", "Redpanda::Subscriber.new.run_forever"]
+    command: ["bin/rails", "runner", "Observability::WorkerRunner.run_forever"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
@@ -334,6 +335,7 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
@@ -354,12 +356,13 @@ services:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: "no"
-    command: ["bin/rails", "db:migrate"]
+    command: ["sh", "bin/observability-db-setup.sh"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - SYNC_DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
+      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
@@ -378,7 +381,7 @@ services:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: unless-stopped
-    command: ["sh", "-lc", "while true; do bin/rails runner 'WirelessHeatmap.refresh!'; sleep \"$${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}\"; done"]
+    command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
@@ -386,6 +389,7 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
+      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
@@ -404,7 +408,7 @@ services:
       context: .
       dockerfile: apps/integration-console/Dockerfile
     restart: unless-stopped
-    command: ["sh", "-lc", "while true; do bin/rails runner 'SensorHeartbeatMonitor.new.call'; sleep \"$${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}\"; done"]
+    command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
     environment:
       - RAILS_ENV=development
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
@@ -412,6 +416,7 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
+      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
@@ -674,13 +679,10 @@ services:
       minio:
         condition: service_healthy
     restart: "no"
-    entrypoint: ["sh", "-lc"]
-    command:
-      - |
-        until mc alias set local http://minio:9000 "$$MINIO_ACCESS_KEY_ID" "$$MINIO_SECRET_ACCESS_KEY"; do
-          sleep 1
-        done
-        mc mb --ignore-existing "local/$$MINIO_BUCKET"
+    entrypoint: ["bash"]
+    command: ["/config/init.sh"]
+    volumes:
+      - ./docker/minio:/config:ro
     environment:
       - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
       - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}

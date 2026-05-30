@@ -52,7 +52,7 @@ Delivered in this pass:
   - `docker/observability/grafana/provisioning/datasources/datasources.yml`
   - `docker/observability/grafana/provisioning/dashboards/dashboards.yml`
   - dashboards under `docker/observability/grafana/dashboards/`
-- Prometheus includes planned scrape targets for `oracle-worker` and `integration-console-web` (excluded from critical "down" alerts until app metrics endpoints ship)
+- Prometheus scrape targets for `oracle-worker` and `integration-console-web` are active and covered by critical "service down" alert rules
 
 ### Wave 1 - Telemetry contract (common schema)
 
@@ -79,20 +79,20 @@ Metrics contract:
 - service-level prefixing (for example: `ssl_proxy_*`, `oracle_worker_*`, `integration_console_*`)
 - low-cardinality labels only (no request ids, no user ids, no high-cardinality path fragments)
 
-### Wave 2 - App instrumentation backlog (non-vector)
+### Wave 2 - App instrumentation status (non-vector)
 
 | Service | Logs | Metrics | Traces | Status |
 |---|---|---|---|---|
 | `ssl-proxy` | JSON stdout (existing) | `/metrics` admin path (existing) | OTLP env contract wired | platform wired |
-| `java-coordinator*` | structured log migration pending | `/actuator/prometheus` (existing) | OTLP env contract wired | partial |
-| `oracle-worker` | structured logging migration pending | `/metrics` endpoint pending | OTLP env contract wired | partial |
-| `integration-console-web` | JSON toggle wired (`LOG_FORMAT`) | `/metrics` endpoint pending | OTLP env contract wired | partial |
-| `integration-console-worker` | JSON toggle wired | per-process `/metrics` pending | loop root spans pending | pending app work |
-| `integration-console-heatmap-refresh` | JSON toggle wired | per-process `/metrics` pending | loop root spans pending | pending app work |
-| `integration-console-heartbeat` | JSON toggle wired | per-process `/metrics` pending | loop root spans pending | pending app work |
-| `integration-console-db-setup` | JSON toggle wired | Pushgateway job metric push pending | no long-lived traces required | pending app work |
-| `redpanda-init` | structured log output pending | Pushgateway job metric push pending | no long-lived traces required | pending app work |
-| `minio-init` | structured log output pending | Pushgateway job metric push pending | no long-lived traces required | pending app work |
+| `java-coordinator*` | JSON logback output enabled | `/actuator/prometheus` (existing) | OTLP env contract wired | platform wired |
+| `oracle-worker` | key/value logs (structured migration still recommended) | `/metrics` endpoint on `:9464` | OTLP env contract wired | partial |
+| `integration-console-web` | JSON formatter enabled via `LOG_FORMAT=json` | `/metrics` endpoint live | OTLP env contract wired | platform wired |
+| `integration-console-worker` | JSON formatter enabled | Pushgateway process heartbeat (`observability_process_*`) | loop telemetry with generated trace/span ids in job-cycle logs | platform wired |
+| `integration-console-heatmap-refresh` | JSON formatter enabled | Pushgateway cycle metrics (`observability_job_*`) | per-cycle generated trace/span ids in job-cycle logs | platform wired |
+| `integration-console-heartbeat` | JSON formatter enabled | Pushgateway cycle metrics (`observability_job_*`) | per-cycle generated trace/span ids in job-cycle logs | platform wired |
+| `integration-console-db-setup` | JSON formatter enabled | Pushgateway one-shot metrics (`observability_job_*`) | no long-lived traces required | platform wired |
+| `redpanda-init` | structured JSON logs in `bootstrap.sh` | Pushgateway one-shot metrics (`observability_job_*`) | no long-lived traces required | platform wired |
+| `minio-init` | structured JSON logs in `init.sh` | Pushgateway one-shot metrics (`observability_job_*`) | no long-lived traces required | platform wired |
 | `atheros-sensor` | JSON stdout (existing) | `/metrics` enabled via `ATH_SENSOR_METRICS_PORT` | OTLP env contract wired | platform wired |
 
 ### Wave 3 - Infra coverage

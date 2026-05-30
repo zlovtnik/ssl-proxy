@@ -39,6 +39,7 @@ pub(crate) struct RunConfig {
     pub(crate) window_duration_secs: u64,
     pub(crate) window_max_messages: usize,
     pub(crate) oracle_statement_timeout_secs: u64,
+    pub(crate) metrics_port: u16,
 }
 
 fn non_zero_u64(value: u64, default: u64) -> u64 {
@@ -59,6 +60,9 @@ fn non_zero_usize(value: usize, default: usize) -> usize {
 
 impl RunConfig {
     pub(crate) fn load() -> Result<Self, String> {
+        let metrics_port = env_or_default("ORACLE_WORKER_METRICS_PORT", "9464")
+            .parse::<u16>()
+            .unwrap_or(9464);
         Ok(Self {
             redpanda_bootstrap_servers: required_env("SYNC_REDPANDA_BOOTSTRAP_SERVERS")?,
             audit_stream_name: env_or_default("AUDIT_STREAM_NAME", DEFAULT_AUDIT_STREAM_NAME),
@@ -85,6 +89,7 @@ impl RunConfig {
                     .unwrap_or(30),
                 30,
             ),
+            metrics_port,
         })
     }
 }

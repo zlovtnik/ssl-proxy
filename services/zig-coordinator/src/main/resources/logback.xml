@@ -15,7 +15,7 @@
     </appender>
 
     <root level="INFO">
-        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON"/>
     </root>
 
     <!-- Reduce noise from libraries -->
