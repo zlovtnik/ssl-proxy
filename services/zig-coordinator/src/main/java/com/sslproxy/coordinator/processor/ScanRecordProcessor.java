@@ -147,6 +147,7 @@ public class ScanRecordProcessor implements Processor {
                     .addKeyValue("status", "failed")
                     .addKeyValue("batch_size", batch.size())
                     .addKeyValue("error", sanitize(e.getMessage()))
+                    .addKeyValue("root_cause", rootCauseSummary(e))
                     .log("scan request batch failed");
             // Re-add failed records for retry while enforcing a bounded accumulator.
             synchronized (pending) {
@@ -184,6 +185,19 @@ public class ScanRecordProcessor implements Processor {
         }
         int separator = payloadRef.indexOf("://");
         return separator > 0 ? payloadRef.substring(0, separator) : "unknown";
+    }
+
+    private String rootCauseSummary(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+
+        String message = sanitize(root.getMessage());
+        if (message.isEmpty()) {
+            return root.getClass().getSimpleName();
+        }
+        return root.getClass().getSimpleName() + ": " + message;
     }
 
     private String sanitize(String message) {
