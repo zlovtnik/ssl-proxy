@@ -25,6 +25,7 @@ public class BackpressureService {
     private final DatabaseService databaseService;
     private final CamelContext camelContext;
     private final CoordinatorMetricsService metricsService;
+    private final AdaptivePullController adaptivePullController;
 
     /** Tracks whether the consumer is currently suspended (avoids repeated suspend/resume calls). */
     private volatile boolean consumerSuspended = false;
@@ -32,11 +33,13 @@ public class BackpressureService {
     public BackpressureService(CoordinatorProperties props,
                                DatabaseService databaseService,
                                CamelContext camelContext,
-                               CoordinatorMetricsService metricsService) {
+                               CoordinatorMetricsService metricsService,
+                               AdaptivePullController adaptivePullController) {
         this.props = props;
         this.databaseService = databaseService;
         this.camelContext = camelContext;
         this.metricsService = metricsService;
+        this.adaptivePullController = adaptivePullController;
     }
 
     /**
@@ -98,14 +101,20 @@ public class BackpressureService {
      * Suspends the scan-request-consumer route so it stops polling Kafka.
      */
     private boolean suspendScanConsumer() {
+        String routeId = "scan-request-consumer";
+        if (!adaptivePullController.tryLockRouteUpdate(routeId, "backpressure_suspend")) {
+            log.debug("event=route_suspend route={} status=skipped reason=route_update_busy", routeId);
+            return false;
+        }
         try {
-            camelContext.getRouteController().suspendRoute("scan-request-consumer");
-            log.info("event=route_suspend route=scan-request-consumer status=suspended");
+            camelContext.getRouteController().suspendRoute(routeId);
+            log.info("event=route_suspend route={} status=suspended", routeId);
             return true;
         } catch (Exception e) {
-            log.error("event=route_suspend route=scan-request-consumer status=failed error=\"{}\"",
-                    e.getMessage());
+            log.error("event=route_suspend route={} status=failed error=\"{}\"", routeId, e.getMessage());
             return false;
+        } finally {
+            adaptivePullController.unlockRouteUpdate(routeId, "backpressure_suspend");
         }
     }
 
@@ -113,14 +122,20 @@ public class BackpressureService {
      * Resumes the scan-request-consumer route.
      */
     private boolean resumeScanConsumer() {
+        String routeId = "scan-request-consumer";
+        if (!adaptivePullController.tryLockRouteUpdate(routeId, "backpressure_resume")) {
+            log.debug("event=route_resume route={} status=skipped reason=route_update_busy", routeId);
+            return false;
+        }
         try {
-            camelContext.getRouteController().resumeRoute("scan-request-consumer");
-            log.info("event=route_resume route=scan-request-consumer status=resumed");
+            camelContext.getRouteController().resumeRoute(routeId);
+            log.info("event=route_resume route={} status=resumed", routeId);
             return true;
         } catch (Exception e) {
-            log.error("event=route_resume route=scan-request-consumer status=failed error=\"{}\"",
-                    e.getMessage());
+            log.error("event=route_resume route={} status=failed error=\"{}\"", routeId, e.getMessage());
             return false;
+        } finally {
+            adaptivePullController.unlockRouteUpdate(routeId, "backpressure_resume");
         }
     }
 

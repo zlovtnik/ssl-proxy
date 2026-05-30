@@ -1,0 +1,100 @@
+-- object: vec_build_frame_sequences
+-- folder: functions
+-- depends_on: vec_frame_sequences, wireless_frames
+create or replace function vec_build_frame_sequences(
+  p_from timestamptz default now() - interval '2 hours',
+  p_to timestamptz default now()
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer := 0;
+begin
+  with base as (
+    select
+      -- Prefer real session_key from payload; fall back to synthetic key
+      -- derived from (source_mac, bssid, minute) so events with no session
+      -- identifier still get grouped into meaningful frame sequences.
+      coalesce(
+        nullif(coalesce(session_key, payload->>'session_key'), ''),
+        md5(
+          coalesce(lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')), '')
+          || '|'
+          || coalesce(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '')
+          || '|'
+          || to_char(date_trunc('minute', observed_at), 'YYYY-MM-DD HH24:MI:SS')
+        )
+      ) as session_key,
+      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(location_id, payload->>'location_id'), '') as location_id,
+      nullif(coalesce(sensor_id, payload->>'sensor_id'), '') as sensor_id,
+      observed_at,
+      coalesce(
+        nullif(frame_subtype, ''),
+        nullif(payload->>'frame_subtype', '')
+      ) as frame_subtype_value
+    from sync_events_expanded
+    where stream_name = 'wireless.audit'
+      and observed_at >= p_from
+      and observed_at < p_to
+      and coalesce(
+        nullif(frame_subtype, ''),
+        nullif(payload->>'frame_subtype', '')
+      ) is not null
+  ),
+  prepared as (
+    select
+      session_key,
+      min(source_mac) as source_mac,
+      min(location_id) as location_id,
+      min(sensor_id) as sensor_id,
+      min(observed_at) as window_start,
+      max(observed_at) as window_end,
+      string_agg(
+        upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
+        ' ' order by observed_at
+      ) as sequence_tokens,
+      count(*)::bigint as frame_count
+    from base
+    where session_key is not null
+    group by session_key
+  )
+  insert into vec_frame_sequences (
+    session_key,
+    source_mac,
+    location_id,
+    sensor_id,
+    window_start,
+    window_end,
+    sequence_tokens,
+    frame_count,
+    created_at,
+    updated_at
+  )
+  select
+    session_key,
+    source_mac,
+    location_id,
+    sensor_id,
+    window_start,
+    window_end,
+    sequence_tokens,
+    frame_count,
+    now(),
+    now()
+  from prepared
+  on conflict (session_key) do update set
+    source_mac = excluded.source_mac,
+    location_id = excluded.location_id,
+    sensor_id = excluded.sensor_id,
+    window_start = excluded.window_start,
+    window_end = excluded.window_end,
+    sequence_tokens = excluded.sequence_tokens,
+    frame_count = excluded.frame_count,
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;

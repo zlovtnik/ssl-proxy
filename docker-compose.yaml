@@ -686,7 +686,7 @@ services:
       retries: 5
     volumes:
       # /docker-entrypoint-initdb.d is intentionally unused; zig-coordinator
-      # applies sql/postgres.sql with psql.
+      # applies sql/postgres.sql with psql (shim includes the split sql/* tree).
       - postgres-data:/var/lib/postgresql/data
 
 volumes:

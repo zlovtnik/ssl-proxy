@@ -443,7 +443,7 @@ If replicas contend on leases but the queue stays deep, increase `VECTOR_EMBEDDI
 
 ## External dependencies: PSQL cron jobs
 
-The vec-worker is a **consumer** of embedding jobs - it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `sql/postgres.sql` (lines 2004-2045). `pg_cron` must be installed and the `cron` schema available.
+The vec-worker is a **consumer** of embedding jobs - it never creates them, and it never builds the behaviour snapshots it reads. Both are produced by Postgres cron jobs defined in `vec_install_cron_jobs()` at `sql/cron/001_vec_install_cron_jobs.sql` (and included by the `sql/postgres.sql` shim). `pg_cron` must be installed and the `cron` schema available.
 
 Without these cron jobs the worker would run forever, lease nothing, and produce zero output.
 
@@ -474,7 +474,7 @@ SELECT vec_reembed_changed_jobs(p_limit => 1000);
 ### Where the cron definitions live
 
 ```text
-sql/postgres.sql  ->  vec_install_cron_jobs()  (end of file)
+sql/cron/001_vec_install_cron_jobs.sql  ->  vec_install_cron_jobs()
 ```
 
 The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_snapshots`, `vec_materialize_similarity_pairs`, `vec_release_expired_leases`, `vec_reap_stale_workers`) are defined in the same file, lines 1175–2002.
@@ -487,7 +487,7 @@ The individual functions (`vec_enqueue_embedding_jobs`, `vec_build_behaviour_sna
 - `services/vec-worker/src/db.rs` — Postgres access, job update, embedding upsert, worker heartbeat
 - `services/vec-worker/src/text_builder.rs` — source row reads and embedding text construction
 
-- `sql/postgres.sql` — Postgres table definitions and helper functions used by the worker
+- `sql/postgres.sql` (shim) and split `sql/*` files — Postgres table definitions and helper functions used by the worker
 
 # vec-worker: Performance & Correctness Recovery
 ## From 55 jobs/min → target 2,000+ jobs/min

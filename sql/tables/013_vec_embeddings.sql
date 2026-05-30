@@ -1,0 +1,27 @@
+-- object: vec_embeddings
+-- folder: tables
+-- depends_on: pgvector extension
+create table if not exists vec_embeddings (
+  embedding_id bigserial primary key,
+  source_table text not null,
+  source_key text not null,
+  source_observed_at timestamptz,
+  source_stream_name text,
+  source_sensor_id text,
+  source_location_id text,
+  source_mac text,
+  embedding_model text not null,
+  embedding_kind text not null,
+  embedding_dimensions integer not null,
+  content_sha256 text not null,
+  content_text text not null,
+  embedding vector not null,
+  metadata jsonb not null default '{}'::jsonb,
+  embedded_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
+  constraint vec_embeddings_dimensions_chk check (embedding_dimensions > 0),
+  constraint chk_embedding_dims_matches_embedding_dimensions check (vector_dims(embedding) = embedding_dimensions),
+  constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
+);

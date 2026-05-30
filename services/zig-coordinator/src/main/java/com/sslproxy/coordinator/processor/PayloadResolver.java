@@ -81,13 +81,16 @@ public class PayloadResolver {
                 if (!realFilePath.startsWith(realOutboxPath)) {
                     throw new IllegalArgumentException("Path traversal detected: " + locator);
                 }
+                if (!Files.isReadable(realFilePath)) {
+                    throw new IllegalArgumentException("Outbox file not readable: " + locator);
+                }
 
-                long fileSize = Files.size(filePath);
+                long fileSize = Files.size(realFilePath);
                 if (fileSize > MAX_PAYLOAD_BYTES) {
                     throw new IllegalArgumentException("Outbox file too large: " + fileSize + " bytes");
                 }
 
-                byte[] payload = Files.readAllBytes(filePath);
+                byte[] payload = Files.readAllBytes(realFilePath);
                 validateJson(payload);
                 return payload;
             } catch (IOException e) {
