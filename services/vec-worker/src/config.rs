@@ -125,6 +125,9 @@ impl Config {
     /// - `VECTOR_EMBEDDING_WORKER_NAME` (string, default hostname)
     /// - `DATABASE_URL` or `SYNC_DATABASE_URL` (at least one required)
     /// - `POLL_INTERVAL_SECONDS` (u64, default 5)
+    /// - `DATABASE_POOL_MAX_CONNECTIONS` (u32, default derived from worker concurrency)
+    /// - `DATABASE_POOL_MIN_CONNECTIONS` (u32, default 1)
+    /// - `ALERT_POOL_MAX_CONNECTIONS` (u32, default 4)
     ///
     /// # Returns
     ///
