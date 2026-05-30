@@ -32,7 +32,7 @@ groups:
           description: "5xx error ratio is above 5% for 5 minutes."
 
       - alert: QueueLagGrowth
-        expr: rate(redpanda_kafka_max_offset[5m]) - rate(redpanda_kafka_consumer_group_committed_offset[5m]) > 1000
+        expr: sum by (topic) (rate(redpanda_kafka_max_offset[5m])) - sum by (topic) (rate(redpanda_kafka_consumer_group_committed_offset[5m])) > 1000
         for: 10m
         labels:
           severity: critical

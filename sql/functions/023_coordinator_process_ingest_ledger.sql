@@ -155,7 +155,8 @@ begin
    where dedupe_key = any(v_processed_dedupe_keys)
    order by stream_name, observed_at desc
   on conflict (stream_name)
-  do update set cursor_value = excluded.cursor_value, updated_at = now();
+  do update set cursor_value = excluded.cursor_value, updated_at = now()
+  where sync_cursors.cursor_value::bigint < excluded.cursor_value::bigint;
 
   return v_marked_count + v_recovered_count + v_batched_count;
 end;

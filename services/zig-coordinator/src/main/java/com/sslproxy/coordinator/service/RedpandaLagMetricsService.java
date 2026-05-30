@@ -196,6 +196,7 @@ public class RedpandaLagMetricsService {
                 .get(timeoutMs, TimeUnit.MILLISECONDS);
         Map<TopicPartition, Long> committedOffsets = committedMetadata.entrySet().stream()
                 .filter(entry -> target.topic().equals(entry.getKey().topic()))
+                .filter(entry -> entry.getValue() != null)
                 .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().offset()));
 
         return calculateLag(partitions, endOffsets, committedOffsets);

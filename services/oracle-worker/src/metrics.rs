@@ -1,8 +1,8 @@
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::SERVICE_NAME;
 
@@ -16,6 +16,7 @@ static BATCH_SUCCESS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static BATCH_FAILED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static BATCH_LAST_DURATION_MS: AtomicU64 = AtomicU64::new(0);
 static HEARTBEAT_TOTAL: AtomicU64 = AtomicU64::new(0);
+const METRICS_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) fn init(started: Instant) {
     let _ = STARTED_AT.set(started);
@@ -60,8 +61,15 @@ pub(crate) fn record_heartbeat() {
 fn run_server(listener: TcpListener) {
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
-                let _ = handle_request(&mut stream);
+            Ok(stream) => {
+                thread::spawn(move || {
+                    if let Err(error) = handle_request(stream) {
+                        eprintln!(
+                            "service={SERVICE_NAME} event=metrics_request status=error error=\"{}\"",
+                            crate::log::escape_for_log(&error.to_string())
+                        );
+                    }
+                });
             }
             Err(error) => {
                 eprintln!(
@@ -73,7 +81,9 @@ fn run_server(listener: TcpListener) {
     }
 }
 
-fn handle_request(stream: &mut std::net::TcpStream) -> std::io::Result<()> {
+fn handle_request(mut stream: TcpStream) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(METRICS_CONNECTION_TIMEOUT))?;
+    stream.set_write_timeout(Some(METRICS_CONNECTION_TIMEOUT))?;
     let mut buffer = [0u8; 1024];
     let read = stream.read(&mut buffer)?;
     if read == 0 {

@@ -123,17 +123,21 @@ begin
     left join lateral (
       select count(*) as new_frame_count
       from (
-        select dedupe_key
+        select source.dedupe_key
         from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
         where source.bssid is not null
           and lower(source.bssid) = bp.bssid
           and source.updated_at > bp.updated_at
+          and event.status = 'batched'
         union
-        select dedupe_key
+        select source.dedupe_key
         from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
         where source.destination_bssid is not null
           and lower(source.destination_bssid) = bp.bssid
           and source.updated_at > bp.updated_at
+          and event.status = 'batched'
       ) source
     ) frames on true
     left join vec_embeddings existing

@@ -75,6 +75,7 @@ begin
     and pair.cosine_similarity >= p_behaviour_similarity_threshold
     and left_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
     and right_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+    and left_snapshot.source_mac <> right_snapshot.source_mac
   order by right_snapshot.source_mac, pair.cosine_similarity desc
   on conflict (source_mac) do update set
     last_occurred_at = greatest(wireless_shadow_alerts.last_occurred_at, excluded.last_occurred_at),

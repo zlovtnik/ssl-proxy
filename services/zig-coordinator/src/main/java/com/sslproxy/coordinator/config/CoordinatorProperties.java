@@ -1,5 +1,6 @@
 package com.sslproxy.coordinator.config;
 
+import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.stereotype.Component;
@@ -84,6 +85,7 @@ public class CoordinatorProperties {
     private int adaptivePullChangeThreshold = 50;
     private int adaptivePullMinRestartIntervalMs = 10_000;
     private boolean redpandaLagMetricsEnabled = true;
+    @Min(1)
     private int redpandaLagMetricsPollIntervalMs = 10_000;
     private int redpandaLagMetricsTimeoutMs = 5_000;
     private int heartbeatLogIntervalMs = 15_000;

@@ -70,6 +70,7 @@ begin
     s.bssid,
     greatest(s.current_clients::double precision, 1.0),
     jsonb_build_object(
+      'bssid',            s.bssid,
       'reason',           'degree_spike',
       'current_clients',  s.current_clients,
       'previous_clients', s.previous_clients
@@ -88,7 +89,7 @@ begin
   with vendor_conflicts as (
     select
       lower(nullif(wf.ssid, '')) as ssid,
-      array_agg(distinct lower(nullif(coalesce(wf.bssid, wf.destination_bssid), ''))) as bssids,
+      array_agg(distinct lower(coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')))) as bssids,
       array_agg(distinct wf.bssid_oui) as vendor_ouis,
       count(distinct wf.bssid_oui) as vendor_count
     from wireless_frames wf
@@ -98,7 +99,7 @@ begin
       and se.observed_at >= p_from
       and se.observed_at < p_to
       and nullif(wf.ssid, '') is not null
-      and nullif(coalesce(wf.bssid, wf.destination_bssid), '') is not null
+      and coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')) is not null
       and wf.bssid_oui is not null
     group by lower(nullif(wf.ssid, ''))
     having count(distinct wf.bssid_oui) >= 2

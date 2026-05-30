@@ -296,11 +296,10 @@ async fn publish_result(
     let batch_id = result.batch_id.clone();
     let status = result.status.clone();
     let batch_duration_ms = batch_started.elapsed().as_millis();
-    metrics::record_batch_result(status == "success", batch_duration_ms);
     let row_count = result.row_count;
     let payload = serde_json::to_vec(&result)
         .map_err(|error| format!("serialize OracleResult for batch {batch_id}: {error}"))?;
-    producer
+    if let Err((error, _)) = producer
         .send(
             FutureRecord::to(config.result_topic.as_str())
                 .payload(&payload)
@@ -308,7 +307,11 @@ async fn publish_result(
             Duration::from_secs(5),
         )
         .await
-        .map_err(|(error, _)| format!("publish result for batch {batch_id}: {error}"))?;
+    {
+        metrics::record_batch_result(false, batch_duration_ms);
+        return Err(format!("publish result for batch {batch_id}: {error}"));
+    }
+    metrics::record_batch_result(status == "success", batch_duration_ms);
     log_result(&batch_id, &status, row_count, batch_duration_ms, &result);
     if status != "success" {
         return Err(format!(

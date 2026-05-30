@@ -49,7 +49,7 @@
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(up{job=\"oracle-worker\"}[5m]))",
+          "expr": "sum(up{job=\"oracle-worker\"})",
           "legendFormat": "oracle-worker",
           "refId": "A"
         }

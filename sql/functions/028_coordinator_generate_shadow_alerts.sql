@@ -9,7 +9,7 @@ as $$
     select
       event.observed_at,
       lower(frame.source_mac) as source_mac,
-      lower(coalesce(frame.destination_bssid, frame.bssid)) as destination_bssid,
+      lower(coalesce(nullif(trim(frame.destination_bssid), ''), nullif(trim(frame.bssid), ''))) as destination_bssid,
       frame.ssid,
       frame.signal_dbm,
       coalesce(frame.sensor_id, event.payload->>'sensor_id') as sensor_id,

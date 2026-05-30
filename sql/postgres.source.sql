@@ -76,7 +76,7 @@ returns boolean
 language plpgsql
 as $$
 begin
-  if not pg_try_advisory_xact_lock(hashtext(p_job_name)::bigint) then
+  if not pg_try_advisory_lock(hashtextextended(p_job_name, 0)) then
     raise notice '% already running, skipping', p_job_name;
     return false;
   end if;
@@ -97,6 +97,7 @@ language plpgsql
 as $$
 begin
   delete from vec_job_locks where job_name = p_job_name;
+  perform pg_advisory_unlock(hashtextextended(p_job_name, 0));
 end;
 $$;
 
@@ -129,7 +130,7 @@ create table if not exists wireless_frames (
   bssid text,
   destination_bssid text,
   bssid_oui text generated always as (
-    nullif(lower(substr(regexp_replace(coalesce(bssid, destination_bssid, ''), '[:\-]', '', 'g'), 1, 6)), '')
+    nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
   ) stored,
   ssid text,
   signal_dbm integer,
@@ -214,7 +215,7 @@ alter table wireless_frames add column if not exists frame_subtype text;
 
 alter table wireless_frames add column if not exists bssid_oui text
   generated always as (
-    nullif(lower(substr(regexp_replace(coalesce(bssid, destination_bssid, ''), '[:\-]', '', 'g'), 1, 6)), '')
+    nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
   ) stored;
 
 update wireless_frames wf
@@ -1683,6 +1684,7 @@ begin
     s.bssid,
     greatest(s.current_clients::double precision, 1.0),
     jsonb_build_object(
+      'bssid',            s.bssid,
       'reason',           'degree_spike',
       'current_clients',  s.current_clients,
       'previous_clients', s.previous_clients
@@ -1701,7 +1703,7 @@ begin
   with vendor_conflicts as (
     select
       lower(nullif(wf.ssid, '')) as ssid,
-      array_agg(distinct lower(nullif(coalesce(wf.bssid, wf.destination_bssid), ''))) as bssids,
+      array_agg(distinct lower(coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')))) as bssids,
       array_agg(distinct wf.bssid_oui) as vendor_ouis,
       count(distinct wf.bssid_oui) as vendor_count
     from wireless_frames wf
@@ -1711,7 +1713,7 @@ begin
       and se.observed_at >= p_from
       and se.observed_at < p_to
       and nullif(wf.ssid, '') is not null
-      and nullif(coalesce(wf.bssid, wf.destination_bssid), '') is not null
+      and coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')) is not null
       and wf.bssid_oui is not null
     group by lower(nullif(wf.ssid, ''))
     having count(distinct wf.bssid_oui) >= 2
@@ -1853,13 +1855,26 @@ $$;
 create or replace view v_ap_risk_score as
 with alert_bssid_scores as (
   select
-    lower(nullif(trim(coalesce(source_mac, metadata->>'bssid')), '')) as bssid,
-    alert_type,
-    metadata,
-    score
-  from vec_alerts
-  where nullif(trim(coalesce(source_mac, metadata->>'bssid')), '') is not null
-    and created_at >= now() - interval '1 hour'
+    alert_bssid.bssid,
+    alert.alert_type,
+    alert.metadata,
+    alert.score
+  from vec_alerts alert
+  cross join lateral (
+    select lower(nullif(trim(alert.metadata->>'bssid'), '')) as bssid
+    union
+    select lower(nullif(trim(alert.metadata->>'destination_bssid'), '')) as bssid
+    union
+    select lower(nullif(trim(value), '')) as bssid
+    from jsonb_array_elements_text(
+      case
+        when jsonb_typeof(alert.metadata->'bssids') = 'array' then alert.metadata->'bssids'
+        else '[]'::jsonb
+      end
+    ) as bssid_values(value)
+  ) alert_bssid
+  where alert_bssid.bssid is not null
+    and alert.created_at >= now() - interval '1 hour'
 ),
 deauth_scores as (
   select
@@ -1889,38 +1904,52 @@ typosquat_scores as (
 ),
 vendor_mismatch_scores as (
   select
-    lower(substr(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g'), 1, 6)) as bssid_oui,
+    lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(payload->>'bssid', ''), nullif(destination_bssid, ''), nullif(payload->>'destination_bssid', '')), '[:\-]', '', 'g'), 1, 6)) as bssid_oui,
     count(distinct lower(substr(regexp_replace(bssid, '[:\-]', '', 'g'), 1, 6)))::double precision as vendor_mismatch_score
   from sync_events_expanded
   where stream_name = 'wireless.audit'
     and observed_at >= now() - interval '1 hour'
     and nullif(coalesce(ssid, payload->>'ssid'), '') is not null
-    and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
-    and lower(substr(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g'), 1, 6)) is not null
+    and coalesce(nullif(bssid, ''), nullif(payload->>'bssid', ''), nullif(destination_bssid, ''), nullif(payload->>'destination_bssid', '')) is not null
+    and lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(payload->>'bssid', ''), nullif(destination_bssid, ''), nullif(payload->>'destination_bssid', '')), '[:\-]', '', 'g'), 1, 6)) is not null
   group by bssid_oui
+),
+similarity_bssid_rows as (
+  select
+    lower(nullif(trim(coalesce(nullif(left_event.bssid, ''), nullif(left_event.payload->>'bssid', ''), nullif(left_event.destination_bssid, ''), nullif(left_event.payload->>'destination_bssid', ''))), '')) as bssid,
+    p.cosine_distance
+  from vec_similarity_pairs p
+  join sync_events_expanded left_event
+    on p.left_source_table = 'sync_events'
+   and left_event.dedupe_key = p.left_source_key
+  where p.computed_at >= now() - interval '1 hour'
+    and p.cosine_distance > 0.15
+  union all
+  select
+    lower(nullif(trim(coalesce(nullif(right_event.bssid, ''), nullif(right_event.payload->>'bssid', ''), nullif(right_event.destination_bssid, ''), nullif(right_event.payload->>'destination_bssid', ''))), '')) as bssid,
+    p.cosine_distance
+  from vec_similarity_pairs p
+  join sync_events_expanded right_event
+    on p.right_source_table = 'sync_events'
+   and right_event.dedupe_key = p.right_source_key
+  where p.computed_at >= now() - interval '1 hour'
+    and p.cosine_distance > 0.15
 ),
 embedding_outlier_scores as (
   select
-    lower(nullif(trim(coalesce(p.left_source_mac, p.right_source_mac)), '')) as bssid,
-    max(p.cosine_distance) as embedding_outlier_score
-  from vec_similarity_pairs p
-  where p.computed_at >= now() - interval '1 hour'
-    and p.cosine_distance > 0.15
-    and nullif(trim(coalesce(p.left_source_mac, p.right_source_mac)), '') is not null
-  group by lower(nullif(trim(coalesce(p.left_source_mac, p.right_source_mac)), ''))
+    bssid,
+    max(cosine_distance) as embedding_outlier_score
+  from similarity_bssid_rows
+  where bssid is not null
+  group by bssid
 ),
 all_bssids as (
-  select distinct lower(nullif(trim(coalesce(source_mac, metadata->>'bssid')), '')) as bssid
-  from vec_alerts
-  where nullif(trim(coalesce(source_mac, metadata->>'bssid')), '') is not null
+  select distinct bssid
+  from alert_bssid_scores
   union
-  select distinct lower(nullif(trim(left_source_mac), '')) as bssid
-  from vec_similarity_pairs
-  where nullif(trim(left_source_mac), '') is not null
-  union
-  select distinct lower(nullif(trim(right_source_mac), '')) as bssid
-  from vec_similarity_pairs
-  where nullif(trim(right_source_mac), '') is not null
+  select distinct bssid
+  from similarity_bssid_rows
+  where bssid is not null
 )
 select
   a.bssid,
@@ -2837,17 +2866,21 @@ begin
     left join lateral (
       select count(*) as new_frame_count
       from (
-        select dedupe_key
+        select source.dedupe_key
         from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
         where source.bssid is not null
           and lower(source.bssid) = bp.bssid
           and source.updated_at > bp.updated_at
+          and event.status = 'batched'
         union
-        select dedupe_key
+        select source.dedupe_key
         from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
         where source.destination_bssid is not null
           and lower(source.destination_bssid) = bp.bssid
           and source.updated_at > bp.updated_at
+          and event.status = 'batched'
       ) source
     ) frames on true
     left join vec_embeddings existing
@@ -3497,6 +3530,7 @@ begin
     and pair.cosine_similarity >= p_behaviour_similarity_threshold
     and left_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
     and right_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+    and left_snapshot.source_mac <> right_snapshot.source_mac
   order by right_snapshot.source_mac, pair.cosine_similarity desc
   on conflict (source_mac) do update set
     last_occurred_at = greatest(wireless_shadow_alerts.last_occurred_at, excluded.last_occurred_at),
@@ -4311,7 +4345,8 @@ begin
    where dedupe_key = any(v_processed_dedupe_keys)
    order by stream_name, observed_at desc
   on conflict (stream_name)
-  do update set cursor_value = excluded.cursor_value, updated_at = now();
+  do update set cursor_value = excluded.cursor_value, updated_at = now()
+  where sync_cursors.cursor_value::bigint < excluded.cursor_value::bigint;
 
   return v_marked_count + v_recovered_count + v_batched_count;
 end;
@@ -4644,7 +4679,7 @@ as $$
     select
       event.observed_at,
       lower(frame.source_mac) as source_mac,
-      lower(coalesce(frame.destination_bssid, frame.bssid)) as destination_bssid,
+      lower(coalesce(nullif(trim(frame.destination_bssid), ''), nullif(trim(frame.bssid), ''))) as destination_bssid,
       frame.ssid,
       frame.signal_dbm,
       coalesce(frame.sensor_id, event.payload->>'sensor_id') as sensor_id,

@@ -46,16 +46,18 @@ public class OracleResultRoute extends RouteBuilder {
                 + "&breakOnFirstError=true")
         .routeId("oracle-result-consumer")
         .process(exchange -> {
-            String body = exchange.getIn().getBody(String.class);
-            int payloadBytes = body == null ? 0 : body.getBytes(StandardCharsets.UTF_8).length;
-            log.atTrace()
-                    .addKeyValue("event", "batch_result_ingest")
-                    .addKeyValue("status", "received")
-                    .addKeyValue("route", "oracle-result-consumer")
-                    .addKeyValue("topic", props.getResultTopic())
-                    .addKeyValue("consumer_group", props.getResultConsumer())
-                    .addKeyValue("payload_bytes", payloadBytes)
-                    .log("oracle result received");
+            if (log.isTraceEnabled()) {
+                String body = exchange.getIn().getBody(String.class);
+                int payloadBytes = body == null ? 0 : body.getBytes(StandardCharsets.UTF_8).length;
+                log.atTrace()
+                        .addKeyValue("event", "batch_result_ingest")
+                        .addKeyValue("status", "received")
+                        .addKeyValue("route", "oracle-result-consumer")
+                        .addKeyValue("topic", props.getResultTopic())
+                        .addKeyValue("consumer_group", props.getResultConsumer())
+                        .addKeyValue("payload_bytes", payloadBytes)
+                        .log("oracle result received");
+            }
         })
         .process(resultProcessor);
 

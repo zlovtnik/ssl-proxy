@@ -13,7 +13,7 @@ create table if not exists wireless_frames (
   bssid text,
   destination_bssid text,
   bssid_oui text generated always as (
-    nullif(lower(substr(regexp_replace(coalesce(bssid, destination_bssid, ''), '[:\-]', '', 'g'), 1, 6)), '')
+    nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
   ) stored,
   ssid text,
   signal_dbm integer,
@@ -98,7 +98,7 @@ alter table wireless_frames add column if not exists frame_subtype text;
 
 alter table wireless_frames add column if not exists bssid_oui text
   generated always as (
-    nullif(lower(substr(regexp_replace(coalesce(bssid, destination_bssid, ''), '[:\-]', '', 'g'), 1, 6)), '')
+    nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
   ) stored;
 
 update wireless_frames wf

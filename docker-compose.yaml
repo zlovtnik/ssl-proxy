@@ -778,7 +778,7 @@ services:
       - ./docker/observability/alerts.yml:/etc/prometheus/alerts/alerts.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     depends_on:
       - pushgateway
       - postgres-exporter
@@ -798,7 +798,7 @@ services:
       - ./docker/observability/loki.yml:/etc/loki/config.yml:ro
       - loki-data:/loki
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
 
   promtail:
     image: grafana/promtail:3.1.1
@@ -828,9 +828,9 @@ services:
     volumes:
       - ./docker/observability/otel-collector.yml:/etc/otel-collector/config.yml:ro
     ports:
-      - "4319:4317"
-      - "4320:4318"
-      - "8888:8888"
+      - "127.0.0.1:4319:4317"
+      - "127.0.0.1:4320:4318"
+      - "127.0.0.1:8888:8888"
     depends_on:
       - jaeger
 
@@ -869,7 +869,7 @@ services:
     command:
       - --redis.addr=redis://redis:6379
     ports:
-      - "9121:9121"
+      - "127.0.0.1:9121:9121"
     depends_on:
       redis:
         condition: service_healthy
@@ -878,7 +878,7 @@ services:
     image: prom/pushgateway:v1.8.0
     restart: unless-stopped
     ports:
-      - "9091:9091"
+      - "127.0.0.1:9091:9091"
 
 volumes:
   redpanda-data:

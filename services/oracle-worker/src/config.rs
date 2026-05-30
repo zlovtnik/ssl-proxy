@@ -58,11 +58,20 @@ fn non_zero_usize(value: usize, default: usize) -> usize {
     }
 }
 
+fn env_non_zero_u16(name: &str, default: &str) -> Result<u16, String> {
+    let raw = env_or_default(name, default);
+    let value = raw.parse::<u16>().map_err(|error| {
+        format!("{name} must be a valid TCP port (1-65535), got {raw:?}: {error}")
+    })?;
+    if value == 0 {
+        return Err(format!("{name} must be a valid TCP port (1-65535), got 0"));
+    }
+    Ok(value)
+}
+
 impl RunConfig {
     pub(crate) fn load() -> Result<Self, String> {
-        let metrics_port = env_or_default("ORACLE_WORKER_METRICS_PORT", "9464")
-            .parse::<u16>()
-            .unwrap_or(9464);
+        let metrics_port = env_non_zero_u16("ORACLE_WORKER_METRICS_PORT", "9464")?;
         Ok(Self {
             redpanda_bootstrap_servers: required_env("SYNC_REDPANDA_BOOTSTRAP_SERVERS")?,
             audit_stream_name: env_or_default("AUDIT_STREAM_NAME", DEFAULT_AUDIT_STREAM_NAME),

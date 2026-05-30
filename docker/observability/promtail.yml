@@ -46,6 +46,9 @@ scrape_configs:
             span_id: span_id
             event: event
             error: error
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
       - labels:
           level:
           service:

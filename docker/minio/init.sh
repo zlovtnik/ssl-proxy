@@ -84,7 +84,14 @@ finish() {
 trap finish EXIT
 
 log_line "info" "bootstrap_start" "Waiting for MinIO API endpoint"
+MAX_ATTEMPTS=60
+attempt=1
 until mc alias set local "http://minio:9000" "${MINIO_ACCESS_KEY_ID}" "${MINIO_SECRET_ACCESS_KEY}" >/dev/null 2>&1; do
+  if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+    log_line "error" "bootstrap_failed" "MinIO API endpoint http://minio:9000 did not become ready after ${MAX_ATTEMPTS} attempts"
+    exit 1
+  fi
+  attempt=$((attempt + 1))
   sleep 1
 done
 

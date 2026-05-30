@@ -6,7 +6,7 @@ returns boolean
 language plpgsql
 as $$
 begin
-  if not pg_try_advisory_xact_lock(hashtext(p_job_name)::bigint) then
+  if not pg_try_advisory_lock(hashtextextended(p_job_name, 0)) then
     raise notice '% already running, skipping', p_job_name;
     return false;
   end if;
@@ -27,5 +27,6 @@ language plpgsql
 as $$
 begin
   delete from vec_job_locks where job_name = p_job_name;
+  perform pg_advisory_unlock(hashtextextended(p_job_name, 0));
 end;
 $$;
