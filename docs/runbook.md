@@ -141,6 +141,8 @@ All views are optimized for ADB columnar storage.
 
 ### 6. Prometheus / Vector Pipeline Setup
 
+> Note: the non-vector Grafana/Loki/Jaeger/Prometheus rollout in `docs/observability-workmap-non-vector.md` explicitly excludes this Vector-profile pipeline.
+
 1. **Start pipeline:**
    ```bash
    LOG_FORMAT=json ./ssl-proxy | vector --config vector.toml
@@ -267,3 +269,31 @@ When configured, additional admin endpoints are exposed (still under API key + M
 GET /security/patch-cadence
 GET /security/recovery-drills
 ```
+
+---
+
+### 10. Non-Vector Observability Rollout Ops
+
+This runbook section covers the non-vector observability control plane. Full rollout details live in `docs/observability-workmap-non-vector.md`.
+
+Ports:
+
+```text
+Grafana:     127.0.0.1:3004
+Prometheus:  127.0.0.1:9090
+Loki:        127.0.0.1:3100
+Jaeger UI:   127.0.0.1:16686
+OTel gRPC:   127.0.0.1:4319
+OTel HTTP:   127.0.0.1:4320
+```
+
+Verification:
+
+```sh
+docker compose up -d prometheus loki promtail jaeger otel-collector grafana postgres-exporter redis-exporter pushgateway
+docker compose ps
+curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health, instance: .labels.instance}'
+curl -s "http://127.0.0.1:16686/api/services" | jq
+```
+
+Scope guardrail: this rollout excludes vector-profile services (`vec-worker*`, `ollama`) and does not change `vector.toml`.

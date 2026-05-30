@@ -79,6 +79,10 @@ services:
       - ADMIN_API_KEY=macaco
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_OUTBOX_DIR=/sync-outbox
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=ssl-proxy
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=ssl-proxy
 
     ports:
       # Publish the plain and obfuscated WireGuard UDP entrypoints on the Docker host.
@@ -126,6 +130,11 @@ services:
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
       - SYNC_OUTBOX_DIR=/sync-outbox
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=java-coordinator
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator
+      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
     volumes:
       - sync-outbox:/sync-outbox
       - ./docker/redpanda:/app/docker/redpanda:ro
@@ -167,6 +176,11 @@ services:
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
       - SYNC_OUTBOX_DIR=/sync-outbox
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=java-coordinator
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator-2
+      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
     volumes:
       - sync-outbox:/sync-outbox
       - ./docker/redpanda:/app/docker/redpanda:ro
@@ -206,6 +220,11 @@ services:
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
       - SYNC_OUTBOX_DIR=/sync-outbox
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=java-coordinator
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator-3
+      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
     volumes:
       - sync-outbox:/sync-outbox
       - ./docker/redpanda:/app/docker/redpanda:ro
@@ -243,6 +262,10 @@ services:
       - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
       - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
       - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=oracle-worker
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=oracle-worker
     healthcheck:
       test: ["CMD", "/usr/local/bin/oracle-worker", "healthcheck"]
       interval: 30s
@@ -281,6 +304,11 @@ services:
       - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
       - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
+      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=integration-console-web
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-web
     ports:
       - "3003:3000"
 
@@ -306,6 +334,11 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
+      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=integration-console-worker
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-worker
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
       interval: 30s
@@ -327,6 +360,11 @@ services:
       - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - SYNC_DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
+      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=integration-console-db-setup
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-db-setup
 
   integration-console-heatmap-refresh:
     depends_on:
@@ -348,6 +386,11 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
+      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=integration-console-heatmap-refresh
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-heatmap-refresh
 
   integration-console-heartbeat:
     depends_on:
@@ -369,6 +412,11 @@ services:
       - SYNC_DB_POOL=${SYNC_DB_POOL:-5}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
+      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=integration-console-heartbeat
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-heartbeat
 
   vec-worker:
     profiles:
@@ -517,7 +565,6 @@ services:
       ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS: ${ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS:-60}
       ATH_SENSOR_EXPORT_HANDSHAKES: ${ATH_SENSOR_EXPORT_HANDSHAKES:-false}
       ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS: ${ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS:-60}
-      ATH_SENSOR_METRICS_PORT: ${ATH_SENSOR_METRICS_PORT:-}
       ATH_SENSOR_SHUTDOWN_GRACE_SECS: ${ATH_SENSOR_SHUTDOWN_GRACE_SECS:-5}
       ATH_SENSOR_BACKLOG_MAX_ATTEMPTS: ${ATH_SENSOR_BACKLOG_MAX_ATTEMPTS:-10}
       ATH_SENSOR_BACKLOG_MAX_AGE_HOURS: ${ATH_SENSOR_BACKLOG_MAX_AGE_HOURS:-72}
@@ -526,6 +573,11 @@ services:
       ATH_SENSOR_AUDIT_LAYER_STREAM: ${ATH_SENSOR_AUDIT_LAYER_STREAM:-off}
       SYNC_OUTBOX_DIR: /sync-outbox
       RUST_LOG: ${ATH_SENSOR_RUST_LOG:-warn,atheros_sensor=info,ssl_proxy=info}
+      ATH_SENSOR_METRICS_PORT: ${ATH_SENSOR_METRICS_PORT:-9097}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_SERVICE_NAME: atheros-sensor
+      OTEL_RESOURCE_ATTRIBUTES: service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=atheros-sensor
     healthcheck:
       test: ["CMD-SHELL", "/usr/local/bin/atheros-sensor healthcheck"]
       interval: 30s
@@ -593,6 +645,7 @@ services:
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-administrador}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
+      - MINIO_PROMETHEUS_AUTH_TYPE=public
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -632,6 +685,7 @@ services:
       - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
       - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
+      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
 
   redpanda-init:
     image: redpandadata/redpanda:latest
@@ -643,6 +697,7 @@ services:
       <<: *ath_sensor_env
       SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       SYNC_REDPANDA_TOPIC_MANIFEST: /config/topics.manifest
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-http://pushgateway:9091}
     volumes:
       - ./docker/redpanda:/config:ro
     entrypoint: ["sh"]
@@ -689,9 +744,127 @@ services:
       # applies sql/postgres.sql with psql (shim includes the split sql/* tree).
       - postgres-data:/var/lib/postgresql/data
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/observability/alerts.yml:/etc/prometheus/alerts/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - pushgateway
+      - postgres-exporter
+      - redis-exporter
+      - otel-collector
+      - loki
+      - jaeger
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  loki:
+    image: grafana/loki:3.1.1
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/config.yml
+    volumes:
+      - ./docker/observability/loki.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./docker/observability/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-data:/promtail
+    depends_on:
+      - loki
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "127.0.0.1:16686:16686"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.107.0
+    restart: unless-stopped
+    command:
+      - --config=/etc/otel-collector/config.yml
+    volumes:
+      - ./docker/observability/otel-collector.yml:/etc/otel-collector/config.yml:ro
+    ports:
+      - "127.0.0.1:4319:4317"
+      - "127.0.0.1:4320:4318"
+      - "127.0.0.1:8888:8888"
+    depends_on:
+      - jaeger
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
+    volumes:
+      - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3004:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.19.1
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://sync:sync@postgres:5432/sync?sslmode=disable
+    ports:
+      - "127.0.0.1:9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.61.0
+    restart: unless-stopped
+    command:
+      - --redis.addr=redis://redis:6379
+    ports:
+      - "127.0.0.1:9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  pushgateway:
+    image: prom/pushgateway:v1.8.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9091:9091"
+
 volumes:
   redpanda-data:
   postgres-data:
   sync-outbox:
   minio-data:
   ollama-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+  promtail-data:
