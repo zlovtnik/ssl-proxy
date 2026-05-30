@@ -20,9 +20,12 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::sync::Arc;
-use std::time::Instant;
 use std::collections::VecDeque;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Instant;
 use tokio::signal;
 use tokio::sync::{watch, Semaphore};
 use tokio::task::JoinHandle;
@@ -50,6 +53,7 @@ pub async fn run_forever(
 
     let mut iteration: u64 = 0;
     let mut consecutive_permanent_failures: u32 = 0;
+    let alert_sweep_running = Arc::new(AtomicBool::new(false));
     const PERMANENT_FAILURE_CIRCUIT_BREAKER: u32 = 5;
 
     loop {
@@ -119,20 +123,31 @@ pub async fn run_forever(
             // later iteration when headroom is available.
             const ALERT_MIN_FREE_CONNECTIONS: usize = 3;
             let idle = pool.num_idle();
-            if idle >= ALERT_MIN_FREE_CONNECTIONS {
+            if alert_sweep_running.load(Ordering::Acquire) {
+                debug!("skipping alert sweep - previous sweep still running");
+            } else if idle >= ALERT_MIN_FREE_CONNECTIONS {
                 let alert_pool = alert_pool.clone();
-                tokio::spawn(async move {
-                    let alert_cfg = AlertConfig::default();
-                    if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
-                        warn!(error = %e, "alert sweep failed (background)");
-                    }
-                    // count_high_risk_aps also uses the alert pool so the main loop
-                    // is never blocked by a COUNT(*) on mv_ap_risk_score.
-                    match db::count_high_risk_aps(&alert_pool, 0.75).await {
-                        Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
-                        Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
-                    }
-                });
+                let alert_sweep_running = Arc::clone(&alert_sweep_running);
+                if alert_sweep_running
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    debug!("skipping alert sweep - previous sweep already claimed");
+                } else {
+                    tokio::spawn(async move {
+                        let _guard = AlertSweepGuard(alert_sweep_running);
+                        let alert_cfg = AlertConfig::default();
+                        if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
+                            warn!(error = %e, "alert sweep failed (background)");
+                        }
+                        // count_high_risk_aps also uses the alert pool so the main loop
+                        // is never blocked by a COUNT(*) on mv_ap_risk_score.
+                        match db::count_high_risk_aps(&alert_pool, 0.75).await {
+                            Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
+                            Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
+                        }
+                    });
+                }
             } else {
                 debug!(
                     idle_connections = idle,
@@ -150,6 +165,14 @@ pub async fn run_forever(
 
     info!("worker finished");
     Ok(())
+}
+
+struct AlertSweepGuard(Arc<AtomicBool>);
+
+impl Drop for AlertSweepGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// Result of a single `run_once` pass.
@@ -259,7 +282,9 @@ pub async fn process_jobs(
     for i in 0..n {
         let chunk = chunks[i].clone();
         let prepared = match next_prepare.take() {
-            Some(handle) => handle.await.unwrap_or_else(|e| panic!("prepare panicked: {e}")),
+            Some(handle) => handle
+                .await
+                .unwrap_or_else(|e| panic!("prepare panicked: {e}")),
             None => prepare_chunk(config, pool, chunk).await,
         };
 
@@ -278,7 +303,14 @@ pub async fn process_jobs(
         let embedder_clone = embedder.clone();
         let embed_sem_clone = Arc::clone(&embed_sem);
         let embed_handle = tokio::spawn(async move {
-            embed_chunk(&cfg_clone, &pool_clone, &embedder_clone, prepared, &embed_sem_clone).await
+            embed_chunk(
+                &cfg_clone,
+                &pool_clone,
+                &embedder_clone,
+                prepared,
+                &embed_sem_clone,
+            )
+            .await
         });
         embed_handles.push_back(embed_handle);
 
@@ -286,10 +318,14 @@ pub async fn process_jobs(
         if let Some(front) = embed_handles.front() {
             if front.is_finished() {
                 let handle = embed_handles.pop_front().unwrap();
-                let embedded = handle.await.unwrap_or_else(|e| panic!("embed panicked: {e}"));
+                let embedded = handle
+                    .await
+                    .unwrap_or_else(|e| panic!("embed panicked: {e}"));
 
                 if let Some(handle) = complete_handle.take() {
-                    let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));
+                    let result = handle
+                        .await
+                        .unwrap_or_else(|e| panic!("complete panicked: {e}"));
                     succeeded += result.succeeded;
                     failed += result.failed;
                 }
@@ -307,10 +343,14 @@ pub async fn process_jobs(
 
     // Drain remaining embed tasks in order, spawning completes as each finishes.
     while let Some(handle) = embed_handles.pop_front() {
-        let embedded = handle.await.unwrap_or_else(|e| panic!("embed panicked: {e}"));
+        let embedded = handle
+            .await
+            .unwrap_or_else(|e| panic!("embed panicked: {e}"));
 
         if let Some(handle) = complete_handle.take() {
-            let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));
+            let result = handle
+                .await
+                .unwrap_or_else(|e| panic!("complete panicked: {e}"));
             succeeded += result.succeeded;
             failed += result.failed;
         }
@@ -325,12 +365,17 @@ pub async fn process_jobs(
     }
 
     if let Some(handle) = complete_handle {
-        let result = handle.await.unwrap_or_else(|e| panic!("complete panicked: {e}"));
+        let result = handle
+            .await
+            .unwrap_or_else(|e| panic!("complete panicked: {e}"));
         succeeded += result.succeeded;
         failed += result.failed;
     }
 
-    debug!(total, succeeded, failed, permanent_failed, "process_jobs done");
+    debug!(
+        total,
+        succeeded, failed, permanent_failed, "process_jobs done"
+    );
     (succeeded, permanent_failed)
 }
 
@@ -365,7 +410,11 @@ struct CompleteChunkResult {
     failed: usize,
 }
 
-async fn prepare_chunk(config: &Config, pool: &PgPool, jobs: Vec<EmbeddingJob>) -> PrepareChunkResult {
+async fn prepare_chunk(
+    config: &Config,
+    pool: &PgPool,
+    jobs: Vec<EmbeddingJob>,
+) -> PrepareChunkResult {
     let start = Instant::now();
     let batch_size = jobs.len();
 
@@ -403,9 +452,7 @@ async fn prepare_chunk(config: &Config, pool: &PgPool, jobs: Vec<EmbeddingJob>) 
                     // Truncate at the last newline before the character limit so we don't
                     // cut a line in the middle (preserving the structured field format).
                     let limit = max_chars;
-                    let cut = trimmed.text[..limit]
-                        .rfind('\n')
-                        .unwrap_or(limit);
+                    let cut = trimmed.text[..limit].rfind('\n').unwrap_or(limit);
                     trimmed.text.truncate(cut);
                     trimmed.text.push_str("\n[truncated]");
                     truncated_count += 1;
@@ -429,9 +476,19 @@ async fn prepare_chunk(config: &Config, pool: &PgPool, jobs: Vec<EmbeddingJob>) 
 
     let prepare_ms = start.elapsed().as_millis() as u64;
     if truncated_count > 0 {
-        debug!(truncated_count, max_input_tokens = config.max_input_tokens, "inputs truncated to fit max_input_tokens");
+        debug!(
+            truncated_count,
+            max_input_tokens = config.max_input_tokens,
+            "inputs truncated to fit max_input_tokens"
+        );
     }
-    debug!(batch_size, prepare_ms, prepared = prepared.len(), failed, "prepare_chunk done");
+    debug!(
+        batch_size,
+        prepare_ms,
+        prepared = prepared.len(),
+        failed,
+        "prepare_chunk done"
+    );
 
     PrepareChunkResult {
         prepared,
@@ -554,9 +611,7 @@ async fn complete_chunk(
     let batch_rows: Vec<CompleteBatchRow> = embedded
         .items
         .iter()
-        .map(|(p, v)| {
-            db::complete_batch_row(&p.job, &p.input, &p.content_sha256, v, dimensions)
-        })
+        .map(|(p, v)| db::complete_batch_row(&p.job, &p.input, &p.content_sha256, v, dimensions))
         .collect();
 
     match db::complete_embedding_batch(pool, &batch_rows).await {
@@ -567,8 +622,7 @@ async fn complete_chunk(
             } else if completed > 0 {
                 warn!(
                     expected = batch_rows.len(),
-                    completed,
-                    "bulk complete partial, falling back per job"
+                    completed, "bulk complete partial, falling back per job"
                 );
                 let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
                 succeeded = s;
@@ -620,7 +674,10 @@ async fn complete_jobs_fallback(
             let pool = pool.clone();
             let dimensions = config.dimensions;
             async move {
-                let _permit = semaphore.acquire().await.expect("complete semaphore closed");
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("complete semaphore closed");
                 match complete_job_pipeline(&pool, dimensions, prepared, vector).await {
                     Ok(()) => Ok(()),
                     Err(e) => {
@@ -655,11 +712,7 @@ fn log_batch_metrics(
 ) {
     info!(
         prepare_ms,
-        embed_ms,
-        complete_ms,
-        jobs_ok,
-        jobs_failed,
-        "batch timing"
+        embed_ms, complete_ms, jobs_ok, jobs_failed, "batch timing"
     );
 }
 

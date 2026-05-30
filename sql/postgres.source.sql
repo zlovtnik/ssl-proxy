@@ -1851,31 +1851,41 @@ $$;
 -- Track 6.1: Composite AP risk score combining deauth, signal, typosquat,
 -- vendor mismatch, and embedding outlier signals into a single score.
 create or replace view v_ap_risk_score as
-with deauth_scores as (
+with alert_bssid_scores as (
   select
-    coalesce(source_mac, metadata->>'bssid') as bssid,
-    score as deauth_score
+    lower(nullif(trim(coalesce(source_mac, metadata->>'bssid')), '')) as bssid,
+    alert_type,
+    metadata,
+    score
   from vec_alerts
-  where alert_type in ('rogue_cluster', 'deauth_flood')
+  where nullif(trim(coalesce(source_mac, metadata->>'bssid')), '') is not null
     and created_at >= now() - interval '1 hour'
+),
+deauth_scores as (
+  select
+    bssid,
+    max(score) as deauth_score
+  from alert_bssid_scores
+  where alert_type in ('rogue_cluster', 'deauth_flood')
+  group by bssid
 ),
 signal_anomaly_scores as (
   select
-    coalesce(source_mac, metadata->>'bssid') as bssid,
-    score as signal_anomaly_score
-  from vec_alerts
+    bssid,
+    max(score) as signal_anomaly_score
+  from alert_bssid_scores
   where alert_type in ('signal_anomaly', 'rogue_cluster')
     and metadata->>'reason' in ('signal_jump', 'channel_band_conflict')
-    and created_at >= now() - interval '1 hour'
+  group by bssid
 ),
 typosquat_scores as (
   select
-    coalesce(source_mac, metadata->>'bssid') as bssid,
-    score as typosquat_score
-  from vec_alerts
+    bssid,
+    max(score) as typosquat_score
+  from alert_bssid_scores
   where alert_type = 'rogue_cluster'
     and metadata->>'reason' in ('ssid_typosquat', 'vendor_conflict', 'bssid_spoofing')
-    and created_at >= now() - interval '1 hour'
+  group by bssid
 ),
 vendor_mismatch_scores as (
   select
@@ -1891,19 +1901,26 @@ vendor_mismatch_scores as (
 ),
 embedding_outlier_scores as (
   select
-    coalesce(p.left_source_mac, p.right_source_mac) as bssid,
+    lower(nullif(trim(coalesce(p.left_source_mac, p.right_source_mac)), '')) as bssid,
     max(p.cosine_distance) as embedding_outlier_score
   from vec_similarity_pairs p
   where p.computed_at >= now() - interval '1 hour'
     and p.cosine_distance > 0.15
-  group by coalesce(p.left_source_mac, p.right_source_mac)
+    and nullif(trim(coalesce(p.left_source_mac, p.right_source_mac)), '') is not null
+  group by lower(nullif(trim(coalesce(p.left_source_mac, p.right_source_mac)), ''))
 ),
 all_bssids as (
-  select distinct coalesce(source_mac, metadata->>'bssid') as bssid from vec_alerts
+  select distinct lower(nullif(trim(coalesce(source_mac, metadata->>'bssid')), '')) as bssid
+  from vec_alerts
+  where nullif(trim(coalesce(source_mac, metadata->>'bssid')), '') is not null
   union
-  select distinct left_source_mac from vec_similarity_pairs where left_source_mac is not null
+  select distinct lower(nullif(trim(left_source_mac), '')) as bssid
+  from vec_similarity_pairs
+  where nullif(trim(left_source_mac), '') is not null
   union
-  select distinct right_source_mac from vec_similarity_pairs where right_source_mac is not null
+  select distinct lower(nullif(trim(right_source_mac), '')) as bssid
+  from vec_similarity_pairs
+  where nullif(trim(right_source_mac), '') is not null
 )
 select
   a.bssid,

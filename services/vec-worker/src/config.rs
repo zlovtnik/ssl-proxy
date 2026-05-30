@@ -72,6 +72,8 @@ pub struct Config {
     pub request_batch_max: usize,
     /// Override for `PgPool` max connections; when unset, derived from concurrency knobs.
     pub database_pool_max_connections: Option<u32>,
+    /// Minimum pre-warmed connections for the main worker pool (default: 1).
+    pub database_pool_min_connections: u32,
     /// Connection pool size for the alert sweep pool (default: 4).
     pub alert_pool_max_connections: u32,
     /// Run a single pass and exit (set by CLI `--once` flag).
@@ -100,6 +102,12 @@ impl Config {
             .saturating_add(self.max_concurrent_prepares)
             .saturating_add(4); // lease + mark_worker_state + release_expired_leases + headroom
         (derived.max(10)) as u32
+    }
+
+    /// Effective Postgres pool prewarm size, clamped to the configured maximum.
+    pub fn effective_pool_min_connections(&self) -> u32 {
+        self.database_pool_min_connections
+            .min(self.effective_pool_max_connections())
     }
 
     /// Load and validate configuration from environment variables.
@@ -140,8 +148,8 @@ impl Config {
 
         // Parse and validate provider if embeddings are enabled.
         let provider = if embeddings_enabled {
-            let raw = std::env::var("VECTOR_EMBEDDING_PROVIDER")
-                .unwrap_or_else(|_| "ollama".to_string());
+            let raw =
+                std::env::var("VECTOR_EMBEDDING_PROVIDER").unwrap_or_else(|_| "ollama".to_string());
             EmbeddingProvider::from_str(&raw).ok_or_else(|| {
                 WorkerError::config(format!(
                     "VECTOR_EMBEDDING_PROVIDER must be 'ollama' or 'llamacpp', got '{}'",
@@ -159,8 +167,8 @@ impl Config {
             EmbeddingProvider::Ollama => "http://127.0.0.1:11434",
             EmbeddingProvider::LlamaCpp => "http://127.0.0.1:8080",
         };
-        let embed_url = std::env::var("VECTOR_EMBEDDING_URL")
-            .unwrap_or_else(|_| default_url.to_string());
+        let embed_url =
+            std::env::var("VECTOR_EMBEDDING_URL").unwrap_or_else(|_| default_url.to_string());
 
         let model = std::env::var("VECTOR_EMBEDDING_MODEL")
             .ok()
@@ -179,20 +187,19 @@ impl Config {
             ));
         }
 
-        let dimensions = match std::env::var("VECTOR_EMBEDDING_DIMENSIONS") {
-            Ok(val) => val.parse::<usize>().map_err(|_| {
-                WorkerError::config(format!(
-                    "VECTOR_EMBEDDING_DIMENSIONS must be a valid usize, got '{}'",
-                    val
-                ))
-            })?,
-            Err(_) if embeddings_enabled => {
-                return Err(WorkerError::config(
+        let dimensions =
+            match std::env::var("VECTOR_EMBEDDING_DIMENSIONS") {
+                Ok(val) => val.parse::<usize>().map_err(|_| {
+                    WorkerError::config(format!(
+                        "VECTOR_EMBEDDING_DIMENSIONS must be a valid usize, got '{}'",
+                        val
+                    ))
+                })?,
+                Err(_) if embeddings_enabled => return Err(WorkerError::config(
                     "VECTOR_EMBEDDING_DIMENSIONS is required when VECTOR_EMBEDDINGS_ENABLED=true",
-                ))
-            }
-            Err(_) => 768,
-        };
+                )),
+                Err(_) => 768,
+            };
         if dimensions == 0 {
             return Err(WorkerError::config(
                 "VECTOR_EMBEDDING_DIMENSIONS must be >= 1",
@@ -243,22 +250,16 @@ impl Config {
                     .ok()
                     .filter(|s| !s.is_empty())
             })
-            .ok_or_else(|| {
-                WorkerError::config(
-                    "DATABASE_URL or SYNC_DATABASE_URL is required",
-                )
-            })?;
+            .ok_or_else(|| WorkerError::config("DATABASE_URL or SYNC_DATABASE_URL is required"))?;
 
         let poll_interval_secs = read_u64("POLL_INTERVAL_SECONDS", 5)?;
-        let max_concurrent_prepares =
-            read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES", 8)?;
+        let max_concurrent_prepares = read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES", 8)?;
         if max_concurrent_prepares == 0 {
             return Err(WorkerError::config(
                 "VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES must be >= 1",
             ));
         }
-        let max_concurrent_completes =
-            read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES", 16)?;
+        let max_concurrent_completes = read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES", 16)?;
         if max_concurrent_completes == 0 {
             return Err(WorkerError::config(
                 "VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES must be >= 1",
@@ -287,6 +288,7 @@ impl Config {
             }
             Err(_) => None,
         };
+        let database_pool_min_connections = read_u32("DATABASE_POOL_MIN_CONNECTIONS", 1)?;
 
         let alert_pool_max_connections = match std::env::var("ALERT_POOL_MAX_CONNECTIONS") {
             Ok(v) => {
@@ -329,6 +331,7 @@ impl Config {
             max_concurrent_embed_requests,
             request_batch_max,
             database_pool_max_connections,
+            database_pool_min_connections,
             alert_pool_max_connections,
             once: false,
             max_input_tokens,
@@ -355,8 +358,14 @@ impl std::fmt::Debug for SanitizedConfig<'_> {
             .field("worker_name", &self.inner.worker_name)
             .field("database_url", &redact_url(&self.inner.database_url))
             .field("poll_interval_secs", &self.inner.poll_interval_secs)
-            .field("max_concurrent_prepares", &self.inner.max_concurrent_prepares)
-            .field("max_concurrent_completes", &self.inner.max_concurrent_completes)
+            .field(
+                "max_concurrent_prepares",
+                &self.inner.max_concurrent_prepares,
+            )
+            .field(
+                "max_concurrent_completes",
+                &self.inner.max_concurrent_completes,
+            )
             .field(
                 "max_concurrent_embed_requests",
                 &self.inner.max_concurrent_embed_requests,
@@ -365,6 +374,14 @@ impl std::fmt::Debug for SanitizedConfig<'_> {
             .field(
                 "database_pool_max_connections",
                 &self.inner.database_pool_max_connections,
+            )
+            .field(
+                "database_pool_min_connections",
+                &self.inner.database_pool_min_connections,
+            )
+            .field(
+                "effective_pool_min_connections",
+                &self.inner.effective_pool_min_connections(),
             )
             .field(
                 "alert_pool_max_connections",
@@ -418,6 +435,14 @@ impl std::fmt::Debug for Config {
                 &self.database_pool_max_connections,
             )
             .field(
+                "database_pool_min_connections",
+                &self.database_pool_min_connections,
+            )
+            .field(
+                "effective_pool_min_connections",
+                &self.effective_pool_min_connections(),
+            )
+            .field(
                 "alert_pool_max_connections",
                 &self.alert_pool_max_connections,
             )
@@ -448,9 +473,19 @@ fn read_bool(var: &str, default: bool) -> Result<bool, WorkerError> {
 /// Read a u64 environment variable with a fallback default.
 fn read_u64(var: &str, default: u64) -> Result<u64, WorkerError> {
     match std::env::var(var) {
-        Ok(v) => v.parse::<u64>().map_err(|_| {
-            WorkerError::config(format!("{var} must be a valid u64, got '{v}'"))
-        }),
+        Ok(v) => v
+            .parse::<u64>()
+            .map_err(|_| WorkerError::config(format!("{var} must be a valid u64, got '{v}'"))),
+        Err(_) => Ok(default),
+    }
+}
+
+/// Read a u32 environment variable with a fallback default.
+fn read_u32(var: &str, default: u32) -> Result<u32, WorkerError> {
+    match std::env::var(var) {
+        Ok(v) => v
+            .parse::<u32>()
+            .map_err(|_| WorkerError::config(format!("{var} must be a valid u32, got '{v}'"))),
         Err(_) => Ok(default),
     }
 }
@@ -458,9 +493,9 @@ fn read_u64(var: &str, default: u64) -> Result<u64, WorkerError> {
 /// Read a usize environment variable with a fallback default.
 fn read_usize(var: &str, default: usize) -> Result<usize, WorkerError> {
     match std::env::var(var) {
-        Ok(v) => v.parse::<usize>().map_err(|_| {
-            WorkerError::config(format!("{var} must be a valid usize, got '{v}'"))
-        }),
+        Ok(v) => v
+            .parse::<usize>()
+            .map_err(|_| WorkerError::config(format!("{var} must be a valid usize, got '{v}'"))),
         Err(_) => Ok(default),
     }
 }
@@ -474,9 +509,8 @@ mod hostname {
         {
             use std::os::unix::ffi::OsStrExt;
             let mut buf = [0u8; 256];
-            let result = unsafe {
-                libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len())
-            };
+            let result =
+                unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
             if result == 0 {
                 let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
                 Ok(std::ffi::OsStr::from_bytes(&buf[..len]).to_os_string())
@@ -503,10 +537,7 @@ mod tests {
 
     impl EnvGuard {
         fn preserve(keys: &[&'static str]) -> Self {
-            let values = keys
-                .iter()
-                .map(|&key| (key, env::var(key).ok()))
-                .collect();
+            let values = keys.iter().map(|&key| (key, env::var(key).ok())).collect();
             Self(values)
         }
 
@@ -547,6 +578,8 @@ mod tests {
             "VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES",
             "VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS",
             "DATABASE_POOL_MAX_CONNECTIONS",
+            "DATABASE_POOL_MIN_CONNECTIONS",
+            "ALERT_POOL_MAX_CONNECTIONS",
         ];
 
         let guard = EnvGuard::preserve(&keys);
@@ -565,6 +598,8 @@ mod tests {
         assert_eq!(cfg.max_concurrent_embed_requests, 4);
         assert_eq!(cfg.poll_interval_secs, 5);
         assert_eq!(cfg.effective_pool_max_connections(), 28);
+        assert_eq!(cfg.database_pool_min_connections, 1);
+        assert_eq!(cfg.effective_pool_min_connections(), 1);
 
         drop(guard);
     }

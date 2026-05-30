@@ -95,8 +95,14 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `4`
   - Maximum in-flight embedding HTTP requests across chunks (increase when the provider can serve parallel batches).
 - `DATABASE_POOL_MAX_CONNECTIONS`
-  - Default: `max(prepares, completes, embed_requests) + 2`, floor `10`
+  - Default: `max(prepares + completes + 4, 10)`
   - Postgres connection pool size for the worker.
+- `DATABASE_POOL_MIN_CONNECTIONS`
+  - Default: `1`
+  - Minimum pre-warmed connections for the main worker pool. Keep this low when running several replicas against a small Postgres instance.
+- `ALERT_POOL_MAX_CONNECTIONS`
+  - Default: `4`
+  - Connection pool size for alert sweeps. The compose vector profile sets this to `1` per worker so materialized-view refreshes cannot multiply connection pressure.
 - `LOG_FORMAT`
   - Default: JSON structured logs
   - Set to `text`, `pretty`, or `human` for human-readable local output
@@ -421,7 +427,10 @@ Throughput comes from **larger lease batches**, **larger embed HTTP batches**, *
 VECTOR_EMBEDDING_BATCH_SIZE=64
 VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=32
 VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=2
-DATABASE_POOL_MAX_CONNECTIONS=16
+VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=2
+DATABASE_POOL_MAX_CONNECTIONS=8
+DATABASE_POOL_MIN_CONNECTIONS=1
+ALERT_POOL_MAX_CONNECTIONS=1
 ```
 
 Watch structured logs for `batch timing` (`prepare_ms`, `embed_ms`, `complete_ms`) and raise or lower batch sizes based on which stage dominates.
