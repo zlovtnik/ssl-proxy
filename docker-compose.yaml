@@ -135,6 +135,10 @@ services:
       - OTEL_SERVICE_NAME=java-coordinator
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator
       - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
+      - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
+      - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
+      - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
+      - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
     volumes:
       - sync-outbox:/sync-outbox
       - ./docker/redpanda:/app/docker/redpanda:ro
@@ -181,6 +185,10 @@ services:
       - OTEL_SERVICE_NAME=java-coordinator
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator-2
       - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
+      - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
+      - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
+      - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
+      - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
     volumes:
       - sync-outbox:/sync-outbox
       - ./docker/redpanda:/app/docker/redpanda:ro
@@ -225,6 +233,10 @@ services:
       - OTEL_SERVICE_NAME=java-coordinator
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator-3
       - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
+      - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
+      - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
+      - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
+      - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
     volumes:
       - sync-outbox:/sync-outbox
       - ./docker/redpanda:/app/docker/redpanda:ro
@@ -758,7 +770,7 @@ services:
       - ./docker/observability/alerts.yml:/etc/prometheus/alerts/alerts.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"
+      - "9090:9090"
     depends_on:
       - pushgateway
       - postgres-exporter
@@ -778,7 +790,7 @@ services:
       - ./docker/observability/loki.yml:/etc/loki/config.yml:ro
       - loki-data:/loki
     ports:
-      - "127.0.0.1:3100:3100"
+      - "3100:3100"
 
   promtail:
     image: grafana/promtail:3.1.1
@@ -798,7 +810,7 @@ services:
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     ports:
-      - "127.0.0.1:16686:16686"
+      - "16686:16686"
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.107.0
@@ -808,9 +820,9 @@ services:
     volumes:
       - ./docker/observability/otel-collector.yml:/etc/otel-collector/config.yml:ro
     ports:
-      - "127.0.0.1:4319:4317"
-      - "127.0.0.1:4320:4318"
-      - "127.0.0.1:8888:8888"
+      - "4319:4317"
+      - "4320:4318"
+      - "8888:8888"
     depends_on:
       - jaeger
 
@@ -826,7 +838,7 @@ services:
       - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "127.0.0.1:3004:3000"
+      - "3004:3000"
     depends_on:
       - prometheus
       - loki
@@ -838,7 +850,7 @@ services:
     environment:
       - DATA_SOURCE_NAME=postgresql://sync:sync@postgres:5432/sync?sslmode=disable
     ports:
-      - "127.0.0.1:9187:9187"
+      - "9187:9187"
     depends_on:
       postgres:
         condition: service_healthy
@@ -849,7 +861,7 @@ services:
     command:
       - --redis.addr=redis://redis:6379
     ports:
-      - "127.0.0.1:9121:9121"
+      - "9121:9121"
     depends_on:
       redis:
         condition: service_healthy
@@ -858,7 +870,7 @@ services:
     image: prom/pushgateway:v1.8.0
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9091:9091"
+      - "9091:9091"
 
 volumes:
   redpanda-data:

@@ -150,6 +150,35 @@ Additional toggles:
 - `LOG_FORMAT` for integration-console services
 - `PUSHGATEWAY_URL` for one-shot init jobs
 
+## Java Coordinator KEDA-Ready Metrics
+
+The Java coordinator owns stable Redpanda lag metrics for future KEDA Prometheus scaling. KEDA manifests are intentionally not created in this rollout; Helm still keeps the future-facing coordinator max at 5 replicas.
+
+Coordinator metrics exported at `/actuator/prometheus`:
+
+- `coordinator_redpanda_consumer_lag_records{role,consumer_group,topic}`
+- `coordinator_redpanda_topic_end_offset_records{role,consumer_group,topic}`
+- `coordinator_redpanda_consumer_committed_offset_records{role,consumer_group,topic}`
+- `coordinator_redpanda_lag_refresh_failures_total{role}`
+- `coordinator_redpanda_lag_stale_seconds{role,consumer_group,topic}`
+- `coordinator_route_running{role,route}`
+- `coordinator_route_suspended{role,route}`
+- `coordinator_backpressure_active`
+
+Use `max(...)` in autoscaling queries so multiple coordinator replicas do not double count the same consumer-group lag:
+
+```promql
+max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="scan",topic="sync.scan.request"})
+max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="result",topic="sync.oracle.result"})
+```
+
+Runtime controls:
+
+- `SYNC_REDPANDA_LAG_METRICS_ENABLED=true`
+- `SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=10000`
+- `SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=5000`
+- `SYNC_HEARTBEAT_LOG_INTERVAL_MS=15000`
+
 ## Port Map (local host bindings)
 
 - Grafana: `127.0.0.1:3004`

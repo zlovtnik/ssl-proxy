@@ -9,11 +9,13 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.util.concurrent.TimeUnit;
 
 @SpringBootApplication
 @EnableConfigurationProperties
+@EnableScheduling
 public class CoordinatorApplication {
 
     private static final Logger log = LoggerFactory.getLogger(CoordinatorApplication.class);

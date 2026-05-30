@@ -35,6 +35,7 @@ dependencies {
     implementation("org.apache.camel.springboot:camel-direct-starter:$camelVersion")
     implementation("org.apache.camel.springboot:camel-file-starter:$camelVersion")
     implementation("org.apache.camel.springboot:camel-jackson-starter:$camelVersion")
+    implementation("org.apache.kafka:kafka-clients")
 
     // Database
     implementation("org.postgresql:postgresql:$postgresqlVersion")

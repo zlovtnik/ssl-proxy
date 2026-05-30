@@ -28,12 +28,12 @@
       "id": 1,
       "targets": [
         {
-          "expr": "sum(rate(camel_exchanges_total{route=~\"sync.*\"}[5m])) by (route)",
-          "legendFormat": "{{route}}",
+          "expr": "max(coordinator_redpanda_consumer_lag_records{job=\"java-coordinator\"}) by (role, topic, consumer_group)",
+          "legendFormat": "{{role}} {{topic}}",
           "refId": "A"
         }
       ],
-      "title": "Coordinator Route Throughput",
+      "title": "Coordinator Redpanda Consumer Lag",
       "type": "timeseries"
     },
     {
@@ -43,7 +43,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -56,12 +56,17 @@
       "id": 2,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(camel_route_processing_seconds_bucket{route=~\"sync.*\"}[5m])) by (route, le))",
-          "legendFormat": "{{route}}",
+          "expr": "max(coordinator_pending_ledger_count{job=\"java-coordinator\"})",
+          "legendFormat": "pending ledger",
           "refId": "A"
+        },
+        {
+          "expr": "max(coordinator_backpressure_active{job=\"java-coordinator\"})",
+          "legendFormat": "backpressure active",
+          "refId": "B"
         }
       ],
-      "title": "Pipeline Route Latency p95",
+      "title": "Coordinator Pending Ledger and Backpressure",
       "type": "timeseries"
     },
     {
@@ -84,12 +89,22 @@
       "id": 3,
       "targets": [
         {
-          "expr": "sum(rate(camel_exchanges_failed_total{route=~\"sync.*\"}[5m])) by (route)",
-          "legendFormat": "{{route}}",
+          "expr": "sum(rate(coordinator_redpanda_lag_refresh_failures_total{job=\"java-coordinator\"}[5m])) by (role)",
+          "legendFormat": "lag refresh failures {{role}}",
           "refId": "A"
+        },
+        {
+          "expr": "max(coordinator_redpanda_lag_stale_seconds{job=\"java-coordinator\"}) by (role, topic)",
+          "legendFormat": "stale seconds {{role}} {{topic}}",
+          "refId": "B"
+        },
+        {
+          "expr": "max(coordinator_route_running{job=\"java-coordinator\"}) by (role, route)",
+          "legendFormat": "route running {{role}}",
+          "refId": "C"
         }
       ],
-      "title": "Route Failures",
+      "title": "Coordinator Lag Metrics and Route State",
       "type": "timeseries"
     },
     {
@@ -106,11 +121,11 @@
       "id": 4,
       "targets": [
         {
-          "expr": "{service=~\"java-coordinator|java-coordinator-2|java-coordinator-3\"} |= \"trace_id\"",
+          "expr": "{service=~\"java-coordinator|java-coordinator-2|java-coordinator-3\"} |~ \"redpanda_lag_metrics|backpressure|heartbeat|batch_dispatch\"",
           "refId": "A"
         }
       ],
-      "title": "Coordinator Logs with Trace IDs",
+      "title": "Coordinator Observability Logs",
       "type": "logs"
     }
   ],

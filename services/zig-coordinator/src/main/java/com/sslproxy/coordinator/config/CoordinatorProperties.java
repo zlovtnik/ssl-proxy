@@ -83,6 +83,10 @@ public class CoordinatorProperties {
     private int backpressureBudgetMultiplier = 4;
     private int adaptivePullChangeThreshold = 50;
     private int adaptivePullMinRestartIntervalMs = 10_000;
+    private boolean redpandaLagMetricsEnabled = true;
+    private int redpandaLagMetricsPollIntervalMs = 10_000;
+    private int redpandaLagMetricsTimeoutMs = 5_000;
+    private int heartbeatLogIntervalMs = 15_000;
 
     // === Health check ===
     private String mode = "run";
@@ -223,6 +227,18 @@ public class CoordinatorProperties {
 
     public int getAdaptivePullMinRestartIntervalMs() { return adaptivePullMinRestartIntervalMs; }
     public void setAdaptivePullMinRestartIntervalMs(int adaptivePullMinRestartIntervalMs) { this.adaptivePullMinRestartIntervalMs = adaptivePullMinRestartIntervalMs; }
+
+    public boolean isRedpandaLagMetricsEnabled() { return redpandaLagMetricsEnabled; }
+    public void setRedpandaLagMetricsEnabled(boolean redpandaLagMetricsEnabled) { this.redpandaLagMetricsEnabled = redpandaLagMetricsEnabled; }
+
+    public int getRedpandaLagMetricsPollIntervalMs() { return redpandaLagMetricsPollIntervalMs; }
+    public void setRedpandaLagMetricsPollIntervalMs(int redpandaLagMetricsPollIntervalMs) { this.redpandaLagMetricsPollIntervalMs = redpandaLagMetricsPollIntervalMs; }
+
+    public int getRedpandaLagMetricsTimeoutMs() { return redpandaLagMetricsTimeoutMs; }
+    public void setRedpandaLagMetricsTimeoutMs(int redpandaLagMetricsTimeoutMs) { this.redpandaLagMetricsTimeoutMs = redpandaLagMetricsTimeoutMs; }
+
+    public int getHeartbeatLogIntervalMs() { return heartbeatLogIntervalMs; }
+    public void setHeartbeatLogIntervalMs(int heartbeatLogIntervalMs) { this.heartbeatLogIntervalMs = heartbeatLogIntervalMs; }
 
     public String getMode() { return mode; }
     public void setMode(String mode) { this.mode = mode; }

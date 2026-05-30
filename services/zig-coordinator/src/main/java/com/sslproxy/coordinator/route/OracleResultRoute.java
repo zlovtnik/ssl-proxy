@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Consumes Oracle results from sync.oracle.result topic.
  * Replaces sync_handlers.zig handleResults() and the CLI-based
@@ -43,7 +45,18 @@ public class OracleResultRoute extends RouteBuilder {
                 + "&consumersCount=1"
                 + "&breakOnFirstError=true")
         .routeId("oracle-result-consumer")
-        .log(LoggingLevel.TRACE, "Received Oracle result: ${body}")
+        .process(exchange -> {
+            String body = exchange.getIn().getBody(String.class);
+            int payloadBytes = body == null ? 0 : body.getBytes(StandardCharsets.UTF_8).length;
+            log.atTrace()
+                    .addKeyValue("event", "batch_result_ingest")
+                    .addKeyValue("status", "received")
+                    .addKeyValue("route", "oracle-result-consumer")
+                    .addKeyValue("topic", props.getResultTopic())
+                    .addKeyValue("consumer_group", props.getResultConsumer())
+                    .addKeyValue("payload_bytes", payloadBytes)
+                    .log("oracle result received");
+        })
         .process(resultProcessor);
 
         // Timer-based flush for partial batches - ensures results don't sit in the

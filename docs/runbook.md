@@ -170,7 +170,7 @@ All views are optimized for ADB columnar storage.
 
 ### 7. Compose Startup Log Notes
 
-- `zig-coordinator` is the sync control-plane service. On startup it applies the Postgres sync schema with `psql -f /app/sql/postgres.sql`; confirm this line appears with `docker compose logs zig-coordinator`.
+- `java-coordinator` is the sync control-plane service. The source still lives under `services/zig-coordinator/` for historical reasons, but the runtime service is Java/Spring/Camel; inspect it with `docker compose logs java-coordinator`.
 - `sql/postgres.sql` is now a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Regenerate split files from `sql/postgres.source.sql` with `scripts/split_postgres_schema.py`.
 - `services/db-migrator` is the canonical CLI for schema ordering and validation:
   - `cargo run -p db-migrator -- list --sql-dir ./sql`
@@ -179,7 +179,7 @@ All views are optimized for ADB columnar storage.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
-- `redpanda-init` must complete successfully before `zig-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the services at runtime: `zig-coordinator-scan`, `oracle-worker-load`, and `zig-coordinator-result`.
+- `redpanda-init` must complete successfully before `java-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the services at runtime: `zig-coordinator-scan`, `oracle-worker-load`, and `zig-coordinator-result`.
 - `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
 ### 8. Wireless Audit Minute Cleanup
@@ -205,15 +205,23 @@ Manual checks:
 docker compose run --rm redpanda-init rpk topic describe sync.scan.request --brokers redpanda:9092
 docker compose run --rm redpanda-init rpk topic describe sync.oracle.load --brokers redpanda:9092
 docker compose run --rm redpanda-init rpk group describe zig-coordinator-scan --brokers redpanda:9092
+curl -s http://127.0.0.1:8081/actuator/prometheus | grep '^coordinator_redpanda_consumer_lag_records'
 docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_events group by status"
 docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_jobs; select count(*) from sync_batches;"
+```
+
+KEDA-ready coordinator lag PromQL uses `max(...)` so multi-replica scrapes do not double count the same consumer-group lag:
+
+```promql
+max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="scan",topic="sync.scan.request"})
+max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="result",topic="sync.oracle.result"})
 ```
 
 If `oracle-worker` logs `worker_load classification=poison` or `unsupported stream_name wireless.audit`, confirm the worker is subscribed to the load topic and that only `proxy.events` is configured for Oracle dispatch:
 
 ```sh
 docker compose run --rm redpanda-init rpk group describe oracle-worker-load --brokers redpanda:9092
-docker compose exec -T zig-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
+docker compose exec -T java-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
 docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batches batch join sync_jobs job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
 ```
 
@@ -221,7 +229,7 @@ Recovery path:
 
 ```sh
 docker compose run --rm redpanda-init
-docker compose restart zig-coordinator oracle-worker
+docker compose restart java-coordinator oracle-worker
 ```
 
 If the consumer group offset is stuck after a poison load message, reset it after the bad row is addressed:
