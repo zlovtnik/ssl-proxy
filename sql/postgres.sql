@@ -102,6 +102,9 @@
 \ir views/012_v_vec_similarity_audit.sql
 \ir views/013_v_wireless_device_inventory.sql
 
+-- unschedule stale cron jobs before materialized view DDL
+\ir cron/000_unschedule_cron_jobs.sql
+
 -- materialized_views
 \ir materialized_views/001_mv_ap_risk_score.sql
 \ir materialized_views/002_v_device_repetition_score.sql

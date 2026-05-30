@@ -51,6 +51,14 @@ public class RedpandaLagMetricsService {
         this(registry, props, () -> AdminClient.create(adminClientConfig(props)), Clock.systemUTC());
     }
 
+    // CGLIB proxy constructor — null/empty defaults, never invoked on the proxy directly
+    RedpandaLagMetricsService() {
+        this.props = null;
+        this.adminClientSupplier = null;
+        this.clock = null;
+        this.metersByTarget = Map.of();
+    }
+
     RedpandaLagMetricsService(MeterRegistry registry,
                               CoordinatorProperties props,
                               Supplier<AdminClient> adminClientSupplier,
