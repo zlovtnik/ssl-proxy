@@ -95,6 +95,22 @@ begin
     where existing.embedding_id is null
        or fs.updated_at > existing.embedded_at
   ),
+  timing_profile_jobs as (
+    select
+      'vec_timing_profiles'::text as source_table,
+      tp.profile_id::text as source_key,
+      p_model as embedding_model,
+      'timing_profile'::text as embedding_kind,
+      17 as priority
+    from vec_timing_profiles tp
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_timing_profiles'
+     and existing.source_key = tp.profile_id::text
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'timing_profile'
+    where existing.embedding_id is null
+       or tp.updated_at > existing.embedded_at
+  ),
   graph_jobs as (
     select
       'vec_infrastructure_graph'::text as source_table,
@@ -164,6 +180,8 @@ begin
       select * from behaviour_jobs
       union all
       select * from frame_sequence_jobs
+      union all
+      select * from timing_profile_jobs
       union all
       select * from baseline_jobs
       union all

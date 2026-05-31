@@ -94,6 +94,15 @@ embedding_outlier_scores as (
   where bssid is not null
   group by bssid
 ),
+baseline_deviation_scores as (
+  select
+    bssid,
+    max(abs(anomaly_score)) as baseline_deviation_score
+  from v_bssid_anomaly_score
+  where anomaly_score is not null
+    and abs(anomaly_score) > 2.0
+  group by bssid
+),
 all_bssids as (
   select distinct bssid
   from alert_bssid_scores
@@ -101,6 +110,9 @@ all_bssids as (
   select distinct bssid
   from similarity_bssid_rows
   where bssid is not null
+  union
+  select distinct bssid
+  from baseline_deviation_scores
 )
 select
   a.bssid,
@@ -109,14 +121,17 @@ select
   coalesce(t.typosquat_score, 0::double precision) as typosquat_score,
   coalesce(v.vendor_mismatch_score, 0::double precision) as vendor_mismatch_score,
   coalesce(e.embedding_outlier_score, 0::double precision) as embedding_outlier_score,
-  (coalesce(d.deauth_score, 0::double precision) * 0.25
-   + coalesce(s.signal_anomaly_score, 0::double precision) * 0.20
-   + coalesce(t.typosquat_score, 0::double precision) * 0.20
+  coalesce(b.baseline_deviation_score, 0::double precision) as baseline_deviation_score,
+  (coalesce(d.deauth_score, 0::double precision) * 0.20
+   + coalesce(s.signal_anomaly_score, 0::double precision) * 0.15
+   + coalesce(t.typosquat_score, 0::double precision) * 0.15
    + coalesce(v.vendor_mismatch_score, 0::double precision) * 0.15
-   + coalesce(e.embedding_outlier_score, 0::double precision) * 0.20) as composite_risk
+   + coalesce(e.embedding_outlier_score, 0::double precision) * 0.15
+   + coalesce(b.baseline_deviation_score, 0::double precision) * 0.20) as composite_risk
 from all_bssids a
 left join deauth_scores d on d.bssid = a.bssid
 left join signal_anomaly_scores s on s.bssid = a.bssid
 left join typosquat_scores t on t.bssid = a.bssid
 left join vendor_mismatch_scores v on v.bssid_oui = lower(substr(regexp_replace(a.bssid, '[:\-]', '', 'g'), 1, 6))
-left join embedding_outlier_scores e on e.bssid = a.bssid;
+left join embedding_outlier_scores e on e.bssid = a.bssid
+left join baseline_deviation_scores b on b.bssid = a.bssid;

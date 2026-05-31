@@ -4,7 +4,7 @@
 create or replace function vec_apply_similarity_flags(
   p_model text default 'nomic-embed-text-v2-moe',
   p_event_dup_distance_threshold double precision default 0.05,
-  p_behaviour_similarity_threshold double precision default 0.92
+  p_behaviour_similarity_threshold double precision default 0.88
 )
 returns integer
 language plpgsql

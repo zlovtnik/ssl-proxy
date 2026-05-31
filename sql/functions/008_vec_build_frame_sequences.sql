@@ -37,7 +37,23 @@ begin
       coalesce(
         nullif(frame_subtype, ''),
         nullif(payload->>'frame_subtype', '')
-      ) as frame_subtype_value
+      ) as frame_subtype_value,
+      case
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('PROBE_REQ', 'PROBE_REQUEST', 'PROBE_RESP', 'PROBE_RESPONSE') then 'DISCOVERY'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('AUTH', 'AUTHENTICATION', 'ASSOC_REQ', 'ASSOCIATION_REQUEST', 'ASSOC_RESP', 'ASSOCIATION_RESPONSE',
+              'REASSOC_REQ', 'REASSOCIATION_REQUEST', 'REASSOC_RESP', 'REASSOCIATION_RESPONSE') then 'ASSOCIATION'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('DEAUTH', 'DEAUTHENTICATION', 'DISASSOC', 'DISASSOCIATION') then 'TERMINATION'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('EAPOL', 'EAPOL_KEY') then 'HANDSHAKE'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('DATA', 'DATA_QOS', 'QOS_DATA', 'NULL_DATA') then 'DATA'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) = 'BEACON' then 'BEACON'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) = 'ACTION' then 'ACTION'
+        else 'OTHER'
+      end as semantic_token
     from sync_events_expanded
     where stream_name = 'wireless.audit'
       and status = 'batched'
@@ -60,6 +76,7 @@ begin
         upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
         ' ' order by observed_at
       ) as sequence_tokens,
+      string_agg(semantic_token, ' ' order by observed_at) as semantic_tokens,
       count(*)::bigint as frame_count
     from base
     where session_key is not null
@@ -73,6 +90,7 @@ begin
     window_start,
     window_end,
     sequence_tokens,
+    semantic_tokens,
     frame_count,
     created_at,
     updated_at
@@ -85,6 +103,7 @@ begin
     window_start,
     window_end,
     sequence_tokens,
+    semantic_tokens,
     frame_count,
     now(),
     now()
@@ -96,6 +115,7 @@ begin
     window_start = excluded.window_start,
     window_end = excluded.window_end,
     sequence_tokens = excluded.sequence_tokens,
+    semantic_tokens = excluded.semantic_tokens,
     frame_count = excluded.frame_count,
     updated_at = now();
 

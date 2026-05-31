@@ -5,8 +5,8 @@
 //! main worker loop.
 
 use crate::WorkerError;
-use sqlx::PgPool;
 use serde::Serialize;
+use sqlx::PgPool;
 use tracing::{info, instrument, warn};
 
 /// Threshold configuration for alert generation.
@@ -140,12 +140,10 @@ pub async fn check_near_duplicates(
 
 #[instrument(skip(pool))]
 pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
-    let inserted: i32 = sqlx::query_scalar(
-        "SELECT vec_detect_rogue_clusters()",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| WorkerError::alerts(format!("rogue cluster query failed: {e}")))?;
+    let inserted: i32 = sqlx::query_scalar("SELECT vec_detect_rogue_clusters()")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| WorkerError::alerts(format!("rogue cluster query failed: {e}")))?;
 
     let inserted = inserted.max(0) as usize;
     info!(inserted, "rogue cluster alert sweep complete");
@@ -158,16 +156,71 @@ pub async fn check_rogue_clusters(pool: &PgPool) -> Result<usize, WorkerError> {
 /// with `alert_type = 'high_risk_ap'` when `composite_risk > 0.75`.
 #[instrument(skip(pool))]
 pub async fn check_high_risk_aps(pool: &PgPool) -> Result<usize, WorkerError> {
-    let inserted: i32 = sqlx::query_scalar(
-        "SELECT check_high_risk_aps()",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| WorkerError::alerts(format!("high_risk_ap query failed: {e}")))?;
+    let inserted: i32 = sqlx::query_scalar("SELECT check_high_risk_aps()")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| WorkerError::alerts(format!("high_risk_ap query failed: {e}")))?;
 
     let inserted = inserted.max(0) as usize;
     if inserted > 0 {
         info!(inserted, "high-risk AP alerts inserted");
+    }
+    Ok(inserted)
+}
+
+/// Check for devices whose recent event embeddings drift away from their own
+/// historical cluster centroid.
+#[instrument(skip(pool))]
+pub async fn check_embedding_drift(pool: &PgPool) -> Result<usize, WorkerError> {
+    let result = sqlx::query(
+        r#"
+        INSERT INTO vec_alerts (alert_type, source_mac, score, explanation_text, metadata)
+        SELECT
+          'embedding_drift',
+          e.source_mac,
+          (e.embedding::vector(768) <=> dic.embedding_centroid) AS drift_score,
+          concat(
+            'Embedding drift for ', e.source_mac,
+            ': distance=',
+            round((e.embedding::vector(768) <=> dic.embedding_centroid)::numeric, 3),
+            ', centroid_sample_count=',
+            dic.centroid_sample_count::text
+          ),
+          jsonb_build_object(
+            'drift_distance', (e.embedding::vector(768) <=> dic.embedding_centroid),
+            'centroid_sample_count', dic.centroid_sample_count,
+            'embedding_id', e.embedding_id,
+            'cluster_id', dic.cluster_id
+          )
+        FROM vec_embeddings e
+        JOIN device_identity_clusters dic
+          ON EXISTS (
+            SELECT 1
+            FROM unnest(dic.mac_ids) AS cluster_mac(mac)
+            WHERE lower(cluster_mac.mac) = lower(e.source_mac)
+          )
+        WHERE e.embedding_kind = 'event'
+          AND e.embedding_dimensions = 768
+          AND e.embedded_at >= now() - interval '30 minutes'
+          AND e.source_mac IS NOT NULL
+          AND dic.embedding_centroid IS NOT NULL
+          AND dic.centroid_sample_count >= 10
+          AND (e.embedding::vector(768) <=> dic.embedding_centroid) > 0.20
+          AND NOT EXISTS (
+            SELECT 1 FROM vec_alerts a
+            WHERE a.alert_type = 'embedding_drift'
+              AND a.source_mac IS NOT DISTINCT FROM e.source_mac
+              AND a.created_at > now() - interval '1 hour'
+          )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| WorkerError::alerts(format!("embedding_drift query failed: {e}")))?;
+
+    let inserted = result.rows_affected() as usize;
+    if inserted > 0 {
+        info!(inserted, "embedding drift alerts inserted");
     }
     Ok(inserted)
 }
@@ -179,44 +232,50 @@ pub async fn check_high_risk_aps(pool: &PgPool) -> Result<usize, WorkerError> {
 /// not stale snapshots. The CONCURRENTLY flag allows reads during the refresh
 /// (requires the unique index on `source_mac`, which is created in V019).
 #[instrument(skip(pool))]
-pub async fn run_alert_sweep(
-    pool: &PgPool,
-    config: &AlertConfig,
-) -> Result<(), WorkerError> {
+pub async fn run_alert_sweep(pool: &PgPool, config: &AlertConfig) -> Result<(), WorkerError> {
     // Refresh the materialized view before querying it so alerts are based on
     // current data. REFRESH MATERIALIZED VIEW CONCURRENTLY requires a unique
     // index, which V019 creates on (source_mac).
-    if let Err(e) = sqlx::query(
-        "REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score",
-    )
-    .execute(pool)
-    .await
+    if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score")
+        .execute(pool)
+        .await
     {
         warn!(error = %e, "failed to refresh v_device_repetition_score, alert sweep may use stale data");
     }
 
     // Refresh the AP risk score materialized view
-    if let Err(e) = sqlx::query(
-        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score",
-    )
-    .execute(pool)
-    .await
+    if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score")
+        .execute(pool)
+        .await
     {
         warn!(error = %e, "failed to refresh mv_ap_risk_score, alert sweep may use stale data");
     }
 
-    let nd = check_near_duplicates(pool, config).await
-        .unwrap_or_else(|e| { warn!(error = %e, "near_duplicate check failed"); 0 });
+    let nd = check_near_duplicates(pool, config)
+        .await
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "near_duplicate check failed");
+            0
+        });
     debug_assert!(nd <= usize::MAX);
 
-    let rc = check_rogue_clusters(pool).await
-        .unwrap_or_else(|e| { warn!(error = %e, "rogue cluster check failed"); 0 });
+    let rc = check_rogue_clusters(pool).await.unwrap_or_else(|e| {
+        warn!(error = %e, "rogue cluster check failed");
+        0
+    });
     debug_assert!(rc <= usize::MAX);
 
-    let hra = check_high_risk_aps(pool).await
-        .unwrap_or_else(|e| { warn!(error = %e, "high_risk_ap check failed"); 0 });
+    let hra = check_high_risk_aps(pool).await.unwrap_or_else(|e| {
+        warn!(error = %e, "high_risk_ap check failed");
+        0
+    });
     debug_assert!(hra <= usize::MAX);
+
+    let drift = check_embedding_drift(pool).await.unwrap_or_else(|e| {
+        warn!(error = %e, "embedding_drift check failed");
+        0
+    });
+    debug_assert!(drift <= usize::MAX);
 
     Ok(())
 }
-

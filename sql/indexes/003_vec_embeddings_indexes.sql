@@ -34,3 +34,9 @@ create index if not exists vec_embeddings_frame_sequence_hnsw_768_idx
   where embedding_kind = 'frame_sequence'
     and embedding_model = 'nomic-embed-text-v2-moe'
     and embedding_dimensions = 768;
+
+create index if not exists vec_embeddings_timing_hnsw_768_idx
+  on vec_embeddings using hnsw ((embedding::vector(768)) vector_cosine_ops)
+  where embedding_kind = 'timing_profile'
+    and embedding_model = 'nomic-embed-text-v2-moe'
+    and embedding_dimensions = 768;

@@ -23,6 +23,12 @@ begin
   );
 
   perform cron.schedule(
+    'vec-build-timing-profiles',
+    '1,16,31,46 * * * *',
+    $cron$select vec_build_timing_profiles();$cron$
+  );
+
+  perform cron.schedule(
     'vec-build-baseline-profiles',
     '2,17,32,47 * * * *',
     $cron$select vec_build_baseline_profiles();$cron$
@@ -49,13 +55,19 @@ begin
   perform cron.schedule(
     'vec-materialize-similarity-pairs',
     '4,9,14,19,24,29,34,39,44,49,54,59 * * * *',
-    $cron$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.92::double precision, 0.10::double precision);$cron$
+    $cron$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.88::double precision, 0.10::double precision, 0.05::double precision);$cron$
   );
 
   perform cron.schedule(
     'vec-apply-similarity-flags',
     '0,5,10,15,20,25,30,35,40,45,50,55 * * * *',
-    $cron$select vec_apply_similarity_flags('nomic-embed-text-v2-moe'::text, 0.05::double precision, 0.92::double precision);$cron$
+    $cron$select vec_apply_similarity_flags('nomic-embed-text-v2-moe'::text, 0.05::double precision, 0.88::double precision);$cron$
+  );
+
+  perform cron.schedule(
+    'vec-fuse-device-identities',
+    '*/10 * * * *',
+    $cron$select vec_fuse_device_identities();$cron$
   );
 
   perform cron.schedule(
@@ -80,6 +92,12 @@ begin
     'vec-update-transition-model',
     '7,22,37,52 * * * *',
     $cron$select vec_update_transition_model();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-update-device-centroids',
+    '10,25,40,55 * * * *',
+    $cron$select vec_update_device_centroids();$cron$
   );
 
   perform cron.schedule(

@@ -134,10 +134,10 @@ Relevant columns:
 - `job_id` — primary key
 - `source_table`, `source_key`
   - identify the row to embed
-  - `source_table` is one of: `sync_events`, `devices`, `vec_behaviour_snapshots`
+  - `source_table` is one of: `sync_events`, `devices`, `vec_behaviour_snapshots`, `vec_baseline_profiles`, `vec_frame_sequences`, `vec_infrastructure_graph`, `vec_timing_profiles`
   - `source_key` is the primary key value of that row as text
 - `embedding_model` — model name used for this job
-- `embedding_kind` — one of `event`, `device`, `behaviour_window`
+- `embedding_kind` — one of `event`, `device`, `behaviour_window`, `baseline_profile`, `frame_sequence`, `infrastructure_subgraph`, `timing_profile`
 - `status` — one of `pending`, `leased`, `completed`, `failed`
 - `priority` — ordering for lease selection
 - `attempts`, `max_attempts`
@@ -191,7 +191,7 @@ Constraints and indexes:
 - `vec_embeddings_dimensions_chk` validates positive dimensions
 - indexes on `(source_table, source_key)` and `(embedding_kind, embedding_model, embedded_at desc)`
 - conditional index on `lower(source_mac), source_observed_at desc` when `source_mac` is not null
-- pgvector HNSW indexes for `embedding_kind` / `embedding_model` / `embedding_dimensions = 768` for event/device/behaviour_window
+- pgvector HNSW indexes for `embedding_kind` / `embedding_model` / `embedding_dimensions = 768` for event/device/behaviour_window/frame_sequence/timing_profile
 
 Usage by vec worker:
 
@@ -427,10 +427,10 @@ Throughput comes from **larger lease batches**, **larger embed HTTP batches**, *
 VECTOR_EMBEDDING_BATCH_SIZE=64
 VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=32
 VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=2
-VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=2
-DATABASE_POOL_MAX_CONNECTIONS=8
+VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=8
+DATABASE_POOL_MAX_CONNECTIONS=20
 DATABASE_POOL_MIN_CONNECTIONS=1
-ALERT_POOL_MAX_CONNECTIONS=1
+ALERT_POOL_MAX_CONNECTIONS=2
 ```
 
 Watch structured logs for `batch timing` (`prepare_ms`, `embed_ms`, `complete_ms`) and raise or lower batch sizes based on which stage dominates.

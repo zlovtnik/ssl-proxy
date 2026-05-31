@@ -34,6 +34,7 @@
 \ir tables/021_vec_worker_state.sql
 \ir tables/022_vec_alerts.sql
 \ir tables/023_vec_job_locks.sql
+\ir tables/024_vec_timing_profiles.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -47,6 +48,7 @@
 \ir indexes/009_vec_embedding_jobs_indexes.sql
 \ir indexes/010_vec_alerts_indexes.sql
 \ir indexes/011_device_identity_clusters_indexes.sql
+\ir indexes/012_vec_timing_profiles_indexes.sql
 
 -- functions
 \ir functions/001_sync_stable_uuid.sql
@@ -89,6 +91,10 @@
 \ir functions/036_coordinator_list_authorized_networks.sql
 \ir functions/037_coordinator_flush_probe_batch.sql
 \ir functions/038_coordinator_pending_ledger_count.sql
+\ir functions/039_vec_build_timing_profiles.sql
+\ir functions/041_vec_update_device_centroids.sql
+\ir functions/042_vec_fuse_device_identities.sql
+\ir functions/043_vec_reembed_on_alert.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql

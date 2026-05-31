@@ -1,7 +1,7 @@
 //! Text content builder - maps an `EmbeddingJob` to its embedding text and metadata.
 //!
 //! This module mirrors the Ruby `VectorEmbeddings::TextBuilder` reference implementation.
-//! Each `embedding_kind` ("event", "device", "behaviour_window") has a dedicated build
+//! Each supported `embedding_kind` has a dedicated build
 //! function that queries the source table and produces identity-stripped semantic text
 //! plus associated metadata for the `EmbeddingInput`.
 
@@ -109,10 +109,7 @@ fn clamp_text(text: &str) -> String {
 /// - The source row is not found in the database
 /// - A database query fails
 #[instrument(skip(pool), fields(job_id = %job.job_id, source_table = %job.source_table, source_key = %job.source_key, embedding_kind = %job.embedding_kind))]
-pub async fn build_text(
-    pool: &PgPool,
-    job: &EmbeddingJob,
-) -> Result<EmbeddingInput, WorkerError> {
+pub async fn build_text(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput, WorkerError> {
     match job.embedding_kind.as_str() {
         "event" => build_event(pool, job).await,
         "device" => build_device(pool, job).await,
@@ -120,6 +117,7 @@ pub async fn build_text(
         "baseline_profile" => build_baseline_profile(pool, job).await,
         "frame_sequence" => build_frame_sequence(pool, job).await,
         "infrastructure_subgraph" => build_infrastructure_subgraph(pool, job).await,
+        "timing_profile" => build_timing_profile(pool, job).await,
         other => Err(WorkerError::text_build(format!(
             "unsupported embedding_kind: '{}'",
             other
@@ -152,6 +150,7 @@ pub async fn build_text_batch(
     let mut baseline_profiles = Vec::new();
     let mut frame_sequences = Vec::new();
     let mut infrastructure_subgraphs = Vec::new();
+    let mut timing_profiles = Vec::new();
 
     for job in jobs {
         match job.embedding_kind.as_str() {
@@ -161,6 +160,7 @@ pub async fn build_text_batch(
             "baseline_profile" => baseline_profiles.push(job),
             "frame_sequence" => frame_sequences.push(job),
             "infrastructure_subgraph" => infrastructure_subgraphs.push(job),
+            "timing_profile" => timing_profiles.push(job),
             other => {
                 return Err(WorkerError::text_build(format!(
                     "unsupported embedding_kind: '{other}'"
@@ -187,6 +187,9 @@ pub async fn build_text_batch(
     }
     if !infrastructure_subgraphs.is_empty() {
         build_infrastructure_subgraphs_batch(pool, &infrastructure_subgraphs, &mut out).await?;
+    }
+    if !timing_profiles.is_empty() {
+        build_timing_profiles_batch(pool, &timing_profiles, &mut out).await?;
     }
     Ok(out)
 }
@@ -654,7 +657,10 @@ struct BehaviourWindowRow {
     mac_rotation_indicators: Option<serde_json::Value>,
 }
 
-async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<EmbeddingInput, WorkerError> {
+async fn build_behaviour_window(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
     let row = sqlx::query_as::<_, BehaviourWindowRow>(
         r#"
         SELECT
@@ -685,7 +691,9 @@ async fn build_behaviour_window(pool: &PgPool, job: &EmbeddingJob) -> Result<Emb
     .fetch_optional(pool)
     .await
     .map_err(|e| WorkerError::text_build(format!("behaviour_window query failed: {e}")))?
-    .ok_or_else(|| WorkerError::text_build(format!("behaviour_window not found: {}", job.source_key)))?;
+    .ok_or_else(|| {
+        WorkerError::text_build(format!("behaviour_window not found: {}", job.source_key))
+    })?;
 
     Ok(behaviour_row_to_input(&row))
 }
@@ -955,7 +963,10 @@ async fn build_baseline_profiles_batch(
                 })
                 .collect();
             let row_refs: Vec<&BaselineProfileRow> = baseline_rows.iter().collect();
-            out.insert(job.source_key.clone(), baseline_profile_rows_to_input_ref(&row_refs));
+            out.insert(
+                job.source_key.clone(),
+                baseline_profile_rows_to_input_ref(&row_refs),
+            );
         }
     }
 
@@ -981,7 +992,10 @@ fn baseline_profile_rows_to_input_ref(rows: &[&BaselineProfileRow]) -> Embedding
     }
     for (i, row) in metrics.iter().enumerate() {
         if i >= MAX_METRIC_LINES {
-            lines.push(format!("(+{} metrics truncated)", metrics.len() - MAX_METRIC_LINES));
+            lines.push(format!(
+                "(+{} metrics truncated)",
+                metrics.len() - MAX_METRIC_LINES
+            ));
             tracing::warn!(
                 original_metric_count = metrics.len(),
                 max_metric_lines = MAX_METRIC_LINES,
@@ -1002,10 +1016,7 @@ fn baseline_profile_rows_to_input_ref(rows: &[&BaselineProfileRow]) -> Embedding
         lines.push(metric_text);
     }
 
-    let source_observed_at = rows
-        .iter()
-        .filter_map(|row| row.updated_at)
-        .max();
+    let source_observed_at = rows.iter().filter_map(|row| row.updated_at).max();
 
     EmbeddingInput {
         text: clamp_text(&lines.join("\n")),
@@ -1026,6 +1037,7 @@ struct FrameSequenceRow {
     window_start: Option<chrono::DateTime<chrono::Utc>>,
     window_end: Option<chrono::DateTime<chrono::Utc>>,
     sequence_tokens: String,
+    semantic_tokens: Option<String>,
     frame_count: i64,
 }
 
@@ -1039,6 +1051,7 @@ struct FrameSequenceBatchRow {
     window_start: Option<chrono::DateTime<chrono::Utc>>,
     window_end: Option<chrono::DateTime<chrono::Utc>>,
     sequence_tokens: String,
+    semantic_tokens: Option<String>,
     frame_count: i64,
     log_prob: Option<f64>,
 }
@@ -1064,6 +1077,7 @@ async fn build_frame_sequence(
             window_start,
             window_end,
             sequence_tokens,
+            semantic_tokens,
             frame_count
         FROM vec_frame_sequences
         WHERE session_key = $1
@@ -1073,7 +1087,9 @@ async fn build_frame_sequence(
     .fetch_optional(pool)
     .await
     .map_err(|e| WorkerError::text_build(format!("frame_sequence query failed: {e}")))?
-    .ok_or_else(|| WorkerError::text_build(format!("frame_sequence not found: {}", job.source_key)))?;
+    .ok_or_else(|| {
+        WorkerError::text_build(format!("frame_sequence not found: {}", job.source_key))
+    })?;
 
     let mut input = frame_sequence_row_to_input(&row);
 
@@ -1113,6 +1129,7 @@ async fn build_frame_sequences_batch(
             window_start,
             window_end,
             sequence_tokens,
+            semantic_tokens,
             frame_count,
             vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+')) AS log_prob
         FROM vec_frame_sequences
@@ -1133,6 +1150,7 @@ async fn build_frame_sequences_batch(
             window_start: row.window_start,
             window_end: row.window_end,
             sequence_tokens: row.sequence_tokens.clone(),
+            semantic_tokens: row.semantic_tokens.clone(),
             frame_count: row.frame_count,
         });
 
@@ -1148,10 +1166,15 @@ async fn build_frame_sequences_batch(
 fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     let mut lines = vec!["kind: frame_sequence".to_string()];
 
-    // Frame subtypes are single uppercase words - each is ~1 token.
+    // Semantic tokens are single uppercase words - each is ~1 token.
     // Reserve OVERHEAD_TOKENS for the fixed structural lines; the rest goes to tokens.
     let token_word_budget = MAX_TOKENS - OVERHEAD_TOKENS;
-    let truncated_tokens = truncate_token_sequence(&row.sequence_tokens, token_word_budget);
+    let token_source = row
+        .semantic_tokens
+        .as_deref()
+        .filter(|tokens| !tokens.trim().is_empty())
+        .unwrap_or(&row.sequence_tokens);
+    let truncated_tokens = truncate_token_sequence(token_source, token_word_budget);
     lines.push(format!("tokens: {}", truncated_tokens));
 
     if let Some(start) = row.window_start {
@@ -1160,16 +1183,12 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
             lines.push(format!("window_secs: {}", duration_secs));
         }
     }
-    if let Some(source_mac) = &row.source_mac {
-        lines.push(format!("source_mac: {}", source_mac));
-    }
     lines.push(format!("frame_count: {}", row.frame_count));
 
     // Note: log_prob is appended by the builder callers (build_frame_sequence /
     // build_frame_sequences_batch) which have access to a PgPool to invoke
     // vec_score_sequence(). See those functions for the score injection.
-    // When computed, a "log_prob: {score}" line is inserted between source_mac
-    // and frame_count.
+    // When computed, a "log_prob: {score}" line is inserted before frame_count.
 
     // Tokens are already truncated to token_word_budget (1 word ~ 1 token for
     // frame subtypes like BEACON, AUTH, etc.), so re-clamping with the generic
@@ -1183,6 +1202,182 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
         source_sensor_id: row.sensor_id.clone(),
         source_location_id: row.location_id.clone(),
         source_mac: row.source_mac.clone(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Timing profile builder
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, sqlx::FromRow)]
+struct TimingProfileRow {
+    source_mac: String,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    tsft_p50_us: Option<f64>,
+    tsft_p95_us: Option<f64>,
+    tsft_jitter: Option<f64>,
+    wall_p50_ms: Option<f64>,
+    wall_jitter_ms: Option<f64>,
+    beacon_interval_median_ms: Option<f64>,
+    beacon_jitter_ms: Option<f64>,
+    embedding_text: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct TimingProfileBatchRow {
+    query_key: String,
+    source_mac: String,
+    sensor_id: Option<String>,
+    location_id: Option<String>,
+    window_start: Option<chrono::DateTime<chrono::Utc>>,
+    tsft_p50_us: Option<f64>,
+    tsft_p95_us: Option<f64>,
+    tsft_jitter: Option<f64>,
+    wall_p50_ms: Option<f64>,
+    wall_jitter_ms: Option<f64>,
+    beacon_interval_median_ms: Option<f64>,
+    beacon_jitter_ms: Option<f64>,
+    embedding_text: Option<String>,
+}
+
+async fn build_timing_profile(
+    pool: &PgPool,
+    job: &EmbeddingJob,
+) -> Result<EmbeddingInput, WorkerError> {
+    let row = sqlx::query_as::<_, TimingProfileRow>(
+        r#"
+        SELECT
+            source_mac,
+            sensor_id,
+            location_id,
+            window_start,
+            tsft_p50_us::float8,
+            tsft_p95_us::float8,
+            tsft_jitter::float8,
+            wall_p50_ms::float8,
+            wall_jitter_ms::float8,
+            beacon_interval_median_ms::float8,
+            beacon_jitter_ms::float8,
+            embedding_text
+        FROM vec_timing_profiles
+        WHERE profile_id::text = $1
+        "#,
+    )
+    .bind(&job.source_key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("timing_profile query failed: {e}")))?
+    .ok_or_else(|| {
+        WorkerError::text_build(format!("timing_profile not found: {}", job.source_key))
+    })?;
+
+    Ok(timing_profile_row_to_input(&row))
+}
+
+async fn build_timing_profiles_batch(
+    pool: &PgPool,
+    jobs: &[&EmbeddingJob],
+    out: &mut HashMap<String, EmbeddingInput>,
+) -> Result<(), WorkerError> {
+    let keys: Vec<&str> = jobs.iter().map(|j| j.source_key.as_str()).collect();
+    let rows = sqlx::query_as::<_, TimingProfileBatchRow>(
+        r#"
+        SELECT
+            profile_id::text AS query_key,
+            source_mac,
+            sensor_id,
+            location_id,
+            window_start,
+            tsft_p50_us::float8,
+            tsft_p95_us::float8,
+            tsft_jitter::float8,
+            wall_p50_ms::float8,
+            wall_jitter_ms::float8,
+            beacon_interval_median_ms::float8,
+            beacon_jitter_ms::float8,
+            embedding_text
+        FROM vec_timing_profiles
+        WHERE profile_id::text = ANY($1::text[])
+        "#,
+    )
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| WorkerError::text_build(format!("timing_profile batch query failed: {e}")))?;
+
+    for row in rows {
+        let timing_row = TimingProfileRow {
+            source_mac: row.source_mac,
+            sensor_id: row.sensor_id,
+            location_id: row.location_id,
+            window_start: row.window_start,
+            tsft_p50_us: row.tsft_p50_us,
+            tsft_p95_us: row.tsft_p95_us,
+            tsft_jitter: row.tsft_jitter,
+            wall_p50_ms: row.wall_p50_ms,
+            wall_jitter_ms: row.wall_jitter_ms,
+            beacon_interval_median_ms: row.beacon_interval_median_ms,
+            beacon_jitter_ms: row.beacon_jitter_ms,
+            embedding_text: row.embedding_text,
+        };
+        out.insert(row.query_key, timing_profile_row_to_input(&timing_row));
+    }
+    Ok(())
+}
+
+fn timing_profile_row_to_input(row: &TimingProfileRow) -> EmbeddingInput {
+    let text = row
+        .embedding_text
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| {
+            let mut lines = Vec::new();
+            lines.push("kind: timing_profile".to_string());
+            if let Some(dt) = row.window_start {
+                lines.extend(temporal_context_lines(dt));
+            }
+            for line in text.lines() {
+                if line.starts_with("kind:") {
+                    continue;
+                }
+                lines.push(line.to_string());
+            }
+            clamp_text(&lines.join("\n"))
+        })
+        .unwrap_or_else(|| {
+            let mut lines = vec!["kind: timing_profile".to_string()];
+            if let Some(dt) = row.window_start {
+                lines.extend(temporal_context_lines(dt));
+            }
+            push_optional_f64(&mut lines, "tsft_p50_us", row.tsft_p50_us);
+            push_optional_f64(&mut lines, "tsft_p95_us", row.tsft_p95_us);
+            push_optional_f64(&mut lines, "tsft_jitter", row.tsft_jitter);
+            push_optional_f64(&mut lines, "wall_p50_ms", row.wall_p50_ms);
+            push_optional_f64(&mut lines, "wall_jitter_ms", row.wall_jitter_ms);
+            push_optional_f64(
+                &mut lines,
+                "beacon_interval_ms",
+                row.beacon_interval_median_ms,
+            );
+            push_optional_f64(&mut lines, "beacon_jitter_ms", row.beacon_jitter_ms);
+            clamp_text(&lines.join("\n"))
+        });
+
+    EmbeddingInput {
+        text,
+        source_observed_at: row.window_start,
+        source_stream_name: None,
+        source_sensor_id: row.sensor_id.clone(),
+        source_location_id: row.location_id.clone(),
+        source_mac: Some(row.source_mac.clone()),
+    }
+}
+
+fn push_optional_f64(lines: &mut Vec<String>, field: &str, value: Option<f64>) {
+    if let Some(value) = value {
+        lines.push(format!("{field}: {value:.3}"));
     }
 }
 
@@ -1283,9 +1478,12 @@ async fn build_infrastructure_subgraphs_batch(
           last_seen DESC
         "#,
     )
-    .bind(&keys).fetch_all(pool).await
-        .map_err(|e|
-            WorkerError::text_build(format!("infrastructure_graph batch query failed: {e}")))?;
+    .bind(&keys)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        WorkerError::text_build(format!("infrastructure_graph batch query failed: {e}"))
+    })?;
 
     // Group rows by query_key
     let mut grouped: HashMap<String, Vec<InfrastructureGraphRow>> = HashMap::new();
@@ -1304,7 +1502,10 @@ async fn build_infrastructure_subgraphs_batch(
 
     for job in jobs {
         if let Some(rows) = grouped.get(&job.source_key) {
-            out.insert(job.source_key.clone(), build_ego_graph_input(&job.source_key, rows));
+            out.insert(
+                job.source_key.clone(),
+                build_ego_graph_input(&job.source_key, rows),
+            );
         }
     }
 
@@ -1330,7 +1531,8 @@ fn build_ego_graph_input(bssid: &str, rows: &[InfrastructureGraphRow]) -> Embedd
     // Count distinct clients (client_mac neighbors via association)
     let mut client_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
     // Count distinct edge types
-    let mut edge_type_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut edge_type_counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
     // Collect all unique SSID neighbors
     let mut ssid_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
     // Collect all unique vendor OUIs
@@ -1409,12 +1611,14 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
             "window_start" => row.window_start.as_ref().map(|dt| dt.to_rfc3339()),
             "window_end" => row.window_end.as_ref().map(|dt| dt.to_rfc3339()),
             "event_count" => row.event_count.map(|v| v.to_string()),
-            "protocol_mix" => row.protocol_mix.as_ref().map(|v| {
-                truncate_words(&normalize_json(v), json_field_budget)
-            }),
-            "frame_type_distribution" => row.frame_type_distribution.as_ref().map(|v| {
-                truncate_words(&normalize_json(v), json_field_budget)
-            }),
+            "protocol_mix" => row
+                .protocol_mix
+                .as_ref()
+                .map(|v| truncate_words(&normalize_json(v), json_field_budget)),
+            "frame_type_distribution" => row
+                .frame_type_distribution
+                .as_ref()
+                .map(|v| truncate_words(&normalize_json(v), json_field_budget)),
             "signal_min_dbm" => row.signal_min_dbm.map(|v| v.to_string()),
             "signal_max_dbm" => row.signal_max_dbm.map(|v| v.to_string()),
             "signal_avg_dbm" => row.signal_avg_dbm.map(|v| v.to_string()),
@@ -1422,9 +1626,10 @@ fn build_snapshot_fallback(row: &BehaviourWindowRow) -> String {
             "protected_count" => row.protected_count.map(|v| v.to_string()),
             "unprotected_count" => row.unprotected_count.map(|v| v.to_string()),
             "unique_bssid_count" => row.unique_bssid_count.map(|v| v.to_string()),
-            "mac_rotation_indicators" => row.mac_rotation_indicators.as_ref().map(|v| {
-                truncate_words(&normalize_json(v), json_field_budget)
-            }),
+            "mac_rotation_indicators" => row
+                .mac_rotation_indicators
+                .as_ref()
+                .map(|v| truncate_words(&normalize_json(v), json_field_budget)),
             _ => None,
         };
         if let Some(ref v) = val {
@@ -1485,10 +1690,20 @@ fn normalize_wps_name(name: &str) -> String {
 
     // Strip trailing brand/type suffixes (case-insensitive already due to lowercasing)
     let suffixes = [
-        " tv", " smart tv", " roku tv", " android tv", " led tv", " lcd tv",
-        " 4k tv", " hd tv", " full hd tv", " uhd tv",
-        " television", " smart television",
-        " monitor", " display",
+        " tv",
+        " smart tv",
+        " roku tv",
+        " android tv",
+        " led tv",
+        " lcd tv",
+        " 4k tv",
+        " hd tv",
+        " full hd tv",
+        " uhd tv",
+        " television",
+        " smart television",
+        " monitor",
+        " display",
     ];
     for suffix in &suffixes {
         if s.ends_with(suffix) {
@@ -1531,7 +1746,11 @@ fn events_per_minute(row: &BehaviourWindowRow) -> Option<f64> {
     let count = row.event_count? as f64;
     let start = row.window_start?;
     let end = row.window_end?;
-    let duration_secs = (end - start).to_std().ok().map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let duration_secs = (end - start)
+        .to_std()
+        .ok()
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
     let duration_mins = duration_secs / 60.0;
     if duration_mins <= 0.0 {
         return None;
@@ -1604,13 +1823,19 @@ mod tests {
         append_value(&mut lines, "protected", Some("false"));
         append_value(&mut lines, "channel_number", Some("6"));
         append_value(&mut lines, "signal_dbm", Some("-79"));
-        assert_eq!(lines, vec!["kind: event", "channel_number: 6", "signal_dbm: -79"]);
+        assert_eq!(
+            lines,
+            vec!["kind: event", "channel_number: 6", "signal_dbm: -79"]
+        );
     }
 
     #[test]
     fn normalize_wps_name_strips_screen_size() {
         assert_eq!(normalize_wps_name(r#"60" Hisense Roku TV"#), "hisense roku");
-        assert_eq!(normalize_wps_name(r#"55" Samsung Smart TV"#), "samsung smart");
+        assert_eq!(
+            normalize_wps_name(r#"55" Samsung Smart TV"#),
+            "samsung smart"
+        );
         assert_eq!(normalize_wps_name("65 inch LG TV"), "lg");
         assert_eq!(normalize_wps_name("Apple TV"), "apple");
         // "null" is preserved by normalize but filtered by is_empty_value

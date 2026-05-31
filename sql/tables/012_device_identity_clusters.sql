@@ -10,8 +10,16 @@ create table if not exists device_identity_clusters (
   cluster_name  text,                        -- optional human-readable label
   mac_ids       text[] not null default '{}', -- array of associated mac_ids
   size          integer not null default 1,   -- number of MACs in the cluster
+  embedding_centroid vector(768),
+  centroid_updated_at timestamptz,
+  centroid_sample_count integer not null default 0,
   first_seen    timestamptz not null default now(),
   last_seen     timestamptz not null default now(),
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
+
+alter table device_identity_clusters
+  add column if not exists embedding_centroid vector(768),
+  add column if not exists centroid_updated_at timestamptz,
+  add column if not exists centroid_sample_count integer not null default 0;
