@@ -171,7 +171,16 @@ begin
     insert into vec_embedding_jobs (
       source_table, source_key, embedding_model, embedding_kind, priority, status, due_at, created_at, updated_at
     )
-    select source_table, source_key, embedding_model, embedding_kind, priority, 'pending', now(), now(), now()
+    select
+      source_table,
+      source_key,
+      embedding_model,
+      embedding_kind,
+      min(priority) as priority,
+      'pending',
+      now(),
+      now(),
+      now()
     from (
       select * from event_jobs
       union all
@@ -187,6 +196,7 @@ begin
       union all
       select * from graph_jobs
     ) jobs
+    group by source_table, source_key, embedding_model, embedding_kind
     on conflict (source_table, source_key, embedding_model, embedding_kind) do update set
       status = 'pending',
       due_at = least(vec_embedding_jobs.due_at, now()),
