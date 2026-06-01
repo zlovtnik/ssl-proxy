@@ -30,3 +30,55 @@ begin
   perform pg_advisory_unlock(hashtextextended(p_job_name, 0));
 end;
 $$;
+
+create or replace function vec_try_begin_maintenance_job(p_job_name text)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_lock_name text := 'vec_maintenance';
+begin
+  if not pg_try_advisory_lock(hashtextextended(v_lock_name, 0)) then
+    raise notice 'vector maintenance already running, skipping %', p_job_name;
+    return false;
+  end if;
+
+  insert into vec_job_locks (job_name, locked_at, locked_by)
+  values ('maintenance:' || p_job_name, now(), pg_backend_pid()::text)
+  on conflict (job_name) do update
+    set locked_at = excluded.locked_at,
+        locked_by = excluded.locked_by;
+
+  return true;
+end;
+$$;
+
+create or replace function vec_finish_maintenance_job(p_job_name text)
+returns void
+language plpgsql
+as $$
+declare
+  v_lock_name text := 'vec_maintenance';
+begin
+  delete from vec_job_locks where job_name = 'maintenance:' || p_job_name;
+  perform pg_advisory_unlock(hashtextextended(v_lock_name, 0));
+end;
+$$;
+
+create or replace function vec_run_maintenance_sql(p_job_name text, p_statement text)
+returns void
+language plpgsql
+as $$
+begin
+  if not vec_try_begin_maintenance_job(p_job_name) then
+    return;
+  end if;
+
+  execute p_statement;
+
+  perform vec_finish_maintenance_job(p_job_name);
+exception when others then
+  perform vec_finish_maintenance_job(p_job_name);
+  raise;
+end;
+$$;

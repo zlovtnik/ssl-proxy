@@ -17,3 +17,10 @@ create table if not exists sync_events (
   updated_at timestamptz not null default now(),
   constraint chk_sync_events_status check (status in ('pending','processing','batched','failed'))
 );
+
+alter table sync_events set (
+  autovacuum_vacuum_scale_factor = 0.005,
+  autovacuum_vacuum_threshold = 1000,
+  autovacuum_analyze_scale_factor = 0.005,
+  autovacuum_analyze_threshold = 1000
+);

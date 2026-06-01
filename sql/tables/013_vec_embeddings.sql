@@ -26,6 +26,13 @@ create table if not exists vec_embeddings (
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
 );
 
+alter table vec_embeddings set (
+  autovacuum_vacuum_scale_factor = 0.01,
+  autovacuum_vacuum_threshold = 500,
+  autovacuum_analyze_scale_factor = 0.005,
+  autovacuum_analyze_threshold = 500
+);
+
 alter table vec_embeddings
   drop constraint if exists vec_embeddings_kind_chk;
 

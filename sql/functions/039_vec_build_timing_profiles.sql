@@ -18,20 +18,23 @@ begin
 
   with base as (
     select
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
-      nullif(coalesce(sensor_id, payload->>'sensor_id'), '') as sensor_id,
-      nullif(coalesce(location_id, payload->>'location_id'), '') as location_id,
-      date_bin(p_window, observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start,
-      tsft_delta_us,
-      wall_clock_delta_ms,
-      coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
-      and tsft_delta_us is not null
+      lower(nullif(coalesce(sse.source_mac, sse.payload->>'source_mac'), '')) as source_mac,
+      nullif(coalesce(sse.sensor_id, sse.payload->>'sensor_id'), '') as sensor_id,
+      nullif(coalesce(sse.location_id, sse.payload->>'location_id'), '') as location_id,
+      date_bin(p_window, sse.observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start,
+      coalesce(sse.tsft_delta_us, timeline.tsft_delta_us) as tsft_delta_us,
+      coalesce(sse.wall_clock_delta_ms, timeline.wall_clock_delta_ms) as wall_clock_delta_ms,
+      coalesce(sse.frame_subtype, sse.payload->>'frame_subtype') as frame_subtype
+    from sync_events_expanded sse
+    left join v_wireless_session_timeline timeline
+      on timeline.dedupe_key = sse.dedupe_key
+    where sse.stream_name = 'wireless.audit'
+      and sse.status = 'batched'
+      and sse.observed_at >= p_from
+      and sse.observed_at < p_to
+      and nullif(coalesce(sse.source_mac, sse.payload->>'source_mac'), '') is not null
+      and coalesce(sse.tsft_delta_us, timeline.tsft_delta_us) is not null
+      and coalesce(sse.tsft_delta_us, timeline.tsft_delta_us) >= 0
   ),
   stats as (
     select

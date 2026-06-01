@@ -101,6 +101,15 @@ begin
       metadata = excluded.metadata,
       embedded_at = now(),
       updated_at = now()
+    where vec_embeddings.source_observed_at is distinct from excluded.source_observed_at
+       or vec_embeddings.source_stream_name is distinct from excluded.source_stream_name
+       or vec_embeddings.source_sensor_id is distinct from excluded.source_sensor_id
+       or vec_embeddings.source_location_id is distinct from excluded.source_location_id
+       or vec_embeddings.source_mac is distinct from excluded.source_mac
+       or vec_embeddings.embedding_dimensions is distinct from excluded.embedding_dimensions
+       or vec_embeddings.content_sha256 is distinct from excluded.content_sha256
+       or vec_embeddings.content_text is distinct from excluded.content_text
+       or vec_embeddings.metadata is distinct from excluded.metadata
     returning 1
   ),
   locked as (

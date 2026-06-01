@@ -896,9 +896,9 @@ async fn build_baseline_profile(
         SELECT
             bssid,
             metric,
-            p5,
-            p50,
-            p95,
+            p5::float8,
+            p50::float8,
+            p95::float8,
             updated_at
         FROM vec_baseline_profiles
         WHERE bssid = $1
@@ -931,9 +931,9 @@ async fn build_baseline_profiles_batch(
             bssid AS query_key,
             bssid,
             metric,
-            p5,
-            p50,
-            p95,
+            p5::float8,
+            p50::float8,
+            p95::float8,
             updated_at
         FROM vec_baseline_profiles
         WHERE bssid = ANY($1::text[])

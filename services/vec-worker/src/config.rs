@@ -48,7 +48,7 @@ pub struct Config {
     pub model: String,
     /// Expected embedding vector dimension (required when embeddings_enabled=true).
     pub dimensions: usize,
-    /// Batch size for job leasing (default: 25).
+    /// Batch size for job leasing (default: 64).
     pub batch_size: usize,
     /// Request batch size for embedding requests (default: min(batch_size, 32)).
     pub request_batch_size: usize,
@@ -60,6 +60,11 @@ pub struct Config {
     pub database_url: String,
     /// Poll interval in seconds for job leasing loop (default: 5).
     pub poll_interval_secs: u64,
+    /// Maximum lease/process batches to drain before yielding to the outer loop.
+    /// `0` means drain until no jobs are leased.
+    pub max_drain_batches: usize,
+    /// Timeout for short database lifecycle calls such as lease and worker state.
+    pub db_call_timeout_seconds: u64,
     /// Maximum number of concurrent `prepare_job` calls (text fetching is IO bound).
     /// Default: 8. Set to 1 for fully sequential behaviour.
     pub max_concurrent_prepares: usize,
@@ -125,6 +130,8 @@ impl Config {
     /// - `VECTOR_EMBEDDING_WORKER_NAME` (string, default hostname)
     /// - `DATABASE_URL` or `SYNC_DATABASE_URL` (at least one required)
     /// - `POLL_INTERVAL_SECONDS` (u64, default 5)
+    /// - `VECTOR_EMBEDDING_MAX_DRAIN_BATCHES` (usize, default 0 = drain until empty)
+    /// - `VECTOR_EMBEDDING_DB_CALL_TIMEOUT_SECONDS` (u64, default 30)
     /// - `DATABASE_POOL_MAX_CONNECTIONS` (u32, default derived from worker concurrency)
     /// - `DATABASE_POOL_MIN_CONNECTIONS` (u32, default 1)
     /// - `ALERT_POOL_MAX_CONNECTIONS` (u32, default 4)
@@ -256,6 +263,13 @@ impl Config {
             .ok_or_else(|| WorkerError::config("DATABASE_URL or SYNC_DATABASE_URL is required"))?;
 
         let poll_interval_secs = read_u64("POLL_INTERVAL_SECONDS", 5)?;
+        let max_drain_batches = read_usize("VECTOR_EMBEDDING_MAX_DRAIN_BATCHES", 0)?;
+        let db_call_timeout_seconds = read_u64("VECTOR_EMBEDDING_DB_CALL_TIMEOUT_SECONDS", 30)?;
+        if db_call_timeout_seconds == 0 {
+            return Err(WorkerError::config(
+                "VECTOR_EMBEDDING_DB_CALL_TIMEOUT_SECONDS must be >= 1",
+            ));
+        }
         let max_concurrent_prepares = read_usize("VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES", 8)?;
         if max_concurrent_prepares == 0 {
             return Err(WorkerError::config(
@@ -329,6 +343,8 @@ impl Config {
             worker_name,
             database_url,
             poll_interval_secs,
+            max_drain_batches,
+            db_call_timeout_seconds,
             max_concurrent_prepares,
             max_concurrent_completes,
             max_concurrent_embed_requests,
@@ -361,6 +377,11 @@ impl std::fmt::Debug for SanitizedConfig<'_> {
             .field("worker_name", &self.inner.worker_name)
             .field("database_url", &redact_url(&self.inner.database_url))
             .field("poll_interval_secs", &self.inner.poll_interval_secs)
+            .field("max_drain_batches", &self.inner.max_drain_batches)
+            .field(
+                "db_call_timeout_seconds",
+                &self.inner.db_call_timeout_seconds,
+            )
             .field(
                 "max_concurrent_prepares",
                 &self.inner.max_concurrent_prepares,
@@ -426,6 +447,8 @@ impl std::fmt::Debug for Config {
             .field("worker_name", &self.worker_name)
             .field("database_url", &"[redacted]")
             .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("max_drain_batches", &self.max_drain_batches)
+            .field("db_call_timeout_seconds", &self.db_call_timeout_seconds)
             .field("max_concurrent_prepares", &self.max_concurrent_prepares)
             .field("max_concurrent_completes", &self.max_concurrent_completes)
             .field(
@@ -577,9 +600,12 @@ mod tests {
             "DATABASE_URL",
             "SYNC_DATABASE_URL",
             "POLL_INTERVAL_SECONDS",
+            "VECTOR_EMBEDDING_MAX_DRAIN_BATCHES",
+            "VECTOR_EMBEDDING_DB_CALL_TIMEOUT_SECONDS",
             "VECTOR_EMBEDDING_MAX_CONCURRENT_PREPARES",
             "VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES",
             "VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS",
+            "VECTOR_EMBEDDING_MAX_INPUT_TOKENS",
             "DATABASE_POOL_MAX_CONNECTIONS",
             "DATABASE_POOL_MIN_CONNECTIONS",
             "ALERT_POOL_MAX_CONNECTIONS",
@@ -600,6 +626,8 @@ mod tests {
         assert_eq!(cfg.max_concurrent_completes, 16);
         assert_eq!(cfg.max_concurrent_embed_requests, 4);
         assert_eq!(cfg.poll_interval_secs, 5);
+        assert_eq!(cfg.max_drain_batches, 0);
+        assert_eq!(cfg.db_call_timeout_seconds, 30);
         assert_eq!(cfg.effective_pool_max_connections(), 28);
         assert_eq!(cfg.database_pool_min_connections, 1);
         assert_eq!(cfg.effective_pool_min_connections(), 1);

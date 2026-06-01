@@ -12,6 +12,11 @@ create index if not exists sync_events_wireless_observed_idx
   where stream_name = 'wireless.audit'
     and status = 'batched';
 
+create index if not exists sync_events_wireless_batched_updated_idx
+  on sync_events (updated_at, dedupe_key)
+  where stream_name = 'wireless.audit'
+    and status = 'batched';
+
 create index if not exists sync_events_processing_idx on sync_events (updated_at) where status = 'processing';
 
 create index if not exists sync_jobs_stream_name_idx on sync_jobs (stream_name);

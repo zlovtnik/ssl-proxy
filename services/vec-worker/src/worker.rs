@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! run_forever (worker_name, model, dimensions)
-//! ├── run_once (rows_leased, rows_completed, rows_failed on exit)
+//! ├── run_once (drain_batches, rows_leased, rows_completed, rows_failed on exit)
 //! │   ├── prepare_chunk (prepare_ms)
 //! │   ├── embed_chunk (embed_ms)
 //! │   └── complete_chunk (complete_ms)
@@ -20,12 +20,14 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::signal;
 use tokio::sync::{watch, Semaphore};
 use tokio::task::JoinHandle;
@@ -68,13 +70,18 @@ pub async fn run_forever(
                     rows_processed = result.processed,
                     permanent_failures = result.permanent_failures,
                     rows_leased = result.rows_leased,
-                    "run_once summary"
+                    drain_batches = result.drain_batches,
+                    drain_ms = result.drain_ms,
+                    drained_to_empty = result.drained_to_empty,
+                    max_drain_batches_reached = result.max_drain_batches_reached,
+                    "run_once drain summary"
                 );
 
                 // Track permanent (4xx) embed failures for circuit breaker.
                 // Reset on any successful processing; increment when all leased
                 // jobs in the batch hit permanent errors (e.g. oversized payload
                 // against a misconfigured llama.cpp).
+                let mut slept_for_circuit_breaker = false;
                 if result.processed > 0 {
                     consecutive_permanent_failures = 0;
                 } else if result.permanent_failures > 0 {
@@ -88,12 +95,22 @@ pub async fn run_forever(
                         );
                         consecutive_permanent_failures = 0;
                         sleep_or_shutdown(60, shutdown_rx.clone()).await;
+                        slept_for_circuit_breaker = true;
                     }
                 }
 
-                if result.processed == 0 && result.permanent_failures == 0 {
-                    debug!("no jobs leased, sleeping");
-                    sleep_or_shutdown(config.poll_interval_secs, shutdown_rx.clone()).await;
+                match loop_action_after_success(config.once, &result) {
+                    LoopAction::ContinueImmediately => {}
+                    LoopAction::SleepIdle => {
+                        if !slept_for_circuit_breaker {
+                            debug!("drain cycle reached empty queue, sleeping");
+                            sleep_or_shutdown(config.poll_interval_secs, shutdown_rx.clone()).await;
+                        }
+                    }
+                    LoopAction::ExitOnce => {
+                        info!("--once mode, exiting after drain cycle");
+                        break;
+                    }
                 }
             }
             Err(e) => {
@@ -156,11 +173,6 @@ pub async fn run_forever(
                 );
             }
         }
-
-        if config.once {
-            info!("--once mode, exiting after single pass");
-            break;
-        }
     }
 
     info!("worker finished");
@@ -184,15 +196,67 @@ pub struct RunOnceResult {
     pub permanent_failures: usize,
     /// Total number of jobs that were leased in this pass.
     pub rows_leased: usize,
+    /// Number of lease/process batches completed in this drain cycle.
+    pub drain_batches: usize,
+    /// Whether the drain cycle ended because a lease attempt returned no jobs.
+    pub drained_to_empty: bool,
+    /// Whether `VECTOR_EMBEDDING_MAX_DRAIN_BATCHES` stopped this drain cycle.
+    pub max_drain_batches_reached: bool,
+    /// Wall-clock time spent in the drain cycle.
+    pub drain_ms: u64,
 }
 
-/// Execute a single pass: update worker state, lease jobs, process them, then idle.
+#[derive(Debug, PartialEq, Eq)]
+enum DrainDecision {
+    Continue,
+    Empty,
+    MaxBatchesReached,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LoopAction {
+    ContinueImmediately,
+    SleepIdle,
+    ExitOnce,
+}
+
+fn drain_decision(
+    rows_leased: usize,
+    drain_batches: usize,
+    max_drain_batches: usize,
+) -> DrainDecision {
+    if rows_leased == 0 {
+        DrainDecision::Empty
+    } else if max_drain_batches > 0 && drain_batches >= max_drain_batches {
+        DrainDecision::MaxBatchesReached
+    } else {
+        DrainDecision::Continue
+    }
+}
+
+fn loop_action_after_success(once: bool, result: &RunOnceResult) -> LoopAction {
+    if once {
+        LoopAction::ExitOnce
+    } else if result.drained_to_empty {
+        LoopAction::SleepIdle
+    } else {
+        LoopAction::ContinueImmediately
+    }
+}
+
+fn should_mark_progress_heartbeat(jobs_ok: usize, jobs_failed: usize) -> bool {
+    jobs_ok > 0 || jobs_failed > 0
+}
+
+/// Execute a drain cycle: update worker state, lease and process jobs until empty,
+/// then mark idle only after a lease returns no work.
 pub async fn run_once(
     config: &Config,
     pool: &PgPool,
     embedder: &EmbeddingClient,
 ) -> Result<RunOnceResult, WorkerError> {
     let _run_once = debug_span!("run_once").entered();
+    let drain_started = Instant::now();
     let started_at = chrono::Utc::now();
 
     let running_params = WorkerStateParams {
@@ -204,50 +268,72 @@ pub async fn run_once(
         rows_processed: 0,
         last_error: None,
     };
-    db::mark_worker_state(pool, &running_params).await?;
+    mark_worker_state_with_timeout(config, pool, &running_params).await?;
 
-    let jobs = db::lease_jobs(
-        pool,
-        config.batch_size as i32,
-        &config.worker_name,
-        config.lease_seconds as i64,
-    )
-    .await?;
-
-    let rows_leased = jobs.len();
-    debug!(rows_leased, "jobs leased");
-
-    if rows_leased == 0 {
-        let idle_params = WorkerStateParams {
-            status: "idle".to_string(),
-            last_run_finished_at: Some(chrono::Utc::now()),
-            ..running_params
-        };
-        db::mark_worker_state(pool, &idle_params).await?;
-        return Ok(RunOnceResult {
-            processed: 0,
-            permanent_failures: 0,
-            rows_leased: 0,
-        });
-    }
-
-    let (processed, permanent_failures) = process_jobs(config, pool, embedder, jobs).await;
-
-    let idle_params = WorkerStateParams {
-        status: "idle".to_string(),
-        last_run_finished_at: Some(chrono::Utc::now()),
-        rows_processed: processed as i64,
-        ..running_params
+    let mut result = RunOnceResult {
+        processed: 0,
+        permanent_failures: 0,
+        rows_leased: 0,
+        drain_batches: 0,
+        drained_to_empty: false,
+        max_drain_batches_reached: false,
+        drain_ms: 0,
     };
-    if let Err(e) = db::mark_worker_state(pool, &idle_params).await {
-        warn!(error = %e, "mark_worker_state(idle) failed");
-    }
 
-    Ok(RunOnceResult {
-        processed,
-        permanent_failures,
-        rows_leased,
-    })
+    loop {
+        let jobs = lease_jobs_with_timeout(config, pool).await?;
+        let rows_leased = jobs.len();
+        debug!(
+            rows_leased,
+            drain_batches = result.drain_batches,
+            "jobs leased"
+        );
+
+        if rows_leased == 0 {
+            result.drained_to_empty = true;
+            let idle_params = WorkerStateParams {
+                status: "idle".to_string(),
+                last_run_finished_at: Some(chrono::Utc::now()),
+                rows_processed: 0,
+                ..running_params
+            };
+            mark_worker_state_with_timeout(config, pool, &idle_params).await?;
+            result.drain_ms = drain_started.elapsed().as_millis() as u64;
+            return Ok(result);
+        }
+
+        result.rows_leased += rows_leased;
+        result.drain_batches += 1;
+        if rows_leased == config.batch_size {
+            debug!(
+                rows_leased,
+                drain_batches = result.drain_batches,
+                max_drain_batches = config.max_drain_batches,
+                "leased full vector batch; continuing drain cycle"
+            );
+        }
+
+        let (processed, permanent_failures) = process_jobs(config, pool, embedder, jobs).await;
+        result.processed += processed;
+        result.permanent_failures += permanent_failures;
+
+        match drain_decision(rows_leased, result.drain_batches, config.max_drain_batches) {
+            DrainDecision::Continue => {}
+            DrainDecision::Empty => unreachable!("empty lease handled before processing"),
+            DrainDecision::MaxBatchesReached => {
+                result.max_drain_batches_reached = true;
+                result.drain_ms = drain_started.elapsed().as_millis() as u64;
+                info!(
+                    drain_batches = result.drain_batches,
+                    rows_leased = result.rows_leased,
+                    rows_processed = result.processed,
+                    max_drain_batches = config.max_drain_batches,
+                    "max drain batches reached; yielding without idle sleep"
+                );
+                return Ok(result);
+            }
+        }
+    }
 }
 
 /// Process leased jobs with pipelined prepare / embed / complete across request chunks.
@@ -424,7 +510,7 @@ async fn prepare_chunk(
             warn!(error = %e, "build_text_batch failed, failing entire chunk");
             let mut failed = 0usize;
             for job in &jobs {
-                if fail_job_with_error(pool, job, &e.to_string()).await {
+                if fail_job_with_error(config, pool, job, &e.to_string()).await {
                     failed += 1;
                 }
             }
@@ -467,7 +553,7 @@ async fn prepare_chunk(
             None => {
                 let msg = format!("source row not found: {}", job.source_key);
                 warn!(job_id = job.job_id, "{msg}");
-                if fail_job_with_error(pool, &job, &msg).await {
+                if fail_job_with_error(config, pool, &job, &msg).await {
                     failed += 1;
                 }
             }
@@ -542,10 +628,10 @@ async fn embed_chunk(
             let mut perm_fails = 0usize;
             for p in &prepared_chunk.prepared {
                 if permanent {
-                    fail_job_permanent(pool, &p.job, &e.to_string()).await;
+                    fail_job_permanent(config, pool, &p.job, &e.to_string()).await;
                     failed += 1;
                     perm_fails += 1;
-                } else if fail_job_with_error(pool, &p.job, &e.to_string()).await {
+                } else if fail_job_with_error(config, pool, &p.job, &e.to_string()).await {
                     failed += 1;
                 }
             }
@@ -569,7 +655,7 @@ async fn embed_chunk(
                 error = %e,
                 "dimension mismatch, failing job",
             );
-            if fail_job_with_error(pool, &prepared_job.job, &e.to_string()).await {
+            if fail_job_with_error(config, pool, &prepared_job.job, &e.to_string()).await {
                 failed += 1;
             }
             continue;
@@ -604,6 +690,7 @@ async fn complete_chunk(
             succeeded,
             failed,
         );
+        heartbeat_after_chunk(config, pool, succeeded, failed).await;
         return CompleteChunkResult { succeeded, failed };
     }
 
@@ -614,29 +701,45 @@ async fn complete_chunk(
         .map(|(p, v)| db::complete_batch_row(&p.job, &p.input, &p.content_sha256, v, dimensions))
         .collect();
 
-    match db::complete_embedding_batch(pool, &batch_rows).await {
+    match complete_embedding_batch_with_timeout(config, pool, &batch_rows).await {
         Ok(completed) => {
             let completed = completed as usize;
             if completed == batch_rows.len() {
                 succeeded = completed;
             } else if completed > 0 {
-                warn!(
+                debug!(
                     expected = batch_rows.len(),
-                    completed, "bulk complete partial, falling back per job"
+                    completed, "bulk complete partial, retrying unresolved jobs"
                 );
-                let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
-                succeeded = s;
+                let fallback_plan =
+                    unresolved_completion_items(config, pool, &embedded.items).await;
+                let (s, f) = complete_jobs_fallback(config, pool, &fallback_plan.items).await;
+                succeeded = if fallback_plan.includes_completed_rows {
+                    s
+                } else {
+                    completed + s
+                };
                 failed += f;
             } else {
                 warn!("bulk complete returned 0, falling back per job");
-                let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
+                let fallback_items: Vec<_> = embedded.items.iter().collect();
+                let (s, f) = complete_jobs_fallback(config, pool, &fallback_items).await;
                 succeeded = s;
                 failed += f;
             }
         }
+        Err(e) if is_db_pressure_error(&e) => {
+            warn!(
+                error = %e,
+                jobs = embedded.items.len(),
+                "bulk complete failed under database pressure; skipping per-job fallback"
+            );
+            failed += embedded.items.len();
+        }
         Err(e) => {
             warn!(error = %e, "bulk complete failed, falling back per job");
-            let (s, f) = complete_jobs_fallback(config, pool, &embedded.items).await;
+            let fallback_items: Vec<_> = embedded.items.iter().collect();
+            let (s, f) = complete_jobs_fallback(config, pool, &fallback_items).await;
             succeeded = s;
             failed += f;
         }
@@ -650,15 +753,83 @@ async fn complete_chunk(
         succeeded,
         failed,
     );
+    heartbeat_after_chunk(config, pool, succeeded, failed).await;
 
     CompleteChunkResult { succeeded, failed }
+}
+
+async fn heartbeat_after_chunk(config: &Config, pool: &PgPool, jobs_ok: usize, jobs_failed: usize) {
+    if !should_mark_progress_heartbeat(jobs_ok, jobs_failed) {
+        return;
+    }
+
+    let params = WorkerStateParams {
+        worker_name: config.worker_name.clone(),
+        status: "running".to_string(),
+        last_cursor: None,
+        last_run_started_at: None,
+        last_run_finished_at: None,
+        rows_processed: jobs_ok as i64,
+        last_error: None,
+    };
+
+    if let Err(e) = mark_worker_state_with_timeout(config, pool, &params).await {
+        warn!(
+            error = %e,
+            jobs_ok,
+            jobs_failed,
+            "worker progress heartbeat failed"
+        );
+    }
+}
+
+struct CompletionFallbackPlan<'a> {
+    items: Vec<&'a (PreparedJob, Vec<f32>)>,
+    includes_completed_rows: bool,
+}
+
+async fn unresolved_completion_items<'a>(
+    config: &Config,
+    pool: &PgPool,
+    items: &'a [(PreparedJob, Vec<f32>)],
+) -> CompletionFallbackPlan<'a> {
+    let job_ids: Vec<i64> = items
+        .iter()
+        .map(|(prepared, _)| prepared.job.job_id)
+        .collect();
+    let completed_ids = match completed_job_ids_with_timeout(config, pool, &job_ids).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            warn!(
+                error = %e,
+                job_count = job_ids.len(),
+                "failed to inspect partial bulk completion; retrying full chunk"
+            );
+            return CompletionFallbackPlan {
+                items: items.iter().collect(),
+                includes_completed_rows: true,
+            };
+        }
+    };
+
+    CompletionFallbackPlan {
+        items: items
+            .iter()
+            .filter(|(prepared, _)| !completed_ids.contains(&prepared.job.job_id))
+            .collect(),
+        includes_completed_rows: false,
+    }
 }
 
 async fn complete_jobs_fallback(
     config: &Config,
     pool: &PgPool,
-    items: &[(PreparedJob, Vec<f32>)],
+    items: &[&(PreparedJob, Vec<f32>)],
 ) -> (usize, usize) {
+    if items.is_empty() {
+        return (0, 0);
+    }
+
     // Cap fallback concurrency so at least 6 connections remain for
     // lease/state/prepare operations running in parallel.
     let pool_max = config.effective_pool_max_connections() as usize;
@@ -672,16 +843,31 @@ async fn complete_jobs_fallback(
         .map(|(prepared, vector)| {
             let semaphore = Arc::clone(&semaphore);
             let pool = pool.clone();
+            let config = config.clone();
             let dimensions = config.dimensions;
             async move {
                 let _permit = semaphore
                     .acquire()
                     .await
                     .expect("complete semaphore closed");
-                match complete_job_pipeline(&pool, dimensions, prepared, vector).await {
+                match complete_job_pipeline_with_timeout(
+                    &config, &pool, dimensions, prepared, vector,
+                )
+                .await
+                {
                     Ok(()) => Ok(()),
                     Err(e) => {
-                        if fail_job_with_error(&pool, &prepared.job, &e.to_string()).await {
+                        warn!(
+                            error = %e,
+                            job_id = prepared.job.job_id,
+                            "fallback completion failed"
+                        );
+                        if matches!(e, WorkerError::DbTimeout { .. }) {
+                            return Err(());
+                        }
+
+                        if fail_job_with_error(&config, &pool, &prepared.job, &e.to_string()).await
+                        {
                             Err(())
                         } else {
                             Err(())
@@ -746,6 +932,154 @@ async fn complete_job_pipeline(
     Ok(())
 }
 
+async fn complete_embedding_batch_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+    rows: &[CompleteBatchRow],
+) -> Result<i32, WorkerError> {
+    with_db_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "complete_embedding_batch",
+        db::complete_embedding_batch(pool, rows),
+    )
+    .await
+}
+
+async fn completed_job_ids_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+    job_ids: &[i64],
+) -> Result<HashSet<i64>, WorkerError> {
+    with_db_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "completed_job_ids",
+        db::completed_job_ids(pool, job_ids),
+    )
+    .await
+}
+
+async fn complete_job_pipeline_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+    dimensions: usize,
+    prepared: &PreparedJob,
+    vector: &[f32],
+) -> Result<(), WorkerError> {
+    with_worker_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "complete_job_pipeline",
+        complete_job_pipeline(pool, dimensions, prepared, vector),
+    )
+    .await
+}
+
+async fn mark_worker_state_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+    params: &WorkerStateParams,
+) -> Result<(), WorkerError> {
+    with_db_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "mark_worker_state",
+        db::mark_worker_state(pool, params),
+    )
+    .await
+}
+
+async fn lease_jobs_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+) -> Result<Vec<EmbeddingJob>, WorkerError> {
+    with_db_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "lease_jobs",
+        db::lease_jobs(
+            pool,
+            config.batch_size as i32,
+            &config.worker_name,
+            config.lease_seconds as i64,
+        ),
+    )
+    .await
+}
+
+async fn fail_job_with_error_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+    job: &EmbeddingJob,
+    message: &str,
+) -> Result<(), WorkerError> {
+    with_db_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "fail_job",
+        db::fail_job(
+            pool,
+            job.job_id,
+            job.lease_token.as_deref(),
+            job.attempts,
+            job.max_attempts,
+            message,
+        ),
+    )
+    .await
+}
+
+async fn fail_job_permanent_with_timeout(
+    config: &Config,
+    pool: &PgPool,
+    job: &EmbeddingJob,
+    message: &str,
+) -> Result<(), WorkerError> {
+    with_db_timeout(
+        Duration::from_secs(config.db_call_timeout_seconds),
+        "fail_job_permanent",
+        db::fail_job(
+            pool,
+            job.job_id,
+            job.lease_token.as_deref(),
+            job.max_attempts,
+            job.max_attempts,
+            message,
+        ),
+    )
+    .await
+}
+
+async fn with_db_timeout<T, Fut>(
+    timeout_duration: Duration,
+    operation: &'static str,
+    future: Fut,
+) -> Result<T, WorkerError>
+where
+    Fut: Future<Output = Result<T, sqlx::Error>>,
+{
+    match tokio::time::timeout(timeout_duration, future).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(WorkerError::DbTimeout {
+            operation,
+            timeout_ms: timeout_duration.as_millis(),
+        }),
+    }
+}
+
+async fn with_worker_timeout<T, Fut>(
+    timeout_duration: Duration,
+    operation: &'static str,
+    future: Fut,
+) -> Result<T, WorkerError>
+where
+    Fut: Future<Output = Result<T, WorkerError>>,
+{
+    match tokio::time::timeout(timeout_duration, future).await {
+        Ok(result) => result,
+        Err(_) => Err(WorkerError::DbTimeout {
+            operation,
+            timeout_ms: timeout_duration.as_millis(),
+        }),
+    }
+}
+
 /// Returns true for HTTP errors that are permanent and should not be retried.
 ///
 /// A 400 Bad Request from an embedding provider means the payload is invalid
@@ -768,38 +1102,148 @@ fn is_permanent_embed_error(e: &WorkerError) -> bool {
     }
 }
 
-async fn fail_job_with_error(pool: &PgPool, job: &EmbeddingJob, message: &str) -> bool {
-    db::fail_job(
-        pool,
-        job.job_id,
-        job.lease_token.as_deref(),
-        job.attempts,
-        job.max_attempts,
-        message,
+fn is_db_pressure_error(e: &WorkerError) -> bool {
+    matches!(
+        e,
+        WorkerError::DbTimeout { .. } | WorkerError::Database(sqlx::Error::PoolTimedOut)
     )
-    .await
-    .is_ok()
+}
+
+async fn fail_job_with_error(
+    config: &Config,
+    pool: &PgPool,
+    job: &EmbeddingJob,
+    message: &str,
+) -> bool {
+    match fail_job_with_error_with_timeout(config, pool, job, message).await {
+        Ok(()) => true,
+        Err(e) => {
+            warn!(
+                error = %e,
+                job_id = job.job_id,
+                "failed to mark embedding job failed"
+            );
+            false
+        }
+    }
 }
 
 /// Mark a job as permanently failed by setting attempts = max_attempts before
 /// calling fail_job.  This bypasses the retry backoff for errors that are known
 /// to be unrecoverable (e.g. 400 Bad Request with oversized payload).
-async fn fail_job_permanent(pool: &PgPool, job: &EmbeddingJob, message: &str) {
-    let _ = db::fail_job(
-        pool,
-        job.job_id,
-        job.lease_token.as_deref(),
-        job.max_attempts, // force exhausted so status = 'failed'
-        job.max_attempts,
-        message,
-    )
-    .await;
+async fn fail_job_permanent(config: &Config, pool: &PgPool, job: &EmbeddingJob, message: &str) {
+    if let Err(e) = fail_job_permanent_with_timeout(config, pool, job, message).await {
+        warn!(
+            error = %e,
+            job_id = job.job_id,
+            "failed to mark embedding job permanently failed"
+        );
+    }
 }
 
 fn sha256_hex(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(
+        rows_leased: usize,
+        drained_to_empty: bool,
+        max_drain_batches_reached: bool,
+    ) -> RunOnceResult {
+        RunOnceResult {
+            processed: rows_leased,
+            permanent_failures: 0,
+            rows_leased,
+            drain_batches: usize::from(rows_leased > 0),
+            drained_to_empty,
+            max_drain_batches_reached,
+            drain_ms: 1,
+        }
+    }
+
+    #[test]
+    fn drain_continues_after_successful_full_batch_without_cap() {
+        assert_eq!(drain_decision(64, 1, 0), DrainDecision::Continue);
+        assert_eq!(
+            loop_action_after_success(false, &result(64, false, false)),
+            LoopAction::ContinueImmediately
+        );
+    }
+
+    #[test]
+    fn drain_sleeps_only_after_empty_lease() {
+        assert_eq!(drain_decision(0, 3, 0), DrainDecision::Empty);
+        assert_eq!(
+            loop_action_after_success(false, &result(0, true, false)),
+            LoopAction::SleepIdle
+        );
+        assert_eq!(
+            loop_action_after_success(false, &result(64, false, true)),
+            LoopAction::ContinueImmediately
+        );
+    }
+
+    #[test]
+    fn once_mode_exits_after_drain_cycle() {
+        assert_eq!(
+            loop_action_after_success(true, &result(128, true, false)),
+            LoopAction::ExitOnce
+        );
+    }
+
+    #[test]
+    fn max_drain_batches_yields_without_idle_sleep() {
+        assert_eq!(drain_decision(64, 2, 2), DrainDecision::MaxBatchesReached);
+        assert_eq!(
+            loop_action_after_success(false, &result(128, false, true)),
+            LoopAction::ContinueImmediately
+        );
+    }
+
+    #[test]
+    fn progress_heartbeat_is_requested_after_each_nonempty_chunk() {
+        assert!(should_mark_progress_heartbeat(1, 0));
+        assert!(should_mark_progress_heartbeat(0, 1));
+        assert!(!should_mark_progress_heartbeat(0, 0));
+    }
+
+    #[tokio::test]
+    async fn db_timeout_returns_retryable_worker_error() {
+        let err = with_db_timeout(Duration::from_millis(1), "lease_jobs", async {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            Ok::<_, sqlx::Error>(())
+        })
+        .await
+        .expect_err("timeout should return an error");
+
+        match err {
+            WorkerError::DbTimeout {
+                operation,
+                timeout_ms,
+            } => {
+                assert_eq!(operation, "lease_jobs");
+                assert_eq!(timeout_ms, 1);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn db_pressure_errors_skip_fallback() {
+        assert!(is_db_pressure_error(&WorkerError::DbTimeout {
+            operation: "complete_embedding_batch",
+            timeout_ms: 30_000,
+        }));
+        assert!(is_db_pressure_error(&WorkerError::Database(
+            sqlx::Error::PoolTimedOut,
+        )));
+    }
 }
 
 // ---------------------------------------------------------------------------

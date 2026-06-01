@@ -11,3 +11,10 @@ create table if not exists vec_worker_state (
   last_error text,
   updated_at timestamptz not null default now()
 );
+
+alter table vec_worker_state set (
+  autovacuum_vacuum_scale_factor = 0,
+  autovacuum_vacuum_threshold = 10,
+  autovacuum_analyze_scale_factor = 0,
+  autovacuum_analyze_threshold = 10
+);

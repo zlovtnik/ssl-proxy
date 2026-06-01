@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing::instrument;
 
@@ -234,13 +235,12 @@ pub async fn complete_job_tx(
     if result.rows_affected() != 1 {
         // If the UPDATE matched 0 rows, the job may already be completed.
         // Check its status — if already completed, treat as success (idempotent).
-        let status: Option<String> = sqlx::query_scalar(
-            r#"SELECT status FROM vec_embedding_jobs WHERE job_id = $1"#,
-        )
-        .bind(job_id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .flatten();
+        let status: Option<String> =
+            sqlx::query_scalar(r#"SELECT status FROM vec_embedding_jobs WHERE job_id = $1"#)
+                .bind(job_id)
+                .fetch_optional(&mut **tx)
+                .await?
+                .flatten();
 
         match status.as_deref() {
             Some("completed") => return Ok(()),
@@ -355,6 +355,15 @@ pub async fn upsert_embedding(
             metadata = EXCLUDED.metadata,
             embedded_at = now(),
             updated_at = now()
+        WHERE vec_embeddings.source_observed_at IS DISTINCT FROM EXCLUDED.source_observed_at
+           OR vec_embeddings.source_stream_name IS DISTINCT FROM EXCLUDED.source_stream_name
+           OR vec_embeddings.source_sensor_id IS DISTINCT FROM EXCLUDED.source_sensor_id
+           OR vec_embeddings.source_location_id IS DISTINCT FROM EXCLUDED.source_location_id
+           OR vec_embeddings.source_mac IS DISTINCT FROM EXCLUDED.source_mac
+           OR vec_embeddings.embedding_dimensions IS DISTINCT FROM EXCLUDED.embedding_dimensions
+           OR vec_embeddings.content_sha256 IS DISTINCT FROM EXCLUDED.content_sha256
+           OR vec_embeddings.content_text IS DISTINCT FROM EXCLUDED.content_text
+           OR vec_embeddings.metadata IS DISTINCT FROM EXCLUDED.metadata
         "#,
     )
     .bind(&job.source_table)
@@ -423,6 +432,15 @@ pub async fn upsert_embedding_tx(
             metadata = EXCLUDED.metadata,
             embedded_at = now(),
             updated_at = now()
+        WHERE vec_embeddings.source_observed_at IS DISTINCT FROM EXCLUDED.source_observed_at
+           OR vec_embeddings.source_stream_name IS DISTINCT FROM EXCLUDED.source_stream_name
+           OR vec_embeddings.source_sensor_id IS DISTINCT FROM EXCLUDED.source_sensor_id
+           OR vec_embeddings.source_location_id IS DISTINCT FROM EXCLUDED.source_location_id
+           OR vec_embeddings.source_mac IS DISTINCT FROM EXCLUDED.source_mac
+           OR vec_embeddings.embedding_dimensions IS DISTINCT FROM EXCLUDED.embedding_dimensions
+           OR vec_embeddings.content_sha256 IS DISTINCT FROM EXCLUDED.content_sha256
+           OR vec_embeddings.content_text IS DISTINCT FROM EXCLUDED.content_text
+           OR vec_embeddings.metadata IS DISTINCT FROM EXCLUDED.metadata
         "#,
     )
     .bind(&job.source_table)
@@ -464,6 +482,31 @@ pub async fn complete_embedding_batch(
             .fetch_one(pool)
             .await?;
     Ok(count)
+}
+
+/// Return the subset of job IDs that are already completed.
+#[instrument(skip(pool, job_ids))]
+pub async fn completed_job_ids(
+    pool: &PgPool,
+    job_ids: &[i64],
+) -> Result<HashSet<i64>, sqlx::Error> {
+    if job_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let rows: Vec<i64> = sqlx::query_scalar(
+        r#"
+        SELECT job_id
+        FROM vec_embedding_jobs
+        WHERE job_id = ANY($1::bigint[])
+          AND status = 'completed'
+        "#,
+    )
+    .bind(job_ids)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().collect())
 }
 
 /// Build a [`CompleteBatchRow`] from job, input, digest, and vector.
@@ -609,16 +652,12 @@ pub async fn release_expired_leases(pool: &PgPool) -> Result<i32, sqlx::Error> {
 }
 
 #[instrument(skip(pool))]
-pub async fn count_high_risk_aps(
-    pool: &PgPool,
-    threshold: f64,
-) -> Result<i64, sqlx::Error> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM mv_ap_risk_score WHERE composite_risk > $1",
-    )
-    .bind(threshold)
-    .fetch_one(pool)
-    .await?;
+pub async fn count_high_risk_aps(pool: &PgPool, threshold: f64) -> Result<i64, sqlx::Error> {
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM mv_ap_risk_score WHERE composite_risk > $1")
+            .bind(threshold)
+            .fetch_one(pool)
+            .await?;
 
     Ok(row.0)
 }
