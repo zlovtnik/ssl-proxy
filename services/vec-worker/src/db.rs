@@ -662,6 +662,29 @@ pub async fn count_high_risk_aps(pool: &PgPool, threshold: f64) -> Result<i64, s
     Ok(row.0)
 }
 
+/// Attempt to acquire a DB advisory lock for the alert sweep.
+/// Returns true if the lock was acquired (caller should run the sweep).
+/// The lock is automatically released at the end of the session or
+/// by calling finish_alert_sweep.
+#[instrument(skip(pool))]
+pub async fn try_begin_alert_sweep(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    let row: (bool,) = sqlx::query_as(
+        "SELECT vec_try_begin_maintenance_job('alert-sweep')"
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+/// Release the DB advisory lock for the alert sweep.
+#[instrument(skip(pool))]
+pub async fn finish_alert_sweep(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT vec_finish_maintenance_job('alert-sweep')")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

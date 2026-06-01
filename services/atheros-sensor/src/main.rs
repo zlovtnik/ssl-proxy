@@ -443,13 +443,21 @@ fn compute_frame_timing_delta(
         })
     });
 
-    timing_tracker.insert(
-        session_key.to_string(),
-        LastFrameTiming {
-            observed_at: current_observed_at,
-            tsft: current_tsft,
-        },
-    );
+    // Only update the baseline when the new sample is not older than the stored one.
+    // This prevents out-of-order packets from corrupting the baseline.
+    let should_update = timing_tracker
+        .get(session_key)
+        .map(|previous| current_observed_at >= previous.observed_at)
+        .unwrap_or(true); // No previous entry — first sample, always insert.
+    if should_update {
+        timing_tracker.insert(
+            session_key.to_string(),
+            LastFrameTiming {
+                observed_at: current_observed_at,
+                tsft: current_tsft,
+            },
+        );
+    }
     prune_timing_tracker(timing_tracker, current_observed_at);
 
     delta
@@ -459,11 +467,25 @@ fn prune_timing_tracker(
     timing_tracker: &mut HashMap<String, LastFrameTiming>,
     observed_at: DateTime<Utc>,
 ) {
+    let cutoff = observed_at - chrono::Duration::seconds(TIMING_TRACKER_MAX_AGE_SECS);
+    timing_tracker.retain(|_, timing| timing.observed_at >= cutoff);
     if timing_tracker.len() <= TIMING_TRACKER_MAX_SESSIONS {
         return;
     }
-    let cutoff = observed_at - chrono::Duration::seconds(TIMING_TRACKER_MAX_AGE_SECS);
-    timing_tracker.retain(|_, timing| timing.observed_at >= cutoff);
+    // Evict the oldest sessions until we are within the cap.
+    let mut entries: Vec<(String, DateTime<Utc>)> = timing_tracker
+        .iter()
+        .map(|(k, v)| (k.clone(), v.observed_at))
+        .collect();
+    entries.sort_by_key(|(_, observed_at)| *observed_at);
+    let to_remove: Vec<String> = entries
+        .into_iter()
+        .take(timing_tracker.len() - TIMING_TRACKER_MAX_SESSIONS)
+        .map(|(k, _)| k)
+        .collect();
+    for key in to_remove {
+        timing_tracker.remove(&key);
+    }
 }
 
 #[derive(Serialize)]

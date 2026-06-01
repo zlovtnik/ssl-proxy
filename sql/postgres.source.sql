@@ -106,7 +106,7 @@ returns boolean
 language plpgsql
 as $$
 declare
-  v_lock_name text := 'vec_maintenance';
+  v_lock_name text := 'vec_maintenance_' || p_job_name;
 begin
   if not pg_try_advisory_lock(hashtextextended(v_lock_name, 0)) then
     raise notice 'vector maintenance already running, skipping %', p_job_name;
@@ -128,7 +128,7 @@ returns void
 language plpgsql
 as $$
 declare
-  v_lock_name text := 'vec_maintenance';
+  v_lock_name text := 'vec_maintenance_' || p_job_name;
 begin
   delete from vec_job_locks where job_name = 'maintenance:' || p_job_name;
   perform pg_advisory_unlock(hashtextextended(v_lock_name, 0));
@@ -3785,7 +3785,7 @@ begin
     return;
   end if;
 
-  refresh materialized view concurrently v_device_repetition_score;
+  refresh materialized view v_device_repetition_score;
 
   perform vec_finish_maintenance_job('vec-refresh-device-repetition-score');
 exception when others then
@@ -3803,7 +3803,7 @@ begin
     return;
   end if;
 
-  refresh materialized view concurrently mv_ap_risk_score;
+  refresh materialized view mv_ap_risk_score;
   perform check_high_risk_aps();
 
   perform vec_finish_maintenance_job('vec-refresh-ap-risk-score');

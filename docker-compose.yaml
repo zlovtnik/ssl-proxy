@@ -603,7 +603,7 @@ services:
       SYNC_OUTBOX_DIR: /sync-outbox
       RUST_LOG: ${ATH_SENSOR_RUST_LOG:-warn,atheros_sensor=info,ssl_proxy=info}
       ATH_SENSOR_METRICS_PORT: ${ATH_SENSOR_METRICS_PORT:-9097}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4317}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       OTEL_SERVICE_NAME: atheros-sensor
       OTEL_RESOURCE_ATTRIBUTES: service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=atheros-sensor

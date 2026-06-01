@@ -23,10 +23,7 @@ use sqlx::PgPool;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::signal;
 use tokio::sync::{watch, Semaphore};
@@ -55,7 +52,6 @@ pub async fn run_forever(
 
     let mut iteration: u64 = 0;
     let mut consecutive_permanent_failures: u32 = 0;
-    let alert_sweep_running = Arc::new(AtomicBool::new(false));
     const PERMANENT_FAILURE_CIRCUIT_BREAKER: u32 = 5;
 
     loop {
@@ -134,36 +130,43 @@ pub async fn run_forever(
             // Periodic alert sweep every 10 iterations; run in the background on
             // the dedicated alert pool so it cannot starve the embed/complete loop.
             //
+            // Uses a DB advisory lock (vec_try_begin_maintenance_job) so only one
+            // replica runs the sweep at a time.  The lock is released when the
+            // spawned task completes.
+            //
             // Skip the sweep when the main pool is under pressure — if idle
             // connections are scarce, the embed/complete pipeline needs them
             // more than the observability sweep does.  The sweep will run on a
             // later iteration when headroom is available.
             const ALERT_MIN_FREE_CONNECTIONS: usize = 3;
             let idle = pool.num_idle();
-            if alert_sweep_running.load(Ordering::Acquire) {
-                debug!("skipping alert sweep - previous sweep still running");
-            } else if idle >= ALERT_MIN_FREE_CONNECTIONS {
+            if idle >= ALERT_MIN_FREE_CONNECTIONS {
                 let alert_pool = alert_pool.clone();
-                let alert_sweep_running = Arc::clone(&alert_sweep_running);
-                if alert_sweep_running
-                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                    .is_err()
-                {
-                    debug!("skipping alert sweep - previous sweep already claimed");
-                } else {
-                    tokio::spawn(async move {
-                        let _guard = AlertSweepGuard(alert_sweep_running);
-                        let alert_cfg = AlertConfig::default();
-                        if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
-                            warn!(error = %e, "alert sweep failed (background)");
-                        }
-                        // count_high_risk_aps also uses the alert pool so the main loop
-                        // is never blocked by a COUNT(*) on mv_ap_risk_score.
-                        match db::count_high_risk_aps(&alert_pool, 0.75).await {
-                            Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
-                            Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
-                        }
-                    });
+                match db::try_begin_alert_sweep(&alert_pool).await {
+                    Ok(true) => {
+                        tokio::spawn(async move {
+                            let alert_cfg = AlertConfig::default();
+                            if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
+                                warn!(error = %e, "alert sweep failed (background)");
+                            }
+                            // count_high_risk_aps also uses the alert pool so the main loop
+                            // is never blocked by a COUNT(*) on mv_ap_risk_score.
+                            match db::count_high_risk_aps(&alert_pool, 0.75).await {
+                                Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
+                                Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
+                            }
+                            // Release the DB advisory lock.
+                            if let Err(e) = db::finish_alert_sweep(&alert_pool).await {
+                                warn!(error = %e, "failed to release alert sweep lock");
+                            }
+                        });
+                    }
+                    Ok(false) => {
+                        debug!("skipping alert sweep — another replica already holds the lock");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "alert sweep attempt failed");
+                    }
                 }
             } else {
                 debug!(
@@ -177,14 +180,6 @@ pub async fn run_forever(
 
     info!("worker finished");
     Ok(())
-}
-
-struct AlertSweepGuard(Arc<AtomicBool>);
-
-impl Drop for AlertSweepGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
 }
 
 /// Result of a single `run_once` pass.
