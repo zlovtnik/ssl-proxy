@@ -38,6 +38,7 @@
 \ir tables/025_vec_rf_sensor_locations.sql
 \ir tables/026_vec_dns_policy.sql
 \ir tables/027_vec_dns_resolver_ledger.sql
+\ir tables/028_search_feedback.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
