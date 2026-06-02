@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Kind string
@@ -93,6 +95,13 @@ func (c *HTTPClient) Embed(ctx context.Context, texts []string, _ Kind) ([][]flo
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("embedding backend returned %s; read response body: %w", resp.Status, readErr)
+		}
+		if message := responseErrorText(body); message != "" {
+			return nil, fmt.Errorf("embedding backend returned %s: %s", resp.Status, message)
+		}
 		return nil, fmt.Errorf("embedding backend returned %s", resp.Status)
 	}
 	var parsed embeddingsResponse
@@ -115,6 +124,32 @@ func (c *HTTPClient) Embed(ctx context.Context, texts []string, _ Kind) ([][]flo
 		}
 	}
 	return vectors, nil
+}
+
+func responseErrorText(body []byte) string {
+	message := strings.TrimSpace(string(body))
+	var parsed embeddingsResponse
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error != nil {
+		switch value := parsed.Error.(type) {
+		case string:
+			message = value
+		default:
+			encoded, err := json.Marshal(value)
+			if err == nil {
+				message = string(encoded)
+			} else {
+				message = fmt.Sprint(value)
+			}
+		}
+	}
+	if len(message) > 2048 {
+		i := 2048
+		for i > 0 && !utf8.RuneStart(message[i]) {
+			i--
+		}
+		return message[:i]
+	}
+	return message
 }
 
 func (c *HTTPClient) Health(ctx context.Context) error {

@@ -3,8 +3,11 @@ package ingest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 )
@@ -52,4 +55,11 @@ func TestTruncateWordsMarksDroppedTokens(t *testing.T) {
 	got := truncateWords("one two three four", 2)
 
 	require.Equal(t, "one two (+2 truncated)", got)
+}
+
+func TestTruncateErrorPreservesUTF8(t *testing.T) {
+	got := truncateError(errors.New(strings.Repeat("a", 2047) + "é"))
+
+	require.True(t, utf8.ValidString(got))
+	require.Len(t, got, 2047)
 }

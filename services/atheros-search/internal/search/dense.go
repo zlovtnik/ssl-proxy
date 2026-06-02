@@ -26,11 +26,20 @@ func denseKind(ctx context.Context, pool *pgxpool.Pool, qvec []float32, model, k
 	args := []any{VectorLiteral(qvec), kind, model, opts.TopK * 4}
 	embedFilter := BuildEmbeddingFilters(opts.Filters, len(args)+1)
 	args = append(args, embedFilter.Args...)
-	where := WhereSQL([]string{
+	wirelessFilter := BuildWirelessFilters(opts.Filters, len(args)+1)
+	args = append(args, wirelessFilter.Args...)
+	baseClauses := []string{
 		"e.embedding_kind = $2",
 		"e.embedding_model = $3",
 		"e.embedding_dimensions = 768",
-	}, embedFilter.Clauses)
+	}
+	if len(wirelessFilter.Clauses) > 0 {
+		baseClauses = append(baseClauses, "EXISTS (SELECT 1 FROM sync_events_expanded se"+WhereSQL([]string{
+			"e.source_table = 'sync_events'",
+			"se.dedupe_key = e.source_key",
+		}, wirelessFilter.Clauses)+")")
+	}
+	where := WhereSQL(baseClauses, embedFilter.Clauses)
 	sql := fmt.Sprintf(`
 WITH candidates AS (
   SELECT
@@ -66,11 +75,6 @@ LEFT JOIN sync_events_expanded se
   ON c.source_table = 'sync_events'
  AND se.dedupe_key = c.source_key
 `, where)
-	wirelessFilter := BuildWirelessFilters(opts.Filters, len(args)+1)
-	if len(wirelessFilter.Clauses) > 0 {
-		sql += WhereSQL(nil, wirelessFilter.Clauses)
-		args = append(args, wirelessFilter.Args...)
-	}
 	sql += `
 ORDER BY cosine_similarity DESC
 LIMIT $4`

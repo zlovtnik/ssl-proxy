@@ -78,20 +78,40 @@ func main() {
 	ingest.StartFreshnessConsumer(ctx, pool.Pool, cfg, logger)
 	ingest.StartEmbedder(ctx, pool.Pool, cfg, embedder, logger)
 
-	if _, err := metrics.StartServer(ctx, cfg.MetricsPort); err != nil {
+	metricsServer, err := metrics.StartServer(ctx, cfg.MetricsPort)
+	if err != nil {
 		logger.Fatal().Err(err).Msg("start metrics server")
 	}
-	if _, err := api.StartGRPC(ctx, cfg.GRPCPort, svc, tokenAuth, logger); err != nil {
+	grpcServer, err := api.StartGRPC(ctx, cfg.GRPCPort, svc, tokenAuth, logger)
+	if err != nil {
 		logger.Fatal().Err(err).Msg("start grpc server")
 	}
-	if _, err := api.StartHTTP(ctx, cfg.HTTPPort, svc, readiness, tokenAuth, logger); err != nil {
+	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, svc, readiness, tokenAuth, logger)
+	if err != nil {
 		logger.Fatal().Err(err).Msg("start http gateway")
 	}
 
 	<-ctx.Done()
 	logger.Info().Msg("shutdown requested")
-	time.Sleep(250 * time.Millisecond)
-	os.Exit(0)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Warn().Err(err).Msg("http gateway shutdown failed")
+	}
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Warn().Err(err).Msg("metrics server shutdown failed")
+	}
+	grpcStopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(grpcStopped)
+	}()
+	select {
+	case <-grpcStopped:
+	case <-shutdownCtx.Done():
+		grpcServer.Stop()
+		logger.Warn().Err(shutdownCtx.Err()).Msg("grpc graceful shutdown timed out")
+	}
 }
 
 func runHealthcheck() error {

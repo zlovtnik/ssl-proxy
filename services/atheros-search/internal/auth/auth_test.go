@@ -24,3 +24,8 @@ func TestTokenAuthDisabledWhenDigestEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, auth.VerifyAuthorization(""))
 }
+
+func TestTokenAuthRejectsWrongDigestLength(t *testing.T) {
+	_, err := NewTokenAuth("deadbeef")
+	require.ErrorContains(t, err, "token digest must decode to 32 bytes")
+}

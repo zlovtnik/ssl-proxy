@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -799,5 +800,9 @@ func truncateError(err error) string {
 	if len(message) <= 2048 {
 		return message
 	}
-	return message[:2048]
+	i := 2048
+	for i > 0 && !utf8.RuneStart(message[i]) {
+		i--
+	}
+	return message[:i]
 }

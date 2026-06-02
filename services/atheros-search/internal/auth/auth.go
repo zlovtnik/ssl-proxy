@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"strings"
 )
 
@@ -19,6 +20,9 @@ func NewTokenAuth(hexDigest string) (*TokenAuth, error) {
 	digest, err := hex.DecodeString(hexDigest)
 	if err != nil {
 		return nil, err
+	}
+	if len(digest) != sha256.Size {
+		return nil, fmt.Errorf("token digest must decode to %d bytes, got %d", sha256.Size, len(digest))
 	}
 	return &TokenAuth{expectedDigest: digest}, nil
 }

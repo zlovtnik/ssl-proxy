@@ -183,11 +183,48 @@ func temporalLines(t time.Time) []string {
 }
 
 func clampWords(text string, maxWords int) string {
-	words := strings.Fields(text)
-	if len(words) <= maxWords {
-		return text
+	if maxWords <= 0 {
+		if strings.TrimSpace(text) == "" {
+			return text
+		}
+		return "..."
 	}
-	return strings.Join(words[:maxWords], " ") + "..."
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	remaining := maxWords
+	for i, line := range lines {
+		words := strings.Fields(line)
+		if len(words) == 0 {
+			out = append(out, line)
+			continue
+		}
+		if len(words) > remaining {
+			if remaining > 0 {
+				out = append(out, strings.Join(words[:remaining], " ")+"...")
+			} else if len(out) > 0 {
+				out[len(out)-1] += "..."
+			} else {
+				out = append(out, "...")
+			}
+			return strings.Join(out, "\n")
+		}
+		out = append(out, line)
+		remaining -= len(words)
+		if remaining == 0 && laterLinesHaveWords(lines[i+1:]) {
+			out[len(out)-1] += "..."
+			return strings.Join(out, "\n")
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func laterLinesHaveWords(lines []string) bool {
+	for _, line := range lines {
+		if len(strings.Fields(line)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func TagsFromJSON(tags []string) []string {

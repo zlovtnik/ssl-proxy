@@ -657,7 +657,9 @@ services:
     ports:
       - "127.0.0.1:50051:50051"
       - "127.0.0.1:8080:8080"
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:19090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "/usr/local/bin/atheros-search", "healthcheck"]
       interval: 30s

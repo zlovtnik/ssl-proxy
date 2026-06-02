@@ -19,7 +19,7 @@ import (
 
 func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *health.Readiness, tokenAuth *auth.TokenAuth, logger zerolog.Logger) (*http.Server, error) {
 	mux := runtime.NewServeMux()
-	registerJSON(mux, "POST", "/v1/search", tokenAuth, func(w http.ResponseWriter, r *http.Request) {
+	registerJSON(mux, "POST", "/v1/search", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		var req searchv1.SearchRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -32,7 +32,7 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
-	registerJSON(mux, "POST", "/v1/search/stream", tokenAuth, func(w http.ResponseWriter, r *http.Request) {
+	registerJSON(mux, "POST", "/v1/search/stream", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		var req searchv1.SearchRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -53,9 +53,9 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 			}
 		}
 	})
-	registerJSON(mux, "GET", "/v1/explain/{source_key}", tokenAuth, func(w http.ResponseWriter, r *http.Request) {
+	registerJSON(mux, "GET", "/v1/explain/{source_key}", tokenAuth, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
 		req := &searchv1.ExplainRequest{
-			SourceKey: strings.TrimPrefix(r.URL.Path, "/v1/explain/"),
+			SourceKey: params["source_key"],
 			Query:     r.URL.Query().Get("query"),
 			Kind:      parseKind(r.URL.Query().Get("kind")),
 		}
@@ -66,7 +66,7 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
-	registerJSON(mux, "GET", "/v1/suggest/filters", tokenAuth, func(w http.ResponseWriter, r *http.Request) {
+	registerJSON(mux, "GET", "/v1/suggest/filters", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		resp, err := svc.SuggestFilters(r.Context(), &searchv1.SuggestFiltersRequest{Prefix: r.URL.Query().Get("prefix")})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -105,13 +105,13 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 	return server, nil
 }
 
-func registerJSON(mux *runtime.ServeMux, method, pattern string, tokenAuth *auth.TokenAuth, handler func(http.ResponseWriter, *http.Request)) {
-	mux.HandlePath(method, pattern, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+func registerJSON(mux *runtime.ServeMux, method, pattern string, tokenAuth *auth.TokenAuth, handler func(http.ResponseWriter, *http.Request, map[string]string)) {
+	mux.HandlePath(method, pattern, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
 		if tokenAuth != nil && tokenAuth.Enabled() && !tokenAuth.VerifyAuthorization(r.Header.Get("Authorization")) {
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
 		}
-		handler(w, r)
+		handler(w, r, params)
 	})
 }
 

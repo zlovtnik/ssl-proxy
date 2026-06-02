@@ -18,6 +18,8 @@ import (
 const (
 	freshnessDebounceInterval = 750 * time.Millisecond
 	freshnessRetryInterval    = 5 * time.Second
+	freshnessRetryMaxAttempts = 5
+	freshnessRetryMaxBackoff  = 30 * time.Second
 	freshnessMaxPending       = 256
 )
 
@@ -33,8 +35,30 @@ func StartFreshnessConsumer(ctx context.Context, pool *pgxpool.Pool, cfg config.
 	}
 
 	go func() {
-		if err := runKafkaFreshnessConsumer(ctx, pool, cfg, logger); err != nil {
-			logger.Error().Err(err).Msg("redpanda freshness consumer stopped")
+		backoff := freshnessRetryInterval
+		for attempt := 1; ctx.Err() == nil; attempt++ {
+			if err := runKafkaFreshnessConsumer(ctx, pool, cfg, logger); err != nil {
+				logger.Warn().Err(err).Int("attempt", attempt).Msg("redpanda freshness consumer stopped")
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if attempt >= freshnessRetryMaxAttempts {
+				logger.Warn().Int("attempts", attempt).Msg("redpanda freshness consumer retry limit reached; using periodic freshness refresh fallback")
+				startPollingFreshnessRefresher(ctx, pool, cfg, logger)
+				return
+			}
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			backoff *= 2
+			if backoff > freshnessRetryMaxBackoff {
+				backoff = freshnessRetryMaxBackoff
+			}
 		}
 	}()
 }
@@ -75,13 +99,18 @@ func runKafkaFreshnessConsumer(ctx context.Context, pool *pgxpool.Pool, cfg conf
 	logger.Info().Strs("topics", topics).Str("bootstrap", cfg.RedpandaBootstrap).Msg("redpanda freshness consumer started")
 
 	pending := map[string]*kafka.Message{}
+	pendingMsgCount := 0
 	var flushAt time.Time
 	for ctx.Err() == nil {
 		event := consumer.Poll(250)
 		now := time.Now()
 		switch value := event.(type) {
 		case *kafka.Message:
-			pending[topicPartitionKey(value.TopicPartition)] = value
+			key := topicPartitionKey(value.TopicPartition)
+			if _, ok := pending[key]; !ok {
+				pendingMsgCount++
+			}
+			pending[key] = value
 			if flushAt.IsZero() {
 				flushAt = now.Add(freshnessDebounceInterval)
 			}
@@ -92,19 +121,20 @@ func runKafkaFreshnessConsumer(ctx context.Context, pool *pgxpool.Pool, cfg conf
 			logger.Debug().Err(value).Msg("redpanda poll error")
 		}
 
-		shouldFlush := len(pending) >= freshnessMaxPending || (!flushAt.IsZero() && !now.Before(flushAt))
+		shouldFlush := pendingMsgCount >= freshnessMaxPending || (!flushAt.IsZero() && !now.Before(flushAt))
 		if shouldFlush {
 			if err := runFreshnessMaintenance(ctx, pool, cfg); err != nil {
-				logger.Warn().Err(err).Int("pending_offsets", len(pending)).Msg("freshness maintenance failed; offsets not committed")
+				logger.Warn().Err(err).Int("pending_offsets", len(pending)).Int("pending_messages", pendingMsgCount).Msg("freshness maintenance failed; offsets not committed")
 				flushAt = time.Now().Add(freshnessRetryInterval)
 				continue
 			}
 			if err := commitPendingMessages(consumer, pending); err != nil {
-				logger.Warn().Err(err).Int("pending_offsets", len(pending)).Msg("redpanda offset commit failed")
+				logger.Warn().Err(err).Int("pending_offsets", len(pending)).Int("pending_messages", pendingMsgCount).Msg("redpanda offset commit failed")
 				flushAt = time.Now().Add(freshnessRetryInterval)
 				continue
 			}
 			pending = map[string]*kafka.Message{}
+			pendingMsgCount = 0
 			flushAt = time.Time{}
 		}
 	}

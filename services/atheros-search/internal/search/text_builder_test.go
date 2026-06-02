@@ -25,3 +25,9 @@ func TestBuildEventTextGolden(t *testing.T) {
 func TestBuildQueryTextPrefixesKind(t *testing.T) {
 	require.Equal(t, "kind: frame_sequence\nquery: probe_request deauthentication", BuildQueryText("probe_request deauthentication", "frame_sequence"))
 }
+
+func TestClampWordsPreservesLineBreaks(t *testing.T) {
+	got := clampWords("one two\nthree four\nfive six", 4)
+
+	require.Equal(t, "one two\nthree four...", got)
+}

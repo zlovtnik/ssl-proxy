@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/db"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/embed"
 )
@@ -29,7 +31,7 @@ func (r *Readiness) Check(ctx context.Context) error {
 		return fmt.Errorf("count embeddings: %w", err)
 	}
 	if count < 1 {
-		return errors.New("vec_embeddings is empty")
+		log.Warn().Msg("vec_embeddings is empty")
 	}
 	if r.Embedder != nil {
 		if err := r.Embedder.Health(checkCtx); err != nil {

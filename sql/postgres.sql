@@ -101,6 +101,7 @@
 \ir functions/041_vec_update_device_centroids.sql
 \ir functions/042_vec_fuse_device_identities.sql
 \ir functions/043_vec_reembed_on_alert.sql
+\ir functions/046_search_purge_expired_queries.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql
