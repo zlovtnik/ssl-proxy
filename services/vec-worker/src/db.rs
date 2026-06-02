@@ -101,6 +101,18 @@ pub struct CompleteBatchRow {
     pub explanation_text: Option<String>,
 }
 
+#[derive(Serialize)]
+struct EmbeddingMetadata<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_stream_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_sensor_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_location_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_mac: Option<&'a str>,
+}
+
 /// Open a new connection pool with explicit timeouts and warm-up.
 ///
 /// Sets `acquire_timeout(10s)` — fail fast instead of silently waiting 30s.
@@ -379,7 +391,7 @@ pub async fn upsert_embedding(
     .bind(content_sha256)
     .bind(&input.text)
     .bind(&vector_literal)
-    .bind(serde_json::json!(build_metadata(input)))
+    .bind(build_metadata(input))
     .execute(pool)
     .await?;
 
@@ -456,7 +468,7 @@ pub async fn upsert_embedding_tx(
     .bind(content_sha256)
     .bind(&input.text)
     .bind(&vector_literal)
-    .bind(serde_json::json!(build_metadata(input)))
+    .bind(build_metadata(input))
     .execute(&mut **tx)
     .await?;
 
@@ -482,6 +494,22 @@ pub async fn complete_embedding_batch(
             .fetch_one(pool)
             .await?;
     Ok(count)
+}
+
+/// Upsert one embedding and mark its job completed in one database round-trip.
+///
+/// Calls `vec_complete_one_embedding($1::jsonb)`. Returns `false` when the job
+/// row no longer matches the lease token.
+#[instrument(skip(pool, row))]
+pub async fn complete_one_embedding(
+    pool: &PgPool,
+    row: &CompleteBatchRow,
+) -> Result<bool, sqlx::Error> {
+    let payload = serde_json::to_value(row).map_err(|e| sqlx::Error::Decode(e.into()))?;
+    sqlx::query_scalar("SELECT vec_complete_one_embedding($1::jsonb)")
+        .bind(payload)
+        .fetch_one(pool)
+        .await
 }
 
 /// Return the subset of job IDs that are already completed.
@@ -540,42 +568,37 @@ pub fn complete_batch_row(
 
 /// Build the metadata JSON object from an `EmbeddingInput`.
 fn build_metadata(input: &EmbeddingInput) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    if let Some(ref v) = input.source_stream_name {
-        map.insert("source_stream_name".to_string(), serde_json::json!(v));
-    }
-    if let Some(ref v) = input.source_sensor_id {
-        map.insert("source_sensor_id".to_string(), serde_json::json!(v));
-    }
-    if let Some(ref v) = input.source_location_id {
-        map.insert("source_location_id".to_string(), serde_json::json!(v));
-    }
-    if let Some(ref v) = input.source_mac {
-        map.insert("source_mac".to_string(), serde_json::json!(v));
-    }
-    serde_json::Value::Object(map)
+    let metadata = EmbeddingMetadata {
+        source_stream_name: input.source_stream_name.as_deref(),
+        source_sensor_id: input.source_sensor_id.as_deref(),
+        source_location_id: input.source_location_id.as_deref(),
+        source_mac: input.source_mac.as_deref(),
+    };
+    serde_json::to_value(metadata).expect("embedding metadata serialization cannot fail")
 }
 
 /// Format a slice of floats as `[f1,f2,...]` — a valid pgvector literal.
 fn format_vector_literal(vector: &[f32]) -> String {
-    let mut s = String::with_capacity(vector.len() * 12 + 2);
+    let mut s = String::with_capacity(vector.len() * 9 + 2);
+    let mut buffer = ryu::Buffer::new();
     s.push('[');
     for (i, val) in vector.iter().enumerate() {
         if i > 0 {
             s.push(',');
         }
-        write_float(&mut s, *val);
+        write_float(&mut s, &mut buffer, *val);
     }
     s.push(']');
     s
 }
 
 /// Append a float to a string with minimal representation.
-fn write_float(s: &mut String, val: f32) {
-    use std::fmt::Write;
-    if val.fract() == 0.0 && val.is_finite() {
-        let _ = write!(s, "{:.1}", val);
+fn write_float(s: &mut String, buffer: &mut ryu::Buffer, val: f32) {
+    if val.is_finite() {
+        s.push_str(buffer.format_finite(val));
     } else {
+        use std::fmt::Write;
+
         let _ = write!(s, "{}", val);
     }
 }
@@ -668,11 +691,9 @@ pub async fn count_high_risk_aps(pool: &PgPool, threshold: f64) -> Result<i64, s
 /// by calling finish_alert_sweep.
 #[instrument(skip(pool))]
 pub async fn try_begin_alert_sweep(pool: &PgPool) -> Result<bool, sqlx::Error> {
-    let row: (bool,) = sqlx::query_as(
-        "SELECT vec_try_begin_maintenance_job('alert-sweep')"
-    )
-    .fetch_one(pool)
-    .await?;
+    let row: (bool,) = sqlx::query_as("SELECT vec_try_begin_maintenance_job('alert-sweep')")
+        .fetch_one(pool)
+        .await?;
     Ok(row.0)
 }
 

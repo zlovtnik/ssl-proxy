@@ -71,7 +71,9 @@ pub struct Config {
     /// Maximum number of concurrent per-job completion transactions.
     /// Used only when bulk completion is unavailable. Default: 8.
     pub max_concurrent_completes: usize,
-    /// Maximum number of in-flight embedding HTTP requests across chunks. Default: 1.
+    /// Primary embedding throughput knob: maximum in-flight embedding HTTP
+    /// requests across chunks. Permits are intentionally held for the full
+    /// provider round trip. Default: 4.
     pub max_concurrent_embed_requests: usize,
     /// Upper bound for `request_batch_size` when not explicitly set. Default: 64.
     pub request_batch_max: usize,

@@ -9,6 +9,7 @@ use crate::WorkerError;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
+use std::time::Duration;
 use tracing::{info, instrument, warn};
 
 /// Threshold configuration for alert generation.
@@ -147,12 +148,15 @@ pub async fn check_near_duplicates(
     let mut inserted = 0usize;
     for row in &rows {
         let mac = row.source_mac.as_deref();
-        let meta = serde_json::json!(NearDuplicateMeta {
+        let meta = NearDuplicateMeta {
             near_duplicate_pairs: row.near_duplicate_pairs.unwrap_or(0),
             min_distance: row.min_distance.unwrap_or(1.0),
             avg_distance: row.avg_distance.unwrap_or(1.0),
             unique_events_implicated: row.unique_events_implicated.unwrap_or(0),
-        });
+        };
+        let meta_json = serde_json::to_string(&meta).map_err(|e| {
+            WorkerError::alerts(format!("near_duplicate metadata encode failed: {e}"))
+        })?;
 
         // Insert only if no identical alert exists in the last hour
         let result = sqlx::query(
@@ -179,7 +183,7 @@ pub async fn check_near_duplicates(
         )
         .bind(mac)
         .bind(row.near_duplicate_pairs.unwrap_or(0) as f64)
-        .bind(meta.to_string())
+        .bind(meta_json)
         .execute(pool)
         .await;
 
@@ -945,20 +949,20 @@ pub async fn run_alert_sweep(pool: &PgPool, config: &AlertConfig) -> Result<(), 
     // Refresh the materialized view before querying it so alerts are based on
     // current data. REFRESH MATERIALIZED VIEW CONCURRENTLY requires a unique
     // index, which V019 creates on (source_mac).
-    if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score")
-        .execute(pool)
-        .await
-    {
-        warn!(error = %e, "failed to refresh v_device_repetition_score, alert sweep may use stale data");
-    }
+    refresh_materialized_view_with_timeout(
+        pool,
+        "v_device_repetition_score",
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score",
+    )
+    .await;
 
     // Refresh the AP risk score materialized view
-    if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score")
-        .execute(pool)
-        .await
-    {
-        warn!(error = %e, "failed to refresh mv_ap_risk_score, alert sweep may use stale data");
-    }
+    refresh_materialized_view_with_timeout(
+        pool,
+        "mv_ap_risk_score",
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score",
+    )
+    .await;
 
     let nd = check_near_duplicates(pool, config)
         .await
@@ -1029,6 +1033,28 @@ pub async fn run_alert_sweep(pool: &PgPool, config: &AlertConfig) -> Result<(), 
     debug_assert!(paths <= usize::MAX);
 
     Ok(())
+}
+
+async fn refresh_materialized_view_with_timeout(
+    pool: &PgPool,
+    view_name: &'static str,
+    statement: &'static str,
+) {
+    const REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
+
+    match tokio::time::timeout(REFRESH_TIMEOUT, sqlx::query(statement).execute(pool)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            warn!(error = %e, view_name, "failed to refresh materialized view, alert sweep may use stale data");
+        }
+        Err(_) => {
+            warn!(
+                view_name,
+                timeout_ms = REFRESH_TIMEOUT.as_millis(),
+                "timed out refreshing materialized view, alert sweep may use stale data"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -53,28 +53,31 @@ fn word_budget(token_budget: usize) -> usize {
 /// "BEACON AUTH ASSOC_REQ ... (already 300 words) ... (+200 truncated)"
 /// ```
 fn truncate_token_sequence(tokens: &str, max_words: usize) -> String {
-    let words: Vec<&str> = tokens.split_whitespace().collect();
-    if words.len() <= max_words {
+    let word_count = tokens.split_whitespace().count();
+    if word_count <= max_words {
         return tokens.to_string();
     }
-    let dropped = words.len() - max_words;
+    let dropped = word_count - max_words;
     tracing::warn!(
-        original_word_count = words.len(),
+        original_word_count = word_count,
         max_words,
         dropped,
         "frame_sequence token sequence truncated to fit model context window"
     );
-    format!("{} (+{} truncated)", words[..max_words].join(" "), dropped)
+    let mut truncated = join_first_words(tokens, max_words);
+    truncated.push_str(&format!(" (+{} truncated)", dropped));
+    truncated
 }
 
 /// Truncate a free-form string to at most `max_words` whitespace-separated words.
 /// Appends `...` when truncation occurs.
 fn truncate_words(s: &str, max_words: usize) -> String {
-    let words: Vec<&str> = s.split_whitespace().collect();
-    if words.len() <= max_words {
+    if s.split_whitespace().count() <= max_words {
         return s.to_string();
     }
-    format!("{}...", words[..max_words].join(" "))
+    let mut truncated = join_first_words(s, max_words);
+    truncated.push_str("...");
+    truncated
 }
 
 /// Clamp the entire assembled text to MAX_TOKENS worth of words.
@@ -82,16 +85,29 @@ fn truncate_words(s: &str, max_words: usize) -> String {
 /// Splits on whitespace, keeps the first N words, rejoins with single spaces.
 fn clamp_text(text: &str) -> String {
     let max_words = word_budget(MAX_TOKENS);
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.len() <= max_words {
+    let word_count = text.split_whitespace().count();
+    if word_count <= max_words {
         return text.to_string();
     }
     tracing::debug!(
-        original_word_count = words.len(),
+        original_word_count = word_count,
         max_words,
         "embedding text clamped to token budget (defensive)"
     );
-    format!("{}...", words[..max_words].join(" "))
+    let mut truncated = join_first_words(text, max_words);
+    truncated.push_str("...");
+    truncated
+}
+
+fn join_first_words(s: &str, max_words: usize) -> String {
+    let mut out = String::with_capacity(s.len().min(max_words.saturating_mul(8)));
+    for (i, word) in s.split_whitespace().take(max_words).enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    out
 }
 
 /// Build the embedding text and metadata for a job.

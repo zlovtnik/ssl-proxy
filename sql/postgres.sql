@@ -69,6 +69,7 @@
 \ir functions/011_vec_enqueue_embedding_jobs.sql
 \ir functions/012_vec_lease_embedding_jobs.sql
 \ir functions/013_vec_complete_embedding_batch.sql
+\ir functions/045_vec_complete_one_embedding.sql
 \ir functions/014_vec_materialize_similarity_pairs.sql
 \ir functions/015_vec_reembed_changed_jobs.sql
 \ir functions/040_vec_apply_similarity_flags.sql
