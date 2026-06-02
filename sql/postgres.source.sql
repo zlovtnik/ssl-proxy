@@ -1859,59 +1859,6 @@ begin
   get diagnostics v_row_count = row_count;
   v_count := v_count + v_row_count;
 
-  -- Track 4: Sequence anomaly — flag sessions with log-prob < -15
-  with session_sequences as (
-    select
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
-      nullif(coalesce(session_key, payload->>'session_key'), '')       as session_key,
-      string_agg(
-        upper(regexp_replace(payload->>'frame_subtype', '-', '_', 'g')),
-        ' ' order by observed_at
-      ) as tokens
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
-      and payload->>'frame_subtype' is not null
-    group by
-      nullif(coalesce(session_key, payload->>'session_key'), ''),
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))
-    having count(*) >= 3
-  ),
-  scored_sequences as (
-    select
-      session_key,
-      source_mac,
-      tokens,
-      vec_score_sequence(regexp_split_to_array(tokens, E'\\s+')) as log_prob
-    from session_sequences
-  )
-  insert into vec_alerts (alert_type, source_mac, score, metadata)
-  select
-    'rogue_cluster'::text,
-    ss.source_mac,
-    greatest(abs(ss.log_prob)::double precision, 1.0),
-    jsonb_build_object(
-      'reason',      'sequence_anomaly',
-      'session_key', ss.session_key,
-      'log_prob',    ss.log_prob,
-      'threshold',   -15
-    )
-  from scored_sequences ss
-  where ss.log_prob < -15
-    and not exists (
-      select 1 from vec_alerts a
-      where a.alert_type          = 'rogue_cluster'
-        and a.source_mac is not distinct from ss.source_mac
-        and a.created_at          > now() - interval '1 hour'
-        and a.metadata->>'reason' = 'sequence_anomaly'
-    );
-
-  get diagnostics v_row_count = row_count;
-  v_count := v_count + v_row_count;
-
   perform vec_finish_job('vec_detect_rogue_clusters');
   return v_count;
 exception when others then
@@ -2561,8 +2508,16 @@ create index if not exists vec_embedding_jobs_pending_idx
   on vec_embedding_jobs (priority, due_at, job_id)
   where status in ('pending', 'failed')
     and attempts < max_attempts;
+create index if not exists vec_embedding_jobs_pending_kind_idx
+  on vec_embedding_jobs (embedding_kind, priority, due_at, job_id)
+  where status in ('pending', 'failed')
+    and attempts < max_attempts;
 create index if not exists vec_embedding_jobs_lease_idx
   on vec_embedding_jobs (leased_at, priority, job_id)
+  where status = 'leased'
+    and attempts < max_attempts;
+create index if not exists vec_embedding_jobs_lease_kind_idx
+  on vec_embedding_jobs (embedding_kind, leased_at, priority, job_id)
   where status = 'leased'
     and attempts < max_attempts;
 create index if not exists vec_embedding_jobs_completion_idx
@@ -3052,16 +3007,59 @@ declare
   remaining_limit integer;
 begin
   -- Branch A: pending & failed jobs that are due for retry.
-  -- Uses pending_idx which pre-filters on status, attempts < max_attempts, due_at <= now().
+  -- Pull bounded candidates per kind, then interleave by kind_round so a deep
+  -- event backlog cannot starve less frequent embedding kinds.
   return query
-  with selected as (
+  with kind_order(embedding_kind, kind_rank) as (
+    values
+      ('event', 1),
+      ('device', 2),
+      ('behaviour_window', 3),
+      ('baseline_profile', 4),
+      ('frame_sequence', 5),
+      ('infrastructure_subgraph', 6),
+      ('timing_profile', 7)
+  ),
+  candidates as (
+    select
+      c.job_id,
+      c.embedding_kind,
+      c.priority,
+      c.due_at,
+      k.kind_rank
+    from kind_order k
+    cross join lateral (
+      select
+        job_id,
+        embedding_kind,
+        priority,
+        due_at
+      from vec_embedding_jobs
+      where embedding_kind = k.embedding_kind
+        and status in ('pending', 'failed')
+        and attempts < max_attempts
+        and due_at <= now()
+      order by priority asc, due_at asc, job_id asc
+      for update skip locked
+      limit v_limit
+    ) c
+  ),
+  ranked as (
+    select
+      job_id,
+      priority,
+      due_at,
+      kind_rank,
+      row_number() over (
+        partition by embedding_kind
+        order by priority asc, due_at asc, job_id asc
+      ) as kind_round
+    from candidates
+  ),
+  selected as (
     select job_id
-    from vec_embedding_jobs
-    where status in ('pending', 'failed')
-      and attempts < max_attempts
-      and due_at <= now()
-    order by priority asc, due_at asc, job_id asc
-    for update skip locked
+    from ranked
+    order by kind_round asc, kind_rank asc, priority asc, due_at asc, job_id asc
     limit v_limit
   )
   update vec_embedding_jobs job
@@ -3081,23 +3079,65 @@ begin
     return;
   end if;
 
-  remaining_limit := greatest(0, p_limit - v_count);
+  remaining_limit := greatest(0, v_limit - v_count);
   if remaining_limit <= 0 then
     return;
   end if;
 
   -- Branch B: expired leases (worker died mid-batch).
-  -- Uses lease_idx which pre-filters on status = 'leased' and attempts < max_attempts.
+  -- Keep the same fair ordering for reclaimed work.
   return query
-  with selected as (
+  with kind_order(embedding_kind, kind_rank) as (
+    values
+      ('event', 1),
+      ('device', 2),
+      ('behaviour_window', 3),
+      ('baseline_profile', 4),
+      ('frame_sequence', 5),
+      ('infrastructure_subgraph', 6),
+      ('timing_profile', 7)
+  ),
+  candidates as (
+    select
+      c.job_id,
+      c.embedding_kind,
+      c.leased_at,
+      c.priority,
+      k.kind_rank
+    from kind_order k
+    cross join lateral (
+      select
+        job_id,
+        embedding_kind,
+        leased_at,
+        priority
+      from vec_embedding_jobs
+      where embedding_kind = k.embedding_kind
+        and status = 'leased'
+        and leased_at < now() - p_lease
+        and attempts < max_attempts
+        and due_at <= now()
+      order by leased_at asc, priority asc, job_id asc
+      for update skip locked
+      limit remaining_limit
+    ) c
+  ),
+  ranked as (
+    select
+      job_id,
+      leased_at,
+      priority,
+      kind_rank,
+      row_number() over (
+        partition by embedding_kind
+        order by leased_at asc, priority asc, job_id asc
+      ) as kind_round
+    from candidates
+  ),
+  selected as (
     select job_id
-    from vec_embedding_jobs
-    where status = 'leased'
-      and leased_at < now() - p_lease
-      and attempts < max_attempts
-      and due_at <= now()
-    order by leased_at asc, priority asc, job_id asc
-    for update skip locked
+    from ranked
+    order by kind_round asc, kind_rank asc, leased_at asc, priority asc, job_id asc
     limit remaining_limit
   )
   update vec_embedding_jobs job
@@ -3991,6 +4031,39 @@ CREATE TABLE IF NOT EXISTS vec_alerts (
 
 ALTER TABLE vec_alerts ADD COLUMN IF NOT EXISTS explanation_text TEXT;
 
+create table if not exists vec_rf_sensor_locations (
+  sensor_id text not null,
+  location_id text not null default '',
+  latitude double precision not null,
+  longitude double precision not null,
+  site_label text,
+  enabled boolean not null default true,
+  updated_at timestamptz not null default now(),
+  constraint vec_rf_sensor_locations_pk primary key (sensor_id, location_id),
+  constraint vec_rf_sensor_locations_latitude_chk check (latitude between -90 and 90),
+  constraint vec_rf_sensor_locations_longitude_chk check (longitude between -180 and 180)
+);
+
+create table if not exists vec_dns_policy (
+  wg_pubkey text primary key,
+  policy text not null,
+  allow_mdns boolean not null default false,
+  updated_at timestamptz not null default now(),
+  constraint vec_dns_policy_policy_chk check (policy in ('secure_required', 'monitor', 'disabled'))
+);
+
+create table if not exists vec_dns_resolver_ledger (
+  ledger_id bigserial primary key,
+  wg_pubkey text not null,
+  observed_at timestamptz not null,
+  protocol text not null,
+  query_name text,
+  query_name_hash text,
+  status text not null default 'observed',
+  constraint vec_dns_resolver_ledger_protocol_chk check (protocol in ('doh', 'dot', 'wireguard_dns', 'dnscrypt', 'unknown')),
+  constraint vec_dns_resolver_ledger_query_chk check (query_name is not null or query_name_hash is not null)
+);
+
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_created
     ON vec_alerts (alert_type, created_at DESC);
 
@@ -4091,6 +4164,33 @@ COMMENT ON FUNCTION vec_reembed_changed_jobs IS
 
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_mac_created
     ON vec_alerts (alert_type, source_mac, created_at DESC);
+
+create index if not exists vec_rf_sensor_locations_enabled_idx
+  on vec_rf_sensor_locations (sensor_id, location_id)
+  where enabled;
+
+create index if not exists vec_dns_policy_secure_required_idx
+  on vec_dns_policy (wg_pubkey)
+  where policy = 'secure_required';
+
+create index if not exists vec_dns_resolver_ledger_pubkey_time_idx
+  on vec_dns_resolver_ledger (wg_pubkey, observed_at desc);
+
+create index if not exists vec_dns_resolver_ledger_query_hash_idx
+  on vec_dns_resolver_ledger (wg_pubkey, query_name_hash, observed_at desc)
+  where query_name_hash is not null;
+
+create index if not exists vec_alerts_metadata_wg_pubkey_idx
+  on vec_alerts ((metadata->>'wg_pubkey'))
+  where metadata ? 'wg_pubkey';
+
+create index if not exists vec_alerts_metadata_cluster_id_idx
+  on vec_alerts ((metadata->>'cluster_id'))
+  where metadata ? 'cluster_id';
+
+create index if not exists vec_alerts_metadata_session_key_idx
+  on vec_alerts ((metadata->>'session_key'))
+  where metadata ? 'session_key';
 
 create or replace function coordinator.ensure_cursor(
   p_stream_name text,

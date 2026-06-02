@@ -35,6 +35,9 @@
 \ir tables/022_vec_alerts.sql
 \ir tables/023_vec_job_locks.sql
 \ir tables/024_vec_timing_profiles.sql
+\ir tables/025_vec_rf_sensor_locations.sql
+\ir tables/026_vec_dns_policy.sql
+\ir tables/027_vec_dns_resolver_ledger.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -49,6 +52,7 @@
 \ir indexes/010_vec_alerts_indexes.sql
 \ir indexes/011_device_identity_clusters_indexes.sql
 \ir indexes/012_vec_timing_profiles_indexes.sql
+\ir indexes/014_vec_detector_support_indexes.sql
 
 -- functions
 \ir functions/001_sync_stable_uuid.sql

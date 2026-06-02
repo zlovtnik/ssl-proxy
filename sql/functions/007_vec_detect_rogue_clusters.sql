@@ -175,59 +175,6 @@ begin
   get diagnostics v_row_count = row_count;
   v_count := v_count + v_row_count;
 
-  -- Track 4: Sequence anomaly — flag sessions with log-prob < -15
-  with session_sequences as (
-    select
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
-      nullif(coalesce(session_key, payload->>'session_key'), '')       as session_key,
-      string_agg(
-        upper(regexp_replace(payload->>'frame_subtype', '-', '_', 'g')),
-        ' ' order by observed_at
-      ) as tokens
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
-      and payload->>'frame_subtype' is not null
-    group by
-      nullif(coalesce(session_key, payload->>'session_key'), ''),
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))
-    having count(*) >= 3
-  ),
-  scored_sequences as (
-    select
-      session_key,
-      source_mac,
-      tokens,
-      vec_score_sequence(regexp_split_to_array(tokens, E'\\s+')) as log_prob
-    from session_sequences
-  )
-  insert into vec_alerts (alert_type, source_mac, score, metadata)
-  select
-    'rogue_cluster'::text,
-    ss.source_mac,
-    greatest(abs(ss.log_prob)::double precision, 1.0),
-    jsonb_build_object(
-      'reason',      'sequence_anomaly',
-      'session_key', ss.session_key,
-      'log_prob',    ss.log_prob,
-      'threshold',   -15
-    )
-  from scored_sequences ss
-  where ss.log_prob < -15
-    and not exists (
-      select 1 from vec_alerts a
-      where a.alert_type          = 'rogue_cluster'
-        and a.source_mac is not distinct from ss.source_mac
-        and a.created_at          > now() - interval '1 hour'
-        and a.metadata->>'reason' = 'sequence_anomaly'
-    );
-
-  get diagnostics v_row_count = row_count;
-  v_count := v_count + v_row_count;
-
   perform vec_finish_job('vec_detect_rogue_clusters');
   return v_count;
 exception when others then

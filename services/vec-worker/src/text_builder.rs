@@ -6,6 +6,7 @@
 //! plus associated metadata for the `EmbeddingInput`.
 
 use crate::db::{EmbeddingInput, EmbeddingJob};
+use crate::sequence_score;
 use crate::WorkerError;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -1053,7 +1054,6 @@ struct FrameSequenceBatchRow {
     sequence_tokens: String,
     semantic_tokens: Option<String>,
     frame_count: i64,
-    log_prob: Option<f64>,
 }
 
 fn insert_log_prob_line(text: &mut String, score: f64) {
@@ -1093,19 +1093,14 @@ async fn build_frame_sequence(
 
     let mut input = frame_sequence_row_to_input(&row);
 
-    // Append log_prob score for the embedding model to weight sequence rarity
-    let tokens: Vec<&str> = row.sequence_tokens.split_whitespace().collect();
-    if tokens.len() >= 2 {
-        match sqlx::query_scalar::<_, f64>("SELECT vec_score_sequence($1::text[])")
-            .bind(&tokens)
-            .fetch_one(pool)
-            .await
-        {
-            Ok(score) => insert_log_prob_line(&mut input.text, score),
-            Err(e) => {
-                // Non-fatal: log_prob is informational, don't fail the job
-                tracing::warn!(error = %e, session_key = %row.session_key, "failed to compute log_prob");
-            }
+    match sequence_score::load_frame_sequence_scorer(pool).await {
+        Ok(scorer) => {
+            let score = scorer.score_text(&row.sequence_tokens);
+            insert_log_prob_line(&mut input.text, score);
+        }
+        Err(e) => {
+            // Non-fatal: log_prob is informational, don't fail the job.
+            tracing::warn!(error = %e, session_key = %row.session_key, "failed to load sequence scorer");
         }
     }
 
@@ -1130,8 +1125,7 @@ async fn build_frame_sequences_batch(
             window_end,
             sequence_tokens,
             semantic_tokens,
-            frame_count,
-            vec_score_sequence(regexp_split_to_array(sequence_tokens, E'\\s+')) AS log_prob
+            frame_count
         FROM vec_frame_sequences
         WHERE session_key = ANY($1::text[])
         "#,
@@ -1140,6 +1134,10 @@ async fn build_frame_sequences_batch(
     .fetch_all(pool)
     .await
     .map_err(|e| WorkerError::text_build(format!("frame_sequence batch query failed: {e}")))?;
+
+    let scorer = sequence_score::load_frame_sequence_scorer(pool)
+        .await
+        .map_err(|e| WorkerError::text_build(format!("sequence scorer load failed: {e}")))?;
 
     for row in rows {
         let mut input = frame_sequence_row_to_input(&FrameSequenceRow {
@@ -1154,9 +1152,8 @@ async fn build_frame_sequences_batch(
             frame_count: row.frame_count,
         });
 
-        if let Some(score) = row.log_prob {
-            insert_log_prob_line(&mut input.text, score);
-        }
+        let score = scorer.score_text(&row.sequence_tokens);
+        insert_log_prob_line(&mut input.text, score);
 
         out.insert(row.query_key.clone(), input);
     }
@@ -1186,8 +1183,8 @@ fn frame_sequence_row_to_input(row: &FrameSequenceRow) -> EmbeddingInput {
     lines.push(format!("frame_count: {}", row.frame_count));
 
     // Note: log_prob is appended by the builder callers (build_frame_sequence /
-    // build_frame_sequences_batch) which have access to a PgPool to invoke
-    // vec_score_sequence(). See those functions for the score injection.
+    // build_frame_sequences_batch) after loading the transition model into the
+    // Rust sequence scorer. See those functions for the score injection.
     // When computed, a "log_prob: {score}" line is inserted before frame_count.
 
     // Tokens are already truncated to token_word_budget (1 word ~ 1 token for

@@ -20,8 +20,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::collections::HashSet;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,6 +49,7 @@ pub async fn run_forever(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     install_signal_handler(shutdown_tx);
 
+    let alert_cfg = AlertConfig::from_env();
     let mut iteration: u64 = 0;
     let mut consecutive_permanent_failures: u32 = 0;
     const PERMANENT_FAILURE_CIRCUIT_BREAKER: u32 = 5;
@@ -70,6 +70,7 @@ pub async fn run_forever(
                     drain_ms = result.drain_ms,
                     drained_to_empty = result.drained_to_empty,
                     max_drain_batches_reached = result.max_drain_batches_reached,
+                    kind_stats = ?result.kind_stats,
                     "run_once drain summary"
                 );
 
@@ -117,8 +118,9 @@ pub async fn run_forever(
 
         iteration += 1;
 
-        // Periodic maintenance: release expired leases every 10 iterations
-        if iteration % 10 == 0 {
+        // Periodic maintenance: release expired leases and run alert sweeps on
+        // the configured iteration cadence.
+        if iteration % alert_cfg.sweep_interval == 0 {
             match db::release_expired_leases(&pool).await {
                 Ok(released) if released > 0 => {
                     info!(released, "expired leases released");
@@ -144,15 +146,19 @@ pub async fn run_forever(
                 let alert_pool = alert_pool.clone();
                 match db::try_begin_alert_sweep(&alert_pool).await {
                     Ok(true) => {
+                        let alert_cfg = alert_cfg.clone();
                         tokio::spawn(async move {
-                            let alert_cfg = AlertConfig::default();
                             if let Err(e) = alerts::run_alert_sweep(&alert_pool, &alert_cfg).await {
                                 warn!(error = %e, "alert sweep failed (background)");
                             }
                             // count_high_risk_aps also uses the alert pool so the main loop
                             // is never blocked by a COUNT(*) on mv_ap_risk_score.
-                            match db::count_high_risk_aps(&alert_pool, 0.75).await {
-                                Ok(count) => info!(high_risk_ap_count = count, "high-risk AP summary"),
+                            match db::count_high_risk_aps(&alert_pool, alert_cfg.ap_risk_threshold)
+                                .await
+                            {
+                                Ok(count) => {
+                                    info!(high_risk_ap_count = count, "high-risk AP summary")
+                                }
                                 Err(e) => warn!(error = %e, "failed to query high-risk AP count"),
                             }
                             // Release the DB advisory lock.
@@ -199,6 +205,17 @@ pub struct RunOnceResult {
     pub max_drain_batches_reached: bool,
     /// Wall-clock time spent in the drain cycle.
     pub drain_ms: u64,
+    /// Per-kind lease, completion, and failure counts for this drain cycle.
+    pub kind_stats: BTreeMap<String, KindRunStats>,
+}
+
+/// Per-kind worker counters for one drain cycle.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KindRunStats {
+    pub leased: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub permanent_failed: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -273,6 +290,7 @@ pub async fn run_once(
         drained_to_empty: false,
         max_drain_batches_reached: false,
         drain_ms: 0,
+        kind_stats: BTreeMap::new(),
     };
 
     loop {
@@ -299,6 +317,7 @@ pub async fn run_once(
 
         result.rows_leased += rows_leased;
         result.drain_batches += 1;
+        add_leased_jobs(&mut result.kind_stats, &jobs);
         if rows_leased == config.batch_size {
             debug!(
                 rows_leased,
@@ -308,9 +327,10 @@ pub async fn run_once(
             );
         }
 
-        let (processed, permanent_failures) = process_jobs(config, pool, embedder, jobs).await;
-        result.processed += processed;
-        result.permanent_failures += permanent_failures;
+        let processed = process_jobs(config, pool, embedder, jobs).await;
+        result.processed += processed.succeeded;
+        result.permanent_failures += processed.permanent_failures;
+        add_process_stats(&mut result.kind_stats, &processed);
 
         match drain_decision(rows_leased, result.drain_batches, config.max_drain_batches) {
             DrainDecision::Continue => {}
@@ -332,14 +352,22 @@ pub async fn run_once(
 }
 
 /// Process leased jobs with pipelined prepare / embed / complete across request chunks.
-///
-/// Returns `(succeeded, permanent_failures)`.
+#[derive(Debug, Default)]
+pub struct ProcessJobsResult {
+    pub succeeded: usize,
+    pub failed: usize,
+    pub permanent_failures: usize,
+    pub completed_by_kind: BTreeMap<String, usize>,
+    pub failed_by_kind: BTreeMap<String, usize>,
+    pub permanent_failed_by_kind: BTreeMap<String, usize>,
+}
+
 pub async fn process_jobs(
     config: &Config,
     pool: &PgPool,
     embedder: &EmbeddingClient,
     jobs: Vec<EmbeddingJob>,
-) -> (usize, usize) {
+) -> ProcessJobsResult {
     let chunks: Vec<Vec<EmbeddingJob>> = jobs
         .chunks(config.request_batch_size)
         .map(|c| c.to_vec())
@@ -348,13 +376,11 @@ pub async fn process_jobs(
     let n = chunks.len();
 
     if n == 0 {
-        return (0, 0);
+        return ProcessJobsResult::default();
     }
 
     let embed_sem = Arc::new(Semaphore::new(config.max_concurrent_embed_requests.max(1)));
-    let mut succeeded = 0usize;
-    let mut failed = 0usize;
-    let mut permanent_failed = 0usize;
+    let mut result = ProcessJobsResult::default();
     let mut next_prepare: Option<JoinHandle<PrepareChunkResult>> = None;
     let mut complete_handle: Option<JoinHandle<CompleteChunkResult>> = None;
     // Queue of in-flight embed tasks (preserves chunk order)
@@ -404,14 +430,17 @@ pub async fn process_jobs(
                     .unwrap_or_else(|e| panic!("embed panicked: {e}"));
 
                 if let Some(handle) = complete_handle.take() {
-                    let result = handle
+                    let complete_result = handle
                         .await
                         .unwrap_or_else(|e| panic!("complete panicked: {e}"));
-                    succeeded += result.succeeded;
-                    failed += result.failed;
+                    add_complete_result(&mut result, complete_result);
                 }
 
-                permanent_failed += embedded.permanent_failed;
+                result.permanent_failures += embedded.permanent_failed;
+                add_counts(
+                    &mut result.permanent_failed_by_kind,
+                    &embedded.permanent_failed_by_kind,
+                );
 
                 let cfg = config.clone();
                 let pool = pool.clone();
@@ -429,14 +458,17 @@ pub async fn process_jobs(
             .unwrap_or_else(|e| panic!("embed panicked: {e}"));
 
         if let Some(handle) = complete_handle.take() {
-            let result = handle
+            let complete_result = handle
                 .await
                 .unwrap_or_else(|e| panic!("complete panicked: {e}"));
-            succeeded += result.succeeded;
-            failed += result.failed;
+            add_complete_result(&mut result, complete_result);
         }
 
-        permanent_failed += embedded.permanent_failed;
+        result.permanent_failures += embedded.permanent_failed;
+        add_counts(
+            &mut result.permanent_failed_by_kind,
+            &embedded.permanent_failed_by_kind,
+        );
 
         let cfg = config.clone();
         let pool = pool.clone();
@@ -446,18 +478,79 @@ pub async fn process_jobs(
     }
 
     if let Some(handle) = complete_handle {
-        let result = handle
+        let complete_result = handle
             .await
             .unwrap_or_else(|e| panic!("complete panicked: {e}"));
-        succeeded += result.succeeded;
-        failed += result.failed;
+        add_complete_result(&mut result, complete_result);
     }
 
     debug!(
         total,
-        succeeded, failed, permanent_failed, "process_jobs done"
+        succeeded = result.succeeded,
+        failed = result.failed,
+        permanent_failed = result.permanent_failures,
+        completed_by_kind = ?result.completed_by_kind,
+        failed_by_kind = ?result.failed_by_kind,
+        permanent_failed_by_kind = ?result.permanent_failed_by_kind,
+        "process_jobs done"
     );
-    (succeeded, permanent_failed)
+    result
+}
+
+fn add_complete_result(process: &mut ProcessJobsResult, complete: CompleteChunkResult) {
+    process.succeeded += complete.succeeded;
+    process.failed += complete.failed;
+    add_counts(&mut process.completed_by_kind, &complete.succeeded_by_kind);
+    add_counts(&mut process.failed_by_kind, &complete.failed_by_kind);
+}
+
+fn add_leased_jobs(stats: &mut BTreeMap<String, KindRunStats>, jobs: &[EmbeddingJob]) {
+    for job in jobs {
+        stats.entry(job.embedding_kind.clone()).or_default().leased += 1;
+    }
+}
+
+fn add_process_stats(stats: &mut BTreeMap<String, KindRunStats>, process: &ProcessJobsResult) {
+    for (kind, count) in &process.completed_by_kind {
+        stats.entry(kind.clone()).or_default().completed += count;
+    }
+    for (kind, count) in &process.failed_by_kind {
+        stats.entry(kind.clone()).or_default().failed += count;
+    }
+    for (kind, count) in &process.permanent_failed_by_kind {
+        stats.entry(kind.clone()).or_default().permanent_failed += count;
+    }
+}
+
+fn increment_count(counts: &mut BTreeMap<String, usize>, kind: &str) {
+    *counts.entry(kind.to_string()).or_default() += 1;
+}
+
+fn add_counts(target: &mut BTreeMap<String, usize>, source: &BTreeMap<String, usize>) {
+    for (kind, count) in source {
+        *target.entry(kind.clone()).or_default() += count;
+    }
+}
+
+fn count_items_by_kind(items: &[&(PreparedJob, Vec<f32>)]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for (prepared, _) in items {
+        increment_count(&mut counts, &prepared.job.embedding_kind);
+    }
+    counts
+}
+
+fn count_completed_items_by_kind(
+    items: &[(PreparedJob, Vec<f32>)],
+    completed_ids: &HashSet<i64>,
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for (prepared, _) in items {
+        if completed_ids.contains(&prepared.job.job_id) {
+            increment_count(&mut counts, &prepared.job.embedding_kind);
+        }
+    }
+    counts
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +566,7 @@ struct PreparedJob {
 struct PrepareChunkResult {
     prepared: Vec<PreparedJob>,
     failed: usize,
+    failed_by_kind: BTreeMap<String, usize>,
     prepare_ms: u64,
 }
 
@@ -482,6 +576,8 @@ struct EmbeddedChunkResult {
     /// Jobs that failed with a permanent error (e.g. 400 Bad Request) and
     /// will not be retried.  Subset of `failed` when the error was permanent.
     permanent_failed: usize,
+    failed_by_kind: BTreeMap<String, usize>,
+    permanent_failed_by_kind: BTreeMap<String, usize>,
     prepare_ms: u64,
     embed_ms: u64,
 }
@@ -489,6 +585,8 @@ struct EmbeddedChunkResult {
 struct CompleteChunkResult {
     succeeded: usize,
     failed: usize,
+    succeeded_by_kind: BTreeMap<String, usize>,
+    failed_by_kind: BTreeMap<String, usize>,
 }
 
 async fn prepare_chunk(
@@ -504,14 +602,17 @@ async fn prepare_chunk(
         Err(e) => {
             warn!(error = %e, "build_text_batch failed, failing entire chunk");
             let mut failed = 0usize;
+            let mut failed_by_kind = BTreeMap::new();
             for job in &jobs {
                 if fail_job_with_error(config, pool, job, &e.to_string()).await {
                     failed += 1;
+                    increment_count(&mut failed_by_kind, &job.embedding_kind);
                 }
             }
             return PrepareChunkResult {
                 prepared: Vec::new(),
                 failed,
+                failed_by_kind,
                 prepare_ms: start.elapsed().as_millis() as u64,
             };
         }
@@ -524,6 +625,7 @@ async fn prepare_chunk(
     let mut truncated_count = 0usize;
     let mut prepared = Vec::with_capacity(jobs.len());
     let mut failed = 0usize;
+    let mut failed_by_kind = BTreeMap::new();
 
     for job in jobs {
         match inputs.get(&job.source_key) {
@@ -550,6 +652,7 @@ async fn prepare_chunk(
                 warn!(job_id = job.job_id, "{msg}");
                 if fail_job_with_error(config, pool, &job, &msg).await {
                     failed += 1;
+                    increment_count(&mut failed_by_kind, &job.embedding_kind);
                 }
             }
         }
@@ -574,6 +677,7 @@ async fn prepare_chunk(
     PrepareChunkResult {
         prepared,
         failed,
+        failed_by_kind,
         prepare_ms,
     }
 }
@@ -588,12 +692,16 @@ async fn embed_chunk(
     let start = Instant::now();
     let prepare_ms = prepared_chunk.prepare_ms;
     let mut failed = prepared_chunk.failed;
+    let mut failed_by_kind = prepared_chunk.failed_by_kind;
+    let mut permanent_failed_by_kind = BTreeMap::new();
 
     if prepared_chunk.prepared.is_empty() {
         return EmbeddedChunkResult {
             items: Vec::new(),
             failed,
             permanent_failed: 0,
+            failed_by_kind,
+            permanent_failed_by_kind,
             prepare_ms,
             embed_ms: 0,
         };
@@ -626,14 +734,19 @@ async fn embed_chunk(
                     fail_job_permanent(config, pool, &p.job, &e.to_string()).await;
                     failed += 1;
                     perm_fails += 1;
+                    increment_count(&mut failed_by_kind, &p.job.embedding_kind);
+                    increment_count(&mut permanent_failed_by_kind, &p.job.embedding_kind);
                 } else if fail_job_with_error(config, pool, &p.job, &e.to_string()).await {
                     failed += 1;
+                    increment_count(&mut failed_by_kind, &p.job.embedding_kind);
                 }
             }
             return EmbeddedChunkResult {
                 items: Vec::new(),
                 failed,
                 permanent_failed: perm_fails,
+                failed_by_kind,
+                permanent_failed_by_kind,
                 prepare_ms,
                 embed_ms: start.elapsed().as_millis() as u64,
             };
@@ -652,6 +765,7 @@ async fn embed_chunk(
             );
             if fail_job_with_error(config, pool, &prepared_job.job, &e.to_string()).await {
                 failed += 1;
+                increment_count(&mut failed_by_kind, &prepared_job.job.embedding_kind);
             }
             continue;
         }
@@ -662,6 +776,8 @@ async fn embed_chunk(
         items,
         failed,
         permanent_failed: 0,
+        failed_by_kind,
+        permanent_failed_by_kind,
         prepare_ms,
         embed_ms,
     }
@@ -675,6 +791,8 @@ async fn complete_chunk(
     let start = Instant::now();
     let mut succeeded = 0usize;
     let mut failed = embedded.failed;
+    let mut succeeded_by_kind = BTreeMap::new();
+    let mut failed_by_kind = embedded.failed_by_kind;
 
     if embedded.items.is_empty() {
         let complete_ms = start.elapsed().as_millis() as u64;
@@ -686,7 +804,12 @@ async fn complete_chunk(
             failed,
         );
         heartbeat_after_chunk(config, pool, succeeded, failed).await;
-        return CompleteChunkResult { succeeded, failed };
+        return CompleteChunkResult {
+            succeeded,
+            failed,
+            succeeded_by_kind,
+            failed_by_kind,
+        };
     }
 
     let dimensions = config.dimensions as i32;
@@ -701,6 +824,8 @@ async fn complete_chunk(
             let completed = completed as usize;
             if completed == batch_rows.len() {
                 succeeded = completed;
+                let item_refs: Vec<_> = embedded.items.iter().collect();
+                succeeded_by_kind = count_items_by_kind(&item_refs);
             } else if completed > 0 {
                 debug!(
                     expected = batch_rows.len(),
@@ -708,19 +833,29 @@ async fn complete_chunk(
                 );
                 let fallback_plan =
                     unresolved_completion_items(config, pool, &embedded.items).await;
-                let (s, f) = complete_jobs_fallback(config, pool, &fallback_plan.items).await;
+                let fallback_result =
+                    complete_jobs_fallback(config, pool, &fallback_plan.items).await;
                 succeeded = if fallback_plan.includes_completed_rows {
-                    s
+                    fallback_result.succeeded
                 } else {
-                    completed + s
+                    let completed_by_kind = count_completed_items_by_kind(
+                        &embedded.items,
+                        &fallback_plan.completed_ids,
+                    );
+                    add_counts(&mut succeeded_by_kind, &completed_by_kind);
+                    completed + fallback_result.succeeded
                 };
-                failed += f;
+                add_counts(&mut succeeded_by_kind, &fallback_result.succeeded_by_kind);
+                failed += fallback_result.failed;
+                add_counts(&mut failed_by_kind, &fallback_result.failed_by_kind);
             } else {
                 warn!("bulk complete returned 0, falling back per job");
                 let fallback_items: Vec<_> = embedded.items.iter().collect();
-                let (s, f) = complete_jobs_fallback(config, pool, &fallback_items).await;
-                succeeded = s;
-                failed += f;
+                let fallback_result = complete_jobs_fallback(config, pool, &fallback_items).await;
+                succeeded = fallback_result.succeeded;
+                succeeded_by_kind = fallback_result.succeeded_by_kind;
+                failed += fallback_result.failed;
+                add_counts(&mut failed_by_kind, &fallback_result.failed_by_kind);
             }
         }
         Err(e) if is_db_pressure_error(&e) => {
@@ -730,13 +865,18 @@ async fn complete_chunk(
                 "bulk complete failed under database pressure; skipping per-job fallback"
             );
             failed += embedded.items.len();
+            let failed_items: Vec<_> = embedded.items.iter().collect();
+            let bulk_failed_by_kind = count_items_by_kind(&failed_items);
+            add_counts(&mut failed_by_kind, &bulk_failed_by_kind);
         }
         Err(e) => {
             warn!(error = %e, "bulk complete failed, falling back per job");
             let fallback_items: Vec<_> = embedded.items.iter().collect();
-            let (s, f) = complete_jobs_fallback(config, pool, &fallback_items).await;
-            succeeded = s;
-            failed += f;
+            let fallback_result = complete_jobs_fallback(config, pool, &fallback_items).await;
+            succeeded = fallback_result.succeeded;
+            succeeded_by_kind = fallback_result.succeeded_by_kind;
+            failed += fallback_result.failed;
+            add_counts(&mut failed_by_kind, &fallback_result.failed_by_kind);
         }
     }
 
@@ -750,7 +890,12 @@ async fn complete_chunk(
     );
     heartbeat_after_chunk(config, pool, succeeded, failed).await;
 
-    CompleteChunkResult { succeeded, failed }
+    CompleteChunkResult {
+        succeeded,
+        failed,
+        succeeded_by_kind,
+        failed_by_kind,
+    }
 }
 
 async fn heartbeat_after_chunk(config: &Config, pool: &PgPool, jobs_ok: usize, jobs_failed: usize) {
@@ -780,6 +925,7 @@ async fn heartbeat_after_chunk(config: &Config, pool: &PgPool, jobs_ok: usize, j
 
 struct CompletionFallbackPlan<'a> {
     items: Vec<&'a (PreparedJob, Vec<f32>)>,
+    completed_ids: HashSet<i64>,
     includes_completed_rows: bool,
 }
 
@@ -802,6 +948,7 @@ async fn unresolved_completion_items<'a>(
             );
             return CompletionFallbackPlan {
                 items: items.iter().collect(),
+                completed_ids: HashSet::new(),
                 includes_completed_rows: true,
             };
         }
@@ -812,6 +959,7 @@ async fn unresolved_completion_items<'a>(
             .iter()
             .filter(|(prepared, _)| !completed_ids.contains(&prepared.job.job_id))
             .collect(),
+        completed_ids,
         includes_completed_rows: false,
     }
 }
@@ -820,9 +968,14 @@ async fn complete_jobs_fallback(
     config: &Config,
     pool: &PgPool,
     items: &[&(PreparedJob, Vec<f32>)],
-) -> (usize, usize) {
+) -> CompleteChunkResult {
     if items.is_empty() {
-        return (0, 0);
+        return CompleteChunkResult {
+            succeeded: 0,
+            failed: 0,
+            succeeded_by_kind: BTreeMap::new(),
+            failed_by_kind: BTreeMap::new(),
+        };
     }
 
     // Cap fallback concurrency so at least 6 connections remain for
@@ -840,6 +993,7 @@ async fn complete_jobs_fallback(
             let pool = pool.clone();
             let config = config.clone();
             let dimensions = config.dimensions;
+            let kind = prepared.job.embedding_kind.clone();
             async move {
                 let _permit = semaphore
                     .acquire()
@@ -850,7 +1004,7 @@ async fn complete_jobs_fallback(
                 )
                 .await
                 {
-                    Ok(()) => Ok(()),
+                    Ok(()) => Ok(kind),
                     Err(e) => {
                         warn!(
                             error = %e,
@@ -858,15 +1012,11 @@ async fn complete_jobs_fallback(
                             "fallback completion failed"
                         );
                         if matches!(e, WorkerError::DbTimeout { .. }) {
-                            return Err(());
+                            return Err(kind);
                         }
 
-                        if fail_job_with_error(&config, &pool, &prepared.job, &e.to_string()).await
-                        {
-                            Err(())
-                        } else {
-                            Err(())
-                        }
+                        fail_job_with_error(&config, &pool, &prepared.job, &e.to_string()).await;
+                        Err(kind)
                     }
                 }
             }
@@ -875,13 +1025,26 @@ async fn complete_jobs_fallback(
 
     let mut succeeded = 0usize;
     let mut failed = 0usize;
+    let mut succeeded_by_kind = BTreeMap::new();
+    let mut failed_by_kind = BTreeMap::new();
     while let Some(result) = tasks.next().await {
         match result {
-            Ok(()) => succeeded += 1,
-            Err(()) => failed += 1,
+            Ok(kind) => {
+                succeeded += 1;
+                increment_count(&mut succeeded_by_kind, &kind);
+            }
+            Err(kind) => {
+                failed += 1;
+                increment_count(&mut failed_by_kind, &kind);
+            }
         }
     }
-    (succeeded, failed)
+    CompleteChunkResult {
+        succeeded,
+        failed,
+        succeeded_by_kind,
+        failed_by_kind,
+    }
 }
 
 fn log_batch_metrics(
@@ -1159,6 +1322,31 @@ mod tests {
             drained_to_empty,
             max_drain_batches_reached,
             drain_ms: 1,
+            kind_stats: BTreeMap::new(),
+        }
+    }
+
+    fn test_job(job_id: i64, kind: &str) -> EmbeddingJob {
+        let now = chrono::Utc::now();
+        EmbeddingJob {
+            job_id,
+            source_table: "test_source".to_string(),
+            source_key: job_id.to_string(),
+            embedding_model: "test-model".to_string(),
+            embedding_kind: kind.to_string(),
+            status: "leased".to_string(),
+            priority: 10,
+            attempts: 1,
+            max_attempts: 5,
+            lease_token: None,
+            leased_at: None,
+            locked_by: None,
+            due_at: now,
+            content_sha256: None,
+            last_error: None,
+            completed_at: None,
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -1206,6 +1394,35 @@ mod tests {
         assert!(should_mark_progress_heartbeat(1, 0));
         assert!(should_mark_progress_heartbeat(0, 1));
         assert!(!should_mark_progress_heartbeat(0, 0));
+    }
+
+    #[test]
+    fn kind_stats_merge_leased_completed_and_failed_counts() {
+        let jobs = vec![
+            test_job(1, "event"),
+            test_job(2, "event"),
+            test_job(3, "frame_sequence"),
+        ];
+        let mut stats = BTreeMap::new();
+        add_leased_jobs(&mut stats, &jobs);
+
+        let mut process = ProcessJobsResult::default();
+        process.completed_by_kind.insert("event".to_string(), 1);
+        process
+            .completed_by_kind
+            .insert("frame_sequence".to_string(), 1);
+        process.failed_by_kind.insert("event".to_string(), 1);
+        process
+            .permanent_failed_by_kind
+            .insert("event".to_string(), 1);
+        add_process_stats(&mut stats, &process);
+
+        assert_eq!(stats["event"].leased, 2);
+        assert_eq!(stats["event"].completed, 1);
+        assert_eq!(stats["event"].failed, 1);
+        assert_eq!(stats["event"].permanent_failed, 1);
+        assert_eq!(stats["frame_sequence"].leased, 1);
+        assert_eq!(stats["frame_sequence"].completed, 1);
     }
 
     #[tokio::test]
