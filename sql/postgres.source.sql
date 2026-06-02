@@ -65,6 +65,94 @@ create table if not exists sync_cursors (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists vec_job_locks (
+  job_name text primary key,
+  locked_at timestamptz not null default now(),
+  locked_by text
+);
+
+create or replace function vec_try_begin_job(p_job_name text)
+returns boolean
+language plpgsql
+as $$
+begin
+  if not pg_try_advisory_lock(hashtextextended(p_job_name, 0)) then
+    raise notice '% already running, skipping', p_job_name;
+    return false;
+  end if;
+
+  insert into vec_job_locks (job_name, locked_at, locked_by)
+  values (p_job_name, now(), pg_backend_pid()::text)
+  on conflict (job_name) do update
+    set locked_at = excluded.locked_at,
+        locked_by = excluded.locked_by;
+
+  return true;
+end;
+$$;
+
+create or replace function vec_finish_job(p_job_name text)
+returns void
+language plpgsql
+as $$
+begin
+  delete from vec_job_locks where job_name = p_job_name;
+  perform pg_advisory_unlock(hashtextextended(p_job_name, 0));
+end;
+$$;
+
+create or replace function vec_try_begin_maintenance_job(p_job_name text)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_lock_name text := 'vec_maintenance_' || p_job_name;
+begin
+  if not pg_try_advisory_lock(hashtextextended(v_lock_name, 0)) then
+    raise notice 'vector maintenance already running, skipping %', p_job_name;
+    return false;
+  end if;
+
+  insert into vec_job_locks (job_name, locked_at, locked_by)
+  values ('maintenance:' || p_job_name, now(), pg_backend_pid()::text)
+  on conflict (job_name) do update
+    set locked_at = excluded.locked_at,
+        locked_by = excluded.locked_by;
+
+  return true;
+end;
+$$;
+
+create or replace function vec_finish_maintenance_job(p_job_name text)
+returns void
+language plpgsql
+as $$
+declare
+  v_lock_name text := 'vec_maintenance_' || p_job_name;
+begin
+  delete from vec_job_locks where job_name = 'maintenance:' || p_job_name;
+  perform pg_advisory_unlock(hashtextextended(v_lock_name, 0));
+end;
+$$;
+
+create or replace function vec_run_maintenance_sql(p_job_name text, p_statement text)
+returns void
+language plpgsql
+as $$
+begin
+  if not vec_try_begin_maintenance_job(p_job_name) then
+    return;
+  end if;
+
+  execute p_statement;
+
+  perform vec_finish_maintenance_job(p_job_name);
+exception when others then
+  perform vec_finish_maintenance_job(p_job_name);
+  raise;
+end;
+$$;
+
 create table if not exists sync_events (
   dedupe_key text primary key,
   stream_name text not null,
@@ -82,6 +170,13 @@ create table if not exists sync_events (
   constraint chk_sync_events_status check (status in ('pending','processing','batched','failed'))
 );
 
+alter table sync_events set (
+  autovacuum_vacuum_scale_factor = 0.005,
+  autovacuum_vacuum_threshold = 1000,
+  autovacuum_analyze_scale_factor = 0.005,
+  autovacuum_analyze_threshold = 1000
+);
+
 create table if not exists wireless_frames (
   dedupe_key text primary key references sync_events(dedupe_key) on delete cascade,
   sensor_id text,
@@ -93,6 +188,9 @@ create table if not exists wireless_frames (
   source_mac text,
   bssid text,
   destination_bssid text,
+  bssid_oui text generated always as (
+    nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
+  ) stored,
   ssid text,
   signal_dbm integer,
   fragment_number integer,
@@ -173,6 +271,11 @@ create table if not exists wireless_frames (
 );
 
 alter table wireless_frames add column if not exists frame_subtype text;
+
+alter table wireless_frames add column if not exists bssid_oui text
+  generated always as (
+    nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
+  ) stored;
 
 update wireless_frames wf
 set frame_subtype = nullif(se.payload->>'frame_subtype', '')
@@ -469,9 +572,9 @@ begin
   else
     -- 5. Merge this MAC into the existing cluster.
     update device_identity_clusters
-    set mac_ids = array_append(
-          array(select distinct unnest(mac_ids || array[p_mac_id])),
-          p_mac_id
+    set mac_ids = array(
+          select distinct unnest(mac_ids || array[p_mac_id])
+          order by 1
         ),
         size = (
           select count(distinct m)
@@ -490,6 +593,14 @@ $$;
 create index if not exists sync_events_status_idx on sync_events (status, observed_at);
 create index if not exists sync_events_stream_idx on sync_events (stream_name, observed_at);
 create index if not exists sync_events_ready_idx on sync_events (status, stream_name, observed_at) where status in ('pending', 'failed');
+create index if not exists sync_events_wireless_observed_idx
+  on sync_events (observed_at desc)
+  where stream_name = 'wireless.audit'
+    and status = 'batched';
+create index if not exists sync_events_wireless_batched_updated_idx
+  on sync_events (updated_at, dedupe_key)
+  where stream_name = 'wireless.audit'
+    and status = 'batched';
 create index if not exists sync_events_processing_idx on sync_events (updated_at) where status = 'processing';
 create index if not exists sync_jobs_stream_name_idx on sync_jobs (stream_name);
 create index if not exists sync_jobs_status_created_at_idx on sync_jobs (status, created_at);
@@ -511,7 +622,16 @@ create index if not exists devices_username_idx on devices (username, last_seen 
 create index if not exists wireless_frames_ssid_idx on wireless_frames (ssid);
 create index if not exists wireless_frames_source_mac_idx on wireless_frames (lower(source_mac));
 create index if not exists wireless_frames_bssid_idx on wireless_frames (lower(bssid));
+create index if not exists wireless_frames_bssid_updated_idx
+  on wireless_frames (lower(bssid), updated_at desc)
+  where bssid is not null;
 create index if not exists wireless_frames_destination_bssid_idx on wireless_frames (lower(destination_bssid));
+create index if not exists wireless_frames_destination_bssid_updated_idx
+  on wireless_frames (lower(destination_bssid), updated_at desc)
+  where destination_bssid is not null;
+create index if not exists wireless_frames_bssid_oui_idx
+  on wireless_frames (bssid_oui)
+  where bssid_oui is not null;
 create index if not exists wireless_frames_schema_version_idx on wireless_frames (schema_version);
 create index if not exists wireless_frames_signal_idx on wireless_frames (signal_dbm) where signal_dbm is not null;
 create index if not exists wireless_frames_src_ip_idx on wireless_frames (src_ip) where src_ip is not null;
@@ -1146,6 +1266,13 @@ create table if not exists vec_embeddings (
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
 );
 
+alter table vec_embeddings set (
+  autovacuum_vacuum_scale_factor = 0.01,
+  autovacuum_vacuum_threshold = 500,
+  autovacuum_analyze_scale_factor = 0.005,
+  autovacuum_analyze_threshold = 500
+);
+
 create index if not exists vec_embeddings_source_idx
   on vec_embeddings (source_table, source_key);
 create index if not exists vec_embeddings_kind_model_idx
@@ -1261,6 +1388,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_update_transition_model') then
+    return 0;
+  end if;
+
   with windowed as (
     select
       coalesce(
@@ -1271,6 +1402,7 @@ begin
       observed_at
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= now() - interval '24 hours'
       and coalesce(session_key, payload->>'session_key') is not null
       and coalesce(
@@ -1300,7 +1432,11 @@ begin
     last_updated = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_update_transition_model');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_update_transition_model');
+  raise;
 end;
 $$;
 
@@ -1403,6 +1539,10 @@ declare
   v_count integer := 0;
   v_row_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_infrastructure_graph') then
+    return 0;
+  end if;
+
   with base as (
     select
       lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
@@ -1416,6 +1556,7 @@ begin
       location_id
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -1536,7 +1677,11 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_infrastructure_graph');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_infrastructure_graph');
+  raise;
 end;
 $$;
 
@@ -1553,6 +1698,9 @@ declare
   v_count     integer := 0;
   v_row_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_detect_rogue_clusters') then
+    return 0;
+  end if;
 
   -- Track 1: Degree spike
   with current_assoc as (
@@ -1562,6 +1710,7 @@ begin
       observed_at
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -1578,6 +1727,7 @@ begin
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from - interval '1 hour'
       and observed_at < p_from
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -1604,6 +1754,7 @@ begin
     s.bssid,
     greatest(s.current_clients::double precision, 1.0),
     jsonb_build_object(
+      'bssid',            s.bssid,
       'reason',           'degree_spike',
       'current_clients',  s.current_clients,
       'previous_clients', s.previous_clients
@@ -1621,18 +1772,21 @@ begin
   -- Track 2: Vendor conflict
   with vendor_conflicts as (
     select
-      lower(nullif(coalesce(ssid, payload->>'ssid'), '')) as ssid,
-      array_agg(distinct lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), ''))) as bssids,
-      array_agg(distinct substr(regexp_replace(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '[:\-]', '', 'g'), 1, 6)) as vendor_ouis,
-      count(distinct substr(regexp_replace(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '[:\-]', '', 'g'), 1, 6)) as vendor_count
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(ssid, payload->>'ssid'), '') is not null
-      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
-    group by lower(nullif(coalesce(ssid, payload->>'ssid'), ''))
-    having count(distinct substr(regexp_replace(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '[:\-]', '', 'g'), 1, 6)) >= 2
+      lower(nullif(wf.ssid, '')) as ssid,
+      array_agg(distinct lower(coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')))) as bssids,
+      array_agg(distinct wf.bssid_oui) as vendor_ouis,
+      count(distinct wf.bssid_oui) as vendor_count
+    from wireless_frames wf
+    join sync_events se on se.dedupe_key = wf.dedupe_key
+    where se.stream_name = 'wireless.audit'
+      and se.status = 'batched'
+      and se.observed_at >= p_from
+      and se.observed_at < p_to
+      and nullif(wf.ssid, '') is not null
+      and coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')) is not null
+      and wf.bssid_oui is not null
+    group by lower(nullif(wf.ssid, ''))
+    having count(distinct wf.bssid_oui) >= 2
   )
   insert into vec_alerts (alert_type, source_mac, score, metadata)
   select
@@ -1672,6 +1826,7 @@ begin
         observed_at
       from sync_events_expanded
       where stream_name = 'wireless.audit'
+        and status = 'batched'
         and observed_at >= p_from
         and observed_at < p_to
         and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
@@ -1704,118 +1859,114 @@ begin
   get diagnostics v_row_count = row_count;
   v_count := v_count + v_row_count;
 
-  -- Track 4: Sequence anomaly — flag sessions with log-prob < -15
-  with session_sequences as (
-    select
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
-      nullif(coalesce(session_key, payload->>'session_key'), '')       as session_key,
-      string_agg(
-        upper(regexp_replace(payload->>'frame_subtype', '-', '_', 'g')),
-        ' ' order by observed_at
-      ) as tokens
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
-      and payload->>'frame_subtype' is not null
-    group by
-      nullif(coalesce(session_key, payload->>'session_key'), ''),
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))
-    having count(*) >= 3
-  ),
-  scored_sequences as (
-    select
-      session_key,
-      source_mac,
-      tokens,
-      vec_score_sequence(regexp_split_to_array(tokens, E'\\s+')) as log_prob
-    from session_sequences
-  )
-  insert into vec_alerts (alert_type, source_mac, score, metadata)
-  select
-    'rogue_cluster'::text,
-    ss.source_mac,
-    greatest(abs(ss.log_prob)::double precision, 1.0),
-    jsonb_build_object(
-      'reason',      'sequence_anomaly',
-      'session_key', ss.session_key,
-      'log_prob',    ss.log_prob,
-      'threshold',   -15
-    )
-  from scored_sequences ss
-  where ss.log_prob < -15
-    and not exists (
-      select 1 from vec_alerts a
-      where a.alert_type          = 'rogue_cluster'
-        and a.source_mac is not distinct from ss.source_mac
-        and a.created_at          > now() - interval '1 hour'
-        and a.metadata->>'reason' = 'sequence_anomaly'
-    );
-
-  get diagnostics v_row_count = row_count;
-  v_count := v_count + v_row_count;
-
+  perform vec_finish_job('vec_detect_rogue_clusters');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_detect_rogue_clusters');
+  raise;
 end;
 $$;
 
 -- Track 6.1: Composite AP risk score combining deauth, signal, typosquat,
 -- vendor mismatch, and embedding outlier signals into a single score.
 create or replace view v_ap_risk_score as
-with deauth_scores as (
+with alert_bssid_scores as (
   select
-    coalesce(source_mac, metadata->>'bssid') as bssid,
-    score as deauth_score
-  from vec_alerts
+    alert_bssid.bssid,
+    alert.alert_type,
+    alert.metadata,
+    alert.score
+  from vec_alerts alert
+  cross join lateral (
+    select lower(nullif(trim(alert.metadata->>'bssid'), '')) as bssid
+    union
+    select lower(nullif(trim(alert.metadata->>'destination_bssid'), '')) as bssid
+    union
+    select lower(nullif(trim(value), '')) as bssid
+    from jsonb_array_elements_text(
+      case
+        when jsonb_typeof(alert.metadata->'bssids') = 'array' then alert.metadata->'bssids'
+        else '[]'::jsonb
+      end
+    ) as bssid_values(value)
+  ) alert_bssid
+  where alert_bssid.bssid is not null
+    and alert.created_at >= now() - interval '1 hour'
+),
+deauth_scores as (
+  select
+    bssid,
+    max(score) as deauth_score
+  from alert_bssid_scores
   where alert_type in ('rogue_cluster', 'deauth_flood')
-    and created_at >= now() - interval '1 hour'
+  group by bssid
 ),
 signal_anomaly_scores as (
   select
-    coalesce(source_mac, metadata->>'bssid') as bssid,
-    score as signal_anomaly_score
-  from vec_alerts
+    bssid,
+    max(score) as signal_anomaly_score
+  from alert_bssid_scores
   where alert_type in ('signal_anomaly', 'rogue_cluster')
     and metadata->>'reason' in ('signal_jump', 'channel_band_conflict')
-    and created_at >= now() - interval '1 hour'
+  group by bssid
 ),
 typosquat_scores as (
   select
-    coalesce(source_mac, metadata->>'bssid') as bssid,
-    score as typosquat_score
-  from vec_alerts
+    bssid,
+    max(score) as typosquat_score
+  from alert_bssid_scores
   where alert_type = 'rogue_cluster'
     and metadata->>'reason' in ('ssid_typosquat', 'vendor_conflict', 'bssid_spoofing')
-    and created_at >= now() - interval '1 hour'
+  group by bssid
 ),
 vendor_mismatch_scores as (
   select
-    lower(substr(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g'), 1, 6)) as bssid_oui,
+    lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(payload->>'bssid', ''), nullif(destination_bssid, ''), nullif(payload->>'destination_bssid', '')), '[:\-]', '', 'g'), 1, 6)) as bssid_oui,
     count(distinct lower(substr(regexp_replace(bssid, '[:\-]', '', 'g'), 1, 6)))::double precision as vendor_mismatch_score
   from sync_events_expanded
   where stream_name = 'wireless.audit'
     and observed_at >= now() - interval '1 hour'
     and nullif(coalesce(ssid, payload->>'ssid'), '') is not null
-    and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
-    and lower(substr(regexp_replace(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '[:\-]', '', 'g'), 1, 6)) is not null
+    and coalesce(nullif(bssid, ''), nullif(payload->>'bssid', ''), nullif(destination_bssid, ''), nullif(payload->>'destination_bssid', '')) is not null
+    and lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(payload->>'bssid', ''), nullif(destination_bssid, ''), nullif(payload->>'destination_bssid', '')), '[:\-]', '', 'g'), 1, 6)) is not null
   group by bssid_oui
+),
+similarity_bssid_rows as (
+  select
+    lower(nullif(trim(coalesce(nullif(left_event.bssid, ''), nullif(left_event.payload->>'bssid', ''), nullif(left_event.destination_bssid, ''), nullif(left_event.payload->>'destination_bssid', ''))), '')) as bssid,
+    p.cosine_distance
+  from vec_similarity_pairs p
+  join sync_events_expanded left_event
+    on p.left_source_table = 'sync_events'
+   and left_event.dedupe_key = p.left_source_key
+  where p.computed_at >= now() - interval '1 hour'
+    and p.cosine_distance > 0.15
+  union all
+  select
+    lower(nullif(trim(coalesce(nullif(right_event.bssid, ''), nullif(right_event.payload->>'bssid', ''), nullif(right_event.destination_bssid, ''), nullif(right_event.payload->>'destination_bssid', ''))), '')) as bssid,
+    p.cosine_distance
+  from vec_similarity_pairs p
+  join sync_events_expanded right_event
+    on p.right_source_table = 'sync_events'
+   and right_event.dedupe_key = p.right_source_key
+  where p.computed_at >= now() - interval '1 hour'
+    and p.cosine_distance > 0.15
 ),
 embedding_outlier_scores as (
   select
-    coalesce(p.left_source_mac, p.right_source_mac) as bssid,
-    max(p.cosine_distance) as embedding_outlier_score
-  from vec_similarity_pairs p
-  where p.computed_at >= now() - interval '1 hour'
-    and p.cosine_distance > 0.15
-  group by coalesce(p.left_source_mac, p.right_source_mac)
+    bssid,
+    max(cosine_distance) as embedding_outlier_score
+  from similarity_bssid_rows
+  where bssid is not null
+  group by bssid
 ),
 all_bssids as (
-  select distinct coalesce(source_mac, metadata->>'bssid') as bssid from vec_alerts
+  select distinct bssid
+  from alert_bssid_scores
   union
-  select distinct left_source_mac from vec_similarity_pairs where left_source_mac is not null
-  union
-  select distinct right_source_mac from vec_similarity_pairs where right_source_mac is not null
+  select distinct bssid
+  from similarity_bssid_rows
+  where bssid is not null
 )
 select
   a.bssid,
@@ -1904,6 +2055,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_frame_sequences') then
+    return 0;
+  end if;
+
   with base as (
     select
       -- Prefer real session_key from payload; fall back to synthetic key
@@ -1929,6 +2084,7 @@ begin
       ) as frame_subtype_value
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and coalesce(
@@ -1988,7 +2144,11 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_frame_sequences');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_frame_sequences');
+  raise;
 end;
 $$;
 
@@ -2003,6 +2163,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_baseline_profiles') then
+    return 0;
+  end if;
+
   with base as (
     select
       lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
@@ -2016,6 +2180,7 @@ begin
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -2160,7 +2325,11 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_baseline_profiles');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_baseline_profiles');
+  raise;
 end;
 $$;
 
@@ -2328,12 +2497,27 @@ create table if not exists vec_embedding_jobs (
   constraint vec_embedding_jobs_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
 );
 
+alter table vec_embedding_jobs set (
+  autovacuum_vacuum_scale_factor = 0.005,
+  autovacuum_vacuum_threshold = 500,
+  autovacuum_analyze_scale_factor = 0.005,
+  autovacuum_analyze_threshold = 500
+);
+
 create index if not exists vec_embedding_jobs_pending_idx
   on vec_embedding_jobs (priority, due_at, job_id)
   where status in ('pending', 'failed')
     and attempts < max_attempts;
+create index if not exists vec_embedding_jobs_pending_kind_idx
+  on vec_embedding_jobs (embedding_kind, priority, due_at, job_id)
+  where status in ('pending', 'failed')
+    and attempts < max_attempts;
 create index if not exists vec_embedding_jobs_lease_idx
   on vec_embedding_jobs (leased_at, priority, job_id)
+  where status = 'leased'
+    and attempts < max_attempts;
+create index if not exists vec_embedding_jobs_lease_kind_idx
+  on vec_embedding_jobs (embedding_kind, leased_at, priority, job_id)
   where status = 'leased'
     and attempts < max_attempts;
 create index if not exists vec_embedding_jobs_completion_idx
@@ -2351,6 +2535,13 @@ create table if not exists vec_worker_state (
   updated_at timestamptz not null default now()
 );
 
+alter table vec_worker_state set (
+  autovacuum_vacuum_scale_factor = 0,
+  autovacuum_vacuum_threshold = 10,
+  autovacuum_analyze_scale_factor = 0,
+  autovacuum_analyze_threshold = 10
+);
+
 create or replace function vec_build_behaviour_snapshots(
   p_from timestamptz default now() - interval '2 hours',
   p_to timestamptz default now(),
@@ -2362,6 +2553,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_behaviour_snapshots') then
+    return 0;
+  end if;
+
   with base as (
     select
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
@@ -2383,6 +2578,7 @@ begin
       coalesce(device_fingerprint, payload->>'device_fingerprint') as device_fingerprint
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
@@ -2579,7 +2775,11 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_behaviour_snapshots');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_behaviour_snapshots');
+  raise;
 end;
 $$;
 
@@ -2592,6 +2792,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
+    return 0;
+  end if;
+
   with cursor_state as (
     select coalesce(
       (select cursor_value::timestamptz
@@ -2615,6 +2819,7 @@ begin
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'event'
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and (
         existing.embedding_id is null
         or source.updated_at > existing.embedded_at
@@ -2699,10 +2904,23 @@ begin
     from vec_baseline_profiles bp
     left join lateral (
       select count(*) as new_frame_count
-      from sync_events_expanded source
-      where stream_name = 'wireless.audit'
-        and lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) = bp.bssid
-        and observed_at > bp.updated_at
+      from (
+        select source.dedupe_key
+        from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
+        where source.bssid is not null
+          and lower(source.bssid) = bp.bssid
+          and source.updated_at > bp.updated_at
+          and event.status = 'batched'
+        union
+        select source.dedupe_key
+        from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
+        where source.destination_bssid is not null
+          and lower(source.destination_bssid) = bp.bssid
+          and source.updated_at > bp.updated_at
+          and event.status = 'batched'
+      ) source
     ) frames on true
     left join vec_embeddings existing
       on existing.source_table = 'vec_baseline_profiles'
@@ -2719,7 +2937,16 @@ begin
     insert into vec_embedding_jobs (
       source_table, source_key, embedding_model, embedding_kind, priority, status, due_at, created_at, updated_at
     )
-    select source_table, source_key, embedding_model, embedding_kind, priority, 'pending', now(), now(), now()
+    select
+      source_table,
+      source_key,
+      embedding_model,
+      embedding_kind,
+      min(priority) as priority,
+      'pending',
+      now(),
+      now(),
+      now()
     from (
       select * from event_jobs
       union all
@@ -2733,6 +2960,7 @@ begin
       union all
       select * from graph_jobs
     ) jobs
+    group by source_table, source_key, embedding_model, embedding_kind
     on conflict (source_table, source_key, embedding_model, embedding_kind) do update set
       status = 'pending',
       due_at = least(vec_embedding_jobs.due_at, now()),
@@ -2752,11 +2980,16 @@ begin
     now()
   from sync_events_expanded
   where stream_name = 'wireless.audit'
+    and status = 'batched'
   on conflict (stream_name) do update set
     cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
     updated_at = now();
 
+  perform vec_finish_job('vec_enqueue_embedding_jobs');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_enqueue_embedding_jobs');
+  raise;
 end;
 $$;
 
@@ -2774,16 +3007,59 @@ declare
   remaining_limit integer;
 begin
   -- Branch A: pending & failed jobs that are due for retry.
-  -- Uses pending_idx which pre-filters on status, attempts < max_attempts, due_at <= now().
+  -- Pull bounded candidates per kind, then interleave by kind_round so a deep
+  -- event backlog cannot starve less frequent embedding kinds.
   return query
-  with selected as (
+  with kind_order(embedding_kind, kind_rank) as (
+    values
+      ('event', 1),
+      ('device', 2),
+      ('behaviour_window', 3),
+      ('baseline_profile', 4),
+      ('frame_sequence', 5),
+      ('infrastructure_subgraph', 6),
+      ('timing_profile', 7)
+  ),
+  candidates as (
+    select
+      c.job_id,
+      c.embedding_kind,
+      c.priority,
+      c.due_at,
+      k.kind_rank
+    from kind_order k
+    cross join lateral (
+      select
+        job_id,
+        embedding_kind,
+        priority,
+        due_at
+      from vec_embedding_jobs
+      where embedding_kind = k.embedding_kind
+        and status in ('pending', 'failed')
+        and attempts < max_attempts
+        and due_at <= now()
+      order by priority asc, due_at asc, job_id asc
+      for update skip locked
+      limit v_limit
+    ) c
+  ),
+  ranked as (
+    select
+      job_id,
+      priority,
+      due_at,
+      kind_rank,
+      row_number() over (
+        partition by embedding_kind
+        order by priority asc, due_at asc, job_id asc
+      ) as kind_round
+    from candidates
+  ),
+  selected as (
     select job_id
-    from vec_embedding_jobs
-    where status in ('pending', 'failed')
-      and attempts < max_attempts
-      and due_at <= now()
-    order by priority asc, due_at asc, job_id asc
-    for update skip locked
+    from ranked
+    order by kind_round asc, kind_rank asc, priority asc, due_at asc, job_id asc
     limit v_limit
   )
   update vec_embedding_jobs job
@@ -2803,23 +3079,65 @@ begin
     return;
   end if;
 
-  remaining_limit := greatest(0, p_limit - v_count);
+  remaining_limit := greatest(0, v_limit - v_count);
   if remaining_limit <= 0 then
     return;
   end if;
 
   -- Branch B: expired leases (worker died mid-batch).
-  -- Uses lease_idx which pre-filters on status = 'leased' and attempts < max_attempts.
+  -- Keep the same fair ordering for reclaimed work.
   return query
-  with selected as (
+  with kind_order(embedding_kind, kind_rank) as (
+    values
+      ('event', 1),
+      ('device', 2),
+      ('behaviour_window', 3),
+      ('baseline_profile', 4),
+      ('frame_sequence', 5),
+      ('infrastructure_subgraph', 6),
+      ('timing_profile', 7)
+  ),
+  candidates as (
+    select
+      c.job_id,
+      c.embedding_kind,
+      c.leased_at,
+      c.priority,
+      k.kind_rank
+    from kind_order k
+    cross join lateral (
+      select
+        job_id,
+        embedding_kind,
+        leased_at,
+        priority
+      from vec_embedding_jobs
+      where embedding_kind = k.embedding_kind
+        and status = 'leased'
+        and leased_at < now() - p_lease
+        and attempts < max_attempts
+        and due_at <= now()
+      order by leased_at asc, priority asc, job_id asc
+      for update skip locked
+      limit remaining_limit
+    ) c
+  ),
+  ranked as (
+    select
+      job_id,
+      leased_at,
+      priority,
+      kind_rank,
+      row_number() over (
+        partition by embedding_kind
+        order by leased_at asc, priority asc, job_id asc
+      ) as kind_round
+    from candidates
+  ),
+  selected as (
     select job_id
-    from vec_embedding_jobs
-    where status = 'leased'
-      and leased_at < now() - p_lease
-      and attempts < max_attempts
-      and due_at <= now()
-    order by leased_at asc, priority asc, job_id asc
-    for update skip locked
+    from ranked
+    order by kind_round asc, kind_rank asc, leased_at asc, priority asc, job_id asc
     limit remaining_limit
   )
   update vec_embedding_jobs job
@@ -2936,6 +3254,15 @@ begin
       metadata = excluded.metadata,
       embedded_at = now(),
       updated_at = now()
+    where vec_embeddings.source_observed_at is distinct from excluded.source_observed_at
+       or vec_embeddings.source_stream_name is distinct from excluded.source_stream_name
+       or vec_embeddings.source_sensor_id is distinct from excluded.source_sensor_id
+       or vec_embeddings.source_location_id is distinct from excluded.source_location_id
+       or vec_embeddings.source_mac is distinct from excluded.source_mac
+       or vec_embeddings.embedding_dimensions is distinct from excluded.embedding_dimensions
+       or vec_embeddings.content_sha256 is distinct from excluded.content_sha256
+       or vec_embeddings.content_text is distinct from excluded.content_text
+       or vec_embeddings.metadata is distinct from excluded.metadata
     returning 1
   ),
   locked as (
@@ -2944,12 +3271,16 @@ begin
       j.job_id,
       p.lease_token,
       p.content_sha256
-    from vec_embedding_jobs j
-    join payload_rows p
-      on p.job_id = j.job_id
+    from (
+      select job_id, lease_token, content_sha256
+      from payload_rows
+      order by job_id asc
+    ) p
+    join vec_embedding_jobs j
+      on j.job_id = p.job_id
     where j.lease_token is not distinct from p.lease_token
     order by j.job_id asc
-    for update
+    for update skip locked
   ),
   updated as (
     update vec_embedding_jobs j
@@ -2973,6 +3304,7 @@ end;
 $$;
 
 drop function if exists vec_materialize_similarity_pairs(text, integer, double precision, double precision);
+drop function if exists vec_materialize_similarity_pairs(text, integer, double precision, double precision, double precision);
 
 create or replace function vec_materialize_similarity_pairs(
   p_model text default 'nomic-embed-text-v2-moe',
@@ -2987,13 +3319,28 @@ as $$
 declare
   v_total integer := 0;
   v_count integer := 0;
+  v_started_at timestamptz := now();
 begin
-  with candidates as (
+  if not vec_try_begin_job('vec_materialize_similarity_pairs') then
+    return 0;
+  end if;
+
+  insert into sync_cursors (stream_name, cursor_value, updated_at)
+  values ('vec_similarity_pairs.last_run', '1970-01-01T00:00:00+00:00', now())
+  on conflict (stream_name) do nothing;
+
+  with last_run as materialized (
+    select cursor_value::timestamptz as ts
+    from sync_cursors
+    where stream_name = 'vec_similarity_pairs.last_run'
+  ),
+  candidates as (
     select
       least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
       greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
       min(neighbor.cosine_distance) as cosine_distance
     from vec_embeddings e1
+    cross join last_run
     join lateral (
       select
         e2.embedding_id,
@@ -3009,6 +3356,8 @@ begin
     where e1.embedding_kind = 'event'
       and e1.embedding_model = p_model
       and e1.embedding_dimensions = 768
+      and e1.embedded_at > last_run.ts
+      and e1.embedded_at <= v_started_at
       and neighbor.cosine_distance <= p_event_dup_distance_threshold
     group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
   )
@@ -3042,12 +3391,18 @@ begin
   get diagnostics v_count = row_count;
   v_total := v_total + v_count;
 
-  with candidates as (
+  with last_run as materialized (
+    select cursor_value::timestamptz as ts
+    from sync_cursors
+    where stream_name = 'vec_similarity_pairs.last_run'
+  ),
+  candidates as (
     select
       least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
       greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
       min(neighbor.cosine_distance) as cosine_distance
     from vec_embeddings e1
+    cross join last_run
     join lateral (
       select
         e2.embedding_id,
@@ -3067,6 +3422,8 @@ begin
     where e1.embedding_kind = 'event'
       and e1.embedding_model = p_model
       and e1.embedding_dimensions = 768
+      and e1.embedded_at > last_run.ts
+      and e1.embedded_at <= v_started_at
       and neighbor.cosine_distance <= greatest(p_event_dup_distance_threshold * 3, p_event_dup_distance_threshold)
     group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
   )
@@ -3100,12 +3457,18 @@ begin
   get diagnostics v_count = row_count;
   v_total := v_total + v_count;
 
-  with candidates as (
+  with last_run as materialized (
+    select cursor_value::timestamptz as ts
+    from sync_cursors
+    where stream_name = 'vec_similarity_pairs.last_run'
+  ),
+  candidates as (
     select
       least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
       greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
       min(neighbor.cosine_distance) as cosine_distance
     from vec_embeddings e1
+    cross join last_run
     join vec_behaviour_snapshots s1 on s1.snapshot_id::text = e1.source_key
     join lateral (
       select
@@ -3125,6 +3488,8 @@ begin
     where e1.embedding_kind = 'behaviour_window'
       and e1.embedding_model = p_model
       and e1.embedding_dimensions = 768
+      and e1.embedded_at > last_run.ts
+      and e1.embedded_at <= v_started_at
       and neighbor.cosine_distance <= (1 - p_behaviour_similarity_threshold)
     group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
   )
@@ -3158,12 +3523,18 @@ begin
   get diagnostics v_count = row_count;
   v_total := v_total + v_count;
 
-  with candidates as (
+  with last_run as materialized (
+    select cursor_value::timestamptz as ts
+    from sync_cursors
+    where stream_name = 'vec_similarity_pairs.last_run'
+  ),
+  candidates as (
     select
       least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
       greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
       min(neighbor.cosine_distance) as cosine_distance
     from vec_embeddings e1
+    cross join last_run
     join lateral (
       select
         e2.embedding_id,
@@ -3179,6 +3550,8 @@ begin
     where e1.embedding_kind = 'frame_sequence'
       and e1.embedding_model = p_model
       and e1.embedding_dimensions = 768
+      and e1.embedded_at > last_run.ts
+      and e1.embedded_at <= v_started_at
       and neighbor.cosine_distance <= p_sequence_similarity_threshold
     group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
   )
@@ -3211,6 +3584,36 @@ begin
 
   get diagnostics v_count = row_count;
   v_total := v_total + v_count;
+
+  insert into sync_cursors (stream_name, cursor_value, updated_at)
+  values ('vec_similarity_pairs.last_run', v_started_at::text, now())
+  on conflict (stream_name) do update
+    set cursor_value = excluded.cursor_value,
+        updated_at = now();
+
+  perform vec_finish_job('vec_materialize_similarity_pairs');
+  return v_total;
+exception when others then
+  perform vec_finish_job('vec_materialize_similarity_pairs');
+  raise;
+end;
+$$;
+
+create or replace function vec_apply_similarity_flags(
+  p_model text default 'nomic-embed-text-v2-moe',
+  p_event_dup_distance_threshold double precision default 0.05,
+  p_behaviour_similarity_threshold double precision default 0.92
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_total integer := 0;
+  v_count integer := 0;
+begin
+  if not vec_try_begin_job('vec_apply_similarity_flags') then
+    return 0;
+  end if;
 
   update wireless_frames target
      set dedupe_or_replay_suspect = true,
@@ -3270,6 +3673,7 @@ begin
     and pair.cosine_similarity >= p_behaviour_similarity_threshold
     and left_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
     and right_snapshot.source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+    and left_snapshot.source_mac <> right_snapshot.source_mac
   order by right_snapshot.source_mac, pair.cosine_similarity desc
   on conflict (source_mac) do update set
     last_occurred_at = greatest(wireless_shadow_alerts.last_occurred_at, excluded.last_occurred_at),
@@ -3288,7 +3692,11 @@ begin
   get diagnostics v_count = row_count;
   v_total := v_total + v_count;
 
+  perform vec_finish_job('vec_apply_similarity_flags');
   return v_total;
+exception when others then
+  perform vec_finish_job('vec_apply_similarity_flags');
+  raise;
 end;
 $$;
 
@@ -3371,7 +3779,15 @@ begin
          last_error = 'lease expired',
          updated_at = now()
    where status = 'leased'
-     and leased_at < now() - p_lease_interval;
+     and leased_at < now() - p_lease_interval
+     and job_id in (
+       select job_id
+       from vec_embedding_jobs
+       where status = 'leased'
+         and leased_at < now() - p_lease_interval
+       order by job_id asc
+       for update skip locked
+     );
 
   get diagnostics v_count = row_count;
   return v_count;
@@ -3400,6 +3816,43 @@ begin
 end;
 $$;
 
+create or replace function vec_refresh_device_repetition_score()
+returns void
+language plpgsql
+as $$
+begin
+  if not vec_try_begin_maintenance_job('vec-refresh-device-repetition-score') then
+    return;
+  end if;
+
+  refresh materialized view v_device_repetition_score;
+
+  perform vec_finish_maintenance_job('vec-refresh-device-repetition-score');
+exception when others then
+  perform vec_finish_maintenance_job('vec-refresh-device-repetition-score');
+  raise;
+end;
+$$;
+
+create or replace function vec_refresh_ap_risk_score()
+returns void
+language plpgsql
+as $$
+begin
+  if not vec_try_begin_maintenance_job('vec-refresh-ap-risk-score') then
+    return;
+  end if;
+
+  refresh materialized view mv_ap_risk_score;
+  perform check_high_risk_aps();
+
+  perform vec_finish_maintenance_job('vec-refresh-ap-risk-score');
+exception when others then
+  perform vec_finish_maintenance_job('vec-refresh-ap-risk-score');
+  raise;
+end;
+$$;
+
 create or replace function vec_install_cron_jobs()
 returns void
 language plpgsql
@@ -3411,50 +3864,68 @@ begin
 
   perform cron.schedule(
     'vec-build-behaviour-snapshots',
-    '*/5 * * * *',
-    $cron$select vec_build_behaviour_snapshots();$cron$
+    '0,10,20,30,40,50 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-build-behaviour-snapshots', $$select vec_build_behaviour_snapshots()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-frame-sequences',
-    '*/5 * * * *',
-    $cron$select vec_build_frame_sequences();$cron$
+    '2,12,22,32,42,52 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-build-frame-sequences', $$select vec_build_frame_sequences()$$);$cron$
+  );
+
+  perform cron.schedule(
+    'vec-build-timing-profiles',
+    '4,19,34,49 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-build-timing-profiles', $$select vec_build_timing_profiles()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-baseline-profiles',
-    '*/15 * * * *',
-    $cron$select vec_build_baseline_profiles();$cron$
+    '6,21,36,51 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-build-baseline-profiles', $$select vec_build_baseline_profiles()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-infrastructure-graph',
-    '*/5 * * * *',
-    $cron$select vec_build_infrastructure_graph();$cron$
+    '8,23,38,53 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-build-infrastructure-graph', $$select vec_build_infrastructure_graph()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-detect-rogue-clusters',
-    '*/5 * * * *',
-    $cron$select vec_detect_rogue_clusters();$cron$
+    '10,25,40,55 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-detect-rogue-clusters', $$select vec_detect_rogue_clusters()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-enqueue-embedding-jobs',
-    '*/2 * * * *',
-    $cron$select vec_enqueue_embedding_jobs();$cron$
+    '*/5 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-enqueue-embedding-jobs', $$select vec_enqueue_embedding_jobs()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-materialize-similarity-pairs',
-    '*/5 * * * *',
-    $cron$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.92::double precision, 0.10::double precision);$cron$
+    '12,27,42,57 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-materialize-similarity-pairs', $$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.88::double precision, 0.10::double precision, 0.05::double precision)$$);$cron$
+  );
+
+  perform cron.schedule(
+    'vec-apply-similarity-flags',
+    '14,29,44,59 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-apply-similarity-flags', $$select vec_apply_similarity_flags('nomic-embed-text-v2-moe'::text, 0.05::double precision, 0.88::double precision)$$);$cron$
+  );
+
+  perform cron.schedule(
+    'vec-fuse-device-identities',
+    '5,20,35,50 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-fuse-device-identities', $$select vec_fuse_device_identities()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-refresh-device-repetition-score',
-    '*/5 * * * *',
-    $cron$REFRESH MATERIALIZED VIEW CONCURRENTLY v_device_repetition_score;$cron$
+    '3,18,33,48 * * * *',
+    $cron$select vec_refresh_device_repetition_score();$cron$
   );
 
   perform cron.schedule(
@@ -3471,14 +3942,20 @@ begin
 
   perform cron.schedule(
     'vec-update-transition-model',
-    '*/15 * * * *',
-    $cron$select vec_update_transition_model();$cron$
+    '7,22,37,52 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-update-transition-model', $$select vec_update_transition_model()$$);$cron$
+  );
+
+  perform cron.schedule(
+    'vec-update-device-centroids',
+    '10,25,40,55 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-update-device-centroids', $$select vec_update_device_centroids()$$);$cron$
   );
 
   perform cron.schedule(
     'vec-refresh-ap-risk-score',
-    '*/5 * * * *',
-    $cron$REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ap_risk_score; SELECT check_high_risk_aps();$cron$
+    '9,24,39,54 * * * *',
+    $cron$select vec_refresh_ap_risk_score();$cron$
   );
 end;
 $$;
@@ -3554,6 +4031,39 @@ CREATE TABLE IF NOT EXISTS vec_alerts (
 
 ALTER TABLE vec_alerts ADD COLUMN IF NOT EXISTS explanation_text TEXT;
 
+create table if not exists vec_rf_sensor_locations (
+  sensor_id text not null,
+  location_id text not null default '',
+  latitude double precision not null,
+  longitude double precision not null,
+  site_label text,
+  enabled boolean not null default true,
+  updated_at timestamptz not null default now(),
+  constraint vec_rf_sensor_locations_pk primary key (sensor_id, location_id),
+  constraint vec_rf_sensor_locations_latitude_chk check (latitude between -90 and 90),
+  constraint vec_rf_sensor_locations_longitude_chk check (longitude between -180 and 180)
+);
+
+create table if not exists vec_dns_policy (
+  wg_pubkey text primary key,
+  policy text not null,
+  allow_mdns boolean not null default false,
+  updated_at timestamptz not null default now(),
+  constraint vec_dns_policy_policy_chk check (policy in ('secure_required', 'monitor', 'disabled'))
+);
+
+create table if not exists vec_dns_resolver_ledger (
+  ledger_id bigserial primary key,
+  wg_pubkey text not null,
+  observed_at timestamptz not null,
+  protocol text not null,
+  query_name text,
+  query_name_hash text,
+  status text not null default 'observed',
+  constraint vec_dns_resolver_ledger_protocol_chk check (protocol in ('doh', 'dot', 'wireguard_dns', 'dnscrypt', 'unknown')),
+  constraint vec_dns_resolver_ledger_query_chk check (query_name is not null or query_name_hash is not null)
+);
+
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_created
     ON vec_alerts (alert_type, created_at DESC);
 
@@ -3562,6 +4072,10 @@ CREATE INDEX IF NOT EXISTS idx_vec_alerts_mac
 
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_created
     ON vec_alerts (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_vec_alerts_metadata_bssid
+    ON vec_alerts ((metadata->>'bssid'))
+    WHERE metadata->>'bssid' IS NOT NULL;
 
 COMMENT ON TABLE vec_alerts IS
   'Actionable alerts generated from embedding analysis (near-duplicate, behaviour anomaly, etc.).';
@@ -3650,6 +4164,33 @@ COMMENT ON FUNCTION vec_reembed_changed_jobs IS
 
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_mac_created
     ON vec_alerts (alert_type, source_mac, created_at DESC);
+
+create index if not exists vec_rf_sensor_locations_enabled_idx
+  on vec_rf_sensor_locations (sensor_id, location_id)
+  where enabled;
+
+create index if not exists vec_dns_policy_secure_required_idx
+  on vec_dns_policy (wg_pubkey)
+  where policy = 'secure_required';
+
+create index if not exists vec_dns_resolver_ledger_pubkey_time_idx
+  on vec_dns_resolver_ledger (wg_pubkey, observed_at desc);
+
+create index if not exists vec_dns_resolver_ledger_query_hash_idx
+  on vec_dns_resolver_ledger (wg_pubkey, query_name_hash, observed_at desc)
+  where query_name_hash is not null;
+
+create index if not exists vec_alerts_metadata_wg_pubkey_idx
+  on vec_alerts ((metadata->>'wg_pubkey'))
+  where metadata ? 'wg_pubkey';
+
+create index if not exists vec_alerts_metadata_cluster_id_idx
+  on vec_alerts ((metadata->>'cluster_id'))
+  where metadata ? 'cluster_id';
+
+create index if not exists vec_alerts_metadata_session_key_idx
+  on vec_alerts ((metadata->>'session_key'))
+  where metadata ? 'session_key';
 
 create or replace function coordinator.ensure_cursor(
   p_stream_name text,
@@ -4036,17 +4577,6 @@ begin
      )
   on conflict (dedupe_key) do nothing;
 
-  insert into sync_cursors (stream_name, cursor_value, updated_at)
-  select distinct on (stream_name)
-         stream_name,
-         extract(epoch from observed_at)::bigint::text,
-         now()
-    from sync_events
-   where dedupe_key = any(v_processed_dedupe_keys)
-   order by stream_name, observed_at desc
-  on conflict (stream_name)
-  do update set cursor_value = excluded.cursor_value, updated_at = now();
-
   update sync_events ingest
      set status = 'batched',
          updated_at = now()
@@ -4063,6 +4593,18 @@ begin
            )
      );
   get diagnostics v_batched_count = row_count;
+
+  insert into sync_cursors (stream_name, cursor_value, updated_at)
+  select distinct on (stream_name)
+         stream_name,
+         extract(epoch from observed_at)::bigint::text,
+         now()
+    from sync_events
+   where dedupe_key = any(v_processed_dedupe_keys)
+   order by stream_name, observed_at desc
+  on conflict (stream_name)
+  do update set cursor_value = excluded.cursor_value, updated_at = now()
+  where sync_cursors.cursor_value::bigint < excluded.cursor_value::bigint;
 
   return v_marked_count + v_recovered_count + v_batched_count;
 end;
@@ -4393,19 +4935,20 @@ language sql
 as $$
   with wireless as (
     select
-      observed_at,
-      lower(source_mac) as source_mac,
-      lower(coalesce(destination_bssid, bssid)) as destination_bssid,
-      ssid,
-      signal_dbm,
-      payload->>'sensor_id' as sensor_id,
-      payload->>'location_id' as location_id
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and observed_at >= now() - interval '60 seconds'
-      and source_mac is not null
-      and lower(source_mac) ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
-      and signal_dbm >= -50
+      event.observed_at,
+      lower(frame.source_mac) as source_mac,
+      lower(coalesce(nullif(trim(frame.destination_bssid), ''), nullif(trim(frame.bssid), ''))) as destination_bssid,
+      frame.ssid,
+      frame.signal_dbm,
+      coalesce(frame.sensor_id, event.payload->>'sensor_id') as sensor_id,
+      coalesce(frame.location_id, event.payload->>'location_id') as location_id
+    from sync_events event
+    join wireless_frames frame on frame.dedupe_key = event.dedupe_key
+    where event.stream_name = 'wireless.audit'
+      and event.observed_at >= now() - interval '60 seconds'
+      and frame.source_mac is not null
+      and lower(frame.source_mac) ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+      and frame.signal_dbm >= -50
   ),
   candidates as (
     select distinct on (source_mac)

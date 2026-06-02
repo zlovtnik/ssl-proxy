@@ -1,0 +1,151 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "max(coordinator_redpanda_consumer_lag_records{job=\"java-coordinator\"}) by (role, topic, consumer_group)",
+          "legendFormat": "{{role}} {{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Coordinator Redpanda Consumer Lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "max(coordinator_pending_ledger_count{job=\"java-coordinator\"})",
+          "legendFormat": "pending ledger",
+          "refId": "A"
+        },
+        {
+          "expr": "max(coordinator_backpressure_active{job=\"java-coordinator\"})",
+          "legendFormat": "backpressure active",
+          "refId": "B"
+        }
+      ],
+      "title": "Coordinator Pending Ledger and Backpressure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(coordinator_redpanda_lag_refresh_failures_total{job=\"java-coordinator\"}[5m])) by (role)",
+          "legendFormat": "lag refresh failures {{role}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(coordinator_redpanda_lag_stale_seconds{job=\"java-coordinator\"}) by (role, topic)",
+          "legendFormat": "stale seconds {{role}} {{topic}}",
+          "refId": "B"
+        },
+        {
+          "expr": "max(coordinator_route_running{job=\"java-coordinator\"}) by (role, route)",
+          "legendFormat": "route running {{role}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Coordinator Lag Metrics and Route State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "{service=~\"java-coordinator|java-coordinator-2|java-coordinator-3\"} |~ \"redpanda_lag_metrics|backpressure|heartbeat|batch_dispatch\"",
+          "refId": "A"
+        }
+      ],
+      "title": "Coordinator Observability Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "observability",
+    "non-vector",
+    "sync"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Sync Pipeline Latency and Failures",
+  "uid": "obs-sync-pipeline",
+  "version": 1,
+  "weekStart": ""
+}

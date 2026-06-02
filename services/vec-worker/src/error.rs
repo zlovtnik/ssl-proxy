@@ -15,6 +15,7 @@ use thiserror::Error;
 /// - `Config`: Configuration loading or validation failure
 /// - `TextBuild`: Text content building failure
 /// - `Alerts`: Alert generation query or insert failure
+/// - `DbTimeout`: Bounded database lifecycle calls exceeded their timeout
 #[derive(Debug, Error)]
 pub enum WorkerError {
     /// Database connection or query error.
@@ -48,6 +49,13 @@ pub enum WorkerError {
     /// Alert generation query or insert failure.
     #[error("alerts error: {0}")]
     Alerts(String),
+
+    /// Timed out while waiting for a database lifecycle call.
+    #[error("database operation '{operation}' timed out after {timeout_ms}ms")]
+    DbTimeout {
+        operation: &'static str,
+        timeout_ms: u128,
+    },
 
     /// Generic I/O error.
     #[error("io error: {0}")]

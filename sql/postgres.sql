@@ -33,6 +33,11 @@
 \ir tables/020_vec_embedding_jobs.sql
 \ir tables/021_vec_worker_state.sql
 \ir tables/022_vec_alerts.sql
+\ir tables/023_vec_job_locks.sql
+\ir tables/024_vec_timing_profiles.sql
+\ir tables/025_vec_rf_sensor_locations.sql
+\ir tables/026_vec_dns_policy.sql
+\ir tables/027_vec_dns_resolver_ledger.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -46,10 +51,13 @@
 \ir indexes/009_vec_embedding_jobs_indexes.sql
 \ir indexes/010_vec_alerts_indexes.sql
 \ir indexes/011_device_identity_clusters_indexes.sql
+\ir indexes/012_vec_timing_profiles_indexes.sql
+\ir indexes/014_vec_detector_support_indexes.sql
 
 -- functions
 \ir functions/001_sync_stable_uuid.sql
 \ir functions/002_coordinator_safe_helpers.sql
+\ir functions/003_vec_job_lock_helpers.sql
 \ir functions/003_upsert_wireless_frame.sql
 \ir functions/004_vec_update_transition_model.sql
 \ir functions/005_vec_score_sequence.sql
@@ -61,8 +69,10 @@
 \ir functions/011_vec_enqueue_embedding_jobs.sql
 \ir functions/012_vec_lease_embedding_jobs.sql
 \ir functions/013_vec_complete_embedding_batch.sql
+\ir functions/045_vec_complete_one_embedding.sql
 \ir functions/014_vec_materialize_similarity_pairs.sql
 \ir functions/015_vec_reembed_changed_jobs.sql
+\ir functions/040_vec_apply_similarity_flags.sql
 \ir functions/016_vec_release_expired_leases.sql
 \ir functions/017_vec_reap_stale_workers.sql
 \ir functions/018_vec_assign_device_cluster.sql
@@ -86,6 +96,10 @@
 \ir functions/036_coordinator_list_authorized_networks.sql
 \ir functions/037_coordinator_flush_probe_batch.sql
 \ir functions/038_coordinator_pending_ledger_count.sql
+\ir functions/039_vec_build_timing_profiles.sql
+\ir functions/041_vec_update_device_centroids.sql
+\ir functions/042_vec_fuse_device_identities.sql
+\ir functions/043_vec_reembed_on_alert.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql
@@ -101,6 +115,9 @@
 \ir views/011_v_ap_risk_score.sql
 \ir views/012_v_vec_similarity_audit.sql
 \ir views/013_v_wireless_device_inventory.sql
+
+-- unschedule stale cron jobs before materialized view DDL
+\ir cron/000_unschedule_cron_jobs.sql
 
 -- materialized_views
 \ir materialized_views/001_mv_ap_risk_score.sql

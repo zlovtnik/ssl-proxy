@@ -14,8 +14,8 @@ spring:
     password: ${POSTGRES_PASSWORD:sync}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 16
-      minimum-idle: 2
+      maximum-pool-size: ${COORDINATOR_DB_POOL:6}
+      minimum-idle: ${COORDINATOR_DB_POOL_MIN_IDLE:1}
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
@@ -73,6 +73,10 @@ coordinator:
   backpressure-budget-multiplier: ${SYNC_BACKPRESSURE_BUDGET_MULTIPLIER:4}
   adaptive-pull-change-threshold: ${SYNC_ADAPTIVE_PULL_CHANGE_THRESHOLD:50}
   adaptive-pull-min-restart-interval-ms: ${SYNC_ADAPTIVE_PULL_MIN_RESTART_INTERVAL_MS:10000}
+  redpanda-lag-metrics-enabled: ${SYNC_REDPANDA_LAG_METRICS_ENABLED:true}
+  redpanda-lag-metrics-poll-interval-ms: ${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:10000}
+  redpanda-lag-metrics-timeout-ms: ${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:5000}
+  heartbeat-log-interval-ms: ${SYNC_HEARTBEAT_LOG_INTERVAL_MS:15000}
 
 # =============================================================================
 # Apache Camel

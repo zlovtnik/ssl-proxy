@@ -70,9 +70,9 @@ begin
   else
     -- 5. Merge this MAC into the existing cluster.
     update device_identity_clusters
-    set mac_ids = array_append(
-          array(select distinct unnest(mac_ids || array[p_mac_id])),
-          p_mac_id
+    set mac_ids = array(
+          select distinct unnest(mac_ids || array[p_mac_id])
+          order by 1
         ),
         size = (
           select count(distinct m)

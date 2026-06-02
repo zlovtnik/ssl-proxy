@@ -202,6 +202,14 @@ spec:
                   key: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
+            - name: SYNC_REDPANDA_LAG_METRICS_ENABLED
+              value: {{ .Values.javaCoordinator.metrics.redpandaLagMetricsEnabled | quote }}
+            - name: SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS
+              value: {{ .Values.javaCoordinator.metrics.redpandaLagMetricsPollIntervalMs | quote }}
+            - name: SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS
+              value: {{ .Values.javaCoordinator.metrics.redpandaLagMetricsTimeoutMs | quote }}
+            - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
+              value: {{ .Values.javaCoordinator.metrics.heartbeatLogIntervalMs | quote }}
           ports:
             - containerPort: 8081
               protocol: TCP

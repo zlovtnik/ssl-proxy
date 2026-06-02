@@ -1,25 +1,26 @@
 -- object: coordinator.generate_shadow_alerts
 -- folder: functions
--- depends_on: sync_events_expanded, wireless_shadow_alerts
+-- depends_on: sync_events, wireless_frames, wireless_shadow_alerts
 create or replace function coordinator.generate_shadow_alerts()
 returns setof jsonb
 language sql
 as $$
   with wireless as (
     select
-      observed_at,
-      lower(source_mac) as source_mac,
-      lower(coalesce(destination_bssid, bssid)) as destination_bssid,
-      ssid,
-      signal_dbm,
-      payload->>'sensor_id' as sensor_id,
-      payload->>'location_id' as location_id
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and observed_at >= now() - interval '60 seconds'
-      and source_mac is not null
-      and lower(source_mac) ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
-      and signal_dbm >= -50
+      event.observed_at,
+      lower(frame.source_mac) as source_mac,
+      lower(coalesce(nullif(trim(frame.destination_bssid), ''), nullif(trim(frame.bssid), ''))) as destination_bssid,
+      frame.ssid,
+      frame.signal_dbm,
+      coalesce(frame.sensor_id, event.payload->>'sensor_id') as sensor_id,
+      coalesce(frame.location_id, event.payload->>'location_id') as location_id
+    from sync_events event
+    join wireless_frames frame on frame.dedupe_key = event.dedupe_key
+    where event.stream_name = 'wireless.audit'
+      and event.observed_at >= now() - interval '60 seconds'
+      and frame.source_mac is not null
+      and lower(frame.source_mac) ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+      and frame.signal_dbm >= -50
   ),
   candidates as (
     select distinct on (source_mac)

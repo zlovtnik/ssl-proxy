@@ -7,6 +7,11 @@ create index if not exists sync_events_stream_idx on sync_events (stream_name, o
 
 create index if not exists sync_events_ready_idx on sync_events (status, stream_name, observed_at) where status in ('pending', 'failed');
 
+create index if not exists sync_events_wireless_observed_idx
+  on sync_events (observed_at desc)
+  where stream_name = 'wireless.audit'
+    and status = 'batched';
+
 create index if not exists sync_events_processing_idx on sync_events (updated_at) where status = 'processing';
 
 create index if not exists sync_jobs_stream_name_idx on sync_jobs (stream_name);

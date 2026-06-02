@@ -6,8 +6,8 @@
 use clap::Parser;
 use tracing_subscriber::fmt;
 use vec_worker::config::EmbeddingProvider;
-use vec_worker::{Config, EmbeddingClient, LlamaCppClient, OllamaClient};
 use vec_worker::db;
+use vec_worker::{Config, EmbeddingClient, LlamaCppClient, OllamaClient};
 
 /// Command-line arguments for the vector embeddings worker.
 #[derive(Parser, Debug)]
@@ -87,7 +87,13 @@ async fn main() {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
-            match db::connect(&config.database_url, config.effective_pool_max_connections()).await {
+            match db::connect_with_options(
+                &config.database_url,
+                config.effective_pool_max_connections(),
+                config.effective_pool_min_connections(),
+            )
+            .await
+            {
                 Ok(p) => break p,
                 Err(e) if attempt < 10 => {
                     let wait = std::time::Duration::from_secs(attempt as u64 * 2);
@@ -106,7 +112,10 @@ async fn main() {
                         "database connection failed after {} attempts",
                         attempt
                     );
-                    eprintln!("Database connection failed after {} attempts: {}", attempt, e);
+                    eprintln!(
+                        "Database connection failed after {} attempts: {}",
+                        attempt, e
+                    );
                     std::process::exit(1);
                 }
             }
@@ -124,7 +133,9 @@ async fn main() {
                 &config.database_url,
                 config.alert_pool_max_connections,
                 1,
-            ).await {
+            )
+            .await
+            {
                 Ok(p) => break p,
                 Err(e) if attempt < 10 => {
                     let wait = std::time::Duration::from_secs(attempt as u64 * 2);
@@ -143,7 +154,10 @@ async fn main() {
                         "alert pool connection failed after {} attempts",
                         attempt
                     );
-                    eprintln!("Alert pool connection failed after {} attempts: {}", attempt, e);
+                    eprintln!(
+                        "Alert pool connection failed after {} attempts: {}",
+                        attempt, e
+                    );
                     std::process::exit(1);
                 }
             }

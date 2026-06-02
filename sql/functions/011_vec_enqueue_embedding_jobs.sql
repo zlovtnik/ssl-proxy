@@ -10,6 +10,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
+    return 0;
+  end if;
+
   with cursor_state as (
     select coalesce(
       (select cursor_value::timestamptz
@@ -33,6 +37,7 @@ begin
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'event'
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and (
         existing.embedding_id is null
         or source.updated_at > existing.embedded_at
@@ -90,6 +95,22 @@ begin
     where existing.embedding_id is null
        or fs.updated_at > existing.embedded_at
   ),
+  timing_profile_jobs as (
+    select
+      'vec_timing_profiles'::text as source_table,
+      tp.profile_id::text as source_key,
+      p_model as embedding_model,
+      'timing_profile'::text as embedding_kind,
+      17 as priority
+    from vec_timing_profiles tp
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_timing_profiles'
+     and existing.source_key = tp.profile_id::text
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'timing_profile'
+    where existing.embedding_id is null
+       or tp.updated_at > existing.embedded_at
+  ),
   graph_jobs as (
     select
       'vec_infrastructure_graph'::text as source_table,
@@ -117,10 +138,23 @@ begin
     from vec_baseline_profiles bp
     left join lateral (
       select count(*) as new_frame_count
-      from sync_events_expanded source
-      where stream_name = 'wireless.audit'
-        and lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) = bp.bssid
-        and observed_at > bp.updated_at
+      from (
+        select source.dedupe_key
+        from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
+        where source.bssid is not null
+          and lower(source.bssid) = bp.bssid
+          and source.updated_at > bp.updated_at
+          and event.status = 'batched'
+        union
+        select source.dedupe_key
+        from wireless_frames source
+        join sync_events event on event.dedupe_key = source.dedupe_key
+        where source.destination_bssid is not null
+          and lower(source.destination_bssid) = bp.bssid
+          and source.updated_at > bp.updated_at
+          and event.status = 'batched'
+      ) source
     ) frames on true
     left join vec_embeddings existing
       on existing.source_table = 'vec_baseline_profiles'
@@ -137,7 +171,16 @@ begin
     insert into vec_embedding_jobs (
       source_table, source_key, embedding_model, embedding_kind, priority, status, due_at, created_at, updated_at
     )
-    select source_table, source_key, embedding_model, embedding_kind, priority, 'pending', now(), now(), now()
+    select
+      source_table,
+      source_key,
+      embedding_model,
+      embedding_kind,
+      min(priority) as priority,
+      'pending',
+      now(),
+      now(),
+      now()
     from (
       select * from event_jobs
       union all
@@ -147,10 +190,13 @@ begin
       union all
       select * from frame_sequence_jobs
       union all
+      select * from timing_profile_jobs
+      union all
       select * from baseline_jobs
       union all
       select * from graph_jobs
     ) jobs
+    group by source_table, source_key, embedding_model, embedding_kind
     on conflict (source_table, source_key, embedding_model, embedding_kind) do update set
       status = 'pending',
       due_at = least(vec_embedding_jobs.due_at, now()),
@@ -170,10 +216,15 @@ begin
     now()
   from sync_events_expanded
   where stream_name = 'wireless.audit'
+    and status = 'batched'
   on conflict (stream_name) do update set
     cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
     updated_at = now();
 
+  perform vec_finish_job('vec_enqueue_embedding_jobs');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_enqueue_embedding_jobs');
+  raise;
 end;
 $$;

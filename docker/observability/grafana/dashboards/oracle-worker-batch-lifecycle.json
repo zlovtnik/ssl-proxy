@@ -1,0 +1,108 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "{service=\"oracle-worker\"} |= \"batch\"",
+          "refId": "A"
+        }
+      ],
+      "title": "Oracle Worker Batch Logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(up{job=\"oracle-worker\"})",
+          "legendFormat": "oracle-worker",
+          "refId": "A"
+        }
+      ],
+      "title": "Oracle Worker Metrics Endpoint Availability",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(otelcol_receiver_accepted_spans{service_name=\"oracle-worker\"}[5m]))",
+          "legendFormat": "oracle-worker spans/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Oracle Worker Span Intake",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "observability",
+    "non-vector",
+    "oracle-worker"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Oracle Worker Batch Lifecycle",
+  "uid": "obs-oracle-worker",
+  "version": 1,
+  "weekStart": ""
+}

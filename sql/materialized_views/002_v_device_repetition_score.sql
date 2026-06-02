@@ -8,7 +8,9 @@
 -- Since a pair has a left and right side, we union both sides to count how many
 -- times a device appears as a near-duplicate participant.
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS v_device_repetition_score AS
+DROP MATERIALIZED VIEW IF EXISTS v_device_repetition_score;
+
+CREATE MATERIALIZED VIEW v_device_repetition_score AS
 WITH device_pairs AS (
     -- Left side: device is the left member of the pair
     SELECT
@@ -17,8 +19,12 @@ WITH device_pairs AS (
         p.left_embedding_id AS embedding_id,
         p.computed_at
     FROM vec_similarity_pairs p
-    WHERE p.pair_kind = 'event_event'
-      AND p.cosine_distance < 0.05
+    WHERE (
+        (p.pair_kind = 'event_event' AND p.cosine_distance < 0.05)
+        OR (p.pair_kind = 'device_device' AND p.embedding_kind = 'behaviour_window' AND p.cosine_distance < 0.12)
+        OR (p.pair_kind = 'sequence_sequence' AND p.embedding_kind = 'frame_sequence' AND p.cosine_distance < 0.10)
+        OR (p.pair_kind = 'timing_timing' AND p.embedding_kind = 'timing_profile' AND p.cosine_distance < 0.05)
+      )
       AND p.left_source_mac IS NOT NULL
 
     UNION ALL
@@ -30,8 +36,12 @@ WITH device_pairs AS (
         p.right_embedding_id AS embedding_id,
         p.computed_at
     FROM vec_similarity_pairs p
-    WHERE p.pair_kind = 'event_event'
-      AND p.cosine_distance < 0.05
+    WHERE (
+        (p.pair_kind = 'event_event' AND p.cosine_distance < 0.05)
+        OR (p.pair_kind = 'device_device' AND p.embedding_kind = 'behaviour_window' AND p.cosine_distance < 0.12)
+        OR (p.pair_kind = 'sequence_sequence' AND p.embedding_kind = 'frame_sequence' AND p.cosine_distance < 0.10)
+        OR (p.pair_kind = 'timing_timing' AND p.embedding_kind = 'timing_profile' AND p.cosine_distance < 0.05)
+      )
       AND p.right_source_mac IS NOT NULL
 )
 SELECT
@@ -46,4 +56,7 @@ GROUP BY source_mac
 ORDER BY near_duplicate_pairs DESC;
 
 COMMENT ON MATERIALIZED VIEW v_device_repetition_score IS
-  'Daily device repetition scores from near-duplicate event_event pairs in vec_similarity_pairs (cosine_distance < 0.05). Refresh with REFRESH MATERIALIZED VIEW CONCURRENTLY.';
+  'Daily device repetition scores from near-duplicate event, behaviour, sequence, and timing pairs in vec_similarity_pairs. Refresh with REFRESH MATERIALIZED VIEW CONCURRENTLY.';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v_device_repetition_score_mac
+  ON v_device_repetition_score (source_mac);

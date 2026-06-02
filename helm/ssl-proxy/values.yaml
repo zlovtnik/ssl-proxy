@@ -214,6 +214,10 @@ javaCoordinator:
   metrics:
     enabled: true
     port: 8081
+    redpandaLagMetricsEnabled: true
+    redpandaLagMetricsPollIntervalMs: 10000
+    redpandaLagMetricsTimeoutMs: 5000
+    heartbeatLogIntervalMs: 15000
 
 # Oracle Worker
 oracleWorker:

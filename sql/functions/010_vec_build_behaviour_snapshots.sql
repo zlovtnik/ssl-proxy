@@ -12,6 +12,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_behaviour_snapshots') then
+    return 0;
+  end if;
+
   with base as (
     select
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
@@ -24,6 +28,7 @@ begin
         signal_dbm,
         case when payload->>'signal_dbm' ~ '^-?[0-9]+$' then (payload->>'signal_dbm')::integer end
       ) as signal_dbm,
+      coalesce(channel_number::text, payload->>'channel_number', payload->>'channel') as channel_number,
       coalesce(retry, false) as retry,
       coalesce(protected, false) as protected,
       coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid') as bssid,
@@ -33,6 +38,7 @@ begin
       coalesce(device_fingerprint, payload->>'device_fingerprint') as device_fingerprint
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
@@ -77,6 +83,21 @@ begin
     from frame_counts
     group by source_mac, location_id, window_start
   ),
+  channel_counts as (
+    select source_mac, location_id, window_start, channel_number, count(*)::bigint as item_count
+    from base
+    where channel_number is not null
+    group by source_mac, location_id, window_start, channel_number
+  ),
+  channel_mix as (
+    select
+      source_mac,
+      location_id,
+      window_start,
+      string_agg(channel_number || ':' || item_count::text, ' ' order by item_count desc, channel_number) as channel_mix
+    from channel_counts
+    group by source_mac, location_id, window_start
+  ),
   cross_mac as (
     select
       location_id,
@@ -90,6 +111,7 @@ begin
       max(signal_dbm) - min(signal_dbm) as signal_range_dbm
     from base
     where signal_dbm is not null
+      and source_mac ~ '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
     group by location_id, window_start
   ),
   prepared as (
@@ -144,6 +166,8 @@ begin
         'protected_count: ' || r.protected_count::text,
         'unprotected_count: ' || r.unprotected_count::text,
         'unique_bssid_count: ' || r.unique_bssid_count::text,
+        'rf_channel_mix: ' || coalesce(ch.channel_mix, 'unknown'),
+        'rf_bssid_count: ' || r.unique_bssid_count::text,
         'la_mac_count_in_window: ' || coalesce(cm.la_mac_count, 0)::text,
         'is_locally_administered: ' || coalesce(cm.is_locally_administered, false)::text,
         'signal_range_dbm: ' || coalesce(cm.signal_range_dbm::text, 'unknown'),
@@ -173,6 +197,8 @@ begin
         'protected_count: ' || r.protected_count::text,
         'unprotected_count: ' || r.unprotected_count::text,
         'unique_bssid_count: ' || r.unique_bssid_count::text,
+        'rf_channel_mix: ' || coalesce(ch.channel_mix, 'unknown'),
+        'rf_bssid_count: ' || r.unique_bssid_count::text,
         'la_mac_count_in_window: ' || coalesce(cm.la_mac_count, 0)::text,
         'is_locally_administered: ' || coalesce(cm.is_locally_administered, false)::text,
         'signal_range_dbm: ' || coalesce(cm.signal_range_dbm::text, 'unknown'),
@@ -195,6 +221,10 @@ begin
       on f.source_mac = r.source_mac
      and f.location_id is not distinct from r.location_id
      and f.window_start = r.window_start
+    left join channel_mix ch
+      on ch.source_mac = r.source_mac
+     and ch.location_id is not distinct from r.location_id
+     and ch.window_start = r.window_start
     left join cross_mac cm
       on cm.location_id is not distinct from r.location_id
      and cm.window_start = r.window_start
@@ -229,6 +259,10 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_behaviour_snapshots');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_behaviour_snapshots');
+  raise;
 end;
 $$;

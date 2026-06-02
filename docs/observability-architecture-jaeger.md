@@ -1,5 +1,7 @@
 # Observability Architecture with Jaeger
 
+> Scope note: the compose rollout tracked in `docs/observability-workmap-non-vector.md` excludes Vector-profile services (`vec-worker*`, `ollama`) even though this target-state diagram includes a Zig/embedding path.
+
 ## What changed with Jaeger
 
 New trace path in the stack:

@@ -70,13 +70,13 @@ use crate::{
     config::AppConfig,
     detect_state::{
         AttackTimelineCorrelator, AuthorizationStatus, AuthorizedNetworkCache, ClientInventory,
-        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SequenceTracker,
-        SignalTracker, ATTACK_SEQUENCE_TOPIC, SEQUENCE_ALERT_TOPIC, CLIENT_INVENTORY_TOPIC,
-        DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
+        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SequenceTracker, SignalTracker,
+        ATTACK_SEQUENCE_TOPIC, CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
+        SEQUENCE_ALERT_TOPIC,
     },
     device::{detect, read_mac_address},
     error::SensorError,
-    model::{AuditContext, EnrichedFrame, RawPacket},
+    model::{AuditContext, EnrichedFrame, RawPacket, WifiFrame},
     parse::{
         attach_context, decode_frame, to_audit_entry, try_decrypt_frame, HandshakeMonitor,
         IdentityCache, ParseError,
@@ -99,6 +99,8 @@ const BACKLOG_RECONCILE_INTERVAL_SECS: u64 = 60;
 const BACKLOG_PRUNE_INTERVAL_SECS: u64 = 3_600;
 const BACKLOG_PRUNE_MAX_ATTEMPTS: i32 = 10;
 const BACKLOG_PRUNE_MAX_AGE_HOURS: i64 = 72;
+const TIMING_TRACKER_MAX_SESSIONS: usize = 4_096;
+const TIMING_TRACKER_MAX_AGE_SECS: i64 = 3_600;
 
 fn hex_prefix(data: &[u8], n: usize) -> String {
     data.iter()
@@ -382,6 +384,7 @@ struct PipelineState {
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
     probe_accumulator: HashMap<(String, String), ProbeObservation>,
+    timing_tracker: HashMap<String, LastFrameTiming>,
 }
 
 #[derive(Clone)]
@@ -390,6 +393,99 @@ struct ProbeObservation {
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
     probe_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LastFrameTiming {
+    observed_at: DateTime<Utc>,
+    tsft: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrameTimingDelta {
+    tsft_delta_us: i64,
+    wall_clock_delta_ms: i64,
+}
+
+fn attach_frame_timing_deltas(
+    frame: &mut WifiFrame,
+    timing_tracker: &mut HashMap<String, LastFrameTiming>,
+) {
+    let delta = compute_frame_timing_delta(frame, timing_tracker);
+    frame.tsft_delta_us = delta.map(|delta| delta.tsft_delta_us);
+    frame.wall_clock_delta_ms = delta.map(|delta| delta.wall_clock_delta_ms);
+    frame.correlation.tsft_delta_us = frame.tsft_delta_us;
+    frame.correlation.wall_clock_delta_ms = frame.wall_clock_delta_ms;
+}
+
+fn compute_frame_timing_delta(
+    frame: &WifiFrame,
+    timing_tracker: &mut HashMap<String, LastFrameTiming>,
+) -> Option<FrameTimingDelta> {
+    let session_key = frame
+        .session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())?;
+    let current_tsft = frame.tsft?;
+    let current_observed_at = frame.observed_at;
+
+    let delta = timing_tracker.get(session_key).and_then(|previous| {
+        let tsft_delta_us = current_tsft.checked_sub(previous.tsft)?;
+        let tsft_delta_us = i64::try_from(tsft_delta_us).ok()?;
+        let wall_clock_delta_ms = (current_observed_at - previous.observed_at).num_milliseconds();
+        if wall_clock_delta_ms < 0 {
+            return None;
+        }
+        Some(FrameTimingDelta {
+            tsft_delta_us,
+            wall_clock_delta_ms,
+        })
+    });
+
+    // Only update the baseline when the new sample is not older than the stored one.
+    // This prevents out-of-order packets from corrupting the baseline.
+    let should_update = timing_tracker
+        .get(session_key)
+        .map(|previous| current_observed_at >= previous.observed_at)
+        .unwrap_or(true); // No previous entry — first sample, always insert.
+    if should_update {
+        timing_tracker.insert(
+            session_key.to_string(),
+            LastFrameTiming {
+                observed_at: current_observed_at,
+                tsft: current_tsft,
+            },
+        );
+    }
+    prune_timing_tracker(timing_tracker, current_observed_at);
+
+    delta
+}
+
+fn prune_timing_tracker(
+    timing_tracker: &mut HashMap<String, LastFrameTiming>,
+    observed_at: DateTime<Utc>,
+) {
+    let cutoff = observed_at - chrono::Duration::seconds(TIMING_TRACKER_MAX_AGE_SECS);
+    timing_tracker.retain(|_, timing| timing.observed_at >= cutoff);
+    if timing_tracker.len() <= TIMING_TRACKER_MAX_SESSIONS {
+        return;
+    }
+    // Evict the oldest sessions until we are within the cap.
+    let mut entries: Vec<(String, DateTime<Utc>)> = timing_tracker
+        .iter()
+        .map(|(k, v)| (k.clone(), v.observed_at))
+        .collect();
+    entries.sort_by_key(|(_, observed_at)| *observed_at);
+    let to_remove: Vec<String> = entries
+        .into_iter()
+        .take(timing_tracker.len() - TIMING_TRACKER_MAX_SESSIONS)
+        .map(|(k, _)| k)
+        .collect();
+    for key in to_remove {
+        timing_tracker.remove(&key);
+    }
 }
 
 #[derive(Serialize)]
@@ -480,6 +576,7 @@ impl PipelineState {
             ),
             seen_authorized_config_generation: 0,
             probe_accumulator: HashMap::new(),
+            timing_tracker: HashMap::new(),
         }
     }
 }
@@ -910,6 +1007,7 @@ async fn process_packet(
     ) {
         debug!("protected data frame decrypted using authorized network PSK");
     }
+    attach_frame_timing_deltas(&mut wifi_frame, &mut pipeline.timing_tracker);
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
     let enriched: EnrichedFrame = attach_context(wifi_frame, context);
     let mut entry = to_audit_entry(enriched);
@@ -1544,6 +1642,140 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn observed_at(offset_ms: i64) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-05-31T01:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+            + chrono::Duration::milliseconds(offset_ms)
+    }
+
+    fn timing_frame(
+        session_key: Option<&str>,
+        tsft: Option<u64>,
+        observed_at: DateTime<Utc>,
+    ) -> WifiFrame {
+        let packet = RawPacket {
+            observed_at,
+            data: crate::testutil::tsft_antenna_radiotap_beacon_frame(),
+        };
+        let mut frame = decode_frame(&packet).expect("test frame should decode");
+        let session_key = session_key.map(str::to_string);
+        frame.session_key = session_key.clone();
+        frame.correlation.session_key = session_key;
+        frame.tsft = tsft;
+        frame.rf.tsft = tsft;
+        frame.tsft_delta_us = None;
+        frame.wall_clock_delta_ms = None;
+        frame.correlation.tsft_delta_us = None;
+        frame.correlation.wall_clock_delta_ms = None;
+        frame
+    }
+
+    #[test]
+    fn timing_tracker_first_frame_yields_null_deltas() {
+        let mut tracker = HashMap::new();
+        let mut frame = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
+
+        attach_frame_timing_deltas(&mut frame, &mut tracker);
+
+        assert_eq!(frame.tsft_delta_us, None);
+        assert_eq!(frame.wall_clock_delta_ms, None);
+        assert_eq!(frame.correlation.tsft_delta_us, None);
+        assert_eq!(frame.correlation.wall_clock_delta_ms, None);
+        assert_eq!(
+            tracker.get("session-1"),
+            Some(&LastFrameTiming {
+                observed_at: observed_at(0),
+                tsft: 1_000,
+            })
+        );
+    }
+
+    #[test]
+    fn timing_tracker_second_frame_populates_flat_and_nested_deltas() {
+        let mut tracker = HashMap::new();
+        let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
+        let mut second = timing_frame(Some("session-1"), Some(2_500), observed_at(2_000));
+
+        attach_frame_timing_deltas(&mut first, &mut tracker);
+        attach_frame_timing_deltas(&mut second, &mut tracker);
+
+        assert_eq!(second.tsft_delta_us, Some(1_500));
+        assert_eq!(second.wall_clock_delta_ms, Some(2_000));
+        assert_eq!(second.correlation.tsft_delta_us, Some(1_500));
+        assert_eq!(second.correlation.wall_clock_delta_ms, Some(2_000));
+    }
+
+    #[test]
+    fn timing_tracker_is_partitioned_by_session() {
+        let mut tracker = HashMap::new();
+        let mut session_one_first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
+        let mut session_two_first =
+            timing_frame(Some("session-2"), Some(5_000), observed_at(1_000));
+        let mut session_one_second =
+            timing_frame(Some("session-1"), Some(1_300), observed_at(2_000));
+
+        attach_frame_timing_deltas(&mut session_one_first, &mut tracker);
+        attach_frame_timing_deltas(&mut session_two_first, &mut tracker);
+        attach_frame_timing_deltas(&mut session_one_second, &mut tracker);
+
+        assert_eq!(session_two_first.tsft_delta_us, None);
+        assert_eq!(session_two_first.wall_clock_delta_ms, None);
+        assert_eq!(session_one_second.tsft_delta_us, Some(300));
+        assert_eq!(session_one_second.wall_clock_delta_ms, Some(2_000));
+    }
+
+    #[test]
+    fn timing_tracker_ignores_missing_and_decreasing_tsft_safely() {
+        let mut tracker = HashMap::new();
+        let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
+        let mut missing = timing_frame(Some("session-1"), None, observed_at(1_000));
+        let mut decreasing = timing_frame(Some("session-1"), Some(900), observed_at(2_000));
+        let mut recovered = timing_frame(Some("session-1"), Some(1_200), observed_at(3_000));
+
+        attach_frame_timing_deltas(&mut first, &mut tracker);
+        attach_frame_timing_deltas(&mut missing, &mut tracker);
+        attach_frame_timing_deltas(&mut decreasing, &mut tracker);
+        attach_frame_timing_deltas(&mut recovered, &mut tracker);
+
+        assert_eq!(missing.tsft_delta_us, None);
+        assert_eq!(missing.wall_clock_delta_ms, None);
+        assert_eq!(decreasing.tsft_delta_us, None);
+        assert_eq!(decreasing.wall_clock_delta_ms, None);
+        assert_eq!(recovered.tsft_delta_us, Some(300));
+        assert_eq!(recovered.wall_clock_delta_ms, Some(1_000));
+    }
+
+    #[test]
+    fn audit_entry_serializes_flat_and_nested_timing_deltas() {
+        let mut tracker = HashMap::new();
+        let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
+        let mut second = timing_frame(Some("session-1"), Some(2_500), observed_at(2_000));
+        let context = AuditContext {
+            sensor_id: "00:11:22:33:44:55".to_string(),
+            location_id: "lab".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+
+        attach_frame_timing_deltas(&mut first, &mut tracker);
+        attach_frame_timing_deltas(&mut second, &mut tracker);
+        let entry = to_audit_entry(attach_context(second, &context));
+        let value = serde_json::to_value(entry).unwrap();
+
+        assert_eq!(value["tsft_delta_us"], serde_json::json!(1_500));
+        assert_eq!(value["wall_clock_delta_ms"], serde_json::json!(2_000));
+        assert_eq!(
+            value["correlation"]["tsft_delta_us"],
+            serde_json::json!(1_500)
+        );
+        assert_eq!(
+            value["correlation"]["wall_clock_delta_ms"],
+            serde_json::json!(2_000)
+        );
+    }
 
     #[test]
     fn mac_lookup_failure_suppresses_retry_without_caching_miss() {

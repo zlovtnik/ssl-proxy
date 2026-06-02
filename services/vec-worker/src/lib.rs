@@ -11,6 +11,7 @@ pub mod embedder;
 pub mod error;
 pub mod llamacpp;
 pub mod ollama;
+pub mod sequence_score;
 pub mod text_builder;
 pub mod worker;
 

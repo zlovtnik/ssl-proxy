@@ -18,6 +18,7 @@ use tokio::task::JoinSet;
 use crate::config::RunConfig;
 use crate::healthcheck::healthcheck;
 use crate::log::escape_for_log;
+use crate::metrics;
 use crate::window::{self, CollectedMessage, CommitTarget};
 use crate::{worker, HEARTBEAT_INTERVAL_SECS, SERVICE_NAME};
 
@@ -91,6 +92,7 @@ pub(crate) async fn run_loop(
                 .saturating_duration_since(Instant::now())
                 .as_millis(),
             summary.collected,
+            summary.poison,
         );
 
         let sleep_target = window_start
@@ -143,6 +145,7 @@ async fn process_collected_message(
     };
 
     commit_tracker.mark_started(&commit_target);
+    metrics::record_batch_received();
     let permit = semaphore
         .clone()
         .acquire_owned()
@@ -193,7 +196,9 @@ fn log_window_complete(
     window_budget: Duration,
     sleeping_ms: u128,
     collected: usize,
+    poison: usize,
 ) {
+    metrics::record_window(collected, poison, processing_ms);
     let lines = window_complete_log_lines(
         window_no,
         processing_ms,
@@ -240,6 +245,7 @@ async fn emit_heartbeat(
     last_heartbeat: &mut Instant,
     pool: &Pool<OracleConnectionManager>,
 ) -> Result<(), String> {
+    metrics::record_heartbeat();
     println!(
         "service={SERVICE_NAME} event=heartbeat uptime_s={} interval_s={HEARTBEAT_INTERVAL_SECS} since_last_heartbeat_s={}",
         started.elapsed().as_secs(),
@@ -293,7 +299,7 @@ async fn publish_result(
     let row_count = result.row_count;
     let payload = serde_json::to_vec(&result)
         .map_err(|error| format!("serialize OracleResult for batch {batch_id}: {error}"))?;
-    producer
+    if let Err((error, _)) = producer
         .send(
             FutureRecord::to(config.result_topic.as_str())
                 .payload(&payload)
@@ -301,7 +307,11 @@ async fn publish_result(
             Duration::from_secs(5),
         )
         .await
-        .map_err(|(error, _)| format!("publish result for batch {batch_id}: {error}"))?;
+    {
+        metrics::record_batch_result(false, batch_duration_ms);
+        return Err(format!("publish result for batch {batch_id}: {error}"));
+    }
+    metrics::record_batch_result(status == "success", batch_duration_ms);
     log_result(&batch_id, &status, row_count, batch_duration_ms, &result);
     if status != "success" {
         return Err(format!(

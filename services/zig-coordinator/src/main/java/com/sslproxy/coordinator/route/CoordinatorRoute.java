@@ -49,6 +49,7 @@ public class CoordinatorRoute extends RouteBuilder {
     private final BackpressureService backpressureService;
     private final AdaptivePullController adaptivePullController;
     private final CoordinatorMetricsService metricsService;
+    private final CamelContext camelContext;
 
     public CoordinatorRoute(CoordinatorProperties props,
                             HealthCheckService healthCheckService,
@@ -59,7 +60,8 @@ public class CoordinatorRoute extends RouteBuilder {
                             ShadowAuditProcessor shadowAuditProcessor,
                             BackpressureService backpressureService,
                             AdaptivePullController adaptivePullController,
-                            CoordinatorMetricsService metricsService) {
+                            CoordinatorMetricsService metricsService,
+                            CamelContext camelContext) {
         this.props = props;
         this.healthCheckService = healthCheckService;
         this.cursorService = cursorService;
@@ -70,6 +72,7 @@ public class CoordinatorRoute extends RouteBuilder {
         this.backpressureService = backpressureService;
         this.adaptivePullController = adaptivePullController;
         this.metricsService = metricsService;
+        this.camelContext = camelContext;
     }
 
     @Override
@@ -217,7 +220,29 @@ public class CoordinatorRoute extends RouteBuilder {
                 .routeId("coordinator-heartbeat")
                 .process(exchange -> {
                     metricsService.incrementLoopCounter();
+                    recordRouteState("scan", "scan-request-consumer");
+                    recordRouteState("result", "oracle-result-consumer");
                     metricsService.heartbeat();
                 });
+    }
+
+    private void recordRouteState(String role, String routeId) {
+        try {
+            var status = camelContext.getRouteController().getRouteStatus(routeId);
+            metricsService.recordRouteState(
+                    role,
+                    routeId,
+                    status != null && status.isStarted(),
+                    status != null && status.isSuspended()
+            );
+        } catch (Exception e) {
+            log.atWarn()
+                    .addKeyValue("event", "route_state_metrics")
+                    .addKeyValue("status", "failed")
+                    .addKeyValue("role", role)
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("error", e.getMessage())
+                    .log("route state metric update failed");
+        }
     }
 }

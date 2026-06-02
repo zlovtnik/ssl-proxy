@@ -14,6 +14,9 @@ declare
   v_count     integer := 0;
   v_row_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_detect_rogue_clusters') then
+    return 0;
+  end if;
 
   -- Track 1: Degree spike
   with current_assoc as (
@@ -23,6 +26,7 @@ begin
       observed_at
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -39,6 +43,7 @@ begin
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from - interval '1 hour'
       and observed_at < p_from
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -65,6 +70,7 @@ begin
     s.bssid,
     greatest(s.current_clients::double precision, 1.0),
     jsonb_build_object(
+      'bssid',            s.bssid,
       'reason',           'degree_spike',
       'current_clients',  s.current_clients,
       'previous_clients', s.previous_clients
@@ -82,18 +88,21 @@ begin
   -- Track 2: Vendor conflict
   with vendor_conflicts as (
     select
-      lower(nullif(coalesce(ssid, payload->>'ssid'), '')) as ssid,
-      array_agg(distinct lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), ''))) as bssids,
-      array_agg(distinct substr(regexp_replace(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '[:\-]', '', 'g'), 1, 6)) as vendor_ouis,
-      count(distinct substr(regexp_replace(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '[:\-]', '', 'g'), 1, 6)) as vendor_count
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(ssid, payload->>'ssid'), '') is not null
-      and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
-    group by lower(nullif(coalesce(ssid, payload->>'ssid'), ''))
-    having count(distinct substr(regexp_replace(lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')), '[:\-]', '', 'g'), 1, 6)) >= 2
+      lower(nullif(wf.ssid, '')) as ssid,
+      array_agg(distinct lower(coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')))) as bssids,
+      array_agg(distinct wf.bssid_oui) as vendor_ouis,
+      count(distinct wf.bssid_oui) as vendor_count
+    from wireless_frames wf
+    join sync_events se on se.dedupe_key = wf.dedupe_key
+    where se.stream_name = 'wireless.audit'
+      and se.status = 'batched'
+      and se.observed_at >= p_from
+      and se.observed_at < p_to
+      and nullif(wf.ssid, '') is not null
+      and coalesce(nullif(wf.bssid, ''), nullif(wf.destination_bssid, '')) is not null
+      and wf.bssid_oui is not null
+    group by lower(nullif(wf.ssid, ''))
+    having count(distinct wf.bssid_oui) >= 2
   )
   insert into vec_alerts (alert_type, source_mac, score, metadata)
   select
@@ -133,6 +142,7 @@ begin
         observed_at
       from sync_events_expanded
       where stream_name = 'wireless.audit'
+        and status = 'batched'
         and observed_at >= p_from
         and observed_at < p_to
         and nullif(coalesce(source_mac, payload->>'source_mac'), '') is not null
@@ -165,58 +175,10 @@ begin
   get diagnostics v_row_count = row_count;
   v_count := v_count + v_row_count;
 
-  -- Track 4: Sequence anomaly — flag sessions with log-prob < -15
-  with session_sequences as (
-    select
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
-      nullif(coalesce(session_key, payload->>'session_key'), '')       as session_key,
-      string_agg(
-        upper(regexp_replace(payload->>'frame_subtype', '-', '_', 'g')),
-        ' ' order by observed_at
-      ) as tokens
-    from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and observed_at >= p_from
-      and observed_at < p_to
-      and nullif(coalesce(session_key, payload->>'session_key'), '') is not null
-      and payload->>'frame_subtype' is not null
-    group by
-      nullif(coalesce(session_key, payload->>'session_key'), ''),
-      lower(nullif(coalesce(source_mac, payload->>'source_mac'), ''))
-    having count(*) >= 3
-  ),
-  scored_sequences as (
-    select
-      session_key,
-      source_mac,
-      tokens,
-      vec_score_sequence(regexp_split_to_array(tokens, E'\\s+')) as log_prob
-    from session_sequences
-  )
-  insert into vec_alerts (alert_type, source_mac, score, metadata)
-  select
-    'rogue_cluster'::text,
-    ss.source_mac,
-    greatest(abs(ss.log_prob)::double precision, 1.0),
-    jsonb_build_object(
-      'reason',      'sequence_anomaly',
-      'session_key', ss.session_key,
-      'log_prob',    ss.log_prob,
-      'threshold',   -15
-    )
-  from scored_sequences ss
-  where ss.log_prob < -15
-    and not exists (
-      select 1 from vec_alerts a
-      where a.alert_type          = 'rogue_cluster'
-        and a.source_mac is not distinct from ss.source_mac
-        and a.created_at          > now() - interval '1 hour'
-        and a.metadata->>'reason' = 'sequence_anomaly'
-    );
-
-  get diagnostics v_row_count = row_count;
-  v_count := v_count + v_row_count;
-
+  perform vec_finish_job('vec_detect_rogue_clusters');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_detect_rogue_clusters');
+  raise;
 end;
 $$;

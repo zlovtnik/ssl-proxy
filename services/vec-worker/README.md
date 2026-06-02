@@ -14,6 +14,10 @@ Its main responsibilities are:
   - `sync_events` for event embeddings
   - `devices` for device embeddings
   - `vec_behaviour_snapshots` for behaviour window embeddings
+  - `vec_baseline_profiles` for baseline profile embeddings
+  - `vec_frame_sequences` for frame sequence embeddings
+  - `vec_infrastructure_graph` for infrastructure subgraph embeddings
+  - `vec_timing_profiles` for timing profile embeddings
 - Embed text using an external provider: Ollama or llama.cpp
 - Upsert embeddings into `vec_embeddings`
 - Mark jobs completed, failed, or pending again when retries or lease expiry occur
@@ -95,8 +99,14 @@ Required values and defaults are defined in `src/config.rs`.
   - Default: `4`
   - Maximum in-flight embedding HTTP requests across chunks (increase when the provider can serve parallel batches).
 - `DATABASE_POOL_MAX_CONNECTIONS`
-  - Default: `max(prepares, completes, embed_requests) + 2`, floor `10`
+  - Default: `max(prepares + completes + 4, 10)`
   - Postgres connection pool size for the worker.
+- `DATABASE_POOL_MIN_CONNECTIONS`
+  - Default: `1`
+  - Minimum pre-warmed connections for the main worker pool. Keep this low when running several replicas against a small Postgres instance.
+- `ALERT_POOL_MAX_CONNECTIONS`
+  - Default: `4`
+  - Connection pool size for alert sweeps. The compose vector profile sets this to `1` per worker so materialized-view refreshes cannot multiply connection pressure.
 - `LOG_FORMAT`
   - Default: JSON structured logs
   - Set to `text`, `pretty`, or `human` for human-readable local output
@@ -128,12 +138,12 @@ Relevant columns:
 - `job_id` — primary key
 - `source_table`, `source_key`
   - identify the row to embed
-  - `source_table` is one of: `sync_events`, `devices`, `vec_behaviour_snapshots`
+  - `source_table` is one of: `sync_events`, `devices`, `vec_behaviour_snapshots`, `vec_baseline_profiles`, `vec_frame_sequences`, `vec_infrastructure_graph`, `vec_timing_profiles`
   - `source_key` is the primary key value of that row as text
 - `embedding_model` — model name used for this job
-- `embedding_kind` — one of `event`, `device`, `behaviour_window`
+- `embedding_kind` — one of `event`, `device`, `behaviour_window`, `baseline_profile`, `frame_sequence`, `infrastructure_subgraph`, `timing_profile`
 - `status` — one of `pending`, `leased`, `completed`, `failed`
-- `priority` — ordering for lease selection
+- `priority` — ordering within each embedding kind during lease selection
 - `attempts`, `max_attempts`
 - `lease_token`, `leased_at`, `locked_by`
 - `due_at` — earliest time the job may be leased
@@ -148,7 +158,9 @@ Constraints and indexes:
 - `vec_embedding_jobs_status_chk` ensures `status` is valid
 - `vec_embedding_jobs_attempts_chk` ensures attempt counts are sane
 - `vec_embedding_jobs_pending_idx` indexes pending/failed jobs by `(priority, due_at, job_id)`
+- `vec_embedding_jobs_pending_kind_idx` indexes fair per-kind pending/failed selection by `(embedding_kind, priority, due_at, job_id)`
 - `vec_embedding_jobs_lease_idx` indexes leased rows by `leased_at`
+- `vec_embedding_jobs_lease_kind_idx` indexes fair per-kind expired lease selection by `(embedding_kind, leased_at, priority, job_id)`
 
 Usage by vec worker:
 
@@ -185,7 +197,7 @@ Constraints and indexes:
 - `vec_embeddings_dimensions_chk` validates positive dimensions
 - indexes on `(source_table, source_key)` and `(embedding_kind, embedding_model, embedded_at desc)`
 - conditional index on `lower(source_mac), source_observed_at desc` when `source_mac` is not null
-- pgvector HNSW indexes for `embedding_kind` / `embedding_model` / `embedding_dimensions = 768` for event/device/behaviour_window
+- pgvector HNSW indexes for `embedding_kind` / `embedding_model` / `embedding_dimensions = 768` for event/device/behaviour_window/frame_sequence/timing_profile
 
 Usage by vec worker:
 
@@ -300,6 +312,7 @@ Usage by vec worker:
   - `attempts < max_attempts`
   - `due_at <= now()`
 - locks rows using `FOR UPDATE SKIP LOCKED`
+- interleaves selected rows by `embedding_kind` so high-volume `event` jobs cannot starve lower-volume kinds
 - updates selected rows:
   - `status = 'leased'`
   - increments `attempts`
@@ -343,6 +356,7 @@ The worker pipeline is implemented in `src/worker.rs`.
    - `embed_chunk()` calls `embed_many()` once for the chunk (limited by `VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS`)
    - `complete_chunk()` calls `vec_complete_embedding_batch()` for all successful vectors in one DB round-trip; falls back to concurrent per-job transactions on partial failure
    - logs `prepare_ms`, `embed_ms`, `complete_ms`, `jobs_ok`, and `jobs_failed` at INFO
+   - the drain summary logs per-kind leased/completed/failed counters as `kind_stats`
 6. After each run, `mark_worker_state()` records `idle`, `rows_processed`, and `last_run_finished_at`.
 
 ### Job failure handling
@@ -354,7 +368,7 @@ The worker pipeline is implemented in `src/worker.rs`.
 
 ## Text builder reference
 
-The worker supports three embedding kinds.
+The worker supports seven embedding kinds.
 
 ### `event`
 
@@ -378,6 +392,30 @@ The worker supports three embedding kinds.
 - Falls back to `text_summary`
 - If neither exists, constructs deterministic fallback text from snapshot fields
 - First line is `kind: behaviour_window`
+- Populates metadata from `window_start`, `sensor_id`, `location_id`, and `source_mac`
+
+### `baseline_profile`
+
+- Source: `vec_baseline_profiles` rows grouped by BSSID
+- Builds text from ordered baseline metrics and percentile values
+- Populates `source_mac` from the BSSID
+
+### `frame_sequence`
+
+- Source: `vec_frame_sequences` row where `session_key = source_key`
+- Builds text from semantic frame tokens, window duration, frame count, and optional sequence rarity score
+- Populates metadata from `window_start`, `sensor_id`, `location_id`, and `source_mac`
+
+### `infrastructure_subgraph`
+
+- Source: `vec_infrastructure_graph` ego graph centered on a BSSID
+- Builds text from client count, SSID/vendor diversity, and edge-type distribution
+- Populates `source_mac` from the center BSSID
+
+### `timing_profile`
+
+- Source: `vec_timing_profiles` row where `profile_id::text = source_key`
+- Uses prebuilt `embedding_text` when present, otherwise builds text from TSFT, wall-clock, beacon interval, and jitter metrics
 - Populates metadata from `window_start`, `sensor_id`, `location_id`, and `source_mac`
 
 ## Compatibility
@@ -404,6 +442,10 @@ If a model returns a vector with the wrong length, the job is failed and retried
 - `event`
 - `device`
 - `behaviour_window`
+- `baseline_profile`
+- `frame_sequence`
+- `infrastructure_subgraph`
+- `timing_profile`
 
 ### Embedding vector storage semantics
 
@@ -421,7 +463,10 @@ Throughput comes from **larger lease batches**, **larger embed HTTP batches**, *
 VECTOR_EMBEDDING_BATCH_SIZE=64
 VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=32
 VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=2
-DATABASE_POOL_MAX_CONNECTIONS=16
+VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=8
+DATABASE_POOL_MAX_CONNECTIONS=20
+DATABASE_POOL_MIN_CONNECTIONS=1
+ALERT_POOL_MAX_CONNECTIONS=2
 ```
 
 Watch structured logs for `batch timing` (`prepare_ms`, `embed_ms`, `complete_ms`) and raise or lower batch sizes based on which stage dominates.
@@ -451,7 +496,7 @@ Without these cron jobs the worker would run forever, lease nothing, and produce
 
 | # | Name | Schedule | Function | Produces | Consumed by worker |
 |---|------|----------|----------|----------|--------------------|
-| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans `sync_events` (`wireless.audit`), `devices`, `vec_behaviour_snapshots` -> inserts/updates `pending` rows into `vec_embedding_jobs` | Yes - this is the sole source of work items |
+| 1 | `vec-enqueue-embedding-jobs` | `*/2 * * * *` (every 2 min) | `vec_enqueue_embedding_jobs()` | Scans source tables for all supported embedding kinds -> inserts/updates `pending` rows into `vec_embedding_jobs` | Yes - this is the sole source of work items |
 | 2 | `vec-build-behaviour-snapshots` | `*/5 * * * *` (every 5 min) | `vec_build_behaviour_snapshots()` | Aggregates recent wireless events into 15-min behaviour windows in `vec_behaviour_snapshots` | Yes - the worker reads `embedding_text` / `text_summary` from this table |
 | 3 | `vec-materialize-similarity-pairs` | `*/5 * * * *` (every 5 min) | `vec_materialize_similarity_pairs()` | HNSW ANN search -> `vec_similarity_pairs`, marks dedupe suspects on `wireless_frames`, creates shadow IT alerts | No - consumes worker output |
 | 4 | `vec-release-expired-leases` | `* * * * *` (every 1 min) | `vec_release_expired_leases()` | Reclaims `leased` jobs whose lease interval has expired back to `pending` | Overlapping - the worker also does this internally every 10 iterations |

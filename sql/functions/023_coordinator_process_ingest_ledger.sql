@@ -129,17 +129,6 @@ begin
      )
   on conflict (dedupe_key) do nothing;
 
-  insert into sync_cursors (stream_name, cursor_value, updated_at)
-  select distinct on (stream_name)
-         stream_name,
-         extract(epoch from observed_at)::bigint::text,
-         now()
-    from sync_events
-   where dedupe_key = any(v_processed_dedupe_keys)
-   order by stream_name, observed_at desc
-  on conflict (stream_name)
-  do update set cursor_value = excluded.cursor_value, updated_at = now();
-
   update sync_events ingest
      set status = 'batched',
          updated_at = now()
@@ -156,6 +145,18 @@ begin
            )
      );
   get diagnostics v_batched_count = row_count;
+
+  insert into sync_cursors (stream_name, cursor_value, updated_at)
+  select distinct on (stream_name)
+         stream_name,
+         extract(epoch from observed_at)::bigint::text,
+         now()
+    from sync_events
+   where dedupe_key = any(v_processed_dedupe_keys)
+   order by stream_name, observed_at desc
+  on conflict (stream_name)
+  do update set cursor_value = excluded.cursor_value, updated_at = now()
+  where sync_cursors.cursor_value::bigint < excluded.cursor_value::bigint;
 
   return v_marked_count + v_recovered_count + v_batched_count;
 end;

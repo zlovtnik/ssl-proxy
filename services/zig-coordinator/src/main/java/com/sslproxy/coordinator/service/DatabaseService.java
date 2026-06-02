@@ -1,16 +1,21 @@
 package com.sslproxy.coordinator.service;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import org.postgresql.util.PGobject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.sql.Array;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Wraps all stored procedure calls to the coordinator schema.
@@ -128,18 +133,33 @@ public class DatabaseService {
             int end = Math.min(start + chunkSize, records.size());
             List<ScanRequestRecord> chunk = records.subList(start, end);
 
-            String requestJsonArray = toJsonbArray(chunk, r -> r.requestJson);
-            String payloadJsonArray = toJsonbArray(chunk, r -> r.payloadJson);
-            String shaArray = toTextArray(chunk, r -> r.payloadSha256);
-            String streamNames = normalizeCsv(props.getStreamNames());
+            String[] streamNames = normalizedCsvArray(props.getStreamNames());
+            String recorded = jdbc.execute((Connection connection) -> {
+                Array requestArray = null;
+                Array payloadArray = null;
+                Array shaArray = null;
+                Array streamNameArray = null;
+                try {
+                    requestArray = createJsonbArray(connection, chunk, r -> r.requestJson);
+                    payloadArray = createJsonbArray(connection, chunk, r -> r.payloadJson);
+                    shaArray = createTextArray(connection, chunk, r -> r.payloadSha256);
+                    streamNameArray = createTextArray(connection, streamNames);
 
-            String recorded = jdbc.queryForObject(
-                    "SELECT coordinator.record_scan_request_batch(" +
-                            "?::jsonb[], ?::jsonb[], ?::text[], " +
-                            "string_to_array(?::text, ','))::text",
-                    String.class,
-                    requestJsonArray, payloadJsonArray, shaArray, streamNames
-            );
+                    return queryForSingleText(
+                            connection,
+                            "SELECT coordinator.record_scan_request_batch(?, ?, ?, ?)::text",
+                            requestArray,
+                            payloadArray,
+                            shaArray,
+                            streamNameArray
+                    );
+                } finally {
+                    freeArray(requestArray);
+                    freeArray(payloadArray);
+                    freeArray(shaArray);
+                    freeArray(streamNameArray);
+                }
+            });
             if (recorded != null && !recorded.isEmpty()) {
                 totalRecorded += Integer.parseInt(recorded.trim());
             }
@@ -223,13 +243,20 @@ public class DatabaseService {
         for (int start = 0; start < resultJsons.size(); start += chunkSize) {
             int end = Math.min(start + chunkSize, resultJsons.size());
             List<String> chunk = resultJsons.subList(start, end);
-            String resultArray = toJsonbArray(chunk);
 
-            String result = jdbc.queryForObject(
-                    "SELECT coordinator.process_batch_results(?::jsonb[])::text",
-                    String.class,
-                    resultArray
-            );
+            String result = jdbc.execute((Connection connection) -> {
+                Array resultArray = null;
+                try {
+                    resultArray = createJsonbArray(connection, chunk);
+                    return queryForSingleText(
+                            connection,
+                            "SELECT coordinator.process_batch_results(?)::text",
+                            resultArray
+                    );
+                } finally {
+                    freeArray(resultArray);
+                }
+            });
             if (result != null && !result.isEmpty()) {
                 total += Integer.parseInt(result.trim());
             }
@@ -321,64 +348,76 @@ public class DatabaseService {
         return sb.toString();
     }
 
-    /**
-     * Builds a Postgres text array literal: {a,b,c}
-     */
-    private String toTextArray(List<ScanRequestRecord> records, java.util.function.Function<ScanRequestRecord, String> extractor) {
-        StringBuilder sb = new StringBuilder("{");
-        for (int i = 0; i < records.size(); i++) {
-            if (i > 0) sb.append(',');
-            String val = extractor.apply(records.get(i));
-            if (val == null) {
-                sb.append("NULL");
-            } else {
-                sb.append(escapeSqlLiteral(val));
-            }
+    private String[] normalizedCsvArray(String csv) {
+        String normalized = normalizeCsv(csv);
+        if (normalized.isEmpty()) {
+            return new String[0];
         }
-        sb.append('}');
-        return sb.toString();
+        return normalized.split(",");
     }
 
-    /**
-     * Builds a Postgres jsonb[] SQL array literal.
-     */
-    private String toJsonbArray(List<ScanRequestRecord> records, java.util.function.Function<ScanRequestRecord, String> extractor) {
-        StringBuilder sb = new StringBuilder("{");
+    private Array createJsonbArray(Connection connection,
+                                   List<ScanRequestRecord> records,
+                                   Function<ScanRequestRecord, String> extractor) throws SQLException {
+        Object[] values = new Object[records.size()];
         for (int i = 0; i < records.size(); i++) {
-            if (i > 0) sb.append(',');
-            String val = extractor.apply(records.get(i));
-            if (val == null) {
-                sb.append("null");
-            } else {
-                sb.append(escapeSqlLiteral(val));
-            }
+            values[i] = toJsonbObject(extractor.apply(records.get(i)));
         }
-        sb.append('}');
-        return sb.toString();
+        return connection.createArrayOf("jsonb", values);
     }
 
-    /**
-     * Builds a Postgres jsonb[] SQL array literal from a list of JSON strings.
-     */
-    private String toJsonbArray(List<String> items) {
-        StringBuilder sb = new StringBuilder("{");
+    private Array createJsonbArray(Connection connection, List<String> items) throws SQLException {
+        Object[] values = new Object[items.size()];
         for (int i = 0; i < items.size(); i++) {
-            if (i > 0) sb.append(',');
-            if (items.get(i) == null) {
-                sb.append("null");
-            } else {
-                sb.append(escapeSqlLiteral(items.get(i)));
-            }
+            values[i] = toJsonbObject(items.get(i));
         }
-        sb.append('}');
-        return sb.toString();
+        return connection.createArrayOf("jsonb", values);
     }
 
-    /**
-     * Escapes a string for use as a Postgres literal inside array syntax.
-     */
-    private String escapeSqlLiteral(String value) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    private Array createTextArray(Connection connection,
+                                  List<ScanRequestRecord> records,
+                                  Function<ScanRequestRecord, String> extractor) throws SQLException {
+        String[] values = new String[records.size()];
+        for (int i = 0; i < records.size(); i++) {
+            values[i] = extractor.apply(records.get(i));
+        }
+        return connection.createArrayOf("text", values);
+    }
+
+    private Array createTextArray(Connection connection, String[] values) throws SQLException {
+        return connection.createArrayOf("text", values);
+    }
+
+    private PGobject toJsonbObject(String json) throws SQLException {
+        if (json == null) {
+            return null;
+        }
+        PGobject object = new PGobject();
+        object.setType("jsonb");
+        object.setValue(json);
+        return object;
+    }
+
+    private String queryForSingleText(Connection connection, String sql, Array... arrays) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < arrays.length; i++) {
+                statement.setArray(i + 1, arrays[i]);
+            }
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getString(1) : null;
+            }
+        }
+    }
+
+    private void freeArray(Array array) {
+        if (array == null) {
+            return;
+        }
+        try {
+            array.free();
+        } catch (SQLException e) {
+            log.warn("failed to free JDBC array: {}", e.getMessage());
+        }
     }
 
     // ========== Inner class ==========

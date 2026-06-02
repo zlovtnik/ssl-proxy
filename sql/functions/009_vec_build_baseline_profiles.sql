@@ -14,6 +14,10 @@ as $$
 declare
   v_count integer := 0;
 begin
+  if not vec_try_begin_job('vec_build_baseline_profiles') then
+    return 0;
+  end if;
+
   with base as (
     select
       lower(nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '')) as bssid,
@@ -27,6 +31,7 @@ begin
       lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac
     from sync_events_expanded
     where stream_name = 'wireless.audit'
+      and status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -171,6 +176,10 @@ begin
     updated_at = now();
 
   get diagnostics v_count = row_count;
+  perform vec_finish_job('vec_build_baseline_profiles');
   return v_count;
+exception when others then
+  perform vec_finish_job('vec_build_baseline_profiles');
+  raise;
 end;
 $$;

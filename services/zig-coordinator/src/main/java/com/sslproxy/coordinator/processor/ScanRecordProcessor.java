@@ -71,11 +71,12 @@ public class ScanRecordProcessor implements Processor {
                     resolvedPayloadJson = new String(payloadBytes, java.nio.charset.StandardCharsets.UTF_8);
                     payloadSha256 = Sha256Utils.sha256Hex(payloadBytes);
                 } catch (Exception e) {
-                    log.warn("event=scan_request_payload_resolve_failed "
-                            + "dedupe_key={} payload_ref={} error=\"{}\"",
-                            scanRequest.getDedupeKey(),
-                            scanRequest.getPayloadRef(),
-                            e.getMessage());
+                    log.atWarn()
+                            .addKeyValue("event", "scan_request_payload_resolve_failed")
+                            .addKeyValue("dedupe_key", scanRequest.getDedupeKey())
+                            .addKeyValue("payload_ref_scheme", payloadRefScheme(scanRequest.getPayloadRef()))
+                            .addKeyValue("error", sanitize(e.getMessage()))
+                            .log("scan request payload resolve failed");
                     // Zig stores null payload/sha256 on resolve failure - match that behavior
                     resolvedPayloadJson = null;
                     payloadSha256 = null;
@@ -93,8 +94,13 @@ public class ScanRecordProcessor implements Processor {
                 int maxPending = maxPendingResults();
                 if (pending.size() >= maxPending) {
                     pending.remove(0);
-                    log.error("event=scan_request_ingest status=dropped_oldest reason=pending_limit "
-                            + "pending_count={} max_pending={}", pending.size(), maxPending);
+                    log.atError()
+                            .addKeyValue("event", "scan_request_ingest")
+                            .addKeyValue("status", "dropped_oldest")
+                            .addKeyValue("reason", "pending_limit")
+                            .addKeyValue("pending_count", pending.size())
+                            .addKeyValue("max_pending", maxPending)
+                            .log("scan request accumulator dropped oldest record");
                 }
                 pending.add(record);
                 shouldFlush = pending.size() >= props.getScanFetchCount();
@@ -104,9 +110,11 @@ public class ScanRecordProcessor implements Processor {
                 flushPending();
             }
         } catch (Exception e) {
-            log.error("event=scan_request_deserialize_failed error=\"{}\" body={}",
-                    e.getMessage(),
-                    rawJson.length() > 1024 ? rawJson.substring(0, 1024) + "..." : rawJson);
+            log.atError()
+                    .addKeyValue("event", "scan_request_deserialize_failed")
+                    .addKeyValue("error", sanitize(e.getMessage()))
+                    .addKeyValue("payload_bytes", rawJson.length())
+                    .log("scan request deserialize failed");
         }
     }
 
@@ -127,10 +135,20 @@ public class ScanRecordProcessor implements Processor {
 
         try {
             int recorded = databaseService.recordScanRequests(batch);
-            log.info("event=scan_request_ingest status=recorded count={} batch_size={}", recorded, batch.size());
+            log.atInfo()
+                    .addKeyValue("event", "scan_request_ingest")
+                    .addKeyValue("status", "recorded")
+                    .addKeyValue("count", recorded)
+                    .addKeyValue("batch_size", batch.size())
+                    .log("scan request batch recorded");
         } catch (Exception e) {
-            log.error("event=scan_request_ingest status=failed batch_size={} error=\"{}\"",
-                    batch.size(), e.getMessage());
+            log.atError()
+                    .addKeyValue("event", "scan_request_ingest")
+                    .addKeyValue("status", "failed")
+                    .addKeyValue("batch_size", batch.size())
+                    .addKeyValue("error", sanitize(e.getMessage()))
+                    .addKeyValue("root_cause", rootCauseSummary(e))
+                    .log("scan request batch failed");
             // Re-add failed records for retry while enforcing a bounded accumulator.
             synchronized (pending) {
                 int maxPending = maxPendingResults();
@@ -143,9 +161,14 @@ public class ScanRecordProcessor implements Processor {
 
                 int dropped = batch.size() - toRequeue;
                 if (dropped > 0) {
-                    log.error("event=scan_request_ingest status=dropped reason=pending_limit "
-                                    + "dropped_count={} pending_count={} max_pending={}",
-                            dropped, pending.size(), maxPending);
+                    log.atError()
+                            .addKeyValue("event", "scan_request_ingest")
+                            .addKeyValue("status", "dropped")
+                            .addKeyValue("reason", "pending_limit")
+                            .addKeyValue("dropped_count", dropped)
+                            .addKeyValue("pending_count", pending.size())
+                            .addKeyValue("max_pending", maxPending)
+                            .log("scan request retry records dropped");
                 }
             }
         }
@@ -154,5 +177,33 @@ public class ScanRecordProcessor implements Processor {
     private int maxPendingResults() {
         int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
         return Math.max(props.getScanFetchCount(), props.getScanFetchCount() * multiplier);
+    }
+
+    private String payloadRefScheme(String payloadRef) {
+        if (payloadRef == null || payloadRef.isBlank()) {
+            return "none";
+        }
+        int separator = payloadRef.indexOf("://");
+        return separator > 0 ? payloadRef.substring(0, separator) : "unknown";
+    }
+
+    private String rootCauseSummary(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+
+        String message = sanitize(root.getMessage());
+        if (message.isEmpty()) {
+            return root.getClass().getSimpleName();
+        }
+        return root.getClass().getSimpleName() + ": " + message;
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 }

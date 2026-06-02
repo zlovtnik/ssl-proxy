@@ -15,16 +15,59 @@ declare
   remaining_limit integer;
 begin
   -- Branch A: pending & failed jobs that are due for retry.
-  -- Uses pending_idx which pre-filters on status, attempts < max_attempts, due_at <= now().
+  -- Pull bounded candidates per kind, then interleave by kind_round so a deep
+  -- event backlog cannot starve less frequent embedding kinds.
   return query
-  with selected as (
+  with kind_order(embedding_kind, kind_rank) as (
+    values
+      ('event', 1),
+      ('device', 2),
+      ('behaviour_window', 3),
+      ('baseline_profile', 4),
+      ('frame_sequence', 5),
+      ('infrastructure_subgraph', 6),
+      ('timing_profile', 7)
+  ),
+  candidates as (
+    select
+      c.job_id,
+      c.embedding_kind,
+      c.priority,
+      c.due_at,
+      k.kind_rank
+    from kind_order k
+    cross join lateral (
+      select
+        job_id,
+        embedding_kind,
+        priority,
+        due_at
+      from vec_embedding_jobs
+      where embedding_kind = k.embedding_kind
+        and status in ('pending', 'failed')
+        and attempts < max_attempts
+        and due_at <= now()
+      order by priority asc, due_at asc, job_id asc
+      for update skip locked
+      limit v_limit
+    ) c
+  ),
+  ranked as (
+    select
+      job_id,
+      priority,
+      due_at,
+      kind_rank,
+      row_number() over (
+        partition by embedding_kind
+        order by priority asc, due_at asc, job_id asc
+      ) as kind_round
+    from candidates
+  ),
+  selected as (
     select job_id
-    from vec_embedding_jobs
-    where status in ('pending', 'failed')
-      and attempts < max_attempts
-      and due_at <= now()
-    order by priority asc, due_at asc, job_id asc
-    for update skip locked
+    from ranked
+    order by kind_round asc, kind_rank asc, priority asc, due_at asc, job_id asc
     limit v_limit
   )
   update vec_embedding_jobs job
@@ -44,23 +87,65 @@ begin
     return;
   end if;
 
-  remaining_limit := greatest(0, p_limit - v_count);
+  remaining_limit := greatest(0, v_limit - v_count);
   if remaining_limit <= 0 then
     return;
   end if;
 
   -- Branch B: expired leases (worker died mid-batch).
-  -- Uses lease_idx which pre-filters on status = 'leased' and attempts < max_attempts.
+  -- Keep the same fair ordering for reclaimed work.
   return query
-  with selected as (
+  with kind_order(embedding_kind, kind_rank) as (
+    values
+      ('event', 1),
+      ('device', 2),
+      ('behaviour_window', 3),
+      ('baseline_profile', 4),
+      ('frame_sequence', 5),
+      ('infrastructure_subgraph', 6),
+      ('timing_profile', 7)
+  ),
+  candidates as (
+    select
+      c.job_id,
+      c.embedding_kind,
+      c.leased_at,
+      c.priority,
+      k.kind_rank
+    from kind_order k
+    cross join lateral (
+      select
+        job_id,
+        embedding_kind,
+        leased_at,
+        priority
+      from vec_embedding_jobs
+      where embedding_kind = k.embedding_kind
+        and status = 'leased'
+        and leased_at < now() - p_lease
+        and attempts < max_attempts
+        and due_at <= now()
+      order by leased_at asc, priority asc, job_id asc
+      for update skip locked
+      limit remaining_limit
+    ) c
+  ),
+  ranked as (
+    select
+      job_id,
+      leased_at,
+      priority,
+      kind_rank,
+      row_number() over (
+        partition by embedding_kind
+        order by leased_at asc, priority asc, job_id asc
+      ) as kind_round
+    from candidates
+  ),
+  selected as (
     select job_id
-    from vec_embedding_jobs
-    where status = 'leased'
-      and leased_at < now() - p_lease
-      and attempts < max_attempts
-      and due_at <= now()
-    order by leased_at asc, priority asc, job_id asc
-    for update skip locked
+    from ranked
+    order by kind_round asc, kind_rank asc, leased_at asc, priority asc, job_id asc
     limit remaining_limit
   )
   update vec_embedding_jobs job

@@ -1,5 +1,6 @@
 package com.sslproxy.coordinator.service;
 
+import com.sslproxy.coordinator.config.CoordinatorProperties;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -7,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -19,21 +22,29 @@ import java.util.concurrent.atomic.AtomicLong;
  *   - coordinator_batches_dispatched_total  (counter)
  *   - coordinator_backpressure_active       (gauge)
  *   - coordinator_heartbeat_total           (counter)
+ *   - coordinator_route_running             (gauge)
+ *   - coordinator_route_suspended           (gauge)
  */
 @Service
 public class CoordinatorMetricsService {
 
     private static final Logger log = LoggerFactory.getLogger(CoordinatorMetricsService.class);
 
+    private final CoordinatorProperties props;
     private final AtomicLong pendingLedgerGauge = new AtomicLong(0);
     private final AtomicLong backpressureActiveGauge = new AtomicLong(0);
+    private final Map<String, RouteStateMeters> routeStateMeters = new ConcurrentHashMap<>();
 
     private final Counter loopAttemptsCounter;
     private final Counter ingestProcessedCounter;
     private final Counter batchesDispatchedCounter;
     private final Counter heartbeatCounter;
 
-    public CoordinatorMetricsService(MeterRegistry registry) {
+    private volatile long lastHeartbeatLogAtMillis = 0;
+
+    public CoordinatorMetricsService(MeterRegistry registry, CoordinatorProperties props) {
+        this.props = props;
+
         Gauge.builder("coordinator.pending.ledger.count", pendingLedgerGauge, AtomicLong::get)
                 .description("Number of pending ledger entries")
                 .register(registry);
@@ -57,6 +68,9 @@ public class CoordinatorMetricsService {
         heartbeatCounter = Counter.builder("coordinator.heartbeat.total")
                 .description("Heartbeat counter, incremented each loop iteration")
                 .register(registry);
+
+        registerRouteStateMeters(registry, "scan", "scan-request-consumer");
+        registerRouteStateMeters(registry, "result", "oracle-result-consumer");
     }
 
     public void recordPendingLedgerCount(long count) {
@@ -81,15 +95,56 @@ public class CoordinatorMetricsService {
         batchesDispatchedCounter.increment();
     }
 
+    public void recordRouteState(String role, String routeId, boolean running, boolean suspended) {
+        RouteStateMeters meters = routeStateMeters.get(routeStateKey(role, routeId));
+        if (meters == null) {
+            return;
+        }
+        meters.running().set(running ? 1 : 0);
+        meters.suspended().set(suspended ? 1 : 0);
+    }
+
     /**
-     * Heartbeat — increments counter and logs at INFO so it appears in structured logs.
+     * Heartbeat - increments counter every loop and rate-limits INFO logging.
      * Called once per main loop iteration after all steps complete.
      */
     public void heartbeat() {
         heartbeatCounter.increment();
-        log.info("event=heartbeat loop_count={} pending_ledger_count={} backpressure_active={}",
-                (long) loopAttemptsCounter.count(),
-                pendingLedgerGauge.get(),
-                backpressureActiveGauge.get());
+        long now = System.currentTimeMillis();
+        long intervalMs = Math.max(0, props.getHeartbeatLogIntervalMs());
+        if (intervalMs > 0 && now - lastHeartbeatLogAtMillis < intervalMs) {
+            return;
+        }
+        lastHeartbeatLogAtMillis = now;
+
+        log.atInfo()
+                .addKeyValue("event", "heartbeat")
+                .addKeyValue("loop_count", (long) loopAttemptsCounter.count())
+                .addKeyValue("pending_ledger_count", pendingLedgerGauge.get())
+                .addKeyValue("backpressure_active", backpressureActiveGauge.get())
+                .log("coordinator heartbeat");
     }
+
+    private void registerRouteStateMeters(MeterRegistry registry, String role, String routeId) {
+        RouteStateMeters meters = new RouteStateMeters(new AtomicLong(0), new AtomicLong(0));
+        routeStateMeters.put(routeStateKey(role, routeId), meters);
+
+        Gauge.builder("coordinator.route.running", meters.running(), AtomicLong::get)
+                .description("1 if the coordinator route is running, 0 otherwise")
+                .tag("role", role)
+                .tag("route", routeId)
+                .register(registry);
+
+        Gauge.builder("coordinator.route.suspended", meters.suspended(), AtomicLong::get)
+                .description("1 if the coordinator route is suspended, 0 otherwise")
+                .tag("role", role)
+                .tag("route", routeId)
+                .register(registry);
+    }
+
+    private String routeStateKey(String role, String routeId) {
+        return role + ":" + routeId;
+    }
+
+    private record RouteStateMeters(AtomicLong running, AtomicLong suspended) {}
 }

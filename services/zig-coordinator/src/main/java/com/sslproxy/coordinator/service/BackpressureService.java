@@ -79,17 +79,26 @@ public class BackpressureService {
                 consumerSuspended = suspendScanConsumer();
             }
             metricsService.recordBackpressureActive(consumerSuspended);
-            log.info("event=backpressure status=throttled "
-                            + "pending_count={} budget={} multiplier={} consumer_suspended={}",
-                    pendingCount, budget, props.getBackpressureBudgetMultiplier(), consumerSuspended);
+            log.atInfo()
+                    .addKeyValue("event", "backpressure")
+                    .addKeyValue("status", "throttled")
+                    .addKeyValue("pending_count", pendingCount)
+                    .addKeyValue("budget", budget)
+                    .addKeyValue("multiplier", props.getBackpressureBudgetMultiplier())
+                    .addKeyValue("consumer_suspended", consumerSuspended)
+                    .log("coordinator backpressure throttled");
         } else if (pendingCount <= recoveryThreshold && consumerSuspended) {
             if (resumeScanConsumer()) {
                 consumerSuspended = false;
             }
             metricsService.recordBackpressureActive(consumerSuspended);
-            log.info("event=backpressure status=recovered "
-                            + "pending_count={} recovery_threshold={} consumer_resumed={}",
-                    pendingCount, recoveryThreshold, !consumerSuspended);
+            log.atInfo()
+                    .addKeyValue("event", "backpressure")
+                    .addKeyValue("status", "recovered")
+                    .addKeyValue("pending_count", pendingCount)
+                    .addKeyValue("recovery_threshold", recoveryThreshold)
+                    .addKeyValue("consumer_resumed", !consumerSuspended)
+                    .log("coordinator backpressure recovered");
         } else {
             metricsService.recordBackpressureActive(consumerSuspended);
         }
@@ -103,15 +112,29 @@ public class BackpressureService {
     private boolean suspendScanConsumer() {
         String routeId = "scan-request-consumer";
         if (!adaptivePullController.tryLockRouteUpdate(routeId, "backpressure_suspend")) {
-            log.debug("event=route_suspend route={} status=skipped reason=route_update_busy", routeId);
+            log.atDebug()
+                    .addKeyValue("event", "route_suspend")
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("status", "skipped")
+                    .addKeyValue("reason", "route_update_busy")
+                    .log("route suspend skipped");
             return false;
         }
         try {
             camelContext.getRouteController().suspendRoute(routeId);
-            log.info("event=route_suspend route={} status=suspended", routeId);
+            log.atInfo()
+                    .addKeyValue("event", "route_suspend")
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("status", "suspended")
+                    .log("route suspended");
             return true;
         } catch (Exception e) {
-            log.error("event=route_suspend route={} status=failed error=\"{}\"", routeId, e.getMessage());
+            log.atError()
+                    .addKeyValue("event", "route_suspend")
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("status", "failed")
+                    .addKeyValue("error", e.getMessage())
+                    .log("route suspend failed");
             return false;
         } finally {
             adaptivePullController.unlockRouteUpdate(routeId, "backpressure_suspend");
@@ -124,15 +147,29 @@ public class BackpressureService {
     private boolean resumeScanConsumer() {
         String routeId = "scan-request-consumer";
         if (!adaptivePullController.tryLockRouteUpdate(routeId, "backpressure_resume")) {
-            log.debug("event=route_resume route={} status=skipped reason=route_update_busy", routeId);
+            log.atDebug()
+                    .addKeyValue("event", "route_resume")
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("status", "skipped")
+                    .addKeyValue("reason", "route_update_busy")
+                    .log("route resume skipped");
             return false;
         }
         try {
             camelContext.getRouteController().resumeRoute(routeId);
-            log.info("event=route_resume route={} status=resumed", routeId);
+            log.atInfo()
+                    .addKeyValue("event", "route_resume")
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("status", "resumed")
+                    .log("route resumed");
             return true;
         } catch (Exception e) {
-            log.error("event=route_resume route={} status=failed error=\"{}\"", routeId, e.getMessage());
+            log.atError()
+                    .addKeyValue("event", "route_resume")
+                    .addKeyValue("route", routeId)
+                    .addKeyValue("status", "failed")
+                    .addKeyValue("error", e.getMessage())
+                    .log("route resume failed");
             return false;
         } finally {
             adaptivePullController.unlockRouteUpdate(routeId, "backpressure_resume");

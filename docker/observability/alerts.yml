@@ -1,0 +1,112 @@
+groups:
+  - name: observability-critical
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"ssl-proxy|java-coordinator|oracle-worker|integration-console-web|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|pushgateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "{{ $labels.job }} target is down"
+          description: "Prometheus has reported {{ $labels.instance }} as down for more than 2 minutes."
+
+      - alert: ScrapeFailures
+        expr: sum by (job) (up == 0) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: scrape
+        annotations:
+          summary: "Scrape failures detected for {{ $labels.job }}"
+          description: "At least one target in job {{ $labels.job }} has failed scraping for 5 minutes."
+
+      - alert: ErrorRateSpike
+        expr: (sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) by (job) / clamp_min(sum(rate(http_server_requests_seconds_count[5m])) by (job), 1)) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          category: errors
+        annotations:
+          summary: "5xx error rate spike on {{ $labels.job }}"
+          description: "5xx error ratio is above 5% for 5 minutes."
+
+      - alert: QueueLagGrowth
+        expr: sum by (topic) (rate(redpanda_kafka_max_offset[5m])) - sum by (topic) (rate(redpanda_kafka_consumer_group_committed_offset[5m])) > 1000
+        for: 10m
+        labels:
+          severity: critical
+          category: lag
+        annotations:
+          summary: "Queue lag is growing"
+          description: "Producer offset growth is outpacing consumer commits by more than 1000 records/sec."
+
+      - alert: CoordinatorRedpandaLagHigh
+        expr: max by (role, topic, consumer_group) (coordinator_redpanda_consumer_lag_records{job="java-coordinator"}) > 5000
+        for: 10m
+        labels:
+          severity: critical
+          category: lag
+        annotations:
+          summary: "Coordinator Redpanda lag is high for {{ $labels.role }}"
+          description: "Coordinator consumer group {{ $labels.consumer_group }} has more than 5000 pending records on {{ $labels.topic }}."
+
+      - alert: CoordinatorRedpandaLagMetricsStale
+        expr: max by (role, topic, consumer_group) (coordinator_redpanda_lag_stale_seconds{job="java-coordinator"}) > 60
+        for: 2m
+        labels:
+          severity: critical
+          category: metrics
+        annotations:
+          summary: "Coordinator Redpanda lag metrics are stale for {{ $labels.role }}"
+          description: "Coordinator lag metrics for {{ $labels.consumer_group }} on {{ $labels.topic }} have not refreshed successfully for more than 60 seconds."
+
+      - alert: CoordinatorRedpandaLagRefreshFailures
+        expr: sum by (role) (increase(coordinator_redpanda_lag_refresh_failures_total{job="java-coordinator"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: metrics
+        annotations:
+          summary: "Coordinator Redpanda lag refresh failures for {{ $labels.role }}"
+          description: "The coordinator is failing to refresh Redpanda lag metrics. Last successful gauge values are retained until refresh recovers."
+
+      - alert: CoordinatorBackpressureActive
+        expr: max(coordinator_backpressure_active{job="java-coordinator"}) > 0
+        for: 10m
+        labels:
+          severity: critical
+          category: backpressure
+        annotations:
+          summary: "Coordinator backpressure is active"
+          description: "The coordinator scan consumer has been throttled by pending ledger backpressure for more than 10 minutes."
+
+      - alert: CoordinatorConsumerRouteDown
+        expr: max by (role, route) (coordinator_route_running{job="java-coordinator"}) == 0
+        for: 5m
+        labels:
+          severity: critical
+          category: route
+        annotations:
+          summary: "Coordinator {{ $labels.role }} route is not running"
+          description: "Coordinator route {{ $labels.route }} has not reported a running state for 5 minutes."
+
+      - alert: IngestionBackpressure
+        expr: rate(loki_distributor_ingester_appends_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: ingestion
+        annotations:
+          summary: "Loki ingestion backpressure"
+          description: "Loki distributor append failures detected over the last 5 minutes."
+
+      - alert: TraceExportFailures
+        expr: rate(otelcol_exporter_send_failed_spans[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: tracing
+        annotations:
+          summary: "OTel trace export failures"
+          description: "OpenTelemetry Collector is failing to export spans to Jaeger."

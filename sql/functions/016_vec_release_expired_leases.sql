@@ -21,7 +21,15 @@ begin
          last_error = 'lease expired',
          updated_at = now()
    where status = 'leased'
-     and leased_at < now() - p_lease_interval;
+     and leased_at < now() - p_lease_interval
+     and job_id in (
+       select job_id
+       from vec_embedding_jobs
+       where status = 'leased'
+         and leased_at < now() - p_lease_interval
+       order by job_id asc
+       for update skip locked
+     );
 
   get diagnostics v_count = row_count;
   return v_count;

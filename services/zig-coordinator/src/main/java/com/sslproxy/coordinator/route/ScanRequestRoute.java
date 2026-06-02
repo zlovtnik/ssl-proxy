@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Consumes scan requests from sync.scan.request via Kafka consumer group.
  * Directly replaces sync_handlers.zig drainScanRequests() and CLI-based
@@ -51,7 +53,18 @@ public class ScanRequestRoute extends RouteBuilder {
                 + "&consumersCount=1"
                 + "&breakOnFirstError=true")
         .routeId("scan-request-consumer")
-        .log(LoggingLevel.TRACE, "Received scan request: ${body}")
+        .process(exchange -> {
+            String body = exchange.getIn().getBody(String.class);
+            int payloadBytes = body == null ? 0 : body.getBytes(StandardCharsets.UTF_8).length;
+            log.atTrace()
+                    .addKeyValue("event", "scan_request_ingest")
+                    .addKeyValue("status", "received")
+                    .addKeyValue("route", "scan-request-consumer")
+                    .addKeyValue("topic", props.getScanTopic())
+                    .addKeyValue("consumer_group", props.getScanConsumer())
+                    .addKeyValue("payload_bytes", payloadBytes)
+                    .log("scan request received");
+        })
         .process(scanRecordProcessor);
 
         // Timer-based flush for partial batches — ensures records don't sit in the

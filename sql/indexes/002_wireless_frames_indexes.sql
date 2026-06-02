@@ -7,7 +7,19 @@ create index if not exists wireless_frames_source_mac_idx on wireless_frames (lo
 
 create index if not exists wireless_frames_bssid_idx on wireless_frames (lower(bssid));
 
+create index if not exists wireless_frames_bssid_updated_idx
+  on wireless_frames (lower(bssid), updated_at desc)
+  where bssid is not null;
+
 create index if not exists wireless_frames_destination_bssid_idx on wireless_frames (lower(destination_bssid));
+
+create index if not exists wireless_frames_destination_bssid_updated_idx
+  on wireless_frames (lower(destination_bssid), updated_at desc)
+  where destination_bssid is not null;
+
+create index if not exists wireless_frames_bssid_oui_idx
+  on wireless_frames (bssid_oui)
+  where bssid_oui is not null;
 
 create index if not exists wireless_frames_schema_version_idx on wireless_frames (schema_version);
 
