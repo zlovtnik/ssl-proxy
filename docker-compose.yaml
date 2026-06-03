@@ -635,9 +635,9 @@ services:
       dockerfile: services/atheros-search/Dockerfile
     restart: unless-stopped
     environment:
-      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@postgres:5432/sync}
+      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@192.168.1.221:5432/sync}
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
-      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8080}
+      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8082}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - ATHSEARCH_EMBEDDING_DIMENSIONS=${ATHSEARCH_EMBEDDING_DIMENSIONS:-768}
       - ATHSEARCH_GRPC_PORT=${ATHSEARCH_GRPC_PORT:-50051}

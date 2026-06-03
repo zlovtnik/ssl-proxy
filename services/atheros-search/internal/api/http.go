@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/rs/zerolog"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/auth"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/health"
@@ -17,11 +19,32 @@ import (
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:5173")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *health.Readiness, tokenAuth *auth.TokenAuth, logger zerolog.Logger) (*http.Server, error) {
 	mux := runtime.NewServeMux()
 	registerJSON(mux, "POST", "/v1/search", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req searchv1.SearchRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := protojson.Unmarshal(body, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -33,8 +56,13 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 		writeJSON(w, http.StatusOK, resp)
 	})
 	registerJSON(mux, "POST", "/v1/search/stream", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var req searchv1.SearchRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := protojson.Unmarshal(body, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -87,7 +115,7 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
-		Handler:           mux,
+		Handler:           corsMiddleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
