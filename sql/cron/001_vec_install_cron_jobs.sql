@@ -142,6 +142,12 @@ begin
     '9,24,39,54 * * * *',
     $cron$select vec_refresh_ap_risk_score();$cron$
   );
+
+  perform cron.schedule(
+    'search-purge-expired-queries',
+    '17 3 * * *',
+    $cron$select search_purge_expired_queries();$cron$
+  );
 end;
 $$;
 

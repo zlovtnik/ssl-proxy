@@ -38,6 +38,7 @@
 \ir tables/025_vec_rf_sensor_locations.sql
 \ir tables/026_vec_dns_policy.sql
 \ir tables/027_vec_dns_resolver_ledger.sql
+\ir tables/028_search_feedback.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -100,6 +101,7 @@
 \ir functions/041_vec_update_device_centroids.sql
 \ir functions/042_vec_fuse_device_identities.sql
 \ir functions/043_vec_reembed_on_alert.sql
+\ir functions/046_search_purge_expired_queries.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql

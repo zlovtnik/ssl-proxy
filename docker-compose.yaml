@@ -622,6 +622,51 @@ services:
           cpus: '0.25'
           memory: 256M
 
+  atheros-search:
+    profiles:
+      - vector
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/atheros-search/Dockerfile
+    restart: unless-stopped
+    environment:
+      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@postgres:5432/sync}
+      - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
+      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8080}
+      - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
+      - ATHSEARCH_EMBEDDING_DIMENSIONS=${ATHSEARCH_EMBEDDING_DIMENSIONS:-768}
+      - ATHSEARCH_GRPC_PORT=${ATHSEARCH_GRPC_PORT:-50051}
+      - ATHSEARCH_HTTP_PORT=${ATHSEARCH_HTTP_PORT:-8080}
+      - ATHSEARCH_METRICS_PORT=${ATHSEARCH_METRICS_PORT:-9090}
+      - ATHSEARCH_LOG_LEVEL=${ATHSEARCH_LOG_LEVEL:-info}
+      - ATHSEARCH_AUDIT_TOPIC=${ATHSEARCH_AUDIT_TOPIC:-wireless.audit}
+      - ATHSEARCH_BANDWIDTH_TOPIC=${ATHSEARCH_BANDWIDTH_TOPIC:-audit.wireless.bandwidth}
+      - ATHSEARCH_CONSUMER_GROUP=${ATHSEARCH_CONSUMER_GROUP:-atheros-search-ingest}
+      - ATHSEARCH_EMBEDDER_ENABLED=${ATHSEARCH_EMBEDDER_ENABLED:-false}
+      - ATHSEARCH_INGEST_ENABLED=${ATHSEARCH_INGEST_ENABLED:-false}
+      - ATHSEARCH_API_TOKEN_SHA256=${ATHSEARCH_API_TOKEN_SHA256:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=atheros-search
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=atheros-search
+    ports:
+      - "127.0.0.1:50051:50051"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:19090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/atheros-search", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
   redpanda:
     image: redpandadata/redpanda:latest
     command:

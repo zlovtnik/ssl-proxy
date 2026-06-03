@@ -1,7 +1,8 @@
-.PHONY: build test bench docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats
+.PHONY: build test bench docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
+GO_BIN_DIR := $(shell go env GOPATH)/bin
 
 # Build project binaries: root proxy, Atheros sensor, Oracle worker, and Zig coordinator.
 build:
@@ -24,6 +25,15 @@ bench:
 # Build Docker images used by the compose stack.
 docker:
 	docker compose build ssl-proxy zig-coordinator oracle-worker redpanda postgres
+
+atheros-search-proto:
+	cd services/atheros-search && PATH="$(GO_BIN_DIR):$$PATH" protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/atheros/search/v1/search.proto
+
+atheros-search-build:
+	cd services/atheros-search && go build -o "$${TMPDIR:-/tmp}/atheros-search" ./cmd/server
+
+atheros-search-test:
+	cd services/atheros-search && go test ./...
 
 # Run clippy lints
 lint:

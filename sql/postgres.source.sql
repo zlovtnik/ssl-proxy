@@ -3957,6 +3957,12 @@ begin
     '9,24,39,54 * * * *',
     $cron$select vec_refresh_ap_risk_score();$cron$
   );
+
+  perform cron.schedule(
+    'search-purge-expired-queries',
+    '17 3 * * *',
+    $cron$select search_purge_expired_queries();$cron$
+  );
 end;
 $$;
 
@@ -4063,6 +4069,62 @@ create table if not exists vec_dns_resolver_ledger (
   constraint vec_dns_resolver_ledger_protocol_chk check (protocol in ('doh', 'dot', 'wireguard_dns', 'dnscrypt', 'unknown')),
   constraint vec_dns_resolver_ledger_query_chk check (query_name is not null or query_name_hash is not null)
 );
+
+-- Search analytics store hashes by default; raw query_text/result_keys are
+-- nullable and reserved for explicit diagnostic opt-in paths.
+create table if not exists search_queries (
+  query_id          bigserial primary key,
+  query_text        text,
+  hashed_query_text text not null,
+  query_kind        text not null,
+  query_vec         vector,
+  top_k             integer not null default 10,
+  result_keys       text[],
+  result_key_hashes text[] not null default '{}',
+  session_hash      text,
+  latency_ms        integer,
+  created_at        timestamptz not null default now(),
+  expires_at        timestamptz not null default (now() + interval '30 days'),
+  constraint search_queries_top_k_chk check (top_k > 0),
+  constraint search_queries_latency_chk check (latency_ms is null or latency_ms >= 0)
+);
+
+create index if not exists search_queries_created_idx
+  on search_queries (created_at desc);
+
+create index if not exists search_queries_expires_idx
+  on search_queries (expires_at);
+
+create index if not exists search_queries_hash_idx
+  on search_queries (hashed_query_text);
+
+create table if not exists search_feedback (
+  feedback_id bigserial primary key,
+  query_id    bigint not null references search_queries(query_id) on delete cascade,
+  source_key  text not null,
+  relevant    boolean not null,
+  created_at  timestamptz not null default now()
+);
+
+-- Repeated feedback events are allowed; consumers can aggregate by query/source.
+create index if not exists search_feedback_query_idx
+  on search_feedback (query_id, source_key);
+
+-- Deletes expired search analytics rows; search_feedback rows cascade by query_id.
+create or replace function search_purge_expired_queries(p_now timestamptz default now())
+returns bigint
+language plpgsql
+as $$
+declare
+  v_deleted bigint;
+begin
+  delete from search_queries
+   where expires_at < p_now;
+
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end;
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_vec_alerts_type_created
     ON vec_alerts (alert_type, created_at DESC);

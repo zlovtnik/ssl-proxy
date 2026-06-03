@@ -12,7 +12,7 @@ declare
   j record;
 begin
   if to_regnamespace('cron') is not null then
-    for j in select jobname from cron.job where jobname like 'vec-%' loop
+    for j in select jobname from cron.job where jobname like 'vec-%' or jobname like 'search-%' loop
       perform cron.unschedule(j.jobname);
     end loop;
   end if;

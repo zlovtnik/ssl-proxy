@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package atheros.search.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1;searchv1";
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc SearchStream(SearchRequest) returns (stream SearchResult);
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+  rpc SuggestFilters(SuggestFiltersRequest) returns (SuggestFiltersResponse);
+}
+
+enum SearchKind {
+  SEARCH_KIND_UNSPECIFIED = 0;
+  SEARCH_KIND_EVENT = 1;
+  SEARCH_KIND_BEHAVIOUR = 2;
+  SEARCH_KIND_SEQUENCE = 3;
+  SEARCH_KIND_DEVICE = 4;
+  SEARCH_KIND_CROSS = 5;
+}
+
+enum SearchMode {
+  SEARCH_MODE_UNSPECIFIED = 0;
+  SEARCH_MODE_DENSE = 1;
+  SEARCH_MODE_SPARSE = 2;
+  SEARCH_MODE_HYBRID = 3;
+}
+
+message SearchFilters {
+  repeated string location_ids = 1;
+  repeated string sensor_ids = 2;
+  string ssid = 3;
+  string source_mac = 4;
+  repeated string frame_subtypes = 5;
+  google.protobuf.Timestamp observed_after = 6;
+  google.protobuf.Timestamp observed_before = 7;
+  bool threat_only = 8;
+  bool handshake_only = 9;
+  int32 security_flags_mask = 10;
+  repeated string tags = 11;
+}
+
+message SearchRequest {
+  string query = 1;
+  SearchKind kind = 2;
+  SearchMode mode = 3;
+  SearchFilters filters = 4;
+  int32 top_k = 5;
+  float min_similarity = 6;
+  string session_id = 7;
+}
+
+message SearchResponse {
+  int64 query_id = 1;
+  repeated SearchResult results = 2;
+  SearchMode mode_used = 3;
+  string fallback_reason = 4;
+  int32 dense_result_count = 5;
+  int32 sparse_result_count = 6;
+  int32 fused_result_count = 7;
+}
+
+message SearchResult {
+  string source_key = 1;
+  string source_table = 2;
+  string source_mac = 3;
+  string location_id = 4;
+  string sensor_id = 5;
+  google.protobuf.Timestamp observed_at = 6;
+  float score = 7;
+  float cosine_similarity = 8;
+  float keyword_rank = 9;
+  float threat_boost = 10;
+  map<string, string> highlights = 11;
+  repeated string tags = 12;
+  string source_kind = 13;
+  string bssid = 14;
+  string ssid = 15;
+  string frame_subtype = 16;
+  double sequence_log_prob = 17;
+  repeated string boost_reasons = 18;
+  string detail_json = 19;
+}
+
+message ExplainRequest {
+  string query = 1;
+  string source_key = 2;
+  SearchKind kind = 3;
+}
+
+message ExplainResponse {
+  string source_key = 1;
+  float dense_score = 2;
+  float sparse_score = 3;
+  float fused_score = 4;
+  float threat_boost = 5;
+  repeated string boost_reasons = 6;
+  double sequence_log_prob = 7;
+}
+
+message SuggestFiltersRequest {
+  string prefix = 1;
+}
+
+message SuggestFiltersResponse {
+  repeated string ssids = 1;
+  repeated string location_ids = 2;
+  repeated string sensor_ids = 3;
+  repeated string frame_subtypes = 4;
+}
+
