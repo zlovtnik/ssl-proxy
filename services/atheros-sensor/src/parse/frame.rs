@@ -1088,9 +1088,14 @@ mod tests {
                 data,
             })
             .unwrap();
-            if let Some(alert) =
-                monitor.observe(&mut frame, &context, None, None, Duration::from_secs(60))
-            {
+            if let Some(alert) = monitor.observe(
+                &mut frame,
+                &context,
+                None,
+                None,
+                "type mgt or type data",
+                Duration::from_secs(60),
+            ) {
                 assert!(frame.handshake_captured);
                 assert!(frame.tags.contains(&"handshake_captured".to_string()));
                 alerts.push(alert);
@@ -1112,6 +1117,7 @@ mod tests {
                 &context,
                 None,
                 None,
+                "type mgt or type data",
                 Duration::from_secs(60)
             )
             .is_none());

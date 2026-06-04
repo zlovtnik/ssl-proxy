@@ -76,7 +76,12 @@ impl HandshakeState {
 }
 
 impl HandshakeMonitor {
-    pub fn cleanup_expired(&mut self, ttl: Duration, capture_control: Option<&CaptureControl>) {
+    pub fn cleanup_expired(
+        &mut self,
+        ttl: Duration,
+        capture_control: Option<&CaptureControl>,
+        restore_filter: &str,
+    ) {
         let now = Instant::now();
         let mut stalled_pairs = Vec::new();
         self.states.retain(|key, state| {
@@ -116,7 +121,7 @@ impl HandshakeMonitor {
             .retain(|key, _| self.states.contains_key(key));
         if self.pinned_pairs.is_empty() {
             if let Some(control) = capture_control {
-                control.apply_filter("type mgt or type data".to_string());
+                control.apply_filter(restore_filter.to_string());
                 tracing::debug!("restored normal scan filter after last pinned pair expired");
             }
         }
@@ -132,6 +137,7 @@ impl HandshakeMonitor {
         context: &AuditContext,
         export_dir: Option<&str>,
         capture_control: Option<&CaptureControl>,
+        restore_filter: &str,
         ttl: Duration,
     ) -> Option<HandshakeAlert> {
         let observation = eapol_key_observation(frame)?;
@@ -245,7 +251,7 @@ impl HandshakeMonitor {
         self.pinned_pairs.remove(&key);
         if self.pinned_pairs.is_empty() {
             if let Some(control) = capture_control {
-                control.apply_filter("type mgt or type data".to_string());
+                control.apply_filter(restore_filter.to_string());
                 tracing::debug!("restored normal scan filter after handshake completion");
             }
         }

@@ -83,7 +83,7 @@ use crate::{
     },
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_oracle_json, reconcile_backlog,
+        publish_entry, publish_handshake_alert, publish_oracle_json_durable, reconcile_backlog,
         replay_journal, PublishClient, PublishError, PublishState, SharedPublishState,
         SyncPublisherClient,
     },
@@ -240,6 +240,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &handles.backlog,
                     &*handles.publish_client,
                     &handles.publish_state,
+                    &handles.current_filter,
                     &mut pipeline_state,
                     &handles.stats,
                     &handles.authorized_config_generation,
@@ -271,9 +272,10 @@ async fn run_sensor() -> Result<(), SensorError> {
             }
             _ = bandwidth_flush.tick() => {
                 let ttl = Duration::from_secs(handles.config.handshake_ttl_secs);
+                let restore_filter = filter_snapshot(&handles.current_filter, &handles.config.bpf);
                 pipeline_state
                     .handshake_monitor
-                    .cleanup_expired(ttl, Some(&handles.capture_control));
+                    .cleanup_expired(ttl, Some(&handles.capture_control), &restore_filter);
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
                 // Compute median (publish_time - window_end) across bandwidth events.
                 let now = Utc::now();
@@ -293,7 +295,13 @@ async fn run_sensor() -> Result<(), SensorError> {
                     stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
                     stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
                 }
-                publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
+                publish_bandwidth_events(
+                    &handles.publish_state,
+                    &*handles.backlog,
+                    &*handles.publish_client,
+                    bandwidth_events,
+                )
+                .await;
             }
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
@@ -308,7 +316,17 @@ async fn run_sensor() -> Result<(), SensorError> {
                     "location_id": context.location_id,
                     "clients": snapshot.clients,
                 });
-                if let Err(error) = publish_oracle_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &inventory_payload, &observed_at).await {
+                if let Err(error) = publish_oracle_json_durable(
+                    &handles.publish_state,
+                    &*handles.backlog,
+                    &*handles.publish_client,
+                    "publish_client_inventory",
+                    CLIENT_INVENTORY_TOPIC,
+                    &inventory_payload,
+                    &observed_at,
+                )
+                .await
+                {
                     warn!(%error, "client inventory publish failed");
                 }
 
@@ -352,6 +370,7 @@ struct SensorHandles {
     audit_window: SharedAuditWindow,
     device: String,
     context: SharedContext,
+    current_filter: SharedFilter,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     capture_control: CaptureControl,
     backlog: Arc<RedpandaBacklog>,
@@ -364,6 +383,7 @@ struct SensorHandles {
 
 /// Thread-safe shared reference to the current audit context.
 type SharedContext = Arc<RwLock<AuditContext>>;
+type SharedFilter = Arc<RwLock<String>>;
 
 /// Mutable per-packet state owned by the main loop.
 /// Never shared across tasks to avoid locks on the hot path.
@@ -773,6 +793,14 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         );
     }
 
+    step(
+        format!(
+            "set wireless capture channel {} on interface {device}",
+            config.channel
+        ),
+        apply_configured_channel(&device, config.channel, set_channel),
+    )?;
+
     let context = Arc::new(RwLock::new(AuditContext {
         sensor_id,
         location_id: config.location_id.clone(),
@@ -803,7 +831,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
     // Shared filter state: tracks the last-applied BPF so the hopper can skip
     // re-applying when the filter hasn't changed.
-    let current_filter: Arc<RwLock<String>> = Arc::new(RwLock::new(config.bpf.clone()));
+    let current_filter: SharedFilter = Arc::new(RwLock::new(config.bpf.clone()));
 
     if config.channel_hop_enabled {
         spawn_channel_hopper(
@@ -822,7 +850,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             config.location_id.clone(),
             Arc::clone(&context),
             packet_stream.control.clone(),
-            current_filter,
+            Arc::clone(&current_filter),
         );
     }
     // Spawn periodic memory backlog flush timer
@@ -853,6 +881,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         audit_window,
         device,
         context,
+        current_filter,
         packets: packet_stream.packets,
         capture_control: packet_stream.control,
         backlog,
@@ -912,6 +941,13 @@ fn spawn_backlog_prune_task(backlog: Arc<RedpandaBacklog>) {
     });
 }
 
+fn apply_configured_channel<F, E>(device: &str, channel: u8, set: F) -> Result<(), E>
+where
+    F: FnOnce(&str, u8) -> Result<(), E>,
+{
+    set(device, channel)
+}
+
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
 /// authorized network -> tags threats -> enriches with MAC device lookup -> observes
 /// bandwidth -> publishes to Redpanda.
@@ -922,6 +958,7 @@ async fn process_packet(
     backlog: &RedpandaBacklog,
     publish_client: &dyn PublishClient,
     publish_state: &SharedPublishState,
+    current_filter: &SharedFilter,
     pipeline: &mut PipelineState,
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
@@ -973,11 +1010,13 @@ async fn process_packet(
         .export_handshakes
         .then_some(config.sync.outbox_dir.as_str());
     let handshake_ttl = Duration::from_secs(config.handshake_ttl_secs);
+    let restore_filter = filter_snapshot(current_filter, &config.bpf);
     let handshake_alert = pipeline.handshake_monitor.observe(
         &mut wifi_frame,
         context,
         handshake_export_dir,
         Some(capture_control),
+        &restore_filter,
         handshake_ttl,
     );
     let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
@@ -1048,7 +1087,9 @@ async fn process_packet(
     }
     pipeline.client_inventory.observe(&mut entry);
     if let Some(alert) = pipeline.sequence_tracker.observe(&entry) {
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_sequence_alert",
             SEQUENCE_ALERT_TOPIC,
@@ -1145,7 +1186,9 @@ async fn process_packet(
             .attack_timeline_correlator
             .observe(&entry, "karma_probe_response")
         {
-            if let Err(error) = publish_oracle_json(
+            if let Err(error) = publish_oracle_json_durable(
+                publish_state,
+                backlog,
                 publish_client,
                 "publish_attack_sequence_alert",
                 ATTACK_SEQUENCE_TOPIC,
@@ -1164,7 +1207,9 @@ async fn process_packet(
     {
         entry.tags.push("threat:signal_anomaly".to_string());
         entry.anomaly_reasons.push("signal_anomaly".to_string());
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_signal_anomaly_alert",
             SIGNAL_ANOMALY_TOPIC,
@@ -1189,7 +1234,9 @@ async fn process_packet(
                 .attack_timeline_correlator
                 .observe(&entry, "bssid_spoofing")
             {
-                if let Err(error) = publish_oracle_json(
+                if let Err(error) = publish_oracle_json_durable(
+                    publish_state,
+                    backlog,
                     publish_client,
                     "publish_attack_sequence_alert",
                     ATTACK_SEQUENCE_TOPIC,
@@ -1202,7 +1249,9 @@ async fn process_packet(
                 }
             }
         }
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_rogue_ap_alert",
             ROGUE_AP_TOPIC,
@@ -1220,7 +1269,9 @@ async fn process_packet(
         config.deauth_flood_window_secs,
         config.deauth_flood_cooldown_secs,
     ) {
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_deauth_flood_alert",
             DEAUTH_FLOOD_TOPIC,
@@ -1238,7 +1289,9 @@ async fn process_packet(
         if let Some(alert) =
             pmf_attack_alert_from_entry(&entry, tag, pipeline.pmf_reconnect_window_ms)
         {
-            if let Err(error) = publish_oracle_json(
+            if let Err(error) = publish_oracle_json_durable(
+                publish_state,
+                backlog,
                 publish_client,
                 "publish_pmf_attack_alert",
                 PMF_ATTACK_TOPIC,
@@ -1305,7 +1358,7 @@ async fn process_packet(
                 entry.identity_source = "device_registry".to_string();
             }
         }
-    } // end of skip_mac_lookup else block
+    }
     // First, let the traffic bucket observe the current frame so it can
     // compute risk scores and detect low-CV burst traffic. Then obtain
     // burst MACs from the *previous* drain window for tagging.
@@ -1332,7 +1385,7 @@ async fn process_packet(
             entry.tags.push("threat:burst_automated".to_string());
         }
     }
-    publish_bandwidth_events(publish_client, bandwidth_events).await;
+    publish_bandwidth_events(publish_state, backlog, publish_client, bandwidth_events).await;
     info!(
         target: "wireless_audit",
         event_type = %entry.event_type,
@@ -1357,6 +1410,8 @@ fn bandwidth_flush_interval() -> tokio::time::Interval {
 }
 
 async fn publish_bandwidth_events(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     events: Vec<WirelessBandwidthEvent>,
 ) {
@@ -1370,7 +1425,7 @@ async fn publish_bandwidth_events(
                 "wireless bandwidth threshold exceeded for external BSSID"
             );
         }
-        if let Err(error) = publish_bandwidth_event(publisher, &event).await {
+        if let Err(error) = publish_bandwidth_event(state, backlog, publisher, &event).await {
             warn!(
                 %error,
                 source_mac = %event.source_mac,
@@ -1392,6 +1447,13 @@ fn interval_secs(secs: u64) -> tokio::time::Interval {
 /// Returns a clone of the current audit context.
 fn context_snapshot(context: &SharedContext) -> AuditContext {
     context.read().unwrap().clone()
+}
+
+fn filter_snapshot(current_filter: &SharedFilter, fallback: &str) -> String {
+    current_filter
+        .read()
+        .map(|filter| filter.clone())
+        .unwrap_or_else(|_| fallback.to_string())
 }
 
 /// Spawns a background task that cycles through channels 1, 6, and 11 at the configured interval.
@@ -1466,7 +1528,13 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
         stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
     }
-    publish_bandwidth_events(&*handles.publish_client, events).await;
+    publish_bandwidth_events(
+        &handles.publish_state,
+        &*handles.backlog,
+        &*handles.publish_client,
+        events,
+    )
+    .await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
@@ -1775,6 +1843,19 @@ mod tests {
             value["correlation"]["wall_clock_delta_ms"],
             serde_json::json!(2_000)
         );
+    }
+
+    #[test]
+    fn startup_channel_application_uses_configured_device_and_channel() {
+        let mut called = None;
+
+        apply_configured_channel("wlan0", 11, |device, channel| {
+            called = Some((device.to_string(), channel));
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+
+        assert_eq!(called, Some(("wlan0".to_string(), 11)));
     }
 
     #[test]

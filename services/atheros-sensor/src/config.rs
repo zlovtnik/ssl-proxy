@@ -86,6 +86,16 @@ pub enum ConfigError {
     InvalidAuditWindowStart(String),
     #[error("invalid AUDIT_WINDOW_END: {0}")]
     InvalidAuditWindowEnd(String),
+    #[error(
+        "SYNC_REDPANDA_SASL_USERNAME is set but SYNC_REDPANDA_SASL_PASSWORD or SYNC_REDPANDA_SASL_PASSWORD_FILE is missing"
+    )]
+    MissingSyncRedpandaSaslPassword,
+    #[error("SYNC_REDPANDA_SASL_PASSWORD is set but SYNC_REDPANDA_SASL_USERNAME is missing")]
+    MissingSyncRedpandaSaslUsername,
+    #[error("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is set but SYNC_REDPANDA_SSL_KEY_LOCATION is missing")]
+    MissingSyncRedpandaSslKeyLocation,
+    #[error("SYNC_REDPANDA_SSL_KEY_LOCATION is set but SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is missing")]
+    MissingSyncRedpandaSslCertificateLocation,
     #[error("{variable} points at Docker service host `{host}`, but ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true requires host-reachable endpoints for host network mode; use 127.0.0.1 or another host-reachable address")]
     HostNetworkEndpoint {
         variable: &'static str,
@@ -149,6 +159,7 @@ impl AppConfig {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox/publish-spool".to_string()),
         };
+        validate_sync_config(&sync)?;
         if read_bool("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", false) {
             validate_host_network_endpoints(sync.redpanda_bootstrap_servers.as_deref())?;
         }
@@ -262,6 +273,20 @@ impl AppConfig {
                 .unwrap_or(30)
                 .max(1),
         })
+    }
+}
+
+fn validate_sync_config(sync: &SyncConfig) -> Result<(), ConfigError> {
+    match (&sync.sasl_username, &sync.sasl_password) {
+        (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSaslPassword),
+        (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSaslUsername),
+        _ => {}
+    }
+
+    match (&sync.ssl_certificate_location, &sync.ssl_key_location) {
+        (Some(_), None) => Err(ConfigError::MissingSyncRedpandaSslKeyLocation),
+        (None, Some(_)) => Err(ConfigError::MissingSyncRedpandaSslCertificateLocation),
+        _ => Ok(()),
     }
 }
 
@@ -470,9 +495,13 @@ mod tests {
             "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
             "SYNC_REDPANDA_CONNECT_TIMEOUT_MS",
             "SYNC_REDPANDA_PUBLISH_TIMEOUT_MS",
+            "SYNC_REDPANDA_SECURITY_PROTOCOL",
+            "SYNC_REDPANDA_SASL_MECHANISMS",
             "SYNC_REDPANDA_SASL_USERNAME",
             "SYNC_REDPANDA_SASL_PASSWORD",
             "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+            "SYNC_PUBLISH_QUEUE_CAPACITY",
+            "SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS",
             "SYNC_REDPANDA_SSL_ENABLED",
             "SYNC_REDPANDA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM",
             "SYNC_REDPANDA_SSL_CA_LOCATION",
@@ -480,6 +509,7 @@ mod tests {
             "SYNC_REDPANDA_SSL_KEY_LOCATION",
             "SYNC_INLINE_PAYLOAD_MAX_BYTES",
             "SYNC_OUTBOX_DIR",
+            "SYNC_PUBLISH_SPOOL_DIR",
             "ATH_SENSOR_DEVICE",
             "ATH_SENSOR_LOCATION_ID",
             "ATH_SENSOR_CHANNEL",
@@ -564,6 +594,70 @@ mod tests {
         assert_eq!(config.redpanda_request_timeout_ms, 15_000);
         assert!(!config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 7);
+    }
+
+    #[test]
+    fn redpanda_sasl_username_requires_password() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SASL_USERNAME", "sensor-user");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing SASL password to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSaslPassword
+        ));
+    }
+
+    #[test]
+    fn redpanda_sasl_password_requires_username() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SASL_PASSWORD", "sensor-password");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing SASL username to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSaslUsername
+        ));
+    }
+
+    #[test]
+    fn redpanda_client_certificate_requires_key() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION", "/tmp/client.pem");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing client key to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSslKeyLocation
+        ));
+    }
+
+    #[test]
+    fn redpanda_client_key_requires_certificate() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SSL_KEY_LOCATION", "/tmp/client.key");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing client certificate to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSslCertificateLocation
+        ));
     }
 
     #[test]
