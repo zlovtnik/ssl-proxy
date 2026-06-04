@@ -957,8 +957,12 @@ async fn queue_publish_with_backpressure(
     payload: &str,
     dedupe_key: &str,
 ) -> Result<(), String> {
+    let started = Instant::now();
     match publisher.enqueue_message(topic, payload) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            crate::metrics::record_redpanda_publish(true, started.elapsed().as_millis());
+            Ok(())
+        }
         Err(error) if error == ENQUEUE_TIMEOUT_ERROR => {
             debug!(
                 dedupe_key,
@@ -966,16 +970,24 @@ async fn queue_publish_with_backpressure(
                 payload_bytes = payload.len(),
                 "sync publisher queue full; retrying with backpressure"
             );
-            publisher
+            let publish_result = publisher
                 .publish_message(topic, payload)
                 .await
                 .map_err(|error| {
                     format!("stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}")
-                })
+                });
+            crate::metrics::record_redpanda_publish(
+                publish_result.is_ok(),
+                started.elapsed().as_millis(),
+            );
+            publish_result
         }
-        Err(error) => Err(format!(
-            "stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}"
-        )),
+        Err(error) => {
+            crate::metrics::record_redpanda_publish(false, started.elapsed().as_millis());
+            Err(format!(
+                "stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}"
+            ))
+        }
     }
 }
 

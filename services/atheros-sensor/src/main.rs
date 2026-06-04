@@ -1609,6 +1609,12 @@ fn init_tracing(
         ),
     };
 
+    let otel_provider = ssl_proxy::observability::init_tracer_provider("atheros-sensor");
+    let otel_layer = otel_provider.as_ref().map(|provider| {
+        use opentelemetry::trace::TracerProvider as _;
+        tracing_opentelemetry::layer().with_tracer(provider.tracer("atheros-sensor"))
+    });
+
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer().json())
@@ -1616,6 +1622,7 @@ fn init_tracing(
             Arc::clone(&audit_window_active),
             audit_layer_stream,
         ))
+        .with(otel_layer)
         .init();
 
     (filter_source, audit_window_active)

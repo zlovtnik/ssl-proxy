@@ -75,9 +75,12 @@ pub(crate) fn insert_wireless_rogue_ap_transaction(
             )
         })?;
     }
-    connection
-        .commit()
-        .map_err(|error| format!("commit WIRELESS_ALERTS rogue_ap batch: {}", error_chain(&error)))?;
+    connection.commit().map_err(|error| {
+        format!(
+            "commit WIRELESS_ALERTS rogue_ap batch: {}",
+            error_chain(&error)
+        )
+    })?;
     Ok(rows.len() as u64)
 }
 
@@ -311,8 +314,11 @@ pub(crate) fn insert_wireless_pmf_attack_transaction(
             )
         })?;
     }
-    connection
-        .commit()
-        .map_err(|error| format!("commit WIRELESS_ALERTS pmf_attack batch: {}", error_chain(&error)))?;
+    connection.commit().map_err(|error| {
+        format!(
+            "commit WIRELESS_ALERTS pmf_attack batch: {}",
+            error_chain(&error)
+        )
+    })?;
     Ok(rows.len() as u64)
 }

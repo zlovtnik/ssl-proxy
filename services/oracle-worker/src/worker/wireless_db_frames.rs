@@ -112,8 +112,11 @@ pub(crate) fn insert_wireless_audit_frames_transaction(
             )
         })?;
     }
-    connection
-        .commit()
-        .map_err(|error| format!("commit WIRELESS_AUDIT_FRAMES batch: {}", error_chain(&error)))?;
+    connection.commit().map_err(|error| {
+        format!(
+            "commit WIRELESS_AUDIT_FRAMES batch: {}",
+            error_chain(&error)
+        )
+    })?;
     Ok(rows.len() as u64)
 }

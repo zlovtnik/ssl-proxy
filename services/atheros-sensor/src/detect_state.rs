@@ -188,10 +188,7 @@ impl ClientInventory {
             .as_deref()
             .or(entry.destination_bssid.as_deref())
             .map(normalize_mac);
-        if matches!(
-            entry.frame_subtype.as_str(),
-            "association_request"
-        ) {
+        if matches!(entry.frame_subtype.as_str(), "association_request") {
             if let Some(bssid) = association_bssid {
                 if let Some(prev_bssid) = &profile.last_bssid {
                     if prev_bssid != &bssid {
@@ -465,14 +462,21 @@ impl RogueApTracker {
                 // Normalize BSSID by removing colons/hyphens, take first 6 chars
                 let normalized = bssid.replace([':', '-', '.'], "");
                 let oui = &normalized[..normalized.len().min(6)];
-                self.ap_vendor_by_bssid.insert(bssid.clone(), oui.to_string());
+                self.ap_vendor_by_bssid
+                    .insert(bssid.clone(), oui.to_string());
 
                 // Check for vendor conflict: same SSID, different BSSID, different OUI
-                let has_conflict = self.ap_vendor_by_bssid.iter().any(|(other_bssid, other_oui)| {
-                    other_bssid != bssid
-                        && other_oui != oui
-                        && self.ssid_by_bssid.get(other_bssid).map_or(false, |s| s == ssid)
-                });
+                let has_conflict =
+                    self.ap_vendor_by_bssid
+                        .iter()
+                        .any(|(other_bssid, other_oui)| {
+                            other_bssid != bssid
+                                && other_oui != oui
+                                && self
+                                    .ssid_by_bssid
+                                    .get(other_bssid)
+                                    .map_or(false, |s| s == ssid)
+                        });
                 if has_conflict {
                     reasons.push("vendor_conflict".to_string());
                 }
@@ -519,12 +523,12 @@ impl RogueApTracker {
 /// Uses fixed baselines where applicable (e.g. normal encryption = present, single channel = 1).
 fn rogue_ap_explanation(reason: &str) -> AlertExplanation {
     let (baseline, observed, contribution) = match reason {
-        "open_authorized_ssid" => (1.0, 0.0, 1.0),   // expected encrypted (1), found open (0)
-        "ssid_typosquat"       => (1.0, 0.0, 0.9),    // expected exact match (1), found typosquat (0)
-        "bssid_spoofing"       => (1.0, 0.0, 0.8),    // expected stable mapping (1), found changed (0)
-        "channel_conflict"     => (1.0, 2.0, 0.7),    // expected single channel (1), found multiple (≥2)
-        "channel_band_conflict" => (1.0, 2.0, 0.6),   // expected consistent band (1), found band switch (2)
-        "vendor_conflict"      => (1.0, 2.0, 0.5),    // expected single vendor (1), found multiple (≥2)
+        "open_authorized_ssid" => (1.0, 0.0, 1.0), // expected encrypted (1), found open (0)
+        "ssid_typosquat" => (1.0, 0.0, 0.9),       // expected exact match (1), found typosquat (0)
+        "bssid_spoofing" => (1.0, 0.0, 0.8),       // expected stable mapping (1), found changed (0)
+        "channel_conflict" => (1.0, 2.0, 0.7), // expected single channel (1), found multiple (≥2)
+        "channel_band_conflict" => (1.0, 2.0, 0.6), // expected consistent band (1), found band switch (2)
+        "vendor_conflict" => (1.0, 2.0, 0.5), // expected single vendor (1), found multiple (≥2)
         _ => (1.0, 1.0, 0.0),
     };
     AlertExplanation {
@@ -539,7 +543,9 @@ fn rogue_ap_explanation(reason: &str) -> AlertExplanation {
 fn explain_reason(reason: &str) -> String {
     match reason {
         "open_authorized_ssid" => "Known SSID broadcasting without encryption".into(),
-        "ssid_typosquat" => "SSID is an edit-distance match to a known network (potential typosquatting)".into(),
+        "ssid_typosquat" => {
+            "SSID is an edit-distance match to a known network (potential typosquatting)".into()
+        }
         "bssid_spoofing" => "BSSID changed its SSID mapping since last observation".into(),
         "channel_conflict" => "Same BSSID observed on multiple channels".into(),
         "channel_band_conflict" => "BSSID originally on 5 GHz now seen on 2.4 GHz".into(),
@@ -644,9 +650,10 @@ impl DeauthFloodTracker {
                 baseline: threshold as f64,
                 contribution: contribution.min(1.0),
             }],
-            explanation: vec![
-                format!("deauth_frame_count: {} in {}s window (threshold: {})", frame_count, window_secs, threshold),
-            ],
+            explanation: vec![format!(
+                "deauth_frame_count: {} in {}s window (threshold: {})",
+                frame_count, window_secs, threshold
+            )],
         })
     }
 }
@@ -943,16 +950,17 @@ impl SequenceTracker {
             .map(str::trim)
             .filter(|s| !s.is_empty())?;
         let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
-        let sequence = self.sessions.entry(session_key.to_string()).or_insert_with(||
-            SessionSequence {
+        let sequence = self
+            .sessions
+            .entry(session_key.to_string())
+            .or_insert_with(|| SessionSequence {
                 frames: VecDeque::new(),
                 first_seen: observed_at,
                 last_seen: observed_at,
                 seen_beacon_bssids: HashSet::new(),
                 auth_deauth_events: Vec::new(),
                 emitted_tags: HashSet::new(),
-            }
-        );
+            });
         sequence.last_seen = observed_at;
 
         let subtype = entry.frame_subtype.as_str();
@@ -977,7 +985,9 @@ impl SequenceTracker {
         }
 
         if subtype == "authentication" || subtype == "deauthentication" {
-            sequence.auth_deauth_events.push((observed_at, subtype.to_string()));
+            sequence
+                .auth_deauth_events
+                .push((observed_at, subtype.to_string()));
             let cutoff = observed_at - chrono::Duration::seconds(10);
             sequence
                 .auth_deauth_events
@@ -1095,9 +1105,12 @@ impl SequenceTracker {
                 baseline: 1.0,
                 contribution: seq_contribution,
             }],
-            explanation: vec![
-                format!("attack_tag: {} with {} frames in sequence (session: {})", attack_tag, sequence_tokens.len(), session_key),
-            ],
+            explanation: vec![format!(
+                "attack_tag: {} with {} frames in sequence (session: {})",
+                attack_tag,
+                sequence_tokens.len(),
+                session_key
+            )],
         }
     }
 }
@@ -1201,9 +1214,12 @@ impl AttackTimelineCorrelator {
                         contribution: if has_spoofing { 0.5 } else { 0.0 },
                     },
                 ],
-                explanation: vec![
-                    format!("combined_attacks: {} against SSID '{}' within {}s window", chain_str, ssid, ATTACK_CORRELATION_WINDOW.as_secs()),
-                ],
+                explanation: vec![format!(
+                    "combined_attacks: {} against SSID '{}' within {}s window",
+                    chain_str,
+                    ssid,
+                    ATTACK_CORRELATION_WINDOW.as_secs()
+                )],
             })
         } else {
             None

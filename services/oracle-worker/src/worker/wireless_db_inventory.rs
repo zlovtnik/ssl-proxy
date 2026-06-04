@@ -66,9 +66,12 @@ pub(crate) fn insert_wireless_client_inventory_transaction(
             )
         })?;
     }
-    connection
-        .commit()
-        .map_err(|error| format!("commit WIRELESS_CLIENT_INVENTORY batch: {}", error_chain(&error)))?;
+    connection.commit().map_err(|error| {
+        format!(
+            "commit WIRELESS_CLIENT_INVENTORY batch: {}",
+            error_chain(&error)
+        )
+    })?;
     Ok(rows.len() as u64)
 }
 
@@ -119,8 +122,11 @@ pub(crate) fn insert_wireless_probe_requests_transaction(
             )
         })?;
     }
-    connection
-        .commit()
-        .map_err(|error| format!("commit WIRELESS_PROBE_REQUESTS batch: {}", error_chain(&error)))?;
+    connection.commit().map_err(|error| {
+        format!(
+            "commit WIRELESS_PROBE_REQUESTS batch: {}",
+            error_chain(&error)
+        )
+    })?;
     Ok(rows.len() as u64)
 }

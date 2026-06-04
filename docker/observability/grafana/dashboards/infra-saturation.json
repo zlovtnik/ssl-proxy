@@ -15,25 +15,30 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "percent"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 12,
         "x": 0,
         "y": 0
       },
       "id": 1,
       "targets": [
         {
-          "expr": "pg_up",
-          "legendFormat": "{{instance}}",
+          "expr": "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+          "legendFormat": "host {{instance}}",
           "refId": "A"
+        },
+        {
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[5m]))",
+          "legendFormat": "container {{name}}",
+          "refId": "B"
         }
       ],
-      "title": "Postgres Exporter Up",
+      "title": "CPU Used",
       "type": "timeseries"
     },
     {
@@ -43,53 +48,30 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "percent"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
+        "w": 12,
+        "x": 12,
         "y": 0
       },
       "id": 2,
       "targets": [
         {
-          "expr": "redis_up",
-          "legendFormat": "{{instance}}",
+          "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
+          "legendFormat": "host {{instance}}",
           "refId": "A"
-        }
-      ],
-      "title": "Redis Exporter Up",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 0
-      },
-      "id": 3,
-      "targets": [
         {
-          "expr": "up{job=\"redpanda\"}",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
+          "expr": "100 * container_memory_working_set_bytes{name!=\"\"} / clamp_min(container_spec_memory_limit_bytes{name!=\"\"}, 1)",
+          "legendFormat": "container {{name}}",
+          "refId": "B"
         }
       ],
-      "title": "Redpanda Metrics Up",
+      "title": "Memory Used",
       "type": "timeseries"
     },
     {
@@ -99,7 +81,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes"
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -109,15 +91,20 @@
         "x": 0,
         "y": 8
       },
-      "id": 4,
+      "id": 3,
       "targets": [
         {
-          "expr": "sum(pg_database_size_bytes) by (datname)",
-          "legendFormat": "{{datname}}",
+          "expr": "100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\",mountpoint!~\"/run.*|/var/lib/docker/.+\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\",mountpoint!~\"/run.*|/var/lib/docker/.+\"}))",
+          "legendFormat": "{{instance}} {{mountpoint}}",
           "refId": "A"
+        },
+        {
+          "expr": "100 * container_fs_usage_bytes{name!=\"\"} / clamp_min(container_fs_limit_bytes{name!=\"\"}, 1)",
+          "legendFormat": "container {{name}}",
+          "refId": "B"
         }
       ],
-      "title": "Postgres Database Size",
+      "title": "Filesystem Used",
       "type": "timeseries"
     },
     {
@@ -127,7 +114,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -137,15 +124,180 @@
         "x": 12,
         "y": 8
       },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "100 * avg by (instance) (rate(node_cpu_seconds_total{mode=\"iowait\"}[5m]))",
+          "legendFormat": "iowait {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "100 * max by (instance, device) (rate(node_disk_io_time_seconds_total{device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "busy {{device}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Disk I/O Wait And Busy",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
       "id": 5,
       "targets": [
         {
-          "expr": "sum(rate(minio_s3_requests_total[5m])) by (api)",
-          "legendFormat": "{{api}}",
+          "expr": "sum by (instance, device) (rate(node_disk_read_bytes_total{device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "read {{device}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (instance, device) (rate(node_disk_written_bytes_total{device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "write {{device}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Host Disk Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{name!=\"\"}[5m]))",
+          "legendFormat": "read {{name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{name!=\"\"}[5m]))",
+          "legendFormat": "write {{name}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Container Filesystem I/O",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum by (instance, device) (rate(node_network_receive_bytes_total{device!~\"lo|veth.*|br.*|docker.*\"}[5m]))",
+          "legendFormat": "rx {{device}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (instance, device) (rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|br.*|docker.*\"}[5m]))",
+          "legendFormat": "tx {{device}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Host Network I/O",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{name!=\"\"}[5m]))",
+          "legendFormat": "rx {{name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{name!=\"\"}[5m]))",
+          "legendFormat": "tx {{name}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Container Network I/O",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "up{job=~\"node-exporter|cadvisor|postgres-exporter|redis-exporter|redpanda|minio\"}",
+          "legendFormat": "{{job}} {{instance}}",
           "refId": "A"
         }
       ],
-      "title": "MinIO API Request Rate",
+      "title": "Infra Targets Up",
       "type": "timeseries"
     }
   ],
@@ -153,8 +305,8 @@
   "schemaVersion": 39,
   "tags": [
     "observability",
-    "non-vector",
-    "infra"
+    "infra",
+    "saturation"
   ],
   "templating": {
     "list": []
@@ -164,8 +316,8 @@
     "to": "now"
   },
   "timezone": "browser",
-  "title": "Infra Saturation (Redpanda, Postgres, Redis, MinIO)",
+  "title": "Infra Saturation",
   "uid": "obs-infra-saturation",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

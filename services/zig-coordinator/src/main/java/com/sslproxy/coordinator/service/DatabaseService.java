@@ -1,9 +1,12 @@
 package com.sslproxy.coordinator.service;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import org.postgresql.util.PGobject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Wraps all stored procedure calls to the coordinator schema.
@@ -28,17 +32,24 @@ public class DatabaseService {
 
     private final JdbcTemplate jdbc;
     private final CoordinatorProperties props;
+    private final ObservationRegistry observationRegistry;
 
     public DatabaseService(JdbcTemplate jdbc, CoordinatorProperties props) {
+        this(jdbc, props, ObservationRegistry.NOOP);
+    }
+
+    @Autowired
+    public DatabaseService(JdbcTemplate jdbc, CoordinatorProperties props, ObservationRegistry observationRegistry) {
         this.jdbc = jdbc;
         this.props = props;
+        this.observationRegistry = observationRegistry;
     }
 
     // ========== Connectivity ==========
 
     /** Quick connectivity check. */
     public void checkConnectivity() {
-        jdbc.queryForObject("SELECT 1", Integer.class);
+        observeDb("coordinator.check_connectivity", () -> jdbc.queryForObject("SELECT 1", Integer.class));
     }
 
     // ========== Cursor management ==========
@@ -48,11 +59,11 @@ public class DatabaseService {
      * Returns the cursor value.
      */
     public String ensureCursor(String streamName) {
-        return jdbc.queryForObject(
+        return observeDb("coordinator.ensure_cursor", () -> jdbc.queryForObject(
                 "SELECT coordinator.ensure_cursor(?::text)::text",
                 String.class,
                 streamName
-        );
+        ));
     }
 
     /**
@@ -82,12 +93,12 @@ public class DatabaseService {
      * coordinator.pending_ledger_count()
      */
     public long pendingLedgerCount() {
-        return Optional.ofNullable(
+        return observeDb("coordinator.pending_ledger_count", () -> Optional.ofNullable(
                 jdbc.queryForObject(
                         "SELECT coordinator.pending_ledger_count()::text",
                         String.class
                 )
-        ).map(Long::parseLong).orElse(0L);
+        ).map(Long::parseLong).orElse(0L));
     }
 
     /**
@@ -97,7 +108,7 @@ public class DatabaseService {
     public long processIngestLedger() {
         String streamNames = normalizeCsv(props.getStreamNames());
         String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.process_ingest_ledger", () -> jdbc.queryForObject(
                 "SELECT coordinator.process_ingest_ledger(" +
                         "string_to_array(?::text, ','), " +
                         "string_to_array(?::text, ','), " +
@@ -107,7 +118,7 @@ public class DatabaseService {
                 props.getScanMaxAttempts(),
                 props.getScanRetryBackoffSeconds(),
                 props.getIngestBatchSize()
-        );
+        ));
         if (result == null || result.isEmpty()) return 0;
         try {
             return Long.parseLong(result.trim());
@@ -134,7 +145,7 @@ public class DatabaseService {
             List<ScanRequestRecord> chunk = records.subList(start, end);
 
             String[] streamNames = normalizedCsvArray(props.getStreamNames());
-            String recorded = jdbc.execute((Connection connection) -> {
+            String recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) -> {
                 Array requestArray = null;
                 Array payloadArray = null;
                 Array shaArray = null;
@@ -159,7 +170,7 @@ public class DatabaseService {
                     freeArray(shaArray);
                     freeArray(streamNameArray);
                 }
-            });
+            }));
             if (recorded != null && !recorded.isEmpty()) {
                 totalRecorded += Integer.parseInt(recorded.trim());
             }
@@ -175,11 +186,11 @@ public class DatabaseService {
      */
     public Optional<String> getNextBatch() {
         String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.get_next_batch", () -> jdbc.queryForObject(
                 "SELECT coordinator.get_next_batch(string_to_array(?::text, ','))::text",
                 String.class,
                 oracleStreamNames
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
@@ -189,7 +200,7 @@ public class DatabaseService {
      */
     public int recoverStaleDispatchedBatches() {
         String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.recover_stale_dispatched_batches", () -> jdbc.queryForObject(
                 "SELECT coordinator.recover_stale_dispatched_batches(" +
                         "string_to_array(?::text, ','), " +
                         "?::integer, ?::integer)::text",
@@ -197,7 +208,7 @@ public class DatabaseService {
                 oracleStreamNames,
                 props.getBatchDispatchLeaseSeconds(),
                 props.getBatchMaxAttempts()
-        );
+        ));
         if (result == null || result.isEmpty()) return 0;
         return Integer.parseInt(result.trim());
     }
@@ -207,11 +218,11 @@ public class DatabaseService {
      * coordinator.mark_batch_dispatch_failed()
      */
     public Optional<String> markBatchDispatchFailed(String loadJson, String errorText) {
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.mark_batch_dispatch_failed", () -> jdbc.queryForObject(
                 "SELECT coordinator.mark_batch_dispatch_failed(?::jsonb, ?::text, ?::integer)::text",
                 String.class,
                 loadJson, errorText, props.getBatchMaxAttempts()
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
@@ -220,11 +231,11 @@ public class DatabaseService {
      * coordinator.release_batch_dispatch()
      */
     public Optional<String> releaseBatchDispatch(String loadJson, String errorText) {
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.release_batch_dispatch", () -> jdbc.queryForObject(
                 "SELECT coordinator.release_batch_dispatch(?::jsonb, ?::text)::text",
                 String.class,
                 loadJson, errorText
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
@@ -244,7 +255,7 @@ public class DatabaseService {
             int end = Math.min(start + chunkSize, resultJsons.size());
             List<String> chunk = resultJsons.subList(start, end);
 
-            String result = jdbc.execute((Connection connection) -> {
+            String result = observeDb("coordinator.process_batch_results", () -> jdbc.execute((Connection connection) -> {
                 Array resultArray = null;
                 try {
                     resultArray = createJsonbArray(connection, chunk);
@@ -256,7 +267,7 @@ public class DatabaseService {
                 } finally {
                     freeArray(resultArray);
                 }
-            });
+            }));
             if (result != null && !result.isEmpty()) {
                 total += Integer.parseInt(result.trim());
             }
@@ -271,63 +282,63 @@ public class DatabaseService {
      * coordinator.generate_shadow_alerts()
      */
     public List<String> generateShadowAlerts() {
-        return jdbc.queryForList(
+        return observeDb("coordinator.generate_shadow_alerts", () -> jdbc.queryForList(
                 "SELECT coordinator.generate_shadow_alerts()::text",
                 String.class
-        );
+        ));
     }
 
     // ========== Wireless: Backlog ==========
 
     public void saveBacklogEntry(String payloadJson) {
-        jdbc.update("SELECT coordinator.save_backlog_entry(?::jsonb)", payloadJson);
+        observeDb("coordinator.save_backlog_entry", () -> jdbc.update("SELECT coordinator.save_backlog_entry(?::jsonb)", payloadJson));
     }
 
     public Optional<String> listPendingBacklog() {
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.list_pending_backlog", () -> jdbc.queryForObject(
                 "SELECT coordinator.list_pending_backlog()::text",
                 String.class
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
     public void markBacklogSynced(String dedupeKey) {
-        jdbc.update("SELECT coordinator.mark_backlog_synced(?::text)", dedupeKey);
+        observeDb("coordinator.mark_backlog_synced", () -> jdbc.update("SELECT coordinator.mark_backlog_synced(?::text)", dedupeKey));
     }
 
     public Optional<String> pruneBacklog() {
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.prune_backlog", () -> jdbc.queryForObject(
                 "SELECT coordinator.prune_backlog()::text",
                 String.class
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
     // ========== Wireless: MAC lookup ==========
 
     public Optional<String> lookupDeviceByMac(String mac) {
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.lookup_device_by_mac", () -> jdbc.queryForObject(
                 "SELECT coordinator.lookup_device_by_mac(?::text)::text",
                 String.class,
                 mac
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
     // ========== Wireless: Networks ==========
 
     public Optional<String> listAuthorizedNetworks() {
-        String result = jdbc.queryForObject(
+        String result = observeDb("coordinator.list_authorized_networks", () -> jdbc.queryForObject(
                 "SELECT coordinator.list_authorized_networks()::text",
                 String.class
-        );
+        ));
         return Optional.ofNullable(result).filter(s -> !s.isEmpty());
     }
 
     // ========== Wireless: Probe flush ==========
 
     public void flushProbeBatch(String probesJson) {
-        jdbc.update("SELECT coordinator.flush_probe_batch(?::jsonb)", probesJson);
+        observeDb("coordinator.flush_probe_batch", () -> jdbc.update("SELECT coordinator.flush_probe_batch(?::jsonb)", probesJson));
     }
 
     // ========== Helpers ==========
@@ -354,6 +365,15 @@ public class DatabaseService {
             return new String[0];
         }
         return normalized.split(",");
+    }
+
+    private <T> T observeDb(String operation, Supplier<T> supplier) {
+        return Observation
+                .createNotStarted("db.client.operation", observationRegistry)
+                .lowCardinalityKeyValue("db.system", "postgresql")
+                .lowCardinalityKeyValue("db.operation", operation)
+                .lowCardinalityKeyValue("db.name", "sync")
+                .observe(supplier);
     }
 
     private Array createJsonbArray(Connection connection,

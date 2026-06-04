@@ -23,7 +23,7 @@ use hyper_util::{
 use ssl_proxy::quic;
 use ssl_proxy::{
     blocklist, boringtun_control, check_proxy_auth, config, constant_time_eq, dashboard, forensic,
-    proxy, security, state, tunnel, wg_relay, wg_stats,
+    observability, proxy, security, state, tunnel, wg_relay, wg_stats,
 };
 use std::net::SocketAddr;
 use tokio::{sync::broadcast, task::JoinSet};
@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 use tower::Service;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing::{debug, error, info, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn run_boringtun_subcommand() -> Option<i32> {
     let mut args = std::env::args().skip(1);
@@ -160,14 +161,27 @@ async fn main() {
         eprintln!("startup integrity verification failed; refusing to start: {e}");
         std::process::exit(1);
     }
+    let otel_provider = observability::init_tracer_provider("ssl-proxy");
     if config.runtime.log_format == "json" {
-        tracing_subscriber::fmt()
-            .json()
-            .flatten_event(true)
-            .with_env_filter(filter)
+        let otel_layer = otel_provider.as_ref().map(|provider| {
+            use opentelemetry::trace::TracerProvider as _;
+            tracing_opentelemetry::layer().with_tracer(provider.tracer("ssl-proxy"))
+        });
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().json().flatten_event(true))
+            .with(otel_layer)
             .init();
     } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
+        let otel_layer = otel_provider.as_ref().map(|provider| {
+            use opentelemetry::trace::TracerProvider as _;
+            tracing_opentelemetry::layer().with_tracer(provider.tracer("ssl-proxy"))
+        });
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(otel_layer)
+            .init();
     }
 
     let mut opts = ResolverOpts::default();
@@ -313,6 +327,7 @@ async fn main() {
     // Admin / dashboard listener — plaintext, internal only
     let admin_router = Router::new()
         .route("/health", get(dashboard::health))
+        .route("/metrics", get(dashboard::metrics))
         .route("/ready", get(dashboard::ready))
         .route("/stats/live", get(dashboard::stats_live))
         .route("/stats/bandwidth", get(dashboard::stats_bandwidth))
@@ -647,6 +662,7 @@ async fn main() {
     })
     .await;
     let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), tproxy_handle).await;
+    observability::shutdown_tracer_provider(otel_provider);
     info!("shutdown complete");
 }
 

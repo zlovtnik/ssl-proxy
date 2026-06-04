@@ -1,0 +1,87 @@
+pg_stat_statements_database:
+  query: |
+    SELECT
+      d.datname,
+      COALESCE(sum(s.calls), 0)::float8 AS calls_total,
+      COALESCE(sum(s.total_exec_time), 0)::float8 AS exec_time_ms_total,
+      COALESCE(sum(s.rows), 0)::float8 AS rows_total,
+      COALESCE(sum(s.shared_blks_read), 0)::float8 AS shared_blocks_read_total,
+      COALESCE(sum(s.shared_blks_hit), 0)::float8 AS shared_blocks_hit_total,
+      COALESCE(sum(s.temp_blks_read), 0)::float8 AS temp_blocks_read_total,
+      COALESCE(sum(s.temp_blks_written), 0)::float8 AS temp_blocks_written_total,
+      COALESCE(sum(s.blk_read_time), 0)::float8 AS block_read_time_ms_total,
+      COALESCE(sum(s.blk_write_time), 0)::float8 AS block_write_time_ms_total
+    FROM pg_database d
+    LEFT JOIN pg_stat_statements s ON s.dbid = d.oid
+    WHERE d.datallowconn
+    GROUP BY d.datname
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "Postgres database name."
+    - calls_total:
+        usage: "COUNTER"
+        description: "Total statements executed, grouped by database."
+    - exec_time_ms_total:
+        usage: "COUNTER"
+        description: "Total statement execution time in milliseconds, grouped by database."
+    - rows_total:
+        usage: "COUNTER"
+        description: "Total rows returned or affected by statements, grouped by database."
+    - shared_blocks_read_total:
+        usage: "COUNTER"
+        description: "Total shared blocks read by statements, grouped by database."
+    - shared_blocks_hit_total:
+        usage: "COUNTER"
+        description: "Total shared block cache hits by statements, grouped by database."
+    - temp_blocks_read_total:
+        usage: "COUNTER"
+        description: "Total temp blocks read by statements, grouped by database."
+    - temp_blocks_written_total:
+        usage: "COUNTER"
+        description: "Total temp blocks written by statements, grouped by database."
+    - block_read_time_ms_total:
+        usage: "COUNTER"
+        description: "Total statement block read time in milliseconds, grouped by database."
+    - block_write_time_ms_total:
+        usage: "COUNTER"
+        description: "Total statement block write time in milliseconds, grouped by database."
+
+pg_database_io_timing:
+  query: |
+    SELECT
+      datname,
+      blk_read_time::float8 AS block_read_time_ms_total,
+      blk_write_time::float8 AS block_write_time_ms_total,
+      blks_read::float8 AS blocks_read_total,
+      blks_hit::float8 AS blocks_hit_total,
+      temp_files::float8 AS temp_files_total,
+      temp_bytes::float8 AS temp_bytes_total,
+      deadlocks::float8 AS deadlocks_total
+    FROM pg_stat_database
+    WHERE datname IS NOT NULL
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "Postgres database name."
+    - block_read_time_ms_total:
+        usage: "COUNTER"
+        description: "Total database block read time in milliseconds."
+    - block_write_time_ms_total:
+        usage: "COUNTER"
+        description: "Total database block write time in milliseconds."
+    - blocks_read_total:
+        usage: "COUNTER"
+        description: "Total blocks read by database."
+    - blocks_hit_total:
+        usage: "COUNTER"
+        description: "Total block cache hits by database."
+    - temp_files_total:
+        usage: "COUNTER"
+        description: "Total temporary files created by database."
+    - temp_bytes_total:
+        usage: "COUNTER"
+        description: "Total temporary bytes written by database."
+    - deadlocks_total:
+        usage: "COUNTER"
+        description: "Total deadlocks by database."

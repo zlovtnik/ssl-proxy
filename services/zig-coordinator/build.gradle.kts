@@ -46,6 +46,8 @@ dependencies {
 
     // Micrometer for Prometheus metrics
     implementation("io.micrometer:micrometer-registry-prometheus")
+    implementation("io.micrometer:micrometer-tracing-bridge-otel")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 
     // Configuration processor
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")

@@ -504,7 +504,11 @@ fn calculate_inter_arrival_cv(times_ms: &[i64]) -> Option<f64> {
         .windows(2)
         .filter_map(|w| {
             let delta = w[1] - w[0];
-            if delta >= 0 { Some(delta as u64) } else { None }
+            if delta >= 0 {
+                Some(delta as u64)
+            } else {
+                None
+            }
         })
         .collect();
     if intervals.len() < 2 {
@@ -516,10 +520,14 @@ fn calculate_inter_arrival_cv(times_ms: &[i64]) -> Option<f64> {
     if mean <= 0.0 {
         return None;
     }
-    let variance = intervals.iter().map(|v| {
-        let diff = *v as f64 - mean;
-        diff * diff
-    }).sum::<f64>() / n;
+    let variance = intervals
+        .iter()
+        .map(|v| {
+            let diff = *v as f64 - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / n;
     let stddev = variance.sqrt();
     Some(stddev / mean)
 }

@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rdkafka::{consumer::StreamConsumer, Message};
+use rdkafka::{consumer::StreamConsumer, message::Headers, Message};
 
 use crate::worker::OracleLoad;
 
@@ -18,6 +18,7 @@ pub(crate) struct CollectedMessage {
     pub(crate) commit_target: CommitTarget,
     pub(crate) load: Result<OracleLoad, serde_json::Error>,
     pub(crate) payload_bytes: usize,
+    pub(crate) trace_headers: Vec<(String, String)>,
 }
 
 pub(crate) struct WindowSummary {
@@ -29,6 +30,7 @@ pub(crate) struct WindowSummary {
 struct RawMessage {
     commit_target: CommitTarget,
     payload: Vec<u8>,
+    trace_headers: Vec<(String, String)>,
 }
 
 pub(crate) async fn collect(
@@ -39,6 +41,7 @@ pub(crate) async fn collect(
     collect_records(max_messages, duration, || async {
         let message = consumer.recv().await.ok()?;
         let payload = message.payload().unwrap_or_default().to_vec();
+        let trace_headers = trace_context_headers(&message);
         Some(RawMessage {
             commit_target: CommitTarget {
                 topic: message.topic().to_string(),
@@ -46,6 +49,7 @@ pub(crate) async fn collect(
                 offset: message.offset(),
             },
             payload,
+            trace_headers,
         })
     })
     .await
@@ -84,6 +88,7 @@ where
             commit_target: raw.commit_target,
             load,
             payload_bytes,
+            trace_headers: raw.trace_headers,
         });
     }
 
@@ -93,6 +98,29 @@ where
         elapsed_collect_ms: started.elapsed().as_millis(),
     };
     (messages, summary)
+}
+
+fn trace_context_headers(message: &rdkafka::message::BorrowedMessage<'_>) -> Vec<(String, String)> {
+    let Some(headers) = message.headers() else {
+        return Vec::new();
+    };
+
+    let mut values = Vec::new();
+    for index in 0..headers.count() {
+        let header = headers.get(index);
+        if !header.key.eq_ignore_ascii_case("traceparent")
+            && !header.key.eq_ignore_ascii_case("tracestate")
+        {
+            continue;
+        }
+        let Some(raw_value) = header.value else {
+            continue;
+        };
+        if let Ok(value) = std::str::from_utf8(raw_value) {
+            values.push((header.key.to_string(), value.to_string()));
+        }
+    }
+    values
 }
 
 #[cfg(test)]
@@ -196,6 +224,7 @@ mod tests {
                 offset,
             },
             payload,
+            trace_headers: Vec::new(),
         }
     }
 

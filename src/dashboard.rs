@@ -85,6 +85,15 @@ pub async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok").into_response()
 }
 
+/// GET /metrics - Prometheus exposition for the proxy admin surface.
+pub async fn metrics(State(state): State<SharedState>) -> impl IntoResponse {
+    (
+        [("content-type", "text/plain; version=0.0.4")],
+        render_metrics_body(&state),
+    )
+        .into_response()
+}
+
 /// GET /ready — readiness probe for the local process surfaces.
 pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
     let publisher = state.publisher.health_snapshot();
@@ -108,6 +117,81 @@ pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
         }),
     )
         .into_response()
+}
+
+fn render_metrics_body(state: &crate::state::AppState) -> String {
+    let publisher = state.publisher.health_snapshot();
+    format!(
+        concat!(
+            "# HELP ssl_proxy_up Process health status.\n",
+            "# TYPE ssl_proxy_up gauge\n",
+            "ssl_proxy_up 1\n",
+            "# HELP ssl_proxy_tunnels_opened_total Total proxy tunnels opened.\n",
+            "# TYPE ssl_proxy_tunnels_opened_total counter\n",
+            "ssl_proxy_tunnels_opened_total {tunnels_opened}\n",
+            "# HELP ssl_proxy_active_tunnels Active proxy tunnels.\n",
+            "# TYPE ssl_proxy_active_tunnels gauge\n",
+            "ssl_proxy_active_tunnels {active_tunnels}\n",
+            "# HELP ssl_proxy_bytes_up_total Total upstream bytes observed.\n",
+            "# TYPE ssl_proxy_bytes_up_total counter\n",
+            "ssl_proxy_bytes_up_total {bytes_up}\n",
+            "# HELP ssl_proxy_bytes_down_total Total downstream bytes observed.\n",
+            "# TYPE ssl_proxy_bytes_down_total counter\n",
+            "ssl_proxy_bytes_down_total {bytes_down}\n",
+            "# HELP ssl_proxy_blocked_total Total blocked proxy decisions.\n",
+            "# TYPE ssl_proxy_blocked_total counter\n",
+            "ssl_proxy_blocked_total {blocked}\n",
+            "# HELP ssl_proxy_allowed_total Total allowed proxy decisions.\n",
+            "# TYPE ssl_proxy_allowed_total counter\n",
+            "ssl_proxy_allowed_total {allowed}\n",
+            "# HELP ssl_proxy_obfuscated_total Total obfuscated proxy flows.\n",
+            "# TYPE ssl_proxy_obfuscated_total counter\n",
+            "ssl_proxy_obfuscated_total {obfuscated}\n",
+            "# HELP ssl_proxy_host_stats_dropped_total Total dropped host-stat updates.\n",
+            "# TYPE ssl_proxy_host_stats_dropped_total counter\n",
+            "ssl_proxy_host_stats_dropped_total {host_stats_dropped}\n",
+            "# HELP ssl_proxy_hosts_tracked Current tracked host count.\n",
+            "# TYPE ssl_proxy_hosts_tracked gauge\n",
+            "ssl_proxy_hosts_tracked {hosts_tracked}\n",
+            "# HELP ssl_proxy_peers_tracked Current tracked peer count.\n",
+            "# TYPE ssl_proxy_peers_tracked gauge\n",
+            "ssl_proxy_peers_tracked {peers_tracked}\n",
+            "# HELP ssl_proxy_dashboard_event_retry_queue_len Dashboard event retry queue length.\n",
+            "# TYPE ssl_proxy_dashboard_event_retry_queue_len gauge\n",
+            "ssl_proxy_dashboard_event_retry_queue_len {dashboard_queue}\n",
+            "# HELP ssl_proxy_sync_publish_queue_depth Sync publisher queue depth.\n",
+            "# TYPE ssl_proxy_sync_publish_queue_depth gauge\n",
+            "ssl_proxy_sync_publish_queue_depth {sync_queue_depth}\n",
+            "# HELP ssl_proxy_sync_publish_queue_capacity Sync publisher queue capacity.\n",
+            "# TYPE ssl_proxy_sync_publish_queue_capacity gauge\n",
+            "ssl_proxy_sync_publish_queue_capacity {sync_queue_capacity}\n",
+            "# HELP ssl_proxy_sync_publish_spool_pending Sync publisher spool files pending.\n",
+            "# TYPE ssl_proxy_sync_publish_spool_pending gauge\n",
+            "ssl_proxy_sync_publish_spool_pending {sync_spool_pending}\n",
+            "# HELP ssl_proxy_sync_publish_spooled_total Sync publishes spooled after transport pressure.\n",
+            "# TYPE ssl_proxy_sync_publish_spooled_total counter\n",
+            "ssl_proxy_sync_publish_spooled_total {sync_spooled_total}\n",
+            "# HELP ssl_proxy_sync_publish_enqueue_timeouts_total Sync publisher enqueue timeouts.\n",
+            "# TYPE ssl_proxy_sync_publish_enqueue_timeouts_total counter\n",
+            "ssl_proxy_sync_publish_enqueue_timeouts_total {sync_enqueue_timeouts}\n",
+        ),
+        tunnels_opened = state.tunnels_opened.load(Ordering::Relaxed),
+        active_tunnels = state.active_tunnels.load(Ordering::Relaxed),
+        bytes_up = state.bytes_up.load(Ordering::Relaxed),
+        bytes_down = state.bytes_down.load(Ordering::Relaxed),
+        blocked = state.blocked_count.load(Ordering::Relaxed),
+        allowed = state.allowed_count.load(Ordering::Relaxed),
+        obfuscated = state.obfuscated_count.load(Ordering::Relaxed),
+        host_stats_dropped = state.host_stats_dropped.load(Ordering::Relaxed),
+        hosts_tracked = state.host_stats.len(),
+        peers_tracked = state.peer_counters.len(),
+        dashboard_queue = state.dashboard_event_queue_len(),
+        sync_queue_depth = publisher.queue_depth,
+        sync_queue_capacity = publisher.queue_capacity,
+        sync_spool_pending = publisher.spool_pending,
+        sync_spooled_total = publisher.spooled_total,
+        sync_enqueue_timeouts = publisher.enqueue_timeouts_total,
+    )
 }
 
 /// GET /sync/status — local sync-plane publisher and topic accounting.

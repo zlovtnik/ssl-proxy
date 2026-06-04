@@ -2,7 +2,7 @@ groups:
   - name: observability-critical
     rules:
       - alert: ServiceDown
-        expr: up{job=~"ssl-proxy|java-coordinator|oracle-worker|integration-console-web|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|pushgateway"} == 0
+        expr: up{job=~"ssl-proxy|java-coordinator|oracle-worker|integration-console-web|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|otel-spanmetrics|pushgateway|node-exporter|cadvisor"} == 0
         for: 2m
         labels:
           severity: critical
@@ -110,3 +110,103 @@ groups:
         annotations:
           summary: "OTel trace export failures"
           description: "OpenTelemetry Collector is failing to export spans to Jaeger."
+
+      - alert: MissingCorePrometheusTarget
+        expr: absent(up{job="node-exporter"}) or absent(up{job="cadvisor"}) or absent(up{job="otel-spanmetrics"})
+        for: 2m
+        labels:
+          severity: critical
+          category: scrape
+        annotations:
+          summary: "Core observability target is missing"
+          description: "Prometheus is missing node-exporter, cAdvisor, or OTel spanmetrics target series."
+
+      - alert: HostCpuHigh
+        expr: 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 10m
+        labels:
+          severity: warning
+          category: saturation
+        annotations:
+          summary: "Host CPU saturation is high"
+          description: "Host CPU usage has been above 85% for 10 minutes."
+
+      - alert: HostMemoryLow
+        expr: 100 * (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 10
+        for: 10m
+        labels:
+          severity: warning
+          category: saturation
+        annotations:
+          summary: "Host memory is low on {{ $labels.instance }}"
+          description: "Available host memory is below 10% for 10 minutes."
+
+      - alert: HostDiskPressure
+        expr: 100 * (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/run.*|/var/lib/docker/.+"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/run.*|/var/lib/docker/.+"}) < 10
+        for: 10m
+        labels:
+          severity: critical
+          category: saturation
+        annotations:
+          summary: "Host filesystem pressure on {{ $labels.instance }}"
+          description: "Filesystem {{ $labels.mountpoint }} has less than 10% available space."
+
+      - alert: HostDiskIoWaitHigh
+        expr: 100 * avg by (instance) (rate(node_cpu_seconds_total{mode="iowait"}[5m])) > 10
+        for: 10m
+        labels:
+          severity: warning
+          category: saturation
+        annotations:
+          summary: "Host disk I/O wait is high on {{ $labels.instance }}"
+          description: "CPU iowait has been above 10% for 10 minutes."
+
+      - alert: ContainerMemoryPressure
+        expr: max by (name) (container_memory_working_set_bytes{name!=""} / clamp_min(container_spec_memory_limit_bytes{name!=""}, 1)) > 0.85 and max by (name) (container_spec_memory_limit_bytes{name!=""}) > 0
+        for: 10m
+        labels:
+          severity: warning
+          category: saturation
+        annotations:
+          summary: "Container memory pressure on {{ $labels.name }}"
+          description: "Container {{ $labels.name }} is using more than 85% of its configured memory limit."
+
+      - alert: DatabaseLatencyHigh
+        expr: histogram_quantile(0.95, sum by (service_name, db_system, db_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{db_system!=""}[5m]))) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "DB latency high for {{ $labels.service_name }}"
+          description: "DB p95 latency for {{ $labels.db_system }} {{ $labels.db_operation }} is above 1s."
+
+      - alert: DatabaseErrorRate
+        expr: sum by (service_name, db_system, db_operation) (rate(traces_spanmetrics_calls_total{db_system!="",status=~"error|ERROR|STATUS_CODE_ERROR"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: database
+        annotations:
+          summary: "DB errors for {{ $labels.service_name }}"
+          description: "DB errors are being observed for {{ $labels.db_system }} {{ $labels.db_operation }}."
+
+      - alert: OracleWorkerDbErrors
+        expr: sum by (operation) (increase(oracle_worker_oracle_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: database
+        annotations:
+          summary: "Oracle worker DB errors for {{ $labels.operation }}"
+          description: "Oracle worker has recorded Oracle errors in the last 5 minutes."
+
+      - alert: DroppedSpans
+        expr: rate(otelcol_processor_dropped_spans[5m]) > 0 or rate(otelcol_exporter_send_failed_spans[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: tracing
+        annotations:
+          summary: "OpenTelemetry spans are being dropped"
+          description: "The collector is dropping spans or failing to export spans."

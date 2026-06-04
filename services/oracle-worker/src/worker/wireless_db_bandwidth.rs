@@ -81,10 +81,21 @@ pub(crate) fn insert_wireless_bandwidth_transaction(
         })?;
     }
     connection
-        .execute("BEGIN WIRELESS_MERGE_BANDWIDTH_ALERTS(:1); END;", &[&batch_id])
-        .map_err(|error| format!("call WIRELESS_MERGE_BANDWIDTH_ALERTS: {}", error_chain(&error)))?;
-    connection
-        .commit()
-        .map_err(|error| format!("commit WIRELESS_BANDWIDTH_WINDOWS batch: {}", error_chain(&error)))?;
+        .execute(
+            "BEGIN WIRELESS_MERGE_BANDWIDTH_ALERTS(:1); END;",
+            &[&batch_id],
+        )
+        .map_err(|error| {
+            format!(
+                "call WIRELESS_MERGE_BANDWIDTH_ALERTS: {}",
+                error_chain(&error)
+            )
+        })?;
+    connection.commit().map_err(|error| {
+        format!(
+            "commit WIRELESS_BANDWIDTH_WINDOWS batch: {}",
+            error_chain(&error)
+        )
+    })?;
     Ok(rows.len() as u64)
 }

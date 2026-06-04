@@ -5,6 +5,7 @@ mod healthcheck;
 mod infra;
 mod log;
 mod metrics;
+mod observability;
 mod pool;
 mod run_loop;
 mod time;
@@ -59,5 +60,8 @@ fn run() -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| format!("initialize tokio runtime: {error}"))?;
-    runtime.block_on(run_loop::run_loop(config, pool, started))
+    let otel_provider = observability::init_tracing(SERVICE_NAME);
+    let result = runtime.block_on(run_loop::run_loop(config, pool, started));
+    observability::shutdown_tracer_provider(otel_provider);
+    result
 }

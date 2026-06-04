@@ -783,11 +783,13 @@ services:
       - -c
       - config_file=/etc/postgresql/postgresql.conf
       - -c
-      - shared_preload_libraries=pg_cron
+      - shared_preload_libraries=pg_cron,pg_stat_statements
       - -c
       - cron.database_name=sync
       - -c
       - listen_addresses=*
+      - -c
+      - track_io_timing=on
     restart: unless-stopped
     deploy:
       resources:
@@ -830,6 +832,8 @@ services:
       - pushgateway
       - postgres-exporter
       - redis-exporter
+      - node-exporter
+      - cadvisor
       - otel-collector
       - loki
       - jaeger
@@ -904,6 +908,9 @@ services:
     restart: unless-stopped
     environment:
       - DATA_SOURCE_NAME=postgresql://sync:sync@postgres:5432/sync?sslmode=disable
+      - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres-exporter/queries.yml
+    volumes:
+      - ./docker/observability/postgres-exporter-queries.yml:/etc/postgres-exporter/queries.yml:ro
     ports:
       - "9187:9187"
     depends_on:
@@ -920,6 +927,38 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)
+      - --collector.netdev.device-exclude=^(veth.*|br-.*|docker.*|lo)$$
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave
+    ports:
+      - "127.0.0.1:9100:9100"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    ports:
+      - "127.0.0.1:8082:8080"
 
   pushgateway:
     image: prom/pushgateway:v1.8.0
