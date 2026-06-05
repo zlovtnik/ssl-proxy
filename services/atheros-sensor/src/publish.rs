@@ -386,12 +386,16 @@ pub async fn publish_handshake_alert(
 
 /// Publishes a wireless bandwidth event to the BANDWIDTH_TOPIC.
 pub async fn publish_bandwidth_event(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     event: &WirelessBandwidthEvent,
 ) -> Result<(), PublishError> {
     let mut event = event.clone();
     event.published_at = Some(ssl_proxy::time::now_rfc3339());
-    publish_oracle_json(
+    publish_oracle_json_durable(
+        state,
+        backlog,
         publisher,
         "publish_bandwidth_event",
         BANDWIDTH_TOPIC,
@@ -411,7 +415,9 @@ pub async fn publish_bandwidth_event(
 }
 
 /// Publishes a live Redpanda event and the matching Oracle scan request.
-pub async fn publish_oracle_json<T: serde::Serialize>(
+pub async fn publish_oracle_json_durable<T: serde::Serialize>(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     operation: &'static str,
     stream_name: &str,
@@ -419,10 +425,21 @@ pub async fn publish_oracle_json<T: serde::Serialize>(
     observed_at: &str,
 ) -> Result<(), PublishError> {
     let payload = serde_json::to_string(value)?;
-    publish_oracle_payload(publisher, operation, stream_name, &payload, observed_at).await
+    publish_oracle_payload_durable(
+        state,
+        backlog,
+        publisher,
+        operation,
+        stream_name,
+        &payload,
+        observed_at,
+    )
+    .await
 }
 
-pub async fn publish_oracle_payload(
+pub async fn publish_oracle_payload_durable(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     operation: &'static str,
     stream_name: &str,
@@ -430,14 +447,53 @@ pub async fn publish_oracle_payload(
     observed_at: &str,
 ) -> Result<(), PublishError> {
     let key = sha256_hex(payload);
-    let prepared = prepare_publish(publisher, stream_name, payload, &key, observed_at)
-        .map_err(PublishError::Publish)?;
-    queue_publish_with_backpressure(publisher, operation, stream_name, payload, &key)
-        .await
-        .map_err(PublishError::Publish)?;
-    enqueue_prepared_publish(publisher, &key, &prepared)
-        .await
-        .map_err(PublishError::Publish)?;
+    let prepared = match prepare_publish(publisher, stream_name, payload, &key, observed_at) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            persist_publish_failure(
+                state,
+                backlog,
+                stream_name,
+                &key,
+                payload.to_string(),
+                error,
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    if let Err(error) =
+        queue_publish_with_backpressure(publisher, operation, stream_name, payload, &key).await
+    {
+        persist_publish_failure(
+            state,
+            backlog,
+            stream_name,
+            &key,
+            payload.to_string(),
+            error,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let drained = flush_memory_backlog(state, backlog).await;
+    if drained {
+        close_backlog_circuit_breaker(state);
+    }
+
+    if let Err(error) = enqueue_prepared_publish(publisher, &key, &prepared).await {
+        persist_publish_failure(
+            state,
+            backlog,
+            stream_name,
+            &key,
+            payload.to_string(),
+            error,
+        )
+        .await?;
+        return Ok(());
+    }
     debug!(
         dedupe_key = %key,
         topic = stream_name,
@@ -673,10 +729,14 @@ pub async fn replay_journal(
         _ => return Ok(0),
     };
     let mut replayed = 0u64;
+    let mut retained_lines = Vec::new();
     for line in content.lines() {
         let parsed: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => {
+                retained_lines.push(line.to_string());
+                continue;
+            }
         };
         let dedupe_key = parsed["dedupe_key"].as_str().unwrap_or("").to_string();
         let stream_name = parsed["stream_name"]
@@ -686,6 +746,7 @@ pub async fn replay_journal(
         let payload = parsed["payload"].as_str().unwrap_or("").to_string();
         let error = parsed["error"].as_str().unwrap_or("").to_string();
         if dedupe_key.is_empty() || payload.is_empty() {
+            retained_lines.push(line.to_string());
             continue;
         }
         match backlog
@@ -698,14 +759,24 @@ pub async fn replay_journal(
             }
             Err(e) => {
                 warn!(%dedupe_key, %stream_name, %e, "failed to replay journal entry; will retry via memory flush");
+                retained_lines.push(line.to_string());
                 let mut s = state.lock().unwrap();
                 s.put_memory_backlog(dedupe_key, stream_name, &payload, &error);
             }
         }
     }
     if replayed > 0 {
-        let _ = std::fs::write(journal_path, "");
-        info!(replayed, "publish journal replayed and cleared");
+        let retained = if retained_lines.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", retained_lines.join("\n"))
+        };
+        let _ = std::fs::write(journal_path, retained);
+        info!(
+            replayed,
+            retained = retained_lines.len(),
+            "publish journal replayed"
+        );
     }
     Ok(replayed)
 }
@@ -886,8 +957,12 @@ async fn queue_publish_with_backpressure(
     payload: &str,
     dedupe_key: &str,
 ) -> Result<(), String> {
+    let started = Instant::now();
     match publisher.enqueue_message(topic, payload) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            crate::metrics::record_redpanda_publish(true, started.elapsed().as_millis());
+            Ok(())
+        }
         Err(error) if error == ENQUEUE_TIMEOUT_ERROR => {
             debug!(
                 dedupe_key,
@@ -895,16 +970,24 @@ async fn queue_publish_with_backpressure(
                 payload_bytes = payload.len(),
                 "sync publisher queue full; retrying with backpressure"
             );
-            publisher
+            let publish_result = publisher
                 .publish_message(topic, payload)
                 .await
                 .map_err(|error| {
                     format!("stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}")
-                })
+                });
+            crate::metrics::record_redpanda_publish(
+                publish_result.is_ok(),
+                started.elapsed().as_millis(),
+            );
+            publish_result
         }
-        Err(error) => Err(format!(
-            "stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}"
-        )),
+        Err(error) => {
+            crate::metrics::record_redpanda_publish(false, started.elapsed().as_millis());
+            Err(format!(
+                "stage={stage} topic={topic} dedupe_key={dedupe_key}: {error}"
+            ))
+        }
     }
 }
 
@@ -1095,6 +1178,56 @@ mod tests {
         }
     }
 
+    struct FailingKeyBacklog {
+        fail_key: String,
+        rows: Mutex<Vec<BacklogEntry>>,
+    }
+
+    #[async_trait]
+    impl BacklogStore for FailingKeyBacklog {
+        async fn record_ingest(&self, _record: IngestRecord<'_>) -> Result<(), BacklogError> {
+            Ok(())
+        }
+
+        async fn save_pending(
+            &self,
+            dedupe_key: &str,
+            stream_name: &str,
+            payload: &str,
+            _error: &str,
+        ) -> Result<(), BacklogError> {
+            if dedupe_key == self.fail_key {
+                return Err(BacklogError::Redpanda {
+                    operation: "save_pending",
+                    message: "selected key unavailable".to_string(),
+                });
+            }
+            self.rows.lock().unwrap().push(BacklogEntry {
+                dedupe_key: dedupe_key.to_string(),
+                stream_name: stream_name.to_string(),
+                payload: payload.to_string(),
+                attempt_count: 1,
+            });
+            Ok(())
+        }
+
+        async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError> {
+            Ok(self.rows.lock().unwrap().clone())
+        }
+
+        async fn mark_synced(&self, _dedupe_key: &str) -> Result<(), BacklogError> {
+            Ok(())
+        }
+
+        async fn prune_stale(
+            &self,
+            _max_attempts: i32,
+            _max_age_hours: i64,
+        ) -> Result<u64, BacklogError> {
+            Ok(0)
+        }
+    }
+
     fn test_state() -> SharedPublishState {
         PublishState::shared()
     }
@@ -1178,6 +1311,8 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_bandwidth_event_topic() {
+        let state = test_state();
+        let backlog = MemoryBacklog::default();
         let publisher = MemoryPublisher {
             fail: false,
             published: Arc::new(Mutex::new(Vec::new())),
@@ -1211,7 +1346,9 @@ mod tests {
             published_at: None,
         };
 
-        publish_bandwidth_event(&publisher, &event).await.unwrap();
+        publish_bandwidth_event(&state, &backlog, &publisher, &event)
+            .await
+            .unwrap();
 
         let published = publisher.published.lock().unwrap().clone();
         assert_eq!(published.len(), 2);
@@ -1220,6 +1357,39 @@ mod tests {
         assert!(published[0]
             .1
             .contains("\"event_type\":\"wireless_bandwidth_window\""));
+    }
+
+    #[tokio::test]
+    async fn durable_oracle_publish_saves_pending_when_live_publish_fails() {
+        let state = test_state();
+        let publisher = MemoryPublisher {
+            fail: true,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        let backlog = MemoryBacklog::default();
+        let payload = json!({
+            "event_type": "wireless_test_alert",
+            "observed_at": "2026-04-20T12:00:00Z",
+            "sensor_id": "sensor-1"
+        });
+
+        publish_oracle_json_durable(
+            &state,
+            &backlog,
+            &publisher,
+            "publish_test_alert",
+            "wireless.alert.test",
+            &payload,
+            "2026-04-20T12:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        let rows = backlog.rows.lock().unwrap().clone();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].stream_name, "wireless.alert.test");
+        assert!(rows[0].payload.contains("\"wireless_test_alert\""));
+        assert!(publisher.published.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1390,6 +1560,48 @@ mod tests {
             state.journal_append("dedupe-1", WIRELESS_AUDIT_TOPIC, "{}", "unavailable");
             assert_eq!(state.journal_bytes(), MAX_JOURNAL_BYTES + 1);
         }
+    }
+
+    #[tokio::test]
+    async fn replay_journal_retains_entries_that_fail_replay() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let journal_path = temp_dir.path().join("publish.jsonl");
+        let ok_payload = r#"{"event_type":"ok","observed_at":"2026-04-20T12:00:00Z"}"#;
+        let fail_payload = r#"{"event_type":"fail","observed_at":"2026-04-20T12:00:01Z"}"#;
+        let ok_key = "ok-key";
+        let fail_key = "fail-key";
+        let ok_line = serde_json::json!({
+            "dedupe_key": ok_key,
+            "stream_name": "wireless.audit",
+            "payload": ok_payload,
+            "error": "unavailable"
+        });
+        let fail_line = serde_json::json!({
+            "dedupe_key": fail_key,
+            "stream_name": "wireless.audit",
+            "payload": fail_payload,
+            "error": "unavailable"
+        });
+        std::fs::write(&journal_path, format!("{ok_line}\n{fail_line}\n")).unwrap();
+        let state = PublishState::shared_with_config(
+            NonZeroUsize::new(64).unwrap(),
+            Some(journal_path.clone()),
+            5,
+            20,
+        );
+        let backlog = FailingKeyBacklog {
+            fail_key: fail_key.to_string(),
+            rows: Mutex::new(Vec::new()),
+        };
+
+        let replayed = replay_journal(&state, &backlog).await.unwrap();
+
+        assert_eq!(replayed, 1);
+        assert_eq!(backlog.rows.lock().unwrap().len(), 1);
+        let journal = std::fs::read_to_string(&journal_path).unwrap();
+        assert!(!journal.contains(ok_key));
+        assert!(journal.contains(fail_key));
+        assert_eq!(state.lock().unwrap().memory_backlog.len(), 1);
     }
 
     #[tokio::test]

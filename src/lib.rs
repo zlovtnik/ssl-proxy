@@ -13,6 +13,7 @@ pub mod events;
 pub mod forensic;
 pub mod identity;
 pub mod obfuscation;
+pub mod observability;
 pub mod payload_audit;
 pub(crate) mod payload_redaction;
 pub mod proxy;

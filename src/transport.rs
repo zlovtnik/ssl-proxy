@@ -10,7 +10,9 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use opentelemetry::{global, propagation::Injector, Context};
 use rdkafka::{
+    message::{Header, OwnedHeaders},
     producer::{FutureProducer, FutureRecord},
     ClientConfig,
 };
@@ -22,7 +24,7 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
-use tracing::{debug, warn};
+use tracing::{debug, field, info_span, warn, Instrument};
 
 use crate::{
     config::SyncConfig,
@@ -704,20 +706,32 @@ async fn publish_with_producer(
     payload: &str,
     source: &str,
 ) -> Result<(), String> {
+    let span = info_span!(
+        "redpanda.publish",
+        "messaging.system" = "redpanda",
+        "messaging.destination.name" = %topic,
+        "messaging.operation" = "publish",
+        status = field::Empty
+    );
     let result = async {
         if producer.is_none() {
             *producer = Some(build_redpanda_producer(config)?);
         }
 
         let producer_ref = producer.as_ref().expect("producer is initialized above");
-        let record = FutureRecord::to(topic).payload(payload).key("");
+        let mut record = FutureRecord::to(topic).payload(payload).key("");
+        if let Some(headers) = current_trace_headers() {
+            record = record.headers(headers);
+        }
         producer_ref
             .send(record, config.publish_timeout)
             .await
             .map(|_| ())
             .map_err(|(error, _)| format!("publish Redpanda topic {topic}: {error}"))
     }
+    .instrument(span.clone())
     .await;
+    span.record("status", if result.is_ok() { "ok" } else { "error" });
 
     match &result {
         Ok(()) => {
@@ -747,6 +761,38 @@ async fn publish_with_producer(
     }
 
     result
+}
+
+struct KafkaHeaderInjector {
+    headers: Vec<(String, String)>,
+}
+
+impl Injector for KafkaHeaderInjector {
+    fn set(&mut self, key: &str, value: String) {
+        self.headers.push((key.to_string(), value));
+    }
+}
+
+fn current_trace_headers() -> Option<OwnedHeaders> {
+    let mut injector = KafkaHeaderInjector {
+        headers: Vec::new(),
+    };
+    global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(&Context::current(), &mut injector);
+    });
+
+    if injector.headers.is_empty() {
+        return None;
+    }
+
+    let mut headers = OwnedHeaders::new();
+    for (key, value) in injector.headers {
+        headers = headers.insert(Header {
+            key: key.as_str(),
+            value: Some(value.as_str()),
+        });
+    }
+    Some(headers)
 }
 
 fn build_redpanda_producer(config: &SyncPublisherConfig) -> Result<FutureProducer, String> {

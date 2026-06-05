@@ -9,6 +9,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: Dockerfile
@@ -108,6 +110,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/zig-coordinator/Dockerfile
@@ -158,6 +162,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/zig-coordinator/Dockerfile
@@ -206,6 +212,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/zig-coordinator/Dockerfile
@@ -253,6 +261,8 @@ services:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/oracle-worker/Dockerfile
@@ -298,6 +308,8 @@ services:
         condition: service_completed_successfully
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -335,6 +347,8 @@ services:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -364,6 +378,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -389,6 +405,8 @@ services:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -416,6 +434,8 @@ services:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -453,7 +473,7 @@ services:
       - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
       - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
       - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
       - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
@@ -482,7 +502,7 @@ services:
       - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
       - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
       - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
       - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
@@ -510,7 +530,7 @@ services:
       - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
       - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
       - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
       - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
@@ -538,7 +558,7 @@ services:
       - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
       - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
       - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8080}
+      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
       - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
       - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
@@ -630,14 +650,16 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/atheros-search/Dockerfile
     restart: unless-stopped
     environment:
-      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@postgres:5432/sync}
+      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@192.168.1.221:5432/sync}
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
-      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8080}
+      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8082}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - ATHSEARCH_EMBEDDING_DIMENSIONS=${ATHSEARCH_EMBEDDING_DIMENSIONS:-768}
       - ATHSEARCH_GRPC_PORT=${ATHSEARCH_GRPC_PORT:-50051}
@@ -783,11 +805,13 @@ services:
       - -c
       - config_file=/etc/postgresql/postgresql.conf
       - -c
-      - shared_preload_libraries=pg_cron
+      - shared_preload_libraries=pg_cron,pg_stat_statements
       - -c
       - cron.database_name=sync
       - -c
       - listen_addresses=*
+      - -c
+      - track_io_timing=on
     restart: unless-stopped
     deploy:
       resources:
@@ -830,6 +854,8 @@ services:
       - pushgateway
       - postgres-exporter
       - redis-exporter
+      - node-exporter
+      - cadvisor
       - otel-collector
       - loki
       - jaeger
@@ -904,6 +930,9 @@ services:
     restart: unless-stopped
     environment:
       - DATA_SOURCE_NAME=postgresql://sync:sync@postgres:5432/sync?sslmode=disable
+      - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres-exporter/queries.yml
+    volumes:
+      - ./docker/observability/postgres-exporter-queries.yml:/etc/postgres-exporter/queries.yml:ro
     ports:
       - "9187:9187"
     depends_on:
@@ -920,6 +949,38 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)
+      - --collector.netdev.device-exclude=^(veth.*|br-.*|docker.*|lo)$$
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave
+    ports:
+      - "127.0.0.1:9100:9100"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    ports:
+      - "127.0.0.1:8082:8080"
 
   pushgateway:
     image: prom/pushgateway:v1.8.0

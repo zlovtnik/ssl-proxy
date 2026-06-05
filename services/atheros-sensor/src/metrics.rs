@@ -11,7 +11,11 @@
 use std::{
     convert::Infallible,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::Instant,
 };
 
 use http_body_util::Full;
@@ -25,8 +29,39 @@ use crate::stats::CaptureStats;
 
 pub type SharedStats = Arc<Mutex<CaptureStats>>;
 
+static STARTED_AT: OnceLock<Instant> = OnceLock::new();
+static REDPANDA_PUBLISH_TOTAL: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_PUBLISH_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_PUBLISH_DURATION_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_PUBLISH_LAST_DURATION_MS: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_REQUEST_TOTAL: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_REQUEST_ERRORS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_REQUEST_DURATION_MS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static REDPANDA_REQUEST_LAST_DURATION_MS: AtomicU64 = AtomicU64::new(0);
+
 pub fn shared_stats() -> SharedStats {
+    let _ = STARTED_AT.set(Instant::now());
     Arc::new(Mutex::new(CaptureStats::default()))
+}
+
+pub(crate) fn record_redpanda_publish(success: bool, duration_ms: u128) {
+    REDPANDA_PUBLISH_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if !success {
+        REDPANDA_PUBLISH_ERRORS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }
+    let duration = duration_ms.min(u128::from(u64::MAX)) as u64;
+    REDPANDA_PUBLISH_DURATION_MS_TOTAL.fetch_add(duration, Ordering::Relaxed);
+    REDPANDA_PUBLISH_LAST_DURATION_MS.store(duration, Ordering::Relaxed);
+}
+
+pub(crate) fn record_redpanda_request(success: bool, duration_ms: u128) {
+    REDPANDA_REQUEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if !success {
+        REDPANDA_REQUEST_ERRORS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }
+    let duration = duration_ms.min(u128::from(u64::MAX)) as u64;
+    REDPANDA_REQUEST_DURATION_MS_TOTAL.fetch_add(duration, Ordering::Relaxed);
+    REDPANDA_REQUEST_LAST_DURATION_MS.store(duration, Ordering::Relaxed);
 }
 
 /// Spawns the metrics HTTP server on 127.0.0.1 (not 0.0.0.0) serving exactly one path:
@@ -108,8 +143,14 @@ fn render_metrics_body(stats: &CaptureStats, cb_state: u8, journal_bytes: u64) -
         Some(ms) => format!("atheros_bandwidth_window_lag_ms {ms}\n"),
         None => String::new(),
     };
+    let uptime = STARTED_AT
+        .get()
+        .map(|started| started.elapsed().as_secs_f64())
+        .unwrap_or(0.0);
     format!(
-        "# TYPE atheros_packets_seen counter\natheros_packets_seen {}\n\
+        "# TYPE atheros_up gauge\natheros_up 1\n\
+         # TYPE atheros_uptime_seconds gauge\natheros_uptime_seconds {uptime}\n\
+         # TYPE atheros_packets_seen counter\natheros_packets_seen {}\n\
          # TYPE atheros_decoded_frames counter\natheros_decoded_frames {}\n\
          # TYPE atheros_unsupported_frames counter\natheros_unsupported_frames {}\n\
          # TYPE atheros_malformed_frames counter\natheros_malformed_frames {}\n\
@@ -124,7 +165,15 @@ fn render_metrics_body(stats: &CaptureStats, cb_state: u8, journal_bytes: u64) -
          # TYPE atheros_memory_backlog_len gauge\natheros_memory_backlog_len {}\n\
          # TYPE atheros_probe_accumulator_len gauge\natheros_probe_accumulator_len {}\n\
          # TYPE atheros_journal_bytes gauge\natheros_journal_bytes {}\n\
-         # TYPE atheros_circuit_breaker_state gauge\natheros_circuit_breaker_state {}\n",
+         # TYPE atheros_circuit_breaker_state gauge\natheros_circuit_breaker_state {}\n\
+         # TYPE atheros_redpanda_publish_total counter\natheros_redpanda_publish_total {}\n\
+         # TYPE atheros_redpanda_publish_errors_total counter\natheros_redpanda_publish_errors_total {}\n\
+         # TYPE atheros_redpanda_publish_duration_ms_total counter\natheros_redpanda_publish_duration_ms_total {}\n\
+         # TYPE atheros_redpanda_publish_last_duration_ms gauge\natheros_redpanda_publish_last_duration_ms {}\n\
+         # TYPE atheros_redpanda_request_total counter\natheros_redpanda_request_total {}\n\
+         # TYPE atheros_redpanda_request_errors_total counter\natheros_redpanda_request_errors_total {}\n\
+         # TYPE atheros_redpanda_request_duration_ms_total counter\natheros_redpanda_request_duration_ms_total {}\n\
+         # TYPE atheros_redpanda_request_last_duration_ms gauge\natheros_redpanda_request_last_duration_ms {}\n",
         stats.packets_seen,
         stats.decoded_frames,
         stats.unsupported_frames,
@@ -140,6 +189,14 @@ fn render_metrics_body(stats: &CaptureStats, cb_state: u8, journal_bytes: u64) -
         stats.probe_accumulator_len,
         journal_bytes,
         cb_state,
+        REDPANDA_PUBLISH_TOTAL.load(Ordering::Relaxed),
+        REDPANDA_PUBLISH_ERRORS_TOTAL.load(Ordering::Relaxed),
+        REDPANDA_PUBLISH_DURATION_MS_TOTAL.load(Ordering::Relaxed),
+        REDPANDA_PUBLISH_LAST_DURATION_MS.load(Ordering::Relaxed),
+        REDPANDA_REQUEST_TOTAL.load(Ordering::Relaxed),
+        REDPANDA_REQUEST_ERRORS_TOTAL.load(Ordering::Relaxed),
+        REDPANDA_REQUEST_DURATION_MS_TOTAL.load(Ordering::Relaxed),
+        REDPANDA_REQUEST_LAST_DURATION_MS.load(Ordering::Relaxed),
     )
 }
 

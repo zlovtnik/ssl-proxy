@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::audit::AuditWindow;
+use crate::state_key::DetectorLimits;
 
 pub const DEFAULT_PUBLISH_JOURNAL_PATH: &str = "/tmp/atheros-sensor-publish-journal.jsonl";
 
@@ -61,6 +62,8 @@ pub struct AppConfig {
     pub redpanda_request_timeout_ms: u64,
     pub mac_device_lookup_enabled: bool,
     pub mac_lookup_error_ttl_secs: u64,
+    pub detector_limits: DetectorLimits,
+    pub clock_skew_anomaly_us: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +89,16 @@ pub enum ConfigError {
     InvalidAuditWindowStart(String),
     #[error("invalid AUDIT_WINDOW_END: {0}")]
     InvalidAuditWindowEnd(String),
+    #[error(
+        "SYNC_REDPANDA_SASL_USERNAME is set but SYNC_REDPANDA_SASL_PASSWORD or SYNC_REDPANDA_SASL_PASSWORD_FILE is missing"
+    )]
+    MissingSyncRedpandaSaslPassword,
+    #[error("SYNC_REDPANDA_SASL_PASSWORD is set but SYNC_REDPANDA_SASL_USERNAME is missing")]
+    MissingSyncRedpandaSaslUsername,
+    #[error("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is set but SYNC_REDPANDA_SSL_KEY_LOCATION is missing")]
+    MissingSyncRedpandaSslKeyLocation,
+    #[error("SYNC_REDPANDA_SSL_KEY_LOCATION is set but SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is missing")]
+    MissingSyncRedpandaSslCertificateLocation,
     #[error("{variable} points at Docker service host `{host}`, but ATH_SENSOR_REQUIRE_HOST_ENDPOINTS=true requires host-reachable endpoints for host network mode; use 127.0.0.1 or another host-reachable address")]
     HostNetworkEndpoint {
         variable: &'static str,
@@ -149,6 +162,7 @@ impl AppConfig {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "/tmp/atheros-sensor-sync-outbox/publish-spool".to_string()),
         };
+        validate_sync_config(&sync)?;
         if read_bool("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", false) {
             validate_host_network_endpoints(sync.redpanda_bootstrap_servers.as_deref())?;
         }
@@ -261,7 +275,41 @@ impl AppConfig {
             mac_lookup_error_ttl_secs: parse_u64("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", 30)
                 .unwrap_or(30)
                 .max(1),
+            detector_limits: DetectorLimits {
+                mac_state_capacity: parse_usize("ATH_SENSOR_MAC_STATE_CAPACITY", 100_000)
+                    .unwrap_or(100_000),
+                ssid_state_capacity: parse_usize("ATH_SENSOR_SSID_STATE_CAPACITY", 16_384)
+                    .unwrap_or(16_384),
+                session_state_capacity: parse_usize("ATH_SENSOR_SESSION_STATE_CAPACITY", 65_536)
+                    .unwrap_or(65_536),
+                client_probe_ssid_capacity: parse_usize(
+                    "ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY",
+                    64,
+                )
+                .unwrap_or(64),
+                pipeline_workers: parse_usize("ATH_SENSOR_PIPELINE_WORKERS", 1).unwrap_or(1),
+                pipeline_queue_capacity: parse_usize("ATH_SENSOR_PIPELINE_QUEUE_CAPACITY", 1_024)
+                    .unwrap_or(1_024),
+            }
+            .clamp(),
+            clock_skew_anomaly_us: parse_i64("ATH_SENSOR_CLOCK_SKEW_ANOMALY_US", 250_000)
+                .unwrap_or(250_000)
+                .max(0),
         })
+    }
+}
+
+fn validate_sync_config(sync: &SyncConfig) -> Result<(), ConfigError> {
+    match (&sync.sasl_username, &sync.sasl_password) {
+        (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSaslPassword),
+        (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSaslUsername),
+        _ => {}
+    }
+
+    match (&sync.ssl_certificate_location, &sync.ssl_key_location) {
+        (Some(_), None) => Err(ConfigError::MissingSyncRedpandaSslKeyLocation),
+        (None, Some(_)) => Err(ConfigError::MissingSyncRedpandaSslCertificateLocation),
+        _ => Ok(()),
     }
 }
 
@@ -372,6 +420,13 @@ fn parse_i32(name: &str, default: i32) -> Result<i32, String> {
     }
 }
 
+fn parse_i64(name: &str, default: i64) -> Result<i64, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => value.trim().parse::<i64>().map_err(|_| value),
+        _ => Ok(default),
+    }
+}
+
 fn parse_i8(name: &str, default: i8) -> Result<i8, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i8>().map_err(|_| value),
@@ -470,9 +525,13 @@ mod tests {
             "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
             "SYNC_REDPANDA_CONNECT_TIMEOUT_MS",
             "SYNC_REDPANDA_PUBLISH_TIMEOUT_MS",
+            "SYNC_REDPANDA_SECURITY_PROTOCOL",
+            "SYNC_REDPANDA_SASL_MECHANISMS",
             "SYNC_REDPANDA_SASL_USERNAME",
             "SYNC_REDPANDA_SASL_PASSWORD",
             "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+            "SYNC_PUBLISH_QUEUE_CAPACITY",
+            "SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS",
             "SYNC_REDPANDA_SSL_ENABLED",
             "SYNC_REDPANDA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM",
             "SYNC_REDPANDA_SSL_CA_LOCATION",
@@ -480,6 +539,7 @@ mod tests {
             "SYNC_REDPANDA_SSL_KEY_LOCATION",
             "SYNC_INLINE_PAYLOAD_MAX_BYTES",
             "SYNC_OUTBOX_DIR",
+            "SYNC_PUBLISH_SPOOL_DIR",
             "ATH_SENSOR_DEVICE",
             "ATH_SENSOR_LOCATION_ID",
             "ATH_SENSOR_CHANNEL",
@@ -507,6 +567,12 @@ mod tests {
             "ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS",
             "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
             "ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS",
+            "ATH_SENSOR_MAC_STATE_CAPACITY",
+            "ATH_SENSOR_SSID_STATE_CAPACITY",
+            "ATH_SENSOR_SESSION_STATE_CAPACITY",
+            "ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY",
+            "ATH_SENSOR_PIPELINE_WORKERS",
+            "ATH_SENSOR_PIPELINE_QUEUE_CAPACITY",
             "ATH_SENSOR_METRICS_PORT",
             "ATH_SENSOR_SHUTDOWN_GRACE_SECS",
             "ATH_SENSOR_AUDIT_LAYER_STREAM",
@@ -546,6 +612,12 @@ mod tests {
         assert_eq!(config.redpanda_request_timeout_ms, 10_000);
         assert!(config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 30);
+        assert_eq!(config.detector_limits.mac_state_capacity, 100_000);
+        assert_eq!(config.detector_limits.ssid_state_capacity, 16_384);
+        assert_eq!(config.detector_limits.session_state_capacity, 65_536);
+        assert_eq!(config.detector_limits.client_probe_ssid_capacity, 64);
+        assert_eq!(config.detector_limits.pipeline_workers, 1);
+        assert_eq!(config.detector_limits.pipeline_queue_capacity, 1_024);
         assert_eq!(
             config.publish_journal_path.as_deref(),
             Some(std::path::Path::new(DEFAULT_PUBLISH_JOURNAL_PATH))
@@ -558,12 +630,88 @@ mod tests {
         std::env::set_var("ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS", "15000");
         std::env::set_var("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", "false");
         std::env::set_var("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", "7");
+        std::env::set_var("ATH_SENSOR_MAC_STATE_CAPACITY", "12");
+        std::env::set_var("ATH_SENSOR_SSID_STATE_CAPACITY", "13");
+        std::env::set_var("ATH_SENSOR_SESSION_STATE_CAPACITY", "14");
+        std::env::set_var("ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY", "15");
+        std::env::set_var("ATH_SENSOR_PIPELINE_WORKERS", "4");
+        std::env::set_var("ATH_SENSOR_PIPELINE_QUEUE_CAPACITY", "256");
 
         let config = AppConfig::from_env().unwrap();
 
         assert_eq!(config.redpanda_request_timeout_ms, 15_000);
         assert!(!config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 7);
+        assert_eq!(config.detector_limits.mac_state_capacity, 12);
+        assert_eq!(config.detector_limits.ssid_state_capacity, 13);
+        assert_eq!(config.detector_limits.session_state_capacity, 14);
+        assert_eq!(config.detector_limits.client_probe_ssid_capacity, 15);
+        assert_eq!(config.detector_limits.pipeline_workers, 4);
+        assert_eq!(config.detector_limits.pipeline_queue_capacity, 256);
+    }
+
+    #[test]
+    fn redpanda_sasl_username_requires_password() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SASL_USERNAME", "sensor-user");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing SASL password to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSaslPassword
+        ));
+    }
+
+    #[test]
+    fn redpanda_sasl_password_requires_username() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SASL_PASSWORD", "sensor-password");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing SASL username to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSaslUsername
+        ));
+    }
+
+    #[test]
+    fn redpanda_client_certificate_requires_key() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION", "/tmp/client.pem");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing client key to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSslKeyLocation
+        ));
+    }
+
+    #[test]
+    fn redpanda_client_key_requires_certificate() {
+        let _env = test_env();
+        std::env::set_var("SYNC_REDPANDA_SSL_KEY_LOCATION", "/tmp/client.key");
+
+        let error = match AppConfig::from_env() {
+            Ok(_) => panic!("expected missing client certificate to fail configuration"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ConfigError::MissingSyncRedpandaSslCertificateLocation
+        ));
     }
 
     #[test]

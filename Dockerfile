@@ -1,6 +1,6 @@
 FROM coredns/coredns:1.12.3 AS coredns
 
-FROM rust:1.86-slim AS builder
+FROM rust:slim-bookworm AS builder
 WORKDIR /app
 
 # Install build dependencies required for openssl-sys
@@ -22,7 +22,7 @@ COPY services/db-migrator ./services/db-migrator
 COPY Cargo.toml Cargo.lock ./
 RUN cargo build --release --workspace && cargo build --release --manifest-path services/atheros-sensor/Cargo.toml
 
-FROM rust:1.86-slim AS boringtun-builder
+FROM rust:slim-bookworm AS boringtun-builder
 RUN cargo install --locked boringtun-cli --version 0.5.2 --root /opt/boringtun
 
 FROM debian:bookworm-slim AS atheros-sensor
@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y \
         curl \
         iproute2 \
         iptables \
+        iw \
         openssl \
         procps \
         tzdata \
@@ -58,6 +59,7 @@ RUN ldconfig && chmod +x /usr/local/bin/start-proxy-wg /usr/local/bin/wg-obfs-sh
   && setcap cap_net_admin+eip /usr/local/bin/coredns \
   && setcap cap_net_admin+eip /app/ssl-proxy \
   && setcap cap_net_admin+eip /usr/local/bin/boringtun-cli \
-  && setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/atheros-sensor
+  && setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/atheros-sensor \
+  && setcap cap_net_admin+eip /usr/sbin/iw
 USER proxyuser
 CMD ["/usr/local/bin/atheros-sensor"]

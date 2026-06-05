@@ -155,11 +155,38 @@ pub(crate) fn ssid_ie() -> Vec<u8> {
 }
 
 pub(crate) fn rsn_ie(wpa3: bool, pmf_required: bool) -> Vec<u8> {
-    let akm = if wpa3 { 8 } else { 2 };
     let capabilities = if pmf_required { 0x0040u16 } else { 0 };
+    rsn_ie_with_capabilities(wpa3, capabilities, false)
+}
+
+pub(crate) fn rsn_ie_with_capabilities(
+    wpa3: bool,
+    capabilities: u16,
+    weak_pairwise_cipher: bool,
+) -> Vec<u8> {
+    let akm = if wpa3 { 8 } else { 2 };
+    let pairwise_cipher = if weak_pairwise_cipher { 2 } else { 4 };
     let mut rsn = vec![
-        0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01,
-        0x00, 0x00, 0x0f, 0xac, akm,
+        0x30,
+        0x14,
+        0x01,
+        0x00,
+        0x00,
+        0x0f,
+        0xac,
+        0x04,
+        0x01,
+        0x00,
+        0x00,
+        0x0f,
+        0xac,
+        pairwise_cipher,
+        0x01,
+        0x00,
+        0x00,
+        0x0f,
+        0xac,
+        akm,
     ];
     rsn.extend_from_slice(&capabilities.to_le_bytes());
     rsn

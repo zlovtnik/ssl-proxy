@@ -570,8 +570,12 @@ impl RedpandaBacklog {
         }
         let reply_topic = next_inbox_topic();
         let payload = payload_with_reply_topic(operation, payload, &reply_topic)?;
-        self.request_with_cached_connection(operation, topic, &payload, &reply_topic)
-            .await
+        let started = Instant::now();
+        let result = self
+            .request_with_cached_connection(operation, topic, &payload, &reply_topic)
+            .await;
+        crate::metrics::record_redpanda_request(result.is_ok(), started.elapsed().as_millis());
+        result
     }
 
     pub async fn lookup_device_by_mac(
@@ -659,13 +663,17 @@ impl RedpandaBacklog {
     }
 
     async fn publish(&self, topic: &'static str, payload: &str) -> Result<(), BacklogError> {
-        self.publisher
+        let started = Instant::now();
+        let result = self
+            .publisher
             .publish_message(topic, payload)
             .await
             .map_err(|source| BacklogError::Redpanda {
                 operation: topic,
                 message: source,
-            })
+            });
+        crate::metrics::record_redpanda_publish(result.is_ok(), started.elapsed().as_millis());
+        result
     }
 }
 

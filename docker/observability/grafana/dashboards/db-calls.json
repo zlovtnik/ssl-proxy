@@ -1,0 +1,300 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum by (service_name, db_system, db_operation) (rate(traces_spanmetrics_calls_total{db_system!=\"\"}[5m]))",
+          "legendFormat": "{{service_name}} {{db_system}} {{db_operation}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (operation) (rate(integration_console_active_record_queries_total[5m]))",
+          "legendFormat": "rails active_record {{operation}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (operation) (rate(oracle_worker_oracle_calls_total[5m]))",
+          "legendFormat": "oracle-worker {{operation}}",
+          "refId": "C"
+        }
+      ],
+      "title": "DB Call Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (service_name, db_system, db_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{db_system!=\"\"}[5m])))",
+          "legendFormat": "p95 {{service_name}} {{db_system}} {{db_operation}}",
+          "refId": "A"
+        },
+        {
+          "expr": "1000 * histogram_quantile(0.95, sum by (operation, le) (rate(integration_console_active_record_query_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 rails {{operation}}",
+          "refId": "B"
+        }
+      ],
+      "title": "DB Latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (service_name, db_system, db_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{db_system!=\"\"}[5m])))",
+          "legendFormat": "p99 {{service_name}} {{db_system}} {{db_operation}}",
+          "refId": "A"
+        },
+        {
+          "expr": "1000 * histogram_quantile(0.99, sum by (operation, le) (rate(integration_console_active_record_query_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 rails {{operation}}",
+          "refId": "B"
+        }
+      ],
+      "title": "DB Latency p99",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum by (service_name, db_system, db_operation, status) (rate(traces_spanmetrics_calls_total{db_system!=\"\",status=~\"error|ERROR|STATUS_CODE_ERROR\"}[5m]))",
+          "legendFormat": "{{service_name}} {{db_system}} {{db_operation}} {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (operation) (rate(oracle_worker_oracle_errors_total[5m]))",
+          "legendFormat": "oracle-worker {{operation}}",
+          "refId": "B"
+        }
+      ],
+      "title": "DB Error Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "rate(oracle_worker_oracle_duration_ms_total[5m]) / clamp_min(rate(oracle_worker_oracle_calls_total[5m]), 0.001)",
+          "legendFormat": "avg {{operation}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Oracle Call Average Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "oracle_worker_pool_connections",
+          "legendFormat": "connections",
+          "refId": "A"
+        },
+        {
+          "expr": "oracle_worker_pool_idle_connections",
+          "legendFormat": "idle",
+          "refId": "B"
+        },
+        {
+          "expr": "oracle_worker_pool_max_connections",
+          "legendFormat": "max",
+          "refId": "C"
+        }
+      ],
+      "title": "Oracle Pool State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "rate(pg_database_io_timing_block_read_time_ms_total[5m])",
+          "legendFormat": "read {{datname}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(pg_database_io_timing_block_write_time_ms_total[5m])",
+          "legendFormat": "write {{datname}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Postgres Block I/O Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "rate(pg_stat_statements_database_calls_total[5m])",
+          "legendFormat": "calls {{datname}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(pg_database_io_timing_temp_files_total[5m])",
+          "legendFormat": "temp files {{datname}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Postgres Query And Temp File Activity",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "observability",
+    "db",
+    "traces"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "DB Calls",
+  "uid": "obs-db-calls",
+  "version": 1,
+  "weekStart": ""
+}

@@ -28,12 +28,22 @@
       "id": 1,
       "targets": [
         {
-          "expr": "sum(rate(http_server_requests_seconds_count[5m])) by (job)",
-          "legendFormat": "{{job}}",
+          "expr": "sum by (job) (rate(http_server_requests_seconds_count[5m]))",
+          "legendFormat": "spring {{job}}",
           "refId": "A"
+        },
+        {
+          "expr": "sum by (controller, action) (rate(integration_console_http_requests_total[5m]))",
+          "legendFormat": "rails {{controller}}#{{action}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (service_name, messaging_destination_name, messaging_operation) (rate(traces_spanmetrics_calls_total{messaging_system!=\"\"}[5m]))",
+          "legendFormat": "{{service_name}} {{messaging_destination_name}} {{messaging_operation}}",
+          "refId": "C"
         }
       ],
-      "title": "Request Rate",
+      "title": "Request And Message Rate",
       "type": "timeseries"
     },
     {
@@ -56,12 +66,22 @@
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[5m])) by (job) / clamp_min(sum(rate(http_server_requests_seconds_count[5m])) by (job), 1)",
-          "legendFormat": "{{job}}",
+          "expr": "sum by (job) (rate(http_server_requests_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum by (job) (rate(http_server_requests_seconds_count[5m])), 0.001)",
+          "legendFormat": "spring {{job}}",
           "refId": "A"
+        },
+        {
+          "expr": "sum(rate(integration_console_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(integration_console_http_requests_total[5m])), 0.001)",
+          "legendFormat": "rails",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(ssl_proxy_sync_publish_enqueue_timeouts_total[5m])) / clamp_min(sum(rate(ssl_proxy_tunnels_opened_total[5m])), 0.001)",
+          "legendFormat": "ssl-proxy publish timeout ratio",
+          "refId": "C"
         }
       ],
-      "title": "Error Rate (5xx)",
+      "title": "Error Ratio",
       "type": "timeseries"
     },
     {
@@ -84,12 +104,45 @@
       "id": 3,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (job, le))",
-          "legendFormat": "{{job}}",
+          "expr": "histogram_quantile(0.95, sum by (job, le) (rate(http_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "spring {{job}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (controller, action, le) (rate(integration_console_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "rails {{controller}}#{{action}}",
+          "refId": "B"
+        }
+      ],
+      "title": "HTTP Latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (service_name, messaging_destination_name, messaging_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{messaging_system!=\"\"}[5m])))",
+          "legendFormat": "{{service_name}} {{messaging_destination_name}} {{messaging_operation}}",
           "refId": "A"
         }
       ],
-      "title": "Latency p95",
+      "title": "Message Latency p95",
       "type": "timeseries"
     },
     {
@@ -106,18 +159,71 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 8
+        "x": 0,
+        "y": 16
       },
-      "id": 4,
+      "id": 5,
       "targets": [
         {
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"2..|3..\"}[5m])) by (job)",
-          "legendFormat": "{{job}}",
+          "expr": "ssl_proxy_active_tunnels",
+          "legendFormat": "ssl-proxy tunnels",
           "refId": "A"
+        },
+        {
+          "expr": "ssl_proxy_sync_publish_queue_depth",
+          "legendFormat": "ssl-proxy publish queue",
+          "refId": "B"
+        },
+        {
+          "expr": "ssl_proxy_sync_publish_spool_pending",
+          "legendFormat": "ssl-proxy spool pending",
+          "refId": "C"
         }
       ],
-      "title": "Successful Responses",
+      "title": "Proxy Active Work",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(atheros_redpanda_publish_total[5m]))",
+          "legendFormat": "atheros publish",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(atheros_redpanda_publish_errors_total[5m]))",
+          "legendFormat": "atheros publish errors",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(oracle_worker_batches_received_total[5m]))",
+          "legendFormat": "oracle batches",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(rate(oracle_worker_batches_failed_total[5m]))",
+          "legendFormat": "oracle failures",
+          "refId": "D"
+        }
+      ],
+      "title": "Worker Throughput And Errors",
       "type": "timeseries"
     }
   ],
@@ -125,8 +231,8 @@
   "schemaVersion": 39,
   "tags": [
     "observability",
-    "non-vector",
-    "red"
+    "red",
+    "mixed-stack"
   ],
   "templating": {
     "list": []
@@ -138,6 +244,6 @@
   "timezone": "browser",
   "title": "Per-Service RED Metrics",
   "uid": "obs-service-red",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

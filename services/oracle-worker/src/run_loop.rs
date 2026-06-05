@@ -9,11 +9,14 @@ use r2d2::Pool;
 use r2d2_oracle::OracleConnectionManager;
 use rdkafka::{
     consumer::{CommitMode, Consumer, StreamConsumer},
+    message::{Header, OwnedHeaders},
     producer::{FutureProducer, FutureRecord},
     ClientConfig, Offset, TopicPartitionList,
 };
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use tracing::{field, info_span, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::config::RunConfig;
 use crate::healthcheck::healthcheck;
@@ -126,6 +129,7 @@ async fn process_collected_message(
         commit_target,
         load,
         payload_bytes,
+        trace_headers,
     } = message;
 
     let load = match load {
@@ -143,6 +147,19 @@ async fn process_collected_message(
             return Ok(());
         }
     };
+
+    let span = info_span!(
+        "oracle.batch.process",
+        "messaging.system" = "redpanda",
+        "messaging.destination.name" = %commit_target.topic,
+        "messaging.operation" = "process",
+        "batch.id" = %load.batch_id,
+        "stream.name" = %load.stream_name,
+        status = field::Empty
+    );
+    if !trace_headers.is_empty() {
+        let _ = span.set_parent(crate::observability::extract_trace_context(&trace_headers));
+    }
 
     commit_tracker.mark_started(&commit_target);
     metrics::record_batch_received();
@@ -169,7 +186,11 @@ async fn process_collected_message(
 
     join_set.spawn(async move {
         let _permit = permit;
-        handle_load_message(&producer, &config, &pool, load, commit_target).await
+        let result = handle_load_message(&producer, &config, &pool, load, commit_target)
+            .instrument(span.clone())
+            .await;
+        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        result
     });
     Ok(())
 }
@@ -256,6 +277,7 @@ async fn emit_heartbeat(
         .await
         .map_err(|error| format!("healthcheck task panicked: {error}"))??;
     let state = pool.state();
+    metrics::record_pool_state(state.connections, state.idle_connections, pool.max_size());
     println!(
         "service={SERVICE_NAME} event=pool_state connections={} idle={} max={}",
         state.connections,
@@ -299,18 +321,30 @@ async fn publish_result(
     let row_count = result.row_count;
     let payload = serde_json::to_vec(&result)
         .map_err(|error| format!("serialize OracleResult for batch {batch_id}: {error}"))?;
+    let span = info_span!(
+        "redpanda.publish",
+        "messaging.system" = "redpanda",
+        "messaging.destination.name" = %config.result_topic,
+        "messaging.operation" = "publish",
+        "batch.id" = %batch_id,
+        status = field::Empty
+    );
+    let mut record = FutureRecord::to(config.result_topic.as_str())
+        .payload(&payload)
+        .key(batch_id.as_str());
+    if let Some(headers) = current_trace_headers() {
+        record = record.headers(headers);
+    }
     if let Err((error, _)) = producer
-        .send(
-            FutureRecord::to(config.result_topic.as_str())
-                .payload(&payload)
-                .key(batch_id.as_str()),
-            Duration::from_secs(5),
-        )
+        .send(record, Duration::from_secs(5))
+        .instrument(span.clone())
         .await
     {
+        span.record("status", "error");
         metrics::record_batch_result(false, batch_duration_ms);
         return Err(format!("publish result for batch {batch_id}: {error}"));
     }
+    span.record("status", "ok");
     metrics::record_batch_result(status == "success", batch_duration_ms);
     log_result(&batch_id, &status, row_count, batch_duration_ms, &result);
     if status != "success" {
@@ -322,6 +356,22 @@ async fn publish_result(
         batch_id,
         commit_target,
     })
+}
+
+fn current_trace_headers() -> Option<OwnedHeaders> {
+    let headers = crate::observability::current_trace_headers();
+    if headers.is_empty() {
+        return None;
+    }
+
+    let mut owned = OwnedHeaders::new();
+    for (key, value) in headers {
+        owned = owned.insert(Header {
+            key: key.as_str(),
+            value: Some(value.as_str()),
+        });
+    }
+    Some(owned)
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

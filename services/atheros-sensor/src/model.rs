@@ -173,6 +173,12 @@ pub struct CorrelationLayer {
     pub payload_visibility: String,
     pub tsft_delta_us: Option<i64>,
     pub wall_clock_delta_ms: Option<i64>,
+    #[serde(default)]
+    pub sequence_delta: Option<u16>,
+    #[serde(default)]
+    pub sequence_gap_missing_frames: Option<u16>,
+    #[serde(default)]
+    pub clock_skew_delta_us: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -236,11 +242,14 @@ pub struct WifiFrame {
     pub tags: Vec<String>,
     pub risk_score: Option<f32>,
     pub security_flags: u32,
+    pub rsn_capabilities: Option<u16>,
+    pub weak_cipher_advertised: Option<bool>,
     pub wps_device_name: Option<String>,
     pub wps_manufacturer: Option<String>,
     pub wps_model_name: Option<String>,
     pub device_fingerprint: Option<String>,
     pub probe_fingerprint: Option<String>,
+    pub ie_layout_hash: Option<String>,
     pub vendor_name: Option<String>,
     pub handshake_captured: bool,
     pub eapol_key_message: Option<u8>,
@@ -281,6 +290,9 @@ pub struct WifiFrame {
     pub payload_visibility: String,
     pub tsft_delta_us: Option<i64>,
     pub wall_clock_delta_ms: Option<i64>,
+    pub sequence_delta: Option<u16>,
+    pub sequence_gap_missing_frames: Option<u16>,
+    pub clock_skew_delta_us: Option<i64>,
     pub large_frame: bool,
     pub mixed_encryption: Option<bool>,
     pub dedupe_or_replay_suspect: bool,
@@ -367,11 +379,17 @@ pub struct AuditEntry {
     pub risk_score: Option<f32>,
     #[serde(default)]
     pub security_flags: u32,
+    #[serde(default)]
+    pub rsn_capabilities: Option<u16>,
+    #[serde(default)]
+    pub weak_cipher_advertised: Option<bool>,
     pub wps_device_name: Option<String>,
     pub wps_manufacturer: Option<String>,
     pub wps_model_name: Option<String>,
     pub device_fingerprint: Option<String>,
     pub probe_fingerprint: Option<String>,
+    #[serde(default)]
+    pub ie_layout_hash: Option<String>,
     pub vendor_name: Option<String>,
     #[serde(default)]
     pub handshake_captured: bool,
@@ -409,6 +427,12 @@ pub struct AuditEntry {
     pub payload_visibility: Option<String>,
     pub tsft_delta_us: Option<i64>,
     pub wall_clock_delta_ms: Option<i64>,
+    #[serde(default)]
+    pub sequence_delta: Option<u16>,
+    #[serde(default)]
+    pub sequence_gap_missing_frames: Option<u16>,
+    #[serde(default)]
+    pub clock_skew_delta_us: Option<i64>,
     pub large_frame: Option<bool>,
     pub mixed_encryption: Option<bool>,
     pub dedupe_or_replay_suspect: Option<bool>,

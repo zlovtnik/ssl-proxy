@@ -31,30 +31,31 @@ mod config;
 mod config_subscriber;
 mod detect_state;
 mod device;
+mod device_registry;
 mod error;
 mod metrics;
 mod model;
 mod parse;
+mod probes;
 mod publish;
+mod state_key;
 mod stats;
 #[cfg(test)]
 mod testutil;
+mod timing;
+mod topics;
 
 use std::{
-    collections::HashMap,
     fmt::Display,
     future,
-    num::NonZeroUsize,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use chrono::{DateTime, Utc};
-use lru::LruCache;
-use serde::Serialize;
+use chrono::Utc;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -64,43 +65,45 @@ use crate::{
         AuditLayer, AuditWindow, SharedAuditWindow, TrafficBucket, WirelessBandwidthEvent,
         DEFAULT_BANDWIDTH_WINDOW_SECS, EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
     },
-    backlog::{BacklogStore, ProbeFlushObservation, RedpandaBacklog},
+    backlog::{BacklogStore, RedpandaBacklog},
     capture::{stream_packets, CaptureControl, CaptureError},
     channel_control::set_channel,
     config::AppConfig,
     detect_state::{
-        AttackTimelineCorrelator, AuthorizationStatus, AuthorizedNetworkCache, ClientInventory,
-        DeauthFloodTracker, PmfAttackTracker, RogueApTracker, SequenceTracker, SignalTracker,
-        ATTACK_SEQUENCE_TOPIC, CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, ROGUE_AP_TOPIC,
-        SEQUENCE_ALERT_TOPIC,
+        pmf_attack_alert_from_entry, AttackTimelineCorrelator, AuthorizationStatus,
+        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, IeLayoutTracker,
+        MacSequenceDeltaTracker, PmfAttackTracker, RogueApTracker, SequenceTracker, SignalTracker,
     },
     device::{detect, read_mac_address},
+    device_registry::{DeviceRegistryCache, DeviceRegistryCacheDecision},
     error::SensorError,
-    model::{AuditContext, EnrichedFrame, RawPacket, WifiFrame},
+    model::{AuditContext, EnrichedFrame, RawPacket},
     parse::{
         attach_context, decode_frame, to_audit_entry, try_decrypt_frame, HandshakeMonitor,
         IdentityCache, ParseError,
     },
+    probes::{ProbeAccumulator, ProbeFlushBatch},
     publish::{
         flush_memory_backlog, periodic_memory_backlog_flush, publish_bandwidth_event,
-        publish_entry, publish_handshake_alert, publish_oracle_json, reconcile_backlog,
+        publish_entry, publish_handshake_alert, publish_oracle_json_durable, reconcile_backlog,
         replay_journal, PublishClient, PublishError, PublishState, SharedPublishState,
         SyncPublisherClient,
     },
+    state_key::{stable_hash, DetectorRouteKey, DetectorRouter, MacAddr},
     stats::PipelineOutcome,
+    timing::FrameTimingTracker,
+    topics::{
+        ATTACK_SEQUENCE_TOPIC, CLIENT_INVENTORY_TOPIC, DEAUTH_FLOOD_TOPIC, PMF_ATTACK_TOPIC,
+        ROGUE_AP_TOPIC, SENSOR_HEARTBEAT_TOPIC, SEQUENCE_ALERT_TOPIC, SIGNAL_ANOMALY_TOPIC,
+    },
 };
 /// Default log level filter when RUST_LOG is not set.
 const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
-const SIGNAL_ANOMALY_TOPIC: &str = "wireless.alert.signal_anomaly";
-const PMF_ATTACK_TOPIC: &str = "wireless.alert.pmf_attack";
-const SENSOR_HEARTBEAT_TOPIC: &str = "wireless.sensor.heartbeat";
 const BACKLOG_RECONCILE_INTERVAL_SECS: u64 = 60;
 const BACKLOG_PRUNE_INTERVAL_SECS: u64 = 3_600;
 const BACKLOG_PRUNE_MAX_ATTEMPTS: i32 = 10;
 const BACKLOG_PRUNE_MAX_AGE_HOURS: i64 = 72;
-const TIMING_TRACKER_MAX_SESSIONS: usize = 4_096;
-const TIMING_TRACKER_MAX_AGE_SECS: i64 = 3_600;
 
 fn hex_prefix(data: &[u8], n: usize) -> String {
     data.iter()
@@ -108,6 +111,32 @@ fn hex_prefix(data: &[u8], n: usize) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn detector_route_key(entry: &crate::model::AuditEntry) -> DetectorRouteKey {
+    if let Some(mac) = entry.bssid.as_deref().and_then(MacAddr::parse) {
+        return DetectorRouteKey::Ap(mac);
+    }
+    if let Some(mac) = entry.source_mac.as_deref().and_then(MacAddr::parse) {
+        return DetectorRouteKey::Client(mac);
+    }
+    if let Some(session_key) = entry
+        .session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return DetectorRouteKey::Session(stable_hash(session_key));
+    }
+    if let Some(ssid) = entry
+        .ssid
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return DetectorRouteKey::Ssid(stable_hash(&ssid.to_ascii_lowercase()));
+    }
+    DetectorRouteKey::Unknown
 }
 
 async fn run_healthcheck() -> Result<(), SensorError> {
@@ -240,6 +269,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     &handles.backlog,
                     &*handles.publish_client,
                     &handles.publish_state,
+                    &handles.current_filter,
                     &mut pipeline_state,
                     &handles.stats,
                     &handles.authorized_config_generation,
@@ -271,9 +301,10 @@ async fn run_sensor() -> Result<(), SensorError> {
             }
             _ = bandwidth_flush.tick() => {
                 let ttl = Duration::from_secs(handles.config.handshake_ttl_secs);
+                let restore_filter = filter_snapshot(&handles.current_filter, &handles.config.bpf);
                 pipeline_state
                     .handshake_monitor
-                    .cleanup_expired(ttl, Some(&handles.capture_control));
+                    .cleanup_expired(ttl, Some(&handles.capture_control), &restore_filter);
                 let bandwidth_events = pipeline_state.traffic_bucket.flush_current();
                 // Compute median (publish_time - window_end) across bandwidth events.
                 let now = Utc::now();
@@ -293,7 +324,13 @@ async fn run_sensor() -> Result<(), SensorError> {
                     stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
                     stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
                 }
-                publish_bandwidth_events(&*handles.publish_client, bandwidth_events).await;
+                publish_bandwidth_events(
+                    &handles.publish_state,
+                    &*handles.backlog,
+                    &*handles.publish_client,
+                    bandwidth_events,
+                )
+                .await;
             }
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
@@ -308,33 +345,32 @@ async fn run_sensor() -> Result<(), SensorError> {
                     "location_id": context.location_id,
                     "clients": snapshot.clients,
                 });
-                if let Err(error) = publish_oracle_json(&*handles.publish_client, "publish_client_inventory", CLIENT_INVENTORY_TOPIC, &inventory_payload, &observed_at).await {
+                if let Err(error) = publish_oracle_json_durable(
+                    &handles.publish_state,
+                    &*handles.backlog,
+                    &*handles.publish_client,
+                    "publish_client_inventory",
+                    CLIENT_INVENTORY_TOPIC,
+                    &inventory_payload,
+                    &observed_at,
+                )
+                .await
+                {
                     warn!(%error, "client inventory publish failed");
                 }
 
-                let probes_to_flush: Vec<_> = pipeline_state.probe_accumulator.drain().collect();
-                let batch = probes_to_flush
-                    .iter()
-                    .map(|((ssid, client_mac), obs)| ProbeFlushObservation {
-                        ssid: ssid.clone(),
-                        client_mac: client_mac.clone(),
-                        known_bssid: obs.known_bssid.clone(),
-                        first_seen: obs.first_seen,
-                        last_seen: obs.last_seen,
-                        probe_count: obs.probe_count,
-                    })
-                    .collect::<Vec<_>>();
-                if let Err(error) = handles.backlog.flush_probe_batch(&batch).await {
-                    warn!(
-                        %error,
-                        probe_count = probes_to_flush.len(),
-                        "probe batch flush failed; reinserting for retry"
-                    );
-                    for (key, obs) in probes_to_flush {
-                        pipeline_state.probe_accumulator.insert(key, obs);
+                for batch in pipeline_state.probe_accumulator.take_ready_batches() {
+                    match flush_probe_batch(&handles.backlog, batch).await {
+                        Ok(probe_count) => debug!(probe_count, "probe batch flushed"),
+                        Err((batch, error)) => {
+                            warn!(
+                                %error,
+                                probe_count = batch.len(),
+                                "probe batch flush failed; reinserting for retry"
+                            );
+                            pipeline_state.probe_accumulator.restore(batch);
+                        }
                     }
-                } else {
-                    debug!(probe_count = batch.len(), "probe batch flushed");
                 }
                 handles.stats.lock().unwrap().probe_accumulator_len =
                     pipeline_state.probe_accumulator.len();
@@ -352,6 +388,7 @@ struct SensorHandles {
     audit_window: SharedAuditWindow,
     device: String,
     context: SharedContext,
+    current_filter: SharedFilter,
     packets: ReceiverStream<Result<RawPacket, CaptureError>>,
     capture_control: CaptureControl,
     backlog: Arc<RedpandaBacklog>,
@@ -364,6 +401,7 @@ struct SensorHandles {
 
 /// Thread-safe shared reference to the current audit context.
 type SharedContext = Arc<RwLock<AuditContext>>;
+type SharedFilter = Arc<RwLock<String>>;
 
 /// Mutable per-packet state owned by the main loop.
 /// Never shared across tasks to avoid locks on the hot path.
@@ -371,286 +409,64 @@ struct PipelineState {
     identity_cache: IdentityCache,
     handshake_monitor: HandshakeMonitor,
     traffic_bucket: TrafficBucket,
-    mac_device_cache: LruCache<String, Option<(String, Option<String>)>>,
-    mac_lookup_error_cache: LruCache<String, Instant>,
+    device_registry_cache: DeviceRegistryCache,
     client_inventory: ClientInventory,
     signal_tracker: SignalTracker,
     rogue_ap_tracker: RogueApTracker,
     deauth_flood_tracker: DeauthFloodTracker,
     attack_timeline_correlator: AttackTimelineCorrelator,
     sequence_tracker: SequenceTracker,
+    mac_sequence_delta_tracker: MacSequenceDeltaTracker,
+    ie_layout_tracker: IeLayoutTracker,
     pmf_attack_tracker: PmfAttackTracker,
     pmf_reconnect_window_ms: i64,
+    detector_router: DetectorRouter,
+    next_frame_id: u64,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
-    probe_accumulator: HashMap<(String, String), ProbeObservation>,
-    timing_tracker: HashMap<String, LastFrameTiming>,
-}
-
-#[derive(Clone)]
-struct ProbeObservation {
-    known_bssid: Option<String>,
-    first_seen: DateTime<Utc>,
-    last_seen: DateTime<Utc>,
-    probe_count: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LastFrameTiming {
-    observed_at: DateTime<Utc>,
-    tsft: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FrameTimingDelta {
-    tsft_delta_us: i64,
-    wall_clock_delta_ms: i64,
-}
-
-fn attach_frame_timing_deltas(
-    frame: &mut WifiFrame,
-    timing_tracker: &mut HashMap<String, LastFrameTiming>,
-) {
-    let delta = compute_frame_timing_delta(frame, timing_tracker);
-    frame.tsft_delta_us = delta.map(|delta| delta.tsft_delta_us);
-    frame.wall_clock_delta_ms = delta.map(|delta| delta.wall_clock_delta_ms);
-    frame.correlation.tsft_delta_us = frame.tsft_delta_us;
-    frame.correlation.wall_clock_delta_ms = frame.wall_clock_delta_ms;
-}
-
-fn compute_frame_timing_delta(
-    frame: &WifiFrame,
-    timing_tracker: &mut HashMap<String, LastFrameTiming>,
-) -> Option<FrameTimingDelta> {
-    let session_key = frame
-        .session_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|key| !key.is_empty())?;
-    let current_tsft = frame.tsft?;
-    let current_observed_at = frame.observed_at;
-
-    let delta = timing_tracker.get(session_key).and_then(|previous| {
-        let tsft_delta_us = current_tsft.checked_sub(previous.tsft)?;
-        let tsft_delta_us = i64::try_from(tsft_delta_us).ok()?;
-        let wall_clock_delta_ms = (current_observed_at - previous.observed_at).num_milliseconds();
-        if wall_clock_delta_ms < 0 {
-            return None;
-        }
-        Some(FrameTimingDelta {
-            tsft_delta_us,
-            wall_clock_delta_ms,
-        })
-    });
-
-    // Only update the baseline when the new sample is not older than the stored one.
-    // This prevents out-of-order packets from corrupting the baseline.
-    let should_update = timing_tracker
-        .get(session_key)
-        .map(|previous| current_observed_at >= previous.observed_at)
-        .unwrap_or(true); // No previous entry — first sample, always insert.
-    if should_update {
-        timing_tracker.insert(
-            session_key.to_string(),
-            LastFrameTiming {
-                observed_at: current_observed_at,
-                tsft: current_tsft,
-            },
-        );
-    }
-    prune_timing_tracker(timing_tracker, current_observed_at);
-
-    delta
-}
-
-fn prune_timing_tracker(
-    timing_tracker: &mut HashMap<String, LastFrameTiming>,
-    observed_at: DateTime<Utc>,
-) {
-    let cutoff = observed_at - chrono::Duration::seconds(TIMING_TRACKER_MAX_AGE_SECS);
-    timing_tracker.retain(|_, timing| timing.observed_at >= cutoff);
-    if timing_tracker.len() <= TIMING_TRACKER_MAX_SESSIONS {
-        return;
-    }
-    // Evict the oldest sessions until we are within the cap.
-    let mut entries: Vec<(String, DateTime<Utc>)> = timing_tracker
-        .iter()
-        .map(|(k, v)| (k.clone(), v.observed_at))
-        .collect();
-    entries.sort_by_key(|(_, observed_at)| *observed_at);
-    let to_remove: Vec<String> = entries
-        .into_iter()
-        .take(timing_tracker.len() - TIMING_TRACKER_MAX_SESSIONS)
-        .map(|(k, _)| k)
-        .collect();
-    for key in to_remove {
-        timing_tracker.remove(&key);
-    }
-}
-
-#[derive(Serialize)]
-struct PmfAttackAlert {
-    schema_version: u32,
-    event_type: String,
-    observed_at: String,
-    sensor_id: String,
-    location_id: String,
-    target_mac: String,
-    target_bssid: Option<String>,
-    ssid: Option<String>,
-    channel: Option<u8>,
-    attack_tag: String,
-    reconnect_window_ms: Option<i64>,
-}
-
-fn pmf_attack_alert_from_entry(
-    entry: &crate::model::AuditEntry,
-    attack_tag: &str,
-    reconnect_window_ms: i64,
-) -> Option<PmfAttackAlert> {
-    if !attack_tag.starts_with("threat:pmf_") && attack_tag != "threat:handshake_harvest_attack" {
-        return None;
-    }
-
-    let target_mac = if attack_tag == "threat:pmf_forced_reconnect" {
-        entry.source_mac.as_deref()
-    } else {
-        entry
-            .destination_mac
-            .as_deref()
-            .or(entry.source_mac.as_deref())
-    }
-    .or(entry.bssid.as_deref())?
-    .trim()
-    .to_ascii_lowercase();
-
-    Some(PmfAttackAlert {
-        schema_version: 1,
-        event_type: "wireless_pmf_attack".to_string(),
-        observed_at: entry.observed_at.clone(),
-        sensor_id: entry.sensor_id.clone(),
-        location_id: entry.location_id.clone(),
-        target_mac,
-        target_bssid: entry
-            .bssid
-            .clone()
-            .or_else(|| entry.destination_bssid.clone()),
-        ssid: entry.ssid.clone(),
-        channel: Some(entry.channel),
-        attack_tag: attack_tag.to_string(),
-        reconnect_window_ms: Some(reconnect_window_ms),
-    })
+    probe_accumulator: ProbeAccumulator,
+    timing_tracker: FrameTimingTracker,
 }
 
 impl PipelineState {
-    fn new(_config: &AppConfig) -> Self {
+    fn new(config: &AppConfig) -> Self {
         let pmf_reconnect_window_ms = std::env::var("ATH_SENSOR_PMF_RECONNECT_WINDOW_MS")
             .ok()
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(3000);
+        let limits = config.detector_limits;
 
         Self {
-            identity_cache: IdentityCache::default(),
+            identity_cache: IdentityCache::new(limits),
             handshake_monitor: HandshakeMonitor::default(),
             traffic_bucket: TrafficBucket::new(DEFAULT_BANDWIDTH_WINDOW_SECS),
-            mac_device_cache: LruCache::new(
-                NonZeroUsize::new(MAC_DEVICE_CACHE_SIZE).unwrap_or_else(|| {
-                    NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
-                }),
-            ),
-            mac_lookup_error_cache: LruCache::new(
-                NonZeroUsize::new(MAC_DEVICE_CACHE_SIZE).unwrap_or_else(|| {
-                    NonZeroUsize::new(1).expect("fallback cache capacity must be non-zero")
-                }),
-            ),
-            client_inventory: ClientInventory::default(),
-            signal_tracker: SignalTracker::default(),
-            rogue_ap_tracker: RogueApTracker::default(),
-            deauth_flood_tracker: DeauthFloodTracker::default(),
-            attack_timeline_correlator: AttackTimelineCorrelator::default(),
-            sequence_tracker: SequenceTracker::default(),
-            pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
+            device_registry_cache: DeviceRegistryCache::new(MAC_DEVICE_CACHE_SIZE),
+            client_inventory: ClientInventory::new(limits),
+            signal_tracker: SignalTracker::new(limits),
+            rogue_ap_tracker: RogueApTracker::new(limits),
+            deauth_flood_tracker: DeauthFloodTracker::new(limits),
+            attack_timeline_correlator: AttackTimelineCorrelator::new(limits),
+            sequence_tracker: SequenceTracker::new(limits),
+            mac_sequence_delta_tracker: MacSequenceDeltaTracker::new(limits),
+            ie_layout_tracker: IeLayoutTracker::new(limits),
+            pmf_attack_tracker: PmfAttackTracker::new_with_limits(pmf_reconnect_window_ms, limits),
             pmf_reconnect_window_ms,
+            detector_router: DetectorRouter::new(limits),
+            next_frame_id: 0,
             authorized_network_cache: AuthorizedNetworkCache::new(
-                _config.authorized_network_cache_backoff_ms,
+                config.authorized_network_cache_backoff_ms,
             ),
             seen_authorized_config_generation: 0,
-            probe_accumulator: HashMap::new(),
-            timing_tracker: HashMap::new(),
+            probe_accumulator: ProbeAccumulator::new_with_limits(limits),
+            timing_tracker: FrameTimingTracker::default(),
         }
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-enum MacLookupCacheDecision {
-    UseCached(Option<(String, Option<String>)>),
-    SkipRecentFailure,
-    Fetch,
-}
-
-fn cached_mac_lookup(
-    pipeline: &mut PipelineState,
-    cache_key: &str,
-    error_ttl: Duration,
-) -> MacLookupCacheDecision {
-    mac_lookup_cache_decision(
-        &mut pipeline.mac_device_cache,
-        &mut pipeline.mac_lookup_error_cache,
-        cache_key,
-        error_ttl,
-    )
-}
-
-fn mac_lookup_cache_decision(
-    device_cache: &mut LruCache<String, Option<(String, Option<String>)>>,
-    error_cache: &mut LruCache<String, Instant>,
-    cache_key: &str,
-    error_ttl: Duration,
-) -> MacLookupCacheDecision {
-    if let Some(cached) = device_cache.get(cache_key) {
-        return MacLookupCacheDecision::UseCached(cached.clone());
+    fn allocate_frame_id(&mut self) -> u64 {
+        let frame_id = self.next_frame_id;
+        self.next_frame_id = self.next_frame_id.wrapping_add(1);
+        frame_id
     }
-    if error_cache
-        .get(cache_key)
-        .is_some_and(|last| last.elapsed() < error_ttl)
-    {
-        return MacLookupCacheDecision::SkipRecentFailure;
-    }
-    MacLookupCacheDecision::Fetch
-}
-
-fn remember_mac_lookup_success(
-    pipeline: &mut PipelineState,
-    cache_key: String,
-    lookup: Option<(String, Option<String>)>,
-) {
-    remember_mac_lookup_success_in_caches(
-        &mut pipeline.mac_device_cache,
-        &mut pipeline.mac_lookup_error_cache,
-        cache_key,
-        lookup,
-    );
-}
-
-fn remember_mac_lookup_failure(pipeline: &mut PipelineState, cache_key: String) {
-    remember_mac_lookup_failure_in_cache(&mut pipeline.mac_lookup_error_cache, cache_key);
-}
-
-fn remember_mac_lookup_success_in_caches(
-    device_cache: &mut LruCache<String, Option<(String, Option<String>)>>,
-    error_cache: &mut LruCache<String, Instant>,
-    cache_key: String,
-    lookup: Option<(String, Option<String>)>,
-) {
-    error_cache.pop(&cache_key);
-    device_cache.put(cache_key, lookup);
-}
-
-fn remember_mac_lookup_failure_in_cache(
-    error_cache: &mut LruCache<String, Instant>,
-    cache_key: String,
-) {
-    error_cache.put(cache_key, Instant::now());
 }
 
 /// Initializes sensor in startup order: tracing first (so all subsequent steps are logged),
@@ -773,6 +589,14 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         );
     }
 
+    step(
+        format!(
+            "set wireless capture channel {} on interface {device}",
+            config.channel
+        ),
+        apply_configured_channel(&device, config.channel, set_channel),
+    )?;
+
     let context = Arc::new(RwLock::new(AuditContext {
         sensor_id,
         location_id: config.location_id.clone(),
@@ -803,7 +627,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
 
     // Shared filter state: tracks the last-applied BPF so the hopper can skip
     // re-applying when the filter hasn't changed.
-    let current_filter: Arc<RwLock<String>> = Arc::new(RwLock::new(config.bpf.clone()));
+    let current_filter: SharedFilter = Arc::new(RwLock::new(config.bpf.clone()));
 
     if config.channel_hop_enabled {
         spawn_channel_hopper(
@@ -822,7 +646,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
             config.location_id.clone(),
             Arc::clone(&context),
             packet_stream.control.clone(),
-            current_filter,
+            Arc::clone(&current_filter),
         );
     }
     // Spawn periodic memory backlog flush timer
@@ -853,6 +677,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         audit_window,
         device,
         context,
+        current_filter,
         packets: packet_stream.packets,
         capture_control: packet_stream.control,
         backlog,
@@ -912,6 +737,13 @@ fn spawn_backlog_prune_task(backlog: Arc<RedpandaBacklog>) {
     });
 }
 
+fn apply_configured_channel<F, E>(device: &str, channel: u8, set: F) -> Result<(), E>
+where
+    F: FnOnce(&str, u8) -> Result<(), E>,
+{
+    set(device, channel)
+}
+
 /// Hot path: decodes raw packet -> extracts handshake -> resolves identity -> checks
 /// authorized network -> tags threats -> enriches with MAC device lookup -> observes
 /// bandwidth -> publishes to Redpanda.
@@ -922,6 +754,7 @@ async fn process_packet(
     backlog: &RedpandaBacklog,
     publish_client: &dyn PublishClient,
     publish_state: &SharedPublishState,
+    current_filter: &SharedFilter,
     pipeline: &mut PipelineState,
     stats: &metrics::SharedStats,
     authorized_config_generation: &AtomicU64,
@@ -973,11 +806,13 @@ async fn process_packet(
         .export_handshakes
         .then_some(config.sync.outbox_dir.as_str());
     let handshake_ttl = Duration::from_secs(config.handshake_ttl_secs);
+    let restore_filter = filter_snapshot(current_filter, &config.bpf);
     let handshake_alert = pipeline.handshake_monitor.observe(
         &mut wifi_frame,
         context,
         handshake_export_dir,
         Some(capture_control),
+        &restore_filter,
         handshake_ttl,
     );
     let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
@@ -1007,10 +842,23 @@ async fn process_packet(
     ) {
         debug!("protected data frame decrypted using authorized network PSK");
     }
-    attach_frame_timing_deltas(&mut wifi_frame, &mut pipeline.timing_tracker);
+    pipeline
+        .timing_tracker
+        .attach_deltas(&mut wifi_frame, config.clock_skew_anomaly_us);
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
     let enriched: EnrichedFrame = attach_context(wifi_frame, context);
     let mut entry = to_audit_entry(enriched);
+    let frame_id = pipeline.allocate_frame_id();
+    let detector_lane = pipeline
+        .detector_router
+        .lane_for(detector_route_key(&entry));
+    trace!(
+        frame_id,
+        detector_lane,
+        detector_lanes = pipeline.detector_router.lanes(),
+        detector_queue_capacity = pipeline.detector_router.queue_capacity(),
+        "decoded frame assigned to detector route"
+    );
     if let Some(alert) = handshake_alert.as_ref() {
         if let Err(error) = publish_handshake_alert(publish_client, alert).await {
             warn!(%error, "handshake alert publish failed; continuing audit publish");
@@ -1046,9 +894,15 @@ async fn process_packet(
             .tags
             .push("enrichment:authorized_network_unknown".to_string());
     }
+    pipeline
+        .ie_layout_tracker
+        .observe(&mut entry, authorization_status);
+    pipeline.mac_sequence_delta_tracker.observe(&mut entry);
     pipeline.client_inventory.observe(&mut entry);
     if let Some(alert) = pipeline.sequence_tracker.observe(&entry) {
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_sequence_alert",
             SEQUENCE_ALERT_TOPIC,
@@ -1061,80 +915,30 @@ async fn process_packet(
         }
     }
 
-    // Accumulate probe observations for batched flush
     if entry.frame_subtype == "probe_request" {
-        if let (Some(client_mac), Some(ssid)) = (
-            entry
-                .source_mac
-                .as_deref()
-                .map(|m| m.trim().to_ascii_lowercase()),
-            entry
-                .ssid
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
-        ) {
-            let observed_at = chrono::DateTime::parse_from_rfc3339(&entry.observed_at)
-                .ok()
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(chrono::Utc::now);
-
-            let linked_bssid = pipeline
-                .client_inventory
-                .link_probe_to_network(&entry, &pipeline.authorized_network_cache)
-                .map(|(bssid, _, _)| bssid);
-            let key = (ssid.to_string(), client_mac.clone());
-            pipeline
-                .probe_accumulator
-                .entry(key)
-                .and_modify(|obs| {
-                    if obs.known_bssid.is_none() {
-                        obs.known_bssid = linked_bssid.clone().or_else(|| entry.bssid.clone());
-                    }
-                    obs.last_seen = observed_at;
-                    obs.probe_count = obs.probe_count.saturating_add(1);
-                })
-                .or_insert_with(|| ProbeObservation {
-                    known_bssid: linked_bssid.or_else(|| entry.bssid.clone()),
-                    first_seen: observed_at,
-                    last_seen: observed_at,
-                    probe_count: 1,
-                });
-            stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
-        }
+        pipeline.probe_accumulator.observe(
+            &entry,
+            &pipeline.client_inventory,
+            &pipeline.authorized_network_cache,
+        );
+        stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
     }
 
-    // Backpressure guard for probe accumulator: if the map exceeds 8192 entries,
-    // drain and flush immediately rather than waiting for the next inventory_flush tick.
-    const MAX_PROBE_ACCUMULATOR_SIZE: usize = 8192;
-    if pipeline.probe_accumulator.len() > MAX_PROBE_ACCUMULATOR_SIZE {
-        let mut probes_to_flush: Vec<_> = pipeline.probe_accumulator.drain().collect();
-        let batch = probes_to_flush
-            .iter()
-            .map(|((ssid, client_mac), obs)| ProbeFlushObservation {
-                ssid: ssid.clone(),
-                client_mac: client_mac.clone(),
-                known_bssid: obs.known_bssid.clone(),
-                first_seen: obs.first_seen,
-                last_seen: obs.last_seen,
-                probe_count: obs.probe_count,
-            })
-            .collect::<Vec<_>>();
-        if let Err(error) = backlog.flush_probe_batch(&batch).await {
-            warn!(
-                %error,
-                probe_count = probes_to_flush.len(),
-                "probe batch early flush failed; dropping half to prevent unbounded growth"
-            );
-            probes_to_flush.sort_by_key(|(_, obs)| obs.last_seen);
-            let keep = probes_to_flush.len() / 2;
-            for (key, obs) in probes_to_flush.into_iter().skip(keep) {
-                pipeline.probe_accumulator.insert(key, obs);
+    if pipeline.probe_accumulator.should_flush_early() {
+        for batch in pipeline.probe_accumulator.take_ready_batches() {
+            match flush_probe_batch(backlog, batch).await {
+                Ok(probe_count) => debug!(probe_count, "probe batch flushed"),
+                Err((batch, error)) => {
+                    warn!(
+                        %error,
+                        probe_count = batch.len(),
+                        "probe batch early flush failed; retaining priority half to prevent unbounded growth"
+                    );
+                    pipeline.probe_accumulator.restore_priority_half(batch);
+                }
             }
-        } else {
-            debug!(probe_count = batch.len(), "probe batch flushed");
+            stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
         }
-        stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
     }
     if entry
         .tags
@@ -1145,7 +949,9 @@ async fn process_packet(
             .attack_timeline_correlator
             .observe(&entry, "karma_probe_response")
         {
-            if let Err(error) = publish_oracle_json(
+            if let Err(error) = publish_oracle_json_durable(
+                publish_state,
+                backlog,
                 publish_client,
                 "publish_attack_sequence_alert",
                 ATTACK_SEQUENCE_TOPIC,
@@ -1164,7 +970,9 @@ async fn process_packet(
     {
         entry.tags.push("threat:signal_anomaly".to_string());
         entry.anomaly_reasons.push("signal_anomaly".to_string());
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_signal_anomaly_alert",
             SIGNAL_ANOMALY_TOPIC,
@@ -1189,7 +997,9 @@ async fn process_packet(
                 .attack_timeline_correlator
                 .observe(&entry, "bssid_spoofing")
             {
-                if let Err(error) = publish_oracle_json(
+                if let Err(error) = publish_oracle_json_durable(
+                    publish_state,
+                    backlog,
                     publish_client,
                     "publish_attack_sequence_alert",
                     ATTACK_SEQUENCE_TOPIC,
@@ -1202,7 +1012,9 @@ async fn process_packet(
                 }
             }
         }
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_rogue_ap_alert",
             ROGUE_AP_TOPIC,
@@ -1220,7 +1032,9 @@ async fn process_packet(
         config.deauth_flood_window_secs,
         config.deauth_flood_cooldown_secs,
     ) {
-        if let Err(error) = publish_oracle_json(
+        if let Err(error) = publish_oracle_json_durable(
+            publish_state,
+            backlog,
             publish_client,
             "publish_deauth_flood_alert",
             DEAUTH_FLOOD_TOPIC,
@@ -1238,7 +1052,9 @@ async fn process_packet(
         if let Some(alert) =
             pmf_attack_alert_from_entry(&entry, tag, pipeline.pmf_reconnect_window_ms)
         {
-            if let Err(error) = publish_oracle_json(
+            if let Err(error) = publish_oracle_json_durable(
+                publish_state,
+                backlog,
                 publish_client,
                 "publish_pmf_attack_alert",
                 PMF_ATTACK_TOPIC,
@@ -1276,25 +1092,30 @@ async fn process_packet(
         }
     } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
         let cache_key = mac.to_ascii_lowercase();
-        let lookup = match cached_mac_lookup(
-            pipeline,
+        let lookup = match pipeline.device_registry_cache.lookup_decision(
             &cache_key,
             Duration::from_secs(config.mac_lookup_error_ttl_secs),
         ) {
-            MacLookupCacheDecision::UseCached(lookup) => lookup,
-            MacLookupCacheDecision::SkipRecentFailure => None,
-            MacLookupCacheDecision::Fetch => match backlog.lookup_device_by_mac(&cache_key).await {
-                Ok(lookup) => {
-                    remember_mac_lookup_success(pipeline, cache_key.clone(), lookup.clone());
-                    lookup
+            DeviceRegistryCacheDecision::UseCached(lookup) => lookup,
+            DeviceRegistryCacheDecision::SkipRecentFailure => None,
+            DeviceRegistryCacheDecision::Fetch => {
+                match backlog.lookup_device_by_mac(&cache_key).await {
+                    Ok(lookup) => {
+                        pipeline
+                            .device_registry_cache
+                            .remember_success(cache_key.clone(), lookup.clone());
+                        lookup
+                    }
+                    Err(error) => {
+                        stats.lock().unwrap().mac_lookup_failures += 1;
+                        pipeline
+                            .device_registry_cache
+                            .remember_failure(cache_key.clone());
+                        warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
+                        None
+                    }
                 }
-                Err(error) => {
-                    stats.lock().unwrap().mac_lookup_failures += 1;
-                    remember_mac_lookup_failure(pipeline, cache_key.clone());
-                    warn!(%error, mac = %cache_key, "MAC device lookup failed; publishing unenriched audit entry");
-                    None
-                }
-            },
+            }
         };
         if let Some((device_id, username)) = lookup {
             entry.device_id = Some(device_id);
@@ -1305,7 +1126,7 @@ async fn process_packet(
                 entry.identity_source = "device_registry".to_string();
             }
         }
-    } // end of skip_mac_lookup else block
+    }
     // First, let the traffic bucket observe the current frame so it can
     // compute risk scores and detect low-CV burst traffic. Then obtain
     // burst MACs from the *previous* drain window for tagging.
@@ -1332,7 +1153,7 @@ async fn process_packet(
             entry.tags.push("threat:burst_automated".to_string());
         }
     }
-    publish_bandwidth_events(publish_client, bandwidth_events).await;
+    publish_bandwidth_events(publish_state, backlog, publish_client, bandwidth_events).await;
     info!(
         target: "wireless_audit",
         event_type = %entry.event_type,
@@ -1357,6 +1178,8 @@ fn bandwidth_flush_interval() -> tokio::time::Interval {
 }
 
 async fn publish_bandwidth_events(
+    state: &SharedPublishState,
+    backlog: &dyn BacklogStore,
     publisher: &dyn PublishClient,
     events: Vec<WirelessBandwidthEvent>,
 ) {
@@ -1370,7 +1193,7 @@ async fn publish_bandwidth_events(
                 "wireless bandwidth threshold exceeded for external BSSID"
             );
         }
-        if let Err(error) = publish_bandwidth_event(publisher, &event).await {
+        if let Err(error) = publish_bandwidth_event(state, backlog, publisher, &event).await {
             warn!(
                 %error,
                 source_mac = %event.source_mac,
@@ -1378,6 +1201,18 @@ async fn publish_bandwidth_events(
                 "wireless bandwidth event publish failed"
             );
         }
+    }
+}
+
+async fn flush_probe_batch(
+    backlog: &RedpandaBacklog,
+    batch: ProbeFlushBatch,
+) -> Result<usize, (ProbeFlushBatch, crate::backlog::BacklogError)> {
+    let observations = batch.to_backlog_observations();
+    let probe_count = observations.len();
+    match backlog.flush_probe_batch(&observations).await {
+        Ok(()) => Ok(probe_count),
+        Err(error) => Err((batch, error)),
     }
 }
 
@@ -1392,6 +1227,13 @@ fn interval_secs(secs: u64) -> tokio::time::Interval {
 /// Returns a clone of the current audit context.
 fn context_snapshot(context: &SharedContext) -> AuditContext {
     context.read().unwrap().clone()
+}
+
+fn filter_snapshot(current_filter: &SharedFilter, fallback: &str) -> String {
+    current_filter
+        .read()
+        .map(|filter| filter.clone())
+        .unwrap_or_else(|_| fallback.to_string())
 }
 
 /// Spawns a background task that cycles through channels 1, 6, and 11 at the configured interval.
@@ -1466,7 +1308,13 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
         stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
     }
-    publish_bandwidth_events(&*handles.publish_client, events).await;
+    publish_bandwidth_events(
+        &handles.publish_state,
+        &*handles.backlog,
+        &*handles.publish_client,
+        events,
+    )
+    .await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
@@ -1541,6 +1389,12 @@ fn init_tracing(
         ),
     };
 
+    let otel_provider = ssl_proxy::observability::init_tracer_provider("atheros-sensor");
+    let otel_layer = otel_provider.as_ref().map(|provider| {
+        use opentelemetry::trace::TracerProvider as _;
+        tracing_opentelemetry::layer().with_tracer(provider.tracer("atheros-sensor"))
+    });
+
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer().json())
@@ -1548,6 +1402,7 @@ fn init_tracing(
             Arc::clone(&audit_window_active),
             audit_layer_stream,
         ))
+        .with(otel_layer)
         .init();
 
     (filter_source, audit_window_active)
@@ -1643,183 +1498,16 @@ where
 mod tests {
     use super::*;
 
-    fn observed_at(offset_ms: i64) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-05-31T01:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc)
-            + chrono::Duration::milliseconds(offset_ms)
-    }
-
-    fn timing_frame(
-        session_key: Option<&str>,
-        tsft: Option<u64>,
-        observed_at: DateTime<Utc>,
-    ) -> WifiFrame {
-        let packet = RawPacket {
-            observed_at,
-            data: crate::testutil::tsft_antenna_radiotap_beacon_frame(),
-        };
-        let mut frame = decode_frame(&packet).expect("test frame should decode");
-        let session_key = session_key.map(str::to_string);
-        frame.session_key = session_key.clone();
-        frame.correlation.session_key = session_key;
-        frame.tsft = tsft;
-        frame.rf.tsft = tsft;
-        frame.tsft_delta_us = None;
-        frame.wall_clock_delta_ms = None;
-        frame.correlation.tsft_delta_us = None;
-        frame.correlation.wall_clock_delta_ms = None;
-        frame
-    }
-
     #[test]
-    fn timing_tracker_first_frame_yields_null_deltas() {
-        let mut tracker = HashMap::new();
-        let mut frame = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
+    fn startup_channel_application_uses_configured_device_and_channel() {
+        let mut called = None;
 
-        attach_frame_timing_deltas(&mut frame, &mut tracker);
+        apply_configured_channel("wlan0", 11, |device, channel| {
+            called = Some((device.to_string(), channel));
+            Ok::<(), ()>(())
+        })
+        .unwrap();
 
-        assert_eq!(frame.tsft_delta_us, None);
-        assert_eq!(frame.wall_clock_delta_ms, None);
-        assert_eq!(frame.correlation.tsft_delta_us, None);
-        assert_eq!(frame.correlation.wall_clock_delta_ms, None);
-        assert_eq!(
-            tracker.get("session-1"),
-            Some(&LastFrameTiming {
-                observed_at: observed_at(0),
-                tsft: 1_000,
-            })
-        );
-    }
-
-    #[test]
-    fn timing_tracker_second_frame_populates_flat_and_nested_deltas() {
-        let mut tracker = HashMap::new();
-        let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
-        let mut second = timing_frame(Some("session-1"), Some(2_500), observed_at(2_000));
-
-        attach_frame_timing_deltas(&mut first, &mut tracker);
-        attach_frame_timing_deltas(&mut second, &mut tracker);
-
-        assert_eq!(second.tsft_delta_us, Some(1_500));
-        assert_eq!(second.wall_clock_delta_ms, Some(2_000));
-        assert_eq!(second.correlation.tsft_delta_us, Some(1_500));
-        assert_eq!(second.correlation.wall_clock_delta_ms, Some(2_000));
-    }
-
-    #[test]
-    fn timing_tracker_is_partitioned_by_session() {
-        let mut tracker = HashMap::new();
-        let mut session_one_first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
-        let mut session_two_first =
-            timing_frame(Some("session-2"), Some(5_000), observed_at(1_000));
-        let mut session_one_second =
-            timing_frame(Some("session-1"), Some(1_300), observed_at(2_000));
-
-        attach_frame_timing_deltas(&mut session_one_first, &mut tracker);
-        attach_frame_timing_deltas(&mut session_two_first, &mut tracker);
-        attach_frame_timing_deltas(&mut session_one_second, &mut tracker);
-
-        assert_eq!(session_two_first.tsft_delta_us, None);
-        assert_eq!(session_two_first.wall_clock_delta_ms, None);
-        assert_eq!(session_one_second.tsft_delta_us, Some(300));
-        assert_eq!(session_one_second.wall_clock_delta_ms, Some(2_000));
-    }
-
-    #[test]
-    fn timing_tracker_ignores_missing_and_decreasing_tsft_safely() {
-        let mut tracker = HashMap::new();
-        let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
-        let mut missing = timing_frame(Some("session-1"), None, observed_at(1_000));
-        let mut decreasing = timing_frame(Some("session-1"), Some(900), observed_at(2_000));
-        let mut recovered = timing_frame(Some("session-1"), Some(1_200), observed_at(3_000));
-
-        attach_frame_timing_deltas(&mut first, &mut tracker);
-        attach_frame_timing_deltas(&mut missing, &mut tracker);
-        attach_frame_timing_deltas(&mut decreasing, &mut tracker);
-        attach_frame_timing_deltas(&mut recovered, &mut tracker);
-
-        assert_eq!(missing.tsft_delta_us, None);
-        assert_eq!(missing.wall_clock_delta_ms, None);
-        assert_eq!(decreasing.tsft_delta_us, None);
-        assert_eq!(decreasing.wall_clock_delta_ms, None);
-        assert_eq!(recovered.tsft_delta_us, Some(300));
-        assert_eq!(recovered.wall_clock_delta_ms, Some(1_000));
-    }
-
-    #[test]
-    fn audit_entry_serializes_flat_and_nested_timing_deltas() {
-        let mut tracker = HashMap::new();
-        let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
-        let mut second = timing_frame(Some("session-1"), Some(2_500), observed_at(2_000));
-        let context = AuditContext {
-            sensor_id: "00:11:22:33:44:55".to_string(),
-            location_id: "lab".to_string(),
-            interface: "wlan0".to_string(),
-            channel: 6,
-            reg_domain: "US".to_string(),
-        };
-
-        attach_frame_timing_deltas(&mut first, &mut tracker);
-        attach_frame_timing_deltas(&mut second, &mut tracker);
-        let entry = to_audit_entry(attach_context(second, &context));
-        let value = serde_json::to_value(entry).unwrap();
-
-        assert_eq!(value["tsft_delta_us"], serde_json::json!(1_500));
-        assert_eq!(value["wall_clock_delta_ms"], serde_json::json!(2_000));
-        assert_eq!(
-            value["correlation"]["tsft_delta_us"],
-            serde_json::json!(1_500)
-        );
-        assert_eq!(
-            value["correlation"]["wall_clock_delta_ms"],
-            serde_json::json!(2_000)
-        );
-    }
-
-    #[test]
-    fn mac_lookup_failure_suppresses_retry_without_caching_miss() {
-        let mut device_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
-        let mut error_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
-        let cache_key = "aa:bb:cc:dd:ee:ff".to_string();
-
-        remember_mac_lookup_failure_in_cache(&mut error_cache, cache_key.clone());
-
-        assert_eq!(
-            mac_lookup_cache_decision(
-                &mut device_cache,
-                &mut error_cache,
-                &cache_key,
-                Duration::from_secs(30),
-            ),
-            MacLookupCacheDecision::SkipRecentFailure
-        );
-        assert!(device_cache.get(&cache_key).is_none());
-    }
-
-    #[test]
-    fn mac_lookup_success_caches_none_and_clears_error_backoff() {
-        let mut device_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
-        let mut error_cache = LruCache::new(NonZeroUsize::new(4).unwrap());
-        let cache_key = "aa:bb:cc:dd:ee:ff".to_string();
-        remember_mac_lookup_failure_in_cache(&mut error_cache, cache_key.clone());
-
-        remember_mac_lookup_success_in_caches(
-            &mut device_cache,
-            &mut error_cache,
-            cache_key.clone(),
-            None,
-        );
-
-        assert_eq!(
-            mac_lookup_cache_decision(
-                &mut device_cache,
-                &mut error_cache,
-                &cache_key,
-                Duration::from_secs(30),
-            ),
-            MacLookupCacheDecision::UseCached(None)
-        );
-        assert!(error_cache.get(&cache_key).is_none());
+        assert_eq!(called, Some(("wlan0".to_string(), 11)));
     }
 }

@@ -15,11 +15,29 @@ processors:
     timeout: 1s
     send_batch_size: 1024
 
+connectors:
+  spanmetrics:
+    namespace: traces.spanmetrics
+    dimensions:
+      - name: service.name
+      - name: db.system
+      - name: db.operation
+      - name: db.name
+      - name: messaging.system
+      - name: messaging.destination.name
+      - name: messaging.operation
+      - name: status
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s]
+
 exporters:
   otlp/jaeger:
     endpoint: jaeger:4317
     tls:
       insecure: true
+  prometheus/spanmetrics:
+    endpoint: 0.0.0.0:9464
   logging:
     verbosity: normal
 
@@ -36,4 +54,13 @@ service:
         - batch
       exporters:
         - otlp/jaeger
+        - spanmetrics
         - logging
+    metrics/spanmetrics:
+      receivers:
+        - spanmetrics
+      processors:
+        - memory_limiter
+        - batch
+      exporters:
+        - prometheus/spanmetrics

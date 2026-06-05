@@ -10,14 +10,14 @@
 //! within a 10-second sliding window; exceeding DEAUTH_FLOOD_THRESHOLD (5) fires a
 //! "threat:deauth_flood" tag once per window via the alerted flag.
 
-use std::{
-    num::NonZeroUsize,
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
 use lru::LruCache;
 
-use crate::model::WifiFrame;
+use crate::{
+    model::WifiFrame,
+    state_key::{DetectorLimits, MacAddr, SsidKey},
+};
 
 use super::tags::push_tag;
 
@@ -33,23 +33,23 @@ pub struct ResolvedIdentity {
 }
 
 pub struct IdentityCache {
-    mac_to_username: LruCache<String, String>,
-    ssid_to_bssids: LruCache<String, Vec<String>>,
-    deauth_counts: LruCache<String, DeauthCount>,
+    mac_to_username: LruCache<MacAddr, String>,
+    ssid_to_bssids: LruCache<SsidKey, Vec<MacAddr>>,
+    deauth_counts: LruCache<MacAddr, DeauthCount>,
 }
 
 #[derive(Clone, Debug)]
 struct DeauthCount {
     count: u32,
-    window_started: Instant,
+    window_started: chrono::DateTime<chrono::Utc>,
     alerted: bool,
 }
 
 impl DeauthCount {
-    fn new(count: u32) -> Self {
+    fn new(count: u32, window_started: chrono::DateTime<chrono::Utc>) -> Self {
         Self {
             count,
-            window_started: Instant::now(),
+            window_started,
             alerted: false,
         }
     }
@@ -57,16 +57,17 @@ impl DeauthCount {
 
 impl Default for IdentityCache {
     fn default() -> Self {
+        Self::new(DetectorLimits::default())
+    }
+}
+
+impl IdentityCache {
+    pub fn new(limits: DetectorLimits) -> Self {
+        let limits = limits.clamp();
         Self {
-            mac_to_username: LruCache::new(
-                NonZeroUsize::new(4_096).expect("identity cache capacity must be non-zero"),
-            ),
-            ssid_to_bssids: LruCache::new(
-                NonZeroUsize::new(4_096).expect("ssid cache capacity must be non-zero"),
-            ),
-            deauth_counts: LruCache::new(
-                NonZeroUsize::new(4_096).expect("deauth cache capacity must be non-zero"),
-            ),
+            mac_to_username: LruCache::new(limits.mac_capacity()),
+            ssid_to_bssids: LruCache::new(limits.ssid_capacity()),
+            deauth_counts: LruCache::new(limits.mac_capacity()),
         }
     }
 }
@@ -78,28 +79,28 @@ impl IdentityCache {
 
         if matches!(frame.frame_subtype.as_str(), "beacon" | "probe_response") {
             if let (Some(ssid), Some(bssid)) = (frame.ssid.as_ref(), frame.bssid.as_ref()) {
-                let known_key = ssid.to_ascii_lowercase();
-                let bssid_key = bssid.to_ascii_lowercase();
-                if let Some(known) = self.ssid_to_bssids.get_mut(&known_key) {
-                    let already_seen = known
-                        .iter()
-                        .any(|known_bssid| known_bssid.eq_ignore_ascii_case(&bssid_key));
-                    if !already_seen && !known.is_empty() {
-                        push_tag(&mut threat_tags, "threat:potential_evil_twin");
-                        detection_identity = Some(ResolvedIdentity {
-                            username: format!("SUSPECT_EVIL_TWIN:{bssid}"),
-                            source: "evil_twin_detection".to_string(),
-                            tags: threat_tags.clone(),
-                        });
-                    }
-                    if !already_seen {
-                        if known.len() >= MAX_BSSIDS_PER_SSID {
-                            known.remove(0);
+                if let (Some(known_key), Some(bssid_key)) =
+                    (SsidKey::new(ssid), MacAddr::parse(bssid))
+                {
+                    if let Some(known) = self.ssid_to_bssids.get_mut(&known_key) {
+                        let already_seen = known.contains(&bssid_key);
+                        if !already_seen && !known.is_empty() {
+                            push_tag(&mut threat_tags, "threat:potential_evil_twin");
+                            detection_identity = Some(ResolvedIdentity {
+                                username: format!("SUSPECT_EVIL_TWIN:{bssid}"),
+                                source: "evil_twin_detection".to_string(),
+                                tags: threat_tags.clone(),
+                            });
                         }
-                        known.push(bssid_key);
+                        if !already_seen {
+                            if known.len() >= MAX_BSSIDS_PER_SSID {
+                                known.remove(0);
+                            }
+                            known.push(bssid_key);
+                        }
+                    } else {
+                        self.ssid_to_bssids.put(known_key, vec![bssid_key]);
                     }
-                } else {
-                    self.ssid_to_bssids.put(known_key, vec![bssid_key]);
                 }
             }
         }
@@ -109,32 +110,40 @@ impl IdentityCache {
             "deauthentication" | "disassociation"
         ) {
             if let Some(bssid) = frame.bssid.as_ref() {
-                let bssid_key = bssid.to_ascii_lowercase();
-                if let Some(entry) = self.deauth_counts.get_mut(&bssid_key) {
-                    if entry.window_started.elapsed() > DEAUTH_FLOOD_WINDOW {
-                        *entry = DeauthCount::new(1);
-                    } else {
-                        entry.count += 1;
-                        if entry.count > DEAUTH_FLOOD_THRESHOLD && !entry.alerted {
-                            push_tag(&mut threat_tags, "threat:deauth_flood");
-                            detection_identity = Some(ResolvedIdentity {
-                                username: format!("SUSPECT_DEAUTH_FLOOD:{bssid}"),
-                                source: "deauth_flood_detection".to_string(),
-                                tags: threat_tags.clone(),
-                            });
-                            entry.alerted = true;
+                if let Some(bssid_key) = MacAddr::parse(bssid) {
+                    if let Some(entry) = self.deauth_counts.get_mut(&bssid_key) {
+                        let window = chrono::Duration::from_std(DEAUTH_FLOOD_WINDOW).ok()?;
+                        if frame
+                            .observed_at
+                            .signed_duration_since(entry.window_started)
+                            > window
+                        {
+                            *entry = DeauthCount::new(1, frame.observed_at);
+                        } else {
+                            entry.count += 1;
+                            if entry.count > DEAUTH_FLOOD_THRESHOLD && !entry.alerted {
+                                push_tag(&mut threat_tags, "threat:deauth_flood");
+                                detection_identity = Some(ResolvedIdentity {
+                                    username: format!("SUSPECT_DEAUTH_FLOOD:{bssid}"),
+                                    source: "deauth_flood_detection".to_string(),
+                                    tags: threat_tags.clone(),
+                                });
+                                entry.alerted = true;
+                            }
                         }
+                    } else {
+                        self.deauth_counts
+                            .put(bssid_key, DeauthCount::new(1, frame.observed_at));
                     }
-                } else {
-                    self.deauth_counts.put(bssid_key, DeauthCount::new(1));
                 }
             }
         }
 
         if let Some(username) = frame.username_hint.clone() {
             if let Some(mac) = frame.source_mac.as_ref() {
-                self.mac_to_username
-                    .put(mac.to_ascii_lowercase(), username.clone());
+                if let Some(mac) = MacAddr::parse(mac) {
+                    self.mac_to_username.put(mac, username.clone());
+                }
             }
             return Some(ResolvedIdentity {
                 username,
@@ -150,7 +159,9 @@ impl IdentityCache {
             let Some(candidate) = candidate else {
                 continue;
             };
-            let key = candidate.to_ascii_lowercase();
+            let Some(key) = MacAddr::parse(candidate) else {
+                continue;
+            };
             if let Some(username) = self.mac_to_username.get(&key) {
                 return Some(ResolvedIdentity {
                     username: username.clone(),
