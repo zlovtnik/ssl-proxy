@@ -77,7 +77,8 @@ mod tests {
 
     #[test]
     fn embedding_client_validate_dimensions_mismatch() {
-        let client = EmbeddingClient::LlamaCpp(LlamaCppClient::new("http://localhost:8080", "test"));
+        let client =
+            EmbeddingClient::LlamaCpp(LlamaCppClient::new("http://localhost:8080", "test"));
         let v = vec![0.1; 512];
         let err = client.validate_dimensions(&v, 768).unwrap_err();
         match err {
