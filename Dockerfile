@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y \
         curl \
         iproute2 \
         iptables \
+        iw \
         openssl \
         procps \
         tzdata \
