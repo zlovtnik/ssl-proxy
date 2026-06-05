@@ -59,6 +59,7 @@ RUN ldconfig && chmod +x /usr/local/bin/start-proxy-wg /usr/local/bin/wg-obfs-sh
   && setcap cap_net_admin+eip /usr/local/bin/coredns \
   && setcap cap_net_admin+eip /app/ssl-proxy \
   && setcap cap_net_admin+eip /usr/local/bin/boringtun-cli \
-  && setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/atheros-sensor
+  && setcap cap_net_raw,cap_net_admin+eip /usr/local/bin/atheros-sensor \
+  && setcap cap_net_admin+eip /usr/sbin/iw
 USER proxyuser
 CMD ["/usr/local/bin/atheros-sensor"]
