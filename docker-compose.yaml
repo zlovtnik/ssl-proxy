@@ -9,6 +9,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: Dockerfile
@@ -108,6 +110,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/zig-coordinator/Dockerfile
@@ -158,6 +162,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/zig-coordinator/Dockerfile
@@ -206,6 +212,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/zig-coordinator/Dockerfile
@@ -253,6 +261,8 @@ services:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/oracle-worker/Dockerfile
@@ -298,6 +308,8 @@ services:
         condition: service_completed_successfully
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -335,6 +347,8 @@ services:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -364,6 +378,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -389,6 +405,8 @@ services:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -416,6 +434,8 @@ services:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: apps/integration-console/Dockerfile
@@ -630,6 +650,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     build:
       context: .
       dockerfile: services/atheros-search/Dockerfile
