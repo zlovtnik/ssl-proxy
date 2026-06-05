@@ -123,10 +123,7 @@ async fn try_embed_many(
     client: &OllamaClient,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, WorkerError> {
-    let url = format!(
-        "{}/api/embed",
-        client.base_url.trim_end_matches('/')
-    );
+    let url = format!("{}/api/embed", client.base_url.trim_end_matches('/'));
     let input_count = texts.len();
 
     debug!(
@@ -143,12 +140,7 @@ async fn try_embed_many(
 
     let start = Instant::now();
 
-    let response = client
-        .client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await?; // WorkerError::Http via `From` impl
+    let response = client.client.post(&url).json(&body).send().await?; // WorkerError::Http via `From` impl
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
     info!(elapsed_ms, "embed_many completed");

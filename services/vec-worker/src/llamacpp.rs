@@ -143,12 +143,7 @@ async fn try_embed_many(
 
     let start = Instant::now();
 
-    let response = client
-        .client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await?; // WorkerError::Http via `From` impl
+    let response = client.client.post(&url).json(&body).send().await?; // WorkerError::Http via `From` impl
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
     info!(elapsed_ms, "llamacpp embed_many completed");
