@@ -252,11 +252,14 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         tags: tags.clone(),
         risk_score: recompute_risk_score(&tags),
         security_flags: ie_metadata.security_flags,
+        rsn_capabilities: ie_metadata.rsn_capabilities,
+        weak_cipher_advertised: ie_metadata.weak_cipher_advertised,
         wps_device_name: ie_metadata.wps_device_name,
         wps_manufacturer: ie_metadata.wps_manufacturer,
         wps_model_name: ie_metadata.wps_model_name,
         device_fingerprint: ie_metadata.device_fingerprint,
         probe_fingerprint: ie_metadata.probe_fingerprint,
+        ie_layout_hash: ie_metadata.ie_layout_hash,
         vendor_name,
         handshake_captured: false,
         eapol_key_message,
@@ -297,6 +300,9 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         payload_visibility: payload_visibility.clone(),
         tsft_delta_us: None,
         wall_clock_delta_ms: None,
+        sequence_delta: None,
+        sequence_gap_missing_frames: None,
+        clock_skew_delta_us: None,
         large_frame,
         mixed_encryption: None,
         dedupe_or_replay_suspect: false,
@@ -330,6 +336,9 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
             payload_visibility,
             tsft_delta_us: None,
             wall_clock_delta_ms: None,
+            sequence_delta: None,
+            sequence_gap_missing_frames: None,
+            clock_skew_delta_us: None,
         },
         anomalies: AnomalyLayer {
             large_frame,
@@ -428,11 +437,14 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         tags: tags.clone(),
         risk_score: recompute_risk_score(&tags),
         security_flags: frame.security_flags,
+        rsn_capabilities: frame.rsn_capabilities,
+        weak_cipher_advertised: frame.weak_cipher_advertised,
         wps_device_name: frame.wps_device_name,
         wps_manufacturer: frame.wps_manufacturer,
         wps_model_name: frame.wps_model_name,
         device_fingerprint: frame.device_fingerprint,
         probe_fingerprint: frame.probe_fingerprint,
+        ie_layout_hash: frame.ie_layout_hash,
         vendor_name: frame.vendor_name,
         handshake_captured: frame.handshake_captured,
         qos_tid: frame.qos_tid,
@@ -469,6 +481,9 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
         payload_visibility: Some(frame.payload_visibility),
         tsft_delta_us: frame.tsft_delta_us,
         wall_clock_delta_ms: frame.wall_clock_delta_ms,
+        sequence_delta: frame.sequence_delta,
+        sequence_gap_missing_frames: frame.sequence_gap_missing_frames,
+        clock_skew_delta_us: frame.clock_skew_delta_us,
         large_frame: Some(frame.large_frame),
         mixed_encryption: frame.mixed_encryption,
         dedupe_or_replay_suspect: Some(frame.dedupe_or_replay_suspect),
@@ -589,7 +604,8 @@ mod tests {
         model::{AuditContext, RawPacket},
         parse::{
             strip_radiotap, HandshakeMonitor, IEIterator, IdentityCache, ParseError,
-            SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2, SECURITY_WPA, SECURITY_WPA3, SECURITY_WPS,
+            RSN_CAP_PMF_CAPABLE, RSN_CAP_PMF_REQUIRED, SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2,
+            SECURITY_WPA, SECURITY_WPA3, SECURITY_WPS,
         },
         testutil::*,
     };
@@ -1056,6 +1072,8 @@ mod tests {
             frame.security_flags,
             SECURITY_WPA | SECURITY_RSN_WPA2 | SECURITY_WPA3 | SECURITY_WPS | SECURITY_PMF_REQUIRED
         );
+        assert_eq!(frame.rsn_capabilities, Some(RSN_CAP_PMF_REQUIRED));
+        assert_eq!(frame.weak_cipher_advertised, Some(false));
         assert_eq!(frame.wps_device_name.as_deref(), Some("Lobby AP"));
         assert_eq!(frame.wps_manufacturer.as_deref(), Some("Acme"));
         assert_eq!(frame.wps_model_name.as_deref(), Some("Model 7"));
@@ -1063,6 +1081,90 @@ mod tests {
             frame.device_fingerprint.as_deref(),
             Some("d9e7757fee253fc7")
         );
+        assert!(frame.ie_layout_hash.is_some());
+    }
+
+    #[test]
+    fn ie_layout_hash_includes_element_lengths_without_changing_device_fingerprint() {
+        let mut short_body = vec![0; 8];
+        short_body.extend_from_slice(&100u16.to_le_bytes());
+        short_body.extend_from_slice(&0x0431u16.to_le_bytes());
+        short_body.extend_from_slice(&[0x00, 0x04]);
+        short_body.extend_from_slice(b"Corp");
+        short_body.extend_from_slice(&[0x01, 0x01, 0x82]);
+
+        let mut long_body = vec![0; 8];
+        long_body.extend_from_slice(&100u16.to_le_bytes());
+        long_body.extend_from_slice(&0x0431u16.to_le_bytes());
+        long_body.extend_from_slice(&[0x00, 0x08]);
+        long_body.extend_from_slice(b"CorpWiFi");
+        long_body.extend_from_slice(&[0x01, 0x01, 0x82]);
+
+        let short = decode_frame(&RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, short_body),
+        })
+        .unwrap();
+        let long = decode_frame(&RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, long_body),
+        })
+        .unwrap();
+
+        assert_eq!(short.device_fingerprint, long.device_fingerprint);
+        assert_ne!(short.ie_layout_hash, long.ie_layout_hash);
+    }
+
+    #[test]
+    fn tags_wpa3_without_pmf_required_as_downgrade_suspect() {
+        let context = AuditContext {
+            sensor_id: "00:11:22:33:44:55".to_string(),
+            location_id: "North-Wing-Entry".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+        let mut body = beacon_body();
+        body.extend_from_slice(&rsn_ie_with_capabilities(true, RSN_CAP_PMF_CAPABLE, false));
+        let entry = to_audit_entry(attach_context(
+            decode_frame(&RawPacket {
+                observed_at: Utc::now(),
+                data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+            })
+            .unwrap(),
+            &context,
+        ));
+
+        assert_eq!(entry.rsn_capabilities, Some(RSN_CAP_PMF_CAPABLE));
+        assert!(entry
+            .tags
+            .contains(&"threat:pmf_downgrade_suspect".to_string()));
+    }
+
+    #[test]
+    fn tags_weak_rsn_cipher_advertisements() {
+        let context = AuditContext {
+            sensor_id: "00:11:22:33:44:55".to_string(),
+            location_id: "North-Wing-Entry".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+        let mut body = beacon_body();
+        body.extend_from_slice(&rsn_ie_with_capabilities(false, 0, true));
+        let entry = to_audit_entry(attach_context(
+            decode_frame(&RawPacket {
+                observed_at: Utc::now(),
+                data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+            })
+            .unwrap(),
+            &context,
+        ));
+
+        assert_eq!(entry.weak_cipher_advertised, Some(true));
+        assert!(entry
+            .tags
+            .contains(&"threat:weak_cipher_advertised".to_string()));
     }
 
     #[test]
@@ -1208,6 +1310,12 @@ mod tests {
             Value::String("header_only".to_string())
         );
         assert_eq!(value["raw_frame"], Value::String(expected_raw_frame));
+        assert!(value["ie_layout_hash"].is_string());
+        assert!(value["sequence_delta"].is_null());
+        assert!(value["sequence_gap_missing_frames"].is_null());
+        assert!(value["clock_skew_delta_us"].is_null());
+        assert!(value["correlation"]["sequence_delta"].is_null());
+        assert!(value["correlation"]["clock_skew_delta_us"].is_null());
         assert_eq!(value["username"], Value::Null);
         assert_eq!(
             value["identity_source"],

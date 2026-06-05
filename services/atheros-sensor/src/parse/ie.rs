@@ -27,6 +27,8 @@ pub const SECURITY_RSN_WPA2: u32 = 0x02;
 pub const SECURITY_WPA3: u32 = 0x04;
 pub const SECURITY_WPS: u32 = 0x08;
 pub const SECURITY_PMF_REQUIRED: u32 = 0x10;
+pub const RSN_CAP_PMF_REQUIRED: u16 = 0x0040;
+pub const RSN_CAP_PMF_CAPABLE: u16 = 0x0080;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InformationElement<'a> {
@@ -75,11 +77,14 @@ impl<'a> Iterator for IEIterator<'a> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct IEMetadata {
     pub(super) security_flags: u32,
+    pub(super) rsn_capabilities: Option<u16>,
+    pub(super) weak_cipher_advertised: Option<bool>,
     pub(super) wps_device_name: Option<String>,
     pub(super) wps_manufacturer: Option<String>,
     pub(super) wps_model_name: Option<String>,
     pub(super) device_fingerprint: Option<String>,
     pub(super) probe_fingerprint: Option<String>,
+    pub(super) ie_layout_hash: Option<String>,
 }
 
 fn ie_start_offset(frame_type: u8, subtype: u8) -> Option<usize> {
@@ -111,17 +116,18 @@ pub(super) fn extract_ie_metadata(frame_type: u8, subtype: u8, frame_bytes: &[u8
     let mut metadata = IEMetadata::default();
     let mut fingerprint = FNV_OFFSET_BASIS;
     let mut probe_fingerprint = FNV_OFFSET_BASIS;
+    let mut layout_hash = FNV_OFFSET_BASIS;
     let mut saw_ie = false;
     let is_probe_request = frame_type == 0 && subtype == 4;
 
     for element in IEIterator::new(frame_bytes, ie_offset) {
         saw_ie = true;
-        fingerprint ^= u64::from(element.id);
-        fingerprint = fingerprint.wrapping_mul(FNV_PRIME);
+        fnv_update(&mut fingerprint, element.id);
+        fnv_update(&mut layout_hash, element.id);
+        fnv_update(&mut layout_hash, element.len as u8);
 
         if is_probe_request {
-            probe_fingerprint ^= u64::from(element.id);
-            probe_fingerprint = probe_fingerprint.wrapping_mul(FNV_PRIME);
+            fnv_update(&mut probe_fingerprint, element.id);
         }
 
         match element.id {
@@ -134,11 +140,17 @@ pub(super) fn extract_ie_metadata(frame_type: u8, subtype: u8, frame_bytes: &[u8
 
     if saw_ie {
         metadata.device_fingerprint = Some(format!("{fingerprint:016x}"));
+        metadata.ie_layout_hash = Some(format!("{layout_hash:016x}"));
         if is_probe_request {
             metadata.probe_fingerprint = Some(format!("{probe_fingerprint:016x}"));
         }
     }
     metadata
+}
+
+fn fnv_update(hash: &mut u64, byte: u8) {
+    *hash ^= u64::from(byte);
+    *hash = hash.wrapping_mul(FNV_PRIME);
 }
 
 fn parse_rsn(data: &[u8], metadata: &mut IEMetadata) {
@@ -148,19 +160,34 @@ fn parse_rsn(data: &[u8], metadata: &mut IEMetadata) {
     }
 
     let mut offset = 2usize;
+    if offset + 4 > data.len() {
+        return;
+    }
+    let mut weak_cipher = is_weak_cipher_suite(&data[offset..offset + 4]);
     offset += 4;
     if offset + 2 > data.len() {
+        merge_weak_cipher(metadata, weak_cipher);
         return;
     }
     let pairwise_count = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
-    offset += 2 + pairwise_count.saturating_mul(4);
+    offset += 2;
+    for _ in 0..pairwise_count {
+        if offset + 4 > data.len() {
+            merge_weak_cipher(metadata, weak_cipher);
+            return;
+        }
+        weak_cipher |= is_weak_cipher_suite(&data[offset..offset + 4]);
+        offset += 4;
+    }
     if offset + 2 > data.len() {
+        merge_weak_cipher(metadata, weak_cipher);
         return;
     }
     let akm_count = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
     offset += 2;
     for _ in 0..akm_count {
         if offset + 4 > data.len() {
+            merge_weak_cipher(metadata, weak_cipher);
             return;
         }
         if data[offset..offset + 3] == [0x00, 0x0f, 0xac] && matches!(data[offset + 3], 8 | 9) {
@@ -170,10 +197,21 @@ fn parse_rsn(data: &[u8], metadata: &mut IEMetadata) {
     }
     if offset + 2 <= data.len() {
         let capabilities = u16::from_le_bytes([data[offset], data[offset + 1]]);
-        if capabilities & 0x0040 != 0 {
+        metadata.rsn_capabilities = Some(capabilities);
+        if capabilities & RSN_CAP_PMF_REQUIRED != 0 {
             metadata.security_flags |= SECURITY_PMF_REQUIRED;
         }
     }
+    merge_weak_cipher(metadata, weak_cipher);
+}
+
+fn is_weak_cipher_suite(suite: &[u8]) -> bool {
+    suite.len() == 4 && suite[..3] == [0x00, 0x0f, 0xac] && matches!(suite[3], 1 | 2 | 5)
+}
+
+fn merge_weak_cipher(metadata: &mut IEMetadata, weak_cipher: bool) {
+    metadata.weak_cipher_advertised =
+        Some(metadata.weak_cipher_advertised.unwrap_or(false) || weak_cipher);
 }
 
 fn parse_vendor_ie(data: &[u8], metadata: &mut IEMetadata) {

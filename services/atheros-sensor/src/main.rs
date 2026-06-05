@@ -38,6 +38,7 @@ mod model;
 mod parse;
 mod probes;
 mod publish;
+mod state_key;
 mod stats;
 #[cfg(test)]
 mod testutil;
@@ -70,8 +71,8 @@ use crate::{
     config::AppConfig,
     detect_state::{
         pmf_attack_alert_from_entry, AttackTimelineCorrelator, AuthorizationStatus,
-        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, PmfAttackTracker,
-        RogueApTracker, SequenceTracker, SignalTracker,
+        AuthorizedNetworkCache, ClientInventory, DeauthFloodTracker, IeLayoutTracker,
+        MacSequenceDeltaTracker, PmfAttackTracker, RogueApTracker, SequenceTracker, SignalTracker,
     },
     device::{detect, read_mac_address},
     device_registry::{DeviceRegistryCache, DeviceRegistryCacheDecision},
@@ -88,6 +89,7 @@ use crate::{
         replay_journal, PublishClient, PublishError, PublishState, SharedPublishState,
         SyncPublisherClient,
     },
+    state_key::{stable_hash, DetectorRouteKey, DetectorRouter, MacAddr},
     stats::PipelineOutcome,
     timing::FrameTimingTracker,
     topics::{
@@ -109,6 +111,32 @@ fn hex_prefix(data: &[u8], n: usize) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn detector_route_key(entry: &crate::model::AuditEntry) -> DetectorRouteKey {
+    if let Some(mac) = entry.bssid.as_deref().and_then(MacAddr::parse) {
+        return DetectorRouteKey::Ap(mac);
+    }
+    if let Some(mac) = entry.source_mac.as_deref().and_then(MacAddr::parse) {
+        return DetectorRouteKey::Client(mac);
+    }
+    if let Some(session_key) = entry
+        .session_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return DetectorRouteKey::Session(stable_hash(session_key));
+    }
+    if let Some(ssid) = entry
+        .ssid
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return DetectorRouteKey::Ssid(stable_hash(&ssid.to_ascii_lowercase()));
+    }
+    DetectorRouteKey::Unknown
 }
 
 async fn run_healthcheck() -> Result<(), SensorError> {
@@ -388,8 +416,12 @@ struct PipelineState {
     deauth_flood_tracker: DeauthFloodTracker,
     attack_timeline_correlator: AttackTimelineCorrelator,
     sequence_tracker: SequenceTracker,
+    mac_sequence_delta_tracker: MacSequenceDeltaTracker,
+    ie_layout_tracker: IeLayoutTracker,
     pmf_attack_tracker: PmfAttackTracker,
     pmf_reconnect_window_ms: i64,
+    detector_router: DetectorRouter,
+    next_frame_id: u64,
     authorized_network_cache: AuthorizedNetworkCache,
     seen_authorized_config_generation: u64,
     probe_accumulator: ProbeAccumulator,
@@ -397,32 +429,43 @@ struct PipelineState {
 }
 
 impl PipelineState {
-    fn new(_config: &AppConfig) -> Self {
+    fn new(config: &AppConfig) -> Self {
         let pmf_reconnect_window_ms = std::env::var("ATH_SENSOR_PMF_RECONNECT_WINDOW_MS")
             .ok()
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(3000);
+        let limits = config.detector_limits;
 
         Self {
-            identity_cache: IdentityCache::default(),
+            identity_cache: IdentityCache::new(limits),
             handshake_monitor: HandshakeMonitor::default(),
             traffic_bucket: TrafficBucket::new(DEFAULT_BANDWIDTH_WINDOW_SECS),
             device_registry_cache: DeviceRegistryCache::new(MAC_DEVICE_CACHE_SIZE),
-            client_inventory: ClientInventory::default(),
-            signal_tracker: SignalTracker::default(),
-            rogue_ap_tracker: RogueApTracker::default(),
-            deauth_flood_tracker: DeauthFloodTracker::default(),
-            attack_timeline_correlator: AttackTimelineCorrelator::default(),
-            sequence_tracker: SequenceTracker::default(),
-            pmf_attack_tracker: PmfAttackTracker::new(pmf_reconnect_window_ms),
+            client_inventory: ClientInventory::new(limits),
+            signal_tracker: SignalTracker::new(limits),
+            rogue_ap_tracker: RogueApTracker::new(limits),
+            deauth_flood_tracker: DeauthFloodTracker::new(limits),
+            attack_timeline_correlator: AttackTimelineCorrelator::new(limits),
+            sequence_tracker: SequenceTracker::new(limits),
+            mac_sequence_delta_tracker: MacSequenceDeltaTracker::new(limits),
+            ie_layout_tracker: IeLayoutTracker::new(limits),
+            pmf_attack_tracker: PmfAttackTracker::new_with_limits(pmf_reconnect_window_ms, limits),
             pmf_reconnect_window_ms,
+            detector_router: DetectorRouter::new(limits),
+            next_frame_id: 0,
             authorized_network_cache: AuthorizedNetworkCache::new(
-                _config.authorized_network_cache_backoff_ms,
+                config.authorized_network_cache_backoff_ms,
             ),
             seen_authorized_config_generation: 0,
-            probe_accumulator: ProbeAccumulator::new(),
+            probe_accumulator: ProbeAccumulator::new_with_limits(limits),
             timing_tracker: FrameTimingTracker::default(),
         }
+    }
+
+    fn allocate_frame_id(&mut self) -> u64 {
+        let frame_id = self.next_frame_id;
+        self.next_frame_id = self.next_frame_id.wrapping_add(1);
+        frame_id
     }
 }
 
@@ -799,10 +842,23 @@ async fn process_packet(
     ) {
         debug!("protected data frame decrypted using authorized network PSK");
     }
-    pipeline.timing_tracker.attach_deltas(&mut wifi_frame);
+    pipeline
+        .timing_tracker
+        .attach_deltas(&mut wifi_frame, config.clock_skew_anomaly_us);
     let resolved_identity = pipeline.identity_cache.resolve(&wifi_frame);
     let enriched: EnrichedFrame = attach_context(wifi_frame, context);
     let mut entry = to_audit_entry(enriched);
+    let frame_id = pipeline.allocate_frame_id();
+    let detector_lane = pipeline
+        .detector_router
+        .lane_for(detector_route_key(&entry));
+    trace!(
+        frame_id,
+        detector_lane,
+        detector_lanes = pipeline.detector_router.lanes(),
+        detector_queue_capacity = pipeline.detector_router.queue_capacity(),
+        "decoded frame assigned to detector route"
+    );
     if let Some(alert) = handshake_alert.as_ref() {
         if let Err(error) = publish_handshake_alert(publish_client, alert).await {
             warn!(%error, "handshake alert publish failed; continuing audit publish");
@@ -838,6 +894,10 @@ async fn process_packet(
             .tags
             .push("enrichment:authorized_network_unknown".to_string());
     }
+    pipeline
+        .ie_layout_tracker
+        .observe(&mut entry, authorization_status);
+    pipeline.mac_sequence_delta_tracker.observe(&mut entry);
     pipeline.client_inventory.observe(&mut entry);
     if let Some(alert) = pipeline.sequence_tracker.observe(&entry) {
         if let Err(error) = publish_oracle_json_durable(

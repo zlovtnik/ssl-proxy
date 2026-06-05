@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::audit::AuditWindow;
+use crate::state_key::DetectorLimits;
 
 pub const DEFAULT_PUBLISH_JOURNAL_PATH: &str = "/tmp/atheros-sensor-publish-journal.jsonl";
 
@@ -61,6 +62,8 @@ pub struct AppConfig {
     pub redpanda_request_timeout_ms: u64,
     pub mac_device_lookup_enabled: bool,
     pub mac_lookup_error_ttl_secs: u64,
+    pub detector_limits: DetectorLimits,
+    pub clock_skew_anomaly_us: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -272,6 +275,26 @@ impl AppConfig {
             mac_lookup_error_ttl_secs: parse_u64("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", 30)
                 .unwrap_or(30)
                 .max(1),
+            detector_limits: DetectorLimits {
+                mac_state_capacity: parse_usize("ATH_SENSOR_MAC_STATE_CAPACITY", 100_000)
+                    .unwrap_or(100_000),
+                ssid_state_capacity: parse_usize("ATH_SENSOR_SSID_STATE_CAPACITY", 16_384)
+                    .unwrap_or(16_384),
+                session_state_capacity: parse_usize("ATH_SENSOR_SESSION_STATE_CAPACITY", 65_536)
+                    .unwrap_or(65_536),
+                client_probe_ssid_capacity: parse_usize(
+                    "ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY",
+                    64,
+                )
+                .unwrap_or(64),
+                pipeline_workers: parse_usize("ATH_SENSOR_PIPELINE_WORKERS", 1).unwrap_or(1),
+                pipeline_queue_capacity: parse_usize("ATH_SENSOR_PIPELINE_QUEUE_CAPACITY", 1_024)
+                    .unwrap_or(1_024),
+            }
+            .clamp(),
+            clock_skew_anomaly_us: parse_i64("ATH_SENSOR_CLOCK_SKEW_ANOMALY_US", 250_000)
+                .unwrap_or(250_000)
+                .max(0),
         })
     }
 }
@@ -393,6 +416,13 @@ fn parse_u8(name: &str, default: u8) -> Result<u8, String> {
 fn parse_i32(name: &str, default: i32) -> Result<i32, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value.trim().parse::<i32>().map_err(|_| value),
+        _ => Ok(default),
+    }
+}
+
+fn parse_i64(name: &str, default: i64) -> Result<i64, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => value.trim().parse::<i64>().map_err(|_| value),
         _ => Ok(default),
     }
 }
@@ -537,6 +567,12 @@ mod tests {
             "ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS",
             "ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED",
             "ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS",
+            "ATH_SENSOR_MAC_STATE_CAPACITY",
+            "ATH_SENSOR_SSID_STATE_CAPACITY",
+            "ATH_SENSOR_SESSION_STATE_CAPACITY",
+            "ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY",
+            "ATH_SENSOR_PIPELINE_WORKERS",
+            "ATH_SENSOR_PIPELINE_QUEUE_CAPACITY",
             "ATH_SENSOR_METRICS_PORT",
             "ATH_SENSOR_SHUTDOWN_GRACE_SECS",
             "ATH_SENSOR_AUDIT_LAYER_STREAM",
@@ -576,6 +612,12 @@ mod tests {
         assert_eq!(config.redpanda_request_timeout_ms, 10_000);
         assert!(config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 30);
+        assert_eq!(config.detector_limits.mac_state_capacity, 100_000);
+        assert_eq!(config.detector_limits.ssid_state_capacity, 16_384);
+        assert_eq!(config.detector_limits.session_state_capacity, 65_536);
+        assert_eq!(config.detector_limits.client_probe_ssid_capacity, 64);
+        assert_eq!(config.detector_limits.pipeline_workers, 1);
+        assert_eq!(config.detector_limits.pipeline_queue_capacity, 1_024);
         assert_eq!(
             config.publish_journal_path.as_deref(),
             Some(std::path::Path::new(DEFAULT_PUBLISH_JOURNAL_PATH))
@@ -588,12 +630,24 @@ mod tests {
         std::env::set_var("ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS", "15000");
         std::env::set_var("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", "false");
         std::env::set_var("ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS", "7");
+        std::env::set_var("ATH_SENSOR_MAC_STATE_CAPACITY", "12");
+        std::env::set_var("ATH_SENSOR_SSID_STATE_CAPACITY", "13");
+        std::env::set_var("ATH_SENSOR_SESSION_STATE_CAPACITY", "14");
+        std::env::set_var("ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY", "15");
+        std::env::set_var("ATH_SENSOR_PIPELINE_WORKERS", "4");
+        std::env::set_var("ATH_SENSOR_PIPELINE_QUEUE_CAPACITY", "256");
 
         let config = AppConfig::from_env().unwrap();
 
         assert_eq!(config.redpanda_request_timeout_ms, 15_000);
         assert!(!config.mac_device_lookup_enabled);
         assert_eq!(config.mac_lookup_error_ttl_secs, 7);
+        assert_eq!(config.detector_limits.mac_state_capacity, 12);
+        assert_eq!(config.detector_limits.ssid_state_capacity, 13);
+        assert_eq!(config.detector_limits.session_state_capacity, 14);
+        assert_eq!(config.detector_limits.client_probe_ssid_capacity, 15);
+        assert_eq!(config.detector_limits.pipeline_workers, 4);
+        assert_eq!(config.detector_limits.pipeline_queue_capacity, 256);
     }
 
     #[test]

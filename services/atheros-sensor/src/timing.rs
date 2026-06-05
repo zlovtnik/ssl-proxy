@@ -12,6 +12,7 @@ const TIMING_TRACKER_MAX_AGE_SECS: i64 = 3_600;
 #[derive(Default)]
 pub struct FrameTimingTracker {
     last_by_session: HashMap<String, LastFrameTiming>,
+    last_by_ap: HashMap<String, LastFrameTiming>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,15 +28,32 @@ struct FrameTimingDelta {
 }
 
 impl FrameTimingTracker {
-    pub fn attach_deltas(&mut self, frame: &mut WifiFrame) {
-        let delta = self.compute_delta(frame);
+    pub fn attach_deltas(&mut self, frame: &mut WifiFrame, clock_skew_anomaly_threshold_us: i64) {
+        let delta = self.compute_session_delta(frame);
         frame.tsft_delta_us = delta.map(|delta| delta.tsft_delta_us);
         frame.wall_clock_delta_ms = delta.map(|delta| delta.wall_clock_delta_ms);
         frame.correlation.tsft_delta_us = frame.tsft_delta_us;
         frame.correlation.wall_clock_delta_ms = frame.wall_clock_delta_ms;
+
+        let clock_skew_delta_us = self.compute_ap_delta(frame).and_then(|delta| {
+            delta
+                .wall_clock_delta_ms
+                .checked_mul(1_000)?
+                .checked_sub(delta.tsft_delta_us)
+        });
+        frame.clock_skew_delta_us = clock_skew_delta_us;
+        frame.correlation.clock_skew_delta_us = clock_skew_delta_us;
+        if clock_skew_anomaly_threshold_us > 0
+            && clock_skew_delta_us
+                .is_some_and(|delta| delta.abs() > clock_skew_anomaly_threshold_us)
+        {
+            push_unique(&mut frame.tags, "anomaly:clock_skew_anomaly");
+            push_unique(&mut frame.anomaly_reasons, "clock_skew_anomaly");
+            push_unique(&mut frame.anomalies.reasons, "clock_skew_anomaly");
+        }
     }
 
-    fn compute_delta(&mut self, frame: &WifiFrame) -> Option<FrameTimingDelta> {
+    fn compute_session_delta(&mut self, frame: &WifiFrame) -> Option<FrameTimingDelta> {
         let session_key = frame
             .session_key
             .as_deref()
@@ -44,19 +62,10 @@ impl FrameTimingTracker {
         let current_tsft = frame.tsft?;
         let current_observed_at = frame.observed_at;
 
-        let delta = self.last_by_session.get(session_key).and_then(|previous| {
-            let tsft_delta_us = current_tsft.checked_sub(previous.tsft)?;
-            let tsft_delta_us = i64::try_from(tsft_delta_us).ok()?;
-            let wall_clock_delta_ms =
-                (current_observed_at - previous.observed_at).num_milliseconds();
-            if wall_clock_delta_ms < 0 {
-                return None;
-            }
-            Some(FrameTimingDelta {
-                tsft_delta_us,
-                wall_clock_delta_ms,
-            })
-        });
+        let delta = self
+            .last_by_session
+            .get(session_key)
+            .and_then(|previous| timing_delta(previous, current_tsft, current_observed_at));
 
         let should_update = self
             .last_by_session
@@ -77,28 +86,105 @@ impl FrameTimingTracker {
         delta
     }
 
+    fn compute_ap_delta(&mut self, frame: &WifiFrame) -> Option<FrameTimingDelta> {
+        if !matches!(frame.frame_subtype.as_str(), "beacon" | "probe_response") {
+            return None;
+        }
+        let bssid = frame
+            .bssid
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())?;
+        let current_tsft = frame.tsft?;
+        let current_observed_at = frame.observed_at;
+
+        let delta = self
+            .last_by_ap
+            .get(bssid)
+            .and_then(|previous| timing_delta(previous, current_tsft, current_observed_at));
+
+        let should_update = self
+            .last_by_ap
+            .get(bssid)
+            .map(|previous| current_observed_at >= previous.observed_at)
+            .unwrap_or(true);
+        if should_update {
+            self.last_by_ap.insert(
+                bssid.to_string(),
+                LastFrameTiming {
+                    observed_at: current_observed_at,
+                    tsft: current_tsft,
+                },
+            );
+        }
+
+        delta
+    }
+
     fn prune(&mut self, observed_at: DateTime<Utc>) {
         let cutoff = observed_at - chrono::Duration::seconds(TIMING_TRACKER_MAX_AGE_SECS);
         self.last_by_session
             .retain(|_, timing| timing.observed_at >= cutoff);
-        if self.last_by_session.len() <= TIMING_TRACKER_MAX_SESSIONS {
-            return;
+        self.last_by_ap
+            .retain(|_, timing| timing.observed_at >= cutoff);
+
+        if self.last_by_session.len() > TIMING_TRACKER_MAX_SESSIONS {
+            let mut entries: Vec<(String, DateTime<Utc>)> = self
+                .last_by_session
+                .iter()
+                .map(|(key, timing)| (key.clone(), timing.observed_at))
+                .collect();
+            entries.sort_by_key(|(_, observed_at)| *observed_at);
+            let to_remove: Vec<String> = entries
+                .into_iter()
+                .take(self.last_by_session.len() - TIMING_TRACKER_MAX_SESSIONS)
+                .map(|(key, _)| key)
+                .collect();
+            for key in to_remove {
+                self.last_by_session.remove(&key);
+            }
         }
 
+        if self.last_by_ap.len() <= TIMING_TRACKER_MAX_SESSIONS {
+            return;
+        }
         let mut entries: Vec<(String, DateTime<Utc>)> = self
-            .last_by_session
+            .last_by_ap
             .iter()
             .map(|(key, timing)| (key.clone(), timing.observed_at))
             .collect();
         entries.sort_by_key(|(_, observed_at)| *observed_at);
         let to_remove: Vec<String> = entries
             .into_iter()
-            .take(self.last_by_session.len() - TIMING_TRACKER_MAX_SESSIONS)
+            .take(self.last_by_ap.len() - TIMING_TRACKER_MAX_SESSIONS)
             .map(|(key, _)| key)
             .collect();
         for key in to_remove {
-            self.last_by_session.remove(&key);
+            self.last_by_ap.remove(&key);
         }
+    }
+}
+
+fn timing_delta(
+    previous: &LastFrameTiming,
+    current_tsft: u64,
+    current_observed_at: DateTime<Utc>,
+) -> Option<FrameTimingDelta> {
+    let tsft_delta_us = current_tsft.checked_sub(previous.tsft)?;
+    let tsft_delta_us = i64::try_from(tsft_delta_us).ok()?;
+    let wall_clock_delta_ms = (current_observed_at - previous.observed_at).num_milliseconds();
+    if wall_clock_delta_ms < 0 {
+        return None;
+    }
+    Some(FrameTimingDelta {
+        tsft_delta_us,
+        wall_clock_delta_ms,
+    })
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|existing| existing == value) {
+        values.push(value.to_string());
     }
 }
 
@@ -134,8 +220,10 @@ mod tests {
         frame.rf.tsft = tsft;
         frame.tsft_delta_us = None;
         frame.wall_clock_delta_ms = None;
+        frame.clock_skew_delta_us = None;
         frame.correlation.tsft_delta_us = None;
         frame.correlation.wall_clock_delta_ms = None;
+        frame.correlation.clock_skew_delta_us = None;
         frame
     }
 
@@ -144,12 +232,14 @@ mod tests {
         let mut tracker = FrameTimingTracker::default();
         let mut frame = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
 
-        tracker.attach_deltas(&mut frame);
+        tracker.attach_deltas(&mut frame, 250_000);
 
         assert_eq!(frame.tsft_delta_us, None);
         assert_eq!(frame.wall_clock_delta_ms, None);
+        assert_eq!(frame.clock_skew_delta_us, None);
         assert_eq!(frame.correlation.tsft_delta_us, None);
         assert_eq!(frame.correlation.wall_clock_delta_ms, None);
+        assert_eq!(frame.correlation.clock_skew_delta_us, None);
         assert_eq!(
             tracker.last_by_session.get("session-1"),
             Some(&LastFrameTiming {
@@ -165,13 +255,18 @@ mod tests {
         let mut first = timing_frame(Some("session-1"), Some(1_000), observed_at(0));
         let mut second = timing_frame(Some("session-1"), Some(2_500), observed_at(2_000));
 
-        tracker.attach_deltas(&mut first);
-        tracker.attach_deltas(&mut second);
+        tracker.attach_deltas(&mut first, 250_000);
+        tracker.attach_deltas(&mut second, 250_000);
 
         assert_eq!(second.tsft_delta_us, Some(1_500));
         assert_eq!(second.wall_clock_delta_ms, Some(2_000));
+        assert_eq!(second.clock_skew_delta_us, Some(1_998_500));
         assert_eq!(second.correlation.tsft_delta_us, Some(1_500));
         assert_eq!(second.correlation.wall_clock_delta_ms, Some(2_000));
+        assert_eq!(second.correlation.clock_skew_delta_us, Some(1_998_500));
+        assert!(second
+            .tags
+            .contains(&"anomaly:clock_skew_anomaly".to_string()));
     }
 
     #[test]
@@ -183,9 +278,9 @@ mod tests {
         let mut session_one_second =
             timing_frame(Some("session-1"), Some(1_300), observed_at(2_000));
 
-        tracker.attach_deltas(&mut session_one_first);
-        tracker.attach_deltas(&mut session_two_first);
-        tracker.attach_deltas(&mut session_one_second);
+        tracker.attach_deltas(&mut session_one_first, 0);
+        tracker.attach_deltas(&mut session_two_first, 0);
+        tracker.attach_deltas(&mut session_one_second, 0);
 
         assert_eq!(session_two_first.tsft_delta_us, None);
         assert_eq!(session_two_first.wall_clock_delta_ms, None);
@@ -201,10 +296,10 @@ mod tests {
         let mut decreasing = timing_frame(Some("session-1"), Some(900), observed_at(2_000));
         let mut recovered = timing_frame(Some("session-1"), Some(1_200), observed_at(3_000));
 
-        tracker.attach_deltas(&mut first);
-        tracker.attach_deltas(&mut missing);
-        tracker.attach_deltas(&mut decreasing);
-        tracker.attach_deltas(&mut recovered);
+        tracker.attach_deltas(&mut first, 0);
+        tracker.attach_deltas(&mut missing, 0);
+        tracker.attach_deltas(&mut decreasing, 0);
+        tracker.attach_deltas(&mut recovered, 0);
 
         assert_eq!(missing.tsft_delta_us, None);
         assert_eq!(missing.wall_clock_delta_ms, None);
@@ -227,13 +322,14 @@ mod tests {
             reg_domain: "US".to_string(),
         };
 
-        tracker.attach_deltas(&mut first);
-        tracker.attach_deltas(&mut second);
+        tracker.attach_deltas(&mut first, 0);
+        tracker.attach_deltas(&mut second, 0);
         let entry = to_audit_entry(attach_context(second, &context));
         let value = serde_json::to_value(entry).unwrap();
 
         assert_eq!(value["tsft_delta_us"], serde_json::json!(1_500));
         assert_eq!(value["wall_clock_delta_ms"], serde_json::json!(2_000));
+        assert_eq!(value["clock_skew_delta_us"], serde_json::json!(1_998_500));
         assert_eq!(
             value["correlation"]["tsft_delta_us"],
             serde_json::json!(1_500)
@@ -241,6 +337,10 @@ mod tests {
         assert_eq!(
             value["correlation"]["wall_clock_delta_ms"],
             serde_json::json!(2_000)
+        );
+        assert_eq!(
+            value["correlation"]["clock_skew_delta_us"],
+            serde_json::json!(1_998_500)
         );
     }
 }

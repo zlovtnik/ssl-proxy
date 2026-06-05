@@ -1,30 +1,29 @@
 //! Probe request accumulation and batch backpressure.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
+use lru::LruCache;
 
 use crate::{
     backlog::ProbeFlushObservation,
     detect_state::{AuthorizedNetworkCache, ClientInventory},
     model::AuditEntry,
+    state_key::{DetectorLimits, MacAddr, SsidKey},
 };
 
-const DEFAULT_MAX_PROBE_ACCUMULATOR_SIZE: usize = 8_192;
-
 pub struct ProbeAccumulator {
-    observations: HashMap<ProbeKey, ProbeObservation>,
+    observations: LruCache<ProbeKey, ProbeObservation>,
     max_size: usize,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ProbeKey {
-    ssid: String,
-    client_mac: String,
+    ssid: SsidKey,
+    client_mac: MacAddr,
 }
 
 #[derive(Clone, Debug)]
 struct ProbeObservation {
+    ssid: String,
     known_bssid: Option<String>,
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
@@ -37,9 +36,17 @@ pub struct ProbeFlushBatch {
 
 impl ProbeAccumulator {
     pub fn new() -> Self {
+        Self::new_with_limits(DetectorLimits::default())
+    }
+
+    pub fn new_with_limits(limits: DetectorLimits) -> Self {
+        let max_size = limits.clamp().pipeline_queue_capacity.max(1);
         Self {
-            observations: HashMap::new(),
-            max_size: DEFAULT_MAX_PROBE_ACCUMULATOR_SIZE,
+            observations: LruCache::new(
+                std::num::NonZeroUsize::new(max_size)
+                    .expect("probe accumulator capacity is non-zero"),
+            ),
+            max_size,
         }
     }
 
@@ -53,10 +60,7 @@ impl ProbeAccumulator {
             return;
         }
         let (Some(client_mac), Some(ssid)) = (
-            entry
-                .source_mac
-                .as_deref()
-                .map(|mac| mac.trim().to_ascii_lowercase()),
+            entry.source_mac.as_deref().and_then(MacAddr::parse),
             entry
                 .ssid
                 .as_deref()
@@ -73,25 +77,31 @@ impl ProbeAccumulator {
         let linked_bssid = client_inventory
             .link_probe_to_network(entry, authorized_network_cache)
             .map(|(bssid, _, _)| bssid);
+        let Some(ssid_key) = SsidKey::new(ssid) else {
+            return;
+        };
         let key = ProbeKey {
-            ssid: ssid.to_string(),
+            ssid: ssid_key,
             client_mac,
         };
-        self.observations
-            .entry(key)
-            .and_modify(|observation| {
-                if observation.known_bssid.is_none() {
-                    observation.known_bssid = linked_bssid.clone().or_else(|| entry.bssid.clone());
-                }
-                observation.last_seen = observed_at;
-                observation.probe_count = observation.probe_count.saturating_add(1);
-            })
-            .or_insert_with(|| ProbeObservation {
-                known_bssid: linked_bssid.or_else(|| entry.bssid.clone()),
-                first_seen: observed_at,
-                last_seen: observed_at,
-                probe_count: 1,
-            });
+        if let Some(observation) = self.observations.get_mut(&key) {
+            if observation.known_bssid.is_none() {
+                observation.known_bssid = linked_bssid.clone().or_else(|| entry.bssid.clone());
+            }
+            observation.last_seen = observed_at;
+            observation.probe_count = observation.probe_count.saturating_add(1);
+        } else {
+            self.observations.put(
+                key,
+                ProbeObservation {
+                    ssid: ssid.to_string(),
+                    known_bssid: linked_bssid.or_else(|| entry.bssid.clone()),
+                    first_seen: observed_at,
+                    last_seen: observed_at,
+                    probe_count: 1,
+                },
+            );
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -99,7 +109,7 @@ impl ProbeAccumulator {
     }
 
     pub fn should_flush_early(&self) -> bool {
-        self.observations.len() > self.max_size
+        self.observations.len() >= self.max_size
     }
 
     pub fn take_ready_batches(&mut self) -> Vec<ProbeFlushBatch> {
@@ -112,7 +122,7 @@ impl ProbeAccumulator {
 
     pub fn restore(&mut self, batch: ProbeFlushBatch) {
         for (key, observation) in batch.observations {
-            self.observations.insert(key, observation);
+            self.observations.put(key, observation);
         }
     }
 
@@ -125,14 +135,16 @@ impl ProbeAccumulator {
         });
         let keep = batch.observations.len() / 2;
         for (key, observation) in batch.observations.into_iter().skip(keep) {
-            self.observations.insert(key, observation);
+            self.observations.put(key, observation);
         }
     }
 
     fn drain_all(&mut self) -> ProbeFlushBatch {
-        ProbeFlushBatch {
-            observations: self.observations.drain().collect(),
+        let mut observations = Vec::with_capacity(self.observations.len());
+        while let Some(entry) = self.observations.pop_lru() {
+            observations.push(entry);
         }
+        ProbeFlushBatch { observations }
     }
 }
 
@@ -151,8 +163,8 @@ impl ProbeFlushBatch {
         self.observations
             .iter()
             .map(|(key, observation)| ProbeFlushObservation {
-                ssid: key.ssid.clone(),
-                client_mac: key.client_mac.clone(),
+                ssid: observation.ssid.clone(),
+                client_mac: key.client_mac.to_string(),
                 known_bssid: observation.known_bssid.clone(),
                 first_seen: observation.first_seen,
                 last_seen: observation.last_seen,
@@ -215,11 +227,14 @@ mod tests {
             tags: vec![],
             risk_score: None,
             security_flags: 0,
+            rsn_capabilities: None,
+            weak_cipher_advertised: None,
             wps_device_name: None,
             wps_manufacturer: None,
             wps_model_name: None,
             device_fingerprint: None,
             probe_fingerprint: None,
+            ie_layout_hash: None,
             vendor_name: None,
             handshake_captured: false,
             qos_tid: None,
@@ -256,6 +271,9 @@ mod tests {
             payload_visibility: None,
             tsft_delta_us: None,
             wall_clock_delta_ms: None,
+            sequence_delta: None,
+            sequence_gap_missing_frames: None,
+            clock_skew_delta_us: None,
             large_frame: None,
             mixed_encryption: None,
             dedupe_or_replay_suspect: None,
@@ -387,5 +405,29 @@ mod tests {
         assert!(retained_ssids.contains(&"long-run"));
         assert!(retained_ssids.contains(&"recent"));
         assert_eq!(retained.len(), 2);
+    }
+
+    #[test]
+    fn accumulator_bounds_randomized_probe_state() {
+        use crate::state_key::DetectorLimits;
+
+        let mut accumulator = ProbeAccumulator::new_with_limits(DetectorLimits {
+            pipeline_queue_capacity: 4,
+            ..DetectorLimits::default()
+        });
+        let inventory = ClientInventory::default();
+        let cache = AuthorizedNetworkCache::default();
+
+        for index in 0..16 {
+            let entry = entry(
+                &format!("SSID-{index}"),
+                &format!("02:00:00:00:00:{index:02x}"),
+                "2024-01-01T12:00:00Z",
+            );
+            accumulator.observe(&entry, &inventory, &cache);
+        }
+
+        assert!(accumulator.len() <= 4);
+        assert!(accumulator.should_flush_early());
     }
 }
