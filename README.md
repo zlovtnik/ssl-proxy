@@ -1,5 +1,7 @@
 # ssl-proxy
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 A privacy-focused transparent proxy and VPN system with wireless audit capabilities, vector embeddings for device intelligence, and Oracle-backed audit persistence.
 
 ## Overview
@@ -17,17 +19,25 @@ ssl-proxy provides:
 
 ![Architecture](docs/architecture.md)
 
-Key data flows:
+### Key Data Flows
 
 ```
 Client → WireGuard (UDP 443/51820) → Transparent Proxy (TCP 3001) → Origin
                     ↓
-            Audit Events → Redpanda → Java Coordinator → Oracle Worker → Oracle ADB
+            Audit Events → Redpanda → Coordinator (×3) → Oracle Worker → Oracle ADB
                     ↓
             PostgreSQL → Vec Worker → Embeddings (pgvector) → Similarity Search
 ```
 
-See [docs/architecture.md](docs/architecture.md) for detailed diagrams and [docs/runbook.md](docs/runbook.md) for operational procedures.
+The **coordinator** (3 replicas for HA) provides sync-plane job orchestration: cursoring, deduplication, batch dispatch, and result handling. Topics are locked to these meanings:
+
+| Topic | Purpose |
+|-------|---------|
+| `sync.scan.request` | Proxy-to-coordinator work discovery |
+| `sync.oracle.load` | Coordinator-to-worker batch dispatch |
+| `sync.oracle.result` | Worker-to-coordinator batch outcomes |
+
+See [docs/architecture.md](docs/architecture.md) for detailed diagrams and [docs/runbook.md](docs/runbook.md) for operational procedures. Design decisions are recorded in [docs/adr/](docs/adr/).
 
 ## Quick Start
 
@@ -68,6 +78,18 @@ curl -i http://127.0.0.1:3002/health
 
 **Do not** combine this with a manual HTTP proxy on the client — WireGuard is the primary ingress path.
 
+### Generating Peer Keys
+
+```bash
+wg genkey | tee privatekey-peer | wg pubkey > publickey-peer
+# Place private key in config/peer1/ and config/peer2/ respectively
+```
+
+For pre-shared keys (recommended for obfuscated peers):
+```bash
+wg genpsk > presharedkey-peer1
+```
+
 ## Port Assignments
 
 | Service | Port | Protocol | Purpose |
@@ -77,27 +99,56 @@ curl -i http://127.0.0.1:3002/health
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
 | Explicit Proxy | 3000 | TCP | Legacy opt-in listener, disabled by default |
-| Java Coordinator | 8081 | TCP | Actuator/health (internal) |
-| Atheros Search gRPC | 50051 | TCP | Search API (vector profile) |
-| Atheros Search HTTP | 8080 | TCP | REST API (vector profile) |
-| Prometheus | 9090 | TCP | Metrics (non-vector profile) |
-| Grafana | 3004 | TCP | Dashboards (non-vector profile) |
+| Coordinator Actuator | 8081 | TCP | Health/actuator (internal) |
+| Integration Console | 3003 | TCP | Rails dashboard (device inventory, heatmaps) |
+| Redis | 6379 | TCP | Caching and job queues (internal) |
+| MinIO API | 9000 | TCP | S3-compatible object storage (internal) |
+| MinIO Console | 9001 | TCP | MinIO admin UI (internal) |
+| Postgres | 5432 | TCP | Primary state store (internal) |
+| Postgres Exporter | 9187 | TCP | Postgres metrics (observability) |
+| Redis Exporter | 9121 | TCP | Redis metrics (observability) |
+| Prometheus | 9090 | TCP | Metrics aggregation (observability) |
+| Pushgateway | 9091 | TCP | Metrics push endpoint (observability) |
+| Node Exporter | 9100 | TCP | Host metrics (observability) |
+| cAdvisor | 8082 | TCP | Container metrics (observability) |
+| Grafana | 3004 | TCP | Dashboards (observability) |
+| Loki | 3100 | TCP | Log aggregation (observability) |
 | Jaeger UI | 16686 | TCP | Distributed tracing |
-| OTel gRPC | 4319 | TCP | OpenTelemetry collector |
-| OTel HTTP | 4320 | TCP | OpenTelemetry HTTP |
+| OTel gRPC | 4319 | TCP | OpenTelemetry collector gRPC |
+| OTel HTTP | 4320 | TCP | OpenTelemetry collector HTTP |
+| Search gRPC | 50051 | TCP | Atheros Search gRPC API (vector profile) |
+| Search HTTP | 8080 | TCP | Atheros Search REST API (vector profile) |
 
 ## Components
 
 ### Core Services (always running)
 
-| Service | Description | README |
-|---------|-------------|--------|
+| Service | Description | Implementation |
+|---------|-------------|----------------|
 | **ssl-proxy** | Rust transparent proxy, WireGuard terminator, obfuscation engine | [src/](src/) |
-| **java-coordinator** | Sync control plane (Kotlin/Spring/Camel) — cursoring, dedupe, job state, batching | [services/zig-coordinator/](services/zig-coordinator/) |
+| **coordinator** | Sync control plane — cursoring, dedupe, job state, batching. 3 replicas for HA. | [services/zig-coordinator/](services/zig-coordinator/) (Gradle/Kotlin) |
 | **oracle-worker** | Oracle ADB sink for `proxy.events` audit stream | [services/oracle-worker/](services/oracle-worker/) |
-| **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/README.md](apps/integration-console/README.md) |
+| **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
 | **redpanda** | Kafka-compatible event backbone for sync topics | — |
 | **postgres** | Primary state store (sync_events, devices, vec_embeddings, etc.) | [sql/postgres.sql](sql/postgres.sql) |
+| **redis** | Caching and job queues for integration console | — |
+| **minio** | S3-compatible object store (console exports) | — |
+
+### Observability Stack
+
+| Service | Description | Port |
+|---------|-------------|------|
+| **otel-collector** | OpenTelemetry collector (traces + metrics) | 4319/4320 |
+| **prometheus** | Metrics aggregation and alerting | 9090 |
+| **grafana** | Dashboards for all observability signals | 3004 |
+| **loki** | Log aggregation | 3100 |
+| **promtail** | Docker log shipping to Loki | — |
+| **jaeger** | Distributed tracing UI | 16686 |
+| **cadvisor** | Container resource metrics | 8082 |
+| **node-exporter** | Host-level metrics | 9100 |
+| **postgres-exporter** | Postgres query performance metrics | 9187 |
+| **redis-exporter** | Redis metrics | 9121 |
+| **pushgateway** | Metrics push endpoint for batch jobs | 9091 |
 
 ### Vector Profile (optional, `docker compose --profile vector up`)
 
@@ -112,6 +163,39 @@ curl -i http://127.0.0.1:3002/health
 | Service | Description | README |
 |---------|-------------|--------|
 | **atheros-sensor** | Linux monitor-mode Wi-Fi capture (AR9271 preferred) | [services/atheros-sensor/README.md](services/atheros-sensor/README.md) |
+
+## Traffic Classification
+
+The proxy classifies destinations and applies obfuscation profiles per domain:
+
+### Classification Labels
+
+| Label | Meaning |
+|-------|---------|
+| `ads_tracker` | Advertising and tracking domains |
+| `analytics` | Analytics and telemetry endpoints |
+| `cdn` | Content delivery networks (pass-through) |
+| `essential_api` | Critical API endpoints (pass-through) |
+| `auth` | Authentication and identity providers |
+| `unknown` | Unclassified (default) |
+
+### Active Obfuscation Profiles
+
+- **fox-news**: Fox News domain family
+- **fox-sports**: Fox Sports domain family
+
+### Applied Modifications
+
+**Request Headers**
+- Removes `X-Forwarded-For`, `Via`, `Forwarded` proxy headers
+- Strips `DNT`, `Sec-GPC` privacy signals
+- Normalizes User-Agent to configured standard value
+
+**Response Headers**
+- Removes `X-Cache`, `X-Edge-IP`, `X-Served-By` CDN leak headers
+- Preserves security headers (CSP, HSTS)
+
+Domain matching supports wildcard subdomains and is case-insensitive.
 
 ## Configuration
 
@@ -154,4 +238,92 @@ curl -i http://127.0.0.1:3002/health
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ATH_SENSOR_DEVICE` | *auto* | Wireless interface (e.g., `wlxc01c3038d5e8`) |
-| `ATH_SENSOR_CHANNEL`
+| `ATH_SENSOR_CHANNEL` | `11` | 802.11 channel for monitor mode |
+| `ATH_SENSOR_CHANNEL_HOP_ENABLED` | `false` | Enable channel hopping |
+| `ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS` | `1000` | Milliseconds between channel hops |
+| `ATH_SENSOR_REG_DOMAIN` | `US` | Regulatory domain |
+| `ATH_SENSOR_LOCATION_ID` | `default` | Sensor location label |
+| `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS` | `true` | Fail if host endpoints unavailable |
+| `ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED` | `true` | Enable MAC OUI vendor lookup |
+| `ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS` | `60` | Client inventory flush interval |
+| `ATH_SENSOR_SIGNAL_ANOMALY_DBM_DELTA` | `15` | Signal anomaly threshold (dBm) |
+| `ATH_SENSOR_DEAUTH_FLOOD_THRESHOLD` | `20` | Deauth flood detection count |
+| `ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS` | `30` | Deauth flood detection window |
+| `ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS` | `60` | Cooldown between deauth alerts |
+| `ATH_SENSOR_EXPORT_HANDSHAKES` | `false` | Export 4-way handshake frames |
+| `ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS` | `60` | Authorized network cache TTL |
+| `ATH_SENSOR_SHUTDOWN_GRACE_SECS` | `5` | Grace period on shutdown |
+| `ATH_SENSOR_BACKLOG_MAX_ATTEMPTS` | `10` | Max retry attempts for send failures |
+| `ATH_SENSOR_BACKLOG_MAX_AGE_HOURS` | `72` | Max age for backlogged frames |
+| `ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS` | `10000` | Redpanda produce timeout |
+| `ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS` | `30` | MAC lookup error cache TTL |
+| `ATH_SENSOR_AUDIT_LAYER_STREAM` | `off` | Enable audit layer stream (`off`/`meta`/`full`) |
+
+## Makefile Reference
+
+| Target | Description |
+|--------|-------------|
+| `build` | Build Rust proxy, atheros-sensor, oracle-worker, and zig-coordinator binaries |
+| `test` | Run all test suites |
+| `bench` | Run local benchmark baselines (`wg_packet_obfuscation`) |
+| `lint` | Run `cargo clippy -- -D warnings` |
+| `docker` | Build Docker images (ssl-proxy, coordinator, oracle-worker, redpanda, postgres) |
+| `clean` | Clean build artifacts |
+| `up-ready` | Bring up compose stack, verify services, print peer QR codes |
+| `diagnose` | Non-mutating diagnosis and signature classification |
+| `pipeline-health` | Check sync-plane pipeline health |
+| `memo-show` | Show operational memory ledger |
+| `memo-log` | Append one operational incident line |
+| `audit-threats` | Query wireless threat alerts view |
+
+## Kubernetes Deployment
+
+A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/):
+
+```bash
+helm upgrade --install ssl-proxy ./helm/ssl-proxy \
+  --set proxy.adminApiKey=your-key \
+  --set postgres.password=sync
+```
+
+## Operational Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/up-ready.sh` | Bring up stack and verify all services |
+| `scripts/diagnose.sh` | Non-mutating diagnosis of proxy and tunnel state |
+| `scripts/smoke_test.sh` | End-to-end smoke test |
+| `scripts/sync-status.sh` | Pipeline health check (sync plane) |
+| `scripts/deploy-and-verify.sh` | Full deploy + verification workflow |
+| `scripts/prep_ath.sh` | Atheros sensor interface preparation |
+| `scripts/memo-show.sh` / `scripts/memo-log.sh` | Operational memory ledger |
+
+## Troubleshooting
+
+### Common Issues
+
+**WireGuard tunnel won't establish**
+- Verify peer config files exist in `config/peer1/` and `config/peer2/`
+- Check that server private key exists: `config/server/privatekey-server`
+- Ensure UDP ports 443 and 51820 are reachable from the client
+
+**Admin API returns 401**
+- Set `ADMIN_API_KEY` to a non-empty value
+- Pass it as `Authorization: Bearer <key>` header
+
+**Oracle worker not delivering events**
+- Verify Oracle wallet is present in `./wallet/`
+- Check `secrets/oracle_password.txt` exists
+- Confirm `ORACLE_CONN` TNS alias matches the wallet configuration
+
+**Postgres connection refused**
+- Postgres may still be initializing (can take 15-30s on first boot)
+- Check `docker compose logs postgres` for startup progress
+
+### Getting Help
+
+- [docs/runbook.md](docs/runbook.md) — detailed operational procedures
+- [docs/threat-model.md](docs/threat-model.md) — security model and assumptions
+- [docs/bugs.md](docs/bugs.md) — known issues and workarounds
+- [docs/ssl-proxy-compliance-audit-enhancement-workmap.md](docs/ssl-proxy-compliance-audit-enhancement-workmap.md) — compliance audit workmap
+- [ops-memory.md](ops-memory.md) — operational incident ledger
