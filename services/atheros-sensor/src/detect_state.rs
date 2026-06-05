@@ -52,11 +52,6 @@ pub struct AlertExplanation {
     pub contribution: f64,
 }
 
-pub const CLIENT_INVENTORY_TOPIC: &str = "wireless.client.inventory";
-pub const ROGUE_AP_TOPIC: &str = "wireless.alert.rogue_ap";
-pub const DEAUTH_FLOOD_TOPIC: &str = "wireless.alert.deauth_flood";
-pub const ATTACK_SEQUENCE_TOPIC: &str = "wireless.alert.attack_sequence";
-pub const SEQUENCE_ALERT_TOPIC: &str = "wireless.alert.sequence";
 const ROGUE_AP_ALERT_TTL: Duration = Duration::from_secs(60);
 const ATTACK_CORRELATION_WINDOW: Duration = Duration::from_secs(300);
 const ATTACK_SEQUENCE_COOLDOWN: Duration = Duration::from_secs(60);
@@ -692,6 +687,14 @@ impl AuthorizedNetworkCache {
             backoff_ms: backoff_ms.max(1),
             last_logged_failure_count: 0,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_entries_for_test(entries: Vec<AuthorizedWirelessNetwork>) -> Self {
+        let mut cache = Self::default();
+        cache.entries = entries;
+        cache.has_loaded = true;
+        cache
     }
 
     #[allow(dead_code)]
@@ -1340,6 +1343,60 @@ impl PmfAttackTracker {
             .retain(|_, &mut time| time >= cutoff);
         self.forced_reconnects.retain(|_, &mut time| time >= cutoff);
     }
+}
+
+#[derive(Serialize)]
+pub struct PmfAttackAlert {
+    pub schema_version: u32,
+    pub event_type: String,
+    pub observed_at: String,
+    pub sensor_id: String,
+    pub location_id: String,
+    pub target_mac: String,
+    pub target_bssid: Option<String>,
+    pub ssid: Option<String>,
+    pub channel: Option<u8>,
+    pub attack_tag: String,
+    pub reconnect_window_ms: Option<i64>,
+}
+
+pub fn pmf_attack_alert_from_entry(
+    entry: &AuditEntry,
+    attack_tag: &str,
+    reconnect_window_ms: i64,
+) -> Option<PmfAttackAlert> {
+    if !attack_tag.starts_with("threat:pmf_") && attack_tag != "threat:handshake_harvest_attack" {
+        return None;
+    }
+
+    let target_mac = if attack_tag == "threat:pmf_forced_reconnect" {
+        entry.source_mac.as_deref()
+    } else {
+        entry
+            .destination_mac
+            .as_deref()
+            .or(entry.source_mac.as_deref())
+    }
+    .or(entry.bssid.as_deref())?
+    .trim()
+    .to_ascii_lowercase();
+
+    Some(PmfAttackAlert {
+        schema_version: 1,
+        event_type: "wireless_pmf_attack".to_string(),
+        observed_at: entry.observed_at.clone(),
+        sensor_id: entry.sensor_id.clone(),
+        location_id: entry.location_id.clone(),
+        target_mac,
+        target_bssid: entry
+            .bssid
+            .clone()
+            .or_else(|| entry.destination_bssid.clone()),
+        ssid: entry.ssid.clone(),
+        channel: Some(entry.channel),
+        attack_tag: attack_tag.to_string(),
+        reconnect_window_ms: Some(reconnect_window_ms),
+    })
 }
 
 #[cfg(test)]
