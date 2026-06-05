@@ -283,6 +283,24 @@ impl BacklogStore for RedpandaBacklog {
         payload: &str,
         error: &str,
     ) -> Result<(), BacklogError> {
+        self.save_pending_with_stage(
+            dedupe_key,
+            stream_name,
+            payload,
+            error,
+            BacklogFailureStage::PrePublish,
+        )
+        .await
+    }
+
+    async fn save_pending_with_stage(
+        &self,
+        dedupe_key: &str,
+        stream_name: &str,
+        payload: &str,
+        error: &str,
+        failure_stage: BacklogFailureStage,
+    ) -> Result<(), BacklogError> {
         #[derive(Serialize)]
         struct Message<'a> {
             operation: &'static str,
@@ -290,6 +308,7 @@ impl BacklogStore for RedpandaBacklog {
             stream_name: &'a str,
             payload: &'a str,
             error: &'a str,
+            failure_stage: &'static str,
         }
         let payload = serialize(
             "save_pending",
@@ -299,6 +318,7 @@ impl BacklogStore for RedpandaBacklog {
                 stream_name,
                 payload,
                 error,
+                failure_stage: failure_stage.as_str(),
             },
         )?;
         self.publish(BACKLOG_SAVE_TOPIC, &payload).await

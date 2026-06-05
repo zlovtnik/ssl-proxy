@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,9 +20,22 @@ import (
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
-func corsMiddleware(next http.Handler) http.Handler {
+const maxRequestBodyBytes int64 = 1 << 20
+
+func corsMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			allowed[origin] = struct{}{}
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://127.0.0.1:5173")
+		if origin := r.Header.Get("Origin"); origin != "" {
+			if _, ok := allowed[origin]; ok {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Add("Vary", "Origin")
+			}
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Max-Age", "86400")
@@ -35,12 +49,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *health.Readiness, tokenAuth *auth.TokenAuth, logger zerolog.Logger) (*http.Server, error) {
+func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *search.Service, readiness *health.Readiness, tokenAuth *auth.TokenAuth, logger zerolog.Logger) (*http.Server, error) {
 	mux := runtime.NewServeMux()
 	registerJSON(mux, "POST", "/v1/search", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		body, ok := readRequestBody(w, r)
+		if !ok {
 			return
 		}
 		var req searchv1.SearchRequest
@@ -56,9 +69,8 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 		writeJSON(w, http.StatusOK, resp)
 	})
 	registerJSON(mux, "POST", "/v1/search/stream", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		body, ok := readRequestBody(w, r)
+		if !ok {
 			return
 		}
 		var req searchv1.SearchRequest
@@ -115,7 +127,7 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
-		Handler:           corsMiddleware(mux),
+		Handler:           corsMiddleware(mux, allowedOrigins),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -131,6 +143,20 @@ func StartHTTP(ctx context.Context, port int, svc *search.Service, readiness *he
 		}
 	}()
 	return server, nil
+}
+
+func readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	if err == nil {
+		return body, true
+	}
+	var maxBytesError *http.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return nil, false
+	}
+	writeError(w, http.StatusBadRequest, err.Error())
+	return nil, false
 }
 
 func registerJSON(mux *runtime.ServeMux, method, pattern string, tokenAuth *auth.TokenAuth, handler func(http.ResponseWriter, *http.Request, map[string]string)) {

@@ -141,12 +141,15 @@ impl TrafficBucket {
             1000..=1500 => counters.histogram[3] += 1,
             _ => {}
         }
-        counters
-            .arrival_times_ms
-            .push(observed_at.timestamp_millis());
-        if counters.arrival_times_ms.len() > counters.arrival_reservoir_size {
-            let drop_idx = fastrand::usize(..counters.arrival_times_ms.len());
-            counters.arrival_times_ms.swap_remove(drop_idx);
+        let observed_at_ms = observed_at.timestamp_millis();
+        counters.arrival_samples_seen = counters.arrival_samples_seen.saturating_add(1);
+        if counters.arrival_times_ms.len() < counters.arrival_reservoir_size {
+            counters.arrival_times_ms.push(observed_at_ms);
+        } else if counters.arrival_reservoir_size > 0 {
+            let sample_index = fastrand::u64(..counters.arrival_samples_seen);
+            if sample_index < counters.arrival_reservoir_size as u64 {
+                counters.arrival_times_ms[sample_index as usize] = observed_at_ms;
+            }
         }
         self.enforce_entry_limit();
         Ok(flushed)

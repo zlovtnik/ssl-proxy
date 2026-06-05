@@ -23,7 +23,8 @@ use tokio_rustls::TlsConnector;
 use tracing::debug;
 
 use super::store::{
-    AuthorizedWirelessNetwork, BacklogEntry, BacklogError, BacklogStore, IngestRecord,
+    AuthorizedWirelessNetwork, BacklogEntry, BacklogError, BacklogFailureStage, BacklogStore,
+    IngestRecord,
 };
 use crate::publish::PublishClient;
 

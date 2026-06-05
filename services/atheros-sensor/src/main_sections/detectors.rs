@@ -72,6 +72,7 @@ async fn process_packet(
     let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
     if latest_generation != pipeline.seen_authorized_config_generation {
         pipeline.authorized_network_cache.invalidate();
+        pipeline.rogue_ap_tracker.clear_typosquat_cache();
         pipeline.seen_authorized_config_generation = latest_generation;
     }
     if inline_request_reply_enabled {
@@ -87,6 +88,8 @@ async fn process_packet(
                 error = %refresh_result.as_ref().unwrap_err(),
                 "authorized wireless network cache refresh failed"
             );
+        } else if refresh_result.is_ok() {
+            pipeline.authorized_network_cache.should_log_failure(false);
         }
     }
     if try_decrypt_frame(

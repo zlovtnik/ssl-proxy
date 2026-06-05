@@ -91,6 +91,8 @@ impl BucketCounter {
             self.buckets.clear();
             self.buckets.push_back((second, 1));
             self.total = 1;
+            self.prune(observed_at, window_secs);
+            return self.total;
         } else {
             self.buckets.push_back((second, 1));
         }
@@ -249,7 +251,9 @@ impl ClientInventory {
 
         for network in &authorized.entries {
             if let Some(known_ssid) = &network.ssid {
-                if known_ssid.trim().eq_ignore_ascii_case(probe_ssid) {
+                if known_ssid.trim().eq_ignore_ascii_case(probe_ssid)
+                    && network.location_id.as_deref() == Some(entry.location_id.as_str())
+                {
                     if let Some(bssid) = &network.bssid {
                         return Some((bssid.clone(), client_mac, Some(probe_ssid.to_string())));
                     }

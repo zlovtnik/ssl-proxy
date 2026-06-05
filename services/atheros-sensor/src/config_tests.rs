@@ -52,6 +52,7 @@ fn clear_env() {
         "ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS",
         "ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS",
         "ATH_SENSOR_SIGNAL_ANOMALY_DBM_DELTA",
+        "ATH_SENSOR_CLOCK_SKEW_ANOMALY_US",
         "ATH_SENSOR_DEAUTH_FLOOD_THRESHOLD",
         "ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS",
         "ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS",
@@ -148,6 +149,16 @@ fn enrichment_knobs_accept_overrides() {
     assert_eq!(config.detector_limits.client_probe_ssid_capacity, 15);
     assert_eq!(config.detector_limits.pipeline_workers, 4);
     assert_eq!(config.detector_limits.pipeline_queue_capacity, 256);
+}
+
+#[test]
+fn enrichment_knobs_invalid_boolean_fallback() {
+    let _env = test_env();
+    std::env::set_var("ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED", "maybe");
+
+    let config = AppConfig::from_env().unwrap();
+
+    assert!(config.mac_device_lookup_enabled);
 }
 
 #[test]
@@ -266,6 +277,29 @@ fn host_endpoint_validation_rejects_redpanda_service_host() {
     std::env::set_var(
         "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
         "redpanda://redpanda:9092",
+    );
+
+    let error = match AppConfig::from_env() {
+        Ok(_) => panic!("expected host-network endpoint validation to reject Redpanda host"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        ConfigError::HostNetworkEndpoint {
+            variable: "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
+            ref host
+        } if host == "redpanda"
+    ));
+}
+
+#[test]
+fn host_endpoint_validation_checks_each_bootstrap_server() {
+    let _env = test_env();
+    std::env::set_var("ATH_SENSOR_REQUIRE_HOST_ENDPOINTS", "true");
+    std::env::set_var(
+        "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
+        "redpanda://127.0.0.1:19092, redpanda://redpanda:9092",
     );
 
     let error = match AppConfig::from_env() {

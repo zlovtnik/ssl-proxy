@@ -37,6 +37,7 @@ sync-plane used by this repository.
 - `ATH_SENSOR_MAC_STATE_CAPACITY`
 - `ATH_SENSOR_SSID_STATE_CAPACITY`
 - `ATH_SENSOR_SESSION_STATE_CAPACITY`
+- `ATH_SENSOR_CLOCK_SKEW_ANOMALY_US` (integer, microseconds; default: `250000`) - clock skew anomaly threshold used for sensor time synchronization alerts.
 - `ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY`
 - `ATH_SENSOR_PIPELINE_WORKERS`
 - `ATH_SENSOR_PIPELINE_QUEUE_CAPACITY`

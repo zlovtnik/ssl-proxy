@@ -108,6 +108,10 @@ impl RogueApTracker {
         }
     }
 
+    pub fn clear_typosquat_cache(&mut self) {
+        self.typosquat_cache.clear();
+    }
+
     /// Observes a beacon or probe response and returns a RogueApAlert when any of four detection
     /// reasons fire: open_authorized_ssid (known SSID with no encryption), ssid_typosquat
     /// (edit distance <=2 from known SSID), bssid_spoofing (BSSID changed SSID mapping), or
@@ -132,18 +136,17 @@ impl RogueApTracker {
             reasons.push("open_authorized_ssid".to_string());
         }
         if let Some(ssid) = ssid {
-            let Some(key) = SsidKey::new(ssid) else {
-                return None;
-            };
-            let typosquat = if let Some(cached) = self.typosquat_cache.get(&key) {
-                *cached
-            } else {
-                let verdict = authorized.is_typosquat(ssid);
-                self.typosquat_cache.put(key, verdict);
-                verdict
-            };
-            if typosquat {
-                reasons.push("ssid_typosquat".to_string());
+            if let Some(key) = SsidKey::new(ssid) {
+                let typosquat = if let Some(cached) = self.typosquat_cache.get(&key) {
+                    *cached
+                } else {
+                    let verdict = authorized.is_typosquat(ssid);
+                    self.typosquat_cache.put(key, verdict);
+                    verdict
+                };
+                if typosquat {
+                    reasons.push("ssid_typosquat".to_string());
+                }
             }
         }
         if let Some(bssid) = bssid {
@@ -282,10 +285,10 @@ pub struct DeauthFloodAlert {
     pub explanation: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum DeauthKey {
     Bssid(MacAddr),
-    Unknown,
+    Raw(String),
 }
 
 pub struct DeauthFloodTracker {
@@ -332,10 +335,10 @@ impl DeauthFloodTracker {
             .as_deref()
             .and_then(MacAddr::parse)
             .map(DeauthKey::Bssid)
-            .unwrap_or(DeauthKey::Unknown);
+            .unwrap_or_else(|| DeauthKey::Raw(raw_deauth_key(entry)));
         let observed_at = parse_observed_at(&entry.observed_at).unwrap_or_else(Utc::now);
         if self.windows.get(&key).is_none() {
-            self.windows.put(key, BucketCounter::default());
+            self.windows.put(key.clone(), BucketCounter::default());
         }
         let frame_count = self
             .windows
@@ -385,6 +388,33 @@ impl DeauthFloodTracker {
             )],
         })
     }
+}
+
+fn raw_deauth_key(entry: &AuditEntry) -> String {
+    if let Some(raw_bssid) = entry
+        .bssid
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return raw_bssid.to_string();
+    }
+    let source = entry
+        .source_mac
+        .as_deref()
+        .or(entry.transmitter_mac.as_deref())
+        .or(entry.receiver_mac.as_deref())
+        .unwrap_or("unknown");
+    format!(
+        "{}|{}|{}|{}",
+        source,
+        entry.frame_subtype,
+        entry.observed_at,
+        entry
+            .sequence_number
+            .map(|sequence| sequence.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    )
 }
 
 pub struct AuthorizedNetworkCache {

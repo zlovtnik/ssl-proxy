@@ -123,6 +123,13 @@
     }
 
     #[test]
+    fn channel_number_fallback_does_not_classify_6ghz_as_5ghz() {
+        assert_eq!(derive_band(None, None, Some(6)), "2.4ghz");
+        assert_eq!(derive_band(None, None, Some(36)), "5ghz");
+        assert_eq!(derive_band(None, None, Some(177)), "unknown");
+    }
+
+    #[test]
     fn tags_weak_rsn_cipher_advertisements() {
         let context = AuditContext {
             sensor_id: "00:11:22:33:44:55".to_string(),

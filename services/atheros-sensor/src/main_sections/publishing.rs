@@ -44,6 +44,27 @@ async fn flush_probe_batch(
     }
 }
 
+async fn flush_probe_accumulator(
+    backlog: &RedpandaBacklog,
+    pipeline_state: &mut PipelineState,
+    stats: &metrics::SharedStats,
+) {
+    for batch in pipeline_state.probe_accumulator.take_ready_batches() {
+        match flush_probe_batch(backlog, batch).await {
+            Ok(probe_count) => debug!(probe_count, "probe batch flushed"),
+            Err((batch, error)) => {
+                warn!(
+                    %error,
+                    probe_count = batch.len(),
+                    "probe batch flush failed; reinserting for retry"
+                );
+                pipeline_state.probe_accumulator.restore(batch);
+            }
+        }
+    }
+    stats.lock().unwrap().probe_accumulator_len = pipeline_state.probe_accumulator.len();
+}
+
 /// Creates a tokio interval that ticks every N seconds, with at least 1 second minimum.
 fn interval_secs(secs: u64) -> tokio::time::Interval {
     let interval = Duration::from_secs(secs.max(1));
@@ -143,6 +164,7 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         events,
     )
     .await;
+    flush_probe_accumulator(&handles.backlog, pipeline_state, &handles.stats).await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }

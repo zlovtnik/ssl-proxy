@@ -19,6 +19,7 @@ const (
 	DefaultEmbeddingDimensions = 768
 	DefaultAuditTopic          = "wireless.audit"
 	DefaultBandwidthTopic      = "audit.wireless.bandwidth"
+	DefaultCORSAllowedOrigin   = "http://127.0.0.1:5173"
 )
 
 type Config struct {
@@ -42,6 +43,7 @@ type Config struct {
 	EmbeddingBatchSize    int
 	EmbeddingPollInterval time.Duration
 	ReadyLagThreshold     int64
+	CORSAllowedOrigins    []string
 }
 
 func Load() (Config, error) {
@@ -68,6 +70,7 @@ func Load() (Config, error) {
 		EmbeddingBatchSize:    envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 32),
 		EmbeddingPollInterval: time.Duration(envInt("ATHSEARCH_EMBEDDING_POLL_INTERVAL_MS", 500)) * time.Millisecond,
 		ReadyLagThreshold:     int64(envInt("ATHSEARCH_READY_LAG_THRESHOLD", 10000)),
+		CORSAllowedOrigins:    envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
 	}
 
 	if cfg.PostgresDSN == "" {
@@ -152,6 +155,24 @@ func envStringViper(env *viper.Viper, key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envCSV(key string, fallback []string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	if len(values) == 0 {
+		return fallback
+	}
+	return values
 }
 
 func envBool(key string, fallback bool) bool {

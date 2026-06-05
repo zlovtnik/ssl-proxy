@@ -185,6 +185,9 @@ async fn run_sensor() -> Result<(), SensorError> {
             }
             packet = handles.packets.next() => {
                 let Some(packet) = packet else {
+                    info!("packet stream closed; flushing sensor state");
+                    shutdown_flush(&handles, &mut pipeline_state).await;
+                    handles.stats.lock().unwrap().log(&handles.device, &handles.config);
                     break;
                 };
 
@@ -312,21 +315,7 @@ async fn run_sensor() -> Result<(), SensorError> {
                     warn!(%error, "client inventory publish failed");
                 }
 
-                for batch in pipeline_state.probe_accumulator.take_ready_batches() {
-                    match flush_probe_batch(&handles.backlog, batch).await {
-                        Ok(probe_count) => debug!(probe_count, "probe batch flushed"),
-                        Err((batch, error)) => {
-                            warn!(
-                                %error,
-                                probe_count = batch.len(),
-                                "probe batch flush failed; reinserting for retry"
-                            );
-                            pipeline_state.probe_accumulator.restore(batch);
-                        }
-                    }
-                }
-                handles.stats.lock().unwrap().probe_accumulator_len =
-                    pipeline_state.probe_accumulator.len();
+                flush_probe_accumulator(&handles.backlog, &mut pipeline_state, &handles.stats).await;
             }
         }
     }

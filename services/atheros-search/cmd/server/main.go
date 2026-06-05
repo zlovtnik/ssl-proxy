@@ -86,7 +86,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start grpc server")
 	}
-	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, svc, readiness, tokenAuth, logger)
+	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, cfg.CORSAllowedOrigins, svc, readiness, tokenAuth, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start http gateway")
 	}

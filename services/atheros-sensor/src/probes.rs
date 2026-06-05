@@ -88,7 +88,8 @@ impl ProbeAccumulator {
             if observation.known_bssid.is_none() {
                 observation.known_bssid = linked_bssid.clone().or_else(|| entry.bssid.clone());
             }
-            observation.last_seen = observed_at;
+            observation.first_seen = observation.first_seen.min(observed_at);
+            observation.last_seen = observation.last_seen.max(observed_at);
             observation.probe_count = observation.probe_count.saturating_add(1);
         } else {
             self.observations.put(

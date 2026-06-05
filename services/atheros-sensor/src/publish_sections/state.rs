@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     audit::{AuditWindow, WirelessBandwidthEvent, BANDWIDTH_TOPIC},
-    backlog::{BacklogError, BacklogStore, IngestRecord},
+    backlog::{BacklogError, BacklogFailureStage, BacklogStore, IngestRecord},
     model::{AuditEntry, HandshakeAlert},
 };
 
@@ -81,7 +81,7 @@ const CIRCUIT_BREAKER_MAX_TIMEOUT_MS: u64 = 320_000;
 const DEFAULT_MEMORY_BACKLOG_SIZE: usize = 1024;
 const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
 
-type MemoryBacklogEntry = (String, String, String, String);
+type MemoryBacklogEntry = (String, String, String, BacklogFailureStage);
 pub type SharedPublishState = Arc<Mutex<PublishState>>;
 
 /// Circuit breaker state machine: closed (healthy), open (failing), half-open (probing).
@@ -162,6 +162,7 @@ impl PublishState {
         stream_name: String,
         payload: &str,
         error: &str,
+        failure_stage: BacklogFailureStage,
     ) -> usize {
         if let Some((evicted_key, (evicted_stream, _, _, _))) = self.memory_backlog.push(
             dedupe_key,
@@ -169,7 +170,7 @@ impl PublishState {
                 stream_name,
                 payload.to_string(),
                 error.to_string(),
-                String::new(),
+                failure_stage,
             ),
         ) {
             error!(
@@ -186,7 +187,14 @@ impl PublishState {
         self.memory_backlog.len()
     }
 
-    fn journal_append(&self, dedupe_key: &str, stream_name: &str, payload: &str, error: &str) {
+    fn journal_append(
+        &self,
+        dedupe_key: &str,
+        stream_name: &str,
+        payload: &str,
+        error: &str,
+        failure_stage: BacklogFailureStage,
+    ) {
         let Some(ref journal_path) = self.journal_path else {
             return;
         };
@@ -195,6 +203,7 @@ impl PublishState {
             "stream_name": stream_name,
             "payload": payload,
             "error": error,
+            "failure_stage": failure_stage.as_str(),
             "timestamp": ssl_proxy::time::now_rfc3339(),
         });
         let line = serde_json::to_string(&entry).unwrap_or_default();
@@ -221,6 +230,52 @@ impl PublishState {
             .and_then(|mut file| file.write_all(format!("{}\n", line).as_bytes()))
         {
             warn!(%e, journal_path = %journal_path.display(), "failed to append to publish journal");
+        }
+    }
+
+    fn journal_remove(&self, dedupe_key: &str) {
+        let Some(ref journal_path) = self.journal_path else {
+            return;
+        };
+        let content = match std::fs::read_to_string(journal_path) {
+            Ok(content) => content,
+            Err(_) => return,
+        };
+        let mut removed = false;
+        let remaining: Vec<&str> = content
+            .lines()
+            .filter(|line| {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
+                    let keep =
+                        parsed.get("dedupe_key").and_then(|value| value.as_str()) != Some(dedupe_key);
+                    removed |= !keep;
+                    keep
+                } else {
+                    true
+                }
+            })
+            .collect();
+        if !removed {
+            return;
+        }
+        let retained = if remaining.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", remaining.join("\n"))
+        };
+        if let Some(parent) = journal_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file_name = journal_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("publish-journal");
+        let temp_path = journal_path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
+        if std::fs::write(&temp_path, retained.as_bytes()).is_err() {
+            return;
+        }
+        if std::fs::rename(&temp_path, journal_path).is_err() {
+            let _ = std::fs::remove_file(&temp_path);
         }
     }
 
@@ -294,6 +349,7 @@ pub async fn publish_entry(
                 &dedupe_key,
                 payload,
                 error,
+                BacklogFailureStage::PrePublish,
             )
             .await?;
             return Ok(());
@@ -316,6 +372,7 @@ pub async fn publish_entry(
             &dedupe_key,
             payload,
             error,
+            BacklogFailureStage::PrePublish,
         )
         .await?;
         return Ok(());
@@ -343,6 +400,7 @@ pub async fn publish_entry(
             &dedupe_key,
             payload,
             error,
+            BacklogFailureStage::PostPublish,
         )
         .await?;
     }

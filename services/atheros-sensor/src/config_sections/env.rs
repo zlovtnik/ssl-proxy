@@ -297,8 +297,13 @@ fn validate_sync_config(sync: &SyncConfig) -> Result<(), ConfigError> {
 fn validate_host_network_endpoints(
     redpanda_bootstrap_servers: Option<&str>,
 ) -> Result<(), ConfigError> {
-    if let Some(host) = redpanda_bootstrap_servers.and_then(redpanda_host) {
-        reject_docker_service_host("SYNC_REDPANDA_BOOTSTRAP_SERVERS", &host)?;
+    let Some(redpanda_bootstrap_servers) = redpanda_bootstrap_servers else {
+        return Ok(());
+    };
+    for endpoint in redpanda_bootstrap_servers.split(',') {
+        if let Some(host) = redpanda_host(endpoint) {
+            reject_docker_service_host("SYNC_REDPANDA_BOOTSTRAP_SERVERS", &host)?;
+        }
     }
     Ok(())
 }

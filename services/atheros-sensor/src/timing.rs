@@ -54,6 +54,7 @@ impl FrameTimingTracker {
     }
 
     fn compute_session_delta(&mut self, frame: &WifiFrame) -> Option<FrameTimingDelta> {
+        self.prune(frame.observed_at);
         let session_key = frame
             .session_key
             .as_deref()
@@ -81,12 +82,12 @@ impl FrameTimingTracker {
                 },
             );
         }
-        self.prune(current_observed_at);
 
         delta
     }
 
     fn compute_ap_delta(&mut self, frame: &WifiFrame) -> Option<FrameTimingDelta> {
+        self.prune(frame.observed_at);
         if !matches!(frame.frame_subtype.as_str(), "beacon" | "probe_response") {
             return None;
         }

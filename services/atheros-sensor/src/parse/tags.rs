@@ -91,6 +91,7 @@ pub(super) fn add_audit_threat_tags(frame: &WifiFrame, tags: &mut Vec<String>) {
     }
     if frame.security_flags & SECURITY_WPA3 != 0
         && frame.security_flags & SECURITY_PMF_REQUIRED == 0
+        && frame.rsn_capabilities.is_some()
     {
         push_tag(tags, "threat:pmf_downgrade_suspect");
     }

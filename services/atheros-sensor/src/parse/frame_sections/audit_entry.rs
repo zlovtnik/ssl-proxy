@@ -212,7 +212,7 @@ fn derive_band(
     }
     match channel_number {
         Some(1..=14) => "2.4ghz",
-        Some(32..=177) => "5ghz",
+        Some(36..=165) => "5ghz",
         _ => "unknown",
     }
 }

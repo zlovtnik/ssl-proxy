@@ -39,7 +39,9 @@ impl OracleProxyEventSink {
         let connection = span
             .in_scope(|| Connection::connect(user.as_str(), password, connect_string.as_str()))
             .map_err(|error| {
+                let duration_ms = start.elapsed().as_millis();
                 span.record("status", "error");
+                crate::metrics::record_oracle_call("oracle.connect_direct", false, duration_ms);
                 format!(
                     "connect Oracle {connect_string}: {}",
                     crate::log::error_chain(&error)
@@ -75,19 +77,22 @@ impl OracleProxyEventSink {
                 crate::log::error_chain(&error)
             )
         })?;
-        span.record("status", "ok");
         let timeout_secs = crate::env::env_or_default("ORACLE_STATEMENT_TIMEOUT_SECS", "30")
             .parse()
             .unwrap_or(30u64);
         connection
             .set_call_timeout(Some(Duration::from_secs(timeout_secs)))
             .map_err(|error| {
+                let duration_ms = start.elapsed().as_millis();
+                span.record("status", "error");
+                crate::metrics::record_oracle_call("oracle.pool_acquire", false, duration_ms);
                 format!(
                     "set Oracle call timeout to {timeout_secs}s: {}",
                     crate::log::error_chain(&error)
                 )
             })?;
         let duration_ms = start.elapsed().as_millis();
+        span.record("status", "ok");
         crate::metrics::record_oracle_call("oracle.pool_acquire", true, duration_ms);
         eprintln!(
             "service=oracle-worker event=connection_acquired pool=true duration_ms={}",

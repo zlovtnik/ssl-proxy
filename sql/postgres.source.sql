@@ -421,13 +421,32 @@ create table if not exists sync_backlog (
   dedupe_key text primary key,
   stream_name text not null,
   payload jsonb not null,
+  failure_stage text not null default 'pre_publish',
   status text not null default 'pending',
   attempt_count integer not null default 0,
   last_error text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint chk_sync_backlog_failure_stage check (failure_stage in ('pre_publish','post_publish')),
   constraint chk_sync_backlog_status check (status in ('pending','synced','sync_failed','failed'))
 );
+
+alter table if exists sync_backlog
+  add column if not exists failure_stage text not null default 'pre_publish';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'chk_sync_backlog_failure_stage'
+  ) then
+    alter table sync_backlog
+      add constraint chk_sync_backlog_failure_stage
+      check (failure_stage in ('pre_publish','post_publish'));
+  end if;
+end;
+$$;
 
 create table if not exists wireless_authorized_networks (
   id bigserial primary key,
@@ -5278,19 +5297,34 @@ begin
     raise exception 'coordinator.save_backlog_entry requires dedupe_key';
   end if;
 
-  insert into sync_backlog (dedupe_key, stream_name, payload, status, attempt_count, created_at, updated_at)
+  insert into sync_backlog (
+    dedupe_key,
+    stream_name,
+    payload,
+    failure_stage,
+    status,
+    attempt_count,
+    last_error,
+    created_at,
+    updated_at
+  )
   values (
     p_payload->>'dedupe_key',
     p_payload->>'stream_name',
     p_payload->'payload',
+    coalesce(nullif(p_payload->>'failure_stage', ''), 'pre_publish'),
     'pending',
     0,
+    nullif(p_payload->>'error', ''),
     now(),
     now()
   )
   on conflict (dedupe_key) do update
-    set payload = excluded.payload,
+    set stream_name = excluded.stream_name,
+        payload = excluded.payload,
+        failure_stage = excluded.failure_stage,
         status = 'pending',
+        last_error = excluded.last_error,
         updated_at = now();
 end;
 $$;
@@ -5304,12 +5338,13 @@ as $$
       'dedupe_key', dedupe_key,
       'stream_name', stream_name,
       'payload', payload,
+      'failure_stage', failure_stage,
       'attempt_count', attempt_count,
       'created_at', created_at
     )
   ), '[]'::jsonb)
   from (
-    select dedupe_key, stream_name, payload, attempt_count, created_at
+    select dedupe_key, stream_name, payload, failure_stage, attempt_count, created_at
     from sync_backlog
     where status = 'pending'
     order by created_at asc

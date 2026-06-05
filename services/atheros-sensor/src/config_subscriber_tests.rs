@@ -73,6 +73,30 @@ fn parses_redpanda_endpoint_with_percent_encoded_userinfo() {
 }
 
 #[test]
+fn parses_bracketed_ipv6_with_default_port() {
+    assert_eq!(
+        parse_redpanda_endpoint("redpanda://[::1]").unwrap(),
+        RedpandaEndpoint {
+            address: "[::1]:9092".to_string(),
+            user: None,
+            password: None
+        }
+    );
+}
+
+#[test]
+fn parses_bracketed_ipv6_with_explicit_port() {
+    assert_eq!(
+        parse_redpanda_endpoint("redpanda://[::1]:4222").unwrap(),
+        RedpandaEndpoint {
+            address: "[::1]:4222".to_string(),
+            user: None,
+            password: None
+        }
+    );
+}
+
+#[test]
 fn rejects_invalid_percent_encoded_userinfo() {
     assert!(parse_redpanda_endpoint("redpanda://user:%zz@127.0.0.1:9092").is_err());
 }

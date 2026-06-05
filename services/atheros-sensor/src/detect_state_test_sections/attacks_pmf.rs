@@ -121,7 +121,7 @@
         tracker.observe(&beacon, &mut tags);
         assert!(tags.is_empty());
 
-        // Unprotected deauth from same AP BSSID
+        // Unprotected deauth from same AP BSSID should not trigger when PMF is not required.
         let mut deauth = beacon.clone();
         deauth.frame_subtype = "deauthentication".to_string();
         deauth.source_mac = Some("aa:bb:cc:dd:ee:ff".to_string());
@@ -129,7 +129,7 @@
         deauth.protected = Some(false);
         deauth.observed_at = "2024-01-01T12:00:01Z".to_string();
         tracker.observe(&deauth, &mut tags);
-        assert!(tags.contains(&"threat:pmf_deauth_attack".to_string()));
+        assert!(!tags.contains(&"threat:pmf_deauth_attack".to_string()));
 
         // Client reconnects within 2 seconds
         tags.clear();
@@ -142,7 +142,7 @@
     }
 
     #[test]
-    fn pmf_attack_not_detected_when_pmf_required() {
+    fn pmf_attack_detected_when_pmf_required() {
         use super::PmfAttackTracker;
         use crate::parse::SECURITY_PMF_REQUIRED;
 
@@ -158,14 +158,14 @@
         beacon.security_flags = SECURITY_PMF_REQUIRED;
         tracker.observe(&beacon, &mut tags);
 
-        // Unprotected deauth should NOT trigger attack tag
+        // Unprotected deauth should trigger attack tag
         let mut deauth = beacon.clone();
         deauth.frame_subtype = "deauthentication".to_string();
         deauth.source_mac = Some("aa:bb:cc:dd:ee:ff".to_string());
         deauth.destination_mac = Some("11:22:33:44:55:66".to_string());
         deauth.protected = Some(false);
         tracker.observe(&deauth, &mut tags);
-        assert!(!tags.contains(&"threat:pmf_deauth_attack".to_string()));
+        assert!(tags.contains(&"threat:pmf_deauth_attack".to_string()));
     }
 
     fn create_test_audit_entry() -> crate::model::AuditEntry {

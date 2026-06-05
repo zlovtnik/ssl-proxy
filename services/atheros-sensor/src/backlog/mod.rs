@@ -9,6 +9,6 @@ pub use redpanda_store::{
 };
 #[doc(inline)]
 #[allow(unused_imports)]
-pub use store::{AuthorizedWirelessNetwork, BacklogEntry, IngestRecord};
+pub use store::{AuthorizedWirelessNetwork, BacklogEntry, BacklogFailureStage, IngestRecord};
 #[doc(inline)]
 pub use store::{BacklogError, BacklogStore};

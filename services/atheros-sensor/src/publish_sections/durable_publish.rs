@@ -18,6 +18,7 @@ pub async fn publish_oracle_payload_durable(
                 &key,
                 payload.to_string(),
                 error,
+                BacklogFailureStage::PrePublish,
             )
             .await?;
             return Ok(());
@@ -33,6 +34,7 @@ pub async fn publish_oracle_payload_durable(
             &key,
             payload.to_string(),
             error,
+            BacklogFailureStage::PrePublish,
         )
         .await?;
         return Ok(());
@@ -51,6 +53,7 @@ pub async fn publish_oracle_payload_durable(
             &key,
             payload.to_string(),
             error,
+            BacklogFailureStage::PostPublish,
         )
         .await?;
         return Ok(());
@@ -72,13 +75,21 @@ async fn persist_publish_failure(
     dedupe_key: &str,
     payload: String,
     error: String,
+    failure_stage: BacklogFailureStage,
 ) -> Result<(), PublishError> {
-    if circuit_breaker_is_open(state, stream_name, dedupe_key, &payload, &error) {
+    if circuit_breaker_is_open(
+        state,
+        stream_name,
+        dedupe_key,
+        &payload,
+        &error,
+        failure_stage,
+    ) {
         return Err(PublishError::Queued(error));
     }
 
     if let Err(backlog_err) = backlog
-        .save_pending(dedupe_key, stream_name, &payload, &error)
+        .save_pending_with_stage(dedupe_key, stream_name, &payload, &error, failure_stage)
         .await
     {
         queue_in_memory_after_backlog_failure(
@@ -87,6 +98,7 @@ async fn persist_publish_failure(
             stream_name.to_string(),
             payload,
             error.clone(),
+            failure_stage,
             backlog_err,
         );
         return Err(PublishError::Queued(error));
@@ -107,6 +119,7 @@ fn circuit_breaker_is_open(
     dedupe_key: &str,
     payload: &str,
     error: &str,
+    failure_stage: BacklogFailureStage,
 ) -> bool {
     let mut state = state.lock().unwrap();
     match state.circuit_breaker_state {
@@ -134,8 +147,9 @@ fn circuit_breaker_is_open(
                         stream_name.to_string(),
                         payload,
                         error,
+                        failure_stage,
                     );
-                    state.journal_append(dedupe_key, stream_name, payload, error);
+                    state.journal_append(dedupe_key, stream_name, payload, error, failure_stage);
                     warn!(
                         dedupe_key,
                         publish_error = %error,
@@ -168,6 +182,7 @@ fn queue_in_memory_after_backlog_failure(
     stream_name: String,
     payload: String,
     error: String,
+    failure_stage: BacklogFailureStage,
     backlog_err: BacklogError,
 ) {
     let mut s = state.lock().unwrap();
@@ -195,12 +210,14 @@ fn queue_in_memory_after_backlog_failure(
         stream_name.clone(),
         &payload_ref,
         &error_ref,
+        failure_stage,
     );
     s.journal_append(
         &dedupe_key,
         &stream_name,
         &payload_ref,
         &backlog_err.to_string(),
+        failure_stage,
     );
     warn!(
         dedupe_key = %dedupe_key,
@@ -223,54 +240,45 @@ pub(crate) async fn flush_memory_backlog(
     }
     let mut memory_entries = memory_entries.into_iter();
     let mut all_succeeded = true;
-    while let Some((key, (stream, payload, err, _))) = memory_entries.next() {
-        if let Err(backlog_err) = backlog.save_pending(&key, &stream, &payload, &err).await {
+    while let Some((key, (stream, payload, err, failure_stage))) = memory_entries.next() {
+        if let Err(backlog_err) = backlog
+            .save_pending_with_stage(&key, &stream, &payload, &err, failure_stage)
+            .await
+        {
             error!(
                 dedupe_key = %key,
                 stream_name = %stream,
                 %backlog_err,
                 "failed to flush memory backlog entry to coordinator"
             );
-            queue_in_memory_after_backlog_failure(state, key, stream, payload, err, backlog_err);
-            for (remaining_key, (remaining_stream, remaining_payload, remaining_err, _)) in
-                memory_entries
+            queue_in_memory_after_backlog_failure(
+                state,
+                key,
+                stream,
+                payload,
+                err,
+                failure_stage,
+                backlog_err,
+            );
+            for (
+                remaining_key,
+                (remaining_stream, remaining_payload, remaining_err, remaining_failure_stage),
+            ) in memory_entries
             {
                 state.lock().unwrap().put_memory_backlog(
                     remaining_key,
                     remaining_stream,
                     &remaining_payload,
                     &remaining_err,
+                    remaining_failure_stage,
                 );
             }
             return false;
         }
-        let journal_path = state.lock().unwrap().journal_path.clone();
-        if let Some(ref jp) = journal_path {
-            remove_journal_entry(jp, &key);
-        }
+        state.lock().unwrap().journal_remove(&key);
         all_succeeded = true;
     }
     all_succeeded
-}
-
-fn remove_journal_entry(journal_path: &std::path::Path, dedupe_key: &str) {
-    let content = match std::fs::read_to_string(journal_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let remaining: Vec<&str> = content
-        .lines()
-        .filter(|line| {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
-                parsed.get("dedupe_key").and_then(|v| v.as_str()) != Some(dedupe_key)
-            } else {
-                true
-            }
-        })
-        .collect();
-    if remaining.len() < content.lines().count() {
-        let _ = std::fs::write(journal_path, remaining.join("\n") + "\n");
-    }
 }
 
 /// Loads journal entries from disk and replays them through the backlog.
@@ -306,12 +314,19 @@ pub async fn replay_journal(
             .to_string();
         let payload = parsed["payload"].as_str().unwrap_or("").to_string();
         let error = parsed["error"].as_str().unwrap_or("").to_string();
+        let failure_stage = serde_json::from_value::<BacklogFailureStage>(
+            parsed
+                .get("failure_stage")
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::String("pre_publish".to_string())),
+        )
+        .unwrap_or_default();
         if dedupe_key.is_empty() || payload.is_empty() {
             retained_lines.push(line.to_string());
             continue;
         }
         match backlog
-            .save_pending(&dedupe_key, &stream_name, &payload, &error)
+            .save_pending_with_stage(&dedupe_key, &stream_name, &payload, &error, failure_stage)
             .await
         {
             Ok(()) => {
@@ -322,7 +337,7 @@ pub async fn replay_journal(
                 warn!(%dedupe_key, %stream_name, %e, "failed to replay journal entry; will retry via memory flush");
                 retained_lines.push(line.to_string());
                 let mut s = state.lock().unwrap();
-                s.put_memory_backlog(dedupe_key, stream_name, &payload, &error);
+                s.put_memory_backlog(dedupe_key, stream_name, &payload, &error, failure_stage);
             }
         }
     }
@@ -332,7 +347,12 @@ pub async fn replay_journal(
         } else {
             format!("{}\n", retained_lines.join("\n"))
         };
-        let _ = std::fs::write(journal_path, retained);
+        std::fs::write(journal_path, retained).map_err(|error| {
+            PublishError::Publish(format!(
+                "rewrite publish journal {} after replay: {error}",
+                journal_path.display()
+            ))
+        })?;
         info!(
             replayed,
             retained = retained_lines.len(),
