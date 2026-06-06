@@ -94,8 +94,9 @@ func timingProfileRowToInput(row TimingProfileRow) db.EmbeddingInput {
 		AppendValue(&lines, "wall_jitter_ms", row.WallJitterMS)
 		AppendValue(&lines, "beacon_interval_ms", row.BeaconIntervalMedianMS)
 		AppendValue(&lines, "beacon_jitter_ms", row.BeaconJitterMS)
-		text = clampDefault(strings.Join(lines, "\n"))
+		text = strings.Join(lines, "\n")
 	}
+	text = clampDefault(text)
 	return db.EmbeddingInput{
 		Text:             text,
 		SourceObservedAt: observed,

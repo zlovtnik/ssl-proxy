@@ -161,7 +161,7 @@ func wordBudget(tokenBudget int) int {
 }
 
 func clampDefault(text string) string {
-	return ClampText(text, wordBudget(MaxTokens))
+	return ClampText(text, wordBudget(ContentTokenBudget))
 }
 
 func prebuiltKindText(kind, text string, observed *time.Time) string {

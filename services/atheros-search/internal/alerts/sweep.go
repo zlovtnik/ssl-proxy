@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/config"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
@@ -67,15 +69,25 @@ func RunSweepWithMetrics(ctx context.Context, pool *pgxpool.Pool, scorer *seqsco
 		{"rf_impossible_travel", func(ctx context.Context) (int, error) { return CheckRFImpossibleTravel(ctx, pool, cfg) }},
 		{"rogue_rf_path", func(ctx context.Context) (int, error) { return CheckRogueRFPaths(ctx, pool, cfg) }},
 	}
+	successfulChecks := 0
+	var lastErr error
 	for _, check := range checks {
 		inserted, err := check.fn(ctx)
 		if err != nil {
+			lastErr = err
 			logger.Warn().Err(err).Str("alert_type", check.alertType).Msg("alert check failed")
 			continue
 		}
+		successfulChecks++
 		if m != nil && inserted > 0 {
 			m.AlertsInserted.WithLabelValues(check.alertType).Add(float64(inserted))
 		}
+	}
+	if successfulChecks == 0 {
+		if lastErr != nil {
+			return fmt.Errorf("all alert checks failed: %w", lastErr)
+		}
+		return fmt.Errorf("all alert checks failed")
 	}
 	return nil
 }
@@ -115,6 +127,8 @@ func envInt64(key string, fallback int64) int64 {
 	if raw := os.Getenv(key); raw != "" {
 		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			return parsed
+		} else {
+			log.Warn().Err(err).Str("env", key).Str("value", raw).Int64("fallback", fallback).Msg("invalid integer env; using fallback")
 		}
 	}
 	return fallback
@@ -124,6 +138,8 @@ func envFloat64(key string, fallback float64) float64 {
 	if raw := os.Getenv(key); raw != "" {
 		if parsed, err := strconv.ParseFloat(raw, 64); err == nil {
 			return parsed
+		} else {
+			log.Warn().Err(err).Str("env", key).Str("value", raw).Float64("fallback", fallback).Msg("invalid float env; using fallback")
 		}
 	}
 	return fallback

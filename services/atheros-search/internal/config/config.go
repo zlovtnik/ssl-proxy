@@ -74,6 +74,9 @@ func Load() (Config, error) {
 	workerBatchSize := envInt("ATHSEARCH_WORKER_BATCH_SIZE", 64)
 	workerRequestBatchMax := envInt("ATHSEARCH_WORKER_REQUEST_BATCH_MAX", 128)
 	workerRequestBatchSize := envInt("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE", minInt(workerBatchSize, workerRequestBatchMax))
+	if err := validateWorkerBatchSettings(workerBatchSize, workerRequestBatchMax, workerRequestBatchSize); err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		PostgresDSN:                 firstEnv("ATHSEARCH_POSTGRES_DSN", "DATABASE_URL", "SYNC_DATABASE_URL"),
 		RedpandaBootstrap:           firstEnv("ATHSEARCH_REDPANDA_BOOTSTRAP", "SYNC_REDPANDA_BOOTSTRAP_SERVERS"),
@@ -143,9 +146,6 @@ func Load() (Config, error) {
 	if cfg.EmbeddingBatchSize < 1 || cfg.EmbeddingBatchSize > 512 {
 		return cfg, errors.New("ATHSEARCH_EMBEDDING_BATCH_SIZE must be between 1 and 512")
 	}
-	if cfg.WorkerBatchSize < 1 || cfg.WorkerBatchSize > 1024 {
-		return cfg, errors.New("ATHSEARCH_WORKER_BATCH_SIZE must be 1-1024")
-	}
 	if cfg.WorkerMaxInputTokens < 1 {
 		return cfg, errors.New("ATHSEARCH_WORKER_MAX_INPUT_TOKENS must be >= 1")
 	}
@@ -193,6 +193,25 @@ func defaultWorkerName() string {
 		return strings.TrimSpace(hostname)
 	}
 	return "atheros-search-worker"
+}
+
+func validateWorkerBatchSettings(workerBatchSize, workerRequestBatchMax, workerRequestBatchSize int) error {
+	if workerBatchSize < 1 || workerBatchSize > 1024 {
+		return errors.New("ATHSEARCH_WORKER_BATCH_SIZE must be 1-1024")
+	}
+	if workerRequestBatchMax < 1 {
+		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_MAX must be >= 1")
+	}
+	if workerRequestBatchSize < 1 {
+		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE must be >= 1")
+	}
+	if workerRequestBatchSize > workerRequestBatchMax {
+		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE must be <= ATHSEARCH_WORKER_REQUEST_BATCH_MAX")
+	}
+	if workerRequestBatchSize > workerBatchSize {
+		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE must be <= ATHSEARCH_WORKER_BATCH_SIZE")
+	}
+	return nil
 }
 
 func firstEnv(keys ...string) string {

@@ -62,7 +62,7 @@ WHERE window_end >= now() - interval '1 hour'
 		if score >= cfg.SeqThreshold {
 			continue
 		}
-		metadata, _ := json.Marshal(map[string]any{
+		metadata, err := json.Marshal(map[string]any{
 			"reason":       "low_probability_pre_deauth_sequence",
 			"session_key":  row.SessionKey,
 			"log_prob":     score,
@@ -71,6 +71,10 @@ WHERE window_end >= now() - interval '1 hour'
 			"window_start": alertTime(row.WindowStart),
 			"window_end":   alertTime(row.WindowEnd),
 		})
+		if err != nil {
+			return inserted, fmt.Errorf("marshal deauth precursor metadata for session %s score %v threshold %v window_start %v window_end %v: %w",
+				row.SessionKey, score, cfg.SeqThreshold, alertTime(row.WindowStart), alertTime(row.WindowEnd), err)
+		}
 		tag, err := pool.Exec(ctx, `
 INSERT INTO vec_alerts (alert_type, source_mac, sensor_id, location_id, score, explanation_text, metadata)
 SELECT

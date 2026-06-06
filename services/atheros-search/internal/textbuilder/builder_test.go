@@ -17,3 +17,12 @@ func TestBuildBatchRejectsUnsupportedKind(t *testing.T) {
 
 	require.ErrorContains(t, err, "unsupported embedding_kind")
 }
+
+func TestBuildBatchRejectsDuplicateSourceKeyAcrossKinds(t *testing.T) {
+	_, err := BuildBatch(context.Background(), nil, []db.EmbeddingJob{
+		{SourceKey: "key", EmbeddingKind: "event"},
+		{SourceKey: "key", EmbeddingKind: "device"},
+	})
+
+	require.ErrorContains(t, err, "duplicate source_key")
+}

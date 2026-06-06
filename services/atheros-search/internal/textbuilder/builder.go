@@ -28,7 +28,12 @@ func BuildBatch(ctx context.Context, pool *pgxpool.Pool, jobs []db.EmbeddingJob)
 	}
 
 	groups := map[string][]db.EmbeddingJob{}
+	sourceKinds := map[string]string{}
 	for _, job := range jobs {
+		if existingKind, ok := sourceKinds[job.SourceKey]; ok && existingKind != job.EmbeddingKind {
+			return nil, fmt.Errorf("duplicate source_key across embedding kinds: %s (%s, %s)", job.SourceKey, existingKind, job.EmbeddingKind)
+		}
+		sourceKinds[job.SourceKey] = job.EmbeddingKind
 		groups[job.EmbeddingKind] = append(groups[job.EmbeddingKind], job)
 	}
 

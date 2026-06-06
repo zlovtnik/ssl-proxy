@@ -35,6 +35,12 @@ type RunOnceResult struct {
 	DrainedToEmpty       bool
 	MaxDrainBatchReached bool
 	DrainMS              int64
+	PrepareMS            int64
+	EmbedMS              int64
+	CompleteMS           int64
+	ChunksPrepared       int
+	ChunksEmbedded       int
+	ChunksCompleted      int
 	KindStats            map[string]KindRunStats
 }
 
@@ -62,9 +68,11 @@ func (w *Worker) Start(ctx context.Context) error {
 		}
 
 		iteration++
-		if _, err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		result, err := w.RunOnce(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			w.Logger.Warn().Err(err).Msg("worker drain iteration failed")
 		}
+
 		if iteration%10 == 0 {
 			if released, err := db.ReleaseExpiredLeases(ctx, w.Pool); err == nil && released > 0 {
 				w.Logger.Info().Int32("released", released).Msg("released expired embedding leases")
@@ -74,6 +82,16 @@ func (w *Worker) Start(ctx context.Context) error {
 		}
 		if w.Config.AlertEnabled && shouldRunAlertSweep(iteration, w.Config.AlertSweepInterval) {
 			w.startAlertSweep(ctx)
+		}
+
+		// Only ticker-sleep when the queue was genuinely drained. Under
+		// sustained load, immediately start the next drain cycle.
+		if shouldPollImmediately(result, err) {
+			w.Logger.Debug().
+				Int("processed", result.Processed).
+				Int("drain_batches", result.DrainBatches).
+				Msg("backlog detected; polling immediately")
+			continue
 		}
 
 		select {
@@ -94,50 +112,77 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 		LastRunStartedAt: &runStarted,
 	})
 
-	for {
-		if reachedMaxDrain(result.DrainBatches, w.Config.WorkerMaxDrainBatches) {
-			result.MaxDrainBatchReached = true
-			break
-		}
-		callCtx, cancel := context.WithTimeout(ctx, w.Config.WorkerDBCallTimeout)
-		jobs, err := db.LeaseJobs(callCtx, w.Pool, w.Config.WorkerBatchSize, w.Config.WorkerName, w.Config.WorkerLeaseSeconds)
-		cancel()
-		if err != nil {
-			return result, err
-		}
-		result.DrainBatches++
-		result.RowsLeased += len(jobs)
-		if len(jobs) == 0 {
-			result.DrainedToEmpty = true
-			break
-		}
-		for _, job := range jobs {
-			stats := result.KindStats[job.EmbeddingKind]
-			stats.Leased++
-			result.KindStats[job.EmbeddingKind] = stats
-			if w.Metrics != nil {
-				w.Metrics.WorkerJobsLeased.WithLabelValues(job.EmbeddingKind).Inc()
+	batchWorkers := effectiveBatchWorkerCount(w.Config)
+	batchCh := make(chan []db.EmbeddingJob, batchWorkers)
+	processCh := make(chan processResult, batchWorkers)
+	leaseSummaryCh := make(chan leaseRunSummary, 1)
+	embedSem := semaphore.NewWeighted(int64(effectiveEmbedWorkerCount(w.Config)))
+
+	go func() {
+		leaseSummaryCh <- w.leaseBatches(ctx, batchCh)
+	}()
+
+	var processWG sync.WaitGroup
+	for i := 0; i < batchWorkers; i++ {
+		processWG.Add(1)
+		go func() {
+			defer processWG.Done()
+			for jobs := range batchCh {
+				process := w.processJobs(ctx, jobs, embedSem)
+				if !sendWithContext(ctx, processCh, process) {
+					return
+				}
 			}
-		}
-		if w.Metrics != nil {
-			w.Metrics.WorkerBatchSize.Observe(float64(len(jobs)))
-		}
-		process := w.processJobs(ctx, jobs)
+		}()
+	}
+	go func() {
+		processWG.Wait()
+		close(processCh)
+	}()
+
+	var processErr error
+	for process := range processCh {
+		processErr = errors.Join(processErr, process.Err)
 		result.Processed += process.Completed
 		result.PermanentFailures += process.PermanentFailed
+		result.PrepareMS += process.PrepareMS
+		result.EmbedMS += process.EmbedMS
+		result.CompleteMS += process.CompleteMS
+		result.ChunksPrepared += process.ChunksPrepared
+		result.ChunksEmbedded += process.ChunksEmbedded
+		result.ChunksCompleted += process.ChunksCompleted
 		mergeKindStats(result.KindStats, process.KindStats)
 	}
 
+	leaseSummary := <-leaseSummaryCh
+	result.RowsLeased = leaseSummary.RowsLeased
+	result.DrainBatches = leaseSummary.DrainBatches
+	result.DrainedToEmpty = leaseSummary.DrainedToEmpty
+	result.MaxDrainBatchReached = leaseSummary.MaxDrainBatchReached
+	mergeKindStats(result.KindStats, leaseSummary.KindStats)
+
 	finished := time.Now()
+	runErr := errors.Join(leaseSummary.Err, processErr)
+	var lastErr *string
+	if runErr != nil {
+		msg := runErr.Error()
+		lastErr = &msg
+	}
+	timeout := w.Config.WorkerDBCallTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	stateCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	result.DrainMS = time.Since(started).Milliseconds()
-	_ = db.MarkWorkerState(ctx, w.Pool, db.WorkerStateParams{
+	_ = db.MarkWorkerState(stateCtx, w.Pool, db.WorkerStateParams{
 		WorkerName:        w.Config.WorkerName,
 		Status:            "idle",
 		LastRunFinishedAt: &finished,
 		RowsProcessed:     int64(result.Processed),
 		LastRunStartedAt:  nil,
 		LastCursor:        nil,
-		LastError:         nil,
+		LastError:         lastErr,
 	})
 	if w.Metrics != nil {
 		if depth, err := db.CountWorkerQueueDepth(ctx, w.Pool); err == nil {
@@ -152,80 +197,178 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 		Bool("drained_to_empty", result.DrainedToEmpty).
 		Bool("max_drain_batch_reached", result.MaxDrainBatchReached).
 		Int64("drain_ms", result.DrainMS).
+		Int64("prepare_ms", result.PrepareMS).
+		Int64("embed_ms", result.EmbedMS).
+		Int64("complete_ms", result.CompleteMS).
+		Int("chunks_prepared", result.ChunksPrepared).
+		Int("chunks_embedded", result.ChunksEmbedded).
+		Int("chunks_completed", result.ChunksCompleted).
+		Interface("kind_stats", result.KindStats).
 		Msg("worker drain cycle finished")
-	return result, nil
+	return result, runErr
 }
 
 type processResult struct {
 	Completed       int
 	Failed          int
 	PermanentFailed int
+	Err             error
+	PrepareMS       int64
+	EmbedMS         int64
+	CompleteMS      int64
+	ChunksPrepared  int
+	ChunksEmbedded  int
+	ChunksCompleted int
 	KindStats       map[string]KindRunStats
 }
 
-func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob) processResult {
+type leaseRunSummary struct {
+	RowsLeased           int
+	DrainBatches         int
+	DrainedToEmpty       bool
+	MaxDrainBatchReached bool
+	KindStats            map[string]KindRunStats
+	Err                  error
+}
+
+type indexedJobChunk struct {
+	Index int
+	Jobs  []db.EmbeddingJob
+}
+
+func (w *Worker) leaseBatches(ctx context.Context, batchCh chan<- []db.EmbeddingJob) leaseRunSummary {
+	defer close(batchCh)
+	summary := leaseRunSummary{KindStats: map[string]KindRunStats{}}
+	for {
+		if reachedMaxDrain(summary.DrainBatches, w.Config.WorkerMaxDrainBatches) {
+			summary.MaxDrainBatchReached = true
+			return summary
+		}
+		callCtx, cancel := context.WithTimeout(ctx, w.Config.WorkerDBCallTimeout)
+		jobs, err := db.LeaseJobs(callCtx, w.Pool, w.Config.WorkerBatchSize, w.Config.WorkerName, w.Config.WorkerLeaseSeconds)
+		cancel()
+		if err != nil {
+			summary.Err = err
+			return summary
+		}
+		summary.DrainBatches++
+		summary.RowsLeased += len(jobs)
+		if len(jobs) == 0 {
+			summary.DrainedToEmpty = true
+			return summary
+		}
+		for _, job := range jobs {
+			stats := summary.KindStats[job.EmbeddingKind]
+			stats.Leased++
+			summary.KindStats[job.EmbeddingKind] = stats
+			if w.Metrics != nil {
+				w.Metrics.WorkerJobsLeased.WithLabelValues(job.EmbeddingKind).Inc()
+			}
+		}
+		if w.Metrics != nil {
+			w.Metrics.WorkerBatchSize.Observe(float64(len(jobs)))
+		}
+		if !sendWithContext(ctx, batchCh, jobs) {
+			summary.Err = ctx.Err()
+			return summary
+		}
+	}
+}
+
+func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedSem *semaphore.Weighted) processResult {
 	chunks := makeJobChunks(jobs, effectiveRequestBatchSize(w.Config))
-	prepCh := make(chan PrepareChunkResult, len(chunks))
-	embedCh := make(chan EmbeddedChunkResult, len(chunks))
+	result := processResult{KindStats: map[string]KindRunStats{}}
+	if len(chunks) == 0 {
+		return result
+	}
+
+	chunkCh := make(chan indexedJobChunk)
+	prepCh := make(chan PrepareChunkResult, stageWorkerCount(len(chunks), effectivePrepareWorkerCount(w.Config)))
+	embedCh := make(chan EmbeddedChunkResult, stageWorkerCount(len(chunks), effectiveEmbedWorkerCount(w.Config)))
 	completeCh := make(chan CompleteChunkResult, len(chunks))
-	embedSem := semaphore.NewWeighted(int64(maxInt(w.Config.WorkerMaxConcurrentEmbed, 1)))
 
 	var prepWG sync.WaitGroup
-	for i, chunk := range chunks {
+	for i := 0; i < stageWorkerCount(len(chunks), effectivePrepareWorkerCount(w.Config)); i++ {
 		prepWG.Add(1)
-		go func(index int, chunk []db.EmbeddingJob) {
+		go func() {
 			defer prepWG.Done()
-			prep := PrepareChunk(ctx, w.Config, w.Pool, index, chunk)
-			if w.Metrics != nil {
-				w.Metrics.WorkerPrepareLatency.Observe(float64(prep.PrepareMS))
+			for chunk := range chunkCh {
+				prep := PrepareChunk(ctx, w.Config, w.Pool, chunk.Index, chunk.Jobs)
+				if w.Metrics != nil {
+					w.Metrics.WorkerPrepareLatency.Observe(float64(prep.PrepareMS))
+				}
+				if !sendWithContext(ctx, prepCh, prep) {
+					return
+				}
 			}
-			prepCh <- prep
-		}(i, chunk)
+		}()
 	}
+	go func() {
+		defer close(chunkCh)
+		for i, chunk := range chunks {
+			if !sendWithContext(ctx, chunkCh, indexedJobChunk{Index: i, Jobs: chunk}) {
+				return
+			}
+		}
+	}()
 	go func() {
 		prepWG.Wait()
 		close(prepCh)
 	}()
 
 	var embedWG sync.WaitGroup
-	go func() {
-		for prep := range prepCh {
-			embedWG.Add(1)
-			go func(prep PrepareChunkResult) {
-				defer embedWG.Done()
+	for i := 0; i < stageWorkerCount(len(chunks), effectiveEmbedWorkerCount(w.Config)); i++ {
+		embedWG.Add(1)
+		go func() {
+			defer embedWG.Done()
+			for prep := range prepCh {
 				embedded := EmbedChunk(ctx, w.Config, w.Pool, w.Embedder, embedSem, prep)
 				if w.Metrics != nil {
 					w.Metrics.WorkerEmbedLatency.Observe(float64(embedded.EmbedMS))
 				}
-				embedCh <- embedded
-			}(prep)
-		}
+				if !sendWithContext(ctx, embedCh, embedded) {
+					return
+				}
+			}
+		}()
+	}
+	go func() {
 		embedWG.Wait()
 		close(embedCh)
 	}()
 
 	var completeWG sync.WaitGroup
-	go func() {
-		for embedded := range embedCh {
-			completeWG.Add(1)
-			go func(embedded EmbeddedChunkResult) {
-				defer completeWG.Done()
+	for i := 0; i < stageWorkerCount(len(chunks), effectiveCompleteWorkerCount(w.Config)); i++ {
+		completeWG.Add(1)
+		go func() {
+			defer completeWG.Done()
+			for embedded := range embedCh {
 				complete := CompleteChunk(ctx, w.Config, w.Pool, embedded)
 				if w.Metrics != nil {
 					w.Metrics.WorkerCompleteLatency.Observe(float64(complete.CompleteMS))
 				}
-				completeCh <- complete
-			}(embedded)
-		}
+				if !sendWithContext(ctx, completeCh, complete) {
+					return
+				}
+			}
+		}()
+	}
+	go func() {
 		completeWG.Wait()
 		close(completeCh)
 	}()
 
-	result := processResult{KindStats: map[string]KindRunStats{}}
 	for complete := range completeCh {
+		result.Err = errors.Join(result.Err, complete.Err)
 		result.Completed += complete.Succeeded
 		result.Failed += complete.Failed
 		result.PermanentFailed += complete.PermanentFailed
+		result.PrepareMS += complete.PrepareMS
+		result.EmbedMS += complete.EmbedMS
+		result.CompleteMS += complete.CompleteMS
+		result.ChunksPrepared++
+		result.ChunksEmbedded++
+		result.ChunksCompleted++
 		for kind, count := range complete.SucceededByKind {
 			stats := result.KindStats[kind]
 			stats.Completed += count
@@ -288,6 +431,21 @@ func makeJobChunks(jobs []db.EmbeddingJob, size int) [][]db.EmbeddingJob {
 	if size < 1 {
 		size = 1
 	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	firstKind := jobs[0].EmbeddingKind
+	sameKind := true
+	for _, job := range jobs[1:] {
+		if job.EmbeddingKind != firstKind {
+			sameKind = false
+			break
+		}
+	}
+	if sameKind {
+		return splitJobGroup(jobs, size)
+	}
+
 	byKind := map[string][]db.EmbeddingJob{}
 	kinds := []string{}
 	for _, job := range jobs {
@@ -311,6 +469,19 @@ func makeJobChunks(jobs []db.EmbeddingJob, size int) [][]db.EmbeddingJob {
 	return chunks
 }
 
+func splitJobGroup(group []db.EmbeddingJob, size int) [][]db.EmbeddingJob {
+	chunks := [][]db.EmbeddingJob{}
+	for len(group) > 0 {
+		n := size
+		if len(group) < n {
+			n = len(group)
+		}
+		chunks = append(chunks, group[:n])
+		group = group[n:]
+	}
+	return chunks
+}
+
 func effectiveRequestBatchSize(cfg config.Config) int {
 	size := cfg.WorkerRequestBatchSize
 	if size <= 0 {
@@ -325,8 +496,50 @@ func effectiveRequestBatchSize(cfg config.Config) int {
 	return size
 }
 
+func effectivePrepareWorkerCount(cfg config.Config) int {
+	return maxInt(cfg.WorkerMaxConcurrentEmbed, 1)
+}
+
+func effectiveEmbedWorkerCount(cfg config.Config) int {
+	return maxInt(cfg.WorkerMaxConcurrentEmbed, 1)
+}
+
+func effectiveCompleteWorkerCount(cfg config.Config) int {
+	return maxInt(cfg.WorkerMaxConcurrentComplete, 1)
+}
+
+func effectiveBatchWorkerCount(cfg config.Config) int {
+	return maxInt(cfg.WorkerMaxConcurrentEmbed, 1)
+}
+
+func stageWorkerCount(workItems, configured int) int {
+	if workItems <= 0 {
+		return 0
+	}
+	if configured < 1 {
+		configured = 1
+	}
+	if configured > workItems {
+		return workItems
+	}
+	return configured
+}
+
+func sendWithContext[T any](ctx context.Context, ch chan<- T, value T) bool {
+	select {
+	case ch <- value:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 func reachedMaxDrain(completedBatches, maxBatches int) bool {
 	return maxBatches > 0 && completedBatches >= maxBatches
+}
+
+func shouldPollImmediately(result RunOnceResult, err error) bool {
+	return err == nil && !result.DrainedToEmpty
 }
 
 func shouldRunAlertSweep(iteration, interval int) bool {
@@ -339,6 +552,7 @@ func shouldRunAlertSweep(iteration, interval int) bool {
 func mergeKindStats(dst map[string]KindRunStats, src map[string]KindRunStats) {
 	for kind, item := range src {
 		stats := dst[kind]
+		stats.Leased += item.Leased
 		stats.Completed += item.Completed
 		stats.Failed += item.Failed
 		stats.PermanentFailed += item.PermanentFailed

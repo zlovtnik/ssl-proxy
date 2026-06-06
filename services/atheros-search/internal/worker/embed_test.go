@@ -12,6 +12,8 @@ import (
 
 func TestIsPermanentEmbedErrorClassifiesHTTPStatus(t *testing.T) {
 	require.True(t, isPermanentEmbedError(errors.New("embedding backend returned 400 Bad Request")))
+	require.True(t, isPermanentEmbedError(errors.New("embedding backend returned status=400")))
+	require.False(t, isPermanentEmbedError(errors.New("embedding backend retry after 4000 milliseconds")))
 	require.False(t, isPermanentEmbedError(errors.New("embedding backend returned 429 Too Many Requests")))
 	require.False(t, isPermanentEmbedError(errors.New("embedding backend returned 503 Service Unavailable")))
 	require.False(t, isPermanentEmbedError(context.DeadlineExceeded))

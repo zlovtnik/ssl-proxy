@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,25 +16,33 @@ import (
 )
 
 type CompleteChunkResult struct {
+	ChunkIndex            int
 	Succeeded             int
 	Failed                int
 	PermanentFailed       int
 	SucceededByKind       map[string]int
 	FailedByKind          map[string]int
 	PermanentFailedByKind map[string]int
+	Err                   error
+	PrepareMS             int64
+	EmbedMS               int64
 	CompleteMS            int64
 }
 
 func CompleteChunk(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, embedded EmbeddedChunkResult) CompleteChunkResult {
 	started := time.Now()
 	result := CompleteChunkResult{
+		ChunkIndex:            embedded.ChunkIndex,
 		Failed:                embedded.Failed,
 		PermanentFailed:       embedded.PermanentFailed,
 		SucceededByKind:       map[string]int{},
 		FailedByKind:          copyCounts(embedded.FailedByKind),
 		PermanentFailedByKind: copyCounts(embedded.PermanentFailedByKind),
+		PrepareMS:             embedded.PrepareMS,
+		EmbedMS:               embedded.EmbedMS,
 	}
 	if len(embedded.Items) == 0 {
+		result.CompleteMS = time.Since(started).Milliseconds()
 		return result
 	}
 	rows := make([]db.CompleteBatchRow, 0, len(embedded.Items))
@@ -63,8 +72,13 @@ func CompleteChunk(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, e
 		for _, row := range rows {
 			ids = append(ids, row.JobID)
 		}
-		if got, idsErr := db.CompletedJobIDs(ctx, pool, ids); idsErr == nil {
+		callCtx, cancel := context.WithTimeout(ctx, cfg.WorkerDBCallTimeout)
+		got, idsErr := db.CompletedJobIDs(callCtx, pool, ids)
+		cancel()
+		if idsErr == nil {
 			completedIDs = got
+		} else {
+			result.Err = errors.Join(result.Err, fmt.Errorf("query completed fallback job ids: %w", idsErr))
 		}
 	}
 
@@ -101,7 +115,13 @@ func CompleteChunk(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, e
 			continue
 		}
 		if one.err != nil {
-			_ = db.FailJob(ctx, pool, one.item.Prepared.Job.JobID, one.item.Prepared.Job.LeaseToken, one.item.Prepared.Job.Attempts, one.item.Prepared.Job.MaxAttempts, one.err.Error())
+			job := one.item.Prepared.Job
+			callCtx, cancel := context.WithTimeout(ctx, cfg.WorkerDBCallTimeout)
+			failErr := db.FailJob(callCtx, pool, job.JobID, job.LeaseToken, job.Attempts, job.MaxAttempts, one.err.Error())
+			cancel()
+			if failErr != nil {
+				result.Err = errors.Join(result.Err, fmt.Errorf("fail completion job %d: %w", job.JobID, failErr))
+			}
 		}
 		result.Failed++
 		result.FailedByKind[one.item.Prepared.Job.EmbeddingKind]++

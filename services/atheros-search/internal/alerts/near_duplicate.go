@@ -29,8 +29,11 @@ WHERE near_duplicate_pairs >= $1
       AND a.created_at > now() - interval '1 hour'
   )
   AND NOT (
-    source_mac IS NOT NULL
-    AND (get_byte(decode(split_part(source_mac, ':', 1), 'hex'), 0) & 2) = 2
+    CASE
+      WHEN score.source_mac ~ '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$'
+      THEN (get_byte(decode(split_part(score.source_mac, ':', 1), 'hex'), 0) & 2) = 2
+      ELSE false
+    END
   )
   AND NOT EXISTS (
     SELECT 1 FROM mv_ap_risk_score ap

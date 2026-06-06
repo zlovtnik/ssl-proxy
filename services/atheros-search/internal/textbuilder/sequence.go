@@ -85,7 +85,7 @@ func frameSequenceRowToInput(row FrameSequenceRow) db.EmbeddingInput {
 	if tokenSource == "" {
 		tokenSource = row.SequenceTokens
 	}
-	lines = append(lines, "tokens: "+TruncateTokenSequence(tokenSource, MaxTokens-OverheadTokens))
+	lines = append(lines, "tokens: "+TruncateTokenSequence(tokenSource, ContentTokenBudget))
 	if row.WindowStart.Valid && row.WindowEnd.Valid {
 		lines = append(lines, fmt.Sprintf("window_secs: %d", int64(row.WindowEnd.Time.Sub(row.WindowStart.Time).Seconds())))
 	}

@@ -98,7 +98,7 @@ LIMIT 10000
 func insertRFImpossibleTravelAlert(ctx context.Context, pool *pgxpool.Pool, cfg Config, prev, current TravelObservation, speed float64) (int, error) {
 	distance := HaversineMeters(prev.Latitude, prev.Longitude, current.Latitude, current.Longitude)
 	elapsed := current.ObservedAt.Sub(prev.ObservedAt).Seconds()
-	metadata, _ := json.Marshal(map[string]any{
+	metadata, err := json.Marshal(map[string]any{
 		"cluster_id":       current.ClusterID,
 		"source_mac":       current.SourceMAC,
 		"from_sensor_id":   prev.SensorID,
@@ -112,6 +112,9 @@ func insertRFImpossibleTravelAlert(ctx context.Context, pool *pgxpool.Pool, cfg 
 		"speed_mps":        speed,
 		"max_speed_mps":    cfg.TravelMaxSpeedMPS,
 	})
+	if err != nil {
+		return 0, fmt.Errorf("marshal rf impossible travel metadata for cluster %d source_mac %s speed %v: %w", current.ClusterID, current.SourceMAC, speed, err)
+	}
 	tag, err := pool.Exec(ctx, `
 INSERT INTO vec_alerts (alert_type, source_mac, sensor_id, location_id, score, explanation_text, metadata)
 SELECT

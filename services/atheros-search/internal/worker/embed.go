@@ -113,11 +113,31 @@ func isPermanentEmbedError(err error) bool {
 		if code == http.StatusTooManyRequests {
 			continue
 		}
-		if strings.Contains(message, strconv.Itoa(code)) {
+		if containsStatusCode(message, strconv.Itoa(code)) {
 			return true
 		}
 	}
 	return strings.Contains(strings.ToLower(message), "dimension")
+}
+
+func containsStatusCode(message, code string) bool {
+	start := 0
+	for {
+		idx := strings.Index(message[start:], code)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		after := idx + len(code)
+		if (idx == 0 || !isASCIIDigit(message[idx-1])) && (after == len(message) || !isASCIIDigit(message[after])) {
+			return true
+		}
+		start = after
+	}
+}
+
+func isASCIIDigit(value byte) bool {
+	return value >= '0' && value <= '9'
 }
 
 func copyCounts(in map[string]int) map[string]int {

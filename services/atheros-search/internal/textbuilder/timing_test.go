@@ -1,6 +1,7 @@
 package textbuilder
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -34,4 +35,13 @@ func TestTimingProfileRowToInputUsesPrebuiltText(t *testing.T) {
 	input := timingProfileRowToInput(row)
 
 	require.Equal(t, "kind: timing_profile\nwall_jitter_ms: 1.2", input.Text)
+}
+
+func TestTimingProfileRowToInputClampsPrebuiltText(t *testing.T) {
+	row := TimingProfileRow{EmbeddingText: strings.Repeat("word ", wordBudget(ContentTokenBudget)+10)}
+
+	input := timingProfileRowToInput(row)
+
+	require.LessOrEqual(t, countWords(input.Text), wordBudget(ContentTokenBudget))
+	require.Contains(t, input.Text, "...")
 }

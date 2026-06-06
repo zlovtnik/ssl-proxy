@@ -119,7 +119,13 @@ func main() {
 		}
 		go func() {
 			if err := w.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				logger.Error().Err(err).Msg("worker stopped")
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				logger.Error().Err(err).Msg("worker stopped unexpectedly")
+				os.Exit(1)
 			}
 		}()
 	}

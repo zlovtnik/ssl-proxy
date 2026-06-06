@@ -142,6 +142,18 @@ func TestLoadValidatesWorkerConfig(t *testing.T) {
 			wantErr: "ATHSEARCH_WORKER_BATCH_SIZE",
 		},
 		{
+			name:    "request batch max low",
+			envKey:  "ATHSEARCH_WORKER_REQUEST_BATCH_MAX",
+			value:   "0",
+			wantErr: "ATHSEARCH_WORKER_REQUEST_BATCH_MAX",
+		},
+		{
+			name:    "request batch size low",
+			envKey:  "ATHSEARCH_WORKER_REQUEST_BATCH_SIZE",
+			value:   "0",
+			wantErr: "ATHSEARCH_WORKER_REQUEST_BATCH_SIZE",
+		},
+		{
 			name:    "max input tokens",
 			envKey:  "ATHSEARCH_WORKER_MAX_INPUT_TOKENS",
 			value:   "0",
@@ -165,6 +177,47 @@ func TestLoadValidatesWorkerConfig(t *testing.T) {
 			_, err := Load()
 
 			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestLoadValidatesWorkerRequestBatchBounds(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{
+			name: "request size above max",
+			env: map[string]string{
+				"ATHSEARCH_WORKER_REQUEST_BATCH_MAX":  "10",
+				"ATHSEARCH_WORKER_REQUEST_BATCH_SIZE": "11",
+			},
+			want: "ATHSEARCH_WORKER_REQUEST_BATCH_MAX",
+		},
+		{
+			name: "request size above worker batch",
+			env: map[string]string{
+				"ATHSEARCH_WORKER_BATCH_SIZE":         "10",
+				"ATHSEARCH_WORKER_REQUEST_BATCH_MAX":  "20",
+				"ATHSEARCH_WORKER_REQUEST_BATCH_SIZE": "11",
+			},
+			want: "ATHSEARCH_WORKER_BATCH_SIZE",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearWorkerAndAlertEnv(t)
+			t.Setenv("ATHSEARCH_POSTGRES_DSN", "postgres://sync:sync@localhost:5432/sync")
+			t.Setenv("ATHSEARCH_EMBEDDING_BACKEND", "")
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+
+			_, err := Load()
+
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }
