@@ -8,7 +8,7 @@
 
     #[test]
     fn edit_distance_counts_unicode_chars() {
-        assert_eq!(edit_distance_limited("cafe", "café", 2), 1);
+        assert_eq!(edit_distance_limited("cafe", "caf\u{00E9}", 2), 1);
     }
 
     #[test]
@@ -415,4 +415,41 @@
             .observe(&entry, 3, 10, 60)
             .expect("cooldown should expire using frame time");
         assert_eq!(second.observed_at, "2024-01-01T12:01:12Z");
+    }
+
+    #[test]
+    fn deauth_flood_groups_unparseable_bssid_by_source_identity() {
+        use super::DeauthFloodTracker;
+
+        for bssids in [
+            [None, None, None],
+            [
+                Some("malformed-bssid-1"),
+                Some("malformed-bssid-2"),
+                Some("malformed-bssid-3"),
+            ],
+        ] {
+            let mut tracker = DeauthFloodTracker::default();
+            let mut entry = create_test_audit_entry();
+            entry.frame_subtype = "deauthentication".to_string();
+            entry.source_mac = Some("AA:BB:CC:DD:EE:FF".to_string());
+
+            entry.bssid = bssids[0].map(str::to_string);
+            entry.observed_at = "2024-01-01T12:00:00Z".to_string();
+            entry.sequence_number = Some(10);
+            assert!(tracker.observe(&entry, 3, 10, 60).is_none());
+
+            entry.bssid = bssids[1].map(str::to_string);
+            entry.observed_at = "2024-01-01T12:00:01Z".to_string();
+            entry.sequence_number = Some(11);
+            assert!(tracker.observe(&entry, 3, 10, 60).is_none());
+
+            entry.bssid = bssids[2].map(str::to_string);
+            entry.observed_at = "2024-01-01T12:00:02Z".to_string();
+            entry.sequence_number = Some(12);
+            let alert = tracker
+                .observe(&entry, 3, 10, 60)
+                .expect("unparseable-BSSID frames from the same source should share a bucket");
+            assert_eq!(alert.frame_count, 3);
+        }
     }

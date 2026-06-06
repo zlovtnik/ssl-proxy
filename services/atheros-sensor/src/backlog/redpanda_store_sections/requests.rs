@@ -322,7 +322,12 @@ impl RedpandaBacklog {
                     message: format!("malformed MSG header: {trimmed}"),
                 });
             }
-            let size = parts[3]
+            let size = parts
+                .last()
+                .ok_or_else(|| BacklogError::Redpanda {
+                    operation,
+                    message: format!("malformed MSG header: {trimmed}"),
+                })?
                 .parse::<usize>()
                 .map_err(|source| BacklogError::Redpanda {
                     operation,

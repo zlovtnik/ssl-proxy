@@ -24,6 +24,8 @@ begin
     select 1
     from pg_constraint
     where conname = 'chk_sync_backlog_failure_stage'
+      and conrelid = 'sync_backlog'::regclass
+      and contype = 'c'
   ) then
     alter table sync_backlog
       add constraint chk_sync_backlog_failure_stage

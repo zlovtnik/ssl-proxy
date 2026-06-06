@@ -313,7 +313,8 @@ impl DeauthFloodTracker {
 
     /// Observes a deauth or disassociation frame and returns a DeauthFloodAlert when the frame
     /// count exceeds threshold within window_secs. Uses per-second buckets and frame-time
-    /// cooldowns so replayed PCAPs are deterministic.
+    /// cooldowns so replayed PCAPs are deterministic. Frames without a parseable BSSID fall
+    /// back to a stable transmitter/source identity so malformed floods still share a bucket.
     pub fn observe(
         &mut self,
         entry: &AuditEntry,
@@ -391,30 +392,28 @@ impl DeauthFloodTracker {
 }
 
 fn raw_deauth_key(entry: &AuditEntry) -> String {
+    if let Some(source) = entry
+        .source_mac
+        .as_deref()
+        .or(entry.transmitter_mac.as_deref())
+        .or(entry.receiver_mac.as_deref())
+        .map(normalize_mac)
+    {
+        return format!("unparseable_bssid|{}|{}", source, entry.frame_subtype);
+    }
     if let Some(raw_bssid) = entry
         .bssid
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        return raw_bssid.to_string();
+        return format!(
+            "unparseable_bssid|{}|{}",
+            normalize_mac(raw_bssid),
+            entry.frame_subtype
+        );
     }
-    let source = entry
-        .source_mac
-        .as_deref()
-        .or(entry.transmitter_mac.as_deref())
-        .or(entry.receiver_mac.as_deref())
-        .unwrap_or("unknown");
-    format!(
-        "{}|{}|{}|{}",
-        source,
-        entry.frame_subtype,
-        entry.observed_at,
-        entry
-            .sequence_number
-            .map(|sequence| sequence.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    )
+    format!("unparseable_bssid|unknown|{}", entry.frame_subtype)
 }
 
 pub struct AuthorizedNetworkCache {
