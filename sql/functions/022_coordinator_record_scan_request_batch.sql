@@ -75,6 +75,11 @@ begin
     select incoming.*
       from incoming
       join configured_streams on configured_streams.stream_name = incoming.stream_name
+      left join sync_event_tombstones tombstone
+        on tombstone.dedupe_key = incoming.dedupe_key
+       and tombstone.stream_name = incoming.stream_name
+       and tombstone.expires_at > now()
+     where tombstone.dedupe_key is null
   ),
   upserted as (
     insert into sync_events (

@@ -2,6 +2,7 @@ plugins {
     java
     id("org.springframework.boot") version "3.4.4"
     id("io.spring.dependency-management") version "1.1.7"
+    id("org.graalvm.buildtools.native") version "0.10.6"
 }
 
 group = "com.sslproxy"
@@ -40,6 +41,7 @@ dependencies {
 
     // Database
     implementation("org.postgresql:postgresql:$postgresqlVersion")
+    implementation("io.minio:minio:8.5.17")
 
     // JSON processing
     implementation("com.fasterxml.jackson.core:jackson-databind")
@@ -68,4 +70,9 @@ tasks.withType<Test> {
 tasks.bootBuildImage {
     builder = "paketobuildpacks/builder-jammy-tiny"
     imageName = "ssl-proxy/java-coordinator:${project.version}"
+    environment.put("BP_JVM_VERSION", "21.*")
+    environment.put(
+        "BPE_APPEND_JAVA_TOOL_OPTIONS",
+        " -XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+    )
 }

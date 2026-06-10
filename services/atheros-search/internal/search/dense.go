@@ -68,13 +68,13 @@ SELECT
   coalesce(se.ssid, '') as ssid,
   coalesce(se.frame_subtype, '') as frame_subtype,
   (1.0 - c.cosine_distance)::real as cosine_similarity,
-  coalesce(jsonb_path_query_array(case when jsonb_typeof(se.payload->'tags') = 'array' then se.payload->'tags' else '[]'::jsonb end, '$[*]'), '[]'::jsonb)::text as tags_json,
-  coalesce(se.payload, '{}'::jsonb)::text as detail_json
+  coalesce(jsonb_path_query_array(%s, '$[*]'), '[]'::jsonb)::text as tags_json,
+  %s::text as detail_json
 FROM candidates c
 LEFT JOIN sync_events_expanded se
   ON c.source_table = 'sync_events'
  AND se.dedupe_key = c.source_key
-`, where)
+`, wirelessTagsSQL, compactEventDetailSQL, where)
 	sql += `
 ORDER BY cosine_similarity DESC
 LIMIT $4`

@@ -7,7 +7,7 @@
 
     use crate::{
         audit::AuditWindow,
-        backlog::{BacklogEntry, BacklogError, IngestRecord},
+        backlog::{BacklogEntry, BacklogError, BacklogFailureStage, IngestRecord},
     };
 
     struct MemoryPublisher {
@@ -65,12 +65,31 @@
             dedupe_key: &str,
             stream_name: &str,
             payload: &str,
+            error: &str,
+        ) -> Result<(), BacklogError> {
+            self.save_pending_with_stage(
+                dedupe_key,
+                stream_name,
+                payload,
+                error,
+                BacklogFailureStage::PrePublish,
+            )
+            .await
+        }
+
+        async fn save_pending_with_stage(
+            &self,
+            dedupe_key: &str,
+            stream_name: &str,
+            payload: &str,
             _error: &str,
+            failure_stage: BacklogFailureStage,
         ) -> Result<(), BacklogError> {
             self.rows.lock().unwrap().push(BacklogEntry {
                 dedupe_key: dedupe_key.to_string(),
                 stream_name: stream_name.to_string(),
                 payload: payload.to_string(),
+                failure_stage,
                 attempt_count: 1,
             });
             Ok(())
@@ -154,7 +173,25 @@
             dedupe_key: &str,
             stream_name: &str,
             payload: &str,
+            error: &str,
+        ) -> Result<(), BacklogError> {
+            self.save_pending_with_stage(
+                dedupe_key,
+                stream_name,
+                payload,
+                error,
+                BacklogFailureStage::PrePublish,
+            )
+            .await
+        }
+
+        async fn save_pending_with_stage(
+            &self,
+            dedupe_key: &str,
+            stream_name: &str,
+            payload: &str,
             _error: &str,
+            failure_stage: BacklogFailureStage,
         ) -> Result<(), BacklogError> {
             if dedupe_key == self.fail_key {
                 return Err(BacklogError::Redpanda {
@@ -166,6 +203,7 @@
                 dedupe_key: dedupe_key.to_string(),
                 stream_name: stream_name.to_string(),
                 payload: payload.to_string(),
+                failure_stage,
                 attempt_count: 1,
             });
             Ok(())

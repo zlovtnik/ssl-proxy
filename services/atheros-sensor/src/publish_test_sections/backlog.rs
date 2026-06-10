@@ -49,6 +49,7 @@
             "wireless.audit".to_string(),
             &payload,
             &error,
+            BacklogFailureStage::PrePublish,
         );
 
         flush_memory_backlog(&state, &FailingBacklog).await;
@@ -87,7 +88,13 @@
 
         {
             let state = state.lock().unwrap();
-            state.journal_append("dedupe-1", WIRELESS_AUDIT_TOPIC, "{}", "unavailable");
+            state.journal_append(
+                "dedupe-1",
+                WIRELESS_AUDIT_TOPIC,
+                "{}",
+                "unavailable",
+                BacklogFailureStage::PrePublish,
+            );
             assert_eq!(state.journal_bytes(), MAX_JOURNAL_BYTES + 1);
         }
     }
@@ -142,7 +149,13 @@
         let payload = serde_json::to_string(&event).unwrap();
         let key = dedupe_key(&payload);
         backlog
-            .save_pending(&key, "wireless.audit", &payload, "redpanda unavailable")
+            .save_pending_with_stage(
+                &key,
+                "wireless.audit",
+                &payload,
+                "redpanda unavailable",
+                BacklogFailureStage::PostPublish,
+            )
             .await
             .unwrap();
 
@@ -162,6 +175,44 @@
         assert!(backlog.rows.lock().unwrap().is_empty());
         assert_eq!(publisher.published.lock().unwrap().len(), 1);
         assert!(backlog.ingest_rows.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_pre_publish_retries_primary_then_scan_request() {
+        let state = test_state();
+        let backlog = MemoryBacklog::default();
+        let event = entry();
+        let payload = serde_json::to_string(&event).unwrap();
+        let key = dedupe_key(&payload);
+        backlog
+            .save_pending_with_stage(
+                &key,
+                "wireless.audit",
+                &payload,
+                "redpanda unavailable",
+                BacklogFailureStage::PrePublish,
+            )
+            .await
+            .unwrap();
+
+        let publisher = MemoryPublisher {
+            fail: false,
+            published: Arc::new(Mutex::new(Vec::new())),
+        };
+        reconcile_backlog(
+            &state,
+            &backlog,
+            &publisher,
+            &AuditWindow::from_parts(None, None, None, None),
+        )
+        .await
+        .unwrap();
+
+        let published = publisher.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 2);
+        assert_eq!(published[0].0, WIRELESS_AUDIT_TOPIC);
+        assert_eq!(published[1].0, SYNC_SCAN_REQUEST_TOPIC);
+        assert!(backlog.rows.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -213,20 +264,22 @@
 
         let backlog = MemoryBacklog::default();
         backlog
-            .save_pending(
+            .save_pending_with_stage(
                 &first_key,
                 "wireless.audit",
                 &first_payload,
                 "redpanda unavailable",
+                BacklogFailureStage::PostPublish,
             )
             .await
             .unwrap();
         backlog
-            .save_pending(
+            .save_pending_with_stage(
                 &second_key,
                 "wireless.audit",
                 &second_payload,
                 "redpanda unavailable",
+                BacklogFailureStage::PostPublish,
             )
             .await
             .unwrap();

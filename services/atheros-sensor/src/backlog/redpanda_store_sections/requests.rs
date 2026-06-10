@@ -317,23 +317,27 @@ impl RedpandaBacklog {
             }
             let parts: Vec<_> = trimmed.split_whitespace().collect();
             if parts.len() < 4 {
-                continue;
-            }
-            let msg_topic = parts[1];
-            if msg_topic != reply_topic {
-                continue;
+                return Err(BacklogError::Redpanda {
+                    operation,
+                    message: format!("malformed MSG header: {trimmed}"),
+                });
             }
             let size = parts
                 .last()
                 .ok_or_else(|| BacklogError::Redpanda {
                     operation,
-                    message: format!("missing reply size: {trimmed}"),
+                    message: format!("malformed MSG header: {trimmed}"),
                 })?
                 .parse::<usize>()
                 .map_err(|source| BacklogError::Redpanda {
                     operation,
                     message: format!("invalid reply size: {source}"),
                 })?;
+            let msg_topic = parts[1];
+            if msg_topic != reply_topic {
+                discard_redpanda_msg_payload(stream, self.request_timeout, operation, size).await?;
+                continue;
+            }
             let mut payload_buf = vec![0_u8; size];
             timeout(self.request_timeout, stream.read_exact(&mut payload_buf))
                 .await
@@ -382,4 +386,38 @@ impl RedpandaBacklog {
         }
     }
 
+}
+
+async fn discard_redpanda_msg_payload<R>(
+    stream: &mut R,
+    request_timeout: Duration,
+    operation: &'static str,
+    size: usize,
+) -> Result<(), BacklogError>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut payload_buf = vec![0_u8; size];
+    timeout(request_timeout, stream.read_exact(&mut payload_buf))
+        .await
+        .map_err(|_| BacklogError::Timeout { operation })?
+        .map_err(|source| BacklogError::Redpanda {
+            operation,
+            message: format!("discard reply payload: {source}"),
+        })?;
+    let mut terminator = [0_u8; 2];
+    timeout(request_timeout, stream.read_exact(&mut terminator))
+        .await
+        .map_err(|_| BacklogError::Timeout { operation })?
+        .map_err(|source| BacklogError::Redpanda {
+            operation,
+            message: format!("discard reply terminator: {source}"),
+        })?;
+    if terminator != *b"\r\n" {
+        return Err(BacklogError::Redpanda {
+            operation,
+            message: "invalid reply terminator".to_string(),
+        });
+    }
+    Ok(())
 }

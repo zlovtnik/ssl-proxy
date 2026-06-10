@@ -42,7 +42,7 @@ public class OracleResultRoute extends RouteBuilder {
                 + "?groupId={{coordinator.result-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.result-fetch-count}}"
-                + "&consumersCount=1"
+                + "&consumersCount={{coordinator.result-consumers-count}}"
                 + "&breakOnFirstError=true")
         .routeId("oracle-result-consumer")
         .process(exchange -> {

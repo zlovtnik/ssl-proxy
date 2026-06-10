@@ -233,8 +233,9 @@ fn current_trace_headers() -> Option<OwnedHeaders> {
     let mut injector = KafkaHeaderInjector {
         headers: Vec::new(),
     };
+    let context = tracing::Span::current().context();
     global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&Context::current(), &mut injector);
+        propagator.inject_context(&context, &mut injector);
     });
 
     if injector.headers.is_empty() {

@@ -8,7 +8,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use opentelemetry::{global, propagation::Injector, Context};
+use opentelemetry::{global, propagation::Injector};
 use rdkafka::{
     message::{Header, OwnedHeaders},
     producer::{FutureProducer, FutureRecord},
@@ -23,6 +23,7 @@ use tokio::{
     time::timeout,
 };
 use tracing::{debug, field, info_span, warn, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     config::SyncConfig,

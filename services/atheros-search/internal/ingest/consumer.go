@@ -142,7 +142,7 @@ func runKafkaFreshnessConsumer(ctx context.Context, pool *pgxpool.Pool, cfg conf
 }
 
 func runFreshnessMaintenance(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) error {
-	_, err := pool.Exec(ctx, "SELECT vec_enqueue_embedding_jobs($1)", cfg.EmbeddingModel)
+	_, err := pool.Exec(ctx, "SELECT vec_enqueue_embedding_jobs($1, $2)", cfg.EmbeddingModel, cfg.EventEmbeddingScope)
 	return err
 }
 

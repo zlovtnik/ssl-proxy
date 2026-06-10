@@ -46,3 +46,13 @@ create index if not exists wireless_frames_device_fingerprint_idx on wireless_fr
 create index if not exists wireless_frames_security_flags_idx on wireless_frames (security_flags) where security_flags <> 0;
 
 create index if not exists wireless_frames_handshake_captured_idx on wireless_frames (dedupe_key) where handshake_captured;
+
+create index if not exists wireless_frames_tags_idx on wireless_frames using gin (tags);
+
+create index if not exists wireless_frames_risk_score_idx
+  on wireless_frames (risk_score desc)
+  where risk_score is not null;
+
+create index if not exists wireless_frames_event_type_idx
+  on wireless_frames (event_type)
+  where event_type is not null;

@@ -19,7 +19,6 @@ connectors:
   spanmetrics:
     namespace: traces.spanmetrics
     dimensions:
-      - name: service.name
       - name: db.system
       - name: db.operation
       - name: db.name

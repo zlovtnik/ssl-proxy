@@ -232,11 +232,11 @@ mod tests {
         serde_json::to_vec(&OracleLoad {
             job_id: "job-1".to_string(),
             batch_id: batch_id.to_string(),
-            batch_no: 1,
+            batch_no: Some(1),
             stream_name: "proxy.events".to_string(),
-            payload_ref: "inline://json/e30".to_string(),
-            cursor_start: "0".to_string(),
-            cursor_end: "1".to_string(),
+            payload_ref: Some("inline://json/e30".to_string()),
+            cursor_start: Some("0".to_string()),
+            cursor_end: Some("1".to_string()),
             attempt: 1,
         })
         .unwrap()

@@ -9,7 +9,7 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-ssl-proxy}"
 REDPANDA_IMAGE="${REDPANDA_IMAGE:-redpandadata/redpanda:latest}"
 
 echo "== compose services =="
-docker compose ps redpanda postgres redpanda-init zig-coordinator atheros-sensor
+docker compose ps redpanda postgres redpanda-init java-coordinator java-coordinator-2 java-coordinator-3 atheros-sensor
 
 echo
 echo "== redpanda cluster =="
@@ -68,13 +68,80 @@ echo
 echo "== wireless audit threat detections =="
 docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
 select
-  payload->>'ssid' as ssid,
-  payload->>'source_mac' as source_mac,
-  payload->'tags' as threat_tags,
+  coalesce(ssid, payload->>'ssid') as ssid,
+  coalesce(source_mac, payload->>'source_mac') as source_mac,
+  case
+    when tags is not null and tags <> '[]'::jsonb then tags
+    when jsonb_typeof(payload->'tags') = 'array' then payload->'tags'
+    else '[]'::jsonb
+  end as threat_tags,
+  payload_archived,
+  payload_archive_uri,
   observed_at
-from sync_events
+from sync_events_expanded
 where stream_name = 'wireless.audit'
-  and payload::text like '%threat:%'
+  and (
+    coalesce(handshake_captured, false)
+    or exists (
+      select 1
+      from jsonb_array_elements_text(
+        case
+          when tags is not null and tags <> '[]'::jsonb then tags
+          when jsonb_typeof(payload->'tags') = 'array' then payload->'tags'
+          else '[]'::jsonb
+        end
+      ) tag(value)
+      where tag.value like 'threat:%'
+    )
+  )
 order by observed_at desc
 limit 20;
+" || true
+
+echo
+echo "== postgres retention health =="
+docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
+select
+  hot_payload_count,
+  pg_size_pretty(hot_payload_bytes) as hot_payload_size,
+  unarchived_payload_count,
+  oldest_unarchived_payload_at,
+  archive_lag_seconds,
+  archived_payload_count,
+  pg_size_pretty(archived_payload_bytes) as archived_payload_size,
+  tombstone_count,
+  expired_tombstone_count,
+  vector_rows_by_kind
+from v_postgres_storage_health;
+" || true
+
+echo
+echo "== postgres relation storage =="
+docker compose exec -T postgres psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
+select
+  relname as relation,
+  pg_size_pretty(pg_total_relation_size(relid)) as total_size,
+  pg_size_pretty(pg_relation_size(relid)) as table_size,
+  pg_size_pretty(pg_total_relation_size(relid) - pg_relation_size(relid)) as index_size,
+  n_live_tup as live_tuples,
+  n_dead_tup as dead_tuples,
+  round(
+    case when n_live_tup + n_dead_tup > 0
+      then n_dead_tup::numeric / nullif(n_live_tup + n_dead_tup, 0)
+      else 0::numeric
+    end,
+    4
+  ) as dead_tuple_ratio,
+  last_autovacuum
+from pg_stat_user_tables
+where relname in (
+  'sync_events',
+  'wireless_frames',
+  'sync_event_payload_archives',
+  'sync_event_tombstones',
+  'vec_embeddings',
+  'vec_embedding_jobs',
+  'vec_similarity_pairs'
+)
+order by pg_total_relation_size(relid) desc;
 " || true

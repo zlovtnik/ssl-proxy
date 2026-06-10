@@ -44,6 +44,27 @@ async fn flush_probe_batch(
     }
 }
 
+async fn flush_probe_accumulator(
+    backlog: &RedpandaBacklog,
+    pipeline_state: &mut PipelineState,
+    stats: &metrics::SharedStats,
+) {
+    for batch in pipeline_state.probe_accumulator.take_ready_batches() {
+        match flush_probe_batch(backlog, batch).await {
+            Ok(probe_count) => debug!(probe_count, "probe batch flushed"),
+            Err((batch, error)) => {
+                warn!(
+                    %error,
+                    probe_count = batch.len(),
+                    "probe batch flush failed; reinserting for retry"
+                );
+                pipeline_state.probe_accumulator.restore(batch);
+            }
+        }
+    }
+    stats.set_probe_accumulator_len(pipeline_state.probe_accumulator.len());
+}
+
 /// Creates a tokio interval that ticks every N seconds, with at least 1 second minimum.
 fn interval_secs(secs: u64) -> tokio::time::Interval {
     let interval = Duration::from_secs(secs.max(1));
@@ -91,7 +112,7 @@ fn spawn_channel_hopper(
                     if let Ok(mut context) = context.write() {
                         context.channel = channel;
                     }
-                    stats.lock().unwrap().channel_hop_count += 1;
+                    stats.increment_channel_hop_count();
 
                     let needs_apply = current_filter
                         .read()
@@ -130,12 +151,13 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         .collect();
     lags.sort_unstable();
     let median_lag = lags.get(lags.len() / 2).copied();
-    {
-        let mut stats = handles.stats.lock().unwrap();
-        stats.bandwidth_window_lag_ms = median_lag;
-        stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
-        stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
-    }
+    handles.stats.set_bandwidth_window_lag_ms(median_lag);
+    handles.stats.set_memory_backlog_len(
+        handles.publish_state.lock().unwrap().memory_backlog_len(),
+    );
+    handles
+        .stats
+        .set_probe_accumulator_len(pipeline_state.probe_accumulator.len());
     publish_bandwidth_events(
         &handles.publish_state,
         &*handles.backlog,
@@ -143,6 +165,7 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         events,
     )
     .await;
+    flush_probe_accumulator(&handles.backlog, pipeline_state, &handles.stats).await;
     let _ = flush_memory_backlog(&handles.publish_state, &*handles.backlog).await;
     tokio::time::sleep(Duration::from_secs(handles.config.shutdown_grace_secs)).await;
 }
@@ -244,12 +267,8 @@ fn log_and_publish_capture_heartbeat(handles: &SensorHandles) {
             format!("{:?}", publish_state.circuit_breaker_state),
         )
     };
-    let stats_snapshot = {
-        let mut stats = handles.stats.lock().unwrap();
-        stats.memory_backlog_len = backlog_len;
-        stats.log(&handles.device, &handles.config);
-        stats.clone()
-    };
+    handles.stats.set_memory_backlog_len(backlog_len);
+    let stats_snapshot = handles.stats.log(&handles.device, &handles.config);
     let sensor_id = handles
         .context
         .read()

@@ -122,7 +122,7 @@ groups:
           description: "Prometheus is missing node-exporter, cAdvisor, or OTel spanmetrics target series."
 
       - alert: HostCpuHigh
-        expr: 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
         for: 10m
         labels:
           severity: warning

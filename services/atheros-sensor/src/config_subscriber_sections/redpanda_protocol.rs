@@ -99,6 +99,9 @@ where
             .read_exact(&mut terminator)
             .await
             .map_err(|error| format!("read Redpanda payload terminator: {error}"))?;
+        if terminator != *b"\r\n" {
+            return Err("invalid Redpanda payload terminator".to_string());
+        }
         let payload = String::from_utf8(payload)
             .map_err(|error| format!("config payload is not UTF-8: {error}"))?;
         on_payload(&payload)?;
@@ -197,7 +200,7 @@ fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaE
         ),
         None => (userinfo.map(percent_decode_userinfo).transpose()?, None),
     };
-    let address = if host_port.contains(':') {
+    let address = if redpanda_host_port_has_port(host_port) {
         host_port.to_string()
     } else {
         format!("{host_port}:9092")
@@ -207,6 +210,15 @@ fn parse_redpanda_endpoint(redpanda_bootstrap_servers: &str) -> Result<RedpandaE
         user,
         password,
     })
+}
+
+fn redpanda_host_port_has_port(host_port: &str) -> bool {
+    if let Some(rest) = host_port.strip_prefix('[') {
+        return rest
+            .split_once(']')
+            .is_some_and(|(_, after_bracket)| after_bracket.starts_with(':'));
+    }
+    host_port.contains(':')
 }
 
 /// Decodes %XX sequences in Redpanda userinfo (username or password); handles @ and : chars.

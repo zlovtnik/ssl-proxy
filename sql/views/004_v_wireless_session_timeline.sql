@@ -15,7 +15,7 @@ with base as (
     coalesce(ssi.protected, false) as protected,
     coalesce(ssi.large_frame, false) as large_frame,
     coalesce(ssi.dedupe_or_replay_suspect, false) as dedupe_or_replay_suspect,
-    nullif(ssi.payload->>'tsft', '')::bigint as tsft
+    coalesce(ssi.tsft, coordinator.safe_bigint(ssi.payload->>'tsft')) as tsft
   from sync_events_expanded ssi
   where ssi.stream_name = 'wireless.audit'
 )

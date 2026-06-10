@@ -91,6 +91,8 @@ impl BucketCounter {
             self.buckets.clear();
             self.buckets.push_back((second, 1));
             self.total = 1;
+            self.prune(observed_at, window_secs);
+            return self.total;
         } else {
             self.buckets.push_back((second, 1));
         }
@@ -249,7 +251,9 @@ impl ClientInventory {
 
         for network in &authorized.entries {
             if let Some(known_ssid) = &network.ssid {
-                if known_ssid.trim().eq_ignore_ascii_case(probe_ssid) {
+                if known_ssid.trim().eq_ignore_ascii_case(probe_ssid)
+                    && network.location_id.as_deref() == Some(entry.location_id.as_str())
+                {
                     if let Some(bssid) = &network.bssid {
                         return Some((bssid.clone(), client_mac, Some(probe_ssid.to_string())));
                     }
@@ -343,13 +347,16 @@ impl ClientInventory {
         }
 
         // Track device_fingerprint -> MAC correlations.
-        if let Some(fp) = &entry.device_fingerprint {
+        if let Some(fp) = entry.device_fingerprint.as_deref() {
             if let Some(normalized_fp) = SsidKey::new(fp) {
                 if self.fingerprint_to_macs.get(&normalized_fp).is_none() {
                     self.fingerprint_to_macs
                         .put(normalized_fp.clone(), Vec::new());
                 }
                 if let Some(macs) = self.fingerprint_to_macs.get_mut(&normalized_fp) {
+                    if macs.iter().any(|mac| *mac != source_mac) {
+                        push_detector_tag(&mut entry.tags, "identity:shared_device_fingerprint");
+                    }
                     if !macs.contains(&source_mac) {
                         if macs.len() >= FINGERPRINT_MAC_LIMIT {
                             macs.remove(0);
@@ -361,6 +368,9 @@ impl ClientInventory {
                             known_macs = macs.len(),
                             "device_fingerprint shared by new MAC"
                         );
+                    }
+                    if macs.len() > 1 {
+                        push_detector_tag(&mut entry.tags, "identity:shared_device_fingerprint");
                     }
                 }
             }
@@ -405,6 +415,12 @@ impl ClientInventory {
             observed_at: ssl_proxy::time::rfc3339_from_utc(Utc::now()),
             clients,
         }
+    }
+}
+
+fn push_detector_tag(tags: &mut Vec<String>, tag: &str) {
+    if !tags.iter().any(|existing| existing == tag) {
+        tags.push(tag.to_string());
     }
 }
 

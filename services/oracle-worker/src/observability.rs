@@ -4,8 +4,13 @@ use opentelemetry::{
     Context,
 };
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{propagation::TraceContextPropagator, trace::SdkTracerProvider, Resource};
+use opentelemetry_sdk::{
+    propagation::TraceContextPropagator,
+    trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider},
+    Resource,
+};
 use std::time::Duration;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub(crate) fn init_tracing(service_name: &str) -> Option<SdkTracerProvider> {
@@ -29,13 +34,22 @@ pub(crate) fn init_tracing(service_name: &str) -> Option<SdkTracerProvider> {
         }
     };
 
+    let batch_config = BatchConfigBuilder::default()
+        .with_max_queue_size(2048)
+        .with_scheduled_delay(Duration::from_secs(5))
+        .with_max_export_batch_size(512)
+        .build();
+    let batch_processor = BatchSpanProcessor::builder(exporter)
+        .with_batch_config(batch_config)
+        .build();
+
     let provider = SdkTracerProvider::builder()
         .with_resource(
             Resource::builder()
                 .with_service_name(service_name.to_string())
                 .build(),
         )
-        .with_simple_exporter(exporter)
+        .with_span_processor(batch_processor)
         .build();
     global::set_tracer_provider(provider.clone());
 
@@ -63,8 +77,9 @@ pub(crate) fn current_trace_headers() -> Vec<(String, String)> {
     let mut injector = HeaderInjector {
         headers: Vec::new(),
     };
+    let context = tracing::Span::current().context();
     global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&Context::current(), &mut injector);
+        propagator.inject_context(&context, &mut injector);
     });
     injector.headers
 }

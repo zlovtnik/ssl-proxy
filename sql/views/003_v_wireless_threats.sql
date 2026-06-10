@@ -11,13 +11,13 @@ select
   coalesce(destination_bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
   coalesce(source_mac, payload->>'source_mac') as source_mac,
   coalesce(sensor_id, payload->>'sensor_id') as sensor_id,
-  payload->>'transmitter_mac' as transmitter_mac,
-  payload->>'receiver_mac' as receiver_mac,
-  payload->>'frame_subtype' as frame_subtype,
+  coalesce(transmitter_mac, payload->>'transmitter_mac') as transmitter_mac,
+  coalesce(receiver_mac, payload->>'receiver_mac') as receiver_mac,
+  coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype,
   coalesce(signal_dbm::text, payload->>'signal_dbm') as signal_dbm,
-  payload->>'noise_dbm' as noise_dbm,
-  payload->>'frequency_mhz' as frequency_mhz,
-  payload->>'data_rate_kbps' as data_rate_kbps,
+  coalesce(noise_dbm::text, payload->>'noise_dbm') as noise_dbm,
+  coalesce(frequency_mhz::text, payload->>'frequency_mhz') as frequency_mhz,
+  coalesce(data_rate_kbps::text, payload->>'data_rate_kbps') as data_rate_kbps,
   coalesce(raw_len::text, payload->>'raw_len') as raw_len,
   coalesce(frame_control_flags::text, payload->>'frame_control_flags') as frame_control_flags,
   coalesce(more_data::text, payload->>'more_data') as more_data,
@@ -25,9 +25,16 @@ select
   coalesce(power_save::text, payload->>'power_save') as power_save,
   coalesce(protected::text, payload->>'protected') as protected,
   coalesce(location_id, payload->>'location_id') as location_id,
-  payload->>'identity_source' as identity_source,
+  coalesce(risk_score::text, payload->>'risk_score') as risk_score,
+  coalesce(identity_source, payload->>'identity_source') as identity_source,
   coalesce(username, payload->>'username') as username,
-  payload->'tags' as tags,
+  case
+    when tags is not null and tags <> '[]'::jsonb then tags
+    else coordinator.safe_jsonb_array(payload->'tags')
+  end as tags,
+  payload_archived,
+  payload_archive_uri,
+  payload_archived_at,
   security_flags,
   wps_device_name,
   wps_manufacturer,
@@ -37,10 +44,12 @@ select
 from sync_events_expanded
 where stream_name = 'wireless.audit'
   and (
-    payload->'tags' ? 'threat:potential_evil_twin'
-    or payload->'tags' ? 'threat:karma_probe_response'
-    or payload->'tags' ? 'threat:deauth_flood'
-    or payload->'tags' ? 'threat:deauth_frame'
+    coordinator.has_threat_tag(
+      case
+        when tags is not null and tags <> '[]'::jsonb then tags
+        else coordinator.safe_jsonb_array(payload->'tags')
+      end
+    )
     or handshake_captured
   )
 order by observed_at desc;

@@ -12,3 +12,8 @@ func TestVectorLiteralSanitizesNonFiniteValues(t *testing.T) {
 
 	require.Equal(t, "[1,0,0,0]", got)
 }
+
+func TestVectorLiteralFormatsEmptyAndFractionalValues(t *testing.T) {
+	require.Equal(t, "[]", VectorLiteral(nil))
+	require.Equal(t, "[0.123456,-1.5,3.14159]", VectorLiteral([]float32{0.123456, -1.5, 3.14159}))
+}

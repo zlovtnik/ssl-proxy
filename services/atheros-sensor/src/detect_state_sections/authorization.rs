@@ -245,7 +245,7 @@ impl IeLayoutTracker {
                 if self
                     .authorized_bssids_by_layout
                     .get(&key)
-                    .is_some_and(|bssids| bssids.iter().any(|known| *known != bssid))
+                    .is_some_and(|bssids| !bssids.contains(&bssid))
                 {
                     push_unique(&mut entry.tags, "threat:structural_evil_twin");
                 }
@@ -363,15 +363,17 @@ fn push_anomaly_reason(entry: &mut AuditEntry, reason: &str) {
 /// difference exceeds limit or any row minimum exceeds limit, avoiding full DP computation.
 /// The limit of 2 distinguishes most typosquats (one character substitution or insertion).
 fn edit_distance_limited(left: &str, right: &str, limit: usize) -> usize {
-    if left.len().abs_diff(right.len()) > limit {
+    let left_chars: Vec<char> = left.chars().collect();
+    let right_chars: Vec<char> = right.chars().collect();
+    if left_chars.len().abs_diff(right_chars.len()) > limit {
         return limit + 1;
     }
-    let mut previous: Vec<usize> = (0..=right.len()).collect();
-    let mut current = vec![0; right.len() + 1];
-    for (i, left_ch) in left.chars().enumerate() {
+    let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
+    let mut current = vec![0; right_chars.len() + 1];
+    for (i, left_ch) in left_chars.iter().enumerate() {
         current[0] = i + 1;
         let mut row_min = current[0];
-        for (j, right_ch) in right.chars().enumerate() {
+        for (j, right_ch) in right_chars.iter().enumerate() {
             let cost = usize::from(left_ch != right_ch);
             current[j + 1] = (previous[j + 1] + 1)
                 .min(current[j] + 1)
@@ -383,7 +385,7 @@ fn edit_distance_limited(left: &str, right: &str, limit: usize) -> usize {
         }
         previous.clone_from(&current);
     }
-    previous[right.len()]
+    previous[right_chars.len()]
 }
 
 #[derive(Clone, Debug, Serialize)]

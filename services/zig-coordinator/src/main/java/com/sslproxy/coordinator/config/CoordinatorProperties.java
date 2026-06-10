@@ -63,6 +63,20 @@ public class CoordinatorProperties {
     private String wirelessMacLookupReplyTopic = "wireless.mac.lookup.reply";
     private String wirelessNetworksAuthorizedReplyTopic = "wireless.networks.authorized.reply";
 
+    // === Wireless raw payload archive and retention ===
+    private boolean wirelessRawArchiveEnabled = true;
+    private int wirelessRawPayloadHotDays = 7;
+    private int syncEventRowRetentionDays = 30;
+    private int syncEventTombstoneRetentionDays = 45;
+    private int wirelessRawArchiveBatchSize = 100;
+    private int retentionPruneBatchSize = 5000;
+    private int wirelessRawArchiveIntervalMs = 300_000;
+    private int retentionMaintenanceIntervalMs = 3_600_000;
+    private String wirelessRawArchiveBucket = "ssl-proxy-wireless-raw-archive";
+    private String minioEndpoint = "http://minio:9000";
+    private String minioAccessKeyId = "administrador";
+    private String minioSecretAccessKey = "senhamaster123";
+
     // === Outbox ===
     private String syncOutboxDir = "/sync-outbox";
 
@@ -75,6 +89,14 @@ public class CoordinatorProperties {
     // === Batch tuning for high-throughput consumption ===
     private int scanFetchCount = 1000;
     private int resultFetchCount = 400;
+    @Min(1)
+    private int scanConsumersCount = 1;
+    @Min(1)
+    private int resultConsumersCount = 1;
+    @Min(1)
+    private int wirelessConsumersCount = 1;
+    @Min(1)
+    private int wirelessMaxPollRecords = 1;
     private int ingestBatchSize = 1000;
     private int dispatchBatchSize = 100;
     private int idleSleepMs = 250;
@@ -188,6 +210,42 @@ public class CoordinatorProperties {
     public String getWirelessNetworksAuthorizedReplyTopic() { return wirelessNetworksAuthorizedReplyTopic; }
     public void setWirelessNetworksAuthorizedReplyTopic(String wirelessNetworksAuthorizedReplyTopic) { this.wirelessNetworksAuthorizedReplyTopic = wirelessNetworksAuthorizedReplyTopic; }
 
+    public boolean isWirelessRawArchiveEnabled() { return wirelessRawArchiveEnabled; }
+    public void setWirelessRawArchiveEnabled(boolean wirelessRawArchiveEnabled) { this.wirelessRawArchiveEnabled = wirelessRawArchiveEnabled; }
+
+    public int getWirelessRawPayloadHotDays() { return wirelessRawPayloadHotDays; }
+    public void setWirelessRawPayloadHotDays(int wirelessRawPayloadHotDays) { this.wirelessRawPayloadHotDays = wirelessRawPayloadHotDays; }
+
+    public int getSyncEventRowRetentionDays() { return syncEventRowRetentionDays; }
+    public void setSyncEventRowRetentionDays(int syncEventRowRetentionDays) { this.syncEventRowRetentionDays = syncEventRowRetentionDays; }
+
+    public int getSyncEventTombstoneRetentionDays() { return syncEventTombstoneRetentionDays; }
+    public void setSyncEventTombstoneRetentionDays(int syncEventTombstoneRetentionDays) { this.syncEventTombstoneRetentionDays = syncEventTombstoneRetentionDays; }
+
+    public int getWirelessRawArchiveBatchSize() { return wirelessRawArchiveBatchSize; }
+    public void setWirelessRawArchiveBatchSize(int wirelessRawArchiveBatchSize) { this.wirelessRawArchiveBatchSize = wirelessRawArchiveBatchSize; }
+
+    public int getRetentionPruneBatchSize() { return retentionPruneBatchSize; }
+    public void setRetentionPruneBatchSize(int retentionPruneBatchSize) { this.retentionPruneBatchSize = retentionPruneBatchSize; }
+
+    public int getWirelessRawArchiveIntervalMs() { return wirelessRawArchiveIntervalMs; }
+    public void setWirelessRawArchiveIntervalMs(int wirelessRawArchiveIntervalMs) { this.wirelessRawArchiveIntervalMs = wirelessRawArchiveIntervalMs; }
+
+    public int getRetentionMaintenanceIntervalMs() { return retentionMaintenanceIntervalMs; }
+    public void setRetentionMaintenanceIntervalMs(int retentionMaintenanceIntervalMs) { this.retentionMaintenanceIntervalMs = retentionMaintenanceIntervalMs; }
+
+    public String getWirelessRawArchiveBucket() { return wirelessRawArchiveBucket; }
+    public void setWirelessRawArchiveBucket(String wirelessRawArchiveBucket) { this.wirelessRawArchiveBucket = wirelessRawArchiveBucket; }
+
+    public String getMinioEndpoint() { return minioEndpoint; }
+    public void setMinioEndpoint(String minioEndpoint) { this.minioEndpoint = minioEndpoint; }
+
+    public String getMinioAccessKeyId() { return minioAccessKeyId; }
+    public void setMinioAccessKeyId(String minioAccessKeyId) { this.minioAccessKeyId = minioAccessKeyId; }
+
+    public String getMinioSecretAccessKey() { return minioSecretAccessKey; }
+    public void setMinioSecretAccessKey(String minioSecretAccessKey) { this.minioSecretAccessKey = minioSecretAccessKey; }
+
     public String getSyncOutboxDir() { return syncOutboxDir; }
     public void setSyncOutboxDir(String syncOutboxDir) { this.syncOutboxDir = syncOutboxDir; }
 
@@ -208,6 +266,18 @@ public class CoordinatorProperties {
 
     public int getResultFetchCount() { return resultFetchCount; }
     public void setResultFetchCount(int resultFetchCount) { this.resultFetchCount = resultFetchCount; }
+
+    public int getScanConsumersCount() { return scanConsumersCount; }
+    public void setScanConsumersCount(int scanConsumersCount) { this.scanConsumersCount = scanConsumersCount; }
+
+    public int getResultConsumersCount() { return resultConsumersCount; }
+    public void setResultConsumersCount(int resultConsumersCount) { this.resultConsumersCount = resultConsumersCount; }
+
+    public int getWirelessConsumersCount() { return wirelessConsumersCount; }
+    public void setWirelessConsumersCount(int wirelessConsumersCount) { this.wirelessConsumersCount = wirelessConsumersCount; }
+
+    public int getWirelessMaxPollRecords() { return wirelessMaxPollRecords; }
+    public void setWirelessMaxPollRecords(int wirelessMaxPollRecords) { this.wirelessMaxPollRecords = wirelessMaxPollRecords; }
 
     public int getIngestBatchSize() { return ingestBatchSize; }
     public void setIngestBatchSize(int ingestBatchSize) { this.ingestBatchSize = ingestBatchSize; }

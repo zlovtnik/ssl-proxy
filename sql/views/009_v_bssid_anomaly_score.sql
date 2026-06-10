@@ -10,7 +10,7 @@ with current_base as (
     ) as signal_dbm,
     coalesce(retry, false) as retry,
     coalesce(channel_number::text, payload->>'channel_number', payload->>'channel') as channel_number,
-    payload->>'frame_subtype' as frame_subtype,
+    coalesce(frame_subtype, payload->>'frame_subtype') as frame_subtype,
     lower(nullif(coalesce(source_mac, payload->>'source_mac'), '')) as source_mac,
     observed_at,
     date_bin(interval '15 minutes', observed_at, timestamptz '2000-01-01 00:00:00+00') as window_start

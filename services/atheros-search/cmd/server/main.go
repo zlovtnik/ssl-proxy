@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/ingest"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/search"
+	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/worker"
 )
 
 func main() {
@@ -65,6 +67,7 @@ func main() {
 	} else {
 		embedder = embed.NewCircuitClient(embed.NewHTTPClient(cfg.EmbeddingBackend, cfg.EmbeddingModel, cfg.EmbeddingDimensions))
 	}
+	workerEmbedder := embedder
 	m := metrics.New()
 	embedder = embed.CachedClient{
 		Inner: embedder,
@@ -76,7 +79,11 @@ func main() {
 	svc := search.NewService(pool.Pool, embedder, cfg, m, logger)
 	readiness := &health.Readiness{DB: pool, Embedder: embedder}
 	ingest.StartFreshnessConsumer(ctx, pool.Pool, cfg, logger)
-	ingest.StartEmbedder(ctx, pool.Pool, cfg, embedder, logger)
+	if cfg.WorkerEnabled {
+		logger.Info().Msg("new worker drain enabled; legacy embedded job drainer suppressed")
+	} else {
+		ingest.StartEmbedder(ctx, pool.Pool, cfg, embedder, logger)
+	}
 
 	metricsServer, err := metrics.StartServer(ctx, cfg.MetricsPort)
 	if err != nil {
@@ -86,9 +93,41 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start grpc server")
 	}
-	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, svc, readiness, tokenAuth, logger)
+	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, cfg.CORSAllowedOrigins, svc, readiness, tokenAuth, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start http gateway")
+	}
+
+	var alertPool *db.Pool
+	if cfg.WorkerEnabled {
+		if cfg.AlertEnabled {
+			alertPool, err = db.NewPool(ctx, cfg.PostgresDSN)
+			if err != nil {
+				logger.Fatal().Err(err).Msg("connect alert postgres pool")
+			}
+			defer alertPool.Close()
+		}
+		w := &worker.Worker{
+			Pool:     pool.Pool,
+			Embedder: workerEmbedder,
+			Config:   cfg,
+			Metrics:  m,
+			Logger:   logger,
+		}
+		if alertPool != nil {
+			w.AlertPool = alertPool.Pool
+		}
+		go func() {
+			if err := w.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				logger.Error().Err(err).Msg("worker stopped unexpectedly")
+				os.Exit(1)
+			}
+		}()
 	}
 
 	<-ctx.Done()

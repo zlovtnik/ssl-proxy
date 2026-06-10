@@ -82,13 +82,13 @@ SELECT
     then ts_rank_cd(wf.search_tsv, plainto_tsquery('simple', $1))::real
     else 0.1::real
   end as keyword_rank,
-  coalesce(jsonb_path_query_array(case when jsonb_typeof(se.payload->'tags') = 'array' then se.payload->'tags' else '[]'::jsonb end, '$[*]'), '[]'::jsonb)::text as tags_json,
-  coalesce(se.payload, '{}'::jsonb)::text as detail_json
+  coalesce(jsonb_path_query_array(%s, '$[*]'), '[]'::jsonb)::text as tags_json,
+  %s::text as detail_json
 FROM wireless_frames wf
 JOIN sync_events_expanded se ON se.dedupe_key = wf.dedupe_key
 %s
 ORDER BY keyword_rank DESC, se.observed_at DESC
-LIMIT $2`, where)
+LIMIT $2`, wirelessTagsSQL, compactEventDetailSQL, where)
 
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {

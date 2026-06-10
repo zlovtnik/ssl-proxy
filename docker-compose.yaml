@@ -119,9 +119,12 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
+      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true}
+      - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
+      - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
-      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
+      - SYNC_SCHEMA_FILE=/app/sql/postgres.coordinator.sql
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
       - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
@@ -133,12 +136,26 @@ services:
       - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
       - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      - SYNC_SCAN_CONSUMERS_COUNT=${SYNC_SCAN_CONSUMERS_COUNT:-1}
+      - SYNC_RESULT_CONSUMERS_COUNT=${SYNC_RESULT_CONSUMERS_COUNT:-1}
+      - WIRELESS_CONSUMERS_COUNT=${WIRELESS_CONSUMERS_COUNT:-1}
+      - WIRELESS_MAX_POLL_RECORDS=${WIRELESS_MAX_POLL_RECORDS:-1}
+      - WIRELESS_RAW_PAYLOAD_HOT_DAYS=${WIRELESS_RAW_PAYLOAD_HOT_DAYS:-7}
+      - SYNC_EVENT_ROW_RETENTION_DAYS=${SYNC_EVENT_ROW_RETENTION_DAYS:-30}
+      - SYNC_EVENT_TOMBSTONE_RETENTION_DAYS=${SYNC_EVENT_TOMBSTONE_RETENTION_DAYS:-45}
+      - WIRELESS_RAW_ARCHIVE_BUCKET=${WIRELESS_RAW_ARCHIVE_BUCKET:-ssl-proxy-wireless-raw-archive}
+      - WIRELESS_RAW_ARCHIVE_BATCH_SIZE=${WIRELESS_RAW_ARCHIVE_BATCH_SIZE:-100}
+      - WIRELESS_RAW_ARCHIVE_INTERVAL_MS=${WIRELESS_RAW_ARCHIVE_INTERVAL_MS:-300000}
+      - RETENTION_MAINTENANCE_INTERVAL_MS=${RETENTION_MAINTENANCE_INTERVAL_MS:-3600000}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
       - SYNC_OUTBOX_DIR=/sync-outbox
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=java-coordinator
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator
-      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
+      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-0.05}
       - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
       - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
       - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
@@ -148,106 +165,6 @@ services:
       - ./docker/redpanda:/app/docker/redpanda:ro
     ports:
       - "127.0.0.1:8081:8081"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-  java-coordinator-2:
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      redpanda-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      otel-collector:
-        condition: service_started
-    build:
-      context: .
-      dockerfile: services/zig-coordinator/Dockerfile
-    restart: unless-stopped
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
-      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
-      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
-      - SYNC_STREAM_NAME=proxy.events
-      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
-      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
-      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
-      - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
-      - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
-      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
-      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
-      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
-      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
-      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
-      - SYNC_OUTBOX_DIR=/sync-outbox
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=java-coordinator
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator-2
-      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
-      - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
-      - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
-      - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
-      - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
-    volumes:
-      - sync-outbox:/sync-outbox
-      - ./docker/redpanda:/app/docker/redpanda:ro
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-  java-coordinator-3:
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      redpanda-init:
-        condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
-      otel-collector:
-        condition: service_started
-    build:
-      context: .
-      dockerfile: services/zig-coordinator/Dockerfile
-    restart: unless-stopped
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
-      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
-      - SYNC_SCHEMA_FILE=/app/sql/postgres.sql
-      - SYNC_STREAM_NAME=proxy.events
-      - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
-      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
-      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
-      - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
-      - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
-      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
-      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
-      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
-      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
-      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
-      - SYNC_OUTBOX_DIR=/sync-outbox
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=java-coordinator
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator-3
-      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-1.0}
-      - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
-      - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
-      - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
-      - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
-    volumes:
-      - sync-outbox:/sync-outbox
-      - ./docker/redpanda:/app/docker/redpanda:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
       interval: 30s
@@ -454,121 +371,6 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=integration-console-heartbeat
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-heartbeat
-
-  vec-worker:
-    profiles:
-      - vector
-    build:
-      context: .
-      dockerfile: services/vec-worker/Dockerfile
-    restart: unless-stopped
-    environment:
-      - VECTOR_EMBEDDING_MAX_INPUT_TOKENS=512
-      - VECTOR_EMBEDDING_WORKER_NAME=worker-1
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=${VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS:-1}
-      - DATABASE_POOL_MAX_CONNECTIONS=${DATABASE_POOL_MAX_CONNECTIONS:-5}
-      - DATABASE_POOL_MIN_CONNECTIONS=${DATABASE_POOL_MIN_CONNECTIONS:-1}
-      - ALERT_POOL_MAX_CONNECTIONS=${ALERT_POOL_MAX_CONNECTIONS:-1}
-      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
-      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
-      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
-      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
-      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
-      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
-      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-16}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
-      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-600}
-      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-2}
-      - VECTOR_EMBEDDING_MAX_DRAIN_BATCHES=${VECTOR_EMBEDDING_MAX_DRAIN_BATCHES:-2}
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-1}
-
-  vec-worker-2:
-    profiles:
-      - vector
-    build:
-      context: .
-      dockerfile: services/vec-worker/Dockerfile
-    restart: unless-stopped
-    environment:
-      - VECTOR_EMBEDDING_MAX_INPUT_TOKENS=512
-      - VECTOR_EMBEDDING_WORKER_NAME=worker-2
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=${VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS:-1}
-      - DATABASE_POOL_MAX_CONNECTIONS=${DATABASE_POOL_MAX_CONNECTIONS:-5}
-      - DATABASE_POOL_MIN_CONNECTIONS=${DATABASE_POOL_MIN_CONNECTIONS:-1}
-      - ALERT_POOL_MAX_CONNECTIONS=${ALERT_POOL_MAX_CONNECTIONS:-1}
-      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
-      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
-      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
-      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
-      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
-      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
-      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-16}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
-      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-600}
-      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-2}
-      - VECTOR_EMBEDDING_MAX_DRAIN_BATCHES=${VECTOR_EMBEDDING_MAX_DRAIN_BATCHES:-2}
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-1}
-
-  vec-worker-3:
-    profiles:
-      - vector
-    build:
-      context: .
-      dockerfile: services/vec-worker/Dockerfile
-    restart: unless-stopped
-    environment:
-      - VECTOR_EMBEDDING_WORKER_NAME=worker-3
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=${VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS:-1}
-      - DATABASE_POOL_MAX_CONNECTIONS=${DATABASE_POOL_MAX_CONNECTIONS:-5}
-      - DATABASE_POOL_MIN_CONNECTIONS=${DATABASE_POOL_MIN_CONNECTIONS:-1}
-      - ALERT_POOL_MAX_CONNECTIONS=${ALERT_POOL_MAX_CONNECTIONS:-1}
-      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
-      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
-      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
-      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
-      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
-      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
-      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-16}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
-      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-600}
-      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-2}
-      - VECTOR_EMBEDDING_MAX_DRAIN_BATCHES=${VECTOR_EMBEDDING_MAX_DRAIN_BATCHES:-2}
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-1}
-
-  vec-worker-4:
-    profiles:
-      - vector
-    build:
-      context: .
-      dockerfile: services/vec-worker/Dockerfile
-    restart: unless-stopped
-    environment:
-      - VECTOR_EMBEDDING_WORKER_NAME=worker-4
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS=${VECTOR_EMBEDDING_MAX_CONCURRENT_EMBED_REQUESTS:-1}
-      - DATABASE_POOL_MAX_CONNECTIONS=${DATABASE_POOL_MAX_CONNECTIONS:-5}
-      - DATABASE_POOL_MIN_CONNECTIONS=${DATABASE_POOL_MIN_CONNECTIONS:-1}
-      - ALERT_POOL_MAX_CONNECTIONS=${ALERT_POOL_MAX_CONNECTIONS:-1}
-      - RUST_LOG=${VEC_WORKER_RUST_LOG:-vec_worker=warn,sqlx=warn}
-      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
-      - VECTOR_EMBEDDINGS_ENABLED=${VECTOR_EMBEDDINGS_ENABLED:-true}
-      - VECTOR_EMBEDDING_PROVIDER=${VECTOR_EMBEDDING_PROVIDER:-llamacpp}
-      - VECTOR_EMBEDDING_URL=${VECTOR_EMBEDDING_URL:-http://host.docker.internal:8082}
-      - VECTOR_EMBEDDING_MODEL=${VECTOR_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
-      - VECTOR_EMBEDDING_DIMENSIONS=${VECTOR_EMBEDDING_DIMENSIONS:-768}
-      - VECTOR_EMBEDDING_BATCH_SIZE=${VECTOR_EMBEDDING_BATCH_SIZE:-32}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_SIZE=${VECTOR_EMBEDDING_REQUEST_BATCH_SIZE:-16}
-      - VECTOR_EMBEDDING_REQUEST_BATCH_MAX=${VECTOR_EMBEDDING_REQUEST_BATCH_MAX:-128}
-      - VECTOR_EMBEDDING_LEASE_SECONDS=${VECTOR_EMBEDDING_LEASE_SECONDS:-600}
-      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-2}
-      - VECTOR_EMBEDDING_MAX_DRAIN_BATCHES=${VECTOR_EMBEDDING_MAX_DRAIN_BATCHES:-2}
-      - VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES=${VECTOR_EMBEDDING_MAX_CONCURRENT_COMPLETES:-1}
-
   atheros-sensor:
     depends_on:
       redpanda:
@@ -645,13 +447,6 @@ services:
   atheros-search:
     profiles:
       - vector
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      otel-collector:
-        condition: service_started
     build:
       context: .
       dockerfile: services/atheros-search/Dockerfile
@@ -659,9 +454,10 @@ services:
     environment:
       - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@192.168.1.221:5432/sync}
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
-      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8082}
+      - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8083}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
       - ATHSEARCH_EMBEDDING_DIMENSIONS=${ATHSEARCH_EMBEDDING_DIMENSIONS:-768}
+      - ATHSEARCH_EVENT_EMBEDDING_SCOPE=${ATHSEARCH_EVENT_EMBEDDING_SCOPE:-high_signal}
       - ATHSEARCH_GRPC_PORT=${ATHSEARCH_GRPC_PORT:-50051}
       - ATHSEARCH_HTTP_PORT=${ATHSEARCH_HTTP_PORT:-8080}
       - ATHSEARCH_METRICS_PORT=${ATHSEARCH_METRICS_PORT:-9090}
@@ -669,6 +465,16 @@ services:
       - ATHSEARCH_AUDIT_TOPIC=${ATHSEARCH_AUDIT_TOPIC:-wireless.audit}
       - ATHSEARCH_BANDWIDTH_TOPIC=${ATHSEARCH_BANDWIDTH_TOPIC:-audit.wireless.bandwidth}
       - ATHSEARCH_CONSUMER_GROUP=${ATHSEARCH_CONSUMER_GROUP:-atheros-search-ingest}
+      - ATHSEARCH_WORKER_ENABLED=${ATHSEARCH_WORKER_ENABLED:-true}
+      - ATHSEARCH_WORKER_BATCH_SIZE=${ATHSEARCH_WORKER_BATCH_SIZE:-256}
+      - ATHSEARCH_WORKER_REQUEST_BATCH_SIZE=${ATHSEARCH_WORKER_REQUEST_BATCH_SIZE:-256}
+      - ATHSEARCH_WORKER_REQUEST_BATCH_MAX=${ATHSEARCH_WORKER_REQUEST_BATCH_MAX:-512}
+      - ATHSEARCH_WORKER_LEASE_SECONDS=${ATHSEARCH_WORKER_LEASE_SECONDS:-600}
+      - ATHSEARCH_WORKER_POLL_INTERVAL_MS=${ATHSEARCH_WORKER_POLL_INTERVAL_MS:-500}
+      - ATHSEARCH_WORKER_MAX_DRAIN_BATCHES=${ATHSEARCH_WORKER_MAX_DRAIN_BATCHES:-0}
+      - ATHSEARCH_WORKER_MAX_INPUT_TOKENS=${ATHSEARCH_WORKER_MAX_INPUT_TOKENS:-512}
+      - ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED=${ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED:-4}
+      - ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE=${ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE:-8}
       - ATHSEARCH_EMBEDDER_ENABLED=${ATHSEARCH_EMBEDDER_ENABLED:-false}
       - ATHSEARCH_INGEST_ENABLED=${ATHSEARCH_INGEST_ENABLED:-false}
       - ATHSEARCH_API_TOKEN_SHA256=${ATHSEARCH_API_TOKEN_SHA256:-}
@@ -778,6 +584,7 @@ services:
       - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
       - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
+      - MINIO_EXTRA_BUCKETS=${MINIO_EXTRA_BUCKETS:-ssl-proxy-wireless-raw-archive}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
 
   redpanda-init:
@@ -901,7 +708,7 @@ services:
     volumes:
       - ./docker/observability/otel-collector.yml:/etc/otel-collector/config.yml:ro
     ports:
-      - "127.0.0.1:4319:4317"
+      - "127.0.0.1:4317:4317"
       - "127.0.0.1:4320:4318"
       - "127.0.0.1:8888:8888"
     depends_on:

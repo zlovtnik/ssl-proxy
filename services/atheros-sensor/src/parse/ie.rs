@@ -4,9 +4,10 @@
 //! cleanly on truncation. Only management frames (type 0) with subtypes 0, 4, 5, 8 carry IEs;
 //! all others return an empty IEMetadata. RSN (IE 48) is parsed to set SECURITY_RSN_WPA2;
 //! AKM suite types 8 and 9 (OUI 00:0f:ac) additionally set SECURITY_WPA3; the RSN capabilities
-//! field bit 6 sets SECURITY_PMF_REQUIRED. Vendor IEs (IE 221) with OUI 00:50:f2 are dispatched
-//! by type: type 1 sets SECURITY_WPA, type 4 sets SECURITY_WPS and triggers WPS attribute
-//! extraction (device name 0x1011, manufacturer 0x1021, model name 0x1023).
+//! field bits 6 and 7 set SECURITY_PMF_REQUIRED and SECURITY_PMF_CAPABLE. Vendor IEs (IE 221)
+//! with OUI 00:50:f2 are dispatched by type: type 1 sets SECURITY_WPA, type 4 sets SECURITY_WPS
+//! and triggers WPS attribute extraction (device name 0x1011, manufacturer 0x1021, model name
+//! 0x1023).
 //! device_fingerprint is a FNV-1a hash over the sequence of IE IDs seen in the frame,
 //! providing a stable hardware fingerprint that survives firmware updates.
 //!
@@ -27,6 +28,7 @@ pub const SECURITY_RSN_WPA2: u32 = 0x02;
 pub const SECURITY_WPA3: u32 = 0x04;
 pub const SECURITY_WPS: u32 = 0x08;
 pub const SECURITY_PMF_REQUIRED: u32 = 0x10;
+pub const SECURITY_PMF_CAPABLE: u32 = 0x20;
 pub const RSN_CAP_PMF_REQUIRED: u16 = 0x0040;
 pub const RSN_CAP_PMF_CAPABLE: u16 = 0x0080;
 
@@ -200,6 +202,9 @@ fn parse_rsn(data: &[u8], metadata: &mut IEMetadata) {
         metadata.rsn_capabilities = Some(capabilities);
         if capabilities & RSN_CAP_PMF_REQUIRED != 0 {
             metadata.security_flags |= SECURITY_PMF_REQUIRED;
+        }
+        if capabilities & RSN_CAP_PMF_CAPABLE != 0 {
+            metadata.security_flags |= SECURITY_PMF_CAPABLE;
         }
     }
     merge_weak_cipher(metadata, weak_cipher);

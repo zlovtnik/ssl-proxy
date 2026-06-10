@@ -15,6 +15,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -341,6 +342,56 @@ public class DatabaseService {
         observeDb("coordinator.flush_probe_batch", () -> jdbc.update("SELECT coordinator.flush_probe_batch(?::jsonb)", probesJson));
     }
 
+    // ========== Retention and raw payload archive ==========
+
+    public List<PayloadArchiveCandidate> listWirelessPayloadArchiveCandidates() {
+        return observeDb("coordinator.list_wireless_payload_archive_candidates", () -> jdbc.query(
+                "SELECT dedupe_key, stream_name, observed_at, payload_sha256, payload_bytes, payload::text AS payload " +
+                        "FROM coordinator.list_wireless_payload_archive_candidates(?::integer, ?::integer)",
+                (rs, rowNum) -> new PayloadArchiveCandidate(
+                        rs.getString("dedupe_key"),
+                        rs.getString("stream_name"),
+                        rs.getObject("observed_at", OffsetDateTime.class),
+                        rs.getString("payload_sha256"),
+                        rs.getLong("payload_bytes"),
+                        rs.getString("payload")
+                ),
+                props.getWirelessRawPayloadHotDays(),
+                props.getWirelessRawArchiveBatchSize()
+        ));
+    }
+
+    public boolean recordPayloadArchive(String dedupeKey, String payloadSha256, String archiveUri, long payloadBytes) {
+        Boolean recorded = observeDb("coordinator.record_payload_archive", () -> jdbc.queryForObject(
+                "SELECT coordinator.record_payload_archive(?::text, ?::text, ?::text, ?::bigint)",
+                Boolean.class,
+                dedupeKey,
+                payloadSha256,
+                archiveUri,
+                payloadBytes
+        ));
+        return Boolean.TRUE.equals(recorded);
+    }
+
+    public Optional<String> pruneSyncEventRetention() {
+        String result = observeDb("coordinator.prune_sync_event_retention", () -> jdbc.queryForObject(
+                "SELECT coordinator.prune_sync_event_retention(?::integer, ?::integer, ?::integer)::text",
+                String.class,
+                props.getSyncEventRowRetentionDays(),
+                props.getSyncEventTombstoneRetentionDays(),
+                props.getRetentionPruneBatchSize()
+        ));
+        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    }
+
+    public Optional<String> pruneVectorRetention() {
+        String result = observeDb("vec_prune_retention", () -> jdbc.queryForObject(
+                "SELECT vec_prune_retention()::text",
+                String.class
+        ));
+        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    }
+
     // ========== Helpers ==========
 
     /**
@@ -458,4 +509,13 @@ public class DatabaseService {
         public String getPayloadJson() { return payloadJson; }
         public String getPayloadSha256() { return payloadSha256; }
     }
+
+    public record PayloadArchiveCandidate(
+            String dedupeKey,
+            String streamName,
+            OffsetDateTime observedAt,
+            String payloadSha256,
+            long payloadBytes,
+            String payloadJson
+    ) {}
 }

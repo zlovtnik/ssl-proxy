@@ -7,6 +7,11 @@
     }
 
     #[test]
+    fn edit_distance_counts_unicode_chars() {
+        assert_eq!(edit_distance_limited("cafe", "caf\u{00E9}", 2), 1);
+    }
+
+    #[test]
     fn link_probe_to_network_matches_ssid() {
         use super::{AuthorizedNetworkCache, ClientInventory};
         use crate::backlog::AuthorizedWirelessNetwork;
@@ -149,6 +154,36 @@
     }
 
     #[test]
+    fn client_inventory_tags_shared_device_fingerprints() {
+        use super::ClientInventory;
+
+        let mut inventory = ClientInventory::default();
+        let mut first = create_test_audit_entry();
+        first.source_mac = Some("02:00:00:00:00:01".to_string());
+        first.device_fingerprint = Some("fingerprint-a".to_string());
+        inventory.observe(&mut first);
+        assert!(!first
+            .tags
+            .contains(&"identity:shared_device_fingerprint".to_string()));
+
+        let mut second = create_test_audit_entry();
+        second.source_mac = Some("02:00:00:00:00:02".to_string());
+        second.device_fingerprint = Some("fingerprint-a".to_string());
+        inventory.observe(&mut second);
+        assert!(second
+            .tags
+            .contains(&"identity:shared_device_fingerprint".to_string()));
+
+        let mut repeated_first = create_test_audit_entry();
+        repeated_first.source_mac = first.source_mac;
+        repeated_first.device_fingerprint = Some("fingerprint-a".to_string());
+        inventory.observe(&mut repeated_first);
+        assert!(repeated_first
+            .tags
+            .contains(&"identity:shared_device_fingerprint".to_string()));
+    }
+
+    #[test]
     fn authorization_status_is_unknown_until_cache_loads() {
         use super::{AuthorizationStatus, AuthorizedNetworkCache};
 
@@ -204,6 +239,31 @@
         rogue.bssid = Some("aa:bb:cc:dd:ee:02".to_string());
         tracker.observe(&mut rogue, AuthorizationStatus::Unauthorized);
         assert!(rogue
+            .tags
+            .contains(&"threat:structural_evil_twin".to_string()));
+    }
+
+    #[test]
+    fn ie_layout_tracker_does_not_tag_authorized_member_as_structural_evil_twin() {
+        use super::{AuthorizationStatus, IeLayoutTracker};
+
+        let mut tracker = IeLayoutTracker::default();
+        let mut first = create_test_audit_entry();
+        first.frame_subtype = "beacon".to_string();
+        first.ssid = Some("CorpWiFi".to_string());
+        first.bssid = Some("aa:bb:cc:dd:ee:01".to_string());
+        first.ie_layout_hash = Some("feedface00000001".to_string());
+        tracker.observe(&mut first, AuthorizationStatus::Authorized);
+
+        let mut second = first.clone();
+        second.bssid = Some("aa:bb:cc:dd:ee:02".to_string());
+        tracker.observe(&mut second, AuthorizationStatus::Authorized);
+
+        let mut current = first.clone();
+        current.tags.clear();
+        tracker.observe(&mut current, AuthorizationStatus::Unauthorized);
+
+        assert!(!current
             .tags
             .contains(&"threat:structural_evil_twin".to_string()));
     }
@@ -385,4 +445,41 @@
             .observe(&entry, 3, 10, 60)
             .expect("cooldown should expire using frame time");
         assert_eq!(second.observed_at, "2024-01-01T12:01:12Z");
+    }
+
+    #[test]
+    fn deauth_flood_groups_unparseable_bssid_by_source_identity() {
+        use super::DeauthFloodTracker;
+
+        for bssids in [
+            [None, None, None],
+            [
+                Some("malformed-bssid-1"),
+                Some("malformed-bssid-2"),
+                Some("malformed-bssid-3"),
+            ],
+        ] {
+            let mut tracker = DeauthFloodTracker::default();
+            let mut entry = create_test_audit_entry();
+            entry.frame_subtype = "deauthentication".to_string();
+            entry.source_mac = Some("AA:BB:CC:DD:EE:FF".to_string());
+
+            entry.bssid = bssids[0].map(str::to_string);
+            entry.observed_at = "2024-01-01T12:00:00Z".to_string();
+            entry.sequence_number = Some(10);
+            assert!(tracker.observe(&entry, 3, 10, 60).is_none());
+
+            entry.bssid = bssids[1].map(str::to_string);
+            entry.observed_at = "2024-01-01T12:00:01Z".to_string();
+            entry.sequence_number = Some(11);
+            assert!(tracker.observe(&entry, 3, 10, 60).is_none());
+
+            entry.bssid = bssids[2].map(str::to_string);
+            entry.observed_at = "2024-01-01T12:00:02Z".to_string();
+            entry.sequence_number = Some(12);
+            let alert = tracker
+                .observe(&entry, 3, 10, 60)
+                .expect("unparseable-BSSID frames from the same source should share a bucket");
+            assert_eq!(alert.frame_count, 3);
+        }
     }

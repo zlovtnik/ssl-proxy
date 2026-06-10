@@ -65,8 +65,47 @@ pub async fn reconcile_backlog(
                 continue;
             }
         };
-        if let Err(error) = enqueue_prepared_publish(publisher, &entry.dedupe_key, &prepared).await
-        {
+        if entry.failure_stage == BacklogFailureStage::PrePublish {
+            if let Err(error) = queue_publish_with_backpressure(
+                publisher,
+                "retry_primary_publish",
+                &entry.stream_name,
+                &entry.payload,
+                &entry.dedupe_key,
+            )
+            .await
+            {
+                warn!(
+                    dedupe_key = %entry.dedupe_key,
+                    stream_name = %entry.stream_name,
+                    attempt_count = entry.attempt_count,
+                    %error,
+                    "backlog entry primary publish retry failed"
+                );
+                if let Err(persist_err) = persist_publish_failure(
+                    state,
+                    backlog,
+                    &entry.stream_name,
+                    &entry.dedupe_key,
+                    entry.payload.clone(),
+                    error,
+                    BacklogFailureStage::PrePublish,
+                )
+                .await
+                {
+                    warn!(
+                        dedupe_key = %entry.dedupe_key,
+                        stream_name = %entry.stream_name,
+                        attempt_count = entry.attempt_count,
+                        persist_error = %persist_err,
+                        "failed to persist backlog entry after primary publish retry failure"
+                    );
+                }
+                continue;
+            }
+        }
+
+        if let Err(error) = enqueue_prepared_publish(publisher, &entry.dedupe_key, &prepared).await {
             warn!(
                 dedupe_key = %entry.dedupe_key,
                 stream_name = %entry.stream_name,
@@ -81,6 +120,7 @@ pub async fn reconcile_backlog(
                 &entry.dedupe_key,
                 entry.payload.clone(),
                 error,
+                BacklogFailureStage::PostPublish,
             )
             .await
             {
@@ -225,7 +265,7 @@ fn sha256_hex(payload: &str) -> String {
     ssl_proxy::sha256_hex(&[payload.as_bytes()])
 }
 
-/// Periodic drain of memory backlog — runs regardless of circuit breaker state.
+/// Periodic drain of memory backlog -- runs regardless of circuit breaker state.
 pub async fn periodic_memory_backlog_flush(state: &SharedPublishState, backlog: &dyn BacklogStore) {
     let backlog_len = state.lock().unwrap().memory_backlog.len();
     if backlog_len == 0 {

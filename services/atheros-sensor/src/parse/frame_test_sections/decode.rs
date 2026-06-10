@@ -8,8 +8,8 @@
         model::{AuditContext, RawPacket},
         parse::{
             strip_radiotap, HandshakeMonitor, IEIterator, IdentityCache, ParseError,
-            RSN_CAP_PMF_CAPABLE, RSN_CAP_PMF_REQUIRED, SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2,
-            SECURITY_WPA, SECURITY_WPA3, SECURITY_WPS,
+            RSN_CAP_PMF_CAPABLE, RSN_CAP_PMF_REQUIRED, SECURITY_PMF_CAPABLE,
+            SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2, SECURITY_WPA, SECURITY_WPA3, SECURITY_WPS,
         },
         testutil::*,
     };

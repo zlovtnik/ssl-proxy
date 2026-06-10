@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct OracleLoad {
     pub job_id: String,
     pub batch_id: String,
-    pub batch_no: i32,
+    pub batch_no: Option<i32>,
     pub stream_name: String,
-    pub payload_ref: String,
-    pub cursor_start: String,
-    pub cursor_end: String,
+    pub payload_ref: Option<String>,
+    pub cursor_start: Option<String>,
+    pub cursor_end: Option<String>,
     pub attempt: i32,
 }
 

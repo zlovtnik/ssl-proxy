@@ -75,7 +75,7 @@ EOF
 finish() {
   if [ "$RUN_SUCCESS" -eq 1 ]; then
     push_result_metrics 1
-    log_line "info" "job_complete" "Initialized MinIO bucket ${MINIO_BUCKET}"
+    log_line "info" "job_complete" "Initialized MinIO buckets"
   else
     push_result_metrics 0
   fi
@@ -95,5 +95,17 @@ until mc alias set local "http://minio:9000" "${MINIO_ACCESS_KEY_ID}" "${MINIO_S
   sleep 1
 done
 
-mc mb --ignore-existing "local/${MINIO_BUCKET}" >/dev/null
+BUCKETS="${MINIO_BUCKET}"
+if [ -n "${MINIO_EXTRA_BUCKETS:-}" ]; then
+  BUCKETS="${BUCKETS},${MINIO_EXTRA_BUCKETS}"
+fi
+
+IFS=',' read -r -a bucket_list <<< "$BUCKETS"
+for bucket in "${bucket_list[@]}"; do
+  bucket="$(printf '%s' "$bucket" | xargs)"
+  if [ -n "$bucket" ]; then
+    mc mb --ignore-existing "local/${bucket}" >/dev/null
+    log_line "info" "bucket_ready" "Initialized MinIO bucket ${bucket}"
+  fi
+done
 RUN_SUCCESS=1

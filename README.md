@@ -8,25 +8,25 @@ A privacy-focused transparent proxy and VPN system with wireless audit capabilit
 
 ssl-proxy provides:
 
-- **WireGuard VPN ingress** — UDP 443 (plain) and UDP 51820 (obfuscated) endpoints for client traffic
-- **Transparent TLS interception** — Redirects TCP 80/443 through a Rust proxy with SNI-based classification and obfuscation profiles
-- **Wireless audit sensor** — Monitor-mode 802.11 capture (AR9271/ath9k_htc) publishing to a Redpanda-backed sync plane
-- **Vector embeddings worker** — PostgreSQL-only embedding pipeline for device behaviour, frame sequences, and infrastructure graphs
-- **Oracle sink worker** — At-least-once delivery of classified audit events to Oracle ADB
-- **Integration console** — Rails dashboard for device inventory, heatmaps, and sync-plane observability
+- **WireGuard VPN ingress** - UDP 443 (plain) and UDP 51820 (obfuscated) endpoints for client traffic
+- **Transparent TLS interception** - Redirects TCP 80/443 through a Rust proxy with SNI-based classification and obfuscation profiles
+- **Wireless audit sensor** - Monitor-mode 802.11 capture (AR9271/ath9k_htc) publishing to a Redpanda-backed sync plane
+- **Vector embeddings worker** - PostgreSQL-only embedding pipeline for device behaviour, frame sequences, and infrastructure graphs
+- **Oracle sink worker** - At-least-once delivery of classified audit events to Oracle ADB
+- **Integration console** - Rails dashboard for device inventory, heatmaps, and sync-plane observability
 
 ## Architecture
 
-![Architecture](docs/architecture.md)
+[Architecture](docs/architecture.md)
 
 ### Key Data Flows
 
-```
-Client → WireGuard (UDP 443/51820) → Transparent Proxy (TCP 3001) → Origin
-                    ↓
-            Audit Events → Redpanda → Coordinator (×3) → Oracle Worker → Oracle ADB
-                    ↓
-            PostgreSQL → Vec Worker → Embeddings (pgvector) → Similarity Search
+```text
+Client -> WireGuard (UDP 443/51820) -> Transparent Proxy (TCP 3001) -> Origin
+                    |
+            Audit Events -> Redpanda -> Coordinator (x3) -> Oracle Worker -> Oracle ADB
+                    |
+            PostgreSQL -> Vec Worker -> Embeddings (pgvector) -> Similarity Search
 ```
 
 The **coordinator** (3 replicas for HA) provides sync-plane job orchestration: cursoring, deduplication, batch dispatch, and result handling. Topics are locked to these meanings:
@@ -76,7 +76,7 @@ curl -i http://127.0.0.1:3002/health
 
 3. Configure the real server endpoint in `config/client/wg-obfs-shim.env.example`
 
-**Do not** combine this with a manual HTTP proxy on the client — WireGuard is the primary ingress path.
+**Do not** combine this with a manual HTTP proxy on the client - WireGuard is the primary ingress path.
 
 ### Generating Peer Keys
 
@@ -126,13 +126,13 @@ wg genpsk > presharedkey-peer1
 | Service | Description | Implementation |
 |---------|-------------|----------------|
 | **ssl-proxy** | Rust transparent proxy, WireGuard terminator, obfuscation engine | [src/](src/) |
-| **coordinator** | Sync control plane — cursoring, dedupe, job state, batching. 3 replicas for HA. | [services/zig-coordinator/](services/zig-coordinator/) (Gradle/Kotlin) |
+| **coordinator** | Sync control plane - cursoring, dedupe, job state, batching. 3 replicas for HA. | [services/zig-coordinator/](services/zig-coordinator/) (Gradle/Kotlin) |
 | **oracle-worker** | Oracle ADB sink for `proxy.events` audit stream | [services/oracle-worker/](services/oracle-worker/) |
 | **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
-| **redpanda** | Kafka-compatible event backbone for sync topics | — |
+| **redpanda** | Kafka-compatible event backbone for sync topics | - |
 | **postgres** | Primary state store (sync_events, devices, vec_embeddings, etc.) | [sql/postgres.sql](sql/postgres.sql) |
-| **redis** | Caching and job queues for integration console | — |
-| **minio** | S3-compatible object store (console exports) | — |
+| **redis** | Caching and job queues for integration console | - |
+| **minio** | S3-compatible object store (console exports) | - |
 
 ### Observability Stack
 
@@ -142,7 +142,7 @@ wg genpsk > presharedkey-peer1
 | **prometheus** | Metrics aggregation and alerting | 9090 |
 | **grafana** | Dashboards for all observability signals | 3004 |
 | **loki** | Log aggregation | 3100 |
-| **promtail** | Docker log shipping to Loki | — |
+| **promtail** | Docker log shipping to Loki | - |
 | **jaeger** | Distributed tracing UI | 16686 |
 | **cadvisor** | Container resource metrics | 8082 |
 | **node-exporter** | Host-level metrics | 9100 |
@@ -156,7 +156,7 @@ wg genpsk > presharedkey-peer1
 |---------|-------------|--------|
 | **vec-worker** | PostgreSQL-only embedding worker (Ollama/llama.cpp) | [services/vec-worker/README.md](services/vec-worker/README.md) |
 | **atheros-search** | Go gRPC search service for wireless audit embeddings | [services/atheros-search/](services/atheros-search/) |
-| **ollama** | Local embedding model server | — |
+| **ollama** | Local embedding model server | - |
 
 ### Wireless Sensor (host-mode, optional)
 
@@ -322,8 +322,8 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 
 ### Getting Help
 
-- [docs/runbook.md](docs/runbook.md) — detailed operational procedures
-- [docs/threat-model.md](docs/threat-model.md) — security model and assumptions
-- [docs/bugs.md](docs/bugs.md) — known issues and workarounds
-- [docs/ssl-proxy-compliance-audit-enhancement-workmap.md](docs/ssl-proxy-compliance-audit-enhancement-workmap.md) — compliance audit workmap
-- [ops-memory.md](ops-memory.md) — operational incident ledger
+- [docs/runbook.md](docs/runbook.md) - detailed operational procedures
+- [docs/threat-model.md](docs/threat-model.md) - security model and assumptions
+- [docs/bugs.md](docs/bugs.md) - known issues and workarounds
+- [docs/ssl-proxy-compliance-audit-enhancement-workmap.md](docs/ssl-proxy-compliance-audit-enhancement-workmap.md) - compliance audit workmap
+- [ops-memory.md](ops-memory.md) - operational incident ledger

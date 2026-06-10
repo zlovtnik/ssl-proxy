@@ -29,6 +29,7 @@ struct FrameTimingDelta {
 
 impl FrameTimingTracker {
     pub fn attach_deltas(&mut self, frame: &mut WifiFrame, clock_skew_anomaly_threshold_us: i64) {
+        self.prune(frame.observed_at);
         let delta = self.compute_session_delta(frame);
         frame.tsft_delta_us = delta.map(|delta| delta.tsft_delta_us);
         frame.wall_clock_delta_ms = delta.map(|delta| delta.wall_clock_delta_ms);
@@ -81,7 +82,6 @@ impl FrameTimingTracker {
                 },
             );
         }
-        self.prune(current_observed_at);
 
         delta
     }

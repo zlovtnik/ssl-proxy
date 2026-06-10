@@ -50,7 +50,7 @@ public class ScanRequestRoute extends RouteBuilder {
                 + "?groupId={{coordinator.scan-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.scan-fetch-count}}"
-                + "&consumersCount=1"
+                + "&consumersCount={{coordinator.scan-consumers-count}}"
                 + "&breakOnFirstError=true")
         .routeId("scan-request-consumer")
         .process(exchange -> {

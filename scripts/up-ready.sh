@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 SERVICE_NAME="${UP_READY_SERVICE_NAME:-ssl-proxy}"
-STACK_HEALTH_SERVICES="${UP_READY_STACK_HEALTH_SERVICES:-redpanda postgres zig-coordinator oracle-worker ssl-proxy}"
+STACK_HEALTH_SERVICES="${UP_READY_STACK_HEALTH_SERVICES:-redpanda postgres java-coordinator oracle-worker ssl-proxy}"
 MEMORY_FILE="${UP_READY_MEMORY_FILE:-$ROOT_DIR/ops-memory.md}"
 PROFILE_MODE="${PROFILE_MODE:-}"
 SERVER_IP="${SERVER_IP:-192.168.1.221}"
@@ -55,7 +55,7 @@ profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct
 docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Treat in-container health as authoritative::auto
-coordinator_unhealthy::zig-coordinator unhealthy::Coordinator failed health or dependency checks::Inspect zig-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/schema access::manual
+coordinator_unhealthy::java-coordinator unhealthy::Coordinator failed health or dependency checks::Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/schema access::manual
 worker_unhealthy::oracle-worker unhealthy::Worker failed Oracle or Redpanda preflight::Inspect oracle-worker logs and wallet/lib/secret mounts::manual
 postgres_unavailable::postgres unhealthy|Postgres unavailable::Postgres dependency unavailable::Ensure postgres is healthy and DATABASE_URL points to postgres:5432::manual
 redpanda_unavailable::redpanda unhealthy|Redpanda unavailable::Redpanda dependency unavailable::Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:9092::manual
@@ -259,8 +259,8 @@ classify_service_failure() {
     local logs
     logs="$(compose logs --tail "$LOG_TAIL_LINES" "$service" 2>&1 || true)"
     case "$service" in
-        zig-coordinator)
-            set_failure_from_text "$logs"$'\n'"zig-coordinator unhealthy"
+        java-coordinator)
+            set_failure_from_text "$logs"$'\n'"java-coordinator unhealthy"
             ;;
         oracle-worker)
             set_failure_from_text "$logs"$'\n'"oracle-worker unhealthy"

@@ -113,7 +113,9 @@ impl IdentityCache {
                 if let Some(bssid_key) = MacAddr::parse(bssid) {
                     if let Some(entry) = self.deauth_counts.get_mut(&bssid_key) {
                         let window = chrono::Duration::from_std(DEAUTH_FLOOD_WINDOW).ok()?;
-                        if frame
+                        if frame.observed_at < entry.window_started {
+                            *entry = DeauthCount::new(1, frame.observed_at);
+                        } else if frame
                             .observed_at
                             .signed_duration_since(entry.window_started)
                             > window

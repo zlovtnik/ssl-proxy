@@ -21,3 +21,8 @@ func TestFuseUsesWeightedRRFAndDeduplicates(t *testing.T) {
 	require.Equal(t, float32(0.8), got[0].CosineSimilarity)
 	require.Equal(t, float32(2.0), got[0].KeywordRank)
 }
+
+func TestRerankCandidateLimitExpandsTopKWindow(t *testing.T) {
+	require.Equal(t, 40, rerankCandidateLimit(10))
+	require.Equal(t, 0, rerankCandidateLimit(0))
+}

@@ -13,7 +13,7 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, OnceLock,
+        Arc, OnceLock,
     },
     time::Instant,
 };
@@ -25,9 +25,9 @@ use tokio::net::TcpListener;
 use tracing::{info, warn};
 
 use crate::publish::{CircuitBreakerState, SharedPublishState};
-use crate::stats::CaptureStats;
+use crate::stats::{CaptureStats, CaptureStatsSnapshot};
 
-pub type SharedStats = Arc<Mutex<CaptureStats>>;
+pub type SharedStats = Arc<CaptureStats>;
 
 static STARTED_AT: OnceLock<Instant> = OnceLock::new();
 static REDPANDA_PUBLISH_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -41,7 +41,7 @@ static REDPANDA_REQUEST_LAST_DURATION_MS: AtomicU64 = AtomicU64::new(0);
 
 pub fn shared_stats() -> SharedStats {
     let _ = STARTED_AT.set(Instant::now());
-    Arc::new(Mutex::new(CaptureStats::default()))
+    Arc::new(CaptureStats::default())
 }
 
 pub(crate) fn record_redpanda_publish(success: bool, duration_ms: u128) {
@@ -121,7 +121,7 @@ async fn serve_metrics(
         *response.status_mut() = StatusCode::NOT_FOUND;
         return Ok(response);
     }
-    let stats = stats.lock().unwrap().clone();
+    let stats = stats.snapshot();
     let (cb_state, journal_bytes) = {
         let publish_state = publish_state.lock().unwrap();
         let cb_state = match publish_state.circuit_breaker_state {
@@ -138,7 +138,7 @@ async fn serve_metrics(
         .unwrap())
 }
 
-fn render_metrics_body(stats: &CaptureStats, cb_state: u8, journal_bytes: u64) -> String {
+fn render_metrics_body(stats: &CaptureStatsSnapshot, cb_state: u8, journal_bytes: u64) -> String {
     let lag_line = match stats.bandwidth_window_lag_ms {
         Some(ms) => format!("atheros_bandwidth_window_lag_ms {ms}\n"),
         None => String::new(),
@@ -206,14 +206,14 @@ mod tests {
 
     #[test]
     fn render_metrics_includes_malformed_probe_and_journal_metrics() {
-        let stats = CaptureStats {
-            malformed_frames: 7,
-            probe_accumulator_len: 9,
-            memory_backlog_len: 3,
-            ..CaptureStats::default()
-        };
+        let stats = CaptureStats::default();
+        for _ in 0..7 {
+            stats.increment_malformed_frames();
+        }
+        stats.set_probe_accumulator_len(9);
+        stats.set_memory_backlog_len(3);
 
-        let body = render_metrics_body(&stats, 2, 4096);
+        let body = render_metrics_body(&stats.snapshot(), 2, 4096);
 
         assert!(body.contains("atheros_malformed_frames 7\n"));
         assert!(body.contains("atheros_probe_accumulator_len 9\n"));

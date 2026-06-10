@@ -63,7 +63,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-save-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-save")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);
@@ -79,7 +81,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-list-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-list")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);
@@ -102,7 +106,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-synced-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-synced")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);
@@ -127,7 +133,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-prune-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-prune")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);
@@ -151,7 +159,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-mac-stream-name}}"
                 + "?groupId={{coordinator.wireless-mac-lookup-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-mac-lookup")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);
@@ -182,7 +192,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-networks-stream-name}}"
                 + "?groupId={{coordinator.wireless-networks-authorized-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-networks-authorized")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);
@@ -204,7 +216,9 @@ public class WirelessRoutes extends RouteBuilder {
         // =====================================================================
         from("kafka:{{coordinator.wireless-probe-stream-name}}"
                 + "?groupId={{coordinator.wireless-probe-flush-consumer}}"
-                + "&autoOffsetReset=earliest&maxPollRecords=1&consumersCount=1")
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
+                + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-probe-flush")
         .process(exchange -> {
             String payload = exchange.getIn().getBody(String.class);

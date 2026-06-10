@@ -29,10 +29,10 @@ async fn process_packet(
             );
             match &error {
                 ParseError::UnsupportedControlFrame => {
-                    stats.lock().unwrap().unsupported_frames += 1;
+                    stats.increment_unsupported_frames();
                 }
                 _ => {
-                    stats.lock().unwrap().malformed_frames += 1;
+                    stats.increment_malformed_frames();
                     debug!(
                         error = %error,
                         packet_len,
@@ -72,6 +72,7 @@ async fn process_packet(
     let latest_generation = authorized_config_generation.load(Ordering::Relaxed);
     if latest_generation != pipeline.seen_authorized_config_generation {
         pipeline.authorized_network_cache.invalidate();
+        pipeline.rogue_ap_tracker.clear_typosquat_cache();
         pipeline.seen_authorized_config_generation = latest_generation;
     }
     if inline_request_reply_enabled {
@@ -87,6 +88,8 @@ async fn process_packet(
                 error = %refresh_result.as_ref().unwrap_err(),
                 "authorized wireless network cache refresh failed"
             );
+        } else if refresh_result.is_ok() {
+            pipeline.authorized_network_cache.should_log_failure(false);
         }
     }
     if try_decrypt_frame(
@@ -175,7 +178,7 @@ async fn process_packet(
             &pipeline.client_inventory,
             &pipeline.authorized_network_cache,
         );
-        stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
+        stats.set_probe_accumulator_len(pipeline.probe_accumulator.len());
     }
 
     if pipeline.probe_accumulator.should_flush_early() {
@@ -191,7 +194,7 @@ async fn process_packet(
                     pipeline.probe_accumulator.restore_priority_half(batch);
                 }
             }
-            stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
+            stats.set_probe_accumulator_len(pipeline.probe_accumulator.len());
         }
     }
     if entry
@@ -361,7 +364,7 @@ async fn process_packet(
                         lookup
                     }
                     Err(error) => {
-                        stats.lock().unwrap().mac_lookup_failures += 1;
+                        stats.increment_mac_lookup_failures();
                         pipeline
                             .device_registry_cache
                             .remember_failure(cache_key.clone());

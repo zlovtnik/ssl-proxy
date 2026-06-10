@@ -5,11 +5,35 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use thiserror::Error;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BacklogFailureStage {
+    PrePublish,
+    PostPublish,
+}
+
+impl BacklogFailureStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PrePublish => "pre_publish",
+            Self::PostPublish => "post_publish",
+        }
+    }
+}
+
+impl Default for BacklogFailureStage {
+    fn default() -> Self {
+        Self::PrePublish
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct BacklogEntry {
     pub dedupe_key: String,
     pub stream_name: String,
     pub payload: String,
+    #[serde(default)]
+    pub failure_stage: BacklogFailureStage,
     pub attempt_count: i32,
 }
 
@@ -78,6 +102,18 @@ pub trait BacklogStore: Send + Sync {
         payload: &str,
         error: &str,
     ) -> Result<(), BacklogError>;
+
+    async fn save_pending_with_stage(
+        &self,
+        dedupe_key: &str,
+        stream_name: &str,
+        payload: &str,
+        error: &str,
+        _failure_stage: BacklogFailureStage,
+    ) -> Result<(), BacklogError> {
+        self.save_pending(dedupe_key, stream_name, payload, error)
+            .await
+    }
 
     async fn list_pending(&self) -> Result<Vec<BacklogEntry>, BacklogError>;
 

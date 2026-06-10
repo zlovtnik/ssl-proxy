@@ -26,10 +26,11 @@ fn parse_usize(name: &str, default: usize) -> Result<usize, String> {
 
 fn read_bool(name: &str, default: bool) -> bool {
     match std::env::var(name) {
-        Ok(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
         Err(_) => default,
     }
 }

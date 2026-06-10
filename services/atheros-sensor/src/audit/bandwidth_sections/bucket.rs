@@ -119,6 +119,7 @@ struct TrafficCounters {
     strongest_signal_dbm: Option<i8>,
     histogram: [u64; 4],
     arrival_times_ms: Vec<i64>,
+    arrival_samples_seen: u64,
     arrival_reservoir_size: usize,
     max_risk_score: Option<f32>,
 }
@@ -134,6 +135,7 @@ impl Default for TrafficCounters {
             strongest_signal_dbm: None,
             histogram: [0; 4],
             arrival_times_ms: Vec::new(),
+            arrival_samples_seen: 0,
             arrival_reservoir_size: ARRIVAL_RESERVOIR_SIZE,
             max_risk_score: None,
         }

@@ -17,7 +17,7 @@ impl PmfAttackTracker {
         ) {
             if let Some(src_norm) = entry.source_mac.as_deref().and_then(MacAddr::parse) {
                 if let Some(&pmf_required) = self.ap_pmf_state.get(&src_norm) {
-                    if !entry.protected.unwrap_or(false) && !pmf_required {
+                    if !entry.protected.unwrap_or(false) && pmf_required {
                         if !tags.contains(&"threat:pmf_deauth_attack".to_string()) {
                             tags.push("threat:pmf_deauth_attack".to_string());
                         }
