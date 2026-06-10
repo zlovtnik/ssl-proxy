@@ -1,8 +1,11 @@
 -- object: vec_enqueue_embedding_jobs
 -- folder: functions
 -- depends_on: vec_embedding_jobs
+drop function if exists vec_enqueue_embedding_jobs(text);
+
 create or replace function vec_enqueue_embedding_jobs(
-  p_model text default 'nomic-embed-text-v2-moe'
+  p_model text default 'nomic-embed-text-v2-moe',
+  p_event_embedding_scope text default 'high_signal'
 )
 returns integer
 language plpgsql
@@ -38,6 +41,39 @@ begin
      and existing.embedding_kind = 'event'
     where stream_name = 'wireless.audit'
       and status = 'batched'
+      and (
+        coalesce(nullif(p_event_embedding_scope, ''), 'high_signal') = 'all'
+        or coalesce(source.handshake_captured, false)
+        or coalesce(source.risk_score, coordinator.safe_double(source.payload->>'risk_score'), 0::double precision) >= 0.5
+        or coordinator.has_threat_tag(
+          case
+            when source.tags is not null and source.tags <> '[]'::jsonb then source.tags
+            else coordinator.safe_jsonb_array(source.payload->'tags')
+          end
+        )
+        or exists (
+          select 1
+          from vec_alerts alert
+          where alert.created_at >= source.observed_at - interval '1 hour'
+            and alert.created_at <= source.observed_at + interval '24 hours'
+            and (
+              alert.metadata->>'dedupe_key' = source.dedupe_key
+              or alert.metadata->>'source_key' = source.dedupe_key
+              or (
+                source.source_mac is not null
+                and lower(alert.source_mac) = lower(source.source_mac)
+              )
+              or (
+                source.bssid is not null
+                and lower(alert.metadata->>'bssid') = lower(source.bssid)
+              )
+              or (
+                source.destination_bssid is not null
+                and lower(alert.metadata->>'destination_bssid') = lower(source.destination_bssid)
+              )
+            )
+        )
+      )
       and (
         existing.embedding_id is null
         or source.updated_at > existing.embedded_at

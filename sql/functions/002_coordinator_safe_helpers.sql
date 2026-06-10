@@ -17,6 +17,17 @@ as $$
   select case when p_value ~ '^-?[0-9]+$' then p_value::bigint end
 $$;
 
+create or replace function coordinator.safe_double(p_value text)
+returns double precision
+language sql
+immutable
+as $$
+  select case
+    when p_value ~ '^-?([0-9]+(\.[0-9]+)?|\.[0-9]+)([eE][+-]?[0-9]+)?$'
+    then p_value::double precision
+  end
+$$;
+
 create or replace function coordinator.safe_bool(p_value text)
 returns boolean
 language sql
@@ -26,4 +37,24 @@ as $$
     when lower(p_value) in ('true', 't', '1', 'yes', 'y') then true
     when lower(p_value) in ('false', 'f', '0', 'no', 'n') then false
   end
+$$;
+
+create or replace function coordinator.safe_jsonb_array(p_value jsonb)
+returns jsonb
+language sql
+immutable
+as $$
+  select case when jsonb_typeof(p_value) = 'array' then p_value else '[]'::jsonb end
+$$;
+
+create or replace function coordinator.has_threat_tag(p_tags jsonb)
+returns boolean
+language sql
+immutable
+as $$
+  select exists (
+    select 1
+    from jsonb_array_elements_text(coordinator.safe_jsonb_array(p_tags)) as tag(value)
+    where tag.value like 'threat:%'
+  )
 $$;

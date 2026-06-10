@@ -18,7 +18,7 @@ base as (
     coalesce(bssid, payload->>'bssid') as bssid,
     coalesce(destination_bssid, bssid, payload->>'destination_bssid', payload->>'bssid') as destination_bssid,
     coalesce(ssid, payload->>'ssid') as ssid,
-    coalesce(signal_dbm, nullif(payload->>'signal_dbm', '')::integer) as signal_dbm,
+    coalesce(signal_dbm, coordinator.safe_int(payload->>'signal_dbm')) as signal_dbm,
     coalesce(location_id, payload->>'location_id') as location_id,
     coalesce(sensor_id, payload->>'sensor_id') as sensor_id,
     coalesce(username, payload->>'username') as username,

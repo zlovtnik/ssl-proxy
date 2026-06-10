@@ -39,6 +39,8 @@
 \ir tables/026_vec_dns_policy.sql
 \ir tables/027_vec_dns_resolver_ledger.sql
 \ir tables/028_search_feedback.sql
+\ir tables/029_sync_event_payload_archives.sql
+\ir tables/030_sync_event_tombstones.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -53,13 +55,15 @@
 \ir indexes/010_vec_alerts_indexes.sql
 \ir indexes/011_device_identity_clusters_indexes.sql
 \ir indexes/012_vec_timing_profiles_indexes.sql
+\ir indexes/013_sync_events_wireless_batched_updated_idx.sql
 \ir indexes/014_vec_detector_support_indexes.sql
+\ir indexes/015_sync_event_retention_indexes.sql
 
 -- functions
 \ir functions/001_sync_stable_uuid.sql
 \ir functions/002_coordinator_safe_helpers.sql
-\ir functions/003_vec_job_lock_helpers.sql
 \ir functions/003_upsert_wireless_frame.sql
+\ir functions/003_vec_job_lock_helpers.sql
 \ir functions/004_vec_update_transition_model.sql
 \ir functions/005_vec_score_sequence.sql
 \ir functions/006_vec_build_infrastructure_graph.sql
@@ -70,10 +74,8 @@
 \ir functions/011_vec_enqueue_embedding_jobs.sql
 \ir functions/012_vec_lease_embedding_jobs.sql
 \ir functions/013_vec_complete_embedding_batch.sql
-\ir functions/045_vec_complete_one_embedding.sql
 \ir functions/014_vec_materialize_similarity_pairs.sql
 \ir functions/015_vec_reembed_changed_jobs.sql
-\ir functions/040_vec_apply_similarity_flags.sql
 \ir functions/016_vec_release_expired_leases.sql
 \ir functions/017_vec_reap_stale_workers.sql
 \ir functions/018_vec_assign_device_cluster.sql
@@ -98,10 +100,15 @@
 \ir functions/037_coordinator_flush_probe_batch.sql
 \ir functions/038_coordinator_pending_ledger_count.sql
 \ir functions/039_vec_build_timing_profiles.sql
+\ir functions/040_vec_apply_similarity_flags.sql
 \ir functions/041_vec_update_device_centroids.sql
 \ir functions/042_vec_fuse_device_identities.sql
 \ir functions/043_vec_reembed_on_alert.sql
+\ir functions/044_vec_complete_embedding_batch_replace.sql
+\ir functions/045_vec_complete_one_embedding.sql
 \ir functions/046_search_purge_expired_queries.sql
+\ir functions/047_coordinator_event_retention.sql
+\ir functions/048_vec_prune_retention.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql

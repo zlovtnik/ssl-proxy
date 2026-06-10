@@ -36,6 +36,21 @@ begin
     raise exception 'scan request missing payload_ref';
   end if;
 
+  if exists (
+    select 1
+      from sync_event_tombstones tombstone
+     where tombstone.dedupe_key = v_dedupe_key
+       and tombstone.stream_name = v_stream_name
+       and tombstone.expires_at > now()
+  ) then
+    return jsonb_build_object(
+      'recorded', false,
+      'reason', 'tombstone_dedupe',
+      'dedupe_key', v_dedupe_key,
+      'stream_name', v_stream_name
+    );
+  end if;
+
   insert into sync_events (
     dedupe_key,
     stream_name,

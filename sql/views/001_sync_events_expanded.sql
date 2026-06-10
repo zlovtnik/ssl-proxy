@@ -1,6 +1,6 @@
 -- object: sync_events_expanded
 -- folder: views
--- depends_on: sync_events, wireless_frames
+-- depends_on: sync_events, wireless_frames, sync_event_payload_archives
 -- CREATE OR REPLACE cannot insert columns mid-list; dependents are recreated below.
 drop view if exists sync_events_expanded cascade;
 
@@ -12,6 +12,10 @@ select
   e.payload_ref,
   e.payload,
   e.payload_sha256,
+  archive.archive_uri as payload_archive_uri,
+  archive.payload_bytes as archived_payload_bytes,
+  archive.archived_at as payload_archived_at,
+  (archive.dedupe_key is not null and e.payload is null) as payload_archived,
   e.status,
   e.attempt_count,
   e.last_error,
@@ -20,14 +24,23 @@ select
   f.sensor_id,
   f.location_id,
   f.username,
+  f.event_type,
   f.schema_version,
   f.frame_type,
   f.frame_subtype,
   f.source_mac,
+  f.transmitter_mac,
+  f.receiver_mac,
   f.bssid,
   f.destination_bssid,
   f.ssid,
   f.signal_dbm,
+  f.noise_dbm,
+  f.frequency_mhz,
+  f.channel_flags,
+  f.data_rate_kbps,
+  f.antenna_id,
+  f.tsft,
   f.fragment_number,
   f.channel_number,
   f.signal_status,
@@ -76,6 +89,9 @@ select
   f.power_save,
   f.protected,
   f.security_flags,
+  f.risk_score,
+  f.identity_source,
+  f.tags,
   f.wps_device_name,
   f.wps_manufacturer,
   f.wps_model_name,
@@ -85,4 +101,5 @@ select
   e.created_at,
   greatest(e.updated_at, coalesce(f.updated_at, e.updated_at)) as updated_at
 from sync_events e
-left join wireless_frames f on f.dedupe_key = e.dedupe_key;
+left join wireless_frames f on f.dedupe_key = e.dedupe_key
+left join sync_event_payload_archives archive on archive.dedupe_key = e.dedupe_key;
