@@ -842,7 +842,7 @@ services:
     volumes:
       - ./docker/observability/otel-collector.yml:/etc/otel-collector/config.yml:ro
     ports:
-      - "127.0.0.1:4319:4317"
+      - "127.0.0.1:4317:4317"
       - "127.0.0.1:4320:4318"
       - "127.0.0.1:8888:8888"
     depends_on:
