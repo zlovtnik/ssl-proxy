@@ -66,6 +66,43 @@
     }
 
     #[test]
+    fn parses_pmf_capable_only_from_rsn_capabilities() {
+        let mut body = beacon_body();
+        body.extend_from_slice(&rsn_ie_with_capabilities(
+            true,
+            RSN_CAP_PMF_CAPABLE,
+            false,
+        ));
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.rsn_capabilities, Some(RSN_CAP_PMF_CAPABLE));
+        assert_ne!(frame.security_flags & SECURITY_PMF_CAPABLE, 0);
+        assert_eq!(frame.security_flags & SECURITY_PMF_REQUIRED, 0);
+    }
+
+    #[test]
+    fn parses_pmf_capable_and_required_from_rsn_capabilities() {
+        let capabilities = RSN_CAP_PMF_REQUIRED | RSN_CAP_PMF_CAPABLE;
+        let mut body = beacon_body();
+        body.extend_from_slice(&rsn_ie_with_capabilities(true, capabilities, false));
+        let packet = RawPacket {
+            observed_at: Utc::now(),
+            data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+        };
+
+        let frame = decode_frame(&packet).unwrap();
+
+        assert_eq!(frame.rsn_capabilities, Some(capabilities));
+        assert_ne!(frame.security_flags & SECURITY_PMF_CAPABLE, 0);
+        assert_ne!(frame.security_flags & SECURITY_PMF_REQUIRED, 0);
+    }
+
+    #[test]
     fn ie_layout_hash_includes_element_lengths_without_changing_device_fingerprint() {
         let mut short_body = vec![0; 8];
         short_body.extend_from_slice(&100u16.to_le_bytes());
@@ -97,7 +134,7 @@
     }
 
     #[test]
-    fn tags_wpa3_without_pmf_required_as_downgrade_suspect() {
+    fn does_not_tag_wpa3_with_pmf_capable_as_downgrade_suspect() {
         let context = AuditContext {
             sensor_id: "00:11:22:33:44:55".to_string(),
             location_id: "North-Wing-Entry".to_string(),
@@ -117,6 +154,32 @@
         ));
 
         assert_eq!(entry.rsn_capabilities, Some(RSN_CAP_PMF_CAPABLE));
+        assert!(!entry
+            .tags
+            .contains(&"threat:pmf_downgrade_suspect".to_string()));
+    }
+
+    #[test]
+    fn tags_wpa3_without_pmf_advertised_as_downgrade_suspect() {
+        let context = AuditContext {
+            sensor_id: "00:11:22:33:44:55".to_string(),
+            location_id: "North-Wing-Entry".to_string(),
+            interface: "wlan0".to_string(),
+            channel: 6,
+            reg_domain: "US".to_string(),
+        };
+        let mut body = beacon_body();
+        body.extend_from_slice(&rsn_ie_with_capabilities(true, 0, false));
+        let entry = to_audit_entry(attach_context(
+            decode_frame(&RawPacket {
+                observed_at: Utc::now(),
+                data: build_frame(0x80, 0x00, BROADCAST, AP, AP, None, body),
+            })
+            .unwrap(),
+            &context,
+        ));
+
+        assert_eq!(entry.rsn_capabilities, Some(0));
         assert!(entry
             .tags
             .contains(&"threat:pmf_downgrade_suspect".to_string()));

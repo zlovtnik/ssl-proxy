@@ -57,6 +57,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.passwordSecret.name }}
                   key: {{ .Values.postgres.passwordSecret.key }}
+            - name: JAVA_TOOL_OPTIONS
+              value: {{ .Values.javaCoordinator.jvmOptions | quote }}
+            - name: COORDINATOR_DB_POOL
+              value: {{ .Values.javaCoordinator.datasource.maximumPoolSize | quote }}
+            - name: COORDINATOR_DB_POOL_MIN_IDLE
+              value: {{ .Values.javaCoordinator.datasource.minimumIdle | quote }}
             # Redpanda
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
               valueFrom:
@@ -99,6 +105,14 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: SYNC_RESULT_CONSUMER
+            - name: SYNC_SCAN_CONSUMERS_COUNT
+              value: {{ .Values.javaCoordinator.consumerConcurrency.scan | quote }}
+            - name: SYNC_RESULT_CONSUMERS_COUNT
+              value: {{ .Values.javaCoordinator.consumerConcurrency.result | quote }}
+            - name: WIRELESS_CONSUMERS_COUNT
+              value: {{ .Values.javaCoordinator.consumerConcurrency.wireless | quote }}
+            - name: WIRELESS_MAX_POLL_RECORDS
+              value: {{ .Values.javaCoordinator.consumerConcurrency.wirelessMaxPollRecords | quote }}
             # Stream names
             - name: SYNC_STREAM_NAME
               value: "proxy.events"
@@ -210,6 +224,8 @@ spec:
               value: {{ .Values.javaCoordinator.metrics.redpandaLagMetricsTimeoutMs | quote }}
             - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
               value: {{ .Values.javaCoordinator.metrics.heartbeatLogIntervalMs | quote }}
+            - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+              value: {{ .Values.javaCoordinator.tracing.samplingProbability | quote }}
           ports:
             - containerPort: 8081
               protocol: TCP

@@ -75,6 +75,14 @@ public class CoordinatorProperties {
     // === Batch tuning for high-throughput consumption ===
     private int scanFetchCount = 1000;
     private int resultFetchCount = 400;
+    @Min(1)
+    private int scanConsumersCount = 1;
+    @Min(1)
+    private int resultConsumersCount = 1;
+    @Min(1)
+    private int wirelessConsumersCount = 1;
+    @Min(1)
+    private int wirelessMaxPollRecords = 1;
     private int ingestBatchSize = 1000;
     private int dispatchBatchSize = 100;
     private int idleSleepMs = 250;
@@ -208,6 +216,18 @@ public class CoordinatorProperties {
 
     public int getResultFetchCount() { return resultFetchCount; }
     public void setResultFetchCount(int resultFetchCount) { this.resultFetchCount = resultFetchCount; }
+
+    public int getScanConsumersCount() { return scanConsumersCount; }
+    public void setScanConsumersCount(int scanConsumersCount) { this.scanConsumersCount = scanConsumersCount; }
+
+    public int getResultConsumersCount() { return resultConsumersCount; }
+    public void setResultConsumersCount(int resultConsumersCount) { this.resultConsumersCount = resultConsumersCount; }
+
+    public int getWirelessConsumersCount() { return wirelessConsumersCount; }
+    public void setWirelessConsumersCount(int wirelessConsumersCount) { this.wirelessConsumersCount = wirelessConsumersCount; }
+
+    public int getWirelessMaxPollRecords() { return wirelessMaxPollRecords; }
+    public void setWirelessMaxPollRecords(int wirelessMaxPollRecords) { this.wirelessMaxPollRecords = wirelessMaxPollRecords; }
 
     public int getIngestBatchSize() { return ingestBatchSize; }
     public void setIngestBatchSize(int ingestBatchSize) { this.ingestBatchSize = ingestBatchSize; }

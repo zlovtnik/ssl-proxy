@@ -7,7 +7,7 @@
 
 use crate::model::WifiFrame;
 
-use super::ie::{SECURITY_PMF_REQUIRED, SECURITY_WPA3};
+use super::ie::{SECURITY_PMF_CAPABLE, SECURITY_PMF_REQUIRED, SECURITY_WPA3};
 
 /// Pushes a tag into the vector only if it does not already exist, ensuring deduplication.
 /// No-op if the tag is already present.
@@ -62,7 +62,7 @@ pub(super) fn tag_probe_response_destination(
 /// 1. SSID contains suspicious keywords ("setup", "wifi", "spectrumsetup") => potential_evil_twin
 /// 2. Probe response to randomized MAC => randomized_mac_target
 /// 3. Deauth or disassociation frame => deauth_frame
-/// 4. WPA3 without PMF-required => pmf_downgrade_suspect
+/// 4. WPA3 without PMF advertised => pmf_downgrade_suspect
 /// 5. Weak RSN cipher suite advertised => weak_cipher_advertised
 /// 6. Signal strength tier (strong/medium/weak/very_weak) based on dBm
 pub(super) fn add_audit_threat_tags(frame: &WifiFrame, tags: &mut Vec<String>) {
@@ -90,7 +90,7 @@ pub(super) fn add_audit_threat_tags(frame: &WifiFrame, tags: &mut Vec<String>) {
         push_tag(tags, "threat:deauth_frame");
     }
     if frame.security_flags & SECURITY_WPA3 != 0
-        && frame.security_flags & SECURITY_PMF_REQUIRED == 0
+        && frame.security_flags & (SECURITY_PMF_REQUIRED | SECURITY_PMF_CAPABLE) == 0
         && frame.rsn_capabilities.is_some()
     {
         push_tag(tags, "threat:pmf_downgrade_suspect");

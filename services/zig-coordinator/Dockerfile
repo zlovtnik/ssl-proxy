@@ -12,6 +12,7 @@ RUN gradle build --no-daemon -x test
 # ---- Stage 2: Runtime with slim JRE ----
 FROM eclipse-temurin:21-jre-alpine
 ENV TZ=America/New_York
+ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
 
 RUN apk add --no-cache \
         bash \

@@ -14,6 +14,13 @@ type boostSignals struct {
 	ThreatTags    int
 }
 
+func rerankCandidateLimit(topK int) int {
+	if topK <= 0 {
+		return 0
+	}
+	return topK * 4
+}
+
 func ApplyThreatBoosts(ctx context.Context, pool *pgxpool.Pool, results []RawResult) ([]RawResult, error) {
 	if len(results) == 0 {
 		return results, nil

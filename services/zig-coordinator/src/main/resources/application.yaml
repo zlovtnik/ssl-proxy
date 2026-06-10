@@ -8,14 +8,17 @@ server:
 spring:
   application:
     name: java-coordinator
+  threads:
+    virtual:
+      enabled: ${SPRING_THREADS_VIRTUAL_ENABLED:true}
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/sync}
     username: ${POSTGRES_USER:sync}
     password: ${POSTGRES_PASSWORD:sync}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: ${COORDINATOR_DB_POOL:6}
-      minimum-idle: ${COORDINATOR_DB_POOL_MIN_IDLE:1}
+      maximum-pool-size: ${COORDINATOR_DB_POOL:35}
+      minimum-idle: ${COORDINATOR_DB_POOL_MIN_IDLE:10}
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
@@ -66,6 +69,10 @@ coordinator:
   batch-max-attempts: ${SYNC_BATCH_MAX_ATTEMPTS:5}
   scan-fetch-count: ${SYNC_SCAN_FETCH_COUNT:500}
   result-fetch-count: ${SYNC_RESULT_FETCH_COUNT:200}
+  scan-consumers-count: ${SYNC_SCAN_CONSUMERS_COUNT:1}
+  result-consumers-count: ${SYNC_RESULT_CONSUMERS_COUNT:1}
+  wireless-consumers-count: ${WIRELESS_CONSUMERS_COUNT:1}
+  wireless-max-poll-records: ${WIRELESS_MAX_POLL_RECORDS:1}
   ingest-batch-size: ${SYNC_INGEST_BATCH_SIZE:1000}
   dispatch-batch-size: ${SYNC_DISPATCH_BATCH_SIZE:50}
   idle-sleep-ms: ${SYNC_IDLE_SLEEP_MS:250}
@@ -85,6 +92,12 @@ camel:
   springboot:
     name: java-coordinator
     main-run-controller: true
+  main:
+    exchange-factory: pooled
+    exchange-factory-capacity: ${CAMEL_EXCHANGE_FACTORY_CAPACITY:100}
+    exchange-factory-statistics-enabled: false
+    jmx-enabled: false
+    stream-caching-enabled: false
   component:
     kafka:
       brokers: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -113,7 +126,7 @@ management:
       application: ${spring.application.name}
   tracing:
     sampling:
-      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:1.0}
+      probability: ${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:0.05}
   otlp:
     tracing:
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}

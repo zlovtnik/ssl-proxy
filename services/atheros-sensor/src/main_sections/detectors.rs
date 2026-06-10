@@ -29,10 +29,10 @@ async fn process_packet(
             );
             match &error {
                 ParseError::UnsupportedControlFrame => {
-                    stats.lock().unwrap().unsupported_frames += 1;
+                    stats.increment_unsupported_frames();
                 }
                 _ => {
-                    stats.lock().unwrap().malformed_frames += 1;
+                    stats.increment_malformed_frames();
                     debug!(
                         error = %error,
                         packet_len,
@@ -178,7 +178,7 @@ async fn process_packet(
             &pipeline.client_inventory,
             &pipeline.authorized_network_cache,
         );
-        stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
+        stats.set_probe_accumulator_len(pipeline.probe_accumulator.len());
     }
 
     if pipeline.probe_accumulator.should_flush_early() {
@@ -194,7 +194,7 @@ async fn process_packet(
                     pipeline.probe_accumulator.restore_priority_half(batch);
                 }
             }
-            stats.lock().unwrap().probe_accumulator_len = pipeline.probe_accumulator.len();
+            stats.set_probe_accumulator_len(pipeline.probe_accumulator.len());
         }
     }
     if entry
@@ -364,7 +364,7 @@ async fn process_packet(
                         lookup
                     }
                     Err(error) => {
-                        stats.lock().unwrap().mac_lookup_failures += 1;
+                        stats.increment_mac_lookup_failures();
                         pipeline
                             .device_registry_cache
                             .remember_failure(cache_key.clone());

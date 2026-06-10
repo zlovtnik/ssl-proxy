@@ -154,6 +154,36 @@
     }
 
     #[test]
+    fn client_inventory_tags_shared_device_fingerprints() {
+        use super::ClientInventory;
+
+        let mut inventory = ClientInventory::default();
+        let mut first = create_test_audit_entry();
+        first.source_mac = Some("02:00:00:00:00:01".to_string());
+        first.device_fingerprint = Some("fingerprint-a".to_string());
+        inventory.observe(&mut first);
+        assert!(!first
+            .tags
+            .contains(&"identity:shared_device_fingerprint".to_string()));
+
+        let mut second = create_test_audit_entry();
+        second.source_mac = Some("02:00:00:00:00:02".to_string());
+        second.device_fingerprint = Some("fingerprint-a".to_string());
+        inventory.observe(&mut second);
+        assert!(second
+            .tags
+            .contains(&"identity:shared_device_fingerprint".to_string()));
+
+        let mut repeated_first = create_test_audit_entry();
+        repeated_first.source_mac = first.source_mac;
+        repeated_first.device_fingerprint = Some("fingerprint-a".to_string());
+        inventory.observe(&mut repeated_first);
+        assert!(repeated_first
+            .tags
+            .contains(&"identity:shared_device_fingerprint".to_string()));
+    }
+
+    #[test]
     fn authorization_status_is_unknown_until_cache_loads() {
         use super::{AuthorizationStatus, AuthorizedNetworkCache};
 

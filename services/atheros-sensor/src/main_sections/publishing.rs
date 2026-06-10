@@ -62,7 +62,7 @@ async fn flush_probe_accumulator(
             }
         }
     }
-    stats.lock().unwrap().probe_accumulator_len = pipeline_state.probe_accumulator.len();
+    stats.set_probe_accumulator_len(pipeline_state.probe_accumulator.len());
 }
 
 /// Creates a tokio interval that ticks every N seconds, with at least 1 second minimum.
@@ -112,7 +112,7 @@ fn spawn_channel_hopper(
                     if let Ok(mut context) = context.write() {
                         context.channel = channel;
                     }
-                    stats.lock().unwrap().channel_hop_count += 1;
+                    stats.increment_channel_hop_count();
 
                     let needs_apply = current_filter
                         .read()
@@ -151,12 +151,13 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
         .collect();
     lags.sort_unstable();
     let median_lag = lags.get(lags.len() / 2).copied();
-    {
-        let mut stats = handles.stats.lock().unwrap();
-        stats.bandwidth_window_lag_ms = median_lag;
-        stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
-        stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
-    }
+    handles.stats.set_bandwidth_window_lag_ms(median_lag);
+    handles.stats.set_memory_backlog_len(
+        handles.publish_state.lock().unwrap().memory_backlog_len(),
+    );
+    handles
+        .stats
+        .set_probe_accumulator_len(pipeline_state.probe_accumulator.len());
     publish_bandwidth_events(
         &handles.publish_state,
         &*handles.backlog,
@@ -266,12 +267,8 @@ fn log_and_publish_capture_heartbeat(handles: &SensorHandles) {
             format!("{:?}", publish_state.circuit_breaker_state),
         )
     };
-    let stats_snapshot = {
-        let mut stats = handles.stats.lock().unwrap();
-        stats.memory_backlog_len = backlog_len;
-        stats.log(&handles.device, &handles.config);
-        stats.clone()
-    };
+    handles.stats.set_memory_backlog_len(backlog_len);
+    let stats_snapshot = handles.stats.log(&handles.device, &handles.config);
     let sensor_id = handles
         .context
         .read()

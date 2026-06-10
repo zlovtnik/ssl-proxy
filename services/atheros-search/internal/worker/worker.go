@@ -177,7 +177,7 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 	result.DrainMS = time.Since(started).Milliseconds()
 	_ = db.MarkWorkerState(stateCtx, w.Pool, db.WorkerStateParams{
 		WorkerName:        w.Config.WorkerName,
-		Status:            "idle",
+		Status:            finishedWorkerStatus(runErr),
 		LastRunFinishedAt: &finished,
 		RowsProcessed:     int64(result.Processed),
 		LastRunStartedAt:  nil,
@@ -547,6 +547,13 @@ func shouldRunAlertSweep(iteration, interval int) bool {
 		interval = 10
 	}
 	return iteration > 0 && iteration%interval == 0
+}
+
+func finishedWorkerStatus(err error) string {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return "idle"
+	}
+	return "failed"
 }
 
 func mergeKindStats(dst map[string]KindRunStats, src map[string]KindRunStats) {

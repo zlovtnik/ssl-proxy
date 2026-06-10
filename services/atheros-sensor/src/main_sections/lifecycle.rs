@@ -180,31 +180,31 @@ async fn run_sensor() -> Result<(), SensorError> {
             _ = &mut shutdown => {
                 info!("shutdown signal received; flushing sensor state");
                 shutdown_flush(&handles, &mut pipeline_state).await;
-                handles.stats.lock().unwrap().log(&handles.device, &handles.config);
+                handles.stats.log(&handles.device, &handles.config);
                 break;
             }
             packet = handles.packets.next() => {
                 let Some(packet) = packet else {
                     info!("packet stream closed; flushing sensor state");
                     shutdown_flush(&handles, &mut pipeline_state).await;
-                    handles.stats.lock().unwrap().log(&handles.device, &handles.config);
+                    handles.stats.log(&handles.device, &handles.config);
                     break;
                 };
 
                 let packet = match packet {
                     Ok(packet) => {
-                        handles.stats.lock().unwrap().packets_seen += 1;
+                        handles.stats.increment_packets_seen();
                         packet
                     }
                     Err(error) => {
-                        handles.stats.lock().unwrap().capture_errors += 1;
+                        handles.stats.increment_capture_errors();
                         error!(%error, interface = %handles.device, "packet capture failed");
                         continue;
                     }
                 };
 
                 if !audit_window_snapshot(&handles.audit_window).is_active_at(packet.observed_at) {
-                    handles.stats.lock().unwrap().audit_window_drops += 1;
+                    handles.stats.increment_audit_window_drops();
                     debug!("audit window inactive; dropping packet");
                     continue;
                 }
@@ -237,17 +237,15 @@ async fn run_sensor() -> Result<(), SensorError> {
 
                 match result {
                     Ok(PipelineOutcome::DecodedFrame) => {
-                        let mut stats = handles.stats.lock().unwrap();
-                        stats.decoded_frames += 1;
                         let lag_ms = (Utc::now() - observed_at)
                             .num_milliseconds()
                             .max(0) as u64;
-                        stats.lag_total_ms = stats.lag_total_ms.saturating_add(lag_ms);
-                        stats.lag_count += 1;
+                        handles.stats.increment_decoded_frames();
+                        handles.stats.observe_publish_lag_ms(lag_ms);
                     }
                     Ok(PipelineOutcome::UnsupportedFrame) => {}
                     Err(error) => {
-                        handles.stats.lock().unwrap().pipeline_errors += 1;
+                        handles.stats.increment_pipeline_errors();
                         error!(%error, "wireless packet pipeline failed");
                     }
                 }
@@ -274,12 +272,13 @@ async fn run_sensor() -> Result<(), SensorError> {
                     .collect();
                 lags.sort_unstable();
                 let median_lag = lags.get(lags.len() / 2).copied();
-                {
-                    let mut stats = handles.stats.lock().unwrap();
-                    stats.bandwidth_window_lag_ms = median_lag;
-                    stats.memory_backlog_len = handles.publish_state.lock().unwrap().memory_backlog_len();
-                    stats.probe_accumulator_len = pipeline_state.probe_accumulator.len();
-                }
+                handles.stats.set_bandwidth_window_lag_ms(median_lag);
+                handles.stats.set_memory_backlog_len(
+                    handles.publish_state.lock().unwrap().memory_backlog_len(),
+                );
+                handles
+                    .stats
+                    .set_probe_accumulator_len(pipeline_state.probe_accumulator.len());
                 publish_bandwidth_events(
                     &handles.publish_state,
                     &*handles.backlog,

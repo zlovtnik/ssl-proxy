@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -105,6 +106,12 @@ func TestShouldRunAlertSweep(t *testing.T) {
 	require.False(t, shouldRunAlertSweep(9, 10))
 	require.True(t, shouldRunAlertSweep(10, 10))
 	require.True(t, shouldRunAlertSweep(10, 0))
+}
+
+func TestFinishedWorkerStatus(t *testing.T) {
+	require.Equal(t, "idle", finishedWorkerStatus(nil))
+	require.Equal(t, "idle", finishedWorkerStatus(context.Canceled))
+	require.Equal(t, "failed", finishedWorkerStatus(errors.New("database unavailable")))
 }
 
 func chunkIDs(jobs []db.EmbeddingJob) []int64 {

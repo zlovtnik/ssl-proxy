@@ -46,7 +46,8 @@ pub use identity::{IdentityCache, ResolvedIdentity};
 #[allow(unused_imports)]
 pub use ie::{
     IEIterator, InformationElement, RSN_CAP_PMF_CAPABLE, RSN_CAP_PMF_REQUIRED,
-    SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2, SECURITY_WPA, SECURITY_WPA3, SECURITY_WPS,
+    SECURITY_PMF_CAPABLE, SECURITY_PMF_REQUIRED, SECURITY_RSN_WPA2, SECURITY_WPA, SECURITY_WPA3,
+    SECURITY_WPS,
 };
 #[doc(inline)]
 #[allow(unused_imports)]

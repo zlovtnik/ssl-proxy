@@ -90,7 +90,7 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*sea
 	case searchv1.SearchMode_SEARCH_MODE_SPARSE:
 		fused = sparseResults
 	default:
-		fused = Fuse(denseResults, sparseResults, topK, s.Config.HybridAlpha)
+		fused = Fuse(denseResults, sparseResults, rerankCandidateLimit(topK), s.Config.HybridAlpha)
 	}
 	fused, err = ApplyThreatBoosts(searchCtx, s.Pool, fused)
 	if err != nil {

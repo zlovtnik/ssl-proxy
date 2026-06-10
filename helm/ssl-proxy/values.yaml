@@ -155,6 +155,17 @@ javaCoordinator:
   service:
     port: 8080
     type: ClusterIP
+  jvmOptions: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+  datasource:
+    maximumPoolSize: 35
+    minimumIdle: 10
+  consumerConcurrency:
+    scan: 1
+    result: 1
+    wireless: 1
+    wirelessMaxPollRecords: 1
+  tracing:
+    samplingProbability: 0.05
   # Resource limits
   resources:
     limits:
