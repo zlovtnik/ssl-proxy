@@ -120,51 +120,7 @@ alter table wireless_frames add column if not exists tsft bigint;
 alter table wireless_frames add column if not exists risk_score double precision;
 alter table wireless_frames add column if not exists identity_source text;
 alter table wireless_frames add column if not exists tags jsonb not null default '[]'::jsonb;
-
 alter table wireless_frames add column if not exists bssid_oui text
   generated always as (
     nullif(lower(substr(regexp_replace(coalesce(nullif(bssid, ''), nullif(destination_bssid, ''), ''), '[:\-]', '', 'g'), 1, 6)), '')
   ) stored;
-
-update wireless_frames wf
-set frame_subtype = coalesce(wf.frame_subtype, nullif(se.payload->>'frame_subtype', '')),
-    event_type = coalesce(wf.event_type, nullif(coalesce(se.payload->>'event_type', se.payload->>'type'), '')),
-    transmitter_mac = coalesce(wf.transmitter_mac, lower(nullif(se.payload->>'transmitter_mac', ''))),
-    receiver_mac = coalesce(wf.receiver_mac, lower(nullif(se.payload->>'receiver_mac', ''))),
-    noise_dbm = coalesce(wf.noise_dbm, case when se.payload->>'noise_dbm' ~ '^-?[0-9]+$' then (se.payload->>'noise_dbm')::integer end),
-    frequency_mhz = coalesce(wf.frequency_mhz, case when se.payload->>'frequency_mhz' ~ '^-?[0-9]+$' then (se.payload->>'frequency_mhz')::integer end),
-    channel_flags = coalesce(wf.channel_flags, case when se.payload->>'channel_flags' ~ '^-?[0-9]+$' then (se.payload->>'channel_flags')::integer end),
-    data_rate_kbps = coalesce(wf.data_rate_kbps, case when se.payload->>'data_rate_kbps' ~ '^-?[0-9]+$' then (se.payload->>'data_rate_kbps')::integer end),
-    antenna_id = coalesce(wf.antenna_id, case when se.payload->>'antenna_id' ~ '^-?[0-9]+$' then (se.payload->>'antenna_id')::integer end),
-    tsft = coalesce(wf.tsft, case when se.payload->>'tsft' ~ '^-?[0-9]+$' then (se.payload->>'tsft')::bigint end),
-    risk_score = coalesce(
-      wf.risk_score,
-      case
-        when se.payload->>'risk_score' ~ '^-?([0-9]+(\.[0-9]+)?|\.[0-9]+)([eE][+-]?[0-9]+)?$'
-        then (se.payload->>'risk_score')::double precision
-      end
-    ),
-    identity_source = coalesce(wf.identity_source, nullif(se.payload->>'identity_source', '')),
-    tags = case
-      when wf.tags <> '[]'::jsonb then wf.tags
-      when jsonb_typeof(se.payload->'tags') = 'array' then se.payload->'tags'
-      else wf.tags
-    end
-from sync_events se
-where se.dedupe_key = wf.dedupe_key
-  and se.payload is not null
-  and (
-    wf.frame_subtype is null
-    or wf.event_type is null
-    or wf.transmitter_mac is null
-    or wf.receiver_mac is null
-    or wf.noise_dbm is null
-    or wf.frequency_mhz is null
-    or wf.channel_flags is null
-    or wf.data_rate_kbps is null
-    or wf.antenna_id is null
-    or wf.tsft is null
-    or wf.risk_score is null
-    or wf.identity_source is null
-    or wf.tags = '[]'::jsonb
-  );
