@@ -43,10 +43,21 @@ $$;
 
 create or replace function coordinator.safe_int(p_value text)
 returns integer
-language sql
+language plpgsql
 immutable
 as $$
-  select case when p_value ~ '^-?[0-9]+$' then p_value::integer end
+begin
+  if p_value is null or p_value !~ '^-?[0-9]+$' then
+    return null;
+  end if;
+
+  begin
+    return p_value::integer;
+  exception
+    when others then
+      return null;
+  end;
+end;
 $$;
 
 create or replace function coordinator.safe_bigint(p_value text)

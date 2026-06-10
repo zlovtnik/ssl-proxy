@@ -8,6 +8,7 @@ import io.minio.PutObjectArgs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayInputStream;
 import java.net.URLEncoder;
@@ -31,6 +32,12 @@ public class PayloadArchiveService {
     public PayloadArchiveService(DatabaseService databaseService, CoordinatorProperties props) {
         this.databaseService = databaseService;
         this.props = props;
+        if (props.isWirelessRawArchiveEnabled()
+                && (!StringUtils.hasText(props.getMinioAccessKeyId())
+                || !StringUtils.hasText(props.getMinioSecretAccessKey()))) {
+            throw new IllegalStateException(
+                    "wireless raw archive is enabled but MinIO credentials are not configured");
+        }
         this.minioClient = MinioClient.builder()
                 .endpoint(props.getMinioEndpoint())
                 .credentials(props.getMinioAccessKeyId(), props.getMinioSecretAccessKey())
@@ -112,12 +119,26 @@ public class PayloadArchiveService {
         if (bucketChecked) {
             return;
         }
-        String bucket = props.getWirelessRawArchiveBucket();
-        boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
-        if (!exists) {
-            minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
+        synchronized (this) {
+            if (bucketChecked) {
+                return;
+            }
+            String bucket = props.getWirelessRawArchiveBucket();
+            boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
+            if (!exists) {
+                try {
+                    minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
+                } catch (Exception exception) {
+                    String message = exception.getMessage();
+                    if (message == null
+                            || (!message.contains("BucketAlreadyOwnedByYou")
+                            && !message.contains("BucketAlreadyExists"))) {
+                        throw exception;
+                    }
+                }
+            }
+            bucketChecked = true;
         }
-        bucketChecked = true;
     }
 
     private String encodeKey(String value) {

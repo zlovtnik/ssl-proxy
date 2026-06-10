@@ -72,8 +72,8 @@ coordinator:
   retention-maintenance-interval-ms: ${RETENTION_MAINTENANCE_INTERVAL_MS:3600000}
   wireless-raw-archive-bucket: ${WIRELESS_RAW_ARCHIVE_BUCKET:ssl-proxy-wireless-raw-archive}
   minio-endpoint: ${MINIO_ENDPOINT:http://minio:9000}
-  minio-access-key-id: ${MINIO_ACCESS_KEY_ID:administrador}
-  minio-secret-access-key: ${MINIO_SECRET_ACCESS_KEY:senhamaster123}
+  minio-access-key-id: ${MINIO_ACCESS_KEY_ID}
+  minio-secret-access-key: ${MINIO_SECRET_ACCESS_KEY}
   sync-outbox-dir: ${SYNC_OUTBOX_DIR:/sync-outbox}
   scan-max-attempts: ${SYNC_SCAN_MAX_ATTEMPTS:5}
   scan-retry-backoff-seconds: ${SYNC_SCAN_RETRY_BACKOFF_SECONDS:30}

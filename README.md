@@ -114,7 +114,7 @@ wg genpsk > presharedkey-peer1
 | Grafana | 3004 | TCP | Dashboards (observability) |
 | Loki | 3100 | TCP | Log aggregation (observability) |
 | Jaeger UI | 16686 | TCP | Distributed tracing |
-| OTel gRPC | 4319 | TCP | OpenTelemetry collector gRPC |
+| OTel gRPC | 4317 | TCP | OpenTelemetry collector gRPC |
 | OTel HTTP | 4320 | TCP | OpenTelemetry collector HTTP |
 | Search gRPC | 50051 | TCP | Atheros Search gRPC API (vector profile) |
 | Search HTTP | 8080 | TCP | Atheros Search REST API (vector profile) |
@@ -138,7 +138,7 @@ wg genpsk > presharedkey-peer1
 
 | Service | Description | Port |
 |---------|-------------|------|
-| **otel-collector** | OpenTelemetry collector (traces + metrics) | 4319/4320 |
+| **otel-collector** | OpenTelemetry collector (traces + metrics) | 4317/4320 |
 | **prometheus** | Metrics aggregation and alerting | 9090 |
 | **grafana** | Dashboards for all observability signals | 3004 |
 | **loki** | Log aggregation | 3100 |

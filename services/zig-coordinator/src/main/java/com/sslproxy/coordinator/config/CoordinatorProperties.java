@@ -65,17 +65,24 @@ public class CoordinatorProperties {
 
     // === Wireless raw payload archive and retention ===
     private boolean wirelessRawArchiveEnabled = true;
+    @Min(1)
     private int wirelessRawPayloadHotDays = 7;
+    @Min(1)
     private int syncEventRowRetentionDays = 30;
+    @Min(1)
     private int syncEventTombstoneRetentionDays = 45;
+    @Min(1)
     private int wirelessRawArchiveBatchSize = 100;
+    @Min(1)
     private int retentionPruneBatchSize = 5000;
+    @Min(1)
     private int wirelessRawArchiveIntervalMs = 300_000;
+    @Min(1)
     private int retentionMaintenanceIntervalMs = 3_600_000;
     private String wirelessRawArchiveBucket = "ssl-proxy-wireless-raw-archive";
     private String minioEndpoint = "http://minio:9000";
-    private String minioAccessKeyId = "administrador";
-    private String minioSecretAccessKey = "senhamaster123";
+    private String minioAccessKeyId = "";
+    private String minioSecretAccessKey = "";
 
     // === Outbox ===
     private String syncOutboxDir = "/sync-outbox";

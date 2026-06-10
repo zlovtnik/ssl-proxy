@@ -60,9 +60,7 @@ fn run() -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| format!("initialize tokio runtime: {error}"))?;
-    let otel_provider = runtime.block_on(async {
-        observability::init_tracing(SERVICE_NAME)
-    });
+    let otel_provider = observability::init_tracing(SERVICE_NAME);
     let result = runtime.block_on(run_loop::run_loop(config, pool, started));
     observability::shutdown_tracer_provider(otel_provider);
     result
