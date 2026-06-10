@@ -113,6 +113,32 @@ spec:
               value: {{ .Values.javaCoordinator.consumerConcurrency.wireless | quote }}
             - name: WIRELESS_MAX_POLL_RECORDS
               value: {{ .Values.javaCoordinator.consumerConcurrency.wirelessMaxPollRecords | quote }}
+            - name: WIRELESS_RAW_PAYLOAD_HOT_DAYS
+              value: {{ .Values.javaCoordinator.retention.wirelessRawPayloadHotDays | quote }}
+            - name: SYNC_EVENT_ROW_RETENTION_DAYS
+              value: {{ .Values.javaCoordinator.retention.syncEventRowRetentionDays | quote }}
+            - name: SYNC_EVENT_TOMBSTONE_RETENTION_DAYS
+              value: {{ .Values.javaCoordinator.retention.syncEventTombstoneRetentionDays | quote }}
+            - name: WIRELESS_RAW_ARCHIVE_BUCKET
+              value: {{ .Values.javaCoordinator.retention.wirelessRawArchiveBucket | quote }}
+            - name: WIRELESS_RAW_ARCHIVE_BATCH_SIZE
+              value: {{ .Values.javaCoordinator.retention.wirelessRawArchiveBatchSize | quote }}
+            - name: WIRELESS_RAW_ARCHIVE_INTERVAL_MS
+              value: {{ .Values.javaCoordinator.retention.wirelessRawArchiveIntervalMs | quote }}
+            - name: RETENTION_MAINTENANCE_INTERVAL_MS
+              value: {{ .Values.javaCoordinator.retention.maintenanceIntervalMs | quote }}
+            - name: MINIO_ENDPOINT
+              value: {{ .Values.minio.endpoint | quote }}
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.accessKeySecret.name }}
+                  key: {{ .Values.minio.accessKeySecret.key }}
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.secretKeySecret.name }}
+                  key: {{ .Values.minio.secretKeySecret.key }}
             # Stream names
             - name: SYNC_STREAM_NAME
               value: "proxy.events"

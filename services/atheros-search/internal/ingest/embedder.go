@@ -88,7 +88,7 @@ func StartEmbedder(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, e
 }
 
 func drainEmbeddingJobs(ctx context.Context, pool *pgxpool.Pool, cfg config.Config, embedder embed.Client, logger zerolog.Logger) error {
-	if _, err := pool.Exec(ctx, "SELECT vec_enqueue_embedding_jobs($1)", cfg.EmbeddingModel); err != nil {
+	if _, err := pool.Exec(ctx, "SELECT vec_enqueue_embedding_jobs($1, $2)", cfg.EmbeddingModel, cfg.EventEmbeddingScope); err != nil {
 		return fmt.Errorf("enqueue embedding jobs: %w", err)
 	}
 

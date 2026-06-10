@@ -164,6 +164,14 @@ javaCoordinator:
     result: 1
     wireless: 1
     wirelessMaxPollRecords: 1
+  retention:
+    wirelessRawPayloadHotDays: 7
+    syncEventRowRetentionDays: 30
+    syncEventTombstoneRetentionDays: 45
+    wirelessRawArchiveBucket: "ssl-proxy-wireless-raw-archive"
+    wirelessRawArchiveBatchSize: 100
+    wirelessRawArchiveIntervalMs: 300000
+    maintenanceIntervalMs: 3600000
   tracing:
     samplingProbability: 0.05
   # Resource limits

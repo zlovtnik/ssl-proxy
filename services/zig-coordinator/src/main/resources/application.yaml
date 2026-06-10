@@ -62,6 +62,18 @@ coordinator:
   wireless-backlog-prune-reply-topic: ${WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC:wireless.backlog.prune.reply}
   wireless-mac-lookup-reply-topic: ${WIRELESS_MAC_LOOKUP_REPLY_TOPIC:wireless.mac.lookup.reply}
   wireless-networks-authorized-reply-topic: ${WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC:wireless.networks.authorized.reply}
+  wireless-raw-archive-enabled: ${WIRELESS_RAW_ARCHIVE_ENABLED:true}
+  wireless-raw-payload-hot-days: ${WIRELESS_RAW_PAYLOAD_HOT_DAYS:7}
+  sync-event-row-retention-days: ${SYNC_EVENT_ROW_RETENTION_DAYS:30}
+  sync-event-tombstone-retention-days: ${SYNC_EVENT_TOMBSTONE_RETENTION_DAYS:45}
+  wireless-raw-archive-batch-size: ${WIRELESS_RAW_ARCHIVE_BATCH_SIZE:100}
+  retention-prune-batch-size: ${SYNC_EVENT_RETENTION_PRUNE_BATCH_SIZE:5000}
+  wireless-raw-archive-interval-ms: ${WIRELESS_RAW_ARCHIVE_INTERVAL_MS:300000}
+  retention-maintenance-interval-ms: ${RETENTION_MAINTENANCE_INTERVAL_MS:3600000}
+  wireless-raw-archive-bucket: ${WIRELESS_RAW_ARCHIVE_BUCKET:ssl-proxy-wireless-raw-archive}
+  minio-endpoint: ${MINIO_ENDPOINT:http://minio:9000}
+  minio-access-key-id: ${MINIO_ACCESS_KEY_ID:administrador}
+  minio-secret-access-key: ${MINIO_SECRET_ACCESS_KEY:senhamaster123}
   sync-outbox-dir: ${SYNC_OUTBOX_DIR:/sync-outbox}
   scan-max-attempts: ${SYNC_SCAN_MAX_ATTEMPTS:5}
   scan-retry-backoff-seconds: ${SYNC_SCAN_RETRY_BACKOFF_SECONDS:30}

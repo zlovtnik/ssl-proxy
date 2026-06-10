@@ -8,6 +8,30 @@ import (
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
+const wirelessTagsSQL = "case when se.tags is not null and se.tags <> '[]'::jsonb then se.tags when jsonb_typeof(se.payload->'tags') = 'array' then se.payload->'tags' else '[]'::jsonb end"
+
+const compactEventDetailSQL = "case when se.dedupe_key is null then '{}'::jsonb when se.payload is not null then se.payload else jsonb_strip_nulls(jsonb_build_object(" +
+	"'dedupe_key', se.dedupe_key, " +
+	"'observed_at', se.observed_at, " +
+	"'stream_name', se.stream_name, " +
+	"'payload_archived', coalesce(se.payload_archived, false), " +
+	"'payload_archive_uri', se.payload_archive_uri, " +
+	"'payload_archived_at', se.payload_archived_at, " +
+	"'archived_payload_bytes', se.archived_payload_bytes, " +
+	"'event_type', se.event_type, " +
+	"'frame_type', se.frame_type, " +
+	"'frame_subtype', se.frame_subtype, " +
+	"'source_mac', se.source_mac, " +
+	"'transmitter_mac', se.transmitter_mac, " +
+	"'receiver_mac', se.receiver_mac, " +
+	"'bssid', coalesce(se.bssid, se.destination_bssid), " +
+	"'ssid', se.ssid, " +
+	"'sensor_id', se.sensor_id, " +
+	"'location_id', se.location_id, " +
+	"'risk_score', se.risk_score, " +
+	"'tags', " + wirelessTagsSQL +
+	")) end"
+
 type SQLFilter struct {
 	Clauses []string
 	Args    []any
@@ -52,12 +76,12 @@ func BuildWirelessFilters(filters *searchv1.SearchFilters, start int) SQLFilter 
 		out.Clauses = append(out.Clauses, "coalesce(se.handshake_captured, false) = true")
 	}
 	if filters.ThreatOnly {
-		out.Clauses = append(out.Clauses, "(coalesce(se.handshake_captured, false) = true or exists (select 1 from jsonb_array_elements_text(case when jsonb_typeof(se.payload->'tags') = 'array' then se.payload->'tags' else '[]'::jsonb end) t(tag) where t.tag like 'threat:%'))")
+		out.Clauses = append(out.Clauses, "(coalesce(se.handshake_captured, false) = true or exists (select 1 from jsonb_array_elements_text("+wirelessTagsSQL+") t(tag) where t.tag like 'threat:%'))")
 	}
 	for _, tag := range filters.Tags {
 		tag = strings.TrimSpace(tag)
 		if tag != "" {
-			add("se.payload->'tags' ? $%d", tag)
+			add(wirelessTagsSQL+" ? $%d", tag)
 		}
 	}
 	return out

@@ -26,6 +26,7 @@ func TestLoadValidatesDimensionsAndAuthDigest(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, DefaultEmbeddingDimensions, cfg.EmbeddingDimensions)
+	require.Equal(t, "high_signal", cfg.EventEmbeddingScope)
 }
 
 func TestClampTopK(t *testing.T) {
@@ -71,6 +72,7 @@ func TestLoadWorkerAndAlertDefaults(t *testing.T) {
 	require.Equal(t, -15.0, cfg.AlertSeqThreshold)
 	require.Equal(t, 50.0, cfg.AlertTravelMaxSpeedMPS)
 	require.Equal(t, 15, cfg.AlertDNSLookbackMinutes)
+	require.Equal(t, "high_signal", cfg.EventEmbeddingScope)
 }
 
 func TestLoadWorkerConfigFromEnv(t *testing.T) {
@@ -96,6 +98,7 @@ func TestLoadWorkerConfigFromEnv(t *testing.T) {
 	t.Setenv("ATHSEARCH_ALERT_SEQ_THRESHOLD", "-21.5")
 	t.Setenv("ATHSEARCH_ALERT_TRAVEL_MAX_SPEED_MPS", "33.25")
 	t.Setenv("ATHSEARCH_ALERT_DNS_LOOKBACK_MINUTES", "30")
+	t.Setenv("ATHSEARCH_EVENT_EMBEDDING_SCOPE", "ALL")
 
 	cfg, err := Load()
 
@@ -120,6 +123,7 @@ func TestLoadWorkerConfigFromEnv(t *testing.T) {
 	require.Equal(t, -21.5, cfg.AlertSeqThreshold)
 	require.Equal(t, 33.25, cfg.AlertTravelMaxSpeedMPS)
 	require.Equal(t, 30, cfg.AlertDNSLookbackMinutes)
+	require.Equal(t, "all", cfg.EventEmbeddingScope)
 }
 
 func TestLoadValidatesWorkerConfig(t *testing.T) {

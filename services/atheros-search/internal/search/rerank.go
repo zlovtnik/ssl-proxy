@@ -29,7 +29,7 @@ func ApplyThreatBoosts(ctx context.Context, pool *pgxpool.Pool, results []RawRes
 	for _, result := range results {
 		keys = append(keys, result.SourceKey)
 	}
-	rows, err := pool.Query(ctx, `
+	query := `
 WITH keys AS (
   SELECT unnest($1::text[]) AS source_key
 )
@@ -50,17 +50,25 @@ SELECT
       AND lower(alert.source_mac) = lower(coalesce(se.source_mac, ''))
     LIMIT 1
   ) AS shadow_open,
-  coalesce((se.payload->>'risk_score')::double precision, 0) AS risk_score,
+  coalesce(
+    se.risk_score,
+    case
+      when se.payload->>'risk_score' ~ '^-?([0-9]+(\.[0-9]+)?|\.[0-9]+)([eE][+-]?[0-9]+)?$'
+      then (se.payload->>'risk_score')::double precision
+    end,
+    0
+  ) AS risk_score,
   coalesce(ap.composite_risk, 0) AS ap_risk,
   coalesce((
     SELECT count(*)::integer
-    FROM jsonb_array_elements_text(case when jsonb_typeof(se.payload->'tags') = 'array' then se.payload->'tags' else '[]'::jsonb end) tag(value)
+    FROM jsonb_array_elements_text(` + wirelessTagsSQL + `) tag(value)
     WHERE tag.value LIKE 'threat:%'
   ), 0) AS threat_tags
 FROM keys k
 LEFT JOIN sync_events_expanded se ON se.dedupe_key = k.source_key
 LEFT JOIN mv_ap_risk_score ap ON ap.bssid = lower(coalesce(se.bssid, se.destination_bssid, ''))
-`, keys)
+`
+	rows, err := pool.Query(ctx, query, keys)
 	if err != nil {
 		return results, err
 	}

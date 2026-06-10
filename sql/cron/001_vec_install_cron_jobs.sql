@@ -86,7 +86,19 @@ begin
   perform cron.schedule(
     'vec-enqueue-embedding-jobs',
     '*/5 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-enqueue-embedding-jobs', $stmt$select vec_enqueue_embedding_jobs()$stmt$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-enqueue-embedding-jobs', $stmt$select vec_enqueue_embedding_jobs('nomic-embed-text-v2-moe'::text, 'high_signal'::text)$stmt$);$cron$
+  );
+
+  perform cron.schedule(
+    'sync-event-retention-prune',
+    '37 * * * *',
+    $cron$select coordinator.prune_sync_event_retention();$cron$
+  );
+
+  perform cron.schedule(
+    'vec-prune-retention',
+    '47 * * * *',
+    $cron$select vec_run_maintenance_sql('vec-prune-retention', $stmt$select vec_prune_retention()$stmt$);$cron$
   );
 
   perform cron.schedule(

@@ -14,7 +14,7 @@ returns table (
   payload jsonb
 )
 language sql
-stable
+volatile
 as $$
   select
     event.dedupe_key,
@@ -33,6 +33,7 @@ as $$
     and archive.dedupe_key is null
   order by event.observed_at asc, event.dedupe_key asc
   limit greatest(coalesce(p_limit, 100), 1)
+  for update of event skip locked
 $$;
 
 create or replace function coordinator.record_payload_archive(
@@ -46,6 +47,7 @@ language plpgsql
 as $$
 declare
   v_event record;
+  v_updated integer := 0;
 begin
   if nullif(p_dedupe_key, '') is null then
     raise exception 'payload archive missing dedupe_key';
@@ -57,9 +59,17 @@ begin
   select dedupe_key, stream_name, observed_at, payload_sha256
     into v_event
     from sync_events
-   where dedupe_key = p_dedupe_key;
+   where dedupe_key = p_dedupe_key
+     and payload is not null
+   for update;
 
   if not found then
+    return false;
+  end if;
+
+  if p_payload_sha256 is not null
+     and v_event.payload_sha256 is not null
+     and v_event.payload_sha256 <> p_payload_sha256 then
     return false;
   end if;
 
@@ -102,8 +112,9 @@ begin
        or payload_sha256 is null
        or payload_sha256 = p_payload_sha256
      );
+  get diagnostics v_updated = row_count;
 
-  return true;
+  return v_updated > 0;
 end;
 $$;
 
@@ -211,4 +222,3 @@ begin
   );
 end;
 $$;
-

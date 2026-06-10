@@ -85,3 +85,130 @@ pg_database_io_timing:
     - deadlocks_total:
         usage: "COUNTER"
         description: "Total deadlocks by database."
+
+pg_relation_storage_health:
+  query: |
+    SELECT
+      relname AS relation,
+      pg_total_relation_size(relid)::float8 AS total_bytes,
+      pg_relation_size(relid)::float8 AS table_bytes,
+      (pg_total_relation_size(relid) - pg_relation_size(relid))::float8 AS index_bytes,
+      n_live_tup::float8 AS live_tuples,
+      n_dead_tup::float8 AS dead_tuples,
+      CASE
+        WHEN n_live_tup + n_dead_tup > 0
+          THEN n_dead_tup::float8 / NULLIF(n_live_tup + n_dead_tup, 0)
+        ELSE 0::float8
+      END AS dead_tuple_ratio,
+      COALESCE(EXTRACT(EPOCH FROM now() - last_autovacuum), 0)::float8 AS autovacuum_age_seconds
+    FROM pg_stat_user_tables
+    WHERE relname IN (
+      'sync_events',
+      'wireless_frames',
+      'sync_event_payload_archives',
+      'sync_event_tombstones',
+      'vec_embeddings',
+      'vec_embedding_jobs',
+      'vec_similarity_pairs',
+      'vec_behaviour_snapshots',
+      'vec_frame_sequences',
+      'vec_timing_profiles'
+    )
+  metrics:
+    - relation:
+        usage: "LABEL"
+        description: "Postgres relation name."
+    - total_bytes:
+        usage: "GAUGE"
+        description: "Total relation bytes including indexes and toast."
+    - table_bytes:
+        usage: "GAUGE"
+        description: "Heap/table bytes."
+    - index_bytes:
+        usage: "GAUGE"
+        description: "Index and auxiliary bytes."
+    - live_tuples:
+        usage: "GAUGE"
+        description: "Estimated live tuples."
+    - dead_tuples:
+        usage: "GAUGE"
+        description: "Estimated dead tuples."
+    - dead_tuple_ratio:
+        usage: "GAUGE"
+        description: "Estimated dead tuple ratio."
+    - autovacuum_age_seconds:
+        usage: "GAUGE"
+        description: "Seconds since last autovacuum, or 0 if never autovacuumed."
+
+sync_retention_health:
+  query: |
+    WITH payloads AS (
+      SELECT
+        COUNT(*) FILTER (WHERE payload IS NOT NULL)::float8 AS hot_payload_count,
+        COALESCE(SUM(pg_column_size(payload)) FILTER (WHERE payload IS NOT NULL), 0)::float8 AS hot_payload_bytes,
+        COUNT(*) FILTER (
+          WHERE payload IS NOT NULL
+            AND observed_at < now() - interval '7 days'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sync_event_payload_archives archive
+              WHERE archive.dedupe_key = sync_events.dedupe_key
+            )
+        )::float8 AS unarchived_payload_count,
+        COALESCE(EXTRACT(EPOCH FROM now() - MIN(observed_at) FILTER (
+          WHERE payload IS NOT NULL
+            AND observed_at < now() - interval '7 days'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sync_event_payload_archives archive
+              WHERE archive.dedupe_key = sync_events.dedupe_key
+            )
+        )), 0)::float8 AS archive_lag_seconds
+      FROM sync_events
+      WHERE stream_name = 'wireless.audit'
+    ),
+    archives AS (
+      SELECT
+        COUNT(*)::float8 AS archived_payload_count,
+        COALESCE(SUM(payload_bytes), 0)::float8 AS archived_payload_bytes
+      FROM sync_event_payload_archives
+    ),
+    tombstones AS (
+      SELECT
+        COUNT(*)::float8 AS tombstone_count,
+        COUNT(*) FILTER (WHERE expires_at <= now())::float8 AS expired_tombstone_count
+      FROM sync_event_tombstones
+    )
+    SELECT metric, value
+    FROM payloads, archives, tombstones,
+    LATERAL (
+      VALUES
+        ('hot_payload_count', hot_payload_count),
+        ('hot_payload_bytes', hot_payload_bytes),
+        ('unarchived_payload_count', unarchived_payload_count),
+        ('archive_lag_seconds', archive_lag_seconds),
+        ('archived_payload_count', archived_payload_count),
+        ('archived_payload_bytes', archived_payload_bytes),
+        ('tombstone_count', tombstone_count),
+        ('expired_tombstone_count', expired_tombstone_count)
+    ) AS metrics(metric, value)
+  metrics:
+    - metric:
+        usage: "LABEL"
+        description: "Retention health metric name."
+    - value:
+        usage: "GAUGE"
+        description: "Retention health metric value."
+
+pg_vector_rows_by_kind:
+  query: |
+    SELECT embedding_kind, COUNT(*)::float8 AS rows
+    FROM vec_embeddings
+    GROUP BY embedding_kind
+  metrics:
+    - embedding_kind:
+        usage: "LABEL"
+        description: "Embedding kind."
+    - rows:
+        usage: "GAUGE"
+        description: "Vector rows by embedding kind."

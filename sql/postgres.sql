@@ -124,6 +124,7 @@
 \ir views/011_v_ap_risk_score.sql
 \ir views/012_v_vec_similarity_audit.sql
 \ir views/013_v_wireless_device_inventory.sql
+\ir views/014_v_postgres_storage_health.sql
 
 -- unschedule stale cron jobs before materialized view DDL
 \ir cron/000_unschedule_cron_jobs.sql

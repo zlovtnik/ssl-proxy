@@ -28,6 +28,7 @@ type Config struct {
 	EmbeddingModel        string
 	EmbeddingDimensions   int
 	EmbeddingBackend      string
+	EventEmbeddingScope   string
 	GRPCPort              int
 	HTTPPort              int
 	MetricsPort           int
@@ -83,6 +84,7 @@ func Load() (Config, error) {
 		EmbeddingModel:              envString("ATHSEARCH_EMBEDDING_MODEL", envString("VECTOR_EMBEDDING_MODEL", DefaultEmbeddingModel)),
 		EmbeddingDimensions:         envInt("ATHSEARCH_EMBEDDING_DIMENSIONS", envInt("VECTOR_EMBEDDING_DIMENSIONS", DefaultEmbeddingDimensions)),
 		EmbeddingBackend:            firstEnv("ATHSEARCH_EMBEDDING_BACKEND", "VECTOR_EMBEDDING_URL"),
+		EventEmbeddingScope:         envString("ATHSEARCH_EVENT_EMBEDDING_SCOPE", "high_signal"),
 		GRPCPort:                    envInt("ATHSEARCH_GRPC_PORT", 50051),
 		HTTPPort:                    envInt("ATHSEARCH_HTTP_PORT", 8080),
 		MetricsPort:                 envInt("ATHSEARCH_METRICS_PORT", 9090),
@@ -139,6 +141,10 @@ func Load() (Config, error) {
 		if _, err := url.ParseRequestURI(cfg.EmbeddingBackend); err != nil {
 			return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_BACKEND must be a valid URL: %w", err)
 		}
+	}
+	cfg.EventEmbeddingScope = strings.ToLower(strings.TrimSpace(cfg.EventEmbeddingScope))
+	if cfg.EventEmbeddingScope != "high_signal" && cfg.EventEmbeddingScope != "all" {
+		return cfg, errors.New("ATHSEARCH_EVENT_EMBEDDING_SCOPE must be high_signal or all")
 	}
 	if cfg.SearchTimeout <= 0 {
 		return cfg, errors.New("ATHSEARCH_SEARCH_TIMEOUT_MS must be positive")

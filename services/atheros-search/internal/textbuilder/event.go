@@ -74,7 +74,7 @@ SELECT
   lower(coalesce(source_mac, payload->>'source_mac', '')),
   coalesce(ssid, payload->>'ssid', ''),
   coalesce(frame_type, payload->>'frame_type', ''),
-  coalesce(payload->>'frame_subtype', ''),
+  coalesce(frame_subtype, payload->>'frame_subtype', ''),
   coalesce(channel_number::text, payload->>'channel_number', payload->>'channel', ''),
   coalesce(signal_dbm::text, payload->>'signal_dbm', ''),
   coalesce(retry::text, payload->>'retry', ''),

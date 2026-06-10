@@ -41,6 +41,7 @@ dependencies {
 
     // Database
     implementation("org.postgresql:postgresql:$postgresqlVersion")
+    implementation("io.minio:minio:8.5.17")
 
     // JSON processing
     implementation("com.fasterxml.jackson.core:jackson-databind")
