@@ -107,7 +107,8 @@ fn validate_load(load: &OracleLoad) -> Result<ValidatedLoad, String> {
 
     let target = sink_target(&load.stream_name)
         .map_err(|_| format!("unsupported stream_name {}", load.stream_name))?;
-    let payload = resolve_payload(&load.payload_ref)?;
+    let payload_ref = load.payload_ref.as_deref().unwrap_or("");
+    let payload = resolve_payload(payload_ref)?;
     let values = payload_rows(target, &payload)?;
     let rows = proxy_event_rows_from_values(target, &values)?;
     let blocked_rows = blocked_event_rows_from_values(target, &values)?;

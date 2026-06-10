@@ -171,11 +171,11 @@ async fn process_collected_message(
     println!(
         "service={SERVICE_NAME} event=batch_received batch_id={} batch_no={} stream_name={} payload_ref={} cursor_start={} cursor_end={} attempt={} payload_bytes={}",
         load.batch_id,
-        load.batch_no,
+        load.batch_no.unwrap_or(0),
         load.stream_name,
-        load.payload_ref,
-        load.cursor_start,
-        load.cursor_end,
+        load.payload_ref.as_deref().unwrap_or(""),
+        load.cursor_start.as_deref().unwrap_or(""),
+        load.cursor_end.as_deref().unwrap_or(""),
         load.attempt,
         payload_bytes,
     );

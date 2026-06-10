@@ -9,13 +9,13 @@ fn routes_wireless_audit_loads_to_frame_sink() {
         OracleLoad {
             job_id: "job-2".to_string(),
             batch_id: "batch-2".to_string(),
-            batch_no: 0,
+            batch_no: Some(0),
             stream_name: "wireless.audit".to_string(),
-            payload_ref: inline_payload(
+            payload_ref: Some(inline_payload(
                 r#"{"event_type":"wifi_management_frame","observed_at":"2026-04-21T00:00:00Z","sensor_id":"aa:bb:cc:dd:ee:ff","location_id":"lab","interface":"wlan0","channel":6,"frame_type":"management","frame_subtype":"beacon","bssid":"10:20:30:40:50:60","ssid":"corp","signal_dbm":-42,"sequence_number":7,"raw_len":128,"retry":true,"more_data":false,"power_save":false,"protected":true,"to_ds":false,"from_ds":false,"handshake_captured":false,"security_flags":2,"identity_source":"unknown","tags":["threat:signal_anomaly"],"anomaly_reasons":["signal_anomaly"]}"#,
-            ),
-            cursor_start: "20".to_string(),
-            cursor_end: "21".to_string(),
+            )),
+            cursor_start: Some("20".to_string()),
+            cursor_end: Some("21".to_string()),
             attempt: 1,
         },
         &mut sink,
@@ -39,13 +39,13 @@ fn routes_wireless_bandwidth_loads_to_bandwidth_sink() {
         OracleLoad {
             job_id: "job-bw".to_string(),
             batch_id: "batch-bw".to_string(),
-            batch_no: 0,
+            batch_no: Some(0),
             stream_name: "audit.wireless.bandwidth".to_string(),
-            payload_ref: inline_payload(
+            payload_ref: Some(inline_payload(
                 r#"{"schema_version":1,"event_type":"wireless_bandwidth_window","window_start":"2026-04-21T00:00:00Z","window_end":"2026-04-21T00:01:00Z","sensor_id":"aa:bb:cc:dd:ee:ff","location_id":"lab","interface":"wlan0","channel":6,"source_mac":"aa:bb:cc:dd:ee:01","destination_bssid":"10:20:30:40:50:60","ssid":"corp","bytes":524288001,"frame_count":9,"retry_count":1,"more_data_count":2,"power_save_count":3,"strongest_signal_dbm":-40,"external_bssid":true,"threshold_exceeded":true,"frame_size_histogram":{"under_100":1,"range_100_500":2,"range_500_1000":3,"range_1000_1500":4},"inter_arrival_p50_ms":17,"wall_clock_delta_ms":50,"window_is_partial":false,"published_at":"2026-04-21T00:01:01Z"}"#,
-            ),
-            cursor_start: "1".to_string(),
-            cursor_end: "2".to_string(),
+            )),
+            cursor_start: Some("1".to_string()),
+            cursor_end: Some("2".to_string()),
             attempt: 1,
         },
         &mut sink,
@@ -92,11 +92,11 @@ fn routes_wireless_alert_and_inventory_targets() {
             OracleLoad {
                 job_id: format!("job-{topic}"),
                 batch_id: format!("batch-{topic}"),
-                batch_no: 0,
+                batch_no: Some(0),
                 stream_name: topic.to_string(),
-                payload_ref: inline_payload(payload),
-                cursor_start: "1".to_string(),
-                cursor_end: "2".to_string(),
+                payload_ref: Some(inline_payload(payload)),
+                cursor_start: Some("1".to_string()),
+                cursor_end: Some("2".to_string()),
                 attempt: 1,
             },
             &mut sink,
