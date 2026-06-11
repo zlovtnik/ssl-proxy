@@ -34,8 +34,8 @@ public class CoordinatorStartupListener {
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         log.info("event=process_start mode={} stream_name={} scan_topic={} load_topic={} result_topic={}",
-                props.getMode(), props.getStreamName(),
-                props.getScanTopic(), props.getLoadTopic(), props.getResultTopic());
+                props.mode(), props.streamName(),
+                props.scanTopic(), props.loadTopic(), props.resultTopic());
 
         // Run healthcheck (same as Zig coordinator healthcheck mode)
         healthCheckService.checkHealth();
@@ -43,6 +43,6 @@ public class CoordinatorStartupListener {
         // Ensure cursors for all streams (same as main.zig ensureCursors())
         String cursor = cursorService.ensureCursors();
         log.info("event=ready mode={} primary_stream={} cursor={}",
-                props.getMode(), props.getStreamName(), cursor);
+                props.mode(), props.streamName(), cursor);
     }
 }

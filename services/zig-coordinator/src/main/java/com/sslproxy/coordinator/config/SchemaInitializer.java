@@ -41,7 +41,7 @@ public class SchemaInitializer implements InitializingBean {
     }
 
     void applySchema() {
-        Path schemaPath = Path.of(props.getSyncSchemaFile());
+        Path schemaPath = Path.of(props.syncSchemaFile());
         if (!Files.isReadable(schemaPath)) {
             throw new IllegalStateException("Schema file is not readable: " + schemaPath);
         }
