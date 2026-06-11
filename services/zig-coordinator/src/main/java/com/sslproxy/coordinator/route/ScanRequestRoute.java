@@ -60,8 +60,8 @@ public class ScanRequestRoute extends RouteBuilder {
                     .addKeyValue("event", "scan_request_ingest")
                     .addKeyValue("status", "received")
                     .addKeyValue("route", "scan-request-consumer")
-                    .addKeyValue("topic", props.getScanTopic())
-                    .addKeyValue("consumer_group", props.getScanConsumer())
+                    .addKeyValue("topic", props.scanTopic())
+                    .addKeyValue("consumer_group", props.scanConsumer())
                     .addKeyValue("payload_bytes", payloadBytes)
                     .log("scan request received");
         })

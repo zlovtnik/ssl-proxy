@@ -34,7 +34,7 @@ public class HealthCheckService {
      */
     private void checkPostgres() {
         try {
-            db.checkConnectivity();
+            db.checkConnectivity().orElseThrow();
             log.info("event=healthcheck_step step=check_postgres status=ok");
         } catch (Exception e) {
             log.error("event=healthcheck_step step=check_postgres status=error error={}", e.getMessage());
@@ -47,7 +47,7 @@ public class HealthCheckService {
      */
     private void checkPostgresCursors() {
         try {
-            db.ensureAllCursors();
+            db.ensureAllCursors().orElseThrow();
             log.info("event=healthcheck_step step=check_cursors status=ok");
         } catch (Exception e) {
             log.error("event=healthcheck_step step=check_cursors status=error error={}", e.getMessage());

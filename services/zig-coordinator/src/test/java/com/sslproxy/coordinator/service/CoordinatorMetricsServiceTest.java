@@ -12,10 +12,8 @@ class CoordinatorMetricsServiceTest {
     @Test
     void exposesRouteStateAndBackpressureGauges() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        CoordinatorProperties props = new CoordinatorProperties();
-        props.setHeartbeatLogIntervalMs(15_000);
 
-        CoordinatorMetricsService service = new CoordinatorMetricsService(registry, props);
+        CoordinatorMetricsService service = new CoordinatorMetricsService(registry, CoordinatorProperties.DEFAULTS);
         service.recordBackpressureActive(true);
         service.recordRouteState("scan", "scan-request-consumer", true, false);
         service.recordRouteState("result", "oracle-result-consumer", false, true);

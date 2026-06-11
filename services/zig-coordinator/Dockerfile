@@ -3,16 +3,26 @@
 # Multi-stage build: Gradle + JDK to slim JRE runtime
 # =============================================================================
 
-# ---- Stage 1: Build with Gradle + JDK 21 ----
-FROM gradle:8.12-jdk21 AS builder
+# ---- Stage 1: Build with Gradle + Azul Zulu JDK 21 ----
+FROM azul/zulu-openjdk-alpine:21 AS builder
+
+# Install Gradle
+ARG GRADLE_VERSION=8.12
+RUN apk add --no-cache curl unzip \
+    && curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+      -o /tmp/gradle.zip \
+    && unzip -d /opt /tmp/gradle.zip \
+    && ln -s /opt/gradle-${GRADLE_VERSION}/bin/gradle /usr/local/bin/gradle \
+    && rm /tmp/gradle.zip
+
 WORKDIR /app
 COPY services/zig-coordinator/ ./
 RUN gradle build --no-daemon -x test
 
-# ---- Stage 2: Runtime with slim JRE ----
-FROM eclipse-temurin:21-jre-alpine
+# ---- Stage 2: Runtime with Azul Zulu JRE 21 (Alpine) ----
+FROM azul/zulu-openjdk-alpine:21-jre
 ENV TZ=America/New_York
-ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
 
 RUN apk add --no-cache \
         bash \

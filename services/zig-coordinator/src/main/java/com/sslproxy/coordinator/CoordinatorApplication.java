@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import com.sslproxy.coordinator.config.CoordinatorProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
@@ -14,7 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import java.util.concurrent.TimeUnit;
 
 @SpringBootApplication
-@EnableConfigurationProperties
+@EnableConfigurationProperties(CoordinatorProperties.class)
 @EnableScheduling
 public class CoordinatorApplication {
 

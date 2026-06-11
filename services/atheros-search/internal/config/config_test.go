@@ -53,6 +53,9 @@ func TestLoadWorkerAndAlertDefaults(t *testing.T) {
 
 	require.NoError(t, err)
 	require.False(t, cfg.WorkerEnabled)
+	require.True(t, cfg.SchemaReadyRequired)
+	require.Equal(t, 60*time.Second, cfg.SchemaReadyTimeout)
+	require.Equal(t, time.Second, cfg.SchemaReadyPollInterval)
 	require.NotEmpty(t, cfg.WorkerName)
 	require.Equal(t, 64, cfg.WorkerBatchSize)
 	require.Equal(t, 64, cfg.WorkerRequestBatchSize)
@@ -241,6 +244,9 @@ func clearWorkerAndAlertEnv(t *testing.T) {
 		"ATHSEARCH_WORKER_DB_CALL_TIMEOUT_MS",
 		"ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED",
 		"ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE",
+		"ATHSEARCH_SCHEMA_READY_REQUIRED",
+		"ATHSEARCH_SCHEMA_READY_TIMEOUT_MS",
+		"ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS",
 		"ATHSEARCH_ALERT_ENABLED",
 		"ATHSEARCH_ALERT_SWEEP_INTERVAL",
 		"ATHSEARCH_ALERT_NEAR_DUP_THRESHOLD",

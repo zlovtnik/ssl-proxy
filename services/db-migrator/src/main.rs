@@ -3,6 +3,7 @@ mod cli;
 mod discovery;
 mod error;
 mod executor;
+mod schema_control;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

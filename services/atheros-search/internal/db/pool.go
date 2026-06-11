@@ -13,6 +13,15 @@ type Pool struct {
 	*pgxpool.Pool
 }
 
+type SchemaReadyStatus struct {
+	Ready         bool
+	AllApplied    bool
+	TotalCount    int64
+	PendingCount  int64
+	FailedCount   int64
+	FailedObjects []string
+}
+
 func NewPool(ctx context.Context, dsn string) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -42,6 +51,25 @@ func (p *Pool) Health(ctx context.Context) error {
 		return fmt.Errorf("postgres health query returned %d", one)
 	}
 	return nil
+}
+
+func (p *Pool) SchemaReady(ctx context.Context) (SchemaReadyStatus, error) {
+	var status SchemaReadyStatus
+	err := p.QueryRow(ctx, `
+SELECT ready, all_applied, total_count, pending_count, failed_count, failed_objects
+FROM schema_control.schema_ready
+`).Scan(
+		&status.Ready,
+		&status.AllApplied,
+		&status.TotalCount,
+		&status.PendingCount,
+		&status.FailedCount,
+		&status.FailedObjects,
+	)
+	if err != nil {
+		return SchemaReadyStatus{}, fmt.Errorf("schema readiness query: %w", err)
+	}
+	return status, nil
 }
 
 func (p *Pool) CountEmbeddings(ctx context.Context) (int64, error) {

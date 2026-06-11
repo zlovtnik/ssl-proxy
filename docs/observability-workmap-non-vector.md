@@ -185,7 +185,7 @@ Runtime controls:
 - Prometheus: `127.0.0.1:9090`
 - Loki: `127.0.0.1:3100`
 - Jaeger UI: `127.0.0.1:16686`
-- OTel Collector OTLP gRPC (host): `127.0.0.1:4319`
+- OTel Collector OTLP gRPC (host): `127.0.0.1:4317`
 - OTel Collector OTLP HTTP (host): `127.0.0.1:4320`
 - OTel Collector self-metrics: `127.0.0.1:8888`
 - Pushgateway: `127.0.0.1:9091`

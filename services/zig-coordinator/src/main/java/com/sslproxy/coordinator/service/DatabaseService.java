@@ -1,9 +1,12 @@
 package com.sslproxy.coordinator.service;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.fp.DbResult;
+import com.sslproxy.coordinator.fp.FpUtils;
+import com.sslproxy.coordinator.fp.SqlArrays;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
-import org.postgresql.util.PGobject;
+import io.vavr.control.Try;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,9 +19,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -30,6 +31,7 @@ import java.util.function.Supplier;
 public class DatabaseService {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseService.class);
+    private static final int SQL_ARRAY_CHUNK_SIZE = 500;
 
     private final JdbcTemplate jdbc;
     private final CoordinatorProperties props;
@@ -49,8 +51,11 @@ public class DatabaseService {
     // ========== Connectivity ==========
 
     /** Quick connectivity check. */
-    public void checkConnectivity() {
-        observeDb("coordinator.check_connectivity", () -> jdbc.queryForObject("SELECT 1", Integer.class));
+    public DbResult<Void> checkConnectivity() {
+        return DbResult.run(
+                () -> observeDb("coordinator.check_connectivity", () -> jdbc.queryForObject("SELECT 1", Integer.class)),
+                "coordinator.check_connectivity"
+        );
     }
 
     // ========== Cursor management ==========
@@ -59,32 +64,35 @@ public class DatabaseService {
      * Ensures a cursor for the given stream name exists.
      * Returns the cursor value.
      */
-    public String ensureCursor(String streamName) {
-        return observeDb("coordinator.ensure_cursor", () -> jdbc.queryForObject(
-                "SELECT coordinator.ensure_cursor(?::text)::text",
-                String.class,
-                streamName
-        ));
+    public DbResult<String> ensureCursor(String streamName) {
+        return DbResult.of(
+                () -> observeDb("coordinator.ensure_cursor", () -> jdbc.queryForObject(
+                        "SELECT coordinator.ensure_cursor(?::text)::text",
+                        String.class,
+                        streamName
+                )),
+                "coordinator.ensure_cursor"
+        );
     }
 
     /**
      * Ensures cursors for all configured streams.
      * Returns the cursor for the primary stream.
      */
-    public String ensureAllCursors() {
-        String primaryCursor = null;
-        for (String rawName : props.getStreamNames().split(",")) {
-            String name = rawName.trim();
-            if (name.isEmpty()) continue;
-            String cursor = ensureCursor(name);
-            if (name.equals(props.getStreamName())) {
-                primaryCursor = cursor;
+    public DbResult<String> ensureAllCursors() {
+        return DbResult.of(() -> {
+            String primaryCursor = null;
+            for (String name : props.streamNames()) {
+                String cursor = ensureCursor(name).orElseThrow();
+                if (name.equals(props.streamName())) {
+                    primaryCursor = cursor;
+                }
             }
-        }
-        if (primaryCursor == null) {
-            throw new RuntimeException("Cursor not found for primary stream: " + props.getStreamName());
-        }
-        return primaryCursor;
+            if (primaryCursor == null) {
+                throw new IllegalStateException("Cursor not found for primary stream: " + props.streamName());
+            }
+            return primaryCursor;
+        }, "coordinator.ensure_all_cursors");
     }
 
     // ========== Ingest ledger ==========
@@ -93,40 +101,37 @@ public class DatabaseService {
      * Returns the count of pending ledger entries.
      * coordinator.pending_ledger_count()
      */
-    public long pendingLedgerCount() {
-        return observeDb("coordinator.pending_ledger_count", () -> Optional.ofNullable(
-                jdbc.queryForObject(
+    public DbResult<Long> pendingLedgerCount() {
+        return DbResult.of(
+                () -> parseLongOrZero(observeDb("coordinator.pending_ledger_count", () -> jdbc.queryForObject(
                         "SELECT coordinator.pending_ledger_count()::text",
                         String.class
-                )
-        ).map(Long::parseLong).orElse(0L));
+                )), "coordinator.pending_ledger_count"),
+                "coordinator.pending_ledger_count"
+        );
     }
 
     /**
      * Processes the ingest ledger. Returns number of events processed.
      * coordinator.process_ingest_ledger()
      */
-    public long processIngestLedger() {
-        String streamNames = normalizeCsv(props.getStreamNames());
-        String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
-        String result = observeDb("coordinator.process_ingest_ledger", () -> jdbc.queryForObject(
-                "SELECT coordinator.process_ingest_ledger(" +
-                        "string_to_array(?::text, ','), " +
-                        "string_to_array(?::text, ','), " +
-                        "?::integer, ?::integer, ?::integer)::text",
-                String.class,
-                streamNames, oracleStreamNames,
-                props.getScanMaxAttempts(),
-                props.getScanRetryBackoffSeconds(),
-                props.getIngestBatchSize()
-        ));
-        if (result == null || result.isEmpty()) return 0;
-        try {
-            return Long.parseLong(result.trim());
-        } catch (NumberFormatException e) {
-            log.warn("processIngestLedger returned non-numeric: {}", result);
-            return 0;
-        }
+    public DbResult<Long> processIngestLedger() {
+        return DbResult.of(() -> {
+            String streamNames = joinCsv(props.streamNames());
+            String oracleStreamNames = joinCsv(props.oracleStreamNames());
+            String result = observeDb("coordinator.process_ingest_ledger", () -> jdbc.queryForObject(
+                    "SELECT coordinator.process_ingest_ledger(" +
+                            "string_to_array(?::text, ','), " +
+                            "string_to_array(?::text, ','), " +
+                            "?::integer, ?::integer, ?::integer)::text",
+                    String.class,
+                    streamNames, oracleStreamNames,
+                    props.scanMaxAttempts(),
+                    props.scanRetryBackoffSeconds(),
+                    props.ingestBatchSize()
+            ));
+            return parseLongOrZero(result, "coordinator.process_ingest_ledger");
+        }, "coordinator.process_ingest_ledger");
     }
 
     // ========== Scan request recording ==========
@@ -135,48 +140,41 @@ public class DatabaseService {
      * Records scan request batches.
      * coordinator.record_scan_request_batch()
      */
-    public int recordScanRequests(List<ScanRequestRecord> records) {
-        if (records.isEmpty()) return 0;
-
-        int totalRecorded = 0;
-        int chunkSize = 500;
-
-        for (int start = 0; start < records.size(); start += chunkSize) {
-            int end = Math.min(start + chunkSize, records.size());
-            List<ScanRequestRecord> chunk = records.subList(start, end);
-
-            String[] streamNames = normalizedCsvArray(props.getStreamNames());
-            String recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) -> {
-                Array requestArray = null;
-                Array payloadArray = null;
-                Array shaArray = null;
-                Array streamNameArray = null;
-                try {
-                    requestArray = createJsonbArray(connection, chunk, r -> r.requestJson);
-                    payloadArray = createJsonbArray(connection, chunk, r -> r.payloadJson);
-                    shaArray = createTextArray(connection, chunk, r -> r.payloadSha256);
-                    streamNameArray = createTextArray(connection, streamNames);
-
-                    return queryForSingleText(
-                            connection,
-                            "SELECT coordinator.record_scan_request_batch(?, ?, ?, ?)::text",
-                            requestArray,
-                            payloadArray,
-                            shaArray,
-                            streamNameArray
-                    );
-                } finally {
-                    freeArray(requestArray);
-                    freeArray(payloadArray);
-                    freeArray(shaArray);
-                    freeArray(streamNameArray);
-                }
-            }));
-            if (recorded != null && !recorded.isEmpty()) {
-                totalRecorded += Integer.parseInt(recorded.trim());
+    public DbResult<Integer> recordScanRequests(List<ScanRequestRecord> records) {
+        return DbResult.of(() -> {
+            if (records == null || records.isEmpty()) {
+                return 0;
             }
-        }
-        return totalRecorded;
+            return FpUtils.partition(records, SQL_ARRAY_CHUNK_SIZE).stream()
+                    .map(this::recordScanRequestChunk)
+                    .mapToInt(t -> t.getOrElse(0))
+                    .sum();
+        }, "coordinator.record_scan_request_batch");
+    }
+
+    private Try<Integer> recordScanRequestChunk(List<ScanRequestRecord> chunk) {
+        List<String> streamNames = props.streamNames();
+        return Try.of(() -> {
+            Integer recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) ->
+                    SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getRequestJson), requestArray ->
+                            SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getPayloadJson), payloadArray ->
+                                    SqlArrays.withTextArray(connection, extract(chunk, ScanRequestRecord::getPayloadSha256), shaArray ->
+                                            SqlArrays.withTextArray(connection, streamNames, streamNameArray ->
+                                                    queryForInt(
+                                                            connection,
+                                                            "SELECT coordinator.record_scan_request_batch(?, ?, ?, ?)::text",
+                                                            requestArray,
+                                                            payloadArray,
+                                                            shaArray,
+                                                            streamNameArray
+                                                    )
+                                            ).get()
+                                    ).get()
+                            ).get()
+                    ).get()
+            ));
+            return recorded == null ? 0 : recorded;
+        });
     }
 
     // ========== Batch dispatch ==========
@@ -185,59 +183,66 @@ public class DatabaseService {
      * Gets the next batch to dispatch. Returns the JSON payload or empty.
      * coordinator.get_next_batch()
      */
-    public Optional<String> getNextBatch() {
-        String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
-        String result = observeDb("coordinator.get_next_batch", () -> jdbc.queryForObject(
-                "SELECT coordinator.get_next_batch(string_to_array(?::text, ','))::text",
-                String.class,
-                oracleStreamNames
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> getNextBatch() {
+        return DbResult.of(() -> {
+            String oracleStreamNames = joinCsv(props.oracleStreamNames());
+            String result = observeDb("coordinator.get_next_batch", () -> jdbc.queryForObject(
+                    "SELECT coordinator.get_next_batch(string_to_array(?::text, ','))::text",
+                    String.class,
+                    oracleStreamNames
+            ));
+            return blankToNull(result);
+        }, "coordinator.get_next_batch");
     }
 
     /**
      * Recovers stale dispatched batches.
      * coordinator.recover_stale_dispatched_batches()
      */
-    public int recoverStaleDispatchedBatches() {
-        String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
-        String result = observeDb("coordinator.recover_stale_dispatched_batches", () -> jdbc.queryForObject(
-                "SELECT coordinator.recover_stale_dispatched_batches(" +
-                        "string_to_array(?::text, ','), " +
-                        "?::integer, ?::integer)::text",
-                String.class,
-                oracleStreamNames,
-                props.getBatchDispatchLeaseSeconds(),
-                props.getBatchMaxAttempts()
-        ));
-        if (result == null || result.isEmpty()) return 0;
-        return Integer.parseInt(result.trim());
+    public DbResult<Integer> recoverStaleDispatchedBatches() {
+        return DbResult.of(() -> {
+            String oracleStreamNames = joinCsv(props.oracleStreamNames());
+            String result = observeDb("coordinator.recover_stale_dispatched_batches", () -> jdbc.queryForObject(
+                    "SELECT coordinator.recover_stale_dispatched_batches(" +
+                            "string_to_array(?::text, ','), " +
+                            "?::integer, ?::integer)::text",
+                    String.class,
+                    oracleStreamNames,
+                    props.batchDispatchLeaseSeconds(),
+                    props.batchMaxAttempts()
+            ));
+            return parseIntOrZero(result, "coordinator.recover_stale_dispatched_batches");
+        }, "coordinator.recover_stale_dispatched_batches");
     }
 
     /**
      * Marks a batch dispatch as failed.
      * coordinator.mark_batch_dispatch_failed()
      */
-    public Optional<String> markBatchDispatchFailed(String loadJson, String errorText) {
-        String result = observeDb("coordinator.mark_batch_dispatch_failed", () -> jdbc.queryForObject(
-                "SELECT coordinator.mark_batch_dispatch_failed(?::jsonb, ?::text, ?::integer)::text",
-                String.class,
-                loadJson, errorText, props.getBatchMaxAttempts()
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> markBatchDispatchFailed(String loadJson, String errorText) {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.mark_batch_dispatch_failed", () -> jdbc.queryForObject(
+                    "SELECT coordinator.mark_batch_dispatch_failed(?::jsonb, ?::text, ?::integer)::text",
+                    String.class,
+                    loadJson, errorText, props.batchMaxAttempts()
+            ));
+            return blankToNull(result);
+        }, "coordinator.mark_batch_dispatch_failed");
     }
 
     /**
      * Releases a batch dispatch with an error.
      * coordinator.release_batch_dispatch()
      */
-    public Optional<String> releaseBatchDispatch(String loadJson, String errorText) {
-        String result = observeDb("coordinator.release_batch_dispatch", () -> jdbc.queryForObject(
-                "SELECT coordinator.release_batch_dispatch(?::jsonb, ?::text)::text",
-                String.class,
-                loadJson, errorText
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> releaseBatchDispatch(String loadJson, String errorText) {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.release_batch_dispatch", () -> jdbc.queryForObject(
+                    "SELECT coordinator.release_batch_dispatch(?::jsonb, ?::text)::text",
+                    String.class,
+                    loadJson, errorText
+            ));
+            return blankToNull(result);
+        }, "coordinator.release_batch_dispatch");
     }
 
     // ========== Results ==========
@@ -246,34 +251,31 @@ public class DatabaseService {
      * Processes batch results. Returns the number of results processed.
      * coordinator.process_batch_results()
      */
-    public int processBatchResults(List<String> resultJsons) {
-        if (resultJsons.isEmpty()) return 0;
-
-        int total = 0;
-        int chunkSize = 500;
-
-        for (int start = 0; start < resultJsons.size(); start += chunkSize) {
-            int end = Math.min(start + chunkSize, resultJsons.size());
-            List<String> chunk = resultJsons.subList(start, end);
-
-            String result = observeDb("coordinator.process_batch_results", () -> jdbc.execute((Connection connection) -> {
-                Array resultArray = null;
-                try {
-                    resultArray = createJsonbArray(connection, chunk);
-                    return queryForSingleText(
-                            connection,
-                            "SELECT coordinator.process_batch_results(?)::text",
-                            resultArray
-                    );
-                } finally {
-                    freeArray(resultArray);
-                }
-            }));
-            if (result != null && !result.isEmpty()) {
-                total += Integer.parseInt(result.trim());
+    public DbResult<Integer> processBatchResults(List<String> resultJsons) {
+        return DbResult.of(() -> {
+            if (resultJsons == null || resultJsons.isEmpty()) {
+                return 0;
             }
-        }
-        return total;
+            return FpUtils.partition(resultJsons, SQL_ARRAY_CHUNK_SIZE).stream()
+                    .map(this::processBatchResultChunk)
+                    .mapToInt(t -> t.getOrElse(0))
+                    .sum();
+        }, "coordinator.process_batch_results");
+    }
+
+    private Try<Integer> processBatchResultChunk(List<String> chunk) {
+        return Try.of(() -> {
+            Integer processed = observeDb("coordinator.process_batch_results", () -> jdbc.execute((Connection connection) ->
+                    SqlArrays.withJsonbArray(connection, chunk, resultArray ->
+                            queryForInt(
+                                    connection,
+                                    "SELECT coordinator.process_batch_results(?)::text",
+                                    resultArray
+                            )
+                    ).get()
+            ));
+            return processed == null ? 0 : processed;
+        });
     }
 
     // ========== Shadow audit ==========
@@ -282,141 +284,152 @@ public class DatabaseService {
      * Generates shadow device alerts.
      * coordinator.generate_shadow_alerts()
      */
-    public List<String> generateShadowAlerts() {
-        return observeDb("coordinator.generate_shadow_alerts", () -> jdbc.queryForList(
-                "SELECT coordinator.generate_shadow_alerts()::text",
-                String.class
-        ));
+    public DbResult<List<String>> generateShadowAlerts() {
+        return DbResult.of(
+                () -> observeDb("coordinator.generate_shadow_alerts", () -> jdbc.queryForList(
+                        "SELECT coordinator.generate_shadow_alerts()::text",
+                        String.class
+                )),
+                "coordinator.generate_shadow_alerts"
+        );
     }
 
     // ========== Wireless: Backlog ==========
 
-    public void saveBacklogEntry(String payloadJson) {
-        observeDb("coordinator.save_backlog_entry", () -> jdbc.update("SELECT coordinator.save_backlog_entry(?::jsonb)", payloadJson));
+    public DbResult<Void> saveBacklogEntry(String payloadJson) {
+        return DbResult.run(
+                () -> observeDb("coordinator.save_backlog_entry",
+                        () -> jdbc.update("SELECT coordinator.save_backlog_entry(?::jsonb)", payloadJson)),
+                "coordinator.save_backlog_entry"
+        );
     }
 
-    public Optional<String> listPendingBacklog() {
-        String result = observeDb("coordinator.list_pending_backlog", () -> jdbc.queryForObject(
-                "SELECT coordinator.list_pending_backlog()::text",
-                String.class
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> listPendingBacklog() {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.list_pending_backlog", () -> jdbc.queryForObject(
+                    "SELECT coordinator.list_pending_backlog()::text",
+                    String.class
+            ));
+            return blankToNull(result);
+        }, "coordinator.list_pending_backlog");
     }
 
-    public void markBacklogSynced(String dedupeKey) {
-        observeDb("coordinator.mark_backlog_synced", () -> jdbc.update("SELECT coordinator.mark_backlog_synced(?::text)", dedupeKey));
+    public DbResult<Void> markBacklogSynced(String dedupeKey) {
+        return DbResult.run(
+                () -> observeDb("coordinator.mark_backlog_synced",
+                        () -> jdbc.update("SELECT coordinator.mark_backlog_synced(?::text)", dedupeKey)),
+                "coordinator.mark_backlog_synced"
+        );
     }
 
-    public Optional<String> pruneBacklog() {
-        String result = observeDb("coordinator.prune_backlog", () -> jdbc.queryForObject(
-                "SELECT coordinator.prune_backlog()::text",
-                String.class
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> pruneBacklog() {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.prune_backlog", () -> jdbc.queryForObject(
+                    "SELECT coordinator.prune_backlog()::text",
+                    String.class
+            ));
+            return blankToNull(result);
+        }, "coordinator.prune_backlog");
     }
 
     // ========== Wireless: MAC lookup ==========
 
-    public Optional<String> lookupDeviceByMac(String mac) {
-        String result = observeDb("coordinator.lookup_device_by_mac", () -> jdbc.queryForObject(
-                "SELECT coordinator.lookup_device_by_mac(?::text)::text",
-                String.class,
-                mac
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> lookupDeviceByMac(String mac) {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.lookup_device_by_mac", () -> jdbc.queryForObject(
+                    "SELECT coordinator.lookup_device_by_mac(?::text)::text",
+                    String.class,
+                    mac
+            ));
+            return blankToNull(result);
+        }, "coordinator.lookup_device_by_mac");
     }
 
     // ========== Wireless: Networks ==========
 
-    public Optional<String> listAuthorizedNetworks() {
-        String result = observeDb("coordinator.list_authorized_networks", () -> jdbc.queryForObject(
-                "SELECT coordinator.list_authorized_networks()::text",
-                String.class
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> listAuthorizedNetworks() {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.list_authorized_networks", () -> jdbc.queryForObject(
+                    "SELECT coordinator.list_authorized_networks()::text",
+                    String.class
+            ));
+            return blankToNull(result);
+        }, "coordinator.list_authorized_networks");
     }
 
     // ========== Wireless: Probe flush ==========
 
-    public void flushProbeBatch(String probesJson) {
-        observeDb("coordinator.flush_probe_batch", () -> jdbc.update("SELECT coordinator.flush_probe_batch(?::jsonb)", probesJson));
+    public DbResult<Void> flushProbeBatch(String probesJson) {
+        return DbResult.run(
+                () -> observeDb("coordinator.flush_probe_batch",
+                        () -> jdbc.update("SELECT coordinator.flush_probe_batch(?::jsonb)", probesJson)),
+                "coordinator.flush_probe_batch"
+        );
     }
 
     // ========== Retention and raw payload archive ==========
 
-    public List<PayloadArchiveCandidate> listWirelessPayloadArchiveCandidates() {
-        return observeDb("coordinator.list_wireless_payload_archive_candidates", () -> jdbc.query(
-                "SELECT dedupe_key, stream_name, observed_at, payload_sha256, payload_bytes, payload::text AS payload " +
-                        "FROM coordinator.list_wireless_payload_archive_candidates(?::integer, ?::integer)",
-                (rs, rowNum) -> new PayloadArchiveCandidate(
-                        rs.getString("dedupe_key"),
-                        rs.getString("stream_name"),
-                        rs.getObject("observed_at", OffsetDateTime.class),
-                        rs.getString("payload_sha256"),
-                        rs.getLong("payload_bytes"),
-                        rs.getString("payload")
-                ),
-                props.getWirelessRawPayloadHotDays(),
-                props.getWirelessRawArchiveBatchSize()
-        ));
+    public DbResult<List<PayloadArchiveCandidate>> listWirelessPayloadArchiveCandidates() {
+        return DbResult.of(
+                () -> observeDb("coordinator.list_wireless_payload_archive_candidates", () -> jdbc.query(
+                        "SELECT dedupe_key, stream_name, observed_at, payload_sha256, payload_bytes, payload::text AS payload " +
+                                "FROM coordinator.list_wireless_payload_archive_candidates(?::integer, ?::integer)",
+                        (rs, rowNum) -> new PayloadArchiveCandidate(
+                                rs.getString("dedupe_key"),
+                                rs.getString("stream_name"),
+                                rs.getObject("observed_at", OffsetDateTime.class),
+                                rs.getString("payload_sha256"),
+                                rs.getLong("payload_bytes"),
+                                rs.getString("payload")
+                        ),
+                        props.wirelessRawPayloadHotDays(),
+                        props.wirelessRawArchiveBatchSize()
+                )),
+                "coordinator.list_wireless_payload_archive_candidates"
+        );
     }
 
-    public boolean recordPayloadArchive(String dedupeKey, String payloadSha256, String archiveUri, long payloadBytes) {
-        Boolean recorded = observeDb("coordinator.record_payload_archive", () -> jdbc.queryForObject(
-                "SELECT coordinator.record_payload_archive(?::text, ?::text, ?::text, ?::bigint)",
-                Boolean.class,
-                dedupeKey,
-                payloadSha256,
-                archiveUri,
-                payloadBytes
-        ));
-        return Boolean.TRUE.equals(recorded);
+    public DbResult<Boolean> recordPayloadArchive(String dedupeKey,
+                                                  String payloadSha256,
+                                                  String archiveUri,
+                                                  long payloadBytes) {
+        return DbResult.of(() -> {
+            Boolean recorded = observeDb("coordinator.record_payload_archive", () -> jdbc.queryForObject(
+                    "SELECT coordinator.record_payload_archive(?::text, ?::text, ?::text, ?::bigint)",
+                    Boolean.class,
+                    dedupeKey,
+                    payloadSha256,
+                    archiveUri,
+                    payloadBytes
+            ));
+            return Boolean.TRUE.equals(recorded);
+        }, "coordinator.record_payload_archive");
     }
 
-    public Optional<String> pruneSyncEventRetention() {
-        String result = observeDb("coordinator.prune_sync_event_retention", () -> jdbc.queryForObject(
-                "SELECT coordinator.prune_sync_event_retention(?::integer, ?::integer, ?::integer)::text",
-                String.class,
-                props.getSyncEventRowRetentionDays(),
-                props.getSyncEventTombstoneRetentionDays(),
-                props.getRetentionPruneBatchSize()
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> pruneSyncEventRetention() {
+        return DbResult.of(() -> {
+            String result = observeDb("coordinator.prune_sync_event_retention", () -> jdbc.queryForObject(
+                    "SELECT coordinator.prune_sync_event_retention(?::integer, ?::integer, ?::integer)::text",
+                    String.class,
+                    props.syncEventRowRetentionDays(),
+                    props.syncEventTombstoneRetentionDays(),
+                    props.retentionPruneBatchSize()
+            ));
+            return blankToNull(result);
+        }, "coordinator.prune_sync_event_retention");
     }
 
-    public Optional<String> pruneVectorRetention() {
-        String result = observeDb("vec_prune_retention", () -> jdbc.queryForObject(
-                "SELECT vec_prune_retention()::text",
-                String.class
-        ));
-        return Optional.ofNullable(result).filter(s -> !s.isEmpty());
+    public DbResult<String> pruneVectorRetention() {
+        return DbResult.of(() -> {
+            String result = observeDb("vec_prune_retention", () -> jdbc.queryForObject(
+                    "SELECT vec_prune_retention()::text",
+                    String.class
+            ));
+            return blankToNull(result);
+        }, "vec_prune_retention");
     }
 
     // ========== Helpers ==========
-
-    /**
-     * Normalizes a CSV string (trims whitespace, removes empties).
-     */
-    public String normalizeCsv(String csv) {
-        StringBuilder sb = new StringBuilder();
-        boolean first = true;
-        for (String part : csv.split(",")) {
-            String trimmed = part.trim();
-            if (trimmed.isEmpty()) continue;
-            if (!first) sb.append(',');
-            sb.append(trimmed);
-            first = false;
-        }
-        return sb.toString();
-    }
-
-    private String[] normalizedCsvArray(String csv) {
-        String normalized = normalizeCsv(csv);
-        if (normalized.isEmpty()) {
-            return new String[0];
-        }
-        return normalized.split(",");
-    }
 
     private <T> T observeDb(String operation, Supplier<T> supplier) {
         return Observation
@@ -427,46 +440,16 @@ public class DatabaseService {
                 .observe(supplier);
     }
 
-    private Array createJsonbArray(Connection connection,
-                                   List<ScanRequestRecord> records,
-                                   Function<ScanRequestRecord, String> extractor) throws SQLException {
-        Object[] values = new Object[records.size()];
-        for (int i = 0; i < records.size(); i++) {
-            values[i] = toJsonbObject(extractor.apply(records.get(i)));
-        }
-        return connection.createArrayOf("jsonb", values);
+    private <T> List<String> extract(List<T> items, Function<T, String> extractor) {
+        return items.stream().map(extractor).toList();
     }
 
-    private Array createJsonbArray(Connection connection, List<String> items) throws SQLException {
-        Object[] values = new Object[items.size()];
-        for (int i = 0; i < items.size(); i++) {
-            values[i] = toJsonbObject(items.get(i));
-        }
-        return connection.createArrayOf("jsonb", values);
+    private static String joinCsv(List<String> items) {
+        return items.isEmpty() ? "" : String.join(",", items);
     }
 
-    private Array createTextArray(Connection connection,
-                                  List<ScanRequestRecord> records,
-                                  Function<ScanRequestRecord, String> extractor) throws SQLException {
-        String[] values = new String[records.size()];
-        for (int i = 0; i < records.size(); i++) {
-            values[i] = extractor.apply(records.get(i));
-        }
-        return connection.createArrayOf("text", values);
-    }
-
-    private Array createTextArray(Connection connection, String[] values) throws SQLException {
-        return connection.createArrayOf("text", values);
-    }
-
-    private PGobject toJsonbObject(String json) throws SQLException {
-        if (json == null) {
-            return null;
-        }
-        PGobject object = new PGobject();
-        object.setType("jsonb");
-        object.setValue(json);
-        return object;
+    private int queryForInt(Connection connection, String sql, Array... arrays) throws SQLException {
+        return parseIntOrZero(queryForSingleText(connection, sql, arrays), sql);
     }
 
     private String queryForSingleText(Connection connection, String sql, Array... arrays) throws SQLException {
@@ -480,34 +463,49 @@ public class DatabaseService {
         }
     }
 
-    private void freeArray(Array array) {
-        if (array == null) {
-            return;
+    private int parseIntOrZero(String result, String operation) {
+        if (result == null || result.isBlank()) {
+            return 0;
         }
         try {
-            array.free();
-        } catch (SQLException e) {
-            log.warn("failed to free JDBC array: {}", e.getMessage());
+            return Integer.parseInt(result.trim());
+        } catch (NumberFormatException e) {
+            log.warn("{} returned non-numeric: {}", operation, result);
+            return 0;
         }
     }
 
-    // ========== Inner class ==========
+    private long parseLongOrZero(String result, String operation) {
+        if (result == null || result.isBlank()) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(result.trim());
+        } catch (NumberFormatException e) {
+            log.warn("{} returned non-numeric: {}", operation, result);
+            return 0L;
+        }
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
+
+    // ========== Inner records ==========
 
     /** Represents a scan request record to be inserted. */
-    public static class ScanRequestRecord {
-        private final String requestJson;
-        private final String payloadJson;
-        private final String payloadSha256;
-
-        public ScanRequestRecord(String requestJson, String payloadJson, String payloadSha256) {
-            this.requestJson = requestJson;
-            this.payloadJson = payloadJson;
-            this.payloadSha256 = payloadSha256;
+    public record ScanRequestRecord(String requestJson, String payloadJson, String payloadSha256) {
+        public String getRequestJson() {
+            return requestJson;
         }
 
-        public String getRequestJson() { return requestJson; }
-        public String getPayloadJson() { return payloadJson; }
-        public String getPayloadSha256() { return payloadSha256; }
+        public String getPayloadJson() {
+            return payloadJson;
+        }
+
+        public String getPayloadSha256() {
+            return payloadSha256;
+        }
     }
 
     public record PayloadArchiveCandidate(

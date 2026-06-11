@@ -176,6 +176,12 @@ All views are optimized for ADB columnar storage.
   - `cargo run -p db-migrator -- list --sql-dir ./sql`
   - `cargo run -p db-migrator -- validate --sql-dir ./sql`
   - `cargo run -p db-migrator -- apply --sql-dir ./sql --database-url "$DATABASE_URL"`
+- `db-migrator apply` bootstraps `schema_control.schema_objects`, `schema_control.schema_apply_log`, and the single-row readiness view `schema_control.schema_ready`. Runtime apps should gate startup with:
+  ```sql
+  select ready, all_applied, pending_count, failed_count, failed_objects
+  from schema_control.schema_ready;
+  ```
+  Proceed only when `ready = true` and `failed_count = 0`. `atheros-search` enforces this by default before serving traffic or starting its embedded worker path; tune with `ATHSEARCH_SCHEMA_READY_TIMEOUT_MS`, `ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS`, or temporarily bypass legacy environments with `ATHSEARCH_SCHEMA_READY_REQUIRED=false`. Any standalone `vec-worker` deployment should perform the same query before leasing embedding jobs.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
@@ -291,7 +297,7 @@ Grafana:     127.0.0.1:3004
 Prometheus:  127.0.0.1:9090
 Loki:        127.0.0.1:3100
 Jaeger UI:   127.0.0.1:16686
-OTel gRPC:   127.0.0.1:4319
+OTel gRPC:   127.0.0.1:4317
 OTel HTTP:   127.0.0.1:4320
 ```
 

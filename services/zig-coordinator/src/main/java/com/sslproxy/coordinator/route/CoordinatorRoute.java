@@ -2,17 +2,15 @@ package com.sslproxy.coordinator.route;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
 import com.sslproxy.coordinator.processor.BatchDispatchProcessor;
-import com.sslproxy.coordinator.processor.IngestProcessor;
-import com.sslproxy.coordinator.processor.ShadowAuditProcessor;
-import com.sslproxy.coordinator.processor.StaleBatchRecoveryProcessor;
+import com.sslproxy.coordinator.processor.CoordinatorProcessors;
 import com.sslproxy.coordinator.service.AdaptivePullController;
 import com.sslproxy.coordinator.service.BackpressureService;
 import com.sslproxy.coordinator.service.CoordinatorMetricsService;
 import com.sslproxy.coordinator.service.CursorService;
-import com.sslproxy.coordinator.service.DatabaseService;
 import com.sslproxy.coordinator.service.HealthCheckService;
 import org.apache.camel.CamelContext;
 import org.apache.camel.LoggingLevel;
+import org.apache.camel.Processor;
 import org.apache.camel.builder.RouteBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,10 +39,8 @@ public class CoordinatorRoute extends RouteBuilder {
     private final CoordinatorProperties props;
     private final HealthCheckService healthCheckService;
     private final CursorService cursorService;
-    private final IngestProcessor ingestProcessor;
-    private final StaleBatchRecoveryProcessor staleBatchRecoveryProcessor;
+    private final CoordinatorProcessors coordinatorProcessors;
     private final BatchDispatchProcessor batchDispatchProcessor;
-    private final ShadowAuditProcessor shadowAuditProcessor;
 
     private final BackpressureService backpressureService;
     private final AdaptivePullController adaptivePullController;
@@ -54,10 +50,8 @@ public class CoordinatorRoute extends RouteBuilder {
     public CoordinatorRoute(CoordinatorProperties props,
                             HealthCheckService healthCheckService,
                             CursorService cursorService,
-                            IngestProcessor ingestProcessor,
-                            StaleBatchRecoveryProcessor staleBatchRecoveryProcessor,
+                            CoordinatorProcessors coordinatorProcessors,
                             BatchDispatchProcessor batchDispatchProcessor,
-                            ShadowAuditProcessor shadowAuditProcessor,
                             BackpressureService backpressureService,
                             AdaptivePullController adaptivePullController,
                             CoordinatorMetricsService metricsService,
@@ -65,10 +59,8 @@ public class CoordinatorRoute extends RouteBuilder {
         this.props = props;
         this.healthCheckService = healthCheckService;
         this.cursorService = cursorService;
-        this.ingestProcessor = ingestProcessor;
-        this.staleBatchRecoveryProcessor = staleBatchRecoveryProcessor;
+        this.coordinatorProcessors = coordinatorProcessors;
         this.batchDispatchProcessor = batchDispatchProcessor;
-        this.shadowAuditProcessor = shadowAuditProcessor;
         this.backpressureService = backpressureService;
         this.adaptivePullController = adaptivePullController;
         this.metricsService = metricsService;
@@ -140,25 +132,20 @@ public class CoordinatorRoute extends RouteBuilder {
                 .log(LoggingLevel.TRACE, "event=scan_requests status=delegated");
 
         // =====================================================================
-        // Ingest processing - fully delegates to IngestProcessor
+        // Ingest processing - delegates to CoordinatorProcessors.ingest()
         // Mirrors scheduler.zig: processIngestLedger() call
         // =====================================================================
         from("direct:processIngest")
                 .routeId("coordinator-ingest")
-                .process(ingestProcessor)
-                .process(exchange -> {
-                    Object body = exchange.getIn().getBody();
-                    long processed = body instanceof Number ? ((Number) body).longValue() : 0;
-                    metricsService.recordIngestProcessed(processed);
-                });
+                .process(coordinatorProcessors.ingest());
 
         // =====================================================================
-        // Stale batch recovery - fully delegates to StaleBatchRecoveryProcessor
+        // Stale batch recovery - delegates to CoordinatorProcessors.recoverStale()
         // Mirrors scheduler.zig: recoverStaleDispatchedBatches() call
         // =====================================================================
         from("direct:recoverStaleBatches")
                 .routeId("coordinator-stale-recovery")
-                .process(staleBatchRecoveryProcessor);
+                .process(coordinatorProcessors.recoverStale());
 
         // =====================================================================
         // Batch dispatch loop - dispatches up to dispatch_batch_size batches.
@@ -168,11 +155,8 @@ public class CoordinatorRoute extends RouteBuilder {
         from("direct:dispatchBatches")
                 .routeId("coordinator-dispatch")
                 .loop(simple("{{coordinator.dispatch-batch-size}}"))
-                    .process(batchDispatchProcessor)
+                    .process(countingDispatch(batchDispatchProcessor, metricsService))
                     .choice()
-                        .when(simple("${body} == true"))
-                            .process(exchange -> metricsService.recordBatchDispatched())
-                            .endChoice()
                         .when(simple("${body} == false"))
                             .log(LoggingLevel.TRACE, "event=batch_dispatch status=no_more_batches")
                         .endChoice()
@@ -190,12 +174,12 @@ public class CoordinatorRoute extends RouteBuilder {
 
         // =====================================================================
         // Shadow audit - rate-limited to 10 second intervals
-        // Uses ShadowAuditProcessor which tracks lastRunTimestamp internally
+        // Uses CoordinatorProcessors.shadowAudit() for rate-limit state
         // Mirrors scheduler.zig: runShadowAudit() with SHADOW_AUDIT_INTERVAL_MS
         // =====================================================================
         from("direct:shadowAudit")
                 .routeId("coordinator-shadow-audit")
-                .process(shadowAuditProcessor)
+                .process(coordinatorProcessors.shadowAudit(10_000))
                 .choice()
                     .when(simple("${body} == true"))
                         .log(LoggingLevel.INFO, "event=shadow_audit status=completed")
@@ -244,5 +228,14 @@ public class CoordinatorRoute extends RouteBuilder {
                     .addKeyValue("error", e.getMessage())
                     .log("route state metric update failed");
         }
+    }
+
+    private static Processor countingDispatch(Processor delegate, CoordinatorMetricsService metrics) {
+        return exchange -> {
+            delegate.process(exchange);
+            if (Boolean.TRUE.equals(exchange.getIn().getBody(Boolean.class))) {
+                metrics.recordBatchDispatched();
+            }
+        };
     }
 }

@@ -1,6 +1,8 @@
 package com.sslproxy.coordinator.processor;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.fp.BoundedAccumulator;
+import com.sslproxy.coordinator.fp.DbResult;
 import com.sslproxy.coordinator.service.DatabaseService;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
@@ -8,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -26,13 +27,12 @@ public class ResultProcessor implements Processor {
 
     private final DatabaseService databaseService;
     private final CoordinatorProperties props;
-
-    /** In-memory batch accumulator. */
-    private final List<String> pending = new ArrayList<>();
+    private final BoundedAccumulator<String> accumulator;
 
     public ResultProcessor(DatabaseService databaseService, CoordinatorProperties props) {
         this.databaseService = databaseService;
         this.props = props;
+        this.accumulator = new BoundedAccumulator<>("oracle-result", maxPendingResults(props));
     }
 
     @Override
@@ -42,19 +42,13 @@ public class ResultProcessor implements Processor {
             return;
         }
 
-        boolean shouldFlush;
-        synchronized (pending) {
-            int maxPending = maxPendingResults();
-            if (pending.size() >= maxPending) {
-                log.error("event=batch_result_ingest status=rejected reason=pending_limit "
-                        + "pending_count={} max_pending={}", pending.size(), maxPending);
-                throw new IllegalStateException("Pending result accumulator is full");
-            }
-            pending.add(resultJson);
-            shouldFlush = pending.size() >= props.getResultFetchCount();
+        if (!accumulator.offer(resultJson)) {
+            log.error("event=batch_result_ingest status=rejected reason=accumulator_full "
+                    + "pending_count={} max_pending={}", accumulator.size(), accumulator.capacity());
+            throw new IllegalStateException("Pending result accumulator is full");
         }
 
-        if (shouldFlush) {
+        if (accumulator.size() >= props.resultFetchCount()) {
             flushPending();
         }
     }
@@ -64,31 +58,38 @@ public class ResultProcessor implements Processor {
      * Can be called externally on a timer to drain partial batches.
      */
     public void flushPending() {
-        List<String> batch;
-        synchronized (pending) {
-            if (pending.isEmpty()) {
-                return;
-            }
-            batch = new ArrayList<>(pending);
-            pending.clear();
+        List<String> batch = accumulator.drain(props.resultFetchCount());
+        if (batch.isEmpty()) {
+            return;
         }
 
-        try {
-            int processed = databaseService.processBatchResults(batch);
-            log.info("event=batch_result_ingest status=processed count={} batch_size={}", processed, batch.size());
-        } catch (Exception e) {
-            log.error("event=batch_result_ingest status=failed batch_size={} error=\"{}\"",
-                    batch.size(), e.getMessage());
-            // Re-add for retry - at-least-once semantics
-            synchronized (pending) {
-                pending.addAll(0, batch);
+        switch (databaseService.processBatchResults(batch)) {
+            case DbResult.Ok<Integer> ok ->
+                    log.info("event=batch_result_ingest status=processed count={} batch_size={}", ok.value(), batch.size());
+            case DbResult.Empty<Integer> ignored ->
+                    log.info("event=batch_result_ingest status=processed count=0 batch_size={}", batch.size());
+            case DbResult.Err<Integer> err -> {
+                log.error("event=batch_result_ingest status=failed operation={} batch_size={} error=\"{}\"",
+                        err.operation(), batch.size(), sanitize(err.cause().getMessage()));
+                int dropped = accumulator.requeueFront(batch);
+                if (dropped > 0) {
+                    log.error("event=batch_result_ingest status=dropped reason=accumulator_full "
+                                    + "dropped_count={} pending_count={} max_pending={}",
+                            dropped, accumulator.size(), accumulator.capacity());
+                }
             }
-            throw new IllegalStateException("Failed to process batch results", e);
         }
     }
 
-    private int maxPendingResults() {
-        int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
-        return Math.max(props.getResultFetchCount(), props.getResultFetchCount() * multiplier);
+    private static int maxPendingResults(CoordinatorProperties props) {
+        int multiplier = Math.max(1, props.backpressureBudgetMultiplier());
+        return Math.max(1, props.resultFetchCount()) * multiplier;
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 }

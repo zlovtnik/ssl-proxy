@@ -2,16 +2,21 @@ package com.sslproxy.coordinator.processor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.fp.BoundedAccumulator;
+import com.sslproxy.coordinator.fp.DbResult;
 import com.sslproxy.coordinator.model.ScanRequest;
 import com.sslproxy.coordinator.service.DatabaseService;
 import com.sslproxy.coordinator.util.Sha256Utils;
+import io.vavr.Tuple;
+import io.vavr.Tuple2;
+import io.vavr.control.Try;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -35,9 +40,7 @@ public class ScanRecordProcessor implements Processor {
     private final PayloadResolver payloadResolver;
     private final DatabaseService databaseService;
     private final CoordinatorProperties props;
-
-    /** In-memory batch accumulator - flushes when full or on timeout. */
-    private final List<DatabaseService.ScanRequestRecord> pending = new ArrayList<>();
+    private final BoundedAccumulator<DatabaseService.ScanRequestRecord> accumulator;
 
     public ScanRecordProcessor(ObjectMapper objectMapper,
                                PayloadResolver payloadResolver,
@@ -47,6 +50,7 @@ public class ScanRecordProcessor implements Processor {
         this.payloadResolver = payloadResolver;
         this.databaseService = databaseService;
         this.props = props;
+        this.accumulator = new BoundedAccumulator<>("scan-request", maxPendingResults(props));
     }
 
     @Override
@@ -56,66 +60,57 @@ public class ScanRecordProcessor implements Processor {
             return;
         }
 
-        try {
-            ScanRequest scanRequest = objectMapper.readValue(rawJson, ScanRequest.class);
+        buildRecord(rawJson)
+                .onSuccess(record -> {
+                    if (!accumulator.offer(record)) {
+                        log.atError()
+                                .addKeyValue("event", "scan_request_ingest")
+                                .addKeyValue("status", "dropped")
+                                .addKeyValue("reason", "accumulator_full")
+                                .addKeyValue("pending_count", accumulator.size())
+                                .addKeyValue("max_pending", accumulator.capacity())
+                                .log("scan request accumulator dropped record");
+                    }
+                })
+                .onFailure(e -> log.atError()
+                        .addKeyValue("event", "scan_request_deserialize_failed")
+                        .addKeyValue("error", sanitize(e.getMessage()))
+                        .addKeyValue("payload_bytes", rawJson.length())
+                        .log("scan request deserialize failed"));
 
-            String resolvedPayloadJson = null;
-            String payloadSha256 = null;
+        if (accumulator.size() >= props.scanFetchCount()) {
+            flushPending();
+        }
+    }
 
-            if (scanRequest.getPayloadRef() != null && !scanRequest.getPayloadRef().isEmpty()) {
-                try {
-                    byte[] payloadBytes = payloadResolver.resolve(
-                            scanRequest.getPayloadRef(),
-                            props.getSyncOutboxDir()
-                    );
-                    resolvedPayloadJson = new String(payloadBytes, java.nio.charset.StandardCharsets.UTF_8);
-                    payloadSha256 = Sha256Utils.sha256Hex(payloadBytes);
-                } catch (Exception e) {
+    private Try<DatabaseService.ScanRequestRecord> buildRecord(String rawJson) {
+        return Try.of(() -> objectMapper.readValue(rawJson, ScanRequest.class))
+                .map(scanRequest -> {
+                    Tuple2<String, String> resolved = resolvePayload(scanRequest);
+                    return new DatabaseService.ScanRequestRecord(rawJson, resolved._1, resolved._2);
+                });
+    }
+
+    private Tuple2<String, String> resolvePayload(ScanRequest scanRequest) {
+        String payloadRef = scanRequest.getPayloadRef();
+        if (payloadRef == null || payloadRef.isEmpty()) {
+            return Tuple.of(null, null);
+        }
+
+        return Try.of(() -> payloadResolver.resolve(payloadRef, props.syncOutboxDir()))
+                .map(payloadBytes -> Tuple.of(
+                        new String(payloadBytes, StandardCharsets.UTF_8),
+                        Sha256Utils.sha256Hex(payloadBytes)
+                ))
+                .getOrElseGet(error -> {
                     log.atWarn()
                             .addKeyValue("event", "scan_request_payload_resolve_failed")
                             .addKeyValue("dedupe_key", scanRequest.getDedupeKey())
-                            .addKeyValue("payload_ref_scheme", payloadRefScheme(scanRequest.getPayloadRef()))
-                            .addKeyValue("error", sanitize(e.getMessage()))
+                            .addKeyValue("payload_ref_scheme", payloadRefScheme(payloadRef))
+                            .addKeyValue("error", sanitize(error.getMessage()))
                             .log("scan request payload resolve failed");
-                    // Zig stores null payload/sha256 on resolve failure - match that behavior
-                    resolvedPayloadJson = null;
-                    payloadSha256 = null;
-                }
-            }
-
-            DatabaseService.ScanRequestRecord record = new DatabaseService.ScanRequestRecord(
-                    rawJson,
-                    resolvedPayloadJson,
-                    payloadSha256
-            );
-
-            boolean shouldFlush;
-            synchronized (pending) {
-                int maxPending = maxPendingResults();
-                if (pending.size() >= maxPending) {
-                    pending.remove(0);
-                    log.atError()
-                            .addKeyValue("event", "scan_request_ingest")
-                            .addKeyValue("status", "dropped_oldest")
-                            .addKeyValue("reason", "pending_limit")
-                            .addKeyValue("pending_count", pending.size())
-                            .addKeyValue("max_pending", maxPending)
-                            .log("scan request accumulator dropped oldest record");
-                }
-                pending.add(record);
-                shouldFlush = pending.size() >= props.getScanFetchCount();
-            }
-
-            if (shouldFlush) {
-                flushPending();
-            }
-        } catch (Exception e) {
-            log.atError()
-                    .addKeyValue("event", "scan_request_deserialize_failed")
-                    .addKeyValue("error", sanitize(e.getMessage()))
-                    .addKeyValue("payload_bytes", rawJson.length())
-                    .log("scan request deserialize failed");
-        }
+                    return Tuple.of(null, null);
+                });
     }
 
     /**
@@ -124,59 +119,51 @@ public class ScanRecordProcessor implements Processor {
      * on a timer to drain partial batches.
      */
     public void flushPending() {
-        List<DatabaseService.ScanRequestRecord> batch;
-        synchronized (pending) {
-            if (pending.isEmpty()) {
-                return;
-            }
-            batch = new ArrayList<>(pending);
-            pending.clear();
+        List<DatabaseService.ScanRequestRecord> batch = accumulator.drain(props.scanFetchCount());
+        if (batch.isEmpty()) {
+            return;
         }
 
-        try {
-            int recorded = databaseService.recordScanRequests(batch);
-            log.atInfo()
+        switch (databaseService.recordScanRequests(batch)) {
+            case DbResult.Ok<Integer> ok -> log.atInfo()
                     .addKeyValue("event", "scan_request_ingest")
                     .addKeyValue("status", "recorded")
-                    .addKeyValue("count", recorded)
+                    .addKeyValue("count", ok.value())
                     .addKeyValue("batch_size", batch.size())
                     .log("scan request batch recorded");
-        } catch (Exception e) {
-            log.atError()
+            case DbResult.Empty<Integer> ignored -> log.atInfo()
                     .addKeyValue("event", "scan_request_ingest")
-                    .addKeyValue("status", "failed")
+                    .addKeyValue("status", "recorded")
+                    .addKeyValue("count", 0)
                     .addKeyValue("batch_size", batch.size())
-                    .addKeyValue("error", sanitize(e.getMessage()))
-                    .addKeyValue("root_cause", rootCauseSummary(e))
-                    .log("scan request batch failed");
-            // Re-add failed records for retry while enforcing a bounded accumulator.
-            synchronized (pending) {
-                int maxPending = maxPendingResults();
-                int available = Math.max(0, maxPending - pending.size());
-                int toRequeue = Math.min(batch.size(), available);
-
-                if (toRequeue > 0) {
-                    pending.addAll(0, batch.subList(0, toRequeue));
-                }
-
-                int dropped = batch.size() - toRequeue;
+                    .log("scan request batch recorded");
+            case DbResult.Err<Integer> err -> {
+                log.atError()
+                        .addKeyValue("event", "scan_request_ingest")
+                        .addKeyValue("status", "failed")
+                        .addKeyValue("operation", err.operation())
+                        .addKeyValue("batch_size", batch.size())
+                        .addKeyValue("error", sanitize(err.cause().getMessage()))
+                        .addKeyValue("root_cause", rootCauseSummary(err.cause()))
+                        .log("scan request batch failed");
+                int dropped = accumulator.requeueFront(batch);
                 if (dropped > 0) {
                     log.atError()
                             .addKeyValue("event", "scan_request_ingest")
                             .addKeyValue("status", "dropped")
-                            .addKeyValue("reason", "pending_limit")
+                            .addKeyValue("reason", "accumulator_full")
                             .addKeyValue("dropped_count", dropped)
-                            .addKeyValue("pending_count", pending.size())
-                            .addKeyValue("max_pending", maxPending)
+                            .addKeyValue("pending_count", accumulator.size())
+                            .addKeyValue("max_pending", accumulator.capacity())
                             .log("scan request retry records dropped");
                 }
             }
         }
     }
 
-    private int maxPendingResults() {
-        int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
-        return Math.max(props.getScanFetchCount(), props.getScanFetchCount() * multiplier);
+    private static int maxPendingResults(CoordinatorProperties props) {
+        int multiplier = Math.max(1, props.backpressureBudgetMultiplier());
+        return Math.max(1, props.scanFetchCount()) * multiplier;
     }
 
     private String payloadRefScheme(String payloadRef) {
