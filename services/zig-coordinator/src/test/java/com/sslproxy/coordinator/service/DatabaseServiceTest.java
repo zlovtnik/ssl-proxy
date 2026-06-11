@@ -29,9 +29,7 @@ class DatabaseServiceTest {
     @Test
     void recordScanRequestsBindsTypedArraysAndFreesThem() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        CoordinatorProperties props = new CoordinatorProperties();
-        props.setStreamNames(" proxy.events, wireless.audit, ");
-        DatabaseService service = new DatabaseService(jdbc, props);
+        DatabaseService service = new DatabaseService(jdbc, withStreamNames(List.of("proxy.events", "wireless.audit")));
 
         Connection connection = mock(Connection.class);
         PreparedStatement statement = mock(PreparedStatement.class);
@@ -88,7 +86,7 @@ class DatabaseServiceTest {
     @Test
     void processBatchResultsBindsTypedJsonbArrayAndFreesIt() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        DatabaseService service = new DatabaseService(jdbc, new CoordinatorProperties());
+        DatabaseService service = new DatabaseService(jdbc, CoordinatorProperties.DEFAULTS);
 
         Connection connection = mock(Connection.class);
         PreparedStatement statement = mock(PreparedStatement.class);
@@ -126,6 +124,78 @@ class DatabaseServiceTest {
     @SuppressWarnings("unchecked")
     private static ConnectionCallback<String> anyConnectionCallback() {
         return any(ConnectionCallback.class);
+    }
+
+    private static CoordinatorProperties withStreamNames(List<String> streamNames) {
+        CoordinatorProperties d = CoordinatorProperties.DEFAULTS;
+        return new CoordinatorProperties(
+            d.streamName(),
+            streamNames,
+            d.oracleStreamNames(),
+            d.scanTopic(),
+            d.loadTopic(),
+            d.resultTopic(),
+            d.databaseUrl(),
+            d.syncRedpandaUrl(),
+            d.redpandaTopicManifestFile(),
+            d.syncSchemaFile(),
+            d.redpandaPublishTimeoutMs(),
+            d.auditStreamName(),
+            d.resultStreamName(),
+            d.scanConsumer(),
+            d.loadConsumer(),
+            d.resultConsumer(),
+            d.wirelessBacklogStreamName(),
+            d.wirelessMacStreamName(),
+            d.wirelessNetworksStreamName(),
+            d.wirelessProbeStreamName(),
+            d.wirelessBacklogSaveConsumer(),
+            d.wirelessBacklogListConsumer(),
+            d.wirelessBacklogSyncedConsumer(),
+            d.wirelessBacklogPruneConsumer(),
+            d.wirelessMacLookupConsumer(),
+            d.wirelessNetworksAuthorizedConsumer(),
+            d.wirelessProbeFlushConsumer(),
+            d.wirelessBacklogListReplyTopic(),
+            d.wirelessBacklogPruneReplyTopic(),
+            d.wirelessMacLookupReplyTopic(),
+            d.wirelessNetworksAuthorizedReplyTopic(),
+            d.wirelessRawArchiveEnabled(),
+            d.wirelessRawPayloadHotDays(),
+            d.syncEventRowRetentionDays(),
+            d.syncEventTombstoneRetentionDays(),
+            d.wirelessRawArchiveBatchSize(),
+            d.retentionPruneBatchSize(),
+            d.wirelessRawArchiveIntervalMs(),
+            d.retentionMaintenanceIntervalMs(),
+            d.wirelessRawArchiveBucket(),
+            d.minioEndpoint(),
+            d.minioAccessKeyId(),
+            d.minioSecretAccessKey(),
+            d.syncOutboxDir(),
+            d.scanMaxAttempts(),
+            d.scanRetryBackoffSeconds(),
+            d.batchDispatchLeaseSeconds(),
+            d.batchMaxAttempts(),
+            d.scanFetchCount(),
+            d.resultFetchCount(),
+            d.scanConsumersCount(),
+            d.resultConsumersCount(),
+            d.wirelessConsumersCount(),
+            d.wirelessMaxPollRecords(),
+            d.ingestBatchSize(),
+            d.dispatchBatchSize(),
+            d.idleSleepMs(),
+            d.idleSleepBackoffMs(),
+            d.backpressureBudgetMultiplier(),
+            d.adaptivePullChangeThreshold(),
+            d.adaptivePullMinRestartIntervalMs(),
+            d.redpandaLagMetricsEnabled(),
+            d.redpandaLagMetricsPollIntervalMs(),
+            d.redpandaLagMetricsTimeoutMs(),
+            d.heartbeatLogIntervalMs(),
+            d.mode()
+        );
     }
 
     private static void assertJsonb(String expectedValue, Object raw) {

@@ -54,6 +54,13 @@ func main() {
 		logger.Fatal().Err(err).Msg("connect postgres")
 	}
 	defer pool.Close()
+	if cfg.SchemaReadyRequired {
+		if err := health.WaitForSchemaReady(ctx, pool, cfg.SchemaReadyTimeout, cfg.SchemaReadyPollInterval, logger); err != nil {
+			logger.Fatal().Err(err).Msg("schema readiness gate failed")
+		}
+	} else {
+		logger.Warn().Msg("schema readiness gate disabled")
+	}
 
 	tokenAuth, err := auth.NewTokenAuth(cfg.APIKeySHA256)
 	if err != nil {
@@ -77,7 +84,7 @@ func main() {
 	}
 
 	svc := search.NewService(pool.Pool, embedder, cfg, m, logger)
-	readiness := &health.Readiness{DB: pool, Embedder: embedder}
+	readiness := &health.Readiness{DB: pool, Embedder: embedder, SchemaReadyRequired: cfg.SchemaReadyRequired}
 	ingest.StartFreshnessConsumer(ctx, pool.Pool, cfg, logger)
 	if cfg.WorkerEnabled {
 		logger.Info().Msg("new worker drain enabled; legacy embedded job drainer suppressed")

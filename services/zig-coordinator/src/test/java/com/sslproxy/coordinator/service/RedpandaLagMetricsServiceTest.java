@@ -162,14 +162,75 @@ class RedpandaLagMetricsServiceTest {
     }
 
     private CoordinatorProperties coordinatorProperties() {
-        CoordinatorProperties props = new CoordinatorProperties();
-        props.setSyncRedpandaUrl("redpanda://redpanda:9092");
-        props.setScanTopic("sync.scan.request");
-        props.setScanConsumer("zig-coordinator-scan");
-        props.setResultTopic("sync.oracle.result");
-        props.setResultConsumer("zig-coordinator-result");
-        props.setRedpandaLagMetricsTimeoutMs(100);
-        return props;
+        CoordinatorProperties d = CoordinatorProperties.DEFAULTS;
+        return new CoordinatorProperties(
+            d.streamName(),
+            d.streamNames(),
+            d.oracleStreamNames(),
+            "sync.scan.request",
+            d.loadTopic(),
+            "sync.oracle.result",
+            d.databaseUrl(),
+            "redpanda://redpanda:9092",
+            d.redpandaTopicManifestFile(),
+            d.syncSchemaFile(),
+            d.redpandaPublishTimeoutMs(),
+            d.auditStreamName(),
+            d.resultStreamName(),
+            "zig-coordinator-scan",
+            d.loadConsumer(),
+            "zig-coordinator-result",
+            d.wirelessBacklogStreamName(),
+            d.wirelessMacStreamName(),
+            d.wirelessNetworksStreamName(),
+            d.wirelessProbeStreamName(),
+            d.wirelessBacklogSaveConsumer(),
+            d.wirelessBacklogListConsumer(),
+            d.wirelessBacklogSyncedConsumer(),
+            d.wirelessBacklogPruneConsumer(),
+            d.wirelessMacLookupConsumer(),
+            d.wirelessNetworksAuthorizedConsumer(),
+            d.wirelessProbeFlushConsumer(),
+            d.wirelessBacklogListReplyTopic(),
+            d.wirelessBacklogPruneReplyTopic(),
+            d.wirelessMacLookupReplyTopic(),
+            d.wirelessNetworksAuthorizedReplyTopic(),
+            d.wirelessRawArchiveEnabled(),
+            d.wirelessRawPayloadHotDays(),
+            d.syncEventRowRetentionDays(),
+            d.syncEventTombstoneRetentionDays(),
+            d.wirelessRawArchiveBatchSize(),
+            d.retentionPruneBatchSize(),
+            d.wirelessRawArchiveIntervalMs(),
+            d.retentionMaintenanceIntervalMs(),
+            d.wirelessRawArchiveBucket(),
+            d.minioEndpoint(),
+            d.minioAccessKeyId(),
+            d.minioSecretAccessKey(),
+            d.syncOutboxDir(),
+            d.scanMaxAttempts(),
+            d.scanRetryBackoffSeconds(),
+            d.batchDispatchLeaseSeconds(),
+            d.batchMaxAttempts(),
+            d.scanFetchCount(),
+            d.resultFetchCount(),
+            d.scanConsumersCount(),
+            d.resultConsumersCount(),
+            d.wirelessConsumersCount(),
+            d.wirelessMaxPollRecords(),
+            d.ingestBatchSize(),
+            d.dispatchBatchSize(),
+            d.idleSleepMs(),
+            d.idleSleepBackoffMs(),
+            d.backpressureBudgetMultiplier(),
+            d.adaptivePullChangeThreshold(),
+            d.adaptivePullMinRestartIntervalMs(),
+            d.redpandaLagMetricsEnabled(),
+            d.redpandaLagMetricsPollIntervalMs(),
+            100,
+            d.heartbeatLogIntervalMs(),
+            d.mode()
+        );
     }
 
     private static final class MutableClock extends Clock {

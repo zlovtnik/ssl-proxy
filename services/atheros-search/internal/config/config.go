@@ -23,28 +23,31 @@ const (
 )
 
 type Config struct {
-	PostgresDSN           string
-	RedpandaBootstrap     string
-	EmbeddingModel        string
-	EmbeddingDimensions   int
-	EmbeddingBackend      string
-	EventEmbeddingScope   string
-	GRPCPort              int
-	HTTPPort              int
-	MetricsPort           int
-	LogLevel              string
-	AuditTopic            string
-	BandwidthTopic        string
-	ConsumerGroup         string
-	SearchTimeout         time.Duration
-	HybridAlpha           float64
-	APIKeySHA256          string
-	EmbedderEnabled       bool
-	IngestEnabled         bool
-	EmbeddingBatchSize    int
-	EmbeddingPollInterval time.Duration
-	ReadyLagThreshold     int64
-	CORSAllowedOrigins    []string
+	PostgresDSN             string
+	RedpandaBootstrap       string
+	EmbeddingModel          string
+	EmbeddingDimensions     int
+	EmbeddingBackend        string
+	EventEmbeddingScope     string
+	GRPCPort                int
+	HTTPPort                int
+	MetricsPort             int
+	LogLevel                string
+	AuditTopic              string
+	BandwidthTopic          string
+	ConsumerGroup           string
+	SearchTimeout           time.Duration
+	HybridAlpha             float64
+	APIKeySHA256            string
+	EmbedderEnabled         bool
+	IngestEnabled           bool
+	EmbeddingBatchSize      int
+	EmbeddingPollInterval   time.Duration
+	ReadyLagThreshold       int64
+	SchemaReadyRequired     bool
+	SchemaReadyTimeout      time.Duration
+	SchemaReadyPollInterval time.Duration
+	CORSAllowedOrigins      []string
 
 	WorkerEnabled               bool
 	WorkerName                  string
@@ -100,6 +103,9 @@ func Load() (Config, error) {
 		EmbeddingBatchSize:          envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 32),
 		EmbeddingPollInterval:       time.Duration(envInt("ATHSEARCH_EMBEDDING_POLL_INTERVAL_MS", 500)) * time.Millisecond,
 		ReadyLagThreshold:           int64(envInt("ATHSEARCH_READY_LAG_THRESHOLD", 10000)),
+		SchemaReadyRequired:         envBool("ATHSEARCH_SCHEMA_READY_REQUIRED", true),
+		SchemaReadyTimeout:          time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
+		SchemaReadyPollInterval:     time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
 		CORSAllowedOrigins:          envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
 		WorkerEnabled:               envBool("ATHSEARCH_WORKER_ENABLED", false),
 		WorkerName:                  envString("ATHSEARCH_WORKER_NAME", defaultWorkerName()),
@@ -148,6 +154,12 @@ func Load() (Config, error) {
 	}
 	if cfg.SearchTimeout <= 0 {
 		return cfg, errors.New("ATHSEARCH_SEARCH_TIMEOUT_MS must be positive")
+	}
+	if cfg.SchemaReadyTimeout <= 0 {
+		return cfg, errors.New("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS must be positive")
+	}
+	if cfg.SchemaReadyPollInterval <= 0 {
+		return cfg, errors.New("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS must be positive")
 	}
 	if cfg.EmbeddingBatchSize < 1 || cfg.EmbeddingBatchSize > 512 {
 		return cfg, errors.New("ATHSEARCH_EMBEDDING_BATCH_SIZE must be between 1 and 512")
