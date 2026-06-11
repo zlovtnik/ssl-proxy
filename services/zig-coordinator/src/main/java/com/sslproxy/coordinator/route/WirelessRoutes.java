@@ -79,7 +79,7 @@ public class WirelessRoutes extends RouteBuilder {
         .routeId("wireless-backlog-list")
         .process(replyingHandler(
                 payload -> db.listPendingBacklog().orElse("[]"),
-                props.getWirelessBacklogListReplyTopic(),
+                props.wirelessBacklogListReplyTopic(),
                 "backlog_list"
         ));
 
@@ -107,7 +107,7 @@ public class WirelessRoutes extends RouteBuilder {
         .routeId("wireless-backlog-prune")
         .process(replyingHandler(
                 payload -> String.format("{\"pruned\":%d}", parseLongOrZero(db.pruneBacklog().orElse("0"))),
-                props.getWirelessBacklogPruneReplyTopic(),
+                props.wirelessBacklogPruneReplyTopic(),
                 "backlog_prune"
         ));
 
@@ -126,7 +126,7 @@ public class WirelessRoutes extends RouteBuilder {
                     }
                     return db.lookupDeviceByMac(mac).orElse("null");
                 },
-                props.getWirelessMacLookupReplyTopic(),
+                props.wirelessMacLookupReplyTopic(),
                 "mac_lookup"
         ));
 
@@ -138,7 +138,7 @@ public class WirelessRoutes extends RouteBuilder {
         .routeId("wireless-networks-authorized")
         .process(replyingHandler(
                 payload -> db.listAuthorizedNetworks().orElse("[]"),
-                props.getWirelessNetworksAuthorizedReplyTopic(),
+                props.wirelessNetworksAuthorizedReplyTopic(),
                 "networks_authorized"
         ));
 

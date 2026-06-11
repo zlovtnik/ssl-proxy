@@ -53,8 +53,8 @@ public class OracleResultRoute extends RouteBuilder {
                         .addKeyValue("event", "batch_result_ingest")
                         .addKeyValue("status", "received")
                         .addKeyValue("route", "oracle-result-consumer")
-                        .addKeyValue("topic", props.getResultTopic())
-                        .addKeyValue("consumer_group", props.getResultConsumer())
+                        .addKeyValue("topic", props.resultTopic())
+                        .addKeyValue("consumer_group", props.resultConsumer())
                         .addKeyValue("payload_bytes", payloadBytes)
                         .log("oracle result received");
             }
