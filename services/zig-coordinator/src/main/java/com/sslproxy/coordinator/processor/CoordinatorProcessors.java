@@ -110,6 +110,7 @@ public class CoordinatorProcessors {
                 case DbResult.Err<List<String>> err -> {
                     log.error("event=shadow_audit status=failed operation={} error=\"{}\"",
                             err.operation(), sanitize(err.cause().getMessage()));
+                    lastShadowAuditMs = now;
                     exchange.getIn().setBody(false);
                 }
             }

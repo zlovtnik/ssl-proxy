@@ -83,10 +83,26 @@ public class BatchDispatchProcessor implements Processor {
             }
         } catch (JsonProcessingException e) {
             log.error("event=batch_dispatch status=deserialize_failed error=\"{}\"", sanitize(e.getMessage()));
+            handleDispatchFailure(batchJson, e);
             exchange.getIn().setBody(false);
         } catch (Exception e) {
             log.error("event=batch_dispatch status=failed error=\"{}\"", sanitize(e.getMessage()));
+            handleDispatchFailure(batchJson, e);
             exchange.getIn().setBody(false);
+        }
+    }
+
+    private void handleDispatchFailure(String batchJson, Exception dispatchError) {
+        switch (databaseService.markBatchDispatchFailed(batchJson, dispatchError.getMessage())) {
+            case DbResult.Ok<String> ignored ->
+                    log.info("event=batch_dispatch status=marked_failed");
+            case DbResult.Empty<String> ignored ->
+                    log.info("event=batch_dispatch status=marked_failed");
+            case DbResult.Err<String> err -> {
+                log.error("event=batch_dispatch status=mark_failed_error operation={} error=\"{}\"",
+                        err.operation(), sanitize(err.cause().getMessage()));
+                releaseBatch(batchJson, dispatchError);
+            }
         }
     }
 
@@ -101,6 +117,18 @@ public class BatchDispatchProcessor implements Processor {
                         payload.getBatchId(), err.operation(), sanitize(err.cause().getMessage()));
                 releaseBatch(batchJson, payload, publishError);
             }
+        }
+    }
+
+    private void releaseBatch(String batchJson, Exception dispatchError) {
+        switch (databaseService.releaseBatchDispatch(batchJson, dispatchError.getMessage())) {
+            case DbResult.Ok<String> ignored ->
+                    log.info("event=batch_dispatch status=released");
+            case DbResult.Empty<String> ignored ->
+                    log.info("event=batch_dispatch status=released");
+            case DbResult.Err<String> err ->
+                    log.error("event=batch_dispatch status=release_failed operation={} error=\"{}\"",
+                            err.operation(), sanitize(err.cause().getMessage()));
         }
     }
 

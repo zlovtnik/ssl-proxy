@@ -1,6 +1,7 @@
 package com.sslproxy.coordinator.service;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.fp.DbResult;
 import org.junit.jupiter.api.Test;
 import org.postgresql.util.PGobject;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -11,12 +12,15 @@ import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -112,6 +116,45 @@ class DatabaseServiceTest {
         assertJsonb(resultJson, jsonbArrays.getValue()[0]);
         verify(statement).setArray(1, resultArray);
         verify(resultArray).free();
+    }
+
+    @Test
+    void recordScanRequestsReturnsErrWhenAnyChunkFails() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        DatabaseService service = new DatabaseService(jdbc, withStreamNames(List.of("proxy.events")));
+
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet resultSet = mock(ResultSet.class);
+        Array requestArray = mock(Array.class);
+        Array payloadArray = mock(Array.class);
+        Array shaArray = mock(Array.class);
+        Array streamArray = mock(Array.class);
+
+        when(connection.createArrayOf(eq("jsonb"), any(Object[].class)))
+                .thenReturn(requestArray, payloadArray, requestArray, payloadArray);
+        when(connection.createArrayOf(eq("text"), any(Object[].class)))
+                .thenReturn(shaArray, streamArray, shaArray, streamArray);
+        when(connection.prepareStatement("SELECT coordinator.record_scan_request_batch(?, ?, ?, ?)::text"))
+                .thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(resultSet).thenThrow(new SQLException("chunk failed"));
+        when(resultSet.next()).thenReturn(true);
+        when(resultSet.getString(1)).thenReturn("500");
+        stubJdbcExecute(jdbc, connection);
+
+        List<DatabaseService.ScanRequestRecord> records = IntStream.range(0, 501)
+                .mapToObj(i -> new DatabaseService.ScanRequestRecord(
+                        "{\"stream_name\":\"proxy.events\",\"dedupe_key\":\"dedupe-" + i + "\"}",
+                        null,
+                        null
+                ))
+                .toList();
+
+        var result = service.recordScanRequests(records);
+
+        DbResult.Err<Integer> err = assertInstanceOf(DbResult.Err.class, result);
+        assertEquals("coordinator.record_scan_request_batch", err.operation());
+        assertTrue(err.cause().getMessage().contains("failed for 1 chunk"));
     }
 
     private static void stubJdbcExecute(JdbcTemplate jdbc, Connection connection) {

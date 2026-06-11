@@ -22,7 +22,7 @@ RUN gradle build --no-daemon -x test
 # ---- Stage 2: Runtime with Azul Zulu JRE 21 (Alpine) ----
 FROM azul/zulu-openjdk-alpine:21-jre
 ENV TZ=America/New_York
-ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
 
 RUN apk add --no-cache \
         bash \

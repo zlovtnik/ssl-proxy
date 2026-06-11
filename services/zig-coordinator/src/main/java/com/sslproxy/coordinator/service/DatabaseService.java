@@ -19,6 +19,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -145,10 +146,10 @@ public class DatabaseService {
             if (records == null || records.isEmpty()) {
                 return 0;
             }
-            return FpUtils.partition(records, SQL_ARRAY_CHUNK_SIZE).stream()
+            List<Try<Integer>> chunkResults = FpUtils.partition(records, SQL_ARRAY_CHUNK_SIZE).stream()
                     .map(this::recordScanRequestChunk)
-                    .mapToInt(t -> t.getOrElse(0))
-                    .sum();
+                    .toList();
+            return sumChunkResultsOrThrow("coordinator.record_scan_request_batch", chunkResults);
         }, "coordinator.record_scan_request_batch");
     }
 
@@ -156,9 +157,9 @@ public class DatabaseService {
         List<String> streamNames = props.streamNames();
         return Try.of(() -> {
             Integer recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) ->
-                    SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getRequestJson), requestArray ->
-                            SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getPayloadJson), payloadArray ->
-                                    SqlArrays.withTextArray(connection, extract(chunk, ScanRequestRecord::getPayloadSha256), shaArray ->
+                    SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::requestJson), requestArray ->
+                            SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::payloadJson), payloadArray ->
+                                    SqlArrays.withTextArray(connection, extract(chunk, ScanRequestRecord::payloadSha256), shaArray ->
                                             SqlArrays.withTextArray(connection, streamNames, streamNameArray ->
                                                     queryForInt(
                                                             connection,
@@ -256,10 +257,10 @@ public class DatabaseService {
             if (resultJsons == null || resultJsons.isEmpty()) {
                 return 0;
             }
-            return FpUtils.partition(resultJsons, SQL_ARRAY_CHUNK_SIZE).stream()
+            List<Try<Integer>> chunkResults = FpUtils.partition(resultJsons, SQL_ARRAY_CHUNK_SIZE).stream()
                     .map(this::processBatchResultChunk)
-                    .mapToInt(t -> t.getOrElse(0))
-                    .sum();
+                    .toList();
+            return sumChunkResultsOrThrow("coordinator.process_batch_results", chunkResults);
         }, "coordinator.process_batch_results");
     }
 
@@ -444,6 +445,33 @@ public class DatabaseService {
         return items.stream().map(extractor).toList();
     }
 
+    private int sumChunkResultsOrThrow(String operation, List<Try<Integer>> chunkResults) {
+        int successfulCount = 0;
+        List<Throwable> failures = new ArrayList<>();
+
+        for (Try<Integer> chunkResult : chunkResults) {
+            if (chunkResult.isSuccess()) {
+                successfulCount += chunkResult.get();
+            } else {
+                failures.add(chunkResult.getCause());
+            }
+        }
+
+        if (!failures.isEmpty()) {
+            for (int i = 0; i < failures.size(); i++) {
+                log.error("event=database_chunk status=failed operation={} failure_index={} successful_count={} error=\"{}\"",
+                        operation, i, successfulCount, sanitize(failures.get(i).getMessage()));
+            }
+            throw new IllegalStateException(
+                    "%s failed for %d chunk(s) after %d successful row(s)"
+                            .formatted(operation, failures.size(), successfulCount),
+                    failures.get(0)
+            );
+        }
+
+        return successfulCount;
+    }
+
     private static String joinCsv(List<String> items) {
         return items.isEmpty() ? "" : String.join(",", items);
     }
@@ -491,22 +519,17 @@ public class DatabaseService {
         return value == null || value.isEmpty() ? null : value;
     }
 
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
+    }
+
     // ========== Inner records ==========
 
     /** Represents a scan request record to be inserted. */
-    public record ScanRequestRecord(String requestJson, String payloadJson, String payloadSha256) {
-        public String getRequestJson() {
-            return requestJson;
-        }
-
-        public String getPayloadJson() {
-            return payloadJson;
-        }
-
-        public String getPayloadSha256() {
-            return payloadSha256;
-        }
-    }
+    public record ScanRequestRecord(String requestJson, String payloadJson, String payloadSha256) {}
 
     public record PayloadArchiveCandidate(
             String dedupeKey,

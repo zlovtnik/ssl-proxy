@@ -119,7 +119,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
-      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true}
+      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75}
       - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
       - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}

@@ -47,8 +47,27 @@ pub async fn apply_sql_files(
     match (result, unlock_result) {
         (Ok(report), Ok(())) => Ok(report),
         (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) | (Err(_), Err(error)) => Err(error),
+        (Ok(report), Err(error)) => {
+            warn_unlock_error("after successful apply", &error);
+            Ok(report)
+        }
+        (Err(error), Err(unlock_error)) => {
+            warn_unlock_error("after failed apply", &unlock_error);
+            Err(error)
+        }
     }
+}
+
+fn warn_unlock_error(context: &str, error: &ExecutionError) {
+    let detail = if error.to_string().contains("was not held") {
+        "lock was not held"
+    } else {
+        "unlock failed"
+    };
+    eprintln!(
+        "{} schema apply {detail} {context}: {error}",
+        "warning:".yellow()
+    );
 }
 
 async fn connect_client(database_url: &str) -> Result<Client, ExecutionError> {

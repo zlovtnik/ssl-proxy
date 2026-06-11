@@ -62,6 +62,8 @@ public class ScanRecordProcessor implements Processor {
 
         buildRecord(rawJson)
                 .onSuccess(record -> {
+                    // Scan discovery is lower priority than batch results, so this path soft-drops
+                    // under backpressure instead of failing the route like ResultProcessor.
                     if (!accumulator.offer(record)) {
                         log.atError()
                                 .addKeyValue("event", "scan_request_ingest")

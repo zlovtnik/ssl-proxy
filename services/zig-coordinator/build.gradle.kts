@@ -75,6 +75,6 @@ tasks.bootBuildImage {
     environment.put("BP_JVM_VERSION", "21.*")
     environment.put(
         "BPE_APPEND_JAVA_TOOL_OPTIONS",
-        " -XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+        " -XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
     )
 }

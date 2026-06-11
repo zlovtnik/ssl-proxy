@@ -12,7 +12,7 @@ public final class FpUtils {
             throw new IllegalArgumentException("size must be positive");
         }
         return IntStream.range(0, (list.size() + size - 1) / size)
-                .mapToObj(i -> list.subList(i * size, Math.min((i + 1) * size, list.size())))
+                .mapToObj(i -> List.copyOf(list.subList(i * size, Math.min((i + 1) * size, list.size()))))
                 .toList();
     }
 }
