@@ -66,13 +66,13 @@ public class BatchDispatchProcessor implements Processor {
 
             try {
                 producerTemplate.sendBody(
-                        "kafka:" + props.getLoadTopic()
-                                + "?groupId=" + props.getLoadConsumer(),
+                        "kafka:" + props.loadTopic()
+                                + "?groupId=" + props.loadConsumer(),
                         dispatchJson
                 );
 
                 log.info("event=batch_dispatch status=published batch_id={} topic={}",
-                        payload.getBatchId(), props.getLoadTopic());
+                        payload.getBatchId(), props.loadTopic());
 
                 exchange.getIn().setBody(true);
             } catch (Exception e) {

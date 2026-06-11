@@ -48,7 +48,7 @@ public class ResultProcessor implements Processor {
             throw new IllegalStateException("Pending result accumulator is full");
         }
 
-        if (accumulator.size() >= props.getResultFetchCount()) {
+        if (accumulator.size() >= props.resultFetchCount()) {
             flushPending();
         }
     }
@@ -58,7 +58,7 @@ public class ResultProcessor implements Processor {
      * Can be called externally on a timer to drain partial batches.
      */
     public void flushPending() {
-        List<String> batch = accumulator.drain(props.getResultFetchCount());
+        List<String> batch = accumulator.drain(props.resultFetchCount());
         if (batch.isEmpty()) {
             return;
         }
@@ -82,8 +82,8 @@ public class ResultProcessor implements Processor {
     }
 
     private static int maxPendingResults(CoordinatorProperties props) {
-        int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
-        return Math.max(1, props.getResultFetchCount()) * multiplier;
+        int multiplier = Math.max(1, props.backpressureBudgetMultiplier());
+        return Math.max(1, props.resultFetchCount()) * multiplier;
     }
 
     private String sanitize(String message) {

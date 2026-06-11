@@ -78,7 +78,7 @@ public class ScanRecordProcessor implements Processor {
                         .addKeyValue("payload_bytes", rawJson.length())
                         .log("scan request deserialize failed"));
 
-        if (accumulator.size() >= props.getScanFetchCount()) {
+        if (accumulator.size() >= props.scanFetchCount()) {
             flushPending();
         }
     }
@@ -97,7 +97,7 @@ public class ScanRecordProcessor implements Processor {
             return Tuple.of(null, null);
         }
 
-        return Try.of(() -> payloadResolver.resolve(payloadRef, props.getSyncOutboxDir()))
+        return Try.of(() -> payloadResolver.resolve(payloadRef, props.syncOutboxDir()))
                 .map(payloadBytes -> Tuple.of(
                         new String(payloadBytes, StandardCharsets.UTF_8),
                         Sha256Utils.sha256Hex(payloadBytes)
@@ -119,7 +119,7 @@ public class ScanRecordProcessor implements Processor {
      * on a timer to drain partial batches.
      */
     public void flushPending() {
-        List<DatabaseService.ScanRequestRecord> batch = accumulator.drain(props.getScanFetchCount());
+        List<DatabaseService.ScanRequestRecord> batch = accumulator.drain(props.scanFetchCount());
         if (batch.isEmpty()) {
             return;
         }
@@ -162,8 +162,8 @@ public class ScanRecordProcessor implements Processor {
     }
 
     private static int maxPendingResults(CoordinatorProperties props) {
-        int multiplier = Math.max(1, props.getBackpressureBudgetMultiplier());
-        return Math.max(1, props.getScanFetchCount()) * multiplier;
+        int multiplier = Math.max(1, props.backpressureBudgetMultiplier());
+        return Math.max(1, props.scanFetchCount()) * multiplier;
     }
 
     private String payloadRefScheme(String payloadRef) {

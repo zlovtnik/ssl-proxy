@@ -32,7 +32,7 @@ public class CoordinatorProcessors {
 
     public Processor ingest() {
         return exchange -> {
-            long budget = (long) props.getIngestBatchSize() * 2;
+            long budget = (long) props.ingestBatchSize() * 2;
             long pendingCount = switch (db.pendingLedgerCount()) {
                 case DbResult.Ok<Long> ok -> ok.value();
                 case DbResult.Empty<Long> ignored -> 0L;
@@ -45,7 +45,7 @@ public class CoordinatorProcessors {
 
             if (pendingCount >= budget) {
                 log.info("event=backpressure status=throttled pending_count={} budget={} ingest_batch_size={}",
-                        pendingCount, budget, props.getIngestBatchSize());
+                        pendingCount, budget, props.ingestBatchSize());
             }
 
             long processed = switch (db.processIngestLedger()) {
