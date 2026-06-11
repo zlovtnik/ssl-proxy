@@ -1,6 +1,7 @@
 package com.sslproxy.coordinator.service;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.fp.DbResult;
 import org.apache.camel.CamelContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,7 +69,20 @@ public class BackpressureService {
      * @return the pending ledger count
      */
     public long checkAndAct() {
-        long pendingCount = databaseService.pendingLedgerCount();
+        long pendingCount = switch (databaseService.pendingLedgerCount()) {
+            case DbResult.Ok<Long> ok -> ok.value();
+            case DbResult.Empty<Long> ignored -> 0L;
+            case DbResult.Err<Long> err -> {
+                log.atWarn()
+                        .addKeyValue("event", "backpressure")
+                        .addKeyValue("status", "pending_count_failed")
+                        .addKeyValue("operation", err.operation())
+                        .addKeyValue("error", sanitize(err.cause().getMessage()))
+                        .log("backpressure pending count failed");
+                metricsService.recordBackpressureActive(consumerSuspended);
+                yield 0L;
+            }
+        };
         long budget = budget();
         long recoveryThreshold = recoveryThreshold();
 
@@ -179,5 +193,12 @@ public class BackpressureService {
     /** Returns whether the consumer route is currently suspended. */
     public boolean isConsumerSuspended() {
         return consumerSuspended;
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 }

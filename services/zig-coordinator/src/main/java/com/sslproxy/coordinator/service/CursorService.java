@@ -24,6 +24,6 @@ public class CursorService {
      * Returns the primary stream cursor value.
      */
     public String ensureCursors() {
-        return db.ensureAllCursors();
+        return db.ensureAllCursors().orElseThrow();
     }
 }
