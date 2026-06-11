@@ -32,20 +32,20 @@ public class PayloadArchiveService {
     public PayloadArchiveService(DatabaseService databaseService, CoordinatorProperties props) {
         this.databaseService = databaseService;
         this.props = props;
-        if (props.isWirelessRawArchiveEnabled()
-                && (!StringUtils.hasText(props.getMinioAccessKeyId())
-                || !StringUtils.hasText(props.getMinioSecretAccessKey()))) {
+        if (props.wirelessRawArchiveEnabled()
+                && (!StringUtils.hasText(props.minioAccessKeyId())
+                || !StringUtils.hasText(props.minioSecretAccessKey()))) {
             throw new IllegalStateException(
                     "wireless raw archive is enabled but MinIO credentials are not configured");
         }
         this.minioClient = MinioClient.builder()
-                .endpoint(props.getMinioEndpoint())
-                .credentials(props.getMinioAccessKeyId(), props.getMinioSecretAccessKey())
+                .endpoint(props.minioEndpoint())
+                .credentials(props.minioAccessKeyId(), props.minioSecretAccessKey())
                 .build();
     }
 
     public int archiveDuePayloads() {
-        if (!props.isWirelessRawArchiveEnabled()) {
+        if (!props.wirelessRawArchiveEnabled()) {
             return 0;
         }
 
@@ -53,7 +53,7 @@ public class PayloadArchiveService {
             ensureBucket();
         } catch (Exception e) {
             log.warn("event=wireless_payload_archive status=bucket_unavailable bucket={} error={}",
-                    props.getWirelessRawArchiveBucket(), e.getMessage());
+                    props.wirelessRawArchiveBucket(), e.getMessage());
             return 0;
         }
 
@@ -75,7 +75,7 @@ public class PayloadArchiveService {
                 byte[] bytes = candidate.payloadJson().getBytes(StandardCharsets.UTF_8);
                 String objectName = archiveObjectName(candidate);
                 uploadPayload(objectName, bytes);
-                String archiveUri = "s3://" + props.getWirelessRawArchiveBucket() + "/" + objectName;
+                String archiveUri = "s3://" + props.wirelessRawArchiveBucket() + "/" + objectName;
                 DbResult<Boolean> recorded = databaseService.recordPayloadArchive(
                         candidate.dedupeKey(),
                         candidate.payloadSha256(),
@@ -129,7 +129,7 @@ public class PayloadArchiveService {
         try (ByteArrayInputStream input = new ByteArrayInputStream(bytes)) {
             minioClient.putObject(
                     PutObjectArgs.builder()
-                            .bucket(props.getWirelessRawArchiveBucket())
+                            .bucket(props.wirelessRawArchiveBucket())
                             .object(objectName)
                             .stream(input, bytes.length, -1)
                             .contentType("application/json")
@@ -146,7 +146,7 @@ public class PayloadArchiveService {
             if (bucketChecked) {
                 return;
             }
-            String bucket = props.getWirelessRawArchiveBucket();
+            String bucket = props.wirelessRawArchiveBucket();
             boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
             if (!exists) {
                 try {

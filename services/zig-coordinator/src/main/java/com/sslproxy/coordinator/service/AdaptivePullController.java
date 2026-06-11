@@ -71,7 +71,7 @@ public class AdaptivePullController {
             return;
         }
 
-        long budget = (long) props.getIngestBatchSize() * props.getBackpressureBudgetMultiplier();
+        long budget = (long) props.ingestBatchSize() * props.backpressureBudgetMultiplier();
         adjustRoute(SCAN_ROUTE_ID, pendingCount, budget);
     }
 
@@ -120,18 +120,18 @@ public class AdaptivePullController {
             KafkaConfiguration config = kafkaEndpoint.getConfiguration();
             int current = config.getMaxPollRecords() != null
                     ? config.getMaxPollRecords()
-                    : props.getScanFetchCount();
+                    : props.scanFetchCount();
             long now = System.currentTimeMillis();
             RouteState state = routeStates.getOrDefault(routeId, RouteState.initial(current));
             RouteAdjustment decision = decideAdjustment(
                     pendingCount,
                     budget,
-                    props.getScanFetchCount(),
+                    props.scanFetchCount(),
                     current,
                     state.lastAppliedMaxPollRecords(),
-                    props.getAdaptivePullChangeThreshold(),
+                    props.adaptivePullChangeThreshold(),
                     now - state.lastRestartTimestampMs(),
-                    props.getAdaptivePullMinRestartIntervalMs()
+                    props.adaptivePullMinRestartIntervalMs()
             );
 
             switch (decision) {

@@ -111,7 +111,7 @@ public class CoordinatorMetricsService {
     public void heartbeat() {
         heartbeatCounter.increment();
         long now = System.currentTimeMillis();
-        long intervalMs = Math.max(0, props.getHeartbeatLogIntervalMs());
+        long intervalMs = Math.max(0, props.heartbeatLogIntervalMs());
         if (intervalMs > 0 && now - lastHeartbeatLogAtMillis < intervalMs) {
             return;
         }

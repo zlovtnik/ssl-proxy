@@ -19,11 +19,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
  * Wraps all stored procedure calls to the coordinator schema.
@@ -84,14 +82,14 @@ public class DatabaseService {
     public DbResult<String> ensureAllCursors() {
         return DbResult.of(() -> {
             String primaryCursor = null;
-            for (String name : normalizedCsvList(props.getStreamNames())) {
+            for (String name : props.streamNames()) {
                 String cursor = ensureCursor(name).orElseThrow();
-                if (name.equals(props.getStreamName())) {
+                if (name.equals(props.streamName())) {
                     primaryCursor = cursor;
                 }
             }
             if (primaryCursor == null) {
-                throw new IllegalStateException("Cursor not found for primary stream: " + props.getStreamName());
+                throw new IllegalStateException("Cursor not found for primary stream: " + props.streamName());
             }
             return primaryCursor;
         }, "coordinator.ensure_all_cursors");
@@ -119,8 +117,8 @@ public class DatabaseService {
      */
     public DbResult<Long> processIngestLedger() {
         return DbResult.of(() -> {
-            String streamNames = normalizeCsv(props.getStreamNames());
-            String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
+            String streamNames = joinCsv(props.streamNames());
+            String oracleStreamNames = joinCsv(props.oracleStreamNames());
             String result = observeDb("coordinator.process_ingest_ledger", () -> jdbc.queryForObject(
                     "SELECT coordinator.process_ingest_ledger(" +
                             "string_to_array(?::text, ','), " +
@@ -128,9 +126,9 @@ public class DatabaseService {
                             "?::integer, ?::integer, ?::integer)::text",
                     String.class,
                     streamNames, oracleStreamNames,
-                    props.getScanMaxAttempts(),
-                    props.getScanRetryBackoffSeconds(),
-                    props.getIngestBatchSize()
+                    props.scanMaxAttempts(),
+                    props.scanRetryBackoffSeconds(),
+                    props.ingestBatchSize()
             ));
             return parseLongOrZero(result, "coordinator.process_ingest_ledger");
         }, "coordinator.process_ingest_ledger");
@@ -149,13 +147,13 @@ public class DatabaseService {
             }
             return FpUtils.partition(records, SQL_ARRAY_CHUNK_SIZE).stream()
                     .map(this::recordScanRequestChunk)
-                    .mapToInt(Try::get)
+                    .mapToInt(t -> t.getOrElse(0))
                     .sum();
         }, "coordinator.record_scan_request_batch");
     }
 
     private Try<Integer> recordScanRequestChunk(List<ScanRequestRecord> chunk) {
-        List<String> streamNames = normalizedCsvList(props.getStreamNames());
+        List<String> streamNames = props.streamNames();
         return Try.of(() -> {
             Integer recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) ->
                     SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getRequestJson), requestArray ->
@@ -187,7 +185,7 @@ public class DatabaseService {
      */
     public DbResult<String> getNextBatch() {
         return DbResult.of(() -> {
-            String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
+            String oracleStreamNames = joinCsv(props.oracleStreamNames());
             String result = observeDb("coordinator.get_next_batch", () -> jdbc.queryForObject(
                     "SELECT coordinator.get_next_batch(string_to_array(?::text, ','))::text",
                     String.class,
@@ -203,15 +201,15 @@ public class DatabaseService {
      */
     public DbResult<Integer> recoverStaleDispatchedBatches() {
         return DbResult.of(() -> {
-            String oracleStreamNames = normalizeCsv(props.getOracleStreamNames());
+            String oracleStreamNames = joinCsv(props.oracleStreamNames());
             String result = observeDb("coordinator.recover_stale_dispatched_batches", () -> jdbc.queryForObject(
                     "SELECT coordinator.recover_stale_dispatched_batches(" +
                             "string_to_array(?::text, ','), " +
                             "?::integer, ?::integer)::text",
                     String.class,
                     oracleStreamNames,
-                    props.getBatchDispatchLeaseSeconds(),
-                    props.getBatchMaxAttempts()
+                    props.batchDispatchLeaseSeconds(),
+                    props.batchMaxAttempts()
             ));
             return parseIntOrZero(result, "coordinator.recover_stale_dispatched_batches");
         }, "coordinator.recover_stale_dispatched_batches");
@@ -226,7 +224,7 @@ public class DatabaseService {
             String result = observeDb("coordinator.mark_batch_dispatch_failed", () -> jdbc.queryForObject(
                     "SELECT coordinator.mark_batch_dispatch_failed(?::jsonb, ?::text, ?::integer)::text",
                     String.class,
-                    loadJson, errorText, props.getBatchMaxAttempts()
+                    loadJson, errorText, props.batchMaxAttempts()
             ));
             return blankToNull(result);
         }, "coordinator.mark_batch_dispatch_failed");
@@ -260,7 +258,7 @@ public class DatabaseService {
             }
             return FpUtils.partition(resultJsons, SQL_ARRAY_CHUNK_SIZE).stream()
                     .map(this::processBatchResultChunk)
-                    .mapToInt(Try::get)
+                    .mapToInt(t -> t.getOrElse(0))
                     .sum();
         }, "coordinator.process_batch_results");
     }
@@ -384,8 +382,8 @@ public class DatabaseService {
                                 rs.getLong("payload_bytes"),
                                 rs.getString("payload")
                         ),
-                        props.getWirelessRawPayloadHotDays(),
-                        props.getWirelessRawArchiveBatchSize()
+                        props.wirelessRawPayloadHotDays(),
+                        props.wirelessRawArchiveBatchSize()
                 )),
                 "coordinator.list_wireless_payload_archive_candidates"
         );
@@ -413,9 +411,9 @@ public class DatabaseService {
             String result = observeDb("coordinator.prune_sync_event_retention", () -> jdbc.queryForObject(
                     "SELECT coordinator.prune_sync_event_retention(?::integer, ?::integer, ?::integer)::text",
                     String.class,
-                    props.getSyncEventRowRetentionDays(),
-                    props.getSyncEventTombstoneRetentionDays(),
-                    props.getRetentionPruneBatchSize()
+                    props.syncEventRowRetentionDays(),
+                    props.syncEventTombstoneRetentionDays(),
+                    props.retentionPruneBatchSize()
             ));
             return blankToNull(result);
         }, "coordinator.prune_sync_event_retention");
@@ -433,27 +431,6 @@ public class DatabaseService {
 
     // ========== Helpers ==========
 
-    /**
-     * Normalizes a CSV string (trims whitespace, removes empties).
-     */
-    public String normalizeCsv(String csv) {
-        if (csv == null || csv.isBlank()) {
-            return "";
-        }
-        return Arrays.stream(csv.split(","))
-                .map(String::trim)
-                .filter(part -> !part.isEmpty())
-                .collect(Collectors.joining(","));
-    }
-
-    private List<String> normalizedCsvList(String csv) {
-        String normalized = normalizeCsv(csv);
-        if (normalized.isEmpty()) {
-            return List.of();
-        }
-        return Arrays.asList(normalized.split(","));
-    }
-
     private <T> T observeDb(String operation, Supplier<T> supplier) {
         return Observation
                 .createNotStarted("db.client.operation", observationRegistry)
@@ -465,6 +442,10 @@ public class DatabaseService {
 
     private <T> List<String> extract(List<T> items, Function<T, String> extractor) {
         return items.stream().map(extractor).toList();
+    }
+
+    private static String joinCsv(List<String> items) {
+        return items.isEmpty() ? "" : String.join(",", items);
     }
 
     private int queryForInt(Connection connection, String sql, Array... arrays) throws SQLException {

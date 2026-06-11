@@ -48,7 +48,7 @@ public class BackpressureService {
      *   ingest_batch_size * backpressure_budget_multiplier
      */
     public long budget() {
-        return (long) props.getIngestBatchSize() * props.getBackpressureBudgetMultiplier();
+        return (long) props.ingestBatchSize() * props.backpressureBudgetMultiplier();
     }
 
     /**
@@ -98,7 +98,7 @@ public class BackpressureService {
                     .addKeyValue("status", "throttled")
                     .addKeyValue("pending_count", pendingCount)
                     .addKeyValue("budget", budget)
-                    .addKeyValue("multiplier", props.getBackpressureBudgetMultiplier())
+                    .addKeyValue("multiplier", props.backpressureBudgetMultiplier())
                     .addKeyValue("consumer_suspended", consumerSuspended)
                     .log("coordinator backpressure throttled");
         } else if (pendingCount <= recoveryThreshold && consumerSuspended) {

@@ -73,7 +73,7 @@ public class RedpandaLagMetricsService {
 
     @Scheduled(fixedDelayString = "${coordinator.redpanda-lag-metrics-poll-interval-ms:10000}")
     public void refresh() {
-        if (!props.isRedpandaLagMetricsEnabled()) {
+        if (!props.redpandaLagMetricsEnabled()) {
             logDisabledOnce();
             return;
         }
@@ -172,7 +172,7 @@ public class RedpandaLagMetricsService {
     }
 
     private LagSnapshot fetchLagSnapshot(AdminClient client, LagTarget target) throws Exception {
-        int timeoutMs = Math.max(1, props.getRedpandaLagMetricsTimeoutMs());
+        int timeoutMs = Math.max(1, props.redpandaLagMetricsTimeoutMs());
         TopicDescription description = client.describeTopics(List.of(target.topic()))
                 .topicNameValues()
                 .get(target.topic())
@@ -269,15 +269,15 @@ public class RedpandaLagMetricsService {
 
     private static List<LagTarget> targets(CoordinatorProperties props) {
         return List.of(
-                new LagTarget("scan", props.getScanConsumer(), props.getScanTopic()),
-                new LagTarget("result", props.getResultConsumer(), props.getResultTopic())
+                new LagTarget("scan", props.scanConsumer(), props.scanTopic()),
+                new LagTarget("result", props.resultConsumer(), props.resultTopic())
         );
     }
 
     private static Properties adminClientConfig(CoordinatorProperties props) {
-        int timeoutMs = Math.max(1, props.getRedpandaLagMetricsTimeoutMs());
+        int timeoutMs = Math.max(1, props.redpandaLagMetricsTimeoutMs());
         Properties config = new Properties();
-        config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, normalizeBootstrapServers(props.getSyncRedpandaUrl()));
+        config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, normalizeBootstrapServers(props.syncRedpandaUrl()));
         config.put(AdminClientConfig.CLIENT_ID_CONFIG, "java-coordinator-lag-metrics");
         config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, Integer.toString(timeoutMs));
         config.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, Integer.toString(timeoutMs));
