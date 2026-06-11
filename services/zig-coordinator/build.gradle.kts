@@ -10,7 +10,7 @@ version = "0.1.0"
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
@@ -74,9 +74,9 @@ tasks.withType<Test> {
 tasks.bootBuildImage {
     builder = "paketobuildpacks/builder-jammy-tiny"
     imageName = "ssl-proxy/java-coordinator:${project.version}"
-    environment.put("BP_JVM_VERSION", "21.*")
+    environment.put("BP_JVM_VERSION", "25.*")
     environment.put(
         "BPE_APPEND_JAVA_TOOL_OPTIONS",
-        " -XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+        " -XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
     )
 }
