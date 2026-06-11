@@ -43,6 +43,10 @@ dependencies {
     implementation("org.postgresql:postgresql:$postgresqlVersion")
     implementation("io.minio:minio:8.5.17")
 
+    // Functional primitives
+    implementation("io.vavr:vavr:0.10.4")
+    implementation("org.jooq:jool:0.9.15")
+
     // JSON processing
     implementation("com.fasterxml.jackson.core:jackson-databind")
 

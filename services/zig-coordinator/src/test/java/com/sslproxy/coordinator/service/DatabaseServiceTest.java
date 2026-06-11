@@ -61,7 +61,7 @@ class DatabaseServiceTest {
         int recorded = service.recordScanRequests(List.of(
                 new DatabaseService.ScanRequestRecord(requestOne, payloadOne, "sha-1"),
                 new DatabaseService.ScanRequestRecord(requestTwo, null, null)
-        ));
+        )).orElseThrow();
 
         assertEquals(2, recorded);
         ArgumentCaptor<Object[]> jsonbArrays = ArgumentCaptor.forClass(Object[].class);
@@ -106,7 +106,7 @@ class DatabaseServiceTest {
         String resultJson = "{\"batch_id\":\"6b8c2a30-5f1e-4cfb-9e45-7e046d832340\","
                 + "\"status\":\"success\",\"checksum\":\"a,b{c}\"}";
 
-        int processed = service.processBatchResults(List.of(resultJson));
+        int processed = service.processBatchResults(List.of(resultJson)).orElseThrow();
 
         assertEquals(1, processed);
         ArgumentCaptor<Object[]> jsonbArrays = ArgumentCaptor.forClass(Object[].class);
@@ -118,7 +118,7 @@ class DatabaseServiceTest {
 
     private static void stubJdbcExecute(JdbcTemplate jdbc, Connection connection) {
         when(jdbc.execute(anyConnectionCallback())).thenAnswer(invocation -> {
-            ConnectionCallback<String> callback = invocation.getArgument(0);
+            ConnectionCallback<?> callback = invocation.getArgument(0);
             return callback.doInConnection(connection);
         });
     }

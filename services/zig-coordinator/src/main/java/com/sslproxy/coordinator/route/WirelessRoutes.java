@@ -2,8 +2,12 @@ package com.sslproxy.coordinator.route;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.fp.CheckedConsumer;
+import com.sslproxy.coordinator.fp.WirelessHandler;
 import com.sslproxy.coordinator.service.DatabaseService;
+import io.vavr.control.Try;
 import org.apache.camel.LoggingLevel;
+import org.apache.camel.Processor;
 import org.apache.camel.ProducerTemplate;
 import org.apache.camel.builder.RouteBuilder;
 import org.slf4j.Logger;
@@ -11,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Wireless operation routes that handle the 7 wireless handlers from
@@ -57,175 +60,133 @@ public class WirelessRoutes extends RouteBuilder {
                 .log(LoggingLevel.ERROR, "event=wireless_operation status=error error=${exception.message}")
                 .continued(true);
 
-        // =====================================================================
-        // 1. Backlog Save consumer (fire-and-forget)
-        //    Saves a raw backlog entry JSON to the DB.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-save-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-save")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
-            db.saveBacklogEntry(payload);
+        .process(voidHandler(payload -> {
+            db.saveBacklogEntry(payload).orElseThrow();
             log.info("event=backlog_save status=ok payload_bytes={}", payload.length());
-        });
+        }));
 
-        // =====================================================================
-        // 2. Backlog List consumer (request/reply pattern)
-        //    Parses optional reply_topic from the request, fetches the pending
-        //    backlog list from DB, and publishes the result to the reply topic.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-list-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-list")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
+        .process(replyingHandler(
+                payload -> db.listPendingBacklog().orElse("[]"),
+                props.getWirelessBacklogListReplyTopic(),
+                "backlog_list"
+        ));
 
-            String replyTopic = resolveReplyTopic(payload, props.getWirelessBacklogListReplyTopic());
-            Optional<String> list = db.listPendingBacklog();
-            String result = list.orElse("[]");
-
-            producerTemplate.sendBody("kafka:" + replyTopic, result);
-
-            log.info("event=backlog_list status=ok reply_topic={} payload_bytes={}",
-                    replyTopic, result.length());
-        });
-
-        // =====================================================================
-        // 3. Backlog Synced consumer (fire-and-forget)
-        //    Parses dedupe_key from the request and marks the backlog entry
-        //    as synced in the DB.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-synced-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-synced")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = objectMapper.readValue(payload, Map.class);
-            String dedupeKey = (String) parsed.get("dedupe_key");
+        .process(voidHandler(payload -> {
+            String dedupeKey = extractField(payload, "dedupe_key");
             if (dedupeKey == null || dedupeKey.isEmpty()) {
                 log.warn("event=backlog_synced status=missing_dedupe_key");
                 return;
             }
-
-            db.markBacklogSynced(dedupeKey);
+            db.markBacklogSynced(dedupeKey).orElseThrow();
             log.info("event=backlog_synced status=ok dedupe_key={}", dedupeKey);
-        });
+        }));
 
-        // =====================================================================
-        // 4. Backlog Prune consumer (request/reply pattern)
-        //    Parses optional reply_topic, prunes synced backlog entries from DB,
-        //    and publishes {"pruned": N} to the reply topic.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-backlog-stream-name}}"
                 + "?groupId={{coordinator.wireless-backlog-prune-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-backlog-prune")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
+        .process(replyingHandler(
+                payload -> String.format("{\"pruned\":%d}", parseLongOrZero(db.pruneBacklog().orElse("0"))),
+                props.getWirelessBacklogPruneReplyTopic(),
+                "backlog_prune"
+        ));
 
-            String replyTopic = resolveReplyTopic(payload, props.getWirelessBacklogPruneReplyTopic());
-            Optional<String> deleted = db.pruneBacklog();
-            long count = deleted.map(Long::parseLong).orElse(0L);
-            String reply = String.format("{\"pruned\":%d}", count);
-
-            producerTemplate.sendBody("kafka:" + replyTopic, reply);
-
-            log.info("event=backlog_prune status=ok reply_topic={} deleted_count={}",
-                    replyTopic, count);
-        });
-
-        // =====================================================================
-        // 5. MAC Lookup consumer (request/reply pattern)
-        //    Parses mac + optional reply_topic, looks up the device by MAC,
-        //    and publishes the device JSON (or null) to the reply topic.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-mac-stream-name}}"
                 + "?groupId={{coordinator.wireless-mac-lookup-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-mac-lookup")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
+        .process(replyingHandler(
+                payload -> {
+                    String mac = extractField(payload, "mac");
+                    if (mac == null || mac.isEmpty()) {
+                        log.warn("event=mac_lookup status=missing_mac");
+                        return null;
+                    }
+                    return db.lookupDeviceByMac(mac).orElse("null");
+                },
+                props.getWirelessMacLookupReplyTopic(),
+                "mac_lookup"
+        ));
 
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = objectMapper.readValue(payload, Map.class);
-            String mac = (String) parsed.get("mac");
-            if (mac == null || mac.isEmpty()) {
-                log.warn("event=mac_lookup status=missing_mac");
-                return;
-            }
-
-            String replyTopic = resolveReplyTopic(payload, props.getWirelessMacLookupReplyTopic());
-            Optional<String> device = db.lookupDeviceByMac(mac);
-            String result = device.orElse("null");
-
-            producerTemplate.sendBody("kafka:" + replyTopic, result);
-
-            log.info("event=mac_lookup status=ok mac={} reply_topic={} found={}",
-                    mac, replyTopic, device.isPresent());
-        });
-
-        // =====================================================================
-        // 6. Networks Authorized consumer (request/reply pattern)
-        //    Parses optional reply_topic, fetches the authorized networks list
-        //    from DB, and publishes the result to the reply topic.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-networks-stream-name}}"
                 + "?groupId={{coordinator.wireless-networks-authorized-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-networks-authorized")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
+        .process(replyingHandler(
+                payload -> db.listAuthorizedNetworks().orElse("[]"),
+                props.getWirelessNetworksAuthorizedReplyTopic(),
+                "networks_authorized"
+        ));
 
-            String replyTopic = resolveReplyTopic(payload, props.getWirelessNetworksAuthorizedReplyTopic());
-            Optional<String> networks = db.listAuthorizedNetworks();
-            String result = networks.orElse("[]");
-
-            producerTemplate.sendBody("kafka:" + replyTopic, result);
-
-            log.info("event=networks_authorized status=ok reply_topic={} payload_bytes={}",
-                    replyTopic, result.length());
-        });
-
-        // =====================================================================
-        // 7. Probe Flush consumer (fire-and-forget)
-        //    Flushes a batch of probe data to the DB.
-        // =====================================================================
         from("kafka:{{coordinator.wireless-probe-stream-name}}"
                 + "?groupId={{coordinator.wireless-probe-flush-consumer}}"
                 + "&autoOffsetReset=earliest"
                 + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
                 + "&consumersCount={{coordinator.wireless-consumers-count}}")
         .routeId("wireless-probe-flush")
-        .process(exchange -> {
-            String payload = exchange.getIn().getBody(String.class);
-            if (payload == null || payload.isEmpty()) return;
-            db.flushProbeBatch(payload);
+        .process(voidHandler(payload -> {
+            db.flushProbeBatch(payload).orElseThrow();
             log.info("event=probe_flush status=ok payload_bytes={}", payload.length());
-        });
+        }));
+    }
+
+    private Processor replyingHandler(WirelessHandler handler,
+                                      String defaultReplyTopic,
+                                      String eventName) {
+        return exchange -> {
+            String payload = exchange.getIn().getBody(String.class);
+            if (payload == null || payload.isEmpty()) {
+                return;
+            }
+
+            String replyTopic = resolveReplyTopic(payload, defaultReplyTopic);
+            Try.of(() -> handler.handle(payload))
+                    .onSuccess(reply -> {
+                        if (reply == null) {
+                            return;
+                        }
+                        producerTemplate.sendBody("kafka:" + replyTopic, reply);
+                        log.info("event={} status=ok reply_topic={} payload_bytes={}",
+                                eventName, replyTopic, reply.length());
+                    })
+                    .onFailure(e -> log.error("event={} status=failed reply_topic={} error={}",
+                            eventName, replyTopic, sanitize(e.getMessage())));
+        };
+    }
+
+    private Processor voidHandler(CheckedConsumer<String> handler) {
+        return exchange -> {
+            String payload = exchange.getIn().getBody(String.class);
+            if (payload == null || payload.isEmpty()) {
+                return;
+            }
+            Try.run(() -> handler.accept(payload))
+                    .onFailure(e -> log.error("event=wireless_void_handler_failed error={}", sanitize(e.getMessage())));
+        };
     }
 
     /**
@@ -244,5 +205,30 @@ public class WirelessRoutes extends RouteBuilder {
             log.trace("event=resolve_reply_topic status=parse_error message={}", e.getMessage());
         }
         return defaultTopic;
+    }
+
+    private String extractField(String payload, String fieldName) throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> parsed = objectMapper.readValue(payload, Map.class);
+        Object value = parsed.get(fieldName);
+        return value instanceof String stringValue ? stringValue : null;
+    }
+
+    private long parseLongOrZero(String value) {
+        if (value == null || value.isBlank()) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 }
