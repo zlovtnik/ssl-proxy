@@ -3,7 +3,6 @@ package com.sslproxy.coordinator.fp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.ListIterator;
 import java.util.concurrent.LinkedBlockingDeque;
 
 public final class BoundedAccumulator<T> {
@@ -38,12 +37,9 @@ public final class BoundedAccumulator<T> {
         if (items.isEmpty()) {
             return 0;
         }
-        int acceptedCount = Math.min(items.size(), queue.remainingCapacity());
-        List<T> accepted = items.subList(0, acceptedCount);
-        ListIterator<T> iterator = accepted.listIterator(accepted.size());
         int requeued = 0;
-        while (iterator.hasPrevious()) {
-            if (queue.offerFirst(iterator.previous())) {
+        for (int i = items.size() - 1; i >= 0; i--) {
+            if (queue.offerFirst(items.get(i))) {
                 requeued++;
             }
         }

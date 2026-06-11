@@ -92,7 +92,7 @@ services/zig-coordinator/
 | Scheduling | Camel `timer:` component | Replaces the `while() { sleep }` loop with managed polling |
 | Health | Spring Boot Actuator + custom | Replaces `healthcheck` subcommand |
 | Build | Gradle (Kotlin DSL) | As you specified |
-| Java | 25 (Azul Zulu) | As you specified |
+| Java | 21 (Azul Zulu) | LTS release, supported by Spring Boot 3.4.x |
 
 ---
 
@@ -183,7 +183,7 @@ The wireless handlers currently poll one message at a time - with Camel Kafka, t
 18. Prometheus metrics export
 
 ### Phase 5: Deployment
-19. `Dockerfile` - `azul/zulu-openjdk-alpine:25-jre`-based slim image
+19. `Dockerfile` - `azul/zulu-openjdk-alpine:21-jre`-based slim image
 20. Update `docker-compose.yaml` - replace `zig-coordinator` services with `java-coordinator`
 21. Update `helm/ssl-proxy/` - new deployment template
 22. Update `configmap.yaml` - Java service env vars

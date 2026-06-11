@@ -2,6 +2,7 @@ package com.sslproxy.coordinator.config;
 
 import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
 
@@ -13,6 +14,7 @@ import java.util.List;
  * for records and classes with a single constructor.
  */
 @ConfigurationProperties(prefix = "coordinator")
+@Validated
 public record CoordinatorProperties(
 
     // === Stream configuration ===

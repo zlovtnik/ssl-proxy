@@ -98,13 +98,20 @@ func WaitForSchemaReady(ctx context.Context, store Database, timeout, pollInterv
 
 		select {
 		case <-waitCtx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("schema readiness timeout after %s: %w", timeout, lastErr)
+			switch {
+			case errors.Is(waitCtx.Err(), context.Canceled):
+				return fmt.Errorf("schema readiness canceled: %w", waitCtx.Err())
+			case errors.Is(waitCtx.Err(), context.DeadlineExceeded):
+				if lastErr != nil {
+					return fmt.Errorf("schema readiness timeout after %s: %w", timeout, lastErr)
+				}
+				if lastStatus != nil {
+					return fmt.Errorf("schema readiness timeout after %s: %s", timeout, schemaStatusSummary(*lastStatus))
+				}
+				return fmt.Errorf("schema readiness timeout after %s", timeout)
+			default:
+				return fmt.Errorf("schema readiness wait ended: %w", waitCtx.Err())
 			}
-			if lastStatus != nil {
-				return fmt.Errorf("schema readiness timeout after %s: %s", timeout, schemaStatusSummary(*lastStatus))
-			}
-			return fmt.Errorf("schema readiness timeout after %s", timeout)
 		case <-ticker.C:
 		}
 	}
