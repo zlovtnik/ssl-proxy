@@ -167,13 +167,28 @@ services:
       - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
     volumes:
       - sync-outbox:/sync-outbox
-      - ./docker/redpanda:/app/docker/redpanda:ro
-      - ./wallet:/app/wallet:ro
-      - ./secrets:/run/secrets:ro
+      - type: bind
+        source: ./docker/redpanda
+        target: /app/docker/redpanda
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./wallet
+        target: /app/wallet
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:8081:8081"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
+      test: ["CMD-SHELL", "if [ \"${ORACLE_SINK_ENABLED:-true}\" != \"false\" ]; then test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s \"${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}\"; fi && wget -qO- http://localhost:8081/actuator/health >/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 5

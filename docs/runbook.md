@@ -228,6 +228,8 @@ If `java-coordinator` logs `event=oracle_load status=failed` or `unsupported str
 Wallet preflight failures use these exact messages in `java-coordinator` logs: `wallet directory missing`, `missing Oracle wallet artifact`, `Oracle TNS alias not found`, `missing Oracle password file`, and `Oracle password file is empty`. Unrecoverable corrupt dispatch rows are marked with `sync.oracle.load payload_ref missing and stored payload unavailable`.
 
 ```sh
+docker compose config java-coordinator | sed -n '/target: \/app\/wallet/,+4p'
+docker compose exec -T java-coordinator sh -lc 'ls -la /app/wallet && test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s "${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}"'
 docker compose run --rm redpanda-init rpk group describe oracle-worker-load --brokers redpanda:9092
 docker compose exec -T java-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
 docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batches batch join sync_jobs job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
