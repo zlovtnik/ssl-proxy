@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sslproxy.coordinator.config.CoordinatorProperties;
 import com.sslproxy.coordinator.fp.DbResult;
-import com.sslproxy.coordinator.model.DispatchPayload;
+import com.sslproxy.coordinator.oracle.OracleLoad;
 import com.sslproxy.coordinator.service.DatabaseService;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
@@ -58,11 +58,11 @@ public class BatchDispatchProcessor implements Processor {
 
     private void dispatchBatch(String batchJson, Exchange exchange) {
         try {
-            DispatchPayload payload = objectMapper.readValue(batchJson, DispatchPayload.class);
+            OracleLoad payload = objectMapper.readValue(batchJson, OracleLoad.class);
             String dispatchJson = objectMapper.writeValueAsString(payload);
 
             log.info("event=batch_dispatch status=selected batch_id={} stream_name={} attempt={}",
-                    payload.getBatchId(), payload.getStreamName(), payload.getAttempt());
+                    payload.batchId(), payload.streamName(), payload.attempt());
 
             try {
                 producerTemplate.sendBody(
@@ -72,12 +72,12 @@ public class BatchDispatchProcessor implements Processor {
                 );
 
                 log.info("event=batch_dispatch status=published batch_id={} topic={}",
-                        payload.getBatchId(), props.loadTopic());
+                        payload.batchId(), props.loadTopic());
 
                 exchange.getIn().setBody(true);
             } catch (Exception e) {
                 log.error("event=batch_dispatch status=publish_failed batch_id={} error=\"{}\"",
-                        payload.getBatchId(), sanitize(e.getMessage()));
+                        payload.batchId(), sanitize(e.getMessage()));
                 handlePublishFailure(batchJson, payload, e);
                 exchange.getIn().setBody(false);
             }
@@ -106,15 +106,15 @@ public class BatchDispatchProcessor implements Processor {
         }
     }
 
-    private void handlePublishFailure(String batchJson, DispatchPayload payload, Exception publishError) {
+    private void handlePublishFailure(String batchJson, OracleLoad payload, Exception publishError) {
         switch (databaseService.markBatchDispatchFailed(batchJson, publishError.getMessage())) {
             case DbResult.Ok<String> ignored ->
-                    log.info("event=batch_dispatch status=marked_failed batch_id={}", payload.getBatchId());
+                    log.info("event=batch_dispatch status=marked_failed batch_id={}", payload.batchId());
             case DbResult.Empty<String> ignored ->
-                    log.info("event=batch_dispatch status=marked_failed batch_id={}", payload.getBatchId());
+                    log.info("event=batch_dispatch status=marked_failed batch_id={}", payload.batchId());
             case DbResult.Err<String> err -> {
                 log.error("event=batch_dispatch status=mark_failed_error batch_id={} operation={} error=\"{}\"",
-                        payload.getBatchId(), err.operation(), sanitize(err.cause().getMessage()));
+                        payload.batchId(), err.operation(), sanitize(err.cause().getMessage()));
                 releaseBatch(batchJson, payload, publishError);
             }
         }
@@ -132,15 +132,15 @@ public class BatchDispatchProcessor implements Processor {
         }
     }
 
-    private void releaseBatch(String batchJson, DispatchPayload payload, Exception publishError) {
+    private void releaseBatch(String batchJson, OracleLoad payload, Exception publishError) {
         switch (databaseService.releaseBatchDispatch(batchJson, publishError.getMessage())) {
             case DbResult.Ok<String> ignored ->
-                    log.info("event=batch_dispatch status=released batch_id={}", payload.getBatchId());
+                    log.info("event=batch_dispatch status=released batch_id={}", payload.batchId());
             case DbResult.Empty<String> ignored ->
-                    log.info("event=batch_dispatch status=released batch_id={}", payload.getBatchId());
+                    log.info("event=batch_dispatch status=released batch_id={}", payload.batchId());
             case DbResult.Err<String> err ->
                     log.error("event=batch_dispatch status=release_failed batch_id={} operation={} error=\"{}\"",
-                            payload.getBatchId(), err.operation(), sanitize(err.cause().getMessage()));
+                            payload.batchId(), err.operation(), sanitize(err.cause().getMessage()));
         }
     }
 

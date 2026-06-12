@@ -97,6 +97,20 @@ coordinator:
   redpanda-lag-metrics-timeout-ms: ${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:5000}
   heartbeat-log-interval-ms: ${SYNC_HEARTBEAT_LOG_INTERVAL_MS:15000}
 
+oracle-sink:
+  enabled: ${ORACLE_SINK_ENABLED:true}
+  conn: ${ORACLE_CONN:}
+  jdbc-url: ${ORACLE_JDBC_URL:}
+  user: ${ORACLE_USER:}
+  pass-file: ${ORACLE_PASS_FILE:}
+  tns-admin: ${TNS_ADMIN:}
+  maximum-pool-size: ${ORACLE_COORDINATOR_POOL:8}
+  minimum-idle: ${ORACLE_COORDINATOR_POOL_MIN_IDLE:1}
+  connection-timeout-ms: ${ORACLE_COORDINATOR_CONNECTION_TIMEOUT_MS:30000}
+  idle-timeout-ms: ${ORACLE_COORDINATOR_IDLE_TIMEOUT_MS:600000}
+  max-lifetime-ms: ${ORACLE_COORDINATOR_MAX_LIFETIME_MS:1800000}
+  statement-timeout-secs: ${ORACLE_STATEMENT_TIMEOUT_SECS:30}
+
 # =============================================================================
 # Apache Camel
 # =============================================================================

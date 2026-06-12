@@ -19,6 +19,7 @@ repositories {
 
 val camelVersion = "4.10.2"
 val postgresqlVersion = "42.7.5"
+val oracleJdbcVersion = "23.6.0.24.10"
 val testcontainersVersion = "1.20.6"
 
 dependencies {
@@ -41,6 +42,7 @@ dependencies {
     // Database
     implementation("org.postgresql:postgresql:$postgresqlVersion")
     implementation("io.minio:minio:8.5.17")
+    runtimeOnly("com.oracle.database.jdbc:ojdbc11:$oracleJdbcVersion")
 
     // Functional primitives
     implementation("io.vavr:vavr:1.0.1")
