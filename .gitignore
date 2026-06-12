@@ -63,3 +63,9 @@ services/zig-coordinator/.settings/
 **/docgen_tmp/
 /lib/
 /wallet/
+services/zig-coordinator/.gradle/9.5.1/executionHistory/executionHistory.bin
+services/zig-coordinator/.gradle/9.5.1/executionHistory/executionHistory.lock
+services/zig-coordinator/.gradle/9.5.1/fileHashes/fileHashes.bin
+services/zig-coordinator/.gradle/9.5.1/fileHashes/fileHashes.lock
+services/zig-coordinator/.gradle/9.5.1/fileHashes/resourceHashesCache.bin
+services/zig-coordinator/.gradle/buildOutputCleanup/buildOutputCleanup.lock
