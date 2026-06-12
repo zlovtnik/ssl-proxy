@@ -252,6 +252,12 @@ spec:
               value: {{ .Values.javaCoordinator.metrics.heartbeatLogIntervalMs | quote }}
             - name: ORACLE_SINK_ENABLED
               value: {{ .Values.javaCoordinator.oracle.enabled | quote }}
+            - name: ORACLE_SINK_WIRELESS_ENABLED
+              value: {{ .Values.javaCoordinator.oracle.wirelessEnabled | quote }}
+            - name: ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY
+              value: {{ .Values.javaCoordinator.oracle.schemaValidationWarnOnly | quote }}
+            - name: ORACLE_LOAD_MAX_RETRIES
+              value: {{ .Values.javaCoordinator.oracle.loadMaxRetries | quote }}
             - name: ORACLE_CONN
               value: {{ .Values.javaCoordinator.oracle.conn | quote }}
             - name: ORACLE_USER

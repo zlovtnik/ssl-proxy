@@ -239,6 +239,9 @@ javaCoordinator:
     heartbeatLogIntervalMs: 15000
   oracle:
     enabled: true
+    wirelessEnabled: true
+    schemaValidationWarnOnly: false
+    loadMaxRetries: 3
     conn: "mainerc_high"
     user: "USCIS_APP"
     passwordSecret:

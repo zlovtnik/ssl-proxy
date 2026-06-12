@@ -7,12 +7,16 @@ import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import io.vavr.control.Try;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.BeanInitializationException;
 import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -26,9 +30,14 @@ import java.util.Set;
 @Component
 public class JdbcOracleSink implements OracleSink {
 
-    static final List<OracleObjectRequirement> REQUIRED_SCHEMA_OBJECTS = List.of(
+    private static final Logger log = LoggerFactory.getLogger(JdbcOracleSink.class);
+
+    static final List<OracleObjectRequirement> CORE_SCHEMA_OBJECTS = List.of(
             OracleObjectRequirement.table("PROXY_EVENTS"),
-            OracleObjectRequirement.table("PROXY_BLOCKED_HOST_ROLLUPS"),
+            OracleObjectRequirement.table("PROXY_BLOCKED_HOST_ROLLUPS")
+    );
+
+    static final List<OracleObjectRequirement> WIRELESS_SCHEMA_OBJECTS = List.of(
             OracleObjectRequirement.table("WIRELESS_SENSORS"),
             OracleObjectRequirement.table("WIRELESS_AUDIT_FRAMES"),
             OracleObjectRequirement.table("WIRELESS_BANDWIDTH_WINDOWS"),
@@ -38,6 +47,10 @@ public class JdbcOracleSink implements OracleSink {
             OracleObjectRequirement.procedure("WIRELESS_UPSERT_SENSOR"),
             OracleObjectRequirement.procedure("WIRELESS_MERGE_BANDWIDTH_ALERTS")
     );
+
+    static final List<OracleObjectRequirement> REQUIRED_SCHEMA_OBJECTS = java.util.stream.Stream
+            .concat(CORE_SCHEMA_OBJECTS.stream(), WIRELESS_SCHEMA_OBJECTS.stream())
+            .toList();
 
     private final OracleConnectionFactory connectionFactory;
     private final OracleSinkProperties props;
@@ -60,14 +73,25 @@ public class JdbcOracleSink implements OracleSink {
             return;
         }
         try (Connection connection = connectionFactory.getConnection()) {
-            validateSchemaObjects(connection);
+            try {
+                validateSchemaObjects(connection);
+            } catch (IllegalStateException e) {
+                if (props.schemaValidationWarnOnly()) {
+                    log.warn("event=oracle_schema_preflight status=warn_only error=\"{}\"", sanitize(e.getMessage()));
+                } else {
+                    throw new BeanInitializationException("Oracle schema preflight failed", e);
+                }
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("Oracle sink schema preflight failed: " + sanitize(e.getMessage()), e);
         }
     }
 
     void validateSchemaObjects(Connection connection) throws SQLException {
-        String placeholders = String.join(", ", Collections.nCopies(REQUIRED_SCHEMA_OBJECTS.size(), "?"));
+        List<OracleObjectRequirement> required = props.validateWirelessObjects()
+                ? REQUIRED_SCHEMA_OBJECTS
+                : CORE_SCHEMA_OBJECTS;
+        String placeholders = String.join(", ", Collections.nCopies(required.size(), "?"));
         String sql = """
                 select object_name, object_type, status
                 from all_objects
@@ -77,8 +101,9 @@ public class JdbcOracleSink implements OracleSink {
 
         Map<OracleObjectRequirement, String> foundStatuses = new HashMap<>();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setQueryTimeout(props.statementTimeoutSecs());
             int index = 1;
-            for (OracleObjectRequirement requirement : REQUIRED_SCHEMA_OBJECTS) {
+            for (OracleObjectRequirement requirement : required) {
                 statement.setString(index++, requirement.name());
             }
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -94,7 +119,7 @@ public class JdbcOracleSink implements OracleSink {
 
         List<String> missing = new ArrayList<>();
         List<String> invalid = new ArrayList<>();
-        for (OracleObjectRequirement requirement : REQUIRED_SCHEMA_OBJECTS) {
+        for (OracleObjectRequirement requirement : required) {
             String status = foundStatuses.get(requirement);
             if (status == null) {
                 missing.add(requirement.displayName());
@@ -129,252 +154,280 @@ public class JdbcOracleSink implements OracleSink {
 
     @Override
     public long insertWirelessAuditFrames(String batchId, List<WirelessAuditFrameInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_audit_frames", () -> withTransaction(connection -> {
-            if (rows.isEmpty()) {
-                return 0L;
-            }
-            WirelessAuditFrameInsert first = rows.stream()
-                    .min(java.util.Comparator.comparing(WirelessAuditFrameInsert::observedAt))
-                    .orElseThrow();
-            try (PreparedStatement statement = prepare(connection,
-                    "BEGIN WIRELESS_UPSERT_SENSOR(?, ?, ?, ?, ?); END;")) {
-                bindAll(statement, first.sensorId(), first.locationId(), first.iface(), first.regDomain(), first.observedAt());
-                statement.execute();
-            }
-            String sql = """
-                    merge into WIRELESS_AUDIT_FRAMES tgt
-                    using (
-                        select ? BATCH_ID, ? ROW_SEQUENCE, ? EVENT_TYPE, ? OBSERVED_AT,
-                               ? SENSOR_ID, ? LOCATION_ID, ? INTERFACE, ? CHANNEL,
-                               ? FRAME_TYPE, ? FRAME_SUBTYPE, ? BSSID, ? SOURCE_MAC,
-                               ? DESTINATION_MAC, ? TRANSMITTER_MAC, ? RECEIVER_MAC,
-                               ? DESTINATION_BSSID, ? SSID, ? SIGNAL_DBM,
-                               ? SEQUENCE_NUMBER, ? RAW_LEN, ? IS_RETRY,
-                               ? IS_MORE_DATA, ? IS_POWER_SAVE, ? IS_PROTECTED,
-                               ? IS_TO_DS, ? IS_FROM_DS, ? IS_HANDSHAKE,
-                               ? SECURITY_FLAGS, ? DEVICE_ID, ? USERNAME,
-                               ? IDENTITY_SOURCE, ? TAGS, ? ANOMALY_REASONS,
-                               ? RAW_JSON
-                        from dual
-                    ) src
-                    on (tgt.BATCH_ID = src.BATCH_ID and tgt.ROW_SEQUENCE = src.ROW_SEQUENCE)
-                    when not matched then insert (
-                        BATCH_ID, ROW_SEQUENCE, EVENT_TYPE, OBSERVED_AT, SENSOR_ID, LOCATION_ID,
-                        INTERFACE, CHANNEL, FRAME_TYPE, FRAME_SUBTYPE, BSSID, SOURCE_MAC,
-                        DESTINATION_MAC, TRANSMITTER_MAC, RECEIVER_MAC, DESTINATION_BSSID, SSID,
-                        SIGNAL_DBM, SEQUENCE_NUMBER, RAW_LEN, IS_RETRY, IS_MORE_DATA,
-                        IS_POWER_SAVE, IS_PROTECTED, IS_TO_DS, IS_FROM_DS, IS_HANDSHAKE,
-                        SECURITY_FLAGS, DEVICE_ID, USERNAME, IDENTITY_SOURCE, TAGS,
-                        ANOMALY_REASONS, RAW_JSON
-                    ) values (
-                        src.BATCH_ID, src.ROW_SEQUENCE, src.EVENT_TYPE, src.OBSERVED_AT,
-                        src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL,
-                        src.FRAME_TYPE, src.FRAME_SUBTYPE, src.BSSID, src.SOURCE_MAC,
-                        src.DESTINATION_MAC, src.TRANSMITTER_MAC, src.RECEIVER_MAC,
-                        src.DESTINATION_BSSID, src.SSID, src.SIGNAL_DBM, src.SEQUENCE_NUMBER,
-                        src.RAW_LEN, src.IS_RETRY, src.IS_MORE_DATA, src.IS_POWER_SAVE,
-                        src.IS_PROTECTED, src.IS_TO_DS, src.IS_FROM_DS, src.IS_HANDSHAKE,
-                        src.SECURITY_FLAGS, src.DEVICE_ID, src.USERNAME, src.IDENTITY_SOURCE,
-                        src.TAGS, src.ANOMALY_REASONS, src.RAW_JSON
-                    )
-                    """;
-            try (PreparedStatement statement = prepare(connection, sql)) {
-                for (WirelessAuditFrameInsert row : rows) {
-                    bindAll(statement, batchId, row.rowSequence(), row.eventType(), row.observedAt(),
-                            row.sensorId(), row.locationId(), row.iface(), row.channel(), row.frameType(),
-                            row.frameSubtype(), row.bssid(), row.sourceMac(), row.destinationMac(),
-                            row.transmitterMac(), row.receiverMac(), row.destinationBssid(), row.ssid(),
-                            row.signalDbm(), row.sequenceNumber(), row.rawLen(), row.isRetry(),
-                            row.isMoreData(), row.isPowerSave(), row.isProtected(), row.isToDs(),
-                            row.isFromDs(), row.isHandshake(), row.securityFlags(), row.deviceId(),
-                            row.username(), row.identitySource(), row.tags(), row.anomalyReasons(), row.rawJson());
-                    statement.executeUpdate();
+        return observeOracle("oracle.insert_wireless_audit_frames", () -> {
+            long inserted = withRetry("insert_wireless_audit_frames", 2, () -> withTransaction(connection -> {
+                if (rows.isEmpty()) {
+                    return 0L;
                 }
-            }
-            return (long) rows.size();
-        }));
+                WirelessAuditFrameInsert first = rows.stream()
+                        .min(java.util.Comparator.comparing(WirelessAuditFrameInsert::observedAt))
+                        .orElseThrow();
+                try (PreparedStatement statement = prepare(connection,
+                        "BEGIN WIRELESS_UPSERT_SENSOR(?, ?, ?, ?, ?); END;")) {
+                    bindAll(statement, first.sensorId(), first.locationId(), first.iface(), first.regDomain(), first.observedAt());
+                    statement.execute();
+                }
+                String sql = """
+                        merge into WIRELESS_AUDIT_FRAMES tgt
+                        using (
+                            select ? BATCH_ID, ? ROW_SEQUENCE, ? EVENT_TYPE, ? OBSERVED_AT,
+                                   ? SENSOR_ID, ? LOCATION_ID, ? INTERFACE, ? CHANNEL,
+                                   ? FRAME_TYPE, ? FRAME_SUBTYPE, ? BSSID, ? SOURCE_MAC,
+                                   ? DESTINATION_MAC, ? TRANSMITTER_MAC, ? RECEIVER_MAC,
+                                   ? DESTINATION_BSSID, ? SSID, ? SIGNAL_DBM,
+                                   ? SEQUENCE_NUMBER, ? RAW_LEN, ? IS_RETRY,
+                                   ? IS_MORE_DATA, ? IS_POWER_SAVE, ? IS_PROTECTED,
+                                   ? IS_TO_DS, ? IS_FROM_DS, ? IS_HANDSHAKE,
+                                   ? SECURITY_FLAGS, ? DEVICE_ID, ? USERNAME,
+                                   ? IDENTITY_SOURCE, ? TAGS, ? ANOMALY_REASONS,
+                                   ? RAW_JSON
+                            from dual
+                        ) src
+                        on (tgt.BATCH_ID = src.BATCH_ID and tgt.ROW_SEQUENCE = src.ROW_SEQUENCE)
+                        when not matched then insert (
+                            BATCH_ID, ROW_SEQUENCE, EVENT_TYPE, OBSERVED_AT, SENSOR_ID, LOCATION_ID,
+                            INTERFACE, CHANNEL, FRAME_TYPE, FRAME_SUBTYPE, BSSID, SOURCE_MAC,
+                            DESTINATION_MAC, TRANSMITTER_MAC, RECEIVER_MAC, DESTINATION_BSSID, SSID,
+                            SIGNAL_DBM, SEQUENCE_NUMBER, RAW_LEN, IS_RETRY, IS_MORE_DATA,
+                            IS_POWER_SAVE, IS_PROTECTED, IS_TO_DS, IS_FROM_DS, IS_HANDSHAKE,
+                            SECURITY_FLAGS, DEVICE_ID, USERNAME, IDENTITY_SOURCE, TAGS,
+                            ANOMALY_REASONS, RAW_JSON
+                        ) values (
+                            src.BATCH_ID, src.ROW_SEQUENCE, src.EVENT_TYPE, src.OBSERVED_AT,
+                            src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL,
+                            src.FRAME_TYPE, src.FRAME_SUBTYPE, src.BSSID, src.SOURCE_MAC,
+                            src.DESTINATION_MAC, src.TRANSMITTER_MAC, src.RECEIVER_MAC,
+                            src.DESTINATION_BSSID, src.SSID, src.SIGNAL_DBM, src.SEQUENCE_NUMBER,
+                            src.RAW_LEN, src.IS_RETRY, src.IS_MORE_DATA, src.IS_POWER_SAVE,
+                            src.IS_PROTECTED, src.IS_TO_DS, src.IS_FROM_DS, src.IS_HANDSHAKE,
+                            src.SECURITY_FLAGS, src.DEVICE_ID, src.USERNAME, src.IDENTITY_SOURCE,
+                            src.TAGS, src.ANOMALY_REASONS, src.RAW_JSON
+                        )
+                        """;
+                try (PreparedStatement statement = prepare(connection, sql)) {
+                    for (WirelessAuditFrameInsert row : rows) {
+                        bindAll(statement, batchId, row.rowSequence(), row.eventType(), row.observedAt(),
+                                row.sensorId(), row.locationId(), row.iface(), row.channel(), row.frameType(),
+                                row.frameSubtype(), row.bssid(), row.sourceMac(), row.destinationMac(),
+                                row.transmitterMac(), row.receiverMac(), row.destinationBssid(), row.ssid(),
+                                row.signalDbm(), row.sequenceNumber(), row.rawLen(), row.isRetry(),
+                                row.isMoreData(), row.isPowerSave(), row.isProtected(), row.isToDs(),
+                                row.isFromDs(), row.isHandshake(), row.securityFlags(), row.deviceId(),
+                                row.username(), row.identitySource(), row.tags(), row.anomalyReasons(), row.rawJson());
+                        statement.executeUpdate();
+                    }
+                }
+                return (long) rows.size();
+            }));
+            log.info("event=oracle_insert status=ok target=wireless_audit_frames batch_id={} rows={}",
+                    batchId, inserted);
+            return inserted;
+        });
     }
 
     @Override
     public long insertWirelessBandwidth(String batchId, List<WirelessBandwidthInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_bandwidth", () -> withTransaction(connection -> {
-            String sql = """
-                    merge into WIRELESS_BANDWIDTH_WINDOWS tgt
-                    using (
-                        select ? BATCH_ID, ? ROW_SEQUENCE, ? SCHEMA_VERSION, ? WINDOW_START,
-                               ? WINDOW_END, ? SENSOR_ID, ? LOCATION_ID, ? INTERFACE,
-                               ? CHANNEL, ? SOURCE_MAC, ? DESTINATION_BSSID, ? SSID,
-                               ? BYTES, ? FRAME_COUNT, ? RETRY_COUNT, ? MORE_DATA_COUNT,
-                               ? POWER_SAVE_COUNT, ? STRONGEST_SIGNAL_DBM, ? HIST_UNDER_100,
-                               ? HIST_100_500, ? HIST_500_1000, ? HIST_1000_1500,
-                               ? INTER_ARRIVAL_P50_MS, ? EXTERNAL_BSSID, ? THRESHOLD_EXCEEDED,
-                               ? WALL_CLOCK_DELTA_MS, ? WINDOW_IS_PARTIAL, ? PUBLISHED_AT
-                        from dual
-                    ) src
-                    on (tgt.BATCH_ID = src.BATCH_ID and tgt.ROW_SEQUENCE = src.ROW_SEQUENCE)
-                    when not matched then insert (
-                        BATCH_ID, ROW_SEQUENCE, SCHEMA_VERSION, WINDOW_START, WINDOW_END,
-                        SENSOR_ID, LOCATION_ID, INTERFACE, CHANNEL, SOURCE_MAC, DESTINATION_BSSID,
-                        SSID, BYTES, FRAME_COUNT, RETRY_COUNT, MORE_DATA_COUNT, POWER_SAVE_COUNT,
-                        STRONGEST_SIGNAL_DBM, HIST_UNDER_100, HIST_100_500, HIST_500_1000,
-                        HIST_1000_1500, INTER_ARRIVAL_P50_MS, EXTERNAL_BSSID, THRESHOLD_EXCEEDED,
-                        WALL_CLOCK_DELTA_MS, WINDOW_IS_PARTIAL, PUBLISHED_AT
-                    ) values (
-                        src.BATCH_ID, src.ROW_SEQUENCE, src.SCHEMA_VERSION, src.WINDOW_START,
-                        src.WINDOW_END, src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL,
-                        src.SOURCE_MAC, src.DESTINATION_BSSID, src.SSID, src.BYTES, src.FRAME_COUNT,
-                        src.RETRY_COUNT, src.MORE_DATA_COUNT, src.POWER_SAVE_COUNT,
-                        src.STRONGEST_SIGNAL_DBM, src.HIST_UNDER_100, src.HIST_100_500,
-                        src.HIST_500_1000, src.HIST_1000_1500, src.INTER_ARRIVAL_P50_MS,
-                        src.EXTERNAL_BSSID, src.THRESHOLD_EXCEEDED, src.WALL_CLOCK_DELTA_MS,
-                        src.WINDOW_IS_PARTIAL, src.PUBLISHED_AT
-                    )
-                    """;
-            try (PreparedStatement statement = prepare(connection, sql)) {
-                for (WirelessBandwidthInsert row : rows) {
-                    bindAll(statement, batchId, row.rowSequence(), row.schemaVersion(), row.windowStart(),
-                            row.windowEnd(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
-                            row.sourceMac(), row.destinationBssid(), row.ssid(), row.bytes(), row.frameCount(),
-                            row.retryCount(), row.moreDataCount(), row.powerSaveCount(), row.strongestSignalDbm(),
-                            row.histUnder100(), row.hist100500(), row.hist5001000(), row.hist10001500(),
-                            row.interArrivalP50Ms(), row.externalBssid(), row.thresholdExceeded(),
-                            row.wallClockDeltaMs(), row.windowIsPartial(), row.publishedAt());
-                    statement.executeUpdate();
+        return observeOracle("oracle.insert_wireless_bandwidth", () -> {
+            long inserted = withRetry("insert_wireless_bandwidth", 2, () -> withTransaction(connection -> {
+                String sql = """
+                        merge into WIRELESS_BANDWIDTH_WINDOWS tgt
+                        using (
+                            select ? BATCH_ID, ? ROW_SEQUENCE, ? SCHEMA_VERSION, ? WINDOW_START,
+                                   ? WINDOW_END, ? SENSOR_ID, ? LOCATION_ID, ? INTERFACE,
+                                   ? CHANNEL, ? SOURCE_MAC, ? DESTINATION_BSSID, ? SSID,
+                                   ? BYTES, ? FRAME_COUNT, ? RETRY_COUNT, ? MORE_DATA_COUNT,
+                                   ? POWER_SAVE_COUNT, ? STRONGEST_SIGNAL_DBM, ? HIST_UNDER_100,
+                                   ? HIST_100_500, ? HIST_500_1000, ? HIST_1000_1500,
+                                   ? INTER_ARRIVAL_P50_MS, ? EXTERNAL_BSSID, ? THRESHOLD_EXCEEDED,
+                                   ? WALL_CLOCK_DELTA_MS, ? WINDOW_IS_PARTIAL, ? PUBLISHED_AT
+                            from dual
+                        ) src
+                        on (tgt.BATCH_ID = src.BATCH_ID and tgt.ROW_SEQUENCE = src.ROW_SEQUENCE)
+                        when not matched then insert (
+                            BATCH_ID, ROW_SEQUENCE, SCHEMA_VERSION, WINDOW_START, WINDOW_END,
+                            SENSOR_ID, LOCATION_ID, INTERFACE, CHANNEL, SOURCE_MAC, DESTINATION_BSSID,
+                            SSID, BYTES, FRAME_COUNT, RETRY_COUNT, MORE_DATA_COUNT, POWER_SAVE_COUNT,
+                            STRONGEST_SIGNAL_DBM, HIST_UNDER_100, HIST_100_500, HIST_500_1000,
+                            HIST_1000_1500, INTER_ARRIVAL_P50_MS, EXTERNAL_BSSID, THRESHOLD_EXCEEDED,
+                            WALL_CLOCK_DELTA_MS, WINDOW_IS_PARTIAL, PUBLISHED_AT
+                        ) values (
+                            src.BATCH_ID, src.ROW_SEQUENCE, src.SCHEMA_VERSION, src.WINDOW_START,
+                            src.WINDOW_END, src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL,
+                            src.SOURCE_MAC, src.DESTINATION_BSSID, src.SSID, src.BYTES, src.FRAME_COUNT,
+                            src.RETRY_COUNT, src.MORE_DATA_COUNT, src.POWER_SAVE_COUNT,
+                            src.STRONGEST_SIGNAL_DBM, src.HIST_UNDER_100, src.HIST_100_500,
+                            src.HIST_500_1000, src.HIST_1000_1500, src.INTER_ARRIVAL_P50_MS,
+                            src.EXTERNAL_BSSID, src.THRESHOLD_EXCEEDED, src.WALL_CLOCK_DELTA_MS,
+                            src.WINDOW_IS_PARTIAL, src.PUBLISHED_AT
+                        )
+                        """;
+                try (PreparedStatement statement = prepare(connection, sql)) {
+                    for (WirelessBandwidthInsert row : rows) {
+                        bindAll(statement, batchId, row.rowSequence(), row.schemaVersion(), row.windowStart(),
+                                row.windowEnd(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
+                                row.sourceMac(), row.destinationBssid(), row.ssid(), row.bytes(), row.frameCount(),
+                                row.retryCount(), row.moreDataCount(), row.powerSaveCount(), row.strongestSignalDbm(),
+                                row.histUnder100(), row.hist100500(), row.hist5001000(), row.hist10001500(),
+                                row.interArrivalP50Ms(), row.externalBssid(), row.thresholdExceeded(),
+                                row.wallClockDeltaMs(), row.windowIsPartial(), row.publishedAt());
+                        statement.executeUpdate();
+                    }
                 }
-            }
-            try (PreparedStatement statement = prepare(connection, "BEGIN WIRELESS_MERGE_BANDWIDTH_ALERTS(?); END;")) {
-                bindAll(statement, batchId);
-                statement.execute();
-            }
-            return (long) rows.size();
-        }));
+                try (PreparedStatement statement = prepare(connection, "BEGIN WIRELESS_MERGE_BANDWIDTH_ALERTS(?); END;")) {
+                    bindAll(statement, batchId);
+                    statement.execute();
+                }
+                return (long) rows.size();
+            }));
+            log.info("event=oracle_insert status=ok target=wireless_bandwidth_windows batch_id={} rows={}",
+                    batchId, inserted);
+            return inserted;
+        });
     }
 
     @Override
     public long insertWirelessRogueAp(String batchId, List<WirelessRogueApInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_rogue_ap", () -> mergeWirelessAlerts(batchId, rows, "rogue_ap", row -> new Object[]{
-                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
-                row.rogueBssid(), null, row.ssid(), row.signalDbm(),
-                jsonDetails("ssid_impersonation", row.ssidImpersonation()), row.rawJson()
-        }));
+        return observeOracle("oracle.insert_wireless_rogue_ap",
+                () -> withRetry("insert_wireless_rogue_ap", 2,
+                        () -> mergeWirelessAlerts(batchId, rows, "rogue_ap", row -> new Object[]{
+                                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
+                                row.rogueBssid(), null, row.ssid(), row.signalDbm(),
+                                jsonDetails("ssid_impersonation", row.ssidImpersonation()), row.rawJson()
+                        })));
     }
 
     @Override
     public long insertWirelessDeauthFlood(String batchId, List<WirelessDeauthFloodInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_deauth_flood", () -> mergeWirelessAlerts(batchId, rows, "deauth_flood", row -> new Object[]{
-                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
-                row.attackerMac(), row.targetBssid(), row.targetSsid(), row.signalDbm(),
-                jsonDetails("deauth_count", row.deauthCount(), "window_secs", row.windowSecs(), "threshold", row.threshold()),
-                row.rawJson()
-        }));
+        return observeOracle("oracle.insert_wireless_deauth_flood",
+                () -> withRetry("insert_wireless_deauth_flood", 2,
+                        () -> mergeWirelessAlerts(batchId, rows, "deauth_flood", row -> new Object[]{
+                                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
+                                row.attackerMac(), row.targetBssid(), row.targetSsid(), row.signalDbm(),
+                                jsonDetails("deauth_count", row.deauthCount(), "window_secs", row.windowSecs(), "threshold", row.threshold()),
+                                row.rawJson()
+                        })));
     }
 
     @Override
     public long insertWirelessSignalAnomaly(String batchId, List<WirelessSignalAnomalyInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_signal_anomaly", () -> mergeWirelessAlerts(batchId, rows, "signal_anomaly", row -> new Object[]{
-                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), null, row.channel(),
-                row.sourceMac(), row.bssid(), row.ssid(), row.observedDbm(),
-                jsonDetails("baseline_dbm", row.baselineDbm(), "observed_dbm", row.observedDbm(),
-                        "dbm_delta", row.dbmDelta(), "configured_delta", row.configuredDelta()),
-                null
-        }));
+        return observeOracle("oracle.insert_wireless_signal_anomaly",
+                () -> withRetry("insert_wireless_signal_anomaly", 2,
+                        () -> mergeWirelessAlerts(batchId, rows, "signal_anomaly", row -> new Object[]{
+                                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), null, row.channel(),
+                                row.sourceMac(), row.bssid(), row.ssid(), row.observedDbm(),
+                                jsonDetails("baseline_dbm", row.baselineDbm(), "observed_dbm", row.observedDbm(),
+                                        "dbm_delta", row.dbmDelta(), "configured_delta", row.configuredDelta()),
+                                null
+                        })));
     }
 
     @Override
     public long insertWirelessPmfAttack(String batchId, List<WirelessPmfAttackInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_pmf_attack", () -> mergeWirelessAlerts(batchId, rows, "pmf_attack", row -> new Object[]{
-                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), null, row.channel(),
-                row.targetMac(), row.targetBssid(), row.ssid(), null,
-                jsonDetails("attack_tag", row.attackTag(), "reconnect_window_ms", row.reconnectWindowMs()),
-                null
-        }));
+        return observeOracle("oracle.insert_wireless_pmf_attack",
+                () -> withRetry("insert_wireless_pmf_attack", 2,
+                        () -> mergeWirelessAlerts(batchId, rows, "pmf_attack", row -> new Object[]{
+                                row.rowSequence(), row.detectedAt(), row.sensorId(), row.locationId(), null, row.channel(),
+                                row.targetMac(), row.targetBssid(), row.ssid(), null,
+                                jsonDetails("attack_tag", row.attackTag(), "reconnect_window_ms", row.reconnectWindowMs()),
+                                null
+                        })));
     }
 
     @Override
     public long insertWirelessClientInventory(String batchId, List<WirelessClientInventoryInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_client_inventory", () -> withTransaction(connection -> {
-            String sql = """
-                    merge into WIRELESS_CLIENT_INVENTORY tgt
-                    using (
-                        select ? SENSOR_ID, ? LOCATION_ID, ? SNAPSHOT_AT, ? CLIENT_MAC,
-                               ? BSSID, ? SSID, ? DEVICE_ID, ? USERNAME, ? IDENTITY_SOURCE,
-                               ? LAST_SEEN, ? FIRST_SEEN, ? SIGNAL_DBM, ? IS_AUTHORIZED
-                        from dual
-                    ) src
-                    on (
-                        tgt.SENSOR_ID = src.SENSOR_ID
-                        and tgt.SNAPSHOT_AT = src.SNAPSHOT_AT
-                        and tgt.CLIENT_MAC = src.CLIENT_MAC
-                    )
-                    when matched then update set
-                        tgt.LOCATION_ID = src.LOCATION_ID,
-                        tgt.BSSID = src.BSSID,
-                        tgt.SSID = src.SSID,
-                        tgt.DEVICE_ID = src.DEVICE_ID,
-                        tgt.USERNAME = src.USERNAME,
-                        tgt.IDENTITY_SOURCE = src.IDENTITY_SOURCE,
-                        tgt.LAST_SEEN = src.LAST_SEEN,
-                        tgt.FIRST_SEEN = src.FIRST_SEEN,
-                        tgt.SIGNAL_DBM = src.SIGNAL_DBM,
-                        tgt.IS_AUTHORIZED = src.IS_AUTHORIZED
-                    when not matched then insert (
-                        SENSOR_ID, LOCATION_ID, SNAPSHOT_AT, CLIENT_MAC, BSSID, SSID,
-                        DEVICE_ID, USERNAME, IDENTITY_SOURCE, LAST_SEEN, FIRST_SEEN,
-                        SIGNAL_DBM, IS_AUTHORIZED
-                    ) values (
-                        src.SENSOR_ID, src.LOCATION_ID, src.SNAPSHOT_AT, src.CLIENT_MAC,
-                        src.BSSID, src.SSID, src.DEVICE_ID, src.USERNAME, src.IDENTITY_SOURCE,
-                        src.LAST_SEEN, src.FIRST_SEEN, src.SIGNAL_DBM, src.IS_AUTHORIZED
-                    )
-                    """;
-            try (PreparedStatement statement = prepare(connection, sql)) {
-                for (WirelessClientInventoryInsert row : rows) {
-                    bindAll(statement, row.sensorId(), row.locationId(), row.snapshotAt(), row.clientMac(),
-                            row.bssid(), row.ssid(), row.deviceId(), row.username(), row.identitySource(),
-                            row.lastSeen(), row.firstSeen(), row.signalDbm(), row.isAuthorized());
-                    statement.executeUpdate();
+        return observeOracle("oracle.insert_wireless_client_inventory", () -> {
+            long inserted = withRetry("insert_wireless_client_inventory", 2, () -> withTransaction(connection -> {
+                String sql = """
+                        merge into WIRELESS_CLIENT_INVENTORY tgt
+                        using (
+                            select ? SENSOR_ID, ? LOCATION_ID, ? SNAPSHOT_AT, ? CLIENT_MAC,
+                                   ? BSSID, ? SSID, ? DEVICE_ID, ? USERNAME, ? IDENTITY_SOURCE,
+                                   ? LAST_SEEN, ? FIRST_SEEN, ? SIGNAL_DBM, ? IS_AUTHORIZED
+                            from dual
+                        ) src
+                        on (
+                            tgt.SENSOR_ID = src.SENSOR_ID
+                            and tgt.SNAPSHOT_AT = src.SNAPSHOT_AT
+                            and tgt.CLIENT_MAC = src.CLIENT_MAC
+                        )
+                        when matched then update set
+                            tgt.LOCATION_ID = src.LOCATION_ID,
+                            tgt.BSSID = src.BSSID,
+                            tgt.SSID = src.SSID,
+                            tgt.DEVICE_ID = src.DEVICE_ID,
+                            tgt.USERNAME = src.USERNAME,
+                            tgt.IDENTITY_SOURCE = src.IDENTITY_SOURCE,
+                            tgt.LAST_SEEN = src.LAST_SEEN,
+                            tgt.FIRST_SEEN = src.FIRST_SEEN,
+                            tgt.SIGNAL_DBM = src.SIGNAL_DBM,
+                            tgt.IS_AUTHORIZED = src.IS_AUTHORIZED
+                        when not matched then insert (
+                            SENSOR_ID, LOCATION_ID, SNAPSHOT_AT, CLIENT_MAC, BSSID, SSID,
+                            DEVICE_ID, USERNAME, IDENTITY_SOURCE, LAST_SEEN, FIRST_SEEN,
+                            SIGNAL_DBM, IS_AUTHORIZED
+                        ) values (
+                            src.SENSOR_ID, src.LOCATION_ID, src.SNAPSHOT_AT, src.CLIENT_MAC,
+                            src.BSSID, src.SSID, src.DEVICE_ID, src.USERNAME, src.IDENTITY_SOURCE,
+                            src.LAST_SEEN, src.FIRST_SEEN, src.SIGNAL_DBM, src.IS_AUTHORIZED
+                        )
+                        """;
+                try (PreparedStatement statement = prepare(connection, sql)) {
+                    for (WirelessClientInventoryInsert row : rows) {
+                        bindAll(statement, row.sensorId(), row.locationId(), row.snapshotAt(), row.clientMac(),
+                                row.bssid(), row.ssid(), row.deviceId(), row.username(), row.identitySource(),
+                                row.lastSeen(), row.firstSeen(), row.signalDbm(), row.isAuthorized());
+                        statement.executeUpdate();
+                    }
                 }
-            }
-            return (long) rows.size();
-        }));
+                return (long) rows.size();
+            }));
+            log.info("event=oracle_insert status=ok target=wireless_client_inventory batch_id={} rows={}",
+                    batchId, inserted);
+            return inserted;
+        });
     }
 
     @Override
     public long insertWirelessProbeRequests(String batchId, List<WirelessProbeRequestInsert> rows) throws Exception {
-        return observeOracle("oracle.insert_wireless_probe_requests", () -> withTransaction(connection -> {
-            String sql = """
-                    merge into WIRELESS_PROBE_REQUESTS tgt
-                    using (
-                        select ? BATCH_ID, ? CLIENT_MAC, ? SSID, ? KNOWN_BSSID,
-                               ? FIRST_SEEN, ? LAST_SEEN, ? PROBE_COUNT
-                        from dual
-                    ) src
-                    on (
-                        tgt.BATCH_ID = src.BATCH_ID
-                        and tgt.CLIENT_MAC = src.CLIENT_MAC
-                        and (tgt.SSID = src.SSID or (tgt.SSID is null and src.SSID is null))
-                    )
-                    when matched then update set
-                        tgt.KNOWN_BSSID = src.KNOWN_BSSID,
-                        tgt.FIRST_SEEN = src.FIRST_SEEN,
-                        tgt.LAST_SEEN = src.LAST_SEEN,
-                        tgt.PROBE_COUNT = src.PROBE_COUNT
-                    when not matched then insert (
-                        BATCH_ID, CLIENT_MAC, SSID, KNOWN_BSSID, FIRST_SEEN, LAST_SEEN, PROBE_COUNT
-                    ) values (
-                        src.BATCH_ID, src.CLIENT_MAC, src.SSID, src.KNOWN_BSSID,
-                        src.FIRST_SEEN, src.LAST_SEEN, src.PROBE_COUNT
-                    )
-                    """;
-            try (PreparedStatement statement = prepare(connection, sql)) {
-                for (WirelessProbeRequestInsert row : rows) {
-                    bindAll(statement, batchId, row.clientMac(), row.ssid(), row.knownBssid(),
-                            row.firstSeen(), row.lastSeen(), row.probeCount());
-                    statement.executeUpdate();
+        return observeOracle("oracle.insert_wireless_probe_requests", () -> {
+            long inserted = withRetry("insert_wireless_probe_requests", 2, () -> withTransaction(connection -> {
+                String sql = """
+                        merge into WIRELESS_PROBE_REQUESTS tgt
+                        using (
+                            select ? BATCH_ID, ? CLIENT_MAC, ? SSID, ? KNOWN_BSSID,
+                                   ? FIRST_SEEN, ? LAST_SEEN, ? PROBE_COUNT
+                            from dual
+                        ) src
+                        on (
+                            tgt.BATCH_ID = src.BATCH_ID
+                            and tgt.CLIENT_MAC = src.CLIENT_MAC
+                            and (tgt.SSID = src.SSID or (tgt.SSID is null and src.SSID is null))
+                        )
+                        when matched then update set
+                            tgt.KNOWN_BSSID = src.KNOWN_BSSID,
+                            tgt.FIRST_SEEN = src.FIRST_SEEN,
+                            tgt.LAST_SEEN = src.LAST_SEEN,
+                            tgt.PROBE_COUNT = src.PROBE_COUNT
+                        when not matched then insert (
+                            BATCH_ID, CLIENT_MAC, SSID, KNOWN_BSSID, FIRST_SEEN, LAST_SEEN, PROBE_COUNT
+                        ) values (
+                            src.BATCH_ID, src.CLIENT_MAC, src.SSID, src.KNOWN_BSSID,
+                            src.FIRST_SEEN, src.LAST_SEEN, src.PROBE_COUNT
+                        )
+                        """;
+                try (PreparedStatement statement = prepare(connection, sql)) {
+                    for (WirelessProbeRequestInsert row : rows) {
+                        bindAll(statement, batchId, row.clientMac(), row.ssid(), row.knownBssid(),
+                                row.firstSeen(), row.lastSeen(), row.probeCount());
+                        statement.executeUpdate();
+                    }
                 }
-            }
-            return (long) rows.size();
-        }));
+                return (long) rows.size();
+            }));
+            log.info("event=oracle_insert status=ok target=wireless_probe_requests batch_id={} rows={}",
+                    batchId, inserted);
+            return inserted;
+        });
     }
 
     private long insertProxyEventsTransaction(Connection connection,
@@ -567,6 +620,31 @@ public class JdbcOracleSink implements OracleSink {
         }
     }
 
+    private <T> T withRetry(String operation, int maxAttempts, CheckedWork<T> work) throws Exception {
+        Exception last = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return work.apply();
+            } catch (Exception e) {
+                last = e;
+                if (OracleErrorClass.classify(e.getMessage()) == OracleErrorClass.PERMANENT) {
+                    throw e;
+                }
+                if (attempt < maxAttempts) {
+                    log.warn("event=oracle_retry status=retrying operation={} attempt={}/{} error=\"{}\"",
+                            operation, attempt, maxAttempts, sanitize(e.getMessage()));
+                    try {
+                        Thread.sleep(200L * attempt);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw interrupted;
+                    }
+                }
+            }
+        }
+        throw last;
+    }
+
     private PreparedStatement prepare(Connection connection, String sql) throws SQLException {
         PreparedStatement statement = connection.prepareStatement(sql);
         statement.setQueryTimeout(props.statementTimeoutSecs());
@@ -577,7 +655,9 @@ public class JdbcOracleSink implements OracleSink {
         statement.clearParameters();
         for (int index = 0; index < values.length; index++) {
             Object value = values[index];
-            if (value instanceof OffsetDateTime offsetDateTime) {
+            if (value == null) {
+                statement.setNull(index + 1, Types.NULL);
+            } else if (value instanceof OffsetDateTime offsetDateTime) {
                 statement.setObject(index + 1, offsetDateTime);
             } else {
                 statement.setObject(index + 1, value);

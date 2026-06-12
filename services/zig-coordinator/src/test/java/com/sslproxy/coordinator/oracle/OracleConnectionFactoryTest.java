@@ -1,15 +1,23 @@
 package com.sslproxy.coordinator.oracle;
 
 import com.sslproxy.coordinator.config.OracleSinkProperties;
+import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class OracleConnectionFactoryTest {
 
@@ -20,7 +28,7 @@ class OracleConnectionFactoryTest {
         writeWallet(wallet, "mainerc_high");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(wallet, passFile, "mainerc_high"));
+        OracleConnectionFactory factory = factory(props(wallet, passFile, "mainerc_high"));
 
         OracleConnectionFactory.OracleConfiguration configuration = factory.validateConfiguration();
 
@@ -37,7 +45,7 @@ class OracleConnectionFactoryTest {
         Files.writeString(wallet.resolve("sqlnet.ora"), "WALLET_LOCATION = ok");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(wallet, passFile, "mainerc_high"));
+        OracleConnectionFactory factory = factory(props(wallet, passFile, "mainerc_high"));
 
         IllegalStateException error = assertThrows(IllegalStateException.class, factory::validateConfiguration);
 
@@ -57,7 +65,7 @@ class OracleConnectionFactoryTest {
         Files.writeString(wallet.resolve("cwallet.sso"), "wallet");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(wallet, passFile, "mainerc_high"));
+        OracleConnectionFactory factory = factory(props(wallet, passFile, "mainerc_high"));
 
         IllegalStateException error = assertThrows(IllegalStateException.class, factory::validateStartupConfiguration);
 
@@ -73,7 +81,7 @@ class OracleConnectionFactoryTest {
         writeWallet(wallet, "mainerc_low");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(wallet, passFile, "mainerc_high"));
+        OracleConnectionFactory factory = factory(props(wallet, passFile, "mainerc_high"));
 
         IllegalStateException error = assertThrows(IllegalStateException.class, factory::validateConfiguration);
 
@@ -88,7 +96,7 @@ class OracleConnectionFactoryTest {
         writeWallet(wallet, "mainerc_high");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(
+        OracleConnectionFactory factory = factory(props(
                 wallet,
                 passFile,
                 "",
@@ -107,7 +115,7 @@ class OracleConnectionFactoryTest {
         writeWallet(wallet, "mainerc_low");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(
+        OracleConnectionFactory factory = factory(props(
                 wallet,
                 passFile,
                 "",
@@ -126,7 +134,7 @@ class OracleConnectionFactoryTest {
         writeWallet(wallet, "mainerc_low");
         Files.writeString(passFile, "secret\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(
+        OracleConnectionFactory factory = factory(props(
                 wallet,
                 passFile,
                 "",
@@ -146,11 +154,27 @@ class OracleConnectionFactoryTest {
         writeWallet(wallet, "mainerc_high");
         Files.writeString(passFile, "\n");
 
-        OracleConnectionFactory factory = new OracleConnectionFactory(props(wallet, passFile, "mainerc_high"));
+        OracleConnectionFactory factory = factory(props(wallet, passFile, "mainerc_high"));
 
         IllegalStateException error = assertThrows(IllegalStateException.class, factory::validateConfiguration);
 
         assertTrue(error.getMessage().contains("Oracle password file is empty"));
+    }
+
+    @Test
+    void closeIsIdempotent() throws Exception {
+        OracleConnectionFactory factory = factory(props(Path.of("/tmp/wallet"), Path.of("/tmp/pass"), "mainerc_high"));
+        HikariDataSource dataSource = mock(HikariDataSource.class);
+        when(dataSource.isClosed()).thenReturn(false, true);
+        when(dataSource.getPoolName()).thenReturn("oracle-sink");
+        Field field = OracleConnectionFactory.class.getDeclaredField("dataSource");
+        field.setAccessible(true);
+        field.set(factory, dataSource);
+
+        assertDoesNotThrow(factory::close);
+        assertDoesNotThrow(factory::close);
+
+        verify(dataSource, times(1)).close();
     }
 
     private void writeWallet(Path wallet, String alias) throws Exception {
@@ -167,6 +191,8 @@ class OracleConnectionFactoryTest {
     private OracleSinkProperties props(Path wallet, Path passFile, String conn, String jdbcUrl) {
         return new OracleSinkProperties(
                 true,
+                true,
+                false,
                 conn,
                 jdbcUrl,
                 "USCIS_APP",
@@ -177,7 +203,12 @@ class OracleConnectionFactoryTest {
                 1_000,
                 1_000,
                 1_000,
-                5
+                5,
+                3
         );
+    }
+
+    private OracleConnectionFactory factory(OracleSinkProperties props) {
+        return new OracleConnectionFactory(props, new SimpleMeterRegistry());
     }
 }

@@ -10,6 +10,8 @@ import java.util.Optional;
 @Validated
 public record OracleSinkProperties(
         boolean enabled,
+        boolean wirelessEnabled,
+        boolean schemaValidationWarnOnly,
         String conn,
         String jdbcUrl,
         String user,
@@ -20,8 +22,13 @@ public record OracleSinkProperties(
         @Min(1) long connectionTimeoutMs,
         @Min(1) long idleTimeoutMs,
         @Min(1) long maxLifetimeMs,
-        @Min(1) int statementTimeoutSecs
+        @Min(1) int statementTimeoutSecs,
+        @Min(1) int loadMaxRetries
 ) {
+    public boolean validateWirelessObjects() {
+        return enabled && wirelessEnabled;
+    }
+
     public String effectiveJdbcUrl() {
         if (jdbcUrl != null && !jdbcUrl.isBlank()) {
             return jdbcUrl.trim();

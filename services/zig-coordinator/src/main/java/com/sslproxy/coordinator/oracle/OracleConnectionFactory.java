@@ -3,8 +3,11 @@ package com.sslproxy.coordinator.oracle;
 import com.sslproxy.coordinator.config.OracleSinkProperties;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -23,11 +26,15 @@ import java.util.stream.Stream;
 @Component
 public class OracleConnectionFactory {
 
+    private static final Logger log = LoggerFactory.getLogger(OracleConnectionFactory.class);
+
     private final OracleSinkProperties props;
+    private final MeterRegistry meterRegistry;
     private volatile HikariDataSource dataSource;
 
-    public OracleConnectionFactory(OracleSinkProperties props) {
+    public OracleConnectionFactory(OracleSinkProperties props, MeterRegistry meterRegistry) {
         this.props = props;
+        this.meterRegistry = meterRegistry;
     }
 
     @PostConstruct
@@ -95,6 +102,9 @@ public class OracleConnectionFactory {
         config.setMaxLifetime(props.maxLifetimeMs());
         config.setAutoCommit(false);
         config.setConnectionTestQuery("SELECT 1 FROM DUAL");
+        config.setKeepaliveTime(60_000);
+        config.setConnectionInitSql("SELECT 1 FROM DUAL");
+        config.setMetricRegistry(meterRegistry);
         config.addDataSourceProperty("oracle.net.tns_admin", tnsAdmin.toString());
         config.addDataSourceProperty("oracle.net.wallet_location", walletLocation);
         config.addDataSourceProperty("oracle.net.ssl_server_dn_match", "true");
@@ -206,8 +216,10 @@ public class OracleConnectionFactory {
     @PreDestroy
     public void close() {
         HikariDataSource existing = dataSource;
-        if (existing != null) {
+        if (existing != null && !existing.isClosed()) {
+            log.info("event=oracle_pool status=closing pool={}", existing.getPoolName());
             existing.close();
+            log.info("event=oracle_pool status=closed");
         }
     }
 

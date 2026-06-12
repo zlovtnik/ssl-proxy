@@ -37,6 +37,27 @@ class OracleLoadRouteTest {
     }
 
     @Test
+    void transientHandlerFailureIsRetryable() throws Exception {
+        OracleLoadHandler loadHandler = mock(OracleLoadHandler.class);
+        when(loadHandler.handle(any(OracleLoad.class))).thenThrow(new IllegalStateException("ORA-03114 not connected"));
+        OracleLoadRoute route = new OracleLoadRoute(new ObjectMapper(), loadHandler);
+
+        OracleResult result = route.handleLoadMessage("""
+                {
+                  "job_id": "job-1",
+                  "batch_id": "batch-1",
+                  "batch_no": 7,
+                  "stream_name": "wireless.audit",
+                  "payload_ref": "inline://json/W10"
+                }
+                """);
+
+        assertEquals("failed", result.status());
+        assertEquals("retryable", result.errorClass());
+        assertTrue(result.retryable());
+    }
+
+    @Test
     void decodeFailureUsesEmptyIdentifiers() {
         OracleLoadRoute route = new OracleLoadRoute(new ObjectMapper(), mock(OracleLoadHandler.class));
 
@@ -45,6 +66,8 @@ class OracleLoadRouteTest {
         assertEquals("failed", result.status());
         assertEquals("", result.jobId());
         assertEquals("", result.batchId());
+        assertEquals("permanent", result.errorClass());
+        assertEquals(false, result.retryable());
         assertTrue(result.errorText().contains("decode sync.oracle.load message"));
     }
 }

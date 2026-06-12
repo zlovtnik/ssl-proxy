@@ -1,6 +1,7 @@
 package com.sslproxy.coordinator.route;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sslproxy.coordinator.oracle.OracleErrorClass;
 import com.sslproxy.coordinator.oracle.OracleLoad;
 import com.sslproxy.coordinator.oracle.OracleLoadHandler;
 import com.sslproxy.coordinator.oracle.OracleResult;
@@ -32,6 +33,10 @@ public class OracleLoadRoute extends RouteBuilder {
     @Override
     public void configure() {
         onException(Exception.class)
+                .maximumRedeliveries("{{oracle-sink.load-max-retries:3}}")
+                .redeliveryDelay(500)
+                .useOriginalMessage()
+                .to("kafka:{{coordinator.load-topic}}.dlq")
                 .handled(true)
                 .log(LoggingLevel.ERROR, "event=oracle_load_route status=error error=${exception.message}");
 
@@ -62,9 +67,12 @@ public class OracleLoadRoute extends RouteBuilder {
             return result;
         } catch (Exception e) {
             String failureStage = batchId.isBlank() ? "decode" : "handle";
+            OracleErrorClass errorClass = batchId.isBlank() || e instanceof com.fasterxml.jackson.core.JsonProcessingException
+                    ? OracleErrorClass.PERMANENT
+                    : OracleErrorClass.classify(e.getMessage());
             log.error("event=oracle_load_route status={}_failed job_id={} batch_id={} error=\"{}\"",
                     failureStage, jobId, batchId, sanitize(e.getMessage()));
-            return OracleResult.failure(jobId, batchId, com.sslproxy.coordinator.oracle.OracleErrorClass.PERMANENT,
+            return OracleResult.failure(jobId, batchId, errorClass,
                     failureStage + " sync.oracle.load message: " + e.getMessage(),
                     java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
                             .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME));

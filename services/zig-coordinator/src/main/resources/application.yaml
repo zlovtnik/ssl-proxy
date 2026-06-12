@@ -99,6 +99,8 @@ coordinator:
 
 oracle-sink:
   enabled: ${ORACLE_SINK_ENABLED:false}
+  wireless-enabled: ${ORACLE_SINK_WIRELESS_ENABLED:true}
+  schema-validation-warn-only: ${ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY:false}
   conn: ${ORACLE_CONN:}
   jdbc-url: ${ORACLE_JDBC_URL:}
   user: ${ORACLE_USER:}
@@ -110,6 +112,7 @@ oracle-sink:
   idle-timeout-ms: ${ORACLE_COORDINATOR_IDLE_TIMEOUT_MS:600000}
   max-lifetime-ms: ${ORACLE_COORDINATOR_MAX_LIFETIME_MS:1800000}
   statement-timeout-secs: ${ORACLE_STATEMENT_TIMEOUT_SECS:30}
+  load-max-retries: ${ORACLE_LOAD_MAX_RETRIES:3}
 
 # =============================================================================
 # Apache Camel

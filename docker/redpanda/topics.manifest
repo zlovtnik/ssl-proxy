@@ -1,6 +1,7 @@
 # topic|partitions|replicas|retention.ms|retention.bytes
 sync.scan.request|3|1|2592000000|-1
 sync.oracle.load|3|1|2592000000|-1
+sync.oracle.load.dlq|3|1|2592000000|-1
 sync.oracle.result|3|1|2592000000|-1
 proxy.payload_audit|3|1|2592000000|-1
 wireless.audit|3|1|2592000000|-1
