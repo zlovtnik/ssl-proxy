@@ -3,6 +3,7 @@ package com.sslproxy.coordinator.oracle;
 import com.sslproxy.coordinator.config.OracleSinkProperties;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
@@ -13,8 +14,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Component
 public class OracleConnectionFactory {
@@ -24,6 +28,13 @@ public class OracleConnectionFactory {
 
     public OracleConnectionFactory(OracleSinkProperties props) {
         this.props = props;
+    }
+
+    @PostConstruct
+    public void validateStartupConfiguration() {
+        if (props.enabled()) {
+            validateConfiguration();
+        }
     }
 
     public Connection getConnection() throws SQLException {
@@ -100,15 +111,57 @@ public class OracleConnectionFactory {
     private Path validateWallet() {
         Path tnsAdmin = Path.of(props.requiredTnsAdmin());
         if (!Files.isDirectory(tnsAdmin)) {
-            throw new IllegalStateException("wallet directory missing: " + tnsAdmin);
+            throw new IllegalStateException("wallet directory missing: " + tnsAdmin + "; " + walletDiagnostics(tnsAdmin));
         }
         for (String file : List.of("tnsnames.ora", "sqlnet.ora", "cwallet.sso")) {
             Path candidate = tnsAdmin.resolve(file);
             if (!Files.isRegularFile(candidate)) {
-                throw new IllegalStateException("missing Oracle wallet artifact: " + candidate);
+                throw new IllegalStateException("missing Oracle wallet artifact: " + candidate + "; " + walletDiagnostics(tnsAdmin));
             }
         }
         return tnsAdmin;
+    }
+
+    private String walletDiagnostics(Path tnsAdmin) {
+        StringBuilder diagnostics = new StringBuilder("wallet diagnostics: path=")
+                .append(tnsAdmin)
+                .append(" exists=")
+                .append(Files.exists(tnsAdmin))
+                .append(" directory=")
+                .append(Files.isDirectory(tnsAdmin))
+                .append(" readable=")
+                .append(Files.isReadable(tnsAdmin));
+
+        if (!Files.isDirectory(tnsAdmin)) {
+            return diagnostics.toString();
+        }
+
+        try (Stream<Path> entries = Files.list(tnsAdmin)) {
+            String listedEntries = entries
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                    .limit(20)
+                    .map(this::walletEntryDiagnostic)
+                    .collect(Collectors.joining(", "));
+            diagnostics.append(" entries=[")
+                    .append(listedEntries)
+                    .append("]");
+        } catch (IOException | SecurityException e) {
+            diagnostics.append(" entries_error=\"")
+                    .append(sanitize(e.getMessage()))
+                    .append("\"");
+        }
+        return diagnostics.toString();
+    }
+
+    private String walletEntryDiagnostic(Path entry) {
+        return entry.getFileName()
+                + "{regular="
+                + Files.isRegularFile(entry)
+                + ",directory="
+                + Files.isDirectory(entry)
+                + ",readable="
+                + Files.isReadable(entry)
+                + "}";
     }
 
     private void validateTnsAlias(Path tnsAdmin, String alias) {
@@ -141,6 +194,13 @@ public class OracleConnectionFactory {
 
     private String walletLocation(Path tnsAdmin) {
         return "(SOURCE=(METHOD=FILE)(METHOD_DATA=(DIRECTORY=" + tnsAdmin + ")))";
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 
     @PreDestroy

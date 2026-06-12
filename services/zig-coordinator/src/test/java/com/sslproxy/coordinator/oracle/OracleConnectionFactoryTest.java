@@ -43,6 +43,27 @@ class OracleConnectionFactoryTest {
 
         assertTrue(error.getMessage().contains("missing Oracle wallet artifact"));
         assertTrue(error.getMessage().contains("cwallet.sso"));
+        assertTrue(error.getMessage().contains("wallet diagnostics"));
+        assertTrue(error.getMessage().contains("tnsnames.ora{regular=true"));
+        assertTrue(error.getMessage().contains("sqlnet.ora{regular=true"));
+    }
+
+    @Test
+    void startupValidationRejectsMissingWalletArtifact(@TempDir Path root) throws Exception {
+        Path wallet = root.resolve("wallet");
+        Path passFile = root.resolve("oracle-password.txt");
+        Files.createDirectories(wallet);
+        Files.writeString(wallet.resolve("sqlnet.ora"), "WALLET_LOCATION = ok");
+        Files.writeString(wallet.resolve("cwallet.sso"), "wallet");
+        Files.writeString(passFile, "secret\n");
+
+        OracleConnectionFactory factory = new OracleConnectionFactory(props(wallet, passFile, "mainerc_high"));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, factory::validateStartupConfiguration);
+
+        assertTrue(error.getMessage().contains("missing Oracle wallet artifact"));
+        assertTrue(error.getMessage().contains("tnsnames.ora"));
+        assertTrue(error.getMessage().contains("wallet diagnostics"));
     }
 
     @Test

@@ -225,7 +225,7 @@ max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="resul
 
 If `java-coordinator` logs `event=oracle_load status=failed` or `unsupported stream_name`, confirm the coordinator load consumer is subscribed to the load topic and that `SYNC_ORACLE_STREAM_NAMES` contains only streams with Oracle sink support:
 
-Wallet preflight failures use these exact messages in `java-coordinator` logs: `wallet directory missing`, `missing Oracle wallet artifact`, `Oracle TNS alias not found`, `missing Oracle password file`, and `Oracle password file is empty`. Unrecoverable corrupt dispatch rows are marked with `sync.oracle.load payload_ref missing and stored payload unavailable`.
+With `ORACLE_SINK_ENABLED=true`, `java-coordinator` validates the mounted wallet before the Kafka load consumer can process batches. Wallet preflight failures use these exact messages in `java-coordinator` logs: `wallet directory missing`, `missing Oracle wallet artifact`, `Oracle TNS alias not found`, `missing Oracle password file`, and `Oracle password file is empty`. Missing wallet artifact errors include a sanitized listing of `/app/wallet`. Unrecoverable corrupt dispatch rows are marked with `sync.oracle.load payload_ref missing and stored payload unavailable`.
 
 ```sh
 docker compose config java-coordinator | sed -n '/target: \/app\/wallet/,+4p'
