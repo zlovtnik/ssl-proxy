@@ -250,6 +250,16 @@ spec:
               value: {{ .Values.javaCoordinator.metrics.redpandaLagMetricsTimeoutMs | quote }}
             - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
               value: {{ .Values.javaCoordinator.metrics.heartbeatLogIntervalMs | quote }}
+            - name: ORACLE_SINK_ENABLED
+              value: {{ .Values.javaCoordinator.oracle.enabled | quote }}
+            - name: ORACLE_CONN
+              value: {{ .Values.javaCoordinator.oracle.conn | quote }}
+            - name: ORACLE_USER
+              value: {{ .Values.javaCoordinator.oracle.user | quote }}
+            - name: ORACLE_PASS_FILE
+              value: "/run/secrets/oracle/{{ .Values.javaCoordinator.oracle.passwordSecret.key }}"
+            - name: TNS_ADMIN
+              value: "/app/wallet"
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.javaCoordinator.tracing.samplingProbability | quote }}
           ports:
@@ -268,12 +278,24 @@ spec:
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
+            - name: oracle-wallet
+              mountPath: /app/wallet
+              readOnly: true
+            - name: oracle-password
+              mountPath: /run/secrets/oracle
+              readOnly: true
       volumes:
         - name: topics-manifest
           configMap:
             name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
         - name: sync-outbox
           emptyDir: {}
+        - name: oracle-wallet
+          secret:
+            secretName: {{ .Values.javaCoordinator.oracle.walletSecret.name }}
+        - name: oracle-password
+          secret:
+            secretName: {{ .Values.javaCoordinator.oracle.passwordSecret.name }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -36,11 +36,6 @@
           "expr": "sum by (operation) (rate(integration_console_active_record_queries_total[5m]))",
           "legendFormat": "rails active_record {{operation}}",
           "refId": "B"
-        },
-        {
-          "expr": "sum by (operation) (rate(oracle_worker_oracle_calls_total[5m]))",
-          "legendFormat": "oracle-worker {{operation}}",
-          "refId": "C"
         }
       ],
       "title": "DB Call Rate",
@@ -135,11 +130,6 @@
           "expr": "sum by (service_name, db_system, db_operation, status) (rate(traces_spanmetrics_calls_total{db_system!=\"\",status=~\"error|ERROR|STATUS_CODE_ERROR\"}[5m]))",
           "legendFormat": "{{service_name}} {{db_system}} {{db_operation}} {{status}}",
           "refId": "A"
-        },
-        {
-          "expr": "sum by (operation) (rate(oracle_worker_oracle_errors_total[5m]))",
-          "legendFormat": "oracle-worker {{operation}}",
-          "refId": "B"
         }
       ],
       "title": "DB Error Rate",
@@ -165,12 +155,12 @@
       "id": 5,
       "targets": [
         {
-          "expr": "rate(oracle_worker_oracle_duration_ms_total[5m]) / clamp_min(rate(oracle_worker_oracle_calls_total[5m]), 0.001)",
-          "legendFormat": "avg {{operation}}",
+          "expr": "histogram_quantile(0.95, sum by (service_name, db_operation, le) (rate(traces_spanmetrics_duration_milliseconds_bucket{db_system=\"oracle\"}[5m])))",
+          "legendFormat": "p95 {{service_name}} {{db_operation}}",
           "refId": "A"
         }
       ],
-      "title": "Oracle Call Average Duration",
+      "title": "Oracle Call Latency p95",
       "type": "timeseries"
     },
     {
@@ -193,17 +183,17 @@
       "id": 6,
       "targets": [
         {
-          "expr": "oracle_worker_pool_connections",
+          "expr": "hikaricp_connections{pool=\"oracle-sink\"}",
           "legendFormat": "connections",
           "refId": "A"
         },
         {
-          "expr": "oracle_worker_pool_idle_connections",
+          "expr": "hikaricp_connections_idle{pool=\"oracle-sink\"}",
           "legendFormat": "idle",
           "refId": "B"
         },
         {
-          "expr": "oracle_worker_pool_max_connections",
+          "expr": "hikaricp_connections_max{pool=\"oracle-sink\"}",
           "legendFormat": "max",
           "refId": "C"
         }

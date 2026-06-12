@@ -211,19 +211,9 @@
           "expr": "sum(rate(atheros_redpanda_publish_errors_total[5m]))",
           "legendFormat": "atheros publish errors",
           "refId": "B"
-        },
-        {
-          "expr": "sum(rate(oracle_worker_batches_received_total[5m]))",
-          "legendFormat": "oracle batches",
-          "refId": "C"
-        },
-        {
-          "expr": "sum(rate(oracle_worker_batches_failed_total[5m]))",
-          "legendFormat": "oracle failures",
-          "refId": "D"
         }
       ],
-      "title": "Worker Throughput And Errors",
+      "title": "Atheros Throughput And Errors",
       "type": "timeseries"
     }
   ],
