@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::AuditEntry;
+use super::{AuditEntry, IdentitySource};
 
 #[test]
 fn audit_entry_defaults_identity_source_when_missing() {
@@ -26,5 +26,5 @@ fn audit_entry_defaults_identity_source_when_missing() {
     .unwrap();
 
     assert_eq!(parsed.schema_version, 1);
-    assert_eq!(parsed.identity_source, "unknown");
+    assert_eq!(parsed.identity_source, IdentitySource::Unknown);
 }

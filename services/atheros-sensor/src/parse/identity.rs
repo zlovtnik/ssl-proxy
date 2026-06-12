@@ -15,7 +15,7 @@ use std::time::Duration;
 use lru::LruCache;
 
 use crate::{
-    model::WifiFrame,
+    model::{IdentitySource, WifiFrame},
     state_key::{DetectorLimits, MacAddr, SsidKey},
 };
 
@@ -28,7 +28,7 @@ const DEAUTH_FLOOD_THRESHOLD: u32 = 5;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedIdentity {
     pub username: String,
-    pub source: String,
+    pub source: IdentitySource,
     pub tags: Vec<String>,
 }
 
@@ -88,7 +88,7 @@ impl IdentityCache {
                             push_tag(&mut threat_tags, "threat:potential_evil_twin");
                             detection_identity = Some(ResolvedIdentity {
                                 username: format!("SUSPECT_EVIL_TWIN:{bssid}"),
-                                source: "evil_twin_detection".to_string(),
+                                source: IdentitySource::EvilTwinDetection,
                                 tags: threat_tags.clone(),
                             });
                         }
@@ -127,7 +127,7 @@ impl IdentityCache {
                                 push_tag(&mut threat_tags, "threat:deauth_flood");
                                 detection_identity = Some(ResolvedIdentity {
                                     username: format!("SUSPECT_DEAUTH_FLOOD:{bssid}"),
-                                    source: "deauth_flood_detection".to_string(),
+                                    source: IdentitySource::DeauthFloodDetection,
                                     tags: threat_tags.clone(),
                                 });
                                 entry.alerted = true;
@@ -151,8 +151,7 @@ impl IdentityCache {
                 username,
                 source: frame
                     .identity_source_hint
-                    .clone()
-                    .unwrap_or_else(|| "observed_identity".to_string()),
+                    .unwrap_or(IdentitySource::ObservedIdentity),
                 tags: threat_tags,
             });
         }
@@ -167,7 +166,7 @@ impl IdentityCache {
             if let Some(username) = self.mac_to_username.get(&key) {
                 return Some(ResolvedIdentity {
                     username: username.clone(),
-                    source: "eap_identity_cache".to_string(),
+                    source: IdentitySource::EapIdentityCache,
                     tags: threat_tags,
                 });
             }

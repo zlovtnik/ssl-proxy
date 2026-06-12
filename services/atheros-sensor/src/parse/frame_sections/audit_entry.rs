@@ -6,13 +6,13 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     add_audit_threat_tags(&frame, &mut tags);
 
     let username = frame.username_hint.clone();
-    let identity_source = match (username.as_ref(), frame.identity_source_hint.clone()) {
+    let identity_source = match (username.as_ref(), frame.identity_source_hint) {
         (Some(_), Some(source)) => source,
-        (Some(_), None) => "observed_identity".to_string(),
+        (Some(_), None) => IdentitySource::ObservedIdentity,
         (None, _) if frame.source_mac.is_some() || frame.bssid.is_some() => {
-            "mac_observed".to_string()
+            IdentitySource::MacObserved
         }
-        (None, _) => "unknown".to_string(),
+        (None, _) => IdentitySource::Unknown,
     };
 
     AuditEntry {

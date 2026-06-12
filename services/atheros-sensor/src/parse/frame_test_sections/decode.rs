@@ -5,7 +5,7 @@
 
     use super::*;
     use crate::{
-        model::{AuditContext, RawPacket},
+        model::{AuditContext, IdentitySource, RawPacket},
         parse::{
             strip_radiotap, HandshakeMonitor, IEIterator, IdentityCache, ParseError,
             RSN_CAP_PMF_CAPABLE, RSN_CAP_PMF_REQUIRED, SECURITY_PMF_CAPABLE,

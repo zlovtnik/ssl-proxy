@@ -145,19 +145,17 @@ pub(super) fn extract_pmkid(
     subtype: u8,
     frame_bytes: &[u8],
 ) -> Option<String> {
-    if extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes)? != 1 {
-        return None;
-    }
+    (extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes)? == 1)
+        .then_some(())
+        .and_then(|_| eapol_key_data(frame_control, subtype, frame_bytes))
+        .and_then(find_pmkid_in_key_data)
+}
+
+fn eapol_key_data<'a>(frame_control: u16, subtype: u8, frame_bytes: &'a [u8]) -> Option<&'a [u8]> {
     let payload_offset = data_payload_offset(frame_control, subtype, frame_bytes)?;
     let eapol = frame_bytes.get(payload_offset + 8..)?;
-    if eapol.len() < 99 {
-        return None;
-    }
-    let key_data_len_offset = 97usize;
-    let key_data_len =
-        u16::from_be_bytes([eapol[key_data_len_offset], eapol[key_data_len_offset + 1]]) as usize;
-    let key_data = eapol.get(key_data_len_offset + 2..key_data_len_offset + 2 + key_data_len)?;
-    find_pmkid_in_key_data(key_data)
+    let key_data_len = u16::from_be_bytes(eapol.get(97..99)?.try_into().ok()?) as usize;
+    eapol.get(99..99 + key_data_len)
 }
 
 pub(super) fn eapol_key_observation(frame: &WifiFrame) -> Option<EapolKeyObservation> {

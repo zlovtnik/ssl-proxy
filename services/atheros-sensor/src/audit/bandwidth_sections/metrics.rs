@@ -46,8 +46,8 @@ impl TrafficBucket {
             location_id: location_id.to_string(),
             interface: interface.to_string(),
             channel,
-            source_mac: "unknown".to_string(),
-            destination_bssid: "unknown".to_string(),
+            source_mac: TrafficMac::unknown(),
+            destination_bssid: TrafficMac::unknown(),
             ssid: None,
             external_bssid: false,
         };
@@ -86,17 +86,19 @@ impl TrafficBucket {
             self.wall_clock_start = Some(Instant::now());
         }
 
-        let Some(source_mac) = entry.source_mac.as_deref().map(normalize_mac) else {
+        let Some(source_mac) = entry.source_mac.as_deref().and_then(TrafficMac::parse) else {
             return Ok(flushed);
         };
         let Some(destination_bssid) = entry
             .destination_bssid
             .as_deref()
             .or(entry.bssid.as_deref())
-            .map(normalize_mac)
+            .and_then(TrafficMac::parse)
         else {
             return Ok(flushed);
         };
+        let ssid = entry.ssid.as_deref().and_then(SsidKey::new);
+        let ssid_display = ssid.as_ref().and_then(|_| entry.ssid.clone());
         let key = TrafficKey {
             sensor_id: entry.sensor_id.clone(),
             location_id: entry.location_id.clone(),
@@ -104,10 +106,13 @@ impl TrafficBucket {
             channel: entry.channel,
             source_mac,
             destination_bssid,
-            ssid: entry.ssid.clone(),
+            ssid,
             external_bssid,
         };
         let counters = self.entries.entry(key).or_default();
+        if counters.ssid.is_none() {
+            counters.ssid = ssid_display;
+        }
         counters.bytes = counters.bytes.saturating_add(entry.raw_len as u64);
         counters.frame_count = counters.frame_count.saturating_add(1);
         if entry.retry.unwrap_or(false) {
@@ -218,52 +223,40 @@ impl TrafficBucket {
         // Cap at Utc::now() to avoid future timestamps from clock skew.
         let window_end = window_end.min(Utc::now());
         self.burst_macs.clear();
-        let mut events = Vec::with_capacity(self.entries.len());
-        for (key, counters) in self.entries.drain() {
-            let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
-            let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
-            // Track source MACs with very low CV - they indicate automated burst traffic.
-            if let Some(cv) = inter_arrival_cv {
-                if cv < 0.05 {
-                    self.burst_macs.insert(key.source_mac.clone());
-                }
-            }
-            events.push(WirelessBandwidthEvent {
-                schema_version: 1,
-                event_type: "wireless_bandwidth_window".to_string(),
-                window_start: ssl_proxy::time::rfc3339_from_utc(window_start),
-                window_end: ssl_proxy::time::rfc3339_from_utc(window_end),
-                sensor_id: key.sensor_id,
-                location_id: key.location_id,
-                interface: key.interface,
-                channel: key.channel,
-                source_mac: key.source_mac,
-                destination_bssid: key.destination_bssid,
-                ssid: key.ssid,
-                bytes: counters.bytes,
-                frame_count: counters.frame_count,
-                retry_count: counters.retry_count,
-                more_data_count: counters.more_data_count,
-                power_save_count: counters.power_save_count,
-                strongest_signal_dbm: counters.strongest_signal_dbm,
-                external_bssid: key.external_bssid,
-                threshold_exceeded: key.external_bssid
-                    && counters.bytes > EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
-                frame_size_histogram: FrameSizeHistogram {
-                    under_100: counters.histogram[0],
-                    range_100_500: counters.histogram[1],
-                    range_500_1000: counters.histogram[2],
-                    range_1000_1500: counters.histogram[3],
-                },
-                inter_arrival_p50_ms,
-                inter_arrival_cv,
-                wall_clock_delta_ms: Some(wall_clock_delta_ms),
-                window_is_partial,
-                max_risk_score: counters.max_risk_score,
-                published_at: None,
-            });
-        }
-        events
+        let event_pairs: Vec<_> = self
+            .entries
+            .drain()
+            .map(|(key, counters)| {
+                let source_mac = key.source_mac.to_string();
+                let inter_arrival_p50_ms =
+                    calculate_p50_inter_arrival(&counters.arrival_times_ms);
+                let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
+                let event = build_bandwidth_event(
+                    key,
+                    counters,
+                    inter_arrival_p50_ms,
+                    inter_arrival_cv,
+                    window_start,
+                    window_end,
+                    wall_clock_delta_ms,
+                    window_is_partial,
+                );
+                (event, source_mac, inter_arrival_cv)
+            })
+            .collect();
+
+        self.burst_macs.extend(event_pairs.iter().filter_map(
+            |(_, source_mac, inter_arrival_cv)| {
+                (*inter_arrival_cv)
+                    .filter(|cv| *cv < 0.05)
+                    .map(|_| source_mac.clone())
+            },
+        ));
+
+        event_pairs
+            .into_iter()
+            .map(|(event, _, _)| event)
+            .collect()
     }
 
     fn enforce_entry_limit(&mut self) {
@@ -290,27 +283,57 @@ fn is_bandwidth_candidate(entry: &AuditEntry) -> bool {
         && (entry.destination_bssid.is_some() || entry.bssid.is_some())
 }
 
-fn normalize_mac(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+fn build_bandwidth_event(
+    key: TrafficKey,
+    counters: TrafficCounters,
+    inter_arrival_p50_ms: Option<u64>,
+    inter_arrival_cv: Option<f64>,
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    wall_clock_delta_ms: i64,
+    window_is_partial: bool,
+) -> WirelessBandwidthEvent {
+    WirelessBandwidthEvent {
+        schema_version: 1,
+        event_type: "wireless_bandwidth_window".to_string(),
+        window_start: ssl_proxy::time::rfc3339_from_utc(window_start),
+        window_end: ssl_proxy::time::rfc3339_from_utc(window_end),
+        sensor_id: key.sensor_id,
+        location_id: key.location_id,
+        interface: key.interface,
+        channel: key.channel,
+        source_mac: key.source_mac.to_string(),
+        destination_bssid: key.destination_bssid.to_string(),
+        ssid: counters.ssid,
+        bytes: counters.bytes,
+        frame_count: counters.frame_count,
+        retry_count: counters.retry_count,
+        more_data_count: counters.more_data_count,
+        power_save_count: counters.power_save_count,
+        strongest_signal_dbm: counters.strongest_signal_dbm,
+        external_bssid: key.external_bssid,
+        threshold_exceeded: key.external_bssid
+            && counters.bytes > EXTERNAL_BANDWIDTH_THRESHOLD_BYTES,
+        frame_size_histogram: FrameSizeHistogram {
+            under_100: counters.histogram[0],
+            range_100_500: counters.histogram[1],
+            range_500_1000: counters.histogram[2],
+            range_1000_1500: counters.histogram[3],
+        },
+        inter_arrival_p50_ms,
+        inter_arrival_cv,
+        wall_clock_delta_ms: Some(wall_clock_delta_ms),
+        window_is_partial,
+        max_risk_score: counters.max_risk_score,
+        published_at: None,
+    }
 }
 
 fn calculate_p50_inter_arrival(times_ms: &[i64]) -> Option<u64> {
     if times_ms.len() < 2 {
         return None;
     }
-    let mut sorted_times = times_ms.to_vec();
-    sorted_times.sort_unstable();
-    let mut intervals: Vec<u64> = sorted_times
-        .windows(2)
-        .filter_map(|w| {
-            let delta = w[1] - w[0];
-            if delta >= 0 {
-                Some(delta as u64)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut intervals = sorted_intervals(times_ms);
     if intervals.is_empty() {
         return None;
     }
@@ -325,19 +348,7 @@ fn calculate_inter_arrival_cv(times_ms: &[i64]) -> Option<f64> {
     if times_ms.len() < 2 {
         return None;
     }
-    let mut sorted = times_ms.to_vec();
-    sorted.sort_unstable();
-    let intervals: Vec<u64> = sorted
-        .windows(2)
-        .filter_map(|w| {
-            let delta = w[1] - w[0];
-            if delta >= 0 {
-                Some(delta as u64)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let intervals = sorted_intervals(times_ms);
     if intervals.len() < 2 {
         return None;
     }
@@ -357,4 +368,13 @@ fn calculate_inter_arrival_cv(times_ms: &[i64]) -> Option<f64> {
         / n;
     let stddev = variance.sqrt();
     Some(stddev / mean)
+}
+
+fn sorted_intervals(times_ms: &[i64]) -> Vec<u64> {
+    let mut sorted = times_ms.to_vec();
+    sorted.sort_unstable();
+    sorted
+        .windows(2)
+        .filter_map(|w| u64::try_from(w[1] - w[0]).ok())
+        .collect()
 }

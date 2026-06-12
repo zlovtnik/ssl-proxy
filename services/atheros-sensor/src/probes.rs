@@ -290,7 +290,7 @@ mod tests {
             anomalies: None,
             device_id: None,
             username: None,
-            identity_source: "unknown".to_string(),
+            identity_source: crate::model::IdentitySource::Unknown,
         }
     }
 

@@ -339,13 +339,12 @@ async fn process_packet(
     let skip_mac_lookup =
         backlog_pct > 80 || !config.mac_device_lookup_enabled || !inline_request_reply_enabled;
     if skip_mac_lookup {
-        if entry.identity_source == "unknown" || entry.identity_source == "mac_observed" {
-            entry.identity_source =
-                if !config.mac_device_lookup_enabled || !inline_request_reply_enabled {
-                    "mac_lookup_disabled".to_string()
-                } else {
-                    "mac_lookup_skipped_backpressure".to_string()
-                };
+        if entry.identity_source.is_mac_lookup_pending() {
+            entry.identity_source = if !config.mac_device_lookup_enabled || !inline_request_reply_enabled {
+                IdentitySource::MacLookupDisabled
+            } else {
+                IdentitySource::MacLookupSkippedBackpressure
+            };
         }
     } else if let Some(mac) = entry.source_mac.clone().or_else(|| entry.bssid.clone()) {
         let cache_key = mac.to_ascii_lowercase();
@@ -379,8 +378,8 @@ async fn process_packet(
             if entry.username.is_none() {
                 entry.username = username;
             }
-            if matches!(entry.identity_source.as_str(), "unknown" | "mac_observed") {
-                entry.identity_source = "device_registry".to_string();
+            if entry.identity_source.is_mac_lookup_pending() {
+                entry.identity_source = IdentitySource::DeviceRegistry;
             }
         }
     }
