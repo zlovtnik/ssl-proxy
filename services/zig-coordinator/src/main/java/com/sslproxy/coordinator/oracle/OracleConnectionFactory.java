@@ -10,8 +10,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Component
 public class OracleConnectionFactory {
@@ -31,9 +34,13 @@ public class OracleConnectionFactory {
         if (!props.enabled()) {
             return;
         }
-        try (Connection connection = getConnection()) {
-            if (!connection.isValid(5)) {
-                throw new SQLException("Oracle connection validation returned false");
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT 1 FROM DUAL")) {
+            statement.setQueryTimeout(props.statementTimeoutSecs());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (!resultSet.next()) {
+                    throw new SQLException("Oracle validation query returned no rows");
+                }
             }
         }
     }
@@ -56,8 +63,9 @@ public class OracleConnectionFactory {
             throw new IllegalStateException("Oracle sink is disabled");
         }
 
-        Path tnsAdmin = validateWallet();
-        String password = readPassword(Path.of(props.requiredPassFile()));
+        OracleConfiguration preflight = validateConfiguration();
+        Path tnsAdmin = preflight.tnsAdmin();
+        String password = preflight.password();
         String walletLocation = walletLocation(tnsAdmin);
         System.setProperty("oracle.net.tns_admin", tnsAdmin.toString());
         System.setProperty("oracle.net.wallet_location", walletLocation);
@@ -75,10 +83,18 @@ public class OracleConnectionFactory {
         config.setIdleTimeout(props.idleTimeoutMs());
         config.setMaxLifetime(props.maxLifetimeMs());
         config.setAutoCommit(false);
+        config.setConnectionTestQuery("SELECT 1 FROM DUAL");
         config.addDataSourceProperty("oracle.net.tns_admin", tnsAdmin.toString());
         config.addDataSourceProperty("oracle.net.wallet_location", walletLocation);
         config.addDataSourceProperty("oracle.net.ssl_server_dn_match", "true");
         return new HikariDataSource(config);
+    }
+
+    OracleConfiguration validateConfiguration() {
+        Path tnsAdmin = validateWallet();
+        props.tnsAliasForValidation().ifPresent(alias -> validateTnsAlias(tnsAdmin, alias));
+        String password = readPassword(Path.of(props.requiredPassFile()));
+        return new OracleConfiguration(tnsAdmin, password);
     }
 
     private Path validateWallet() {
@@ -95,12 +111,29 @@ public class OracleConnectionFactory {
         return tnsAdmin;
     }
 
+    private void validateTnsAlias(Path tnsAdmin, String alias) {
+        Path tnsNames = tnsAdmin.resolve("tnsnames.ora");
+        try {
+            String contents = Files.readString(tnsNames);
+            Pattern aliasPattern = Pattern.compile("(?im)^\\s*" + Pattern.quote(alias) + "\\s*=");
+            if (!aliasPattern.matcher(contents).find()) {
+                throw new IllegalStateException("Oracle TNS alias not found in " + tnsNames + ": " + alias);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("read Oracle tnsnames.ora " + tnsNames + ": " + e.getMessage(), e);
+        }
+    }
+
     private String readPassword(Path passFile) {
         try {
             if (!Files.isRegularFile(passFile)) {
                 throw new IllegalStateException("missing Oracle password file: " + passFile);
             }
-            return Files.readString(passFile).stripTrailing();
+            String password = Files.readString(passFile).stripTrailing();
+            if (password.isBlank()) {
+                throw new IllegalStateException("Oracle password file is empty: " + passFile);
+            }
+            return password;
         } catch (IOException e) {
             throw new IllegalStateException("read Oracle password file " + passFile + ": " + e.getMessage(), e);
         }
@@ -116,5 +149,8 @@ public class OracleConnectionFactory {
         if (existing != null) {
             existing.close();
         }
+    }
+
+    record OracleConfiguration(Path tnsAdmin, String password) {
     }
 }

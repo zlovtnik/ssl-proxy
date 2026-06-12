@@ -45,9 +45,22 @@ wait_for_health() {
 }
 
 expected_ready_status() {
+    local oracle_conn="${ORACLE_CONN:-mainerc_high}"
+
     if [ -f wallet/tnsnames.ora ] \
-        && grep -Eiq '^[[:space:]]*mainerc_tp[[:space:]]*=' wallet/tnsnames.ora \
-        && { [ -f wallet/cwallet.sso ] || [ -f wallet/ewallet.p12 ] || [ -f wallet/sqlnet.ora ]; }; then
+        && awk -v alias="$oracle_conn" '
+            /^[[:space:]]*#/ { next }
+            {
+                line = $0
+                sub(/^[[:space:]]*/, "", line)
+                split(line, parts, "=")
+                gsub(/[[:space:]]+$/, "", parts[1])
+                if (tolower(parts[1]) == tolower(alias)) found = 1
+            }
+            END { exit found ? 0 : 1 }
+        ' wallet/tnsnames.ora \
+        && [ -f wallet/sqlnet.ora ] \
+        && [ -f wallet/cwallet.sso ]; then
         echo "200"
     else
         echo "503"

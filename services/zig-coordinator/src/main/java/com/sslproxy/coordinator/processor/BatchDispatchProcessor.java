@@ -59,6 +59,7 @@ public class BatchDispatchProcessor implements Processor {
     private void dispatchBatch(String batchJson, Exchange exchange) {
         try {
             OracleLoad payload = objectMapper.readValue(batchJson, OracleLoad.class);
+            validateLoad(payload);
             String dispatchJson = objectMapper.writeValueAsString(payload);
 
             log.info("event=batch_dispatch status=selected batch_id={} stream_name={} attempt={}",
@@ -85,10 +86,32 @@ public class BatchDispatchProcessor implements Processor {
             log.error("event=batch_dispatch status=deserialize_failed error=\"{}\"", sanitize(e.getMessage()));
             handleDispatchFailure(batchJson, e);
             exchange.getIn().setBody(false);
+        } catch (IllegalArgumentException e) {
+            log.error("event=batch_dispatch status=validation_failed error=\"{}\"", sanitize(e.getMessage()));
+            handleDispatchFailure(batchJson, e);
+            exchange.getIn().setBody(false);
         } catch (Exception e) {
             log.error("event=batch_dispatch status=failed error=\"{}\"", sanitize(e.getMessage()));
             handleDispatchFailure(batchJson, e);
             exchange.getIn().setBody(false);
+        }
+    }
+
+    private void validateLoad(OracleLoad load) {
+        if (load == null) {
+            throw new IllegalArgumentException("sync.oracle.load payload must not be null");
+        }
+        if (load.jobId().isBlank()) {
+            throw new IllegalArgumentException("job_id must not be empty");
+        }
+        if (load.batchId().isBlank()) {
+            throw new IllegalArgumentException("batch_id must not be empty");
+        }
+        if (load.streamName().isBlank()) {
+            throw new IllegalArgumentException("stream_name must not be empty");
+        }
+        if (load.payloadRef().isBlank()) {
+            throw new IllegalArgumentException("payload_ref must not be empty");
         }
     }
 

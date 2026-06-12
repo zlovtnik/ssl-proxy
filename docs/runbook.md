@@ -111,13 +111,13 @@ docker compose restart ssl-proxy
 
 ### 5. Oracle ADB Connection & Views
 
-1. **Place Oracle wallet files in `./wallet/` directory**
+1. **Place auto-login Oracle wallet files in `./wallet/` directory**
    - Restart the container after adding the wallet so the startup preflight can enable Oracle persistence.
-   - `GET /ready` on `http://127.0.0.1:3002/ready` stays `503` until the wallet contains the `mainerc_tp` alias and the required wallet artifacts.
+   - `GET /ready` on `http://127.0.0.1:3002/ready` stays `503` until the wallet contains the configured `ORACLE_CONN` alias, default `mainerc_high`, plus `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, and a non-empty password file.
 
 2. **Connect using SQL*Plus:**
    ```bash
-   sqlplus USCIS_APP@mainerc_tp
+   sqlplus USCIS_APP@mainerc_high
    ```
 
 3. **Available Audit Views:**
@@ -224,6 +224,8 @@ max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="resul
 ```
 
 If `java-coordinator` logs `event=oracle_load status=failed` or `unsupported stream_name`, confirm the coordinator load consumer is subscribed to the load topic and that `SYNC_ORACLE_STREAM_NAMES` contains only streams with Oracle sink support:
+
+Wallet preflight failures use these exact messages in `java-coordinator` logs: `wallet directory missing`, `missing Oracle wallet artifact`, `Oracle TNS alias not found`, `missing Oracle password file`, and `Oracle password file is empty`. Unrecoverable corrupt dispatch rows are marked with `sync.oracle.load payload_ref missing and stored payload unavailable`.
 
 ```sh
 docker compose run --rm redpanda-init rpk group describe oracle-worker-load --brokers redpanda:9092

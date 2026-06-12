@@ -45,12 +45,13 @@ COPY --chown=coordinator:coordinator --from=builder /app/build/libs/*.jar /app/j
 # Copy SQL schema (used by the init/healthcheck logic)
 COPY --chown=coordinator:coordinator sql /app/sql
 COPY --chown=coordinator:coordinator docker/redpanda /app/docker/redpanda
-COPY --chown=coordinator:coordinator wallet /app/wallet
 
-RUN chown coordinator:coordinator /app \
+RUN mkdir -p /app/wallet \
+    && chown coordinator:coordinator /app /app/wallet \
     && chmod 500 /app \
     && chmod 400 /app/java-coordinator.jar \
-    && chmod -R a=rX /app/sql /app/docker/redpanda /app/wallet
+    && chmod -R a=rX /app/sql /app/docker/redpanda \
+    && chmod 500 /app/wallet
 
 EXPOSE 8081
 

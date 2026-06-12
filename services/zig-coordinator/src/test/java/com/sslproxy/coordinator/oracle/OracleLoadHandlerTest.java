@@ -11,6 +11,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class OracleLoadHandlerTest {
 
@@ -72,6 +73,28 @@ class OracleLoadHandlerTest {
         assertEquals("failed", result.status());
         assertEquals("permanent", result.errorClass());
         assertEquals(false, result.retryable());
+    }
+
+    @Test
+    void returnsPermanentFailureForBlankPayloadRef(@TempDir Path outbox) {
+        FakeSink sink = new FakeSink();
+        OracleLoadHandler handler = handler(outbox, sink);
+
+        OracleResult result = handler.handle(new OracleLoad(
+                "job-1",
+                "batch-1",
+                1,
+                "proxy.events",
+                "",
+                "",
+                "",
+                1
+        ));
+
+        assertEquals("failed", result.status());
+        assertEquals("permanent", result.errorClass());
+        assertEquals("payload_ref must not be empty", result.errorText());
+        assertNull(sink.batchId);
     }
 
     private OracleLoadHandler handler(Path outbox, OracleSink sink) {

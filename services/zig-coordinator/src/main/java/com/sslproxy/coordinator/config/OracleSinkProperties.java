@@ -4,6 +4,8 @@ import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.util.Optional;
+
 @ConfigurationProperties(prefix = "oracle-sink")
 @Validated
 public record OracleSinkProperties(
@@ -24,8 +26,32 @@ public record OracleSinkProperties(
         if (jdbcUrl != null && !jdbcUrl.isBlank()) {
             return jdbcUrl.trim();
         }
-        String alias = requiredText(conn, "ORACLE_CONN");
-        return "jdbc:oracle:thin:@" + alias;
+        return "jdbc:oracle:thin:@" + requiredConn();
+    }
+
+    public String requiredConn() {
+        return requiredText(conn, "ORACLE_CONN");
+    }
+
+    public Optional<String> tnsAliasForValidation() {
+        if (conn != null && !conn.isBlank()) {
+            return Optional.of(conn.trim());
+        }
+        if (jdbcUrl == null || jdbcUrl.isBlank()) {
+            return Optional.empty();
+        }
+
+        String prefix = "jdbc:oracle:thin:@";
+        String trimmed = jdbcUrl.trim();
+        if (!trimmed.startsWith(prefix)) {
+            return Optional.empty();
+        }
+
+        String target = trimmed.substring(prefix.length()).trim();
+        if (target.isBlank() || target.startsWith("(") || target.contains("/") || target.contains(":")) {
+            return Optional.empty();
+        }
+        return Optional.of(target);
     }
 
     public String requiredUser() {

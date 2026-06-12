@@ -212,7 +212,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `DATABASE_URL` | `postgres://sync:sync@postgres:5432/sync` | Primary Postgres connection |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 
-### Oracle Sink (requires wallet in `./wallet/`)
+### Oracle Sink (requires auto-login wallet in `./wallet/`)
 
 | Variable | Description |
 |----------|-------------|
@@ -221,6 +221,8 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `ORACLE_PASS_FILE` | Path to password file (e.g., `/run/secrets/oracle_password.txt`) |
 | `TNS_ADMIN` | Wallet directory (`/app/wallet`) |
 | `ORACLE_SINK_ENABLED` | Enable coordinator-owned Oracle loads (`true` by default) |
+
+The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORACLE_CONN` alias, and a non-empty password file before opening the Oracle pool.
 
 ### Vector Worker
 
@@ -312,9 +314,9 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 - Pass it as `Authorization: Bearer <key>` header
 
 **Oracle sink not delivering events**
-- Verify Oracle wallet is present in `./wallet/`
-- Check `secrets/oracle_password.txt` exists
-- Confirm `ORACLE_CONN` TNS alias matches the wallet configuration
+- Verify the auto-login Oracle wallet is mounted in `./wallet/` with `tnsnames.ora`, `sqlnet.ora`, and `cwallet.sso`
+- Check `secrets/oracle_password.txt` exists and is non-empty
+- Confirm `ORACLE_CONN` TNS alias matches the wallet configuration, default `mainerc_high`
 - Check `docker compose logs java-coordinator` for Oracle load failures
 
 **Postgres connection refused**
