@@ -227,6 +227,8 @@ If `java-coordinator` logs `event=oracle_load status=failed` or `unsupported str
 
 With `ORACLE_SINK_ENABLED=true`, `java-coordinator` validates the mounted wallet before the Kafka load consumer can process batches. Wallet preflight failures use these exact messages in `java-coordinator` logs: `wallet directory missing`, `missing Oracle wallet artifact`, `Oracle TNS alias not found`, `missing Oracle password file`, and `Oracle password file is empty`. Missing wallet artifact errors include a sanitized listing of `/app/wallet`. Unrecoverable corrupt dispatch rows are marked with `sync.oracle.load payload_ref missing and stored payload unavailable`.
 
+`ORA-06550` with `PLS-00201: identifier 'WIRELESS_UPSERT_SENSOR' must be declared` means the connected `ORACLE_USER` can reach Oracle but cannot see the active sink schema from `sql/oracle.sql`; apply the Oracle DDL to that schema or grant visible synonyms for the required tables and procedures.
+
 ```sh
 docker compose config java-coordinator | sed -n '/target: \/app\/wallet/,+4p'
 docker compose exec -T java-coordinator sh -lc 'ls -la /app/wallet && test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s "${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}"'

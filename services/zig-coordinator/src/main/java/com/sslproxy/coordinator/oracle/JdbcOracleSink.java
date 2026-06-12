@@ -3,9 +3,10 @@ package com.sslproxy.coordinator.oracle;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sslproxy.coordinator.config.OracleSinkProperties;
-import io.vavr.control.Try;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
+import io.vavr.control.Try;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 import java.sql.Connection;
@@ -13,12 +14,30 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 @Component
 public class JdbcOracleSink implements OracleSink {
+
+    static final List<OracleObjectRequirement> REQUIRED_SCHEMA_OBJECTS = List.of(
+            OracleObjectRequirement.table("PROXY_EVENTS"),
+            OracleObjectRequirement.table("PROXY_BLOCKED_HOST_ROLLUPS"),
+            OracleObjectRequirement.table("WIRELESS_SENSORS"),
+            OracleObjectRequirement.table("WIRELESS_AUDIT_FRAMES"),
+            OracleObjectRequirement.table("WIRELESS_BANDWIDTH_WINDOWS"),
+            OracleObjectRequirement.table("WIRELESS_ALERTS"),
+            OracleObjectRequirement.table("WIRELESS_CLIENT_INVENTORY"),
+            OracleObjectRequirement.table("WIRELESS_PROBE_REQUESTS"),
+            OracleObjectRequirement.procedure("WIRELESS_UPSERT_SENSOR"),
+            OracleObjectRequirement.procedure("WIRELESS_MERGE_BANDWIDTH_ALERTS")
+    );
 
     private final OracleConnectionFactory connectionFactory;
     private final OracleSinkProperties props;
@@ -33,6 +52,65 @@ public class JdbcOracleSink implements OracleSink {
         this.props = props;
         this.objectMapper = objectMapper;
         this.observationRegistry = observationRegistry;
+    }
+
+    @PostConstruct
+    public void validateStartupSchema() {
+        if (!props.enabled()) {
+            return;
+        }
+        try (Connection connection = connectionFactory.getConnection()) {
+            validateSchemaObjects(connection);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Oracle sink schema preflight failed: " + sanitize(e.getMessage()), e);
+        }
+    }
+
+    void validateSchemaObjects(Connection connection) throws SQLException {
+        String placeholders = String.join(", ", Collections.nCopies(REQUIRED_SCHEMA_OBJECTS.size(), "?"));
+        String sql = """
+                select object_name, object_type, status
+                from all_objects
+                where object_name in (%s)
+                  and object_type in ('TABLE', 'PROCEDURE')
+                """.formatted(placeholders);
+
+        Map<OracleObjectRequirement, String> foundStatuses = new HashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            for (OracleObjectRequirement requirement : REQUIRED_SCHEMA_OBJECTS) {
+                statement.setString(index++, requirement.name());
+            }
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    OracleObjectRequirement requirement = new OracleObjectRequirement(
+                            resultSet.getString("OBJECT_NAME"),
+                            resultSet.getString("OBJECT_TYPE")
+                    );
+                    foundStatuses.put(requirement, resultSet.getString("STATUS"));
+                }
+            }
+        }
+
+        List<String> missing = new ArrayList<>();
+        List<String> invalid = new ArrayList<>();
+        for (OracleObjectRequirement requirement : REQUIRED_SCHEMA_OBJECTS) {
+            String status = foundStatuses.get(requirement);
+            if (status == null) {
+                missing.add(requirement.displayName());
+            } else if (!"VALID".equalsIgnoreCase(status)) {
+                invalid.add(requirement.displayName() + " status=" + status);
+            }
+        }
+
+        if (!missing.isEmpty() || !invalid.isEmpty()) {
+            String details = "missing=[" + String.join(", ", missing) + "] invalid=[" + String.join(", ", invalid) + "]";
+            throw new IllegalStateException("Oracle sink schema objects unavailable for user "
+                    + props.requiredUser()
+                    + ": "
+                    + details
+                    + "; apply sql/oracle.sql to the ORACLE_USER schema or grant visible synonyms for these objects");
+        }
     }
 
     @Override
@@ -520,6 +598,13 @@ public class JdbcOracleSink implements OracleSink {
         return normalized.contains("ORA-00001") && normalized.contains("PROXY_EVENTS_BATCH_ROW_IDX");
     }
 
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
+    }
+
     private String normalizedIdentitySource(String identitySource) {
         return identitySource == null || identitySource.isBlank() ? "unknown" : identitySource;
     }
@@ -559,5 +644,24 @@ public class JdbcOracleSink implements OracleSink {
     @FunctionalInterface
     private interface AlertBinder<T> {
         Object[] values(T row);
+    }
+
+    record OracleObjectRequirement(String name, String type) {
+        OracleObjectRequirement {
+            name = name.toUpperCase(Locale.ROOT);
+            type = type.toUpperCase(Locale.ROOT);
+        }
+
+        static OracleObjectRequirement table(String name) {
+            return new OracleObjectRequirement(name, "TABLE");
+        }
+
+        static OracleObjectRequirement procedure(String name) {
+            return new OracleObjectRequirement(name, "PROCEDURE");
+        }
+
+        String displayName() {
+            return type + " " + name;
+        }
     }
 }
