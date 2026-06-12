@@ -43,22 +43,32 @@ public class OracleLoadRoute extends RouteBuilder {
                 .routeId("oracle-load-consumer")
                 .process(exchange -> {
                     String body = exchange.getIn().getBody(String.class);
-                    OracleResult result;
-                    try {
-                        OracleLoad load = objectMapper.readValue(body, OracleLoad.class);
-                        result = loadHandler.handle(load);
-                        log.info("event=oracle_load_route status=handled batch_id={} result={}",
-                                load.batchId(), result.status());
-                    } catch (Exception e) {
-                        result = OracleResult.failure("", "", com.sslproxy.coordinator.oracle.OracleErrorClass.PERMANENT,
-                                "decode sync.oracle.load message: " + e.getMessage(),
-                                java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
-                                        .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-                        log.error("event=oracle_load_route status=decode_failed error=\"{}\"", sanitize(e.getMessage()));
-                    }
+                    OracleResult result = handleLoadMessage(body);
                     exchange.getIn().setBody(objectMapper.writeValueAsString(result));
                 })
                 .to("kafka:{{coordinator.result-topic}}");
+    }
+
+    OracleResult handleLoadMessage(String body) {
+        String jobId = "";
+        String batchId = "";
+        try {
+            OracleLoad load = objectMapper.readValue(body, OracleLoad.class);
+            jobId = load.jobId();
+            batchId = load.batchId();
+            OracleResult result = loadHandler.handle(load);
+            log.info("event=oracle_load_route status=handled batch_id={} result={}",
+                    load.batchId(), result.status());
+            return result;
+        } catch (Exception e) {
+            String failureStage = batchId.isBlank() ? "decode" : "handle";
+            log.error("event=oracle_load_route status={}_failed job_id={} batch_id={} error=\"{}\"",
+                    failureStage, jobId, batchId, sanitize(e.getMessage()));
+            return OracleResult.failure(jobId, batchId, com.sslproxy.coordinator.oracle.OracleErrorClass.PERMANENT,
+                    failureStage + " sync.oracle.load message: " + e.getMessage(),
+                    java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC)
+                            .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        }
     }
 
     private String sanitize(String message) {

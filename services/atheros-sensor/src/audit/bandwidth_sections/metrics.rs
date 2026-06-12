@@ -86,17 +86,17 @@ impl TrafficBucket {
             self.wall_clock_start = Some(Instant::now());
         }
 
-        let Some(source_mac) = entry.source_mac.as_deref().and_then(TrafficMac::parse) else {
-            return Ok(flushed);
-        };
-        let Some(destination_bssid) = entry
+        let source_mac = entry
+            .source_mac
+            .as_deref()
+            .and_then(TrafficMac::parse)
+            .unwrap_or_else(TrafficMac::unknown);
+        let destination_bssid = entry
             .destination_bssid
             .as_deref()
             .or(entry.bssid.as_deref())
             .and_then(TrafficMac::parse)
-        else {
-            return Ok(flushed);
-        };
+            .unwrap_or_else(TrafficMac::unknown);
         let ssid = entry.ssid.as_deref().and_then(SsidKey::new);
         let ssid_display = ssid.as_ref().and_then(|_| entry.ssid.clone());
         let key = TrafficKey {

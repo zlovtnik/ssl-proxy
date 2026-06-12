@@ -8,7 +8,7 @@ use postgres_native_tls::MakeTlsConnector;
 use tokio_postgres::{Client, NoTls};
 
 use crate::discovery::SqlFile;
-use crate::error::{format_pg_error, ExecutionError};
+use crate::error::{format_pg_error, ExecutionError, ExecutionErrorKind};
 use crate::schema_control::{
     acquire_apply_lock, bootstrap, build_manifest, prepare_manifest, record_applied, record_failed,
     record_skipped, release_apply_lock, PreparedSchemaObject,
@@ -59,15 +59,18 @@ pub async fn apply_sql_files(
 }
 
 fn warn_unlock_error(context: &str, error: &ExecutionError) {
-    let detail = if error.to_string().contains("was not held") {
-        "lock was not held"
-    } else {
-        "unlock failed"
-    };
+    let detail = unlock_warning_detail(error);
     eprintln!(
         "{} schema apply {detail} {context}: {error}",
         "warning:".yellow()
     );
+}
+
+fn unlock_warning_detail(error: &ExecutionError) -> &'static str {
+    match error.kind {
+        ExecutionErrorKind::LockNotHeld => "lock was not held",
+        _ => "unlock failed",
+    }
 }
 
 async fn connect_client(database_url: &str) -> Result<Client, ExecutionError> {
@@ -239,5 +242,19 @@ mod tests {
         assert!(sslmode_requires_tls(
             "postgres://sync:sync@localhost:5432/sync?sslmode=require"
         ));
+    }
+
+    #[test]
+    fn unlock_warning_detail_uses_lock_not_held_kind() {
+        let error = ExecutionError::lock_not_held("schema apply lock was not held");
+
+        assert_eq!(unlock_warning_detail(&error), "lock was not held");
+    }
+
+    #[test]
+    fn unlock_warning_detail_does_not_infer_from_apply_message() {
+        let error = ExecutionError::apply("schema apply lock was not held");
+
+        assert_eq!(unlock_warning_detail(&error), "unlock failed");
     }
 }

@@ -187,6 +187,9 @@ services:
           create_host_path: false
     ports:
       - "127.0.0.1:8081:8081"
+    # ORACLE_SINK_ENABLED is intentionally fail-fast by default here: unless it
+    # is explicitly "false", the healthcheck verifies tnsnames.ora, sqlnet.ora,
+    # cwallet.sso, and ORACLE_PASS_FILE before probing Actuator.
     healthcheck:
       test: ["CMD-SHELL", "if [ \"${ORACLE_SINK_ENABLED:-true}\" != \"false\" ]; then test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s \"${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}\"; fi && wget -qO- http://localhost:8081/actuator/health >/dev/null"]
       interval: 30s

@@ -46,8 +46,6 @@ pub const WIRELESS_AUDIT_SCHEMA_VERSION: u32 = 2;
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentitySource {
-    #[default]
-    Unknown,
     MacObserved,
     DeviceRegistry,
     EapIdentity,
@@ -57,6 +55,9 @@ pub enum IdentitySource {
     DeauthFloodDetection,
     MacLookupDisabled,
     MacLookupSkippedBackpressure,
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 impl IdentitySource {

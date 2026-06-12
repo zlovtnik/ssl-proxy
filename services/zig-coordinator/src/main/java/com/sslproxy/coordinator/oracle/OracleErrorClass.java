@@ -1,5 +1,7 @@
 package com.sslproxy.coordinator.oracle;
 
+import java.util.Locale;
+
 public enum OracleErrorClass {
     RETRYABLE("retryable"),
     PERMANENT("permanent");
@@ -15,7 +17,7 @@ public enum OracleErrorClass {
     }
 
     public static OracleErrorClass classify(String message) {
-        String normalized = message == null ? "" : message.toLowerCase();
+        String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
         if (normalized.contains("timeout")
                 || normalized.contains("dpi-1067")
                 || normalized.contains("ora-03114")

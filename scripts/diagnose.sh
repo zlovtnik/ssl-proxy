@@ -102,12 +102,19 @@ main() {
     echo "--- compose ps ---"
     compose ps || true
     echo "--- service health ---"
-    local service cid status health
+    local service cid status health health_text
+    health_text=""
     for service in $STACK_HEALTH_SERVICES; do
         cid="$(compose ps -q "$service" 2>/dev/null || true)"
         status="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)"
         health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo unknown)"
         echo "$service status=$status health=$health"
+        health_text="${health_text}${service} status=${status} health=${health}
+"
+        if [ "$health" = "unhealthy" ]; then
+            health_text="${health_text}${service} unhealthy
+"
+        fi
     done
 
     echo "--- runtime obfuscation ---"
@@ -138,7 +145,8 @@ main() {
     done
 
     local log_text
-    log_text="$(compose logs --tail "$LOG_TAIL_LINES" 2>&1 || true)"
+    log_text="${health_text}
+$(compose logs --tail "$LOG_TAIL_LINES" 2>&1 || true)"
     set_failure_from_text "$log_text"
 
     echo "--- classification ---"

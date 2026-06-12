@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter};
 pub enum ExecutionErrorKind {
     Connection,
     Apply,
+    LockNotHeld,
 }
 
 #[derive(Debug)]
@@ -24,6 +25,13 @@ impl ExecutionError {
     pub fn apply(message: impl Into<String>) -> Self {
         Self {
             kind: ExecutionErrorKind::Apply,
+            message: message.into(),
+        }
+    }
+
+    pub fn lock_not_held(message: impl Into<String>) -> Self {
+        Self {
+            kind: ExecutionErrorKind::LockNotHeld,
             message: message.into(),
         }
     }

@@ -352,7 +352,7 @@ public class JdbcOracleSink implements OracleSink {
                     on (
                         tgt.BATCH_ID = src.BATCH_ID
                         and tgt.CLIENT_MAC = src.CLIENT_MAC
-                        and tgt.SSID = src.SSID
+                        and (tgt.SSID = src.SSID or (tgt.SSID is null and src.SSID is null))
                     )
                     when matched then update set
                         tgt.KNOWN_BSSID = src.KNOWN_BSSID,

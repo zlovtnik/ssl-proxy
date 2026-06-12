@@ -53,6 +53,7 @@ expected_ready_status() {
             {
                 line = $0
                 sub(/^[[:space:]]*/, "", line)
+                if (index(line, "=") == 0) next
                 split(line, parts, "=")
                 gsub(/[[:space:]]+$/, "", parts[1])
                 if (tolower(parts[1]) == tolower(alias)) found = 1

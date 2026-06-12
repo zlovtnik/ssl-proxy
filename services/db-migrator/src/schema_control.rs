@@ -147,10 +147,14 @@ pub async fn release_apply_lock(client: &Client) -> Result<(), ExecutionError> {
             ExecutionError::apply(format!("failed to release schema apply lock: {error}"))
         })?;
     let released: bool = row.get(0);
+    release_lock_result(released)
+}
+
+fn release_lock_result(released: bool) -> Result<(), ExecutionError> {
     if released {
         Ok(())
     } else {
-        Err(ExecutionError::apply(format!(
+        Err(ExecutionError::lock_not_held(format!(
             "schema apply lock {APPLY_LOCK_KEY} ({APPLY_LOCK_NAMESPACE}) was not held"
         )))
     }
@@ -671,5 +675,13 @@ $$;
             kind_for_folder("cron", "001_vec_install_cron_jobs.sql"),
             "cron_job"
         );
+    }
+
+    #[test]
+    fn release_lock_false_result_is_lock_not_held() {
+        let error = release_lock_result(false).unwrap_err();
+
+        assert_eq!(error.kind, crate::error::ExecutionErrorKind::LockNotHeld);
+        assert!(error.to_string().contains("was not held"));
     }
 }

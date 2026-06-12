@@ -98,7 +98,7 @@ coordinator:
   heartbeat-log-interval-ms: ${SYNC_HEARTBEAT_LOG_INTERVAL_MS:15000}
 
 oracle-sink:
-  enabled: ${ORACLE_SINK_ENABLED:true}
+  enabled: ${ORACLE_SINK_ENABLED:false}
   conn: ${ORACLE_CONN:}
   jdbc-url: ${ORACLE_JDBC_URL:}
   user: ${ORACLE_USER:}

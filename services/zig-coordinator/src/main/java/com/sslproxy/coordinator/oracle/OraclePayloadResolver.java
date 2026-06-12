@@ -88,7 +88,7 @@ public class OraclePayloadResolver {
         }
         JsonNode probes = value.get("probes");
         if (probes == null || !probes.isArray()) {
-            return null;
+            throw new IllegalArgumentException("wireless probe payload must contain a probes array");
         }
         List<JsonNode> rows = new ArrayList<>(probes.size());
         probes.forEach(rows::add);
@@ -101,7 +101,7 @@ public class OraclePayloadResolver {
         }
         JsonNode clients = value.get("clients");
         if (clients == null || !clients.isArray()) {
-            return null;
+            throw new IllegalArgumentException("wireless client inventory payload must contain a clients array");
         }
         List<JsonNode> rows = new ArrayList<>(clients.size());
         for (JsonNode client : clients) {

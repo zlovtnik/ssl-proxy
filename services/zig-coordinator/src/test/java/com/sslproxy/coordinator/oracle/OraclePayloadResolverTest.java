@@ -47,4 +47,24 @@ class OraclePayloadResolverTest {
 
         assertEquals(true, error.getMessage().contains("invalid outbox path escapes base"));
     }
+
+    @Test
+    void rejectsProbeEnvelopeWithoutProbesArray() {
+        OraclePayloadResolver resolver = new OraclePayloadResolver("/tmp", objectMapper);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> resolver.payloadRows(OracleSinkTarget.WIRELESS_PROBE_REQUESTS, "{\"clients\":[]}"));
+
+        assertEquals(true, error.getMessage().contains("probes array"));
+    }
+
+    @Test
+    void rejectsClientInventoryEnvelopeWithoutClientsArray() {
+        OraclePayloadResolver resolver = new OraclePayloadResolver("/tmp", objectMapper);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> resolver.payloadRows(OracleSinkTarget.WIRELESS_CLIENT_INVENTORY, "{\"probes\":[]}"));
+
+        assertEquals(true, error.getMessage().contains("clients array"));
+    }
 }
