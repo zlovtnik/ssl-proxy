@@ -23,6 +23,10 @@ RUN gradle build --no-daemon -x test
 FROM azul/zulu-openjdk-alpine:21-jre
 ENV TZ=America/New_York
 ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
+ENV TNS_ADMIN="/app/wallet" \
+    ORACLE_CONN="mainerc_high" \
+    ORACLE_USER="USCIS_APP" \
+    ORACLE_PASS_FILE="/run/secrets/oracle_password.txt"
 
 RUN apk add --no-cache \
         bash \
@@ -41,11 +45,12 @@ COPY --chown=coordinator:coordinator --from=builder /app/build/libs/*.jar /app/j
 # Copy SQL schema (used by the init/healthcheck logic)
 COPY --chown=coordinator:coordinator sql /app/sql
 COPY --chown=coordinator:coordinator docker/redpanda /app/docker/redpanda
+COPY --chown=coordinator:coordinator wallet /app/wallet
 
 RUN chown coordinator:coordinator /app \
     && chmod 500 /app \
     && chmod 400 /app/java-coordinator.jar \
-    && chmod -R a=rX /app/sql /app/docker/redpanda
+    && chmod -R a=rX /app/sql /app/docker/redpanda /app/wallet
 
 EXPOSE 8081
 

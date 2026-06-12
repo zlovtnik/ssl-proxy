@@ -3,6 +3,7 @@ package com.sslproxy.coordinator.oracle;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -19,6 +20,7 @@ public class OraclePayloadResolver {
     private final String syncOutboxDir;
     private final ObjectMapper objectMapper;
 
+    @Autowired
     public OraclePayloadResolver(CoordinatorProperties props, ObjectMapper objectMapper) {
         this.syncOutboxDir = props.syncOutboxDir();
         this.objectMapper = objectMapper;

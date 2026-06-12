@@ -58,7 +58,10 @@ public class OracleConnectionFactory {
 
         Path tnsAdmin = validateWallet();
         String password = readPassword(Path.of(props.requiredPassFile()));
+        String walletLocation = walletLocation(tnsAdmin);
         System.setProperty("oracle.net.tns_admin", tnsAdmin.toString());
+        System.setProperty("oracle.net.wallet_location", walletLocation);
+        System.setProperty("oracle.net.ssl_server_dn_match", "true");
 
         HikariConfig config = new HikariConfig();
         config.setPoolName("oracle-sink");
@@ -73,6 +76,8 @@ public class OracleConnectionFactory {
         config.setMaxLifetime(props.maxLifetimeMs());
         config.setAutoCommit(false);
         config.addDataSourceProperty("oracle.net.tns_admin", tnsAdmin.toString());
+        config.addDataSourceProperty("oracle.net.wallet_location", walletLocation);
+        config.addDataSourceProperty("oracle.net.ssl_server_dn_match", "true");
         return new HikariDataSource(config);
     }
 
@@ -99,6 +104,10 @@ public class OracleConnectionFactory {
         } catch (IOException e) {
             throw new IllegalStateException("read Oracle password file " + passFile + ": " + e.getMessage(), e);
         }
+    }
+
+    private String walletLocation(Path tnsAdmin) {
+        return "(SOURCE=(METHOD=FILE)(METHOD_DATA=(DIRECTORY=" + tnsAdmin + ")))";
     }
 
     @PreDestroy
