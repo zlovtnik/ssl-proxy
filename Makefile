@@ -4,19 +4,17 @@ ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
 GO_BIN_DIR := $(shell go env GOPATH)/bin
 
-# Build project binaries: root proxy, Atheros sensor, Oracle worker, and Zig coordinator.
+# Build project binaries: root proxy, Atheros sensor, and Java coordinator.
 build:
 	cargo build --release
 	cd services/atheros-sensor && cargo build --release
-	cd services/oracle-worker && cargo build --release
-	cd services/zig-coordinator && ZIG_GLOBAL_CACHE_DIR="$(ZIG_GLOBAL_CACHE_DIR)" ZIG_LOCAL_CACHE_DIR="$(ZIG_LOCAL_CACHE_DIR)" zig build -Doptimize=ReleaseSafe
+	cd services/zig-coordinator && gradle build
 
 # Run tests
 test:
 	cargo test
 	cd services/atheros-sensor && cargo test
-	cd services/oracle-worker && cargo test
-	cd services/zig-coordinator && ZIG_GLOBAL_CACHE_DIR="$(ZIG_GLOBAL_CACHE_DIR)" ZIG_LOCAL_CACHE_DIR="$(ZIG_LOCAL_CACHE_DIR)" zig build test
+	cd services/zig-coordinator && gradle test
 
 # Run local benchmark baselines.
 bench:
@@ -24,7 +22,7 @@ bench:
 
 # Build Docker images used by the compose stack.
 docker:
-	docker compose build ssl-proxy zig-coordinator oracle-worker redpanda postgres
+	docker compose build ssl-proxy java-coordinator redpanda postgres
 
 atheros-search-proto:
 	cd services/atheros-search && PATH="$(GO_BIN_DIR):$$PATH" protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/atheros/search/v1/search.proto

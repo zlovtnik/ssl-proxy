@@ -12,7 +12,7 @@ ssl-proxy provides:
 - **Transparent TLS interception** - Redirects TCP 80/443 through a Rust proxy with SNI-based classification and obfuscation profiles
 - **Wireless audit sensor** - Monitor-mode 802.11 capture (AR9271/ath9k_htc) publishing to a Redpanda-backed sync plane
 - **Vector embeddings worker** - PostgreSQL-only embedding pipeline for device behaviour, frame sequences, and infrastructure graphs
-- **Oracle sink worker** - At-least-once delivery of classified audit events to Oracle ADB
+- **Oracle sink in the Java coordinator** - At-least-once delivery of classified audit events to Oracle ADB
 - **Integration console** - Rails dashboard for device inventory, heatmaps, and sync-plane observability
 
 ## Architecture
@@ -24,7 +24,7 @@ ssl-proxy provides:
 ```text
 Client -> WireGuard (UDP 443/51820) -> Transparent Proxy (TCP 3001) -> Origin
                     |
-            Audit Events -> Redpanda -> Coordinator (x3) -> Oracle Worker -> Oracle ADB
+            Audit Events -> Redpanda -> Coordinator (x3) -> Oracle ADB
                     |
             PostgreSQL -> Vec Worker -> Embeddings (pgvector) -> Similarity Search
 ```
@@ -34,8 +34,8 @@ The **coordinator** (3 replicas for HA) provides sync-plane job orchestration: c
 | Topic | Purpose |
 |-------|---------|
 | `sync.scan.request` | Proxy-to-coordinator work discovery |
-| `sync.oracle.load` | Coordinator-to-worker batch dispatch |
-| `sync.oracle.result` | Worker-to-coordinator batch outcomes |
+| `sync.oracle.load` | Coordinator-owned Oracle load dispatch |
+| `sync.oracle.result` | Coordinator-owned Oracle load outcomes |
 
 See [docs/architecture.md](docs/architecture.md) for detailed diagrams and [docs/runbook.md](docs/runbook.md) for operational procedures. Design decisions are recorded in [docs/adr/](docs/adr/).
 
@@ -126,8 +126,7 @@ wg genpsk > presharedkey-peer1
 | Service | Description | Implementation |
 |---------|-------------|----------------|
 | **ssl-proxy** | Rust transparent proxy, WireGuard terminator, obfuscation engine | [src/](src/) |
-| **coordinator** | Sync control plane - cursoring, dedupe, job state, batching. 3 replicas for HA. | [services/zig-coordinator/](services/zig-coordinator/) (Gradle/Kotlin) |
-| **oracle-worker** | Oracle ADB sink for `proxy.events` audit stream | [services/oracle-worker/](services/oracle-worker/) |
+| **coordinator** | Java sync control plane plus Oracle ADB sink - cursoring, dedupe, job state, batching, wallet-backed Oracle loads. 3 replicas for HA. | [services/zig-coordinator/](services/zig-coordinator/) (Gradle/Java) |
 | **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
 | **redpanda** | Kafka-compatible event backbone for sync topics | - |
 | **postgres** | Primary state store (sync_events, devices, vec_embeddings, etc.) | [sql/postgres.sql](sql/postgres.sql) |
@@ -213,7 +212,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `DATABASE_URL` | `postgres://sync:sync@postgres:5432/sync` | Primary Postgres connection |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 
-### Oracle Worker (requires wallet in `./wallet/`)
+### Oracle Sink (requires wallet in `./wallet/`)
 
 | Variable | Description |
 |----------|-------------|
@@ -221,6 +220,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `ORACLE_USER` | Oracle username |
 | `ORACLE_PASS_FILE` | Path to password file (e.g., `/run/secrets/oracle_password.txt`) |
 | `TNS_ADMIN` | Wallet directory (`/app/wallet`) |
+| `ORACLE_SINK_ENABLED` | Enable coordinator-owned Oracle loads (`true` by default) |
 
 ### Vector Worker
 
@@ -263,11 +263,11 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 
 | Target | Description |
 |--------|-------------|
-| `build` | Build Rust proxy, atheros-sensor, oracle-worker, and zig-coordinator binaries |
+| `build` | Build Rust proxy, atheros-sensor, and Java coordinator binaries |
 | `test` | Run all test suites |
 | `bench` | Run local benchmark baselines (`wg_packet_obfuscation`) |
 | `lint` | Run `cargo clippy -- -D warnings` |
-| `docker` | Build Docker images (ssl-proxy, coordinator, oracle-worker, redpanda, postgres) |
+| `docker` | Build Docker images (ssl-proxy, coordinator, redpanda, postgres) |
 | `clean` | Clean build artifacts |
 | `up-ready` | Bring up compose stack, verify services, print peer QR codes |
 | `diagnose` | Non-mutating diagnosis and signature classification |
@@ -311,10 +311,11 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 - Set `ADMIN_API_KEY` to a non-empty value
 - Pass it as `Authorization: Bearer <key>` header
 
-**Oracle worker not delivering events**
+**Oracle sink not delivering events**
 - Verify Oracle wallet is present in `./wallet/`
 - Check `secrets/oracle_password.txt` exists
 - Confirm `ORACLE_CONN` TNS alias matches the wallet configuration
+- Check `docker compose logs java-coordinator` for Oracle load failures
 
 **Postgres connection refused**
 - Postgres may still be initializing (can take 15-30s on first boot)

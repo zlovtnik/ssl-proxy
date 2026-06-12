@@ -1,6 +1,5 @@
 [workspace]
 members = [".", "services/atheros-sensor", "services/db-migrator"]
-exclude = ["services/oracle-worker"]
 
 [lints.rustdoc]
 html-tags = "allow"
