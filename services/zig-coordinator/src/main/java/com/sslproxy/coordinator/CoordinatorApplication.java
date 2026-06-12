@@ -7,6 +7,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import com.sslproxy.coordinator.config.CoordinatorProperties;
+import com.sslproxy.coordinator.config.OracleSinkProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
@@ -15,7 +16,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import java.util.concurrent.TimeUnit;
 
 @SpringBootApplication
-@EnableConfigurationProperties(CoordinatorProperties.class)
+@EnableConfigurationProperties({CoordinatorProperties.class, OracleSinkProperties.class})
 @EnableScheduling
 public class CoordinatorApplication {
 

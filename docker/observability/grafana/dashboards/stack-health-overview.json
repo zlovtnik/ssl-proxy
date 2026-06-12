@@ -84,7 +84,7 @@
       "id": 3,
       "targets": [
         {
-          "expr": "{service=~\"ssl-proxy|java-coordinator|oracle-worker|integration-console-web|integration-console-worker|atheros-sensor\"}",
+          "expr": "{service=~\"ssl-proxy|java-coordinator|integration-console-web|integration-console-worker|atheros-sensor\"}",
           "refId": "A"
         }
       ],

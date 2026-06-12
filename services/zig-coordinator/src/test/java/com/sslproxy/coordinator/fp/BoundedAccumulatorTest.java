@@ -39,12 +39,12 @@ class BoundedAccumulatorTest {
     }
 
     @Test
-    void requeueFrontDropsExcessFromTail() {
+    void requeueFrontDropsItemsThatCannotBeOffered() {
         BoundedAccumulator<Integer> accumulator = new BoundedAccumulator<>("test", 2);
 
         int dropped = accumulator.requeueFront(List.of(1, 2, 3));
 
         assertEquals(1, dropped);
-        assertEquals(List.of(1, 2), accumulator.drain(10));
+        assertEquals(List.of(2, 3), accumulator.drain(10));
     }
 }

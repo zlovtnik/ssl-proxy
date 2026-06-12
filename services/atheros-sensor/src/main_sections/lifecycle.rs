@@ -30,7 +30,7 @@ use crate::{
     device::{detect, read_mac_address},
     device_registry::{DeviceRegistryCache, DeviceRegistryCacheDecision},
     error::SensorError,
-    model::{AuditContext, EnrichedFrame, RawPacket},
+    model::{AuditContext, EnrichedFrame, IdentitySource, RawPacket},
     parse::{
         attach_context, decode_frame, to_audit_entry, try_decrypt_frame, HandshakeMonitor,
         IdentityCache, ParseError,

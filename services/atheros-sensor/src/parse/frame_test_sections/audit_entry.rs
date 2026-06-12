@@ -14,7 +14,7 @@
 
         let resolved = cache.resolve(&identity_frame).unwrap();
         assert_eq!(resolved.username, "alice@corp.example");
-        assert_eq!(resolved.source, "eap_identity");
+        assert_eq!(resolved.source, IdentitySource::EapIdentity);
 
         let followup_packet = RawPacket {
             observed_at: Utc::now(),
@@ -23,7 +23,7 @@
         let followup_frame = decode_frame(&followup_packet).unwrap();
         let cached = cache.resolve(&followup_frame).unwrap();
         assert_eq!(cached.username, "alice@corp.example");
-        assert_eq!(cached.source, "eap_identity_cache");
+        assert_eq!(cached.source, IdentitySource::EapIdentityCache);
     }
 
     #[test]
@@ -445,7 +445,7 @@
         })
         .unwrap();
         let resolved = cache.resolve(&second).unwrap();
-        assert_eq!(resolved.source, "evil_twin_detection");
+        assert_eq!(resolved.source, IdentitySource::EvilTwinDetection);
         assert!(resolved
             .tags
             .contains(&"threat:potential_evil_twin".to_string()));

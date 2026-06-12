@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::time::Instant;
 
 use chrono::{DateTime, Duration, Utc};
@@ -6,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::model::AuditEntry;
+use crate::{
+    model::AuditEntry,
+    state_key::{MacAddr, SsidKey},
+};
 
 pub const BANDWIDTH_TOPIC: &str = "audit.wireless.bandwidth";
 pub const DEFAULT_BANDWIDTH_WINDOW_SECS: i64 = 60;
@@ -103,14 +107,40 @@ struct TrafficKey {
     location_id: String,
     interface: String,
     channel: u8,
-    source_mac: String,
-    destination_bssid: String,
-    ssid: Option<String>,
+    source_mac: TrafficMac,
+    destination_bssid: TrafficMac,
+    ssid: Option<SsidKey>,
     external_bssid: bool,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum TrafficMac {
+    Known(MacAddr),
+    Unknown,
+}
+
+impl TrafficMac {
+    fn parse(value: &str) -> Option<Self> {
+        MacAddr::parse(value).map(Self::Known)
+    }
+
+    fn unknown() -> Self {
+        Self::Unknown
+    }
+}
+
+impl fmt::Display for TrafficMac {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(mac) => write!(f, "{mac}"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 struct TrafficCounters {
+    ssid: Option<String>,
     bytes: u64,
     frame_count: u64,
     retry_count: u64,
@@ -127,6 +157,7 @@ struct TrafficCounters {
 impl Default for TrafficCounters {
     fn default() -> Self {
         Self {
+            ssid: None,
             bytes: 0,
             frame_count: 0,
             retry_count: 0,

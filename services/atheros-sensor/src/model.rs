@@ -36,10 +36,56 @@
 //! [`AnomalyLayer`]: per-frame anomaly flags serialized as a sub-object; `reasons` is the
 //! human-readable list of triggered heuristics (e.g. `"large_frame"`, `"retransmit_suspect"`).
 
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
 
 pub const WIRELESS_AUDIT_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentitySource {
+    MacObserved,
+    DeviceRegistry,
+    EapIdentity,
+    EapIdentityCache,
+    ObservedIdentity,
+    EvilTwinDetection,
+    DeauthFloodDetection,
+    MacLookupDisabled,
+    MacLookupSkippedBackpressure,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl IdentitySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::MacObserved => "mac_observed",
+            Self::DeviceRegistry => "device_registry",
+            Self::EapIdentity => "eap_identity",
+            Self::EapIdentityCache => "eap_identity_cache",
+            Self::ObservedIdentity => "observed_identity",
+            Self::EvilTwinDetection => "evil_twin_detection",
+            Self::DeauthFloodDetection => "deauth_flood_detection",
+            Self::MacLookupDisabled => "mac_lookup_disabled",
+            Self::MacLookupSkippedBackpressure => "mac_lookup_skipped_backpressure",
+        }
+    }
+
+    pub fn is_mac_lookup_pending(self) -> bool {
+        matches!(self, Self::Unknown | Self::MacObserved)
+    }
+}
+
+impl fmt::Display for IdentitySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MacLayer {
@@ -255,7 +301,7 @@ pub struct WifiFrame {
     pub eapol_key_message: Option<u8>,
     pub pmkid: Option<String>,
     pub username_hint: Option<String>,
-    pub identity_source_hint: Option<String>,
+    pub identity_source_hint: Option<IdentitySource>,
     pub qos_tid: Option<u8>,
     pub qos_eosp: Option<bool>,
     pub qos_ack_policy: Option<u8>,
@@ -450,8 +496,8 @@ pub struct AuditEntry {
     #[serde(serialize_with = "serialize_option_as_null")]
     pub device_id: Option<String>,
     pub username: Option<String>,
-    #[serde(default = "default_identity_source")]
-    pub identity_source: String,
+    #[serde(default)]
+    pub identity_source: IdentitySource,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -466,10 +512,6 @@ pub struct HandshakeAlert {
     pub client_mac: String,
     pub signal_dbm: Option<i8>,
     pub pmkid: Option<String>,
-}
-
-fn default_identity_source() -> String {
-    "unknown".to_string()
 }
 
 fn default_schema_version() -> u32 {

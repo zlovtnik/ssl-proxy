@@ -19,6 +19,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -145,10 +146,10 @@ public class DatabaseService {
             if (records == null || records.isEmpty()) {
                 return 0;
             }
-            return FpUtils.partition(records, SQL_ARRAY_CHUNK_SIZE).stream()
+            List<Try<Integer>> chunkResults = FpUtils.partition(records, SQL_ARRAY_CHUNK_SIZE).stream()
                     .map(this::recordScanRequestChunk)
-                    .mapToInt(t -> t.getOrElse(0))
-                    .sum();
+                    .toList();
+            return sumChunkResultsOrThrow("coordinator.record_scan_request_batch", chunkResults);
         }, "coordinator.record_scan_request_batch");
     }
 
@@ -156,9 +157,9 @@ public class DatabaseService {
         List<String> streamNames = props.streamNames();
         return Try.of(() -> {
             Integer recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) ->
-                    SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getRequestJson), requestArray ->
-                            SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::getPayloadJson), payloadArray ->
-                                    SqlArrays.withTextArray(connection, extract(chunk, ScanRequestRecord::getPayloadSha256), shaArray ->
+                    SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::requestJson), requestArray ->
+                            SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::payloadJson), payloadArray ->
+                                    SqlArrays.withTextArray(connection, extract(chunk, ScanRequestRecord::payloadSha256), shaArray ->
                                             SqlArrays.withTextArray(connection, streamNames, streamNameArray ->
                                                     queryForInt(
                                                             connection,
@@ -245,6 +246,53 @@ public class DatabaseService {
         }, "coordinator.release_batch_dispatch");
     }
 
+    /**
+     * Repairs an already-published sync.oracle.load message whose payload_ref is
+     * blank by rebuilding the ref from the stored sync_events payload.
+     */
+    public DbResult<String> repairBatchPayloadRef(String batchId) {
+        return DbResult.of(() -> {
+            List<String> refs = observeDb("coordinator.repair_batch_payload_ref", () -> jdbc.queryForList("""
+                    with repaired as (
+                      update sync_batches batch
+                         set payload_ref = coalesce(
+                               nullif(btrim(batch.payload_ref), ''),
+                               'inline://json/' ||
+                               rtrim(
+                                 translate(
+                                   replace(encode(convert_to(event.payload::text, 'UTF8'), 'base64'), E'\\n', ''),
+                                   '+/',
+                                   '-_'
+                                 ),
+                                 '='
+                               )
+                             ),
+                             updated_at = now()
+                        from sync_events event
+                       where batch.batch_id = ?::uuid
+                         and event.dedupe_key = batch.dedupe_key
+                         and nullif(btrim(batch.payload_ref), '') is null
+                         and event.payload is not null
+                      returning batch.payload_ref
+                    ),
+                    existing as (
+                      select payload_ref
+                        from sync_batches
+                       where batch_id = ?::uuid
+                         and nullif(btrim(payload_ref), '') is not null
+                    )
+                    select payload_ref from repaired
+                    union all
+                    select payload_ref from existing
+                    limit 1
+                    """, String.class, batchId, batchId));
+            if (refs.isEmpty()) {
+                return null;
+            }
+            return blankToNull(refs.get(0));
+        }, "coordinator.repair_batch_payload_ref");
+    }
+
     // ========== Results ==========
 
     /**
@@ -256,10 +304,10 @@ public class DatabaseService {
             if (resultJsons == null || resultJsons.isEmpty()) {
                 return 0;
             }
-            return FpUtils.partition(resultJsons, SQL_ARRAY_CHUNK_SIZE).stream()
+            List<Try<Integer>> chunkResults = FpUtils.partition(resultJsons, SQL_ARRAY_CHUNK_SIZE).stream()
                     .map(this::processBatchResultChunk)
-                    .mapToInt(t -> t.getOrElse(0))
-                    .sum();
+                    .toList();
+            return sumChunkResultsOrThrow("coordinator.process_batch_results", chunkResults);
         }, "coordinator.process_batch_results");
     }
 
@@ -444,6 +492,33 @@ public class DatabaseService {
         return items.stream().map(extractor).toList();
     }
 
+    private int sumChunkResultsOrThrow(String operation, List<Try<Integer>> chunkResults) {
+        int successfulCount = 0;
+        List<Throwable> failures = new ArrayList<>();
+
+        for (Try<Integer> chunkResult : chunkResults) {
+            if (chunkResult.isSuccess()) {
+                successfulCount += chunkResult.get();
+            } else {
+                failures.add(chunkResult.getCause());
+            }
+        }
+
+        if (!failures.isEmpty()) {
+            for (int i = 0; i < failures.size(); i++) {
+                log.error("event=database_chunk status=failed operation={} failure_index={} successful_count={} error=\"{}\"",
+                        operation, i, successfulCount, sanitize(failures.get(i).getMessage()));
+            }
+            throw new IllegalStateException(
+                    "%s failed for %d chunk(s) after %d successful row(s)"
+                            .formatted(operation, failures.size(), successfulCount),
+                    failures.get(0)
+            );
+        }
+
+        return successfulCount;
+    }
+
     private static String joinCsv(List<String> items) {
         return items.isEmpty() ? "" : String.join(",", items);
     }
@@ -491,22 +566,17 @@ public class DatabaseService {
         return value == null || value.isEmpty() ? null : value;
     }
 
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
+    }
+
     // ========== Inner records ==========
 
     /** Represents a scan request record to be inserted. */
-    public record ScanRequestRecord(String requestJson, String payloadJson, String payloadSha256) {
-        public String getRequestJson() {
-            return requestJson;
-        }
-
-        public String getPayloadJson() {
-            return payloadJson;
-        }
-
-        public String getPayloadSha256() {
-            return payloadSha256;
-        }
-    }
+    public record ScanRequestRecord(String requestJson, String payloadJson, String payloadSha256) {}
 
     public record PayloadArchiveCandidate(
             String dedupeKey,

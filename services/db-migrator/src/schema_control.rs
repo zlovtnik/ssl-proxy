@@ -8,7 +8,22 @@ use tokio_postgres::{Client, Transaction};
 use crate::discovery::SqlFile;
 use crate::error::ExecutionError;
 
-const APPLY_LOCK_KEY: i64 = 2024061001;
+const APPLY_LOCK_NAMESPACE: &str = "ssl-proxy:db-migrator:schema-apply";
+const APPLY_LOCK_KEY: i64 = advisory_lock_key(APPLY_LOCK_NAMESPACE);
+
+const fn advisory_lock_key(namespace: &str) -> i64 {
+    let bytes = namespace.as_bytes();
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut index = 0;
+
+    while index < bytes.len() {
+        hash ^= bytes[index] as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        index += 1;
+    }
+
+    (hash & 0x7fff_ffff_ffff_ffff) as i64
+}
 
 #[derive(Debug, Clone)]
 pub struct SchemaObject {
@@ -119,7 +134,7 @@ pub async fn acquire_apply_lock(client: &Client) -> Result<(), ExecutionError> {
         Ok(())
     } else {
         Err(ExecutionError::apply(format!(
-            "schema apply lock {APPLY_LOCK_KEY} is already held"
+            "schema apply lock {APPLY_LOCK_KEY} ({APPLY_LOCK_NAMESPACE}) is already held"
         )))
     }
 }
@@ -132,11 +147,15 @@ pub async fn release_apply_lock(client: &Client) -> Result<(), ExecutionError> {
             ExecutionError::apply(format!("failed to release schema apply lock: {error}"))
         })?;
     let released: bool = row.get(0);
+    release_lock_result(released)
+}
+
+fn release_lock_result(released: bool) -> Result<(), ExecutionError> {
     if released {
         Ok(())
     } else {
-        Err(ExecutionError::apply(format!(
-            "schema apply lock {APPLY_LOCK_KEY} was not held"
+        Err(ExecutionError::lock_not_held(format!(
+            "schema apply lock {APPLY_LOCK_KEY} ({APPLY_LOCK_NAMESPACE}) was not held"
         )))
     }
 }
@@ -656,5 +675,13 @@ $$;
             kind_for_folder("cron", "001_vec_install_cron_jobs.sql"),
             "cron_job"
         );
+    }
+
+    #[test]
+    fn release_lock_false_result_is_lock_not_held() {
+        let error = release_lock_result(false).unwrap_err();
+
+        assert_eq!(error.kind, crate::error::ExecutionErrorKind::LockNotHeld);
+        assert!(error.to_string().contains("was not held"));
     }
 }

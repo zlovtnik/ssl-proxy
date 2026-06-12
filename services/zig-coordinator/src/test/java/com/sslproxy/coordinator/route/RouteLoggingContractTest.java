@@ -13,10 +13,12 @@ class RouteLoggingContractTest {
     void scanAndResultRoutesDoNotLogMessageBodies() throws Exception {
         String scanRoute = Files.readString(Path.of("src/main/java/com/sslproxy/coordinator/route/ScanRequestRoute.java"));
         String resultRoute = Files.readString(Path.of("src/main/java/com/sslproxy/coordinator/route/OracleResultRoute.java"));
+        String loadRoute = Files.readString(Path.of("src/main/java/com/sslproxy/coordinator/route/OracleLoadRoute.java"));
         String scanProcessor = Files.readString(Path.of("src/main/java/com/sslproxy/coordinator/processor/ScanRecordProcessor.java"));
 
         assertFalse(scanRoute.contains("${body}"));
         assertFalse(resultRoute.contains("${body}"));
+        assertFalse(loadRoute.contains("${body}"));
         assertFalse(scanProcessor.contains("body" + "={}"));
     }
 }

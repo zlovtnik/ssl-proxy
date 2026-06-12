@@ -19,10 +19,9 @@
 - Triaged the live tunnel/proxy TODOs into durable docs and ADRs instead of speculative inline prompts.
 
 ## Remaining proxy work
-- Teach the coordinator/worker side to resolve `outbox://...` payload references from the shared runtime location.
 - Decide whether the outbox remains filesystem-backed or moves to object storage/shared durable media.
 - Remove or isolate the remaining Oracle-era `#[cfg(feature = "oracle-db")]` dead paths that still live inside tunnel handlers.
-- Expose topic/payload-ref contract examples in coordinator and worker operator docs.
+- Expose topic/payload-ref contract examples in coordinator operator docs.
 - Add a compatibility window only if an external producer still emits legacy nested `payload_preview.up` / `payload_preview.down` base64 fields.
 
 ## Required proxy behavior changes
@@ -40,5 +39,4 @@
 
 ## Ownership boundary
 - The proxy produces work signals and metadata.
-- `services/zig-coordinator` owns orchestration, batching, dedupe, and cursor advancement.
-- `services/oracle-worker` owns Oracle sink behavior.
+- `services/zig-coordinator` owns orchestration, batching, dedupe, cursor advancement, and Oracle sink behavior.

@@ -148,9 +148,6 @@ fn parse_mac(value: &str) -> Option<[u8; 6]> {
 }
 /// Returns `None` if the MAC address string is empty, otherwise returns the input.
 fn normalize_mac(value: &str) -> Option<&str> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
 }

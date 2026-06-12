@@ -8,7 +8,7 @@ use postgres_native_tls::MakeTlsConnector;
 use tokio_postgres::{Client, NoTls};
 
 use crate::discovery::SqlFile;
-use crate::error::{format_pg_error, ExecutionError};
+use crate::error::{format_pg_error, ExecutionError, ExecutionErrorKind};
 use crate::schema_control::{
     acquire_apply_lock, bootstrap, build_manifest, prepare_manifest, record_applied, record_failed,
     record_skipped, release_apply_lock, PreparedSchemaObject,
@@ -47,7 +47,29 @@ pub async fn apply_sql_files(
     match (result, unlock_result) {
         (Ok(report), Ok(())) => Ok(report),
         (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) | (Err(_), Err(error)) => Err(error),
+        (Ok(report), Err(error)) => {
+            warn_unlock_error("after successful apply", &error);
+            Ok(report)
+        }
+        (Err(error), Err(unlock_error)) => {
+            warn_unlock_error("after failed apply", &unlock_error);
+            Err(error)
+        }
+    }
+}
+
+fn warn_unlock_error(context: &str, error: &ExecutionError) {
+    let detail = unlock_warning_detail(error);
+    eprintln!(
+        "{} schema apply {detail} {context}: {error}",
+        "warning:".yellow()
+    );
+}
+
+fn unlock_warning_detail(error: &ExecutionError) -> &'static str {
+    match error.kind {
+        ExecutionErrorKind::LockNotHeld => "lock was not held",
+        _ => "unlock failed",
     }
 }
 
@@ -220,5 +242,19 @@ mod tests {
         assert!(sslmode_requires_tls(
             "postgres://sync:sync@localhost:5432/sync?sslmode=require"
         ));
+    }
+
+    #[test]
+    fn unlock_warning_detail_uses_lock_not_held_kind() {
+        let error = ExecutionError::lock_not_held("schema apply lock was not held");
+
+        assert_eq!(unlock_warning_detail(&error), "lock was not held");
+    }
+
+    #[test]
+    fn unlock_warning_detail_does_not_infer_from_apply_message() {
+        let error = ExecutionError::apply("schema apply lock was not held");
+
+        assert_eq!(unlock_warning_detail(&error), "unlock failed");
     }
 }

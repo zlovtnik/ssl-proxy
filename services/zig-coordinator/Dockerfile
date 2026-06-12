@@ -22,7 +22,11 @@ RUN gradle build --no-daemon -x test
 # ---- Stage 2: Runtime with Azul Zulu JRE 21 (Alpine) ----
 FROM azul/zulu-openjdk-alpine:21-jre
 ENV TZ=America/New_York
-ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+ENV JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
+ENV TNS_ADMIN="/app/wallet" \
+    ORACLE_CONN="mainerc_high" \
+    ORACLE_USER="USCIS_APP" \
+    ORACLE_PASS_FILE="/run/secrets/oracle_password.txt"
 
 RUN apk add --no-cache \
         bash \
@@ -42,10 +46,12 @@ COPY --chown=coordinator:coordinator --from=builder /app/build/libs/*.jar /app/j
 COPY --chown=coordinator:coordinator sql /app/sql
 COPY --chown=coordinator:coordinator docker/redpanda /app/docker/redpanda
 
-RUN chown coordinator:coordinator /app \
+RUN mkdir -p /app/wallet \
+    && chown coordinator:coordinator /app /app/wallet \
     && chmod 500 /app \
     && chmod 400 /app/java-coordinator.jar \
-    && chmod -R a=rX /app/sql /app/docker/redpanda
+    && chmod -R a=rX /app/sql /app/docker/redpanda \
+    && chmod 500 /app/wallet
 
 EXPOSE 8081
 

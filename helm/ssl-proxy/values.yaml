@@ -155,7 +155,7 @@ javaCoordinator:
   service:
     port: 8080
     type: ClusterIP
-  jvmOptions: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true"
+  jvmOptions: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
   datasource:
     maximumPoolSize: 35
     minimumIdle: 10
@@ -237,28 +237,11 @@ javaCoordinator:
     redpandaLagMetricsPollIntervalMs: 10000
     redpandaLagMetricsTimeoutMs: 5000
     heartbeatLogIntervalMs: 15000
-
-# Oracle Worker
-oracleWorker:
-  enabled: true
-  replicas: 1
-  image:
-    repository: oracle-worker
-    tag: latest
-    pullPolicy: IfNotPresent
-  service:
-    port: 9091
-    type: ClusterIP
-  # Resource limits
-  resources:
-    limits:
-      cpu: "2"
-      memory: 2Gi
-    requests:
-      cpu: 500m
-      memory: 512Mi
-  # Oracle connection
   oracle:
+    enabled: true
+    wirelessEnabled: true
+    schemaValidationWarnOnly: false
+    loadMaxRetries: 3
     conn: "mainerc_high"
     user: "USCIS_APP"
     passwordSecret:
@@ -267,31 +250,6 @@ oracleWorker:
     # TNS_ADMIN for Oracle wallet
     walletSecret:
       name: "oracle-wallet"
-    # lib directory for Oracle client libraries
-    libSecret:
-      name: "oracle-lib"
-  # Consumer group
-  loadConsumer: "oracle-worker-load"
-  # Worker parallelism
-  oracleWorkerParallelism: 3
-  # Batch settings
-  maxMessages: 200
-  windowDurationMs: 5000
-  # Health check
-  healthcheck:
-    livenessProbe:
-      exec:
-        command:
-          - /usr/local/bin/oracle-worker
-          - healthcheck
-      initialDelaySeconds: 20
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 5
-  # Metrics endpoint
-  metrics:
-    enabled: true
-    port: 9091
 
 # Vec Worker
 vecWorker:
@@ -443,25 +401,6 @@ keda:
       stabilizationWindowSeconds: 60
     scaleDown:
       stabilizationWindowSeconds: 300
-
-  # Oracle Worker auto-scaling (based on Redpanda consumer lag)
-  oracleWorker:
-    enabled: true
-    minReplicas: 1
-    maxReplicas: 5
-    lagThreshold: 1000
-    activationLagThreshold: 100
-    scaleUp:
-      stabilizationWindowSeconds: 60
-    scaleDown:
-      stabilizationWindowSeconds: 300
-    # "80% in 5 minutes" policy via Prometheus trigger
-    throughputPolicy:
-      enabled: true
-      # If throughput ratio falls below 0.8, scale up
-      targetThroughputRatio: 0.8
-      # Query: rate of consumed / rate of produced over 5m
-      prometheusServer: "http://prometheus-kube-prometheus-prometheus.monitoring:9090"
 
   # Vec Worker auto-scaling (based on Postgres pending job count)
   vecWorker:

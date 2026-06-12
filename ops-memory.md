@@ -37,10 +37,10 @@ Cause: Host DNS resolver outage/path failure.
 Fix: Recover host DNS; if image exists locally, use `docker compose up -d --no-build --force-recreate`.
 Retry policy: auto-fix allowed once (`--no-build` fallback).
 
-- `worker_wallet_missing`
-Cause: `oracle-worker` started without mounted Oracle wallet artifacts (`wallet/`), shared libraries (`lib/`), or secret file (`ORACLE_PASS_FILE`).
-Fix: Mount wallet lib and secrets into oracle-worker only.
-Retry policy: manual; remediate mounts, then re-run readiness verification (`docker compose ps`, `docker compose logs oracle-worker`, and `docker compose exec -T oracle-worker /usr/local/bin/oracle-worker healthcheck`). If the signature recurs after one clean retry, apply backoff and escalate to the platform on-call + release owner for deployment pipeline correction.
+- `coordinator_wallet_missing`
+Cause: `java-coordinator` started without mounted Oracle wallet artifacts (`wallet/`) or secret file (`ORACLE_PASS_FILE`).
+Fix: Mount wallet and secrets into java-coordinator.
+Retry policy: manual; remediate mounts, then re-run readiness verification (`docker compose ps` and `docker compose logs java-coordinator`). If the signature recurs after one clean retry, apply backoff and escalate to the platform on-call + release owner for deployment pipeline correction.
 Operational note: recurrence means the mount change was not made durable. The release owner must keep compose/env templates and deployment checklists updated so these mounts persist across future deploys.
 
 ## Last Known Good
@@ -68,9 +68,9 @@ Operational note: recurrence means the mount change was not made durable. The re
 - 2026-04-17T00:00:00Z | result=fail | mode=iphone | signature=admin_loopback_false_negative | action=added in-container health fallback | context=server 192.168.1.221 amd64 | event=up-ready looped on host admin endpoint while container was healthy
 - 2026-04-17T00:00:00Z | result=fail | mode=iphone | signature=qr_permission_denied | action=rendered qr from container bind mount path | context=server 192.168.1.221 amd64 | event=qr generation failed on root-owned config file
 - 2026-04-17T00:00:00Z | result=fail | mode=iphone | signature=docker_registry_dns_timeout | action=fallback no-build recreate | context=server 192.168.1.221 amd64 | event=compose build metadata pull failed during dns outage
-- 2026-04-18T12:52:11Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into oracle-worker only
+- 2026-04-18T12:52:11Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into the Oracle sink service
 - 2026-04-20T15:49:32Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:52:10Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-20T15:58:59Z | result=fail | mode=iphone | server=192.168.1.53 | client=192.168.1.68 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-21T21:40:23Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=qr_permission_denied | action=Read profile from /config bind mount inside container
-- 2026-04-21T21:40:50Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into oracle-worker only
+- 2026-04-21T21:40:50Z | result=fail | mode=iphone | server=192.168.1.221 | client=192.168.1.68 | arch=arm64 | signature=worker_wallet_missing | action=Mount wallet lib and secrets into the Oracle sink service

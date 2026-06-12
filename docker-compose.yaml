@@ -119,7 +119,7 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
-      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75 -Dspring.aot.enabled=true}
+      - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75}
       - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
       - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
@@ -160,58 +160,45 @@ services:
       - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
       - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
       - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
+      - ORACLE_SINK_ENABLED=${ORACLE_SINK_ENABLED:-true}
+      - ORACLE_SINK_WIRELESS_ENABLED=${ORACLE_SINK_WIRELESS_ENABLED:-true}
+      - ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY=${ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY:-false}
+      - ORACLE_LOAD_MAX_RETRIES=${ORACLE_LOAD_MAX_RETRIES:-3}
+      - TNS_ADMIN=/app/wallet
+      - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
+      - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
+      - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
     volumes:
       - sync-outbox:/sync-outbox
-      - ./docker/redpanda:/app/docker/redpanda:ro
+      - type: bind
+        source: ./docker/redpanda
+        target: /app/docker/redpanda
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./wallet
+        target: /app/wallet
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./secrets
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "127.0.0.1:8081:8081"
+    # ORACLE_SINK_ENABLED is intentionally fail-fast by default here: unless it
+    # is explicitly "false", the healthcheck verifies tnsnames.ora, sqlnet.ora,
+    # cwallet.sso, and ORACLE_PASS_FILE before probing Actuator.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
+      test: ["CMD-SHELL", "if [ \"${ORACLE_SINK_ENABLED:-true}\" != \"false\" ]; then test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s \"${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}\"; fi && wget -qO- http://localhost:8081/actuator/health >/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-
-  oracle-worker:
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      redpanda-init:
-        condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
-    build:
-      context: .
-      dockerfile: services/oracle-worker/Dockerfile
-    restart: unless-stopped
-    volumes:
-      - ./lib:/app/lib:ro
-      - ./wallet:/app/wallet:ro
-      - ./secrets:/run/secrets:ro
-      - sync-outbox:/sync-outbox
-    environment:
-      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
-      - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
-      - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
-      - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
-      - SYNC_OUTBOX_DIR=/sync-outbox
-      - TNS_ADMIN=/app/wallet
-      - LD_LIBRARY_PATH=/app/lib
-      - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
-      - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
-      - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
-      - ORACLE_WORKER_METRICS_PORT=${ORACLE_WORKER_METRICS_PORT:-9464}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=oracle-worker
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=oracle-worker
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/oracle-worker", "healthcheck"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
 
   integration-console-web:
     depends_on:

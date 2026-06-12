@@ -2,7 +2,7 @@ groups:
   - name: observability-critical
     rules:
       - alert: ServiceDown
-        expr: up{job=~"ssl-proxy|java-coordinator|oracle-worker|integration-console-web|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|otel-spanmetrics|pushgateway|node-exporter|cadvisor"} == 0
+        expr: up{job=~"ssl-proxy|java-coordinator|integration-console-web|atheros-sensor|redpanda|postgres-exporter|redis-exporter|minio|prometheus|loki|jaeger|otel-collector|otel-spanmetrics|pushgateway|node-exporter|cadvisor"} == 0
         for: 2m
         labels:
           severity: critical
@@ -190,16 +190,6 @@ groups:
         annotations:
           summary: "DB errors for {{ $labels.service_name }}"
           description: "DB errors are being observed for {{ $labels.db_system }} {{ $labels.db_operation }}."
-
-      - alert: OracleWorkerDbErrors
-        expr: sum by (operation) (increase(oracle_worker_oracle_errors_total[5m])) > 0
-        for: 5m
-        labels:
-          severity: critical
-          category: database
-        annotations:
-          summary: "Oracle worker DB errors for {{ $labels.operation }}"
-          description: "Oracle worker has recorded Oracle errors in the last 5 minutes."
 
       - alert: DroppedSpans
         expr: rate(otelcol_processor_dropped_spans[5m]) > 0 or rate(otelcol_exporter_send_failed_spans[5m]) > 0

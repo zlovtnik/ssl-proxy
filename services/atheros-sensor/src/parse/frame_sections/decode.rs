@@ -3,8 +3,8 @@ use ieee80211::GenericFrame;
 use thiserror::Error;
 
 use crate::model::{
-    AnomalyLayer, AuditContext, AuditEntry, CorrelationLayer, EnrichedFrame, MacLayer, RawPacket,
-    RfLayer, WifiFrame, WIRELESS_AUDIT_SCHEMA_VERSION,
+    AnomalyLayer, AuditContext, AuditEntry, CorrelationLayer, EnrichedFrame, IdentitySource,
+    MacLayer, RawPacket, RfLayer, WifiFrame, WIRELESS_AUDIT_SCHEMA_VERSION,
 };
 
 use super::{
@@ -68,7 +68,7 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
     let eapol_key_message =
         extract_eapol_key_message(frame_type, frame_control, subtype, frame_bytes);
     let pmkid = extract_pmkid(frame_type, frame_control, subtype, frame_bytes);
-    let identity_source_hint = username_hint.as_ref().map(|_| "eap_identity".to_string());
+    let identity_source_hint = username_hint.as_ref().map(|_| IdentitySource::EapIdentity);
     let retry = frame_control & (1 << 11) != 0;
     let more_data = frame_control & (1 << 13) != 0;
     let power_save = frame_control & (1 << 12) != 0;

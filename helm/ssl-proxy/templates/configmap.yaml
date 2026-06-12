@@ -57,6 +57,7 @@ data:
     # NOTE: Partition count set to {{ .Values.javaCoordinator.topicPartitions }} to support up to 5 replicas
     sync.scan.request|{{ .Values.javaCoordinator.topicPartitions }}|3|2592000000|-1
     sync.oracle.load|{{ .Values.javaCoordinator.topicPartitions }}|3|2592000000|-1
+    sync.oracle.load.dlq|{{ .Values.javaCoordinator.topicPartitions }}|3|2592000000|-1
     sync.oracle.result|{{ .Values.javaCoordinator.topicPartitions }}|3|2592000000|-1
     proxy.payload_audit|3|3|2592000000|-1
     wireless.audit|3|3|2592000000|-1

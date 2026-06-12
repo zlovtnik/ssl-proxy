@@ -115,6 +115,25 @@ fn observe_raw_uses_wall_clock_for_flush() {
 }
 
 #[test]
+fn traffic_bucket_counts_candidate_frames_with_unparseable_macs() {
+    let mut bucket = TrafficBucket::new(60);
+    let base = Utc.with_ymd_and_hms(2026, 4, 20, 12, 0, 0).unwrap();
+    let mut entry = bandwidth_entry(base, 0, 100, -42);
+    entry.source_mac = Some("not-a-mac".to_string());
+    entry.destination_bssid = Some("also-not-a-mac".to_string());
+    entry.bssid = Some("still-not-a-mac".to_string());
+
+    assert!(bucket.observe(&entry, false).unwrap().is_empty());
+
+    let events = bucket.flush_current();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].source_mac, "unknown");
+    assert_eq!(events[0].destination_bssid, "unknown");
+    assert_eq!(events[0].bytes, 100);
+    assert_eq!(events[0].frame_count, 1);
+}
+
+#[test]
 fn flush_current_returns_partial_window() {
     let mut bucket = TrafficBucket::new(60);
     let observed_at = Utc::now();
