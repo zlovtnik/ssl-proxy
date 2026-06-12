@@ -1,6 +1,8 @@
 package com.sslproxy.coordinator.oracle;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sslproxy.coordinator.fp.DbResult;
+import com.sslproxy.coordinator.service.DatabaseService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -12,6 +14,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class OracleLoadHandlerTest {
 
@@ -78,7 +83,9 @@ class OracleLoadHandlerTest {
     @Test
     void returnsPermanentFailureForBlankPayloadRef(@TempDir Path outbox) {
         FakeSink sink = new FakeSink();
-        OracleLoadHandler handler = handler(outbox, sink);
+        DatabaseService databaseService = mock(DatabaseService.class);
+        when(databaseService.repairBatchPayloadRef("batch-1")).thenReturn(new DbResult.Empty<>());
+        OracleLoadHandler handler = handler(outbox, sink, databaseService);
 
         OracleResult result = handler.handle(new OracleLoad(
                 "job-1",
@@ -95,14 +102,52 @@ class OracleLoadHandlerTest {
         assertEquals("permanent", result.errorClass());
         assertEquals("payload_ref must not be empty", result.errorText());
         assertNull(sink.batchId);
+        verify(databaseService).repairBatchPayloadRef("batch-1");
+    }
+
+    @Test
+    void repairsBlankPayloadRefBeforeLoading(@TempDir Path outbox) {
+        FakeSink sink = new FakeSink();
+        DatabaseService databaseService = mock(DatabaseService.class);
+        String payload = """
+                [{
+                  "type":"connect",
+                  "time":"2026-06-01T12:00:00Z",
+                  "host":"tracker.example",
+                  "blocked":false
+                }]
+                """;
+        when(databaseService.repairBatchPayloadRef("batch-1")).thenReturn(new DbResult.Ok<>(inline(payload)));
+        OracleLoadHandler handler = handler(outbox, sink, databaseService);
+
+        OracleResult result = handler.handle(new OracleLoad(
+                "job-1",
+                "batch-1",
+                1,
+                "proxy.events",
+                "",
+                "",
+                "",
+                1
+        ));
+
+        assertEquals("success", result.status());
+        assertEquals("batch-1", sink.batchId);
+        assertEquals(1, sink.proxyRows.size());
+        verify(databaseService).repairBatchPayloadRef("batch-1");
     }
 
     private OracleLoadHandler handler(Path outbox, OracleSink sink) {
+        return handler(outbox, sink, mock(DatabaseService.class));
+    }
+
+    private OracleLoadHandler handler(Path outbox, OracleSink sink, DatabaseService databaseService) {
         return new OracleLoadHandler(
                 new OraclePayloadResolver(outbox.toString(), objectMapper),
                 new OracleTransformService(objectMapper),
                 sink,
-                new FixedClock()
+                new FixedClock(),
+                databaseService
         );
     }
 

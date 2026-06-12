@@ -246,6 +246,53 @@ public class DatabaseService {
         }, "coordinator.release_batch_dispatch");
     }
 
+    /**
+     * Repairs an already-published sync.oracle.load message whose payload_ref is
+     * blank by rebuilding the ref from the stored sync_events payload.
+     */
+    public DbResult<String> repairBatchPayloadRef(String batchId) {
+        return DbResult.of(() -> {
+            List<String> refs = observeDb("coordinator.repair_batch_payload_ref", () -> jdbc.queryForList("""
+                    with repaired as (
+                      update sync_batches batch
+                         set payload_ref = coalesce(
+                               nullif(btrim(batch.payload_ref), ''),
+                               'inline://json/' ||
+                               rtrim(
+                                 translate(
+                                   replace(encode(convert_to(event.payload::text, 'UTF8'), 'base64'), E'\\n', ''),
+                                   '+/',
+                                   '-_'
+                                 ),
+                                 '='
+                               )
+                             ),
+                             updated_at = now()
+                        from sync_events event
+                       where batch.batch_id = ?::uuid
+                         and event.dedupe_key = batch.dedupe_key
+                         and nullif(btrim(batch.payload_ref), '') is null
+                         and event.payload is not null
+                      returning batch.payload_ref
+                    ),
+                    existing as (
+                      select payload_ref
+                        from sync_batches
+                       where batch_id = ?::uuid
+                         and nullif(btrim(payload_ref), '') is not null
+                    )
+                    select payload_ref from repaired
+                    union all
+                    select payload_ref from existing
+                    limit 1
+                    """, String.class, batchId, batchId));
+            if (refs.isEmpty()) {
+                return null;
+            }
+            return blankToNull(refs.get(0));
+        }, "coordinator.repair_batch_payload_ref");
+    }
+
     // ========== Results ==========
 
     /**

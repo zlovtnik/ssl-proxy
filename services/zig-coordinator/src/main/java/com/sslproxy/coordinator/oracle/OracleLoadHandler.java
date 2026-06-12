@@ -2,6 +2,8 @@ package com.sslproxy.coordinator.oracle;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.sslproxy.coordinator.fp.DbResult;
+import com.sslproxy.coordinator.service.DatabaseService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -17,37 +19,41 @@ public class OracleLoadHandler {
     private final OracleTransformService transformService;
     private final OracleSink sink;
     private final OracleClock clock;
+    private final DatabaseService databaseService;
 
     public OracleLoadHandler(OraclePayloadResolver payloadResolver,
                              OracleTransformService transformService,
                              OracleSink sink,
-                             OracleClock clock) {
+                             OracleClock clock,
+                             DatabaseService databaseService) {
         this.payloadResolver = payloadResolver;
         this.transformService = transformService;
         this.sink = sink;
         this.clock = clock;
+        this.databaseService = databaseService;
     }
 
     public OracleResult handle(OracleLoad load) {
         try {
-            validateLoad(load);
-            OracleSinkTarget target = OracleSinkTarget.fromStreamName(load.streamName())
-                    .orElseThrow(() -> new IllegalArgumentException("unsupported stream_name " + load.streamName()));
-            String payload = payloadResolver.resolvePayload(load.payloadRef());
+            OracleLoad resolvedLoad = repairPayloadRefIfNeeded(load);
+            validateLoad(resolvedLoad);
+            OracleSinkTarget target = OracleSinkTarget.fromStreamName(resolvedLoad.streamName())
+                    .orElseThrow(() -> new IllegalArgumentException("unsupported stream_name " + resolvedLoad.streamName()));
+            String payload = payloadResolver.resolvePayload(resolvedLoad.payloadRef());
             List<JsonNode> values = payloadResolver.payloadRows(target, payload);
             OracleRowSet rows = transformService.transform(target, values);
 
             log.info("event=oracle_load status=validated batch_id={} stream_name={} target={} row_count={}",
-                    load.batchId(), load.streamName(), target.checksumTag(), rows.inputRowCount(target));
+                    resolvedLoad.batchId(), resolvedLoad.streamName(), target.checksumTag(), rows.inputRowCount(target));
 
-            long rowCount = insert(load.batchId(), target, rows);
+            long rowCount = insert(resolvedLoad.batchId(), target, rows);
             if (rowCount > Integer.MAX_VALUE) {
-                return OracleResult.failure(load.jobId(), load.batchId(), OracleErrorClass.PERMANENT,
+                return OracleResult.failure(resolvedLoad.jobId(), resolvedLoad.batchId(), OracleErrorClass.PERMANENT,
                         "inserted row count exceeds i32 limit", clock.nowRfc3339());
             }
             return OracleResult.success(
-                    load.jobId(),
-                    load.batchId(),
+                    resolvedLoad.jobId(),
+                    resolvedLoad.batchId(),
                     (int) rowCount,
                     OracleChecksum.checksum(target, payload),
                     clock.nowRfc3339()
@@ -63,7 +69,45 @@ public class OracleLoadHandler {
         }
     }
 
+    private OracleLoad repairPayloadRefIfNeeded(OracleLoad load) {
+        validateLoadMetadata(load);
+        if (!load.payloadRef().isBlank()) {
+            return load;
+        }
+
+        return switch (databaseService.repairBatchPayloadRef(load.batchId())) {
+            case DbResult.Ok<String> ok when ok.value() != null && !ok.value().isBlank() -> {
+                log.warn("event=oracle_load status=payload_ref_repaired batch_id={} stream_name={}",
+                        load.batchId(), load.streamName());
+                yield new OracleLoad(
+                        load.jobId(),
+                        load.batchId(),
+                        load.batchNo(),
+                        load.streamName(),
+                        ok.value(),
+                        load.cursorStart(),
+                        load.cursorEnd(),
+                        load.attempt()
+                );
+            }
+            case DbResult.Empty<String> ignored -> load;
+            case DbResult.Ok<String> ignored -> load;
+            case DbResult.Err<String> err -> {
+                log.warn("event=oracle_load status=payload_ref_repair_failed batch_id={} operation={} error=\"{}\"",
+                        load.batchId(), err.operation(), sanitize(err.cause().getMessage()));
+                yield load;
+            }
+        };
+    }
+
     private void validateLoad(OracleLoad load) {
+        validateLoadMetadata(load);
+        if (load.payloadRef().isBlank()) {
+            throw new IllegalArgumentException("payload_ref must not be empty");
+        }
+    }
+
+    private void validateLoadMetadata(OracleLoad load) {
         if (load.jobId().isBlank()) {
             throw new IllegalArgumentException("job_id must not be empty");
         }
@@ -72,9 +116,6 @@ public class OracleLoadHandler {
         }
         if (load.streamName().isBlank()) {
             throw new IllegalArgumentException("stream_name must not be empty");
-        }
-        if (load.payloadRef().isBlank()) {
-            throw new IllegalArgumentException("payload_ref must not be empty");
         }
     }
 

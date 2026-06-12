@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -116,6 +117,19 @@ class DatabaseServiceTest {
         assertJsonb(resultJson, jsonbArrays.getValue()[0]);
         verify(statement).setArray(1, resultArray);
         verify(resultArray).free();
+    }
+
+    @Test
+    void repairBatchPayloadRefReturnsRebuiltRef() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        DatabaseService service = new DatabaseService(jdbc, CoordinatorProperties.DEFAULTS);
+        when(jdbc.queryForList(anyString(), eq(String.class), eq("batch-1"), eq("batch-1")))
+                .thenReturn(List.of("inline://json/eyJvayI6dHJ1ZX0"));
+
+        String payloadRef = service.repairBatchPayloadRef("batch-1").orElseThrow();
+
+        assertEquals("inline://json/eyJvayI6dHJ1ZX0", payloadRef);
+        verify(jdbc).queryForList(anyString(), eq(String.class), eq("batch-1"), eq("batch-1"));
     }
 
     @Test
