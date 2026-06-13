@@ -27,6 +27,7 @@ type Service struct {
 	Logger    zerolog.Logger
 	SuggCache SuggestCache
 	suggMu    sync.Mutex
+	graphCache sync.Map
 }
 
 func NewService(pool *pgxpool.Pool, embedder embed.Client, cfg config.Config, m *metrics.Metrics, logger zerolog.Logger) *Service {

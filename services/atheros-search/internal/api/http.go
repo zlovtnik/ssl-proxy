@@ -114,6 +114,29 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		}
 		writeJSON(w, http.StatusOK, resp)
 	})
+	registerJSON(mux, "POST", "/v1/graph", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+		body, ok := readRequestBody(w, r)
+		if !ok {
+			return
+		}
+		var filters search.GraphFilters
+		if len(strings.TrimSpace(string(body))) > 0 {
+			if err := json.Unmarshal(body, &filters); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+		if err := search.ValidateGraphFilters(filters); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		resp, err := svc.Graph(r.Context(), filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+	})
 	mux.HandlePath("GET", "/healthz", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
