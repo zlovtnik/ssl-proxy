@@ -20,13 +20,13 @@ import (
 type Service struct {
 	searchv1.UnimplementedSearchServiceServer
 
-	Pool      *pgxpool.Pool
-	Embedder  embed.Client
-	Config    config.Config
-	Metrics   *metrics.Metrics
-	Logger    zerolog.Logger
-	SuggCache SuggestCache
-	suggMu    sync.Mutex
+	Pool       *pgxpool.Pool
+	Embedder   embed.Client
+	Config     config.Config
+	Metrics    *metrics.Metrics
+	Logger     zerolog.Logger
+	SuggCache  SuggestCache
+	suggMu     sync.Mutex
 	graphCache sync.Map
 }
 
