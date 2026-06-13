@@ -610,11 +610,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 24G
+          cpus: ${POSTGRES_CPUS:-16.0}
+          memory: ${POSTGRES_MEMORY:-32G}
         reservations:
-          cpus: '1.0'
-          memory: 12G
+          cpus: ${POSTGRES_RESERVED_CPUS:-4.0}
+          memory: ${POSTGRES_RESERVED_MEMORY:-16G}
     environment:
       POSTGRES_DB: sync
       POSTGRES_USER: sync

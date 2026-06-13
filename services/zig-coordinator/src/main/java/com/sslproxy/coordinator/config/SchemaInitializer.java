@@ -47,11 +47,8 @@ public class SchemaInitializer implements InitializingBean {
         }
 
         try (Connection lockConnection = dataSource.getConnection()) {
-            if (!tryAcquireSchemaLock(lockConnection)) {
-                log.info("event=schema_apply status=skipped reason=lock_not_acquired file={}", schemaPath);
-                return;
-            }
-
+            log.info("event=schema_apply status=waiting_for_lock file={}", schemaPath);
+            acquireSchemaLock(lockConnection);
             log.info("event=schema_apply status=lock_acquired file={}", schemaPath);
             try {
                 runSchemaApply(schemaPath);
@@ -110,14 +107,12 @@ public class SchemaInitializer implements InitializingBean {
         return rawUrl;
     }
 
-    private boolean tryAcquireSchemaLock(Connection connection) throws SQLException {
+    void acquireSchemaLock(Connection connection) throws SQLException {
         try (PreparedStatement statement =
-                     connection.prepareStatement("SELECT pg_try_advisory_lock(?, ?)")) {
+                     connection.prepareStatement("SELECT pg_advisory_lock(?, ?)")) {
             statement.setInt(1, SCHEMA_LOCK_CLASS_ID);
             statement.setInt(2, SCHEMA_LOCK_OBJECT_ID);
-            try (ResultSet rs = statement.executeQuery()) {
-                return rs.next() && rs.getBoolean(1);
-            }
+            statement.execute();
         }
     }
 

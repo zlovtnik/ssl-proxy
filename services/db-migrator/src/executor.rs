@@ -165,6 +165,10 @@ async fn apply_one_file(
     object: &PreparedSchemaObject,
 ) -> Result<(), ExecutionError> {
     let started = Instant::now();
+    if !object.object.transactional {
+        return apply_one_file_without_transaction(client, object, started).await;
+    }
+
     let transaction = client.transaction().await.map_err(|error| {
         ExecutionError::apply(format!(
             "failed to start transaction for {}: {error}",
@@ -191,6 +195,24 @@ async fn apply_one_file(
                     object.object.source_file
                 ))
             })?;
+            record_failed(client, object, &formatted, started.elapsed()).await?;
+            Err(ExecutionError::apply(formatted))
+        }
+    }
+}
+
+async fn apply_one_file_without_transaction(
+    client: &Client,
+    object: &PreparedSchemaObject,
+    started: Instant,
+) -> Result<(), ExecutionError> {
+    match client.batch_execute(&object.object.raw_sql).await {
+        Ok(()) => {
+            record_applied(client, object, started.elapsed()).await?;
+            Ok(())
+        }
+        Err(error) => {
+            let formatted = format_pg_error(&object.object.source_file, &error);
             record_failed(client, object, &formatted, started.elapsed()).await?;
             Err(ExecutionError::apply(formatted))
         }
