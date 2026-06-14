@@ -11,7 +11,7 @@ begin
     return;
   end if;
 
-  refresh materialized view concurrently vec_dns_violation_summary;
+  refresh materialized view vec_dns_violation_summary;
 
   perform vec_finish_maintenance_job('vec-refresh-dns-violation-summary');
 exception when others then

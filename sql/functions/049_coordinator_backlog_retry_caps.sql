@@ -33,11 +33,11 @@ begin
   end if;
 
   if coalesce(p_payload->>'max_attempts', '') ~ '^[0-9]+$' then
-    v_max_attempts := greatest((p_payload->>'max_attempts')::integer, 1);
+    v_max_attempts := greatest(coordinator.safe_int(p_payload->>'max_attempts'), 1);
   end if;
 
   if coalesce(p_payload->>'attempt_count', '') ~ '^[0-9]+$' then
-    v_attempt_count := greatest((p_payload->>'attempt_count')::integer, 0);
+    v_attempt_count := greatest(coordinator.safe_int(p_payload->>'attempt_count'), 0);
   end if;
 
   insert into sync_backlog (
@@ -98,7 +98,7 @@ begin
       'attempt_count', attempt_count,
       'max_attempts', max_attempts,
       'created_at', created_at
-    )
+    ) order by created_at asc
   ), '[]'::jsonb)
     into v_result
   from (

@@ -26,6 +26,16 @@ func TestBuildWirelessFiltersUsesParameters(t *testing.T) {
 	require.Len(t, filter.Args, 5)
 }
 
+func TestBuildWirelessFiltersCombinesSourceMacList(t *testing.T) {
+	filter := BuildWirelessFilters(&searchv1.SearchFilters{
+		SourceMac:  "AA:BB:CC:DD:EE:FF",
+		SourceMacs: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"},
+	}, 1)
+	sql := WhereSQL(nil, filter.Clauses)
+	require.Contains(t, sql, "lower(se.source_mac) = any($1::text[])")
+	require.Equal(t, []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}, filter.Args[0])
+}
+
 func TestBuildSourceFiltersUsesParameters(t *testing.T) {
 	filter := BuildSourceFilters(&searchv1.SearchFilters{
 		LocationIds: []string{"lab"},
@@ -38,4 +48,15 @@ func TestBuildSourceFiltersUsesParameters(t *testing.T) {
 	require.Contains(t, sql, "$6")
 	require.NotContains(t, sql, "aa:bb:cc:dd:ee:ff")
 	require.Len(t, filter.Args, 3)
+}
+
+func TestGraphFocusMACsDeduplicatesSourceAndExpandedMACs(t *testing.T) {
+	got := graphFocusMACs(GraphFilters{
+		SourceMAC: "AA:BB:CC:DD:EE:FF",
+		focusMACs: []string{
+			"aa:bb:cc:dd:ee:ff",
+			"11:22:33:44:55:66",
+		},
+	})
+	require.Equal(t, []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}, got)
 }

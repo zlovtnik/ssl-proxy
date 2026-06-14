@@ -514,7 +514,7 @@ create table if not exists wireless_clients (
   known_bssid text,
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
-  probe_count integer not null default 1,
+  probe_count bigint not null default 1,
   location_id text,
   primary key (ssid, client_mac)
 );
@@ -5574,7 +5574,7 @@ begin
        where lower(ssid) = lower(v_probe->>'ssid') and enabled limit 1),
       (v_probe->>'first_seen')::timestamptz,
       (v_probe->>'last_seen')::timestamptz,
-      (v_probe->>'probe_count')::integer
+      (v_probe->>'probe_count')::bigint
     )
     on conflict (ssid, client_mac) do update
       set first_seen = least(wireless_clients.first_seen, excluded.first_seen),

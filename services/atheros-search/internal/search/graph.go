@@ -76,6 +76,10 @@ type GraphNode struct {
 	FirstSeen           *time.Time `json:"first_seen,omitempty"`
 	LastSeen            *time.Time `json:"last_seen,omitempty"`
 	ResolvedAt          *time.Time `json:"resolved_at,omitempty"`
+	EventSourceMACs     []string   `json:"event_source_macs,omitempty"`
+	EventSSIDs          []string   `json:"event_ssids,omitempty"`
+	ExplainSourceKey    string     `json:"explain_source_key,omitempty"`
+	ExplainKind         string     `json:"explain_kind,omitempty"`
 }
 
 type GraphResponseEdge struct {
@@ -105,6 +109,10 @@ type GraphFilters struct {
 	ObservedAfter  *time.Time `json:"observed_after,omitempty"`
 	ObservedBefore *time.Time `json:"observed_before,omitempty"`
 	Limit          int        `json:"limit,omitempty"`
+
+	focusMACs   []string
+	focusBSSIDs []string
+	focusSSIDs  []string
 }
 
 type graphCacheEntry struct {
@@ -125,6 +133,9 @@ type graphBuilder struct {
 }
 
 func (s *Service) Graph(ctx context.Context, filters GraphFilters) (*GraphResponse, error) {
+	if err := ValidateGraphFilters(filters); err != nil {
+		return nil, err
+	}
 	filters = normalizeGraphFilters(filters)
 	cacheKey, err := graphFilterKey(filters)
 	if err != nil {
@@ -143,6 +154,10 @@ func (s *Service) Graph(ctx context.Context, filters GraphFilters) (*GraphRespon
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	if err := expandGraphFocus(ctx, tx, &filters); err != nil {
+		return nil, err
+	}
 
 	builder := newGraphBuilder()
 	kinds := graphKindSet(filters)
@@ -214,9 +229,6 @@ func normalizeGraphFilters(filters GraphFilters) GraphFilters {
 	kinds := make([]NodeKind, 0, len(filters.Kinds))
 	seen := map[NodeKind]struct{}{}
 	for _, kind := range filters.Kinds {
-		if !validGraphNodeKind(kind) {
-			continue
-		}
 		if _, ok := seen[kind]; ok {
 			continue
 		}
@@ -257,7 +269,7 @@ func graphFilterKey(filters GraphFilters) (string, error) {
 
 func validGraphNodeKind(kind NodeKind) bool {
 	switch kind {
-	case NodeKindDevice, NodeKindCluster, NodeKindAP, NodeKindClient, NodeKindShadowAlert, NodeKindAlert, NodeKindEmbedding:
+	case NodeKindDevice, NodeKindCluster, NodeKindAP, NodeKindClient, NodeKindShadowAlert, NodeKindAlert:
 		return true
 	default:
 		return false
@@ -279,6 +291,178 @@ func graphKindSet(filters GraphFilters) map[NodeKind]bool {
 		out[kind] = true
 	}
 	return out
+}
+
+func graphFocusMACs(filters GraphFilters) []string {
+	values := make([]string, 0, 1+len(filters.focusMACs))
+	if filters.SourceMAC != "" {
+		values = append(values, filters.SourceMAC)
+	}
+	values = append(values, filters.focusMACs...)
+	return normalizeLowerList(values)
+}
+
+func graphFocusBSSIDs(filters GraphFilters) []string {
+	values := make([]string, 0, 1+len(filters.focusBSSIDs))
+	if filters.SourceMAC != "" {
+		values = append(values, filters.SourceMAC)
+	}
+	values = append(values, filters.focusBSSIDs...)
+	return normalizeLowerList(values)
+}
+
+func graphFocusSSIDs(filters GraphFilters) []string {
+	values := append([]string{}, filters.focusSSIDs...)
+	if filters.SSID != "" {
+		values = append(values, filters.SSID)
+	}
+	return normalizeLowerList(values)
+}
+
+func expandGraphFocus(ctx context.Context, tx pgx.Tx, filters *GraphFilters) error {
+	if filters.SourceMAC == "" {
+		return nil
+	}
+
+	limit := filters.Limit * 4
+	if limit < graphDefaultLimit {
+		limit = graphDefaultLimit
+	}
+	macs := normalizeLowerList([]string{filters.SourceMAC})
+	bssids := normalizeLowerList([]string{filters.SourceMAC})
+	ssids := []string{}
+
+	addMAC := func(value string) {
+		macs = normalizeLowerList(append(macs, value))
+	}
+	addBSSID := func(value string) {
+		bssids = normalizeLowerList(append(bssids, value))
+	}
+	addSSID := func(value string) {
+		ssids = normalizeLowerList(append(ssids, value))
+	}
+
+	rows, err := tx.Query(ctx, `
+SELECT c.mac_ids
+FROM device_identity_clusters c
+WHERE EXISTS (
+  SELECT 1
+  FROM unnest(c.mac_ids) AS member(mac)
+  WHERE lower(member.mac) = any($1::text[])
+)
+ORDER BY c.last_seen DESC
+LIMIT $2`, macs, limit)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var clusterMACs []string
+		if err := rows.Scan(&clusterMACs); err != nil {
+			rows.Close()
+			return err
+		}
+		for _, mac := range clusterMACs {
+			addMAC(mac)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	clientMACs := normalizeLowerList(append([]string{filters.SourceMAC}, macs...))
+	clientBSSIDs := normalizeLowerList(append([]string{filters.SourceMAC}, bssids...))
+	rows, err = tx.Query(ctx, `
+SELECT
+  coalesce(wc.client_mac, ''),
+  coalesce(wc.known_bssid, ''),
+  coalesce(wc.ssid, '')
+FROM wireless_clients wc
+WHERE lower(coalesce(wc.client_mac, '')) = any($1::text[])
+   OR lower(coalesce(wc.known_bssid, '')) = any($2::text[])
+ORDER BY wc.last_seen DESC
+LIMIT $3`, clientMACs, clientBSSIDs, limit)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var clientMAC, bssid, ssid string
+		if err := rows.Scan(&clientMAC, &bssid, &ssid); err != nil {
+			rows.Close()
+			return err
+		}
+		addMAC(clientMAC)
+		addBSSID(bssid)
+		addSSID(ssid)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	matchMACs := normalizeLowerList(append(append([]string{}, macs...), bssids...))
+	rows, err = tx.Query(ctx, `
+SELECT
+  coalesce(se.source_mac, ''),
+  coalesce(se.bssid, se.destination_bssid, ''),
+  coalesce(se.ssid, '')
+FROM sync_events_expanded se
+WHERE lower(coalesce(se.source_mac, '')) = any($1::text[])
+   OR lower(coalesce(se.bssid, se.destination_bssid, '')) = any($1::text[])
+ORDER BY se.observed_at DESC
+LIMIT $2`, matchMACs, limit)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var sourceMAC, bssid, ssid string
+		if err := rows.Scan(&sourceMAC, &bssid, &ssid); err != nil {
+			rows.Close()
+			return err
+		}
+		addMAC(sourceMAC)
+		addBSSID(bssid)
+		addSSID(ssid)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	rows, err = tx.Query(ctx, `
+SELECT
+  coalesce(awn.bssid, ''),
+  coalesce(awn.ssid, '')
+FROM wireless_authorized_networks awn
+WHERE lower(coalesce(awn.bssid, '')) = any($1::text[])
+   OR lower(coalesce(awn.ssid, '')) = any($2::text[])
+ORDER BY awn.updated_at DESC
+LIMIT $3`, bssids, ssids, limit)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var bssid, ssid string
+		if err := rows.Scan(&bssid, &ssid); err != nil {
+			rows.Close()
+			return err
+		}
+		addBSSID(bssid)
+		addSSID(ssid)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	filters.focusMACs = macs
+	filters.focusBSSIDs = bssids
+	filters.focusSSIDs = ssids
+	return nil
 }
 
 func newGraphBuilder() *graphBuilder {
@@ -499,8 +683,8 @@ func fetchGraphDevices(ctx context.Context, tx pgx.Tx, filters GraphFilters, bui
 	args := []any{filters.Limit}
 	clauses := []string{}
 	add := graphClause(&clauses, &args)
-	if filters.SourceMAC != "" {
-		add("lower(d.mac_id) = lower($%d)", filters.SourceMAC)
+	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
+		add("lower(d.mac_id) = any($%d::text[])", sourceMACs)
 	}
 	if filters.ObservedAfter != nil {
 		add("d.last_seen >= $%d", *filters.ObservedAfter)
@@ -540,16 +724,19 @@ LIMIT $1`, args...)
 		}
 		label := firstNonEmpty(displayName, hostname, username, mac)
 		builder.addNode(GraphNode{
-			ID:          graphNodeID(NodeKindDevice, mac),
-			Kind:        NodeKindDevice,
-			Label:       label,
-			MAC:         mac,
-			DisplayName: displayName,
-			Username:    username,
-			Hostname:    hostname,
-			OSHint:      osHint,
-			FirstSeen:   graphTime(firstSeen),
-			LastSeen:    graphTime(lastSeen),
+			ID:               graphNodeID(NodeKindDevice, mac),
+			Kind:             NodeKindDevice,
+			Label:            label,
+			MAC:              mac,
+			DisplayName:      displayName,
+			Username:         username,
+			Hostname:         hostname,
+			OSHint:           osHint,
+			FirstSeen:        graphTime(firstSeen),
+			LastSeen:         graphTime(lastSeen),
+			EventSourceMACs:  graphActionMACs(mac),
+			ExplainSourceKey: mac,
+			ExplainKind:      "SEARCH_KIND_DEVICE",
 		})
 	}
 	return rows.Err()
@@ -559,8 +746,12 @@ func fetchGraphClusters(ctx context.Context, tx pgx.Tx, filters GraphFilters, bu
 	args := []any{filters.Limit}
 	clauses := []string{}
 	add := graphClause(&clauses, &args)
-	if filters.SourceMAC != "" {
-		add("lower($%d) = any(c.mac_ids)", filters.SourceMAC)
+	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
+		add(`EXISTS (
+  SELECT 1
+  FROM unnest(c.mac_ids) AS member(mac)
+  WHERE lower(member.mac) = any($%d::text[])
+)`, sourceMACs)
 	}
 	if filters.ObservedAfter != nil {
 		add("c.last_seen >= $%d", *filters.ObservedAfter)
@@ -607,6 +798,7 @@ LIMIT $1`, args...)
 			CentroidSampleCount: int32Ptr(centroidSampleCount),
 			FirstSeen:           graphTime(firstSeen),
 			LastSeen:            graphTime(lastSeen),
+			EventSourceMACs:     normalizeLowerList(macIDs),
 		})
 	}
 	return rows.Err()
@@ -622,8 +814,19 @@ func fetchGraphAPs(ctx context.Context, tx pgx.Tx, filters GraphFilters, builder
 	if filters.SSID != "" {
 		add("awn.ssid ilike $%d ESCAPE '\\'", "%"+escapeLike(filters.SSID)+"%")
 	}
-	if filters.SourceMAC != "" {
-		add("lower(coalesce(awn.bssid, '')) = lower($%d)", filters.SourceMAC)
+	sourceBSSIDs := graphFocusBSSIDs(filters)
+	focusSSIDs := graphFocusSSIDs(filters)
+	if len(sourceBSSIDs) > 0 || len(focusSSIDs) > 0 {
+		parts := []string{}
+		if len(sourceBSSIDs) > 0 {
+			args = append(args, sourceBSSIDs)
+			parts = append(parts, fmt.Sprintf("lower(coalesce(awn.bssid, '')) = any($%d::text[])", len(args)))
+		}
+		if len(focusSSIDs) > 0 {
+			args = append(args, focusSSIDs)
+			parts = append(parts, fmt.Sprintf("lower(coalesce(awn.ssid, '')) = any($%d::text[])", len(args)))
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
 	if filters.ObservedAfter != nil {
 		add("awn.updated_at >= $%d", *filters.ObservedAfter)
@@ -667,6 +870,7 @@ LIMIT $1`, args...)
 			Enabled:    boolPtr(enabled),
 			CreatedAt:  graphTime(createdAt),
 			LastSeen:   graphTime(updatedAt),
+			EventSSIDs: graphActionStrings(ssid),
 		})
 	}
 	return rows.Err()
@@ -682,8 +886,24 @@ func fetchGraphClients(ctx context.Context, tx pgx.Tx, filters GraphFilters, bui
 	if filters.SSID != "" {
 		add("wc.ssid ilike $%d ESCAPE '\\'", "%"+escapeLike(filters.SSID)+"%")
 	}
-	if filters.SourceMAC != "" {
-		add("lower(wc.client_mac) = lower($%d)", filters.SourceMAC)
+	sourceMACs := graphFocusMACs(filters)
+	sourceBSSIDs := graphFocusBSSIDs(filters)
+	focusSSIDs := graphFocusSSIDs(filters)
+	if len(sourceMACs) > 0 || len(sourceBSSIDs) > 0 || len(focusSSIDs) > 0 {
+		parts := []string{}
+		if len(sourceMACs) > 0 {
+			args = append(args, sourceMACs)
+			parts = append(parts, fmt.Sprintf("lower(wc.client_mac) = any($%d::text[])", len(args)))
+		}
+		if len(sourceBSSIDs) > 0 {
+			args = append(args, sourceBSSIDs)
+			parts = append(parts, fmt.Sprintf("lower(coalesce(wc.known_bssid, '')) = any($%d::text[])", len(args)))
+		}
+		if len(focusSSIDs) > 0 {
+			args = append(args, focusSSIDs)
+			parts = append(parts, fmt.Sprintf("lower(coalesce(wc.ssid, '')) = any($%d::text[])", len(args)))
+		}
+		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
 	if filters.ObservedAfter != nil {
 		add("wc.last_seen >= $%d", *filters.ObservedAfter)
@@ -717,16 +937,20 @@ LIMIT $1`, args...)
 			return err
 		}
 		builder.addNode(GraphNode{
-			ID:         graphNodeID(NodeKindClient, ssid+"|"+mac),
-			Kind:       NodeKindClient,
-			Label:      mac,
-			MAC:        mac,
-			SSID:       ssid,
-			BSSID:      bssid,
-			LocationID: locationID,
-			ProbeCount: int64Ptr(probeCount),
-			FirstSeen:  graphTime(firstSeen),
-			LastSeen:   graphTime(lastSeen),
+			ID:               graphNodeID(NodeKindClient, ssid+"|"+mac),
+			Kind:             NodeKindClient,
+			Label:            mac,
+			MAC:              mac,
+			SSID:             ssid,
+			BSSID:            bssid,
+			LocationID:       locationID,
+			ProbeCount:       int64Ptr(probeCount),
+			FirstSeen:        graphTime(firstSeen),
+			LastSeen:         graphTime(lastSeen),
+			EventSourceMACs:  graphActionMACs(mac),
+			EventSSIDs:       graphActionStrings(ssid),
+			ExplainSourceKey: mac,
+			ExplainKind:      "SEARCH_KIND_DEVICE",
 		})
 	}
 	return rows.Err()
@@ -745,8 +969,8 @@ func fetchGraphShadowAlerts(ctx context.Context, tx pgx.Tx, filters GraphFilters
 	if filters.SSID != "" {
 		add("s.ssid ilike $%d ESCAPE '\\'", "%"+escapeLike(filters.SSID)+"%")
 	}
-	if filters.SourceMAC != "" {
-		add("lower(s.source_mac) = lower($%d)", filters.SourceMAC)
+	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
+		add("lower(s.source_mac) = any($%d::text[])", sourceMACs)
 	}
 	if filters.ObservedAfter != nil {
 		add("s.last_occurred_at >= $%d", *filters.ObservedAfter)
@@ -802,6 +1026,8 @@ LIMIT $1`, args...)
 			FirstSeen:       graphTime(firstSeen),
 			LastSeen:        graphTime(lastSeen),
 			ResolvedAt:      graphTime(resolvedAt),
+			EventSourceMACs: graphActionMACs(mac),
+			EventSSIDs:      graphActionStrings(ssid),
 		})
 	}
 	return rows.Err()
@@ -817,8 +1043,8 @@ func fetchGraphAlerts(ctx context.Context, tx pgx.Tx, filters GraphFilters, buil
 	if len(filters.SensorIDs) > 0 {
 		add("coalesce(a.sensor_id, '') = any($%d::text[])", filters.SensorIDs)
 	}
-	if filters.SourceMAC != "" {
-		add("lower(coalesce(a.source_mac, '')) = lower($%d)", filters.SourceMAC)
+	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
+		add("lower(coalesce(a.source_mac, '')) = any($%d::text[])", sourceMACs)
 	}
 	if filters.ObservedAfter != nil {
 		add("a.created_at >= $%d", *filters.ObservedAfter)
@@ -857,18 +1083,19 @@ LIMIT $1`, args...)
 			return err
 		}
 		builder.addNode(GraphNode{
-			ID:         graphNodeID(NodeKindAlert, fmt.Sprintf("%d", id)),
-			Kind:       NodeKindAlert,
-			Label:      firstNonEmpty(alertType, fmt.Sprintf("Alert %d", id)),
-			MAC:        mac,
-			SensorID:   sensorID,
-			LocationID: locationID,
-			RiskScore:  float64Ptr(score),
-			Score:      float64Ptr(score),
-			AlertType:  alertType,
-			CreatedAt:  graphTime(createdAt),
-			LastSeen:   graphTime(createdAt),
-			ResolvedAt: graphTime(resolvedAt),
+			ID:              graphNodeID(NodeKindAlert, fmt.Sprintf("%d", id)),
+			Kind:            NodeKindAlert,
+			Label:           firstNonEmpty(alertType, fmt.Sprintf("Alert %d", id)),
+			MAC:             mac,
+			SensorID:        sensorID,
+			LocationID:      locationID,
+			RiskScore:       float64Ptr(score),
+			Score:           float64Ptr(score),
+			AlertType:       alertType,
+			CreatedAt:       graphTime(createdAt),
+			LastSeen:        graphTime(createdAt),
+			ResolvedAt:      graphTime(resolvedAt),
+			EventSourceMACs: graphActionMACs(mac),
 		})
 	}
 	return rows.Err()
@@ -954,6 +1181,18 @@ func graphNorm(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
+func graphActionMACs(values ...string) []string {
+	return normalizeLowerList(values)
+}
+
+func graphActionStrings(values ...string) []string {
+	out := normalizeLowerList(values)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func graphSortTime(node GraphNode) time.Time {
 	for _, value := range []*time.Time{node.LastSeen, node.CreatedAt, node.FirstSeen} {
 		if value != nil {
@@ -1025,6 +1264,11 @@ func int4Ptr(value pgtype.Int4) *int32 {
 func ValidateGraphFilters(filters GraphFilters) error {
 	if filters.ObservedAfter != nil && filters.ObservedBefore != nil && filters.ObservedAfter.After(*filters.ObservedBefore) {
 		return errors.New("observed_after must be before observed_before")
+	}
+	for _, kind := range filters.Kinds {
+		if !validGraphNodeKind(kind) {
+			return fmt.Errorf("unsupported graph node kind %q", kind)
+		}
 	}
 	return nil
 }

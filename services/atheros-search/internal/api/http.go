@@ -22,7 +22,7 @@ import (
 
 func httpStatusFromError(err error) int {
 	if err == nil {
-		return http.StatusInternalServerError
+		return http.StatusOK
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "context canceled") {
@@ -31,10 +31,10 @@ func httpStatusFromError(err error) int {
 	if strings.Contains(msg, "request body too large") {
 		return http.StatusRequestEntityTooLarge
 	}
-	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "is required") || strings.Contains(msg, "required") {
+	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "unsupported graph node kind") || strings.Contains(msg, "must be before") || strings.Contains(msg, "is required") || strings.Contains(msg, "required") {
 		return http.StatusBadRequest
 	}
-	return http.StatusBadRequest
+	return http.StatusInternalServerError
 }
 
 const maxRequestBodyBytes int64 = 1 << 20
@@ -149,7 +149,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		}
 		resp, err := svc.Graph(r.Context(), filters)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, httpStatusFromError(err), err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, resp)

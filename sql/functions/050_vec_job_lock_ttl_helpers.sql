@@ -48,7 +48,7 @@ returns boolean
 language plpgsql
 as $$
 declare
-  v_lock_name text := 'vec_maintenance';
+  v_lock_name text := 'vec_maintenance_' || p_job_name;
 begin
   if not pg_try_advisory_lock(hashtextextended(v_lock_name, 0)) then
     raise notice 'vector maintenance already running, skipping %', p_job_name;
@@ -66,5 +66,17 @@ begin
         locked_by = excluded.locked_by;
 
   return true;
+end;
+$$;
+
+create or replace function vec_finish_maintenance_job(p_job_name text)
+returns void
+language plpgsql
+as $$
+declare
+  v_lock_name text := 'vec_maintenance_' || p_job_name;
+begin
+  delete from vec_job_locks where job_name = 'maintenance:' || p_job_name;
+  perform pg_advisory_unlock(hashtextextended(v_lock_name, 0));
 end;
 $$;

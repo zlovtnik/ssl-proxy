@@ -10,7 +10,7 @@ begin
     return;
   end if;
 
-  refresh materialized view concurrently v_device_repetition_score;
+  refresh materialized view v_device_repetition_score;
 
   perform vec_finish_maintenance_job('vec-refresh-device-repetition-score');
 exception when others then
@@ -28,7 +28,7 @@ begin
     return;
   end if;
 
-  refresh materialized view concurrently mv_ap_risk_score;
+  refresh materialized view mv_ap_risk_score;
   perform check_high_risk_aps();
 
   perform vec_finish_maintenance_job('vec-refresh-ap-risk-score');

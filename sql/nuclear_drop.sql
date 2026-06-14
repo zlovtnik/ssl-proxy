@@ -112,6 +112,23 @@ BEGIN
     purge_recyclebin;
     DBMS_OUTPUT.PUT_LINE(' ');
 
+    DBMS_OUTPUT.PUT_LINE('Processing scheduler jobs...');
+    FOR job_rec IN (
+        SELECT job_name
+        FROM user_scheduler_jobs
+        ORDER BY job_name
+    ) LOOP
+        BEGIN
+            DBMS_SCHEDULER.DROP_JOB(job_rec.job_name, TRUE);
+            v_success_count := v_success_count + 1;
+            DBMS_OUTPUT.PUT_LINE('[OK] Dropped JOB: ' || job_rec.job_name);
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_error_count := v_error_count + 1;
+                DBMS_OUTPUT.PUT_LINE('[FAIL] Failed to drop JOB ' || job_rec.job_name || ': ' || SQLERRM);
+        END;
+    END LOOP;
+
     FOR idx IN v_types.FIRST .. v_types.LAST LOOP
         v_object_type := v_types(idx);
 

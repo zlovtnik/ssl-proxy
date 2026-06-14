@@ -41,6 +41,7 @@ message SearchFilters {
   bool handshake_only = 9;
   int32 security_flags_mask = 10;
   repeated string tags = 11;
+  repeated string source_macs = 12;
 }
 
 message SearchRequest {
@@ -111,4 +112,3 @@ message SuggestFiltersResponse {
   repeated string sensor_ids = 3;
   repeated string frame_subtypes = 4;
 }
-

@@ -57,8 +57,9 @@ func BuildWirelessFilters(filters *searchv1.SearchFilters, start int) SQLFilter 
 	if filters.Ssid != "" {
 		add("se.ssid ilike $%d", "%"+escapeLike(filters.Ssid)+"%")
 	}
-	if filters.SourceMac != "" {
-		add("lower(se.source_mac) = lower($%d)", filters.SourceMac)
+	sourceMACs := filterSourceMACs(filters)
+	if len(sourceMACs) > 0 {
+		add("lower(se.source_mac) = any($%d::text[])", sourceMACs)
 	}
 	if len(filters.FrameSubtypes) > 0 {
 		add("se.frame_subtype = any($%d::text[])", filters.FrameSubtypes)
@@ -104,14 +105,44 @@ func BuildEmbeddingFilters(filters *searchv1.SearchFilters, start int) SQLFilter
 	if len(filters.SensorIds) > 0 {
 		add("coalesce(e.source_sensor_id, '') = any($%d::text[])", filters.SensorIds)
 	}
-	if filters.SourceMac != "" {
-		add("lower(e.source_mac) = lower($%d)", filters.SourceMac)
+	sourceMACs := filterSourceMACs(filters)
+	if len(sourceMACs) > 0 {
+		add("lower(e.source_mac) = any($%d::text[])", sourceMACs)
 	}
 	if filters.ObservedAfter != nil {
 		add("e.source_observed_at >= $%d", filters.ObservedAfter.AsTime())
 	}
 	if filters.ObservedBefore != nil {
 		add("e.source_observed_at <= $%d", filters.ObservedBefore.AsTime())
+	}
+	return out
+}
+
+func filterSourceMACs(filters *searchv1.SearchFilters) []string {
+	if filters == nil {
+		return nil
+	}
+	values := make([]string, 0, 1+len(filters.SourceMacs))
+	if filters.SourceMac != "" {
+		values = append(values, filters.SourceMac)
+	}
+	values = append(values, filters.SourceMacs...)
+	return normalizeLowerList(values)
+}
+
+func normalizeLowerList(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }

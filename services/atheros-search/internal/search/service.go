@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,24 +21,30 @@ import (
 type Service struct {
 	searchv1.UnimplementedSearchServiceServer
 
-	Pool       *pgxpool.Pool
-	Embedder   embed.Client
-	Config     config.Config
-	Metrics    *metrics.Metrics
-	Logger     zerolog.Logger
-	SuggCache  SuggestCache
-	suggMu     sync.Mutex
-	graphCache sync.Map
+	Pool                  *pgxpool.Pool
+	Embedder              embed.Client
+	Config                config.Config
+	Metrics               *metrics.Metrics
+	Logger                zerolog.Logger
+	SuggCache             SuggestCache
+	suggMu                sync.Mutex
+	graphCache            sync.Map
+	graphCacheJanitorOnce sync.Once
 }
 
 func NewService(pool *pgxpool.Pool, embedder embed.Client, cfg config.Config, m *metrics.Metrics, logger zerolog.Logger) *Service {
-	return &Service{Pool: pool, Embedder: embedder, Config: cfg, Metrics: m, Logger: logger}
+	s := &Service{Pool: pool, Embedder: embedder, Config: cfg, Metrics: m, Logger: logger}
+	s.startGraphCacheJanitor()
+	return s
 }
 
 func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*searchv1.SearchResponse, error) {
 	started := time.Now()
 	if req == nil {
 		return nil, errors.New("request is required")
+	}
+	if !hasMeaningfulSearchTerms(req.Query) {
+		return nil, errors.New("search query is required and must contain meaningful terms")
 	}
 	query := req.Query
 	topK := config.ClampTopK(req.TopK)
@@ -210,6 +217,35 @@ func (s *Service) SuggestFilters(ctx context.Context, req *searchv1.SuggestFilte
 	return resp, nil
 }
 
+func (s *Service) startGraphCacheJanitor() {
+	if graphCacheTTL <= 0 {
+		return
+	}
+	s.graphCacheJanitorOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(graphCacheTTL)
+			defer ticker.Stop()
+			for range ticker.C {
+				s.pruneExpiredGraphCache(time.Now())
+			}
+		}()
+	})
+}
+
+func (s *Service) pruneExpiredGraphCache(now time.Time) {
+	s.graphCache.Range(func(key, value any) bool {
+		entry, ok := value.(graphCacheEntry)
+		if !ok {
+			s.graphCache.Delete(key)
+			return true
+		}
+		if !now.Before(entry.expiresAt) {
+			s.graphCache.Delete(key)
+		}
+		return true
+	})
+}
+
 func requestKinds(kind searchv1.SearchKind) ([]string, error) {
 	switch kind {
 	case searchv1.SearchKind_SEARCH_KIND_UNSPECIFIED, searchv1.SearchKind_SEARCH_KIND_EVENT:
@@ -232,6 +268,10 @@ func normalizeMode(mode searchv1.SearchMode) searchv1.SearchMode {
 		return searchv1.SearchMode_SEARCH_MODE_HYBRID
 	}
 	return mode
+}
+
+func hasMeaningfulSearchTerms(query string) bool {
+	return strings.Trim(query, " \t\n\r*%") != ""
 }
 
 func responseKind(kind searchv1.SearchKind) string {
