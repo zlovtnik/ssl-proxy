@@ -57,3 +57,11 @@ func TestCompleteBatchRowJSONPayload(t *testing.T) {
 	require.NotContains(t, got, "source_mac")
 	require.NotContains(t, got, "explanation_text")
 }
+
+func TestFailJobSQLUsesExplicitCasts(t *testing.T) {
+	require.Contains(t, failJobSQL, "$2::integer >= $3::integer")
+	require.Contains(t, failJobSQL, "make_interval(secs => $4::integer)")
+	require.Contains(t, failJobSQL, "job_id = $5::bigint")
+	require.Contains(t, failJobSQL, "lease_token IS NOT DISTINCT FROM $6::text")
+	require.Contains(t, failJobSQL, "last_error = $1::text")
+}
