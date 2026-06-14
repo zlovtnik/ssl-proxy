@@ -95,7 +95,7 @@ func Load() (Config, error) {
 		AuditTopic:                  envString("ATHSEARCH_AUDIT_TOPIC", DefaultAuditTopic),
 		BandwidthTopic:              envString("ATHSEARCH_BANDWIDTH_TOPIC", DefaultBandwidthTopic),
 		ConsumerGroup:               envString("ATHSEARCH_CONSUMER_GROUP", "atheros-search-ingest"),
-		SearchTimeout:               time.Duration(envInt("ATHSEARCH_SEARCH_TIMEOUT_MS", 3000)) * time.Millisecond,
+		SearchTimeout:               time.Duration(envInt("ATHSEARCH_SEARCH_TIMEOUT_MS", 10000)) * time.Millisecond,
 		HybridAlpha:                 envFloat("ATHSEARCH_HYBRID_ALPHA", 0.5),
 		APIKeySHA256:                strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_API_TOKEN_SHA256"))),
 		EmbedderEnabled:             envBool("ATHSEARCH_EMBEDDER_ENABLED", false),

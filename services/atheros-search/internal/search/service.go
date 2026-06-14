@@ -164,7 +164,7 @@ func (s *Service) Explain(ctx context.Context, req *searchv1.ExplainRequest) (*s
 		Query: req.Query,
 		Kind:  req.Kind,
 		Mode:  searchv1.SearchMode_SEARCH_MODE_HYBRID,
-		TopK:  100,
+		TopK:  50,
 	}
 	resp, err := s.Search(ctx, searchReq)
 	if err != nil {
