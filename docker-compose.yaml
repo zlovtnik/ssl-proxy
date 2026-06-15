@@ -78,7 +78,7 @@ services:
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
       # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
-      - ADMIN_API_KEY=macaco
+      - ADMIN_API_KEY=mAcacoAmareloTemGostoDeBanana
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_OUTBOX_DIR=/sync-outbox
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
