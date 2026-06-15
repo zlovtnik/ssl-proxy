@@ -121,18 +121,7 @@ func CompleteOneEmbedding(ctx context.Context, pool *pgxpool.Pool, row CompleteB
 }
 
 func FailJob(ctx context.Context, pool *pgxpool.Pool, jobID int64, leaseToken *string, attempts, maxAttempts int32, msg string) error {
-	tag, err := pool.Exec(ctx, `
-UPDATE vec_embedding_jobs
-SET status = CASE WHEN $2 >= $3 THEN 'failed' ELSE 'pending' END,
-    lease_token = NULL,
-    leased_at = NULL,
-    locked_by = NULL,
-    last_error = $1,
-    due_at = now() + make_interval(secs => $4),
-    updated_at = now()
-WHERE job_id = $5
-  AND lease_token IS NOT DISTINCT FROM $6
-`, msg, attempts, maxAttempts, backoffSeconds(attempts), jobID, leaseToken)
+	tag, err := pool.Exec(ctx, failJobSQL, msg, attempts, maxAttempts, backoffSeconds(attempts), jobID, leaseToken)
 	if err != nil {
 		return fmt.Errorf("fail embedding job: %w", err)
 	}
@@ -255,3 +244,16 @@ func backoffSeconds(attempts int32) int32 {
 	}
 	return int32(raw)
 }
+
+const failJobSQL = `
+UPDATE vec_embedding_jobs
+SET status = CASE WHEN $2::integer >= $3::integer THEN 'failed' ELSE 'pending' END,
+    lease_token = NULL,
+    leased_at = NULL,
+    locked_by = NULL,
+    last_error = $1::text,
+    due_at = now() + make_interval(secs => $4::integer),
+    updated_at = now()
+WHERE job_id = $5::bigint
+  AND lease_token IS NOT DISTINCT FROM $6::text
+`

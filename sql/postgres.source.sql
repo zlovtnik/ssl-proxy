@@ -514,7 +514,7 @@ create table if not exists wireless_clients (
   known_bssid text,
   first_seen timestamptz not null default now(),
   last_seen timestamptz not null default now(),
-  probe_count integer not null default 1,
+  probe_count bigint not null default 1,
   location_id text,
   primary key (ssid, client_mac)
 );
@@ -2579,6 +2579,10 @@ create index if not exists vec_similarity_pairs_left_source_idx
   on vec_similarity_pairs (left_source_table, left_source_key);
 create index if not exists vec_similarity_pairs_right_source_idx
   on vec_similarity_pairs (right_source_table, right_source_key);
+create index if not exists vec_similarity_pairs_left_embedding_idx
+  on vec_similarity_pairs (left_embedding_id);
+create index if not exists vec_similarity_pairs_right_embedding_idx
+  on vec_similarity_pairs (right_embedding_id);
 create index if not exists vec_similarity_pairs_mac_idx
   on vec_similarity_pairs (left_source_mac, right_source_mac, computed_at desc);
 
@@ -5570,7 +5574,7 @@ begin
        where lower(ssid) = lower(v_probe->>'ssid') and enabled limit 1),
       (v_probe->>'first_seen')::timestamptz,
       (v_probe->>'last_seen')::timestamptz,
-      (v_probe->>'probe_count')::integer
+      (v_probe->>'probe_count')::bigint
     )
     on conflict (ssid, client_mac) do update
       set first_seen = least(wireless_clients.first_seen, excluded.first_seen),

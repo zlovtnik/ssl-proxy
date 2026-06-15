@@ -20,6 +20,23 @@ import (
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
+func httpStatusFromError(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "context canceled") {
+		return http.StatusGatewayTimeout
+	}
+	if strings.Contains(msg, "request body too large") {
+		return http.StatusRequestEntityTooLarge
+	}
+	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "unsupported graph node kind") || strings.Contains(msg, "must be before") || strings.Contains(msg, "is required") || strings.Contains(msg, "required") {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 const maxRequestBodyBytes int64 = 1 << 20
 
 func corsMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
@@ -63,7 +80,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		}
 		resp, err := svc.Search(r.Context(), &req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeError(w, httpStatusFromError(err), err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, resp)
@@ -80,7 +97,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		}
 		resp, err := svc.Search(r.Context(), &req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeError(w, httpStatusFromError(err), err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -101,7 +118,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		}
 		resp, err := svc.Explain(r.Context(), req)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeError(w, httpStatusFromError(err), err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, resp)
@@ -110,6 +127,29 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		resp, err := svc.SuggestFilters(r.Context(), &searchv1.SuggestFiltersRequest{Prefix: r.URL.Query().Get("prefix")})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+	})
+	registerJSON(mux, "POST", "/v1/graph", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+		body, ok := readRequestBody(w, r)
+		if !ok {
+			return
+		}
+		var filters search.GraphFilters
+		if len(strings.TrimSpace(string(body))) > 0 {
+			if err := json.Unmarshal(body, &filters); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+		if err := search.ValidateGraphFilters(filters); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		resp, err := svc.Graph(r.Context(), filters)
+		if err != nil {
+			writeError(w, httpStatusFromError(err), err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, resp)

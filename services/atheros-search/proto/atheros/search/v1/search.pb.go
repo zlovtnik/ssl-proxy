@@ -145,6 +145,7 @@ type SearchFilters struct {
 	HandshakeOnly     bool                   `protobuf:"varint,9,opt,name=handshake_only,json=handshakeOnly,proto3" json:"handshake_only,omitempty"`
 	SecurityFlagsMask int32                  `protobuf:"varint,10,opt,name=security_flags_mask,json=securityFlagsMask,proto3" json:"security_flags_mask,omitempty"`
 	Tags              []string               `protobuf:"bytes,11,rep,name=tags,proto3" json:"tags,omitempty"`
+	SourceMacs        []string               `protobuf:"bytes,12,rep,name=source_macs,json=sourceMacs,proto3" json:"source_macs,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -252,6 +253,13 @@ func (x *SearchFilters) GetSecurityFlagsMask() int32 {
 func (x *SearchFilters) GetTags() []string {
 	if x != nil {
 		return x.Tags
+	}
+	return nil
+}
+
+func (x *SearchFilters) GetSourceMacs() []string {
+	if x != nil {
+		return x.SourceMacs
 	}
 	return nil
 }
@@ -896,7 +904,7 @@ var File_proto_atheros_search_v1_search_proto protoreflect.FileDescriptor
 
 const file_proto_atheros_search_v1_search_proto_rawDesc = "" +
 	"\n" +
-	"$proto/atheros/search/v1/search.proto\x12\x11atheros.search.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xbf\x03\n" +
+	"$proto/atheros/search/v1/search.proto\x12\x11atheros.search.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe0\x03\n" +
 	"\rSearchFilters\x12!\n" +
 	"\flocation_ids\x18\x01 \x03(\tR\vlocationIds\x12\x1d\n" +
 	"\n" +
@@ -912,7 +920,9 @@ const file_proto_atheros_search_v1_search_proto_rawDesc = "" +
 	"\x0ehandshake_only\x18\t \x01(\bR\rhandshakeOnly\x12.\n" +
 	"\x13security_flags_mask\x18\n" +
 	" \x01(\x05R\x11securityFlagsMask\x12\x12\n" +
-	"\x04tags\x18\v \x03(\tR\x04tags\"\xa2\x02\n" +
+	"\x04tags\x18\v \x03(\tR\x04tags\x12\x1f\n" +
+	"\vsource_macs\x18\f \x03(\tR\n" +
+	"sourceMacs\"\xa2\x02\n" +
 	"\rSearchRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x121\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x1d.atheros.search.v1.SearchKindR\x04kind\x121\n" +

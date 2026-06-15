@@ -289,8 +289,11 @@ func BuildSourceFilters(filters *searchv1.SearchFilters, start int, sourceMACCol
 	if sensorColumn != "" && len(filters.SensorIds) > 0 {
 		add("coalesce("+sensorColumn+", '') = any($%d::text[])", filters.SensorIds)
 	}
-	if sourceMACColumn != "" && filters.SourceMac != "" {
-		add("lower("+sourceMACColumn+") = lower($%d)", filters.SourceMac)
+	if sourceMACColumn != "" {
+		sourceMACs := filterSourceMACs(filters)
+		if len(sourceMACs) > 0 {
+			add("lower("+sourceMACColumn+") = any($%d::text[])", sourceMACs)
+		}
 	}
 	if observedColumn != "" && filters.ObservedAfter != nil {
 		add(observedColumn+" >= $%d", filters.ObservedAfter.AsTime())

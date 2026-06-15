@@ -1,5 +1,6 @@
 use std::fs;
-use std::time::Instant;
+use std::io::{self, IsTerminal, Write};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use colored::Colorize;
@@ -116,13 +117,19 @@ async fn apply_with_lock(
     continue_on_error: bool,
 ) -> Result<ApplyReport, ExecutionError> {
     let prepared = prepare_manifest(client, manifest).await?;
+    let total = prepared.len();
     let mut report = ApplyReport::default();
 
-    for object in prepared {
+    for (index, object) in prepared.iter().enumerate() {
+        let position = index + 1;
+
         if !object.needs_apply {
-            record_skipped(client, &object).await?;
+            record_skipped(client, object).await?;
             report.skipped_files += 1;
-            println!("{} {}", "↷".cyan().bold(), object.object.source_file.cyan());
+            print_progress_line(
+                skipped_message(position, total, &object.object.source_file),
+                true,
+            );
             continue;
         }
 
@@ -135,17 +142,31 @@ async fn apply_with_lock(
             );
         }
 
-        match apply_one_file(client, &object).await {
-            Ok(()) => {
+        print_progress_line(
+            running_message(position, total, &object.object.source_file),
+            false,
+        );
+        let started = Instant::now();
+
+        match apply_one_file(client, object, started).await {
+            Ok(duration) => {
                 report.applied_files += 1;
-                println!(
-                    "{} {}",
-                    "✓".green().bold(),
-                    object.object.source_file.green()
+                print_progress_line(
+                    completed_message(position, total, &object.object.source_file, duration),
+                    true,
                 );
             }
             Err(error) => {
                 report.failed_files += 1;
+                print_progress_line(
+                    failed_message(
+                        position,
+                        total,
+                        &object.object.source_file,
+                        started.elapsed(),
+                    ),
+                    true,
+                );
                 eprintln!("{} {}", "error:".red().bold(), error);
                 if !continue_on_error {
                     return Err(ExecutionError::apply(format!(
@@ -163,8 +184,12 @@ async fn apply_with_lock(
 async fn apply_one_file(
     client: &mut Client,
     object: &PreparedSchemaObject,
-) -> Result<(), ExecutionError> {
-    let started = Instant::now();
+    started: Instant,
+) -> Result<Duration, ExecutionError> {
+    if !object.object.transactional {
+        return apply_one_file_without_transaction(client, object, started).await;
+    }
+
     let transaction = client.transaction().await.map_err(|error| {
         ExecutionError::apply(format!(
             "failed to start transaction for {}: {error}",
@@ -174,14 +199,15 @@ async fn apply_one_file(
 
     match transaction.batch_execute(&object.object.raw_sql).await {
         Ok(()) => {
-            record_applied(&transaction, object, started.elapsed()).await?;
+            let duration = started.elapsed();
+            record_applied(&transaction, object, duration).await?;
             transaction.commit().await.map_err(|error| {
                 ExecutionError::apply(format!(
                     "failed to commit {}: {error}",
                     object.object.source_file
                 ))
             })?;
-            Ok(())
+            Ok(duration)
         }
         Err(error) => {
             let formatted = format_pg_error(&object.object.source_file, &error);
@@ -195,6 +221,68 @@ async fn apply_one_file(
             Err(ExecutionError::apply(formatted))
         }
     }
+}
+
+async fn apply_one_file_without_transaction(
+    client: &Client,
+    object: &PreparedSchemaObject,
+    started: Instant,
+) -> Result<Duration, ExecutionError> {
+    match client.batch_execute(&object.object.raw_sql).await {
+        Ok(()) => {
+            let duration = started.elapsed();
+            record_applied(client, object, duration).await?;
+            Ok(duration)
+        }
+        Err(error) => {
+            let formatted = format_pg_error(&object.object.source_file, &error);
+            record_failed(client, object, &formatted, started.elapsed()).await?;
+            Err(ExecutionError::apply(formatted))
+        }
+    }
+}
+
+fn print_progress_line(message: impl std::fmt::Display, finalize: bool) {
+    let is_terminal = io::stdout().is_terminal();
+    let mut stdout = io::stdout().lock();
+
+    if is_terminal {
+        if finalize {
+            let _ = writeln!(stdout, "\r{}\x1b[K", message);
+        } else {
+            let _ = write!(stdout, "\r{}\x1b[K", message);
+        }
+    } else {
+        let _ = writeln!(stdout, "{message}");
+    }
+
+    let _ = stdout.flush();
+}
+
+fn running_message(index: usize, total: usize, source_file: &str) -> String {
+    format!("[{index}/{total}] Running {source_file} ...")
+}
+
+fn completed_message(index: usize, total: usize, source_file: &str, duration: Duration) -> String {
+    format!(
+        "[{index}/{total}] ✓ {source_file} ({})",
+        format_duration(duration)
+    )
+}
+
+fn skipped_message(index: usize, total: usize, source_file: &str) -> String {
+    format!("[{index}/{total}] ↷ {source_file} (unchanged)")
+}
+
+fn failed_message(index: usize, total: usize, source_file: &str, duration: Duration) -> String {
+    format!(
+        "[{index}/{total}] ✗ {source_file} ({})",
+        format_duration(duration)
+    )
+}
+
+fn format_duration(duration: Duration) -> String {
+    format!("{:.1}s", duration.as_secs_f64())
 }
 
 fn compact_preview(sql: &str, width: usize) -> String {
@@ -256,5 +344,31 @@ mod tests {
         let error = ExecutionError::apply("schema apply lock was not held");
 
         assert_eq!(unlock_warning_detail(&error), "unlock failed");
+    }
+
+    #[test]
+    fn format_duration_uses_one_decimal_second() {
+        assert_eq!(format_duration(Duration::from_millis(47_234)), "47.2s");
+    }
+
+    #[test]
+    fn completed_message_includes_counter_and_duration() {
+        assert_eq!(
+            completed_message(
+                3,
+                12,
+                "sql/tables/vec_embedding_jobs.sql",
+                Duration::from_millis(47_234),
+            ),
+            "[3/12] ✓ sql/tables/vec_embedding_jobs.sql (47.2s)"
+        );
+    }
+
+    #[test]
+    fn skipped_message_marks_unchanged_files() {
+        assert_eq!(
+            skipped_message(3, 12, "sql/tables/vec_embedding_jobs.sql"),
+            "[3/12] ↷ sql/tables/vec_embedding_jobs.sql (unchanged)"
+        );
     }
 }

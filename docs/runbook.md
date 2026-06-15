@@ -171,7 +171,7 @@ All views are optimized for ADB columnar storage.
 ### 7. Compose Startup Log Notes
 
 - `java-coordinator` is the sync control-plane service. The source still lives under `services/zig-coordinator/` for historical reasons, but the runtime service is Java/Spring/Camel; inspect it with `docker compose logs java-coordinator`.
-- `sql/postgres.sql` is now a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Regenerate split files from `sql/postgres.source.sql` with `scripts/split_postgres_schema.py`.
+- `sql/postgres.sql` is a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Maintain split schema files directly and keep `sql/postgres.source.sql` in sync as the aggregate reference when split objects change.
 - `services/db-migrator` is the canonical CLI for schema ordering and validation:
   - `cargo run -p db-migrator -- list --sql-dir ./sql`
   - `cargo run -p db-migrator -- validate --sql-dir ./sql`

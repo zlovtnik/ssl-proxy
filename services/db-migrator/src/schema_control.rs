@@ -3,7 +3,7 @@ use std::process;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use tokio_postgres::{Client, Transaction};
+use tokio_postgres::Client;
 
 use crate::discovery::SqlFile;
 use crate::error::ExecutionError;
@@ -31,6 +31,7 @@ pub struct SchemaObject {
     pub object_name: String,
     pub source_file: String,
     pub depends_on: Vec<String>,
+    pub transactional: bool,
     pub raw_sql: String,
     pub canonical_sql: String,
     pub sha256: String,
@@ -264,12 +265,12 @@ pub async fn record_skipped(
 }
 
 pub async fn record_applied(
-    transaction: &Transaction<'_>,
+    client: &(impl tokio_postgres::GenericClient + Sync),
     prepared: &PreparedSchemaObject,
     duration: Duration,
 ) -> Result<(), ExecutionError> {
     let duration_ms = duration_ms(duration);
-    transaction
+    client
         .execute(
             r#"
 update schema_control.schema_objects
@@ -290,7 +291,7 @@ update schema_control.schema_objects
         })?;
 
     insert_apply_log(
-        transaction,
+        client,
         &prepared.object,
         "applied",
         prepared.old_sha256.as_deref(),
@@ -399,6 +400,7 @@ fn schema_object_from_file(file: &SqlFile) -> Result<SchemaObject, ExecutionErro
     let depends_on = parse_header_value(&raw_sql, "depends_on")
         .map(|value| parse_depends_on(&value))
         .unwrap_or_default();
+    let transactional = parse_transactional(&raw_sql)?;
     let canonical_sql = canonicalize_sql(&raw_sql);
     let sha256 = sha256_hex(&canonical_sql);
 
@@ -407,6 +409,7 @@ fn schema_object_from_file(file: &SqlFile) -> Result<SchemaObject, ExecutionErro
         object_name,
         source_file: file.relative_path(),
         depends_on,
+        transactional,
         raw_sql,
         canonical_sql,
         sha256,
@@ -429,6 +432,35 @@ fn parse_depends_on(value: &str) -> Vec<String> {
         .filter(|item| !item.is_empty() && *item != "-")
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn parse_transactional(sql: &str) -> Result<bool, ExecutionError> {
+    let Some(value) = parse_header_value(sql, "transactional") else {
+        return Ok(!requires_non_transactional_apply(sql));
+    };
+
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => {
+            if requires_non_transactional_apply(sql) {
+                Err(ExecutionError::apply(
+                    "-- transactional: true conflicts with SQL that must run outside a transaction",
+                ))
+            } else {
+                Ok(true)
+            }
+        }
+        "false" | "no" | "off" | "0" => Ok(false),
+        _ => Err(ExecutionError::apply(format!(
+            "invalid -- transactional value '{value}', expected true or false"
+        ))),
+    }
+}
+
+fn requires_non_transactional_apply(sql: &str) -> bool {
+    let canonical = canonicalize_sql(sql).to_ascii_lowercase();
+    canonical.contains("create index concurrently")
+        || canonical.contains("drop index concurrently")
+        || canonical.contains("reindex") && canonical.contains(" concurrently")
 }
 
 fn kind_for_folder(folder: &str, name: &str) -> &'static str {
@@ -663,6 +695,21 @@ $$;
             parse_depends_on(" vec_embedding_jobs, sync_events , - "),
             vec!["vec_embedding_jobs", "sync_events"]
         );
+    }
+
+    #[test]
+    fn detects_non_transactional_index_ddl() {
+        let sql = "-- object: idx\ncreate index concurrently if not exists idx on events(id);";
+
+        assert!(!parse_transactional(sql).expect("transactional parse"));
+    }
+
+    #[test]
+    fn rejects_transactional_header_for_concurrent_index_ddl() {
+        let sql = "-- transactional: true\ncreate index concurrently idx on events(id);";
+
+        let error = parse_transactional(sql).unwrap_err();
+        assert!(error.to_string().contains("conflicts"));
     }
 
     #[test]

@@ -52,6 +52,11 @@ services/zig-coordinator/.settings/
 **/vite.config.ts.timestamp-*
 **/tsconfig.tsbuildinfo
 
+# Elixir
+**/_build/
+**/deps/
+*.ez
+
 # Zig
 **/.zig-cache/
 **/.zig-cache-local/

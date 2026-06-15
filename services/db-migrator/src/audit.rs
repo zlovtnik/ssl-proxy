@@ -2,6 +2,8 @@ use std::fs;
 
 use crate::discovery::SqlFile;
 
+const TABLE_COLUMN_WARNING_LIMIT: usize = 15;
+
 #[derive(Debug, Default)]
 pub struct ValidationReport {
     pub warnings: Vec<String>,
@@ -45,10 +47,11 @@ pub fn validate_sql_files(files: &[SqlFile]) -> ValidationReport {
         }
 
         if !has_header(&sql) {
-            report.warnings.push(format!(
+            report.errors.push(format!(
                 "{}: missing required header comments (-- object, -- folder, -- depends_on)",
                 file.relative_path()
             ));
+            continue;
         }
 
         apply_folder_heuristics(&mut report, file, &sql);
@@ -72,6 +75,13 @@ fn apply_folder_heuristics(report: &mut ValidationReport, file: &SqlFile, sql: &
                 report.warnings.push(format!(
                     "{path}: expected 'CREATE TABLE IF NOT EXISTS' for idempotency"
                 ));
+            }
+            if let Some(column_count) = create_table_column_count(sql) {
+                if column_count > TABLE_COLUMN_WARNING_LIMIT {
+                    report.warnings.push(format!(
+                        "{path}: table has {column_count} columns; prefer <= {TABLE_COLUMN_WARNING_LIMIT} columns and vertical partitioning for hot-path schemas"
+                    ));
+                }
             }
         }
         "functions" => {
@@ -109,6 +119,140 @@ fn apply_folder_heuristics(report: &mut ValidationReport, file: &SqlFile, sql: &
         }
         _ => {}
     }
+}
+
+fn create_table_column_count(sql: &str) -> Option<usize> {
+    let lower = sql.to_lowercase();
+    let create_pos = lower.find("create table")?;
+    let open_relative = sql[create_pos..].find('(')?;
+    let open = create_pos + open_relative;
+    let close = matching_close_paren(sql, open)?;
+    let body = &sql[open + 1..close];
+
+    Some(
+        split_top_level_commas(body)
+            .into_iter()
+            .filter(|part| is_column_definition(part))
+            .count(),
+    )
+}
+
+fn matching_close_paren(sql: &str, open: usize) -> Option<usize> {
+    let bytes = sql.as_bytes();
+    let mut index = open;
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+        let next = bytes.get(index + 1).copied().map(char::from);
+
+        if in_single {
+            if ch == '\'' && next == Some('\'') {
+                index += 2;
+                continue;
+            }
+            if ch == '\'' {
+                in_single = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_double {
+            if ch == '"' {
+                in_double = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn split_top_level_commas(body: &str) -> Vec<&str> {
+    let bytes = body.as_bytes();
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut index = 0usize;
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+        let next = bytes.get(index + 1).copied().map(char::from);
+
+        if in_single {
+            if ch == '\'' && next == Some('\'') {
+                index += 2;
+                continue;
+            }
+            if ch == '\'' {
+                in_single = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_double {
+            if ch == '"' {
+                in_double = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(body[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+
+        index += 1;
+    }
+
+    let tail = body[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
+fn is_column_definition(part: &str) -> bool {
+    let first = part
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_ascii_lowercase();
+
+    !matches!(
+        first.as_str(),
+        "" | "constraint" | "primary" | "foreign" | "unique" | "check" | "exclude"
+    )
 }
 
 fn check_balanced_sql(sql: &str) -> Result<(), String> {
@@ -276,6 +420,40 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("CREATE TABLE IF NOT EXISTS")));
+        assert!(!report.has_errors());
+    }
+
+    #[test]
+    fn validate_errors_when_required_header_is_missing() {
+        let tmp = tempdir().expect("tempdir");
+        let file_path = tmp.path().join("001_table.sql");
+        fs::write(&file_path, "create table if not exists foo(id int);\n").expect("write");
+
+        let report = validate_sql_files(&[sql_file("tables", "001_table.sql", file_path)]);
+
+        assert!(report.has_errors());
+        assert!(report
+            .errors
+            .iter()
+            .any(|error| error.contains("missing required header")));
+    }
+
+    #[test]
+    fn validate_warns_for_wide_table() {
+        let tmp = tempdir().expect("tempdir");
+        let file_path = tmp.path().join("001_table.sql");
+        fs::write(
+            &file_path,
+            "-- object: sample\n-- folder: tables\n-- depends_on: -\ncreate table if not exists foo(\n  c01 int, c02 int, c03 int, c04 int,\n  c05 int, c06 int, c07 int, c08 int,\n  c09 int, c10 int, c11 int, c12 int,\n  c13 int, c14 int, c15 int, c16 int\n);\n",
+        )
+        .expect("write");
+
+        let report = validate_sql_files(&[sql_file("tables", "001_table.sql", file_path)]);
+
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("table has 16 columns")));
         assert!(!report.has_errors());
     }
 }
