@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter};
 pub enum ExecutionErrorKind {
     Connection,
     Apply,
+    NonRetryableApply,
     LockNotHeld,
 }
 
@@ -29,6 +30,13 @@ impl ExecutionError {
         }
     }
 
+    pub fn non_retryable_apply(message: impl Into<String>) -> Self {
+        Self {
+            kind: ExecutionErrorKind::NonRetryableApply,
+            message: message.into(),
+        }
+    }
+
     pub fn lock_not_held(message: impl Into<String>) -> Self {
         Self {
             kind: ExecutionErrorKind::LockNotHeld,
@@ -39,6 +47,10 @@ impl ExecutionError {
     pub fn is_connection_failure(&self) -> bool {
         self.kind == ExecutionErrorKind::Connection
     }
+
+    pub fn is_non_retryable_apply(&self) -> bool {
+        self.kind == ExecutionErrorKind::NonRetryableApply
+    }
 }
 
 impl Display for ExecutionError {
@@ -48,6 +60,20 @@ impl Display for ExecutionError {
 }
 
 impl StdError for ExecutionError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_retryable_apply_errors_have_distinct_kind() {
+        let error = ExecutionError::non_retryable_apply("applied SQL but failed to record state");
+
+        assert_eq!(error.kind, ExecutionErrorKind::NonRetryableApply);
+        assert!(error.is_non_retryable_apply());
+        assert!(!error.is_connection_failure());
+    }
+}
 
 pub fn format_pg_error(file: &str, error: &tokio_postgres::Error) -> String {
     if let Some(db_error) = error.as_db_error() {

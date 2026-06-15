@@ -20,6 +20,7 @@ use crate::executor::{apply_sql_files, print_dry_run};
 const EXIT_SUCCESS: u8 = 0;
 const EXIT_PARTIAL_FAILURE: u8 = 1;
 const EXIT_CONNECTION_FAILURE: u8 = 2;
+const EXIT_NON_RETRYABLE_FAILURE: u8 = 3;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -94,6 +95,10 @@ async fn run() -> Result<u8> {
                 Err(error) if error.is_connection_failure() => {
                     eprintln!("{} {}", "error:".red().bold(), error);
                     Ok(EXIT_CONNECTION_FAILURE)
+                }
+                Err(error) if error.is_non_retryable_apply() => {
+                    eprintln!("{} {}", "error:".red().bold(), error);
+                    Ok(EXIT_NON_RETRYABLE_FAILURE)
                 }
                 Err(error) => {
                     eprintln!("{} {}", "error:".red().bold(), error);
