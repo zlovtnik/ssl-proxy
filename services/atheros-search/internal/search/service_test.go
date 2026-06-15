@@ -9,13 +9,13 @@ import (
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
-func TestSearchRejectsWildcardOnlyQuery(t *testing.T) {
+func TestSearchRejectsEmptyQuery(t *testing.T) {
 	t.Parallel()
 
 	svc := &Service{}
 
 	_, err := svc.Search(context.Background(), &searchv1.SearchRequest{
-		Query: "*",
+		Query: "",
 		Kind:  searchv1.SearchKind_SEARCH_KIND_CROSS,
 		Mode:  searchv1.SearchMode_SEARCH_MODE_SPARSE,
 	})
@@ -46,6 +46,32 @@ func TestHasMeaningfulSearchTerms(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tc.want, hasMeaningfulSearchTerms(tc.query))
+		})
+	}
+}
+
+func TestIsWildcardAllSearch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{name: "empty", query: "", want: false},
+		{name: "spaces", query: "   ", want: false},
+		{name: "star", query: "*", want: true},
+		{name: "percent", query: "%", want: true},
+		{name: "mixed wildcards", query: " * % * ", want: true},
+		{name: "term with wildcard", query: "* foo *", want: false},
+		{name: "inline wildcard", query: "foo*bar", want: false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, isWildcardAllSearch(tc.query))
 		})
 	}
 }

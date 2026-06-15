@@ -171,6 +171,13 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			}
 			streamed++
 		}
+		if _, err := io.WriteString(w, `{"type":"done"}`+"\n"); err != nil {
+			log.Warn().Err(err).Int("streamed", streamed).Dur("latency", time.Since(start)).Msg("search stream done marker write error")
+			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 		log.Info().
 			Dur("latency", time.Since(start)).
 			Int("result_count", streamed).
