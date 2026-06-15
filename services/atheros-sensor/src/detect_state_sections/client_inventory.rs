@@ -392,13 +392,13 @@ impl ClientInventory {
                     .map(|event| ClientRoamingSnapshot {
                         bssid: event.bssid.to_string(),
                         channel: event.channel,
-                        observed_at: ssl_proxy::time::rfc3339_from_utc(event.observed_at),
+                        observed_at: crate::timing::rfc3339_from_utc(event.observed_at),
                     })
                     .collect();
                 ClientProfileSnapshot {
                     source_mac: source_mac.to_string(),
-                    first_seen: ssl_proxy::time::rfc3339_from_utc(profile.first_seen),
-                    last_seen: ssl_proxy::time::rfc3339_from_utc(profile.last_seen),
+                    first_seen: crate::timing::rfc3339_from_utc(profile.first_seen),
+                    last_seen: crate::timing::rfc3339_from_utc(profile.last_seen),
                     probe_ssids,
                     probe_count: profile.probe_count,
                     excessive_probing: profile.excessive_probing,
@@ -412,7 +412,7 @@ impl ClientInventory {
         ClientInventorySnapshot {
             schema_version: 1,
             event_type: "wireless_client_inventory".to_string(),
-            observed_at: ssl_proxy::time::rfc3339_from_utc(Utc::now()),
+            observed_at: crate::timing::rfc3339_from_utc(Utc::now()),
             clients,
         }
     }

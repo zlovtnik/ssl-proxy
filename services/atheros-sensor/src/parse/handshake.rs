@@ -185,7 +185,7 @@ impl HandshakeMonitor {
             {
                 state.frames.push(HandshakeFrame {
                     message: observation.message,
-                    observed_at: ssl_proxy::time::rfc3339_from_utc(frame.observed_at),
+                    observed_at: crate::timing::rfc3339_from_utc(frame.observed_at),
                     raw_frame: frame.raw_frame.clone(),
                 });
             }
@@ -277,7 +277,7 @@ impl HandshakeMonitor {
         }
         Some(HandshakeAlert {
             schema_version: 1,
-            observed_at: ssl_proxy::time::rfc3339_from_utc(frame.observed_at),
+            observed_at: crate::timing::rfc3339_from_utc(frame.observed_at),
             sensor_id: context.sensor_id.clone(),
             location_id: context.location_id.clone(),
             interface: context.interface.clone(),
@@ -396,7 +396,7 @@ fn export_handshake_bundle(
     let payload = serde_json::json!({
         "schema_version": 1,
         "event_type": event_type,
-        "observed_at": ssl_proxy::time::rfc3339_from_utc(Utc::now()),
+        "observed_at": crate::timing::rfc3339_from_utc(Utc::now()),
         "sensor_id": context.sensor_id,
         "location_id": context.location_id,
         "interface": context.interface,

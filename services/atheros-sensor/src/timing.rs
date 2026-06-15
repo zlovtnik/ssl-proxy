@@ -1,13 +1,24 @@
-//! Per-session frame timing deltas for wireless frame correlation.
+//! Frame timing and timestamp formatting helpers for wireless frame correlation.
 
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 
 use crate::model::WifiFrame;
 
 const TIMING_TRACKER_MAX_SESSIONS: usize = 4_096;
 const TIMING_TRACKER_MAX_AGE_SECS: i64 = 3_600;
+pub const EASTERN_TIME_ZONE_NAME: &str = "America/New_York";
+pub const EASTERN_TIME_ZONE: Tz = chrono_tz::America::New_York;
+
+pub fn now_rfc3339() -> String {
+    Utc::now().with_timezone(&EASTERN_TIME_ZONE).to_rfc3339()
+}
+
+pub fn rfc3339_from_utc(value: DateTime<Utc>) -> String {
+    value.with_timezone(&EASTERN_TIME_ZONE).to_rfc3339()
+}
 
 #[derive(Default)]
 pub struct FrameTimingTracker {
@@ -247,6 +258,20 @@ mod tests {
                 tsft: 1_000,
             })
         );
+    }
+
+    #[test]
+    fn eastern_rfc3339_uses_daylight_offset() {
+        let value = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 7, 1, 12, 30, 0).unwrap();
+
+        assert_eq!(rfc3339_from_utc(value), "2026-07-01T08:30:00-04:00");
+    }
+
+    #[test]
+    fn eastern_rfc3339_uses_standard_offset() {
+        let value = chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, 1, 1, 12, 30, 0).unwrap();
+
+        assert_eq!(rfc3339_from_utc(value), "2026-01-01T07:30:00-05:00");
     }
 
     #[test]

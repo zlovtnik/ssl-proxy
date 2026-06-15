@@ -16,13 +16,57 @@ use tracing::{info, warn};
 use crate::{
     config::WireGuardConfig,
     wg_packet_obfuscation::{
-        cleanup_interval, decode_packet_in_place, encode_packet_in_place, PacketDecodeError,
-        PacketDirection, PacketEncodeState, ReplayWindow, WgPacketObfuscation, XorRekeyPolicy,
-        MAX_UDP_PACKET_SIZE,
+        cleanup_interval, decode_packet_in_place, encode_packet_in_place, validate_framed_header,
+        PacketDecodeError, PacketDirection, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
+        XorRekeyPolicy, MAX_UDP_PACKET_SIZE,
     },
 };
 
 const DROP_LOG_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct RelayMetricsSnapshot {
+    pub active_sessions: u64,
+    pub packets_client_to_server: u64,
+    pub packets_server_to_client: u64,
+    pub decode_errors: u64,
+    pub encode_errors: u64,
+    pub replay_detected: u64,
+    pub sessions_evicted_idle: u64,
+    pub sessions_evicted_send_failure: u64,
+    pub sessions_closed_shutdown: u64,
+}
+
+#[derive(Default)]
+pub struct RelayMetrics {
+    active_sessions: AtomicU64,
+    packets_client_to_server: AtomicU64,
+    packets_server_to_client: AtomicU64,
+    decode_errors: AtomicU64,
+    encode_errors: AtomicU64,
+    replay_detected: AtomicU64,
+    sessions_evicted_idle: AtomicU64,
+    sessions_evicted_send_failure: AtomicU64,
+    sessions_closed_shutdown: AtomicU64,
+}
+
+impl RelayMetrics {
+    pub fn snapshot(&self) -> RelayMetricsSnapshot {
+        RelayMetricsSnapshot {
+            active_sessions: self.active_sessions.load(Ordering::Relaxed),
+            packets_client_to_server: self.packets_client_to_server.load(Ordering::Relaxed),
+            packets_server_to_client: self.packets_server_to_client.load(Ordering::Relaxed),
+            decode_errors: self.decode_errors.load(Ordering::Relaxed),
+            encode_errors: self.encode_errors.load(Ordering::Relaxed),
+            replay_detected: self.replay_detected.load(Ordering::Relaxed),
+            sessions_evicted_idle: self.sessions_evicted_idle.load(Ordering::Relaxed),
+            sessions_evicted_send_failure: self
+                .sessions_evicted_send_failure
+                .load(Ordering::Relaxed),
+            sessions_closed_shutdown: self.sessions_closed_shutdown.load(Ordering::Relaxed),
+        }
+    }
+}
 
 #[derive(Clone)]
 struct RelaySettings {
@@ -168,26 +212,55 @@ pub async fn spawn(
     config: &WireGuardConfig,
     shutdown: CancellationToken,
 ) -> io::Result<JoinHandle<()>> {
+    spawn_with_metrics(config, shutdown, Arc::new(RelayMetrics::default())).await
+}
+
+pub async fn spawn_with_metrics(
+    config: &WireGuardConfig,
+    shutdown: CancellationToken,
+    metrics: Arc<RelayMetrics>,
+) -> io::Result<JoinHandle<()>> {
     let public_addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let internal_addr = SocketAddr::from(([127, 0, 0, 1], config.internal_port));
 
-    spawn_with_addrs(
+    spawn_with_addrs_and_metrics(
         public_addr,
         internal_addr,
         RelaySettings::from_config(config).obfuscation,
         Duration::from_secs(config.obfuscation_session_idle_secs),
         shutdown,
+        metrics,
     )
     .await
     .map(|(_, handle)| handle)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn spawn_with_addrs(
     public_bind_addr: SocketAddr,
     internal_addr: SocketAddr,
     obfuscation: WgPacketObfuscation,
     idle_timeout: Duration,
     shutdown: CancellationToken,
+) -> io::Result<(SocketAddr, JoinHandle<()>)> {
+    spawn_with_addrs_and_metrics(
+        public_bind_addr,
+        internal_addr,
+        obfuscation,
+        idle_timeout,
+        shutdown,
+        Arc::new(RelayMetrics::default()),
+    )
+    .await
+}
+
+pub(crate) async fn spawn_with_addrs_and_metrics(
+    public_bind_addr: SocketAddr,
+    internal_addr: SocketAddr,
+    obfuscation: WgPacketObfuscation,
+    idle_timeout: Duration,
+    shutdown: CancellationToken,
+    metrics: Arc<RelayMetrics>,
 ) -> io::Result<(SocketAddr, JoinHandle<()>)> {
     let public_socket = Arc::new(UdpSocket::bind(public_bind_addr).await?);
     let local_addr = public_socket.local_addr()?;
@@ -205,6 +278,7 @@ pub(crate) async fn spawn_with_addrs(
         sessions,
         shutdown,
         clock,
+        metrics,
     ));
 
     Ok((local_addr, task))
@@ -217,6 +291,7 @@ async fn run_relay(
     sessions: Arc<DashMap<SocketAddr, Arc<RelaySession>>>,
     shutdown: CancellationToken,
     clock: Arc<RelayClock>,
+    metrics: Arc<RelayMetrics>,
 ) {
     info!(
         public_addr = %public_socket
@@ -233,9 +308,11 @@ async fn run_relay(
         shutdown.clone(),
         settings.idle_timeout,
         clock.clone(),
+        metrics.clone(),
     ));
     let mut magic_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let mut empty_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
+    let mut other_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
 
     let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
     loop {
@@ -254,17 +331,16 @@ async fn run_relay(
                 };
 
                 let (session, decoded_len) = if settings.obfuscation.uses_framed_encoding() {
-                    let mut validation_buf = buf[..len].to_vec();
-                    if let Err(err) = decode_packet_in_place(
-                        &mut validation_buf,
+                    if let Err(err) = validate_framed_header(
+                        &buf,
                         len,
                         &settings.obfuscation,
-                        None,
-                        PacketDirection::ClientToServer,
                     ) {
                         log_decode_error(
                             &mut magic_drop_notice,
                             &mut empty_drop_notice,
+                            &mut other_drop_notice,
+                            &metrics,
                             err,
                             client_addr,
                             len,
@@ -280,6 +356,7 @@ async fn run_relay(
                             sessions.clone(),
                             shutdown.clone(),
                             clock.clone(),
+                            metrics.clone(),
                         )
                         .await
                     {
@@ -307,6 +384,8 @@ async fn run_relay(
                                 log_decode_error(
                                     &mut magic_drop_notice,
                                     &mut empty_drop_notice,
+                                    &mut other_drop_notice,
+                                    &metrics,
                                     err,
                                     client_addr,
                                     len,
@@ -329,6 +408,8 @@ async fn run_relay(
                             log_decode_error(
                                 &mut magic_drop_notice,
                                 &mut empty_drop_notice,
+                                &mut other_drop_notice,
+                                &metrics,
                                 err,
                                 client_addr,
                                 len,
@@ -344,6 +425,7 @@ async fn run_relay(
                         sessions.clone(),
                         shutdown.clone(),
                         clock.clone(),
+                        metrics.clone(),
                     )
                     .await
                     {
@@ -359,8 +441,17 @@ async fn run_relay(
                 session.touch(clock.now_millis());
                 if let Err(err) = session.upstream_socket.send(&buf[..decoded_len]).await {
                     warn!(%client_addr, %err, "failed to forward WireGuard packet to kernel listener");
-                    remove_session_if_current(&sessions, client_addr, &session);
+                    if remove_session_if_current(&sessions, client_addr, &session) {
+                        metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);
+                        metrics
+                            .sessions_evicted_send_failure
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                     session.close();
+                } else {
+                    metrics
+                        .packets_client_to_server
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -374,7 +465,12 @@ async fn run_relay(
         .map(|entry| (*entry.key(), entry.value().clone()))
         .collect();
     for (client_addr, session) in sessions_to_close {
-        remove_session_if_current(&sessions, client_addr, &session);
+        if remove_session_if_current(&sessions, client_addr, &session) {
+            metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);
+            metrics
+                .sessions_closed_shutdown
+                .fetch_add(1, Ordering::Relaxed);
+        }
         session.close();
     }
 
@@ -402,10 +498,17 @@ fn log_decode_drop(
 fn log_decode_error(
     magic_drop_notice: &mut RateLimitedDropNotice,
     empty_drop_notice: &mut RateLimitedDropNotice,
+    other_drop_notice: &mut RateLimitedDropNotice,
+    metrics: &RelayMetrics,
     err: PacketDecodeError,
     client_addr: SocketAddr,
     packet_len: usize,
 ) {
+    metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
+    if matches!(err, PacketDecodeError::ReplayDetected) {
+        metrics.replay_detected.fetch_add(1, Ordering::Relaxed);
+    }
+
     match err {
         PacketDecodeError::MagicByteMismatch => log_decode_drop(
             magic_drop_notice,
@@ -419,12 +522,17 @@ fn log_decode_error(
             client_addr,
             packet_len,
         ),
-        err => warn!(
-            %client_addr,
-            packet_len,
-            reason = err.as_str(),
-            %err,
-            "dropping inbound WireGuard UDP packet after structured decode failure"
-        ),
+        err => {
+            if let Some(suppressed_since_last) = other_drop_notice.record(Instant::now()) {
+                warn!(
+                    %client_addr,
+                    packet_len,
+                    reason = err.as_str(),
+                    %err,
+                    suppressed_since_last,
+                    "dropping inbound WireGuard UDP packet after structured decode failure"
+                );
+            }
+        }
     }
 }

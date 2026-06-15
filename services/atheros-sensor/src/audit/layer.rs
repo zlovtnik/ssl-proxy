@@ -50,7 +50,7 @@ where
         event.record(&mut visitor);
         let line = json!({
             "type": "audit_trace",
-            "time": ssl_proxy::time::rfc3339_from_utc(now),
+            "time": crate::timing::rfc3339_from_utc(now),
             "target": event.metadata().target(),
             "level": event.metadata().level().as_str(),
             "fields": visitor.fields,

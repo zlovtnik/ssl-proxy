@@ -174,6 +174,12 @@ async fn run_session_receiver(
                             warn!(%client_addr, session_id = session.id, packet_len = len, "dropping server reply with empty obfuscation payload");
                             continue;
                         }
+                        Err(PacketDecodeError::ReplayDetected) => {
+                            context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
+                            context.metrics.replay_detected.fetch_add(1, Ordering::Relaxed);
+                            warn!(%client_addr, session_id = session.id, packet_len = len, "dropping replayed server reply");
+                            continue;
+                        }
                         Err(err) => {
                             context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
                             warn!(

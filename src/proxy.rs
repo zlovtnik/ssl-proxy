@@ -130,7 +130,7 @@ pub async fn handler(
     if hostname.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    if blocklist::is_blocked(&hostname, &state).await {
+    if blocklist::is_blocked(&hostname, &state) {
         #[derive(Serialize)]
         struct HttpBlockedExtra {
             method: String,

@@ -17,10 +17,8 @@ mod tests {
         SyncPublisherHealth, ENQUEUE_TIMEOUT_ERROR,
     };
     use crate::{
-        config::Config,
-        sync::{
-            parse_payload_ref, ScanRequest, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX,
-        },
+        parse_payload_ref, ScanRequest, SyncConfig, INLINE_PAYLOAD_REF_PREFIX,
+        OUTBOX_PAYLOAD_REF_PREFIX, SYNC_SCAN_REQUEST_TOPIC,
     };
 
     #[test]
@@ -41,7 +39,7 @@ mod tests {
 
     #[test]
     fn publisher_records_messages_without_network() {
-        let publisher = SyncPublisher::new(&Config::default().sync);
+        let publisher = SyncPublisher::new(&SyncConfig::default());
         publisher.publish_scan_request(ScanRequest {
             stream_name: "proxy.events".to_string(),
             dedupe_key: "abc".to_string(),
@@ -51,7 +49,7 @@ mod tests {
 
         let messages = publisher.published_messages();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].topic, crate::sync::SYNC_SCAN_REQUEST_TOPIC);
+        assert_eq!(messages[0].topic, SYNC_SCAN_REQUEST_TOPIC);
         assert!(messages[0]
             .payload
             .contains("\"stream_name\":\"proxy.events\""));
@@ -59,7 +57,7 @@ mod tests {
 
     #[test]
     fn enqueue_message_records_disabled_publisher_without_network() {
-        let publisher = SyncPublisher::new(&Config::default().sync);
+        let publisher = SyncPublisher::new(&SyncConfig::default());
 
         let error = publisher
             .enqueue_message("wireless.audit", "{}")
@@ -73,27 +71,27 @@ mod tests {
 
     #[test]
     fn publish_payload_audit_records_disabled_publisher_without_network() {
-        let publisher = SyncPublisher::new(&Config::default().sync);
+        let publisher = SyncPublisher::new(&SyncConfig::default());
 
         let error = publisher
-            .publish_payload_audit(crate::sync::PAYLOAD_AUDIT_TOPIC, "{}")
+            .publish_payload_audit("test.payload_audit", "{}")
             .unwrap_err();
 
         assert_eq!(error, "sync publisher disabled");
         let messages = publisher.published_messages();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].topic, crate::sync::PAYLOAD_AUDIT_TOPIC);
+        assert_eq!(messages[0].topic, "test.payload_audit");
         assert_eq!(messages[0].payload, "{}");
     }
 
     #[tokio::test]
     async fn enqueue_message_spools_when_queue_stays_full() {
         let spool = tempfile::tempdir().unwrap();
-        let mut config = Config::default();
-        config.sync.redpanda_bootstrap_servers = Some("127.0.0.1:9092".to_string());
-        config.sync.publish_enqueue_timeout_ms = 1;
-        config.sync.publish_spool_dir = spool.path().display().to_string();
-        let publisher = SyncPublisher::new(&config.sync);
+        let mut config = SyncConfig::default();
+        config.redpanda_bootstrap_servers = Some("127.0.0.1:9092".to_string());
+        config.publish_enqueue_timeout_ms = 1;
+        config.publish_spool_dir = spool.path().display().to_string();
+        let publisher = SyncPublisher::new(&config);
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         *publisher.publish_tx.lock().unwrap() = Some(tx);
 
@@ -117,11 +115,11 @@ mod tests {
     #[tokio::test]
     async fn try_enqueue_message_reports_timeout_without_spooling() {
         let spool = tempfile::tempdir().unwrap();
-        let mut config = Config::default();
-        config.sync.redpanda_bootstrap_servers = Some("127.0.0.1:9092".to_string());
-        config.sync.publish_enqueue_timeout_ms = 1;
-        config.sync.publish_spool_dir = spool.path().display().to_string();
-        let publisher = SyncPublisher::new(&config.sync);
+        let mut config = SyncConfig::default();
+        config.redpanda_bootstrap_servers = Some("127.0.0.1:9092".to_string());
+        config.publish_enqueue_timeout_ms = 1;
+        config.publish_spool_dir = spool.path().display().to_string();
+        let publisher = SyncPublisher::new(&config);
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         *publisher.publish_tx.lock().unwrap() = Some(tx);
 
@@ -144,7 +142,7 @@ mod tests {
 
     #[test]
     fn publisher_uses_inline_payload_ref_below_limit() {
-        let publisher = SyncPublisher::new(&Config::default().sync);
+        let publisher = SyncPublisher::new(&SyncConfig::default());
         let payload_ref = publisher
             .payload_ref_for_event("{\"small\":true}", "2026-04-17T00:00:00Z")
             .unwrap();
@@ -159,13 +157,13 @@ mod tests {
 
     #[test]
     fn publisher_spools_large_payload_ref_to_outbox() {
-        let mut config = Config::default();
-        config.sync.inline_payload_max_bytes = 8;
-        config.sync.outbox_dir = std::env::temp_dir()
+        let mut config = SyncConfig::default();
+        config.inline_payload_max_bytes = 8;
+        config.outbox_dir = std::env::temp_dir()
             .join(format!("boringtun-sync-outbox-{}", std::process::id()))
             .display()
             .to_string();
-        let publisher = SyncPublisher::new(&config.sync);
+        let publisher = SyncPublisher::new(&config);
         let payload_ref = publisher
             .payload_ref_for_event("{\"large\":true}", "2026-04-17T00:00:00Z")
             .unwrap();
@@ -177,10 +175,10 @@ mod tests {
             "{\"large\":true}"
         );
         if let Some(parsed) = parse_payload_ref(&payload_ref) {
-            let path = Path::new(&config.sync.outbox_dir).join(parsed.locator);
+            let path = Path::new(&config.outbox_dir).join(parsed.locator);
             let _ = std::fs::remove_file(path);
         }
-        let _ = std::fs::remove_dir_all(&config.sync.outbox_dir);
+        let _ = std::fs::remove_dir_all(&config.outbox_dir);
     }
 
     #[tokio::test]

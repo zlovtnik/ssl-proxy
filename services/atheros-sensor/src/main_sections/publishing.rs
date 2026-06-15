@@ -152,9 +152,9 @@ async fn shutdown_flush(handles: &SensorHandles, pipeline_state: &mut PipelineSt
     lags.sort_unstable();
     let median_lag = lags.get(lags.len() / 2).copied();
     handles.stats.set_bandwidth_window_lag_ms(median_lag);
-    handles.stats.set_memory_backlog_len(
-        handles.publish_state.lock().unwrap().memory_backlog_len(),
-    );
+    handles
+        .stats
+        .set_memory_backlog_len(handles.publish_state.lock().unwrap().memory_backlog_len());
     handles
         .stats
         .set_probe_accumulator_len(pipeline_state.probe_accumulator.len());
@@ -240,7 +240,7 @@ fn init_tracing(
         ),
     };
 
-    let otel_provider = ssl_proxy::observability::init_tracer_provider("atheros-sensor");
+    let otel_provider = crate::observability::init_tracer_provider("atheros-sensor");
     let otel_layer = otel_provider.as_ref().map(|provider| {
         use opentelemetry::trace::TracerProvider as _;
         tracing_opentelemetry::layer().with_tracer(provider.tracer("atheros-sensor"))
@@ -276,7 +276,7 @@ fn log_and_publish_capture_heartbeat(handles: &SensorHandles) {
         .unwrap_or_else(|_| "unknown".to_string());
     let heartbeat = serde_json::json!({
         "event_type": "sensor_heartbeat",
-        "observed_at": ssl_proxy::time::now_rfc3339(),
+        "observed_at": crate::timing::now_rfc3339(),
         "sensor_id": sensor_id,
         "location_id": handles.config.location_id.clone(),
         "packets_seen": stats_snapshot.packets_seen,

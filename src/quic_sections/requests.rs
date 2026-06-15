@@ -100,7 +100,7 @@ async fn handle_h3_request(
     let (hostname, port) = parse_host_port(&host);
 
     // Blocklist check — same logic as tunnel::handle (lines 801-935)
-    if blocklist::is_blocked(&hostname, &state).await {
+    if blocklist::is_blocked(&hostname, &state) {
         #[derive(Serialize)]
         struct QuicBlockExtra {
             kind: &'static str,

@@ -149,6 +149,7 @@ pub struct ShimMetrics {
     packets_server_to_client: AtomicU64,
     decode_errors: AtomicU64,
     encode_errors: AtomicU64,
+    replay_detected: AtomicU64,
     sessions_evicted_idle: AtomicU64,
     sessions_evicted_send_failure: AtomicU64,
     sessions_evicted_table_limit: AtomicU64,
@@ -175,6 +176,8 @@ impl ShimMetrics {
                 "wg_obfs_shim_packets_forwarded_total{{direction=\"server_to_client\"}} {}\n",
                 "# TYPE wg_obfs_shim_decode_errors_total counter\n",
                 "wg_obfs_shim_decode_errors_total {}\n",
+                "# TYPE wg_obfs_shim_replay_detected_total counter\n",
+                "wg_obfs_shim_replay_detected_total {}\n",
                 "# TYPE wg_obfs_shim_encode_errors_total counter\n",
                 "wg_obfs_shim_encode_errors_total {}\n",
                 "# TYPE wg_obfs_shim_sessions_evicted_total counter\n",
@@ -196,6 +199,7 @@ impl ShimMetrics {
             self.packets_client_to_server.load(Ordering::Relaxed),
             self.packets_server_to_client.load(Ordering::Relaxed),
             self.decode_errors.load(Ordering::Relaxed),
+            self.replay_detected.load(Ordering::Relaxed),
             self.encode_errors.load(Ordering::Relaxed),
             self.sessions_evicted_idle.load(Ordering::Relaxed),
             self.sessions_evicted_send_failure.load(Ordering::Relaxed),
@@ -217,6 +221,10 @@ pub struct ShimHealthHandle {
 impl ShimHealthHandle {
     pub fn active_sessions(&self) -> u64 {
         self.metrics.active_sessions()
+    }
+
+    pub fn replay_detected(&self) -> u64 {
+        self.metrics.replay_detected.load(Ordering::Relaxed)
     }
 }
 

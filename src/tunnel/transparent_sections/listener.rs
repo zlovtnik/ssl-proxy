@@ -296,7 +296,7 @@ async fn evaluate_transparent_policy(
     );
 
     if let Some(ref name) = hostname {
-        if blocklist::is_blocked(name, state).await {
+        if blocklist::is_blocked(name, state) {
             let blocked_name = name.clone();
             return build_transparent_block_decision(
                 state,

@@ -96,13 +96,29 @@
     }
 
     #[test]
+    fn admin_api_key_must_be_at_least_32_bytes() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "short-key");
+
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::AdminApiKeyTooShort {
+                min_len: MIN_ADMIN_API_KEY_LEN,
+                actual_len: 9
+            })
+        ));
+    }
+
+    #[test]
     fn config_port_conflict_error() {
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
         std::env::set_var("PROXY_PORT", "51820");
         std::env::set_var("WG_PORT", "51820");
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env();
         assert!(matches!(
@@ -116,7 +132,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
 
@@ -128,7 +144,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("EXPLICIT_PROXY_ENABLED", "true");
 
         let result = Config::from_env().unwrap();
@@ -141,7 +157,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert!(!result.proxy.capture_plaintext_payloads);
@@ -156,7 +172,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert!(!result.proxy.forensic_sentry_enabled);
@@ -177,7 +193,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert!(result.proxy.fail_closed_no_sni);
@@ -192,7 +208,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert!(result.wireguard.drop_udp_443);
@@ -207,7 +223,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert_eq!(result.wireguard.port, 443);
@@ -238,7 +254,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("WG_OBFUSCATION_ENCRYPTION_MODE", "aead");
         std::env::set_var("WG_OBFUSCATION_PADDING", "fixed-mtu:1200");
         std::env::set_var("WG_OBFUSCATION_MAGIC_POSITION", "randomized");
@@ -269,7 +285,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "0");
 
         assert!(matches!(
@@ -296,7 +312,7 @@
         clear_env();
         set_test_env_defaults();
         std::env::remove_var("WG_OBFUSCATION_KEY");
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env();
         assert!(matches!(
@@ -312,7 +328,7 @@
         set_test_env_defaults();
         std::env::remove_var("WG_OBFUSCATION_KEY");
         std::env::set_var("WG_OBFUSCATION_ENABLED", "false");
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert!(!result.wireguard.obfuscation_enabled);
@@ -324,7 +340,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xAA");
         let result = Config::from_env().unwrap();
@@ -340,7 +356,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xGG");
 
         let result = Config::from_env();
@@ -355,7 +371,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("WG_PORT", "51820");
         std::env::set_var("WG_INTERNAL_PORT", "51820");
 

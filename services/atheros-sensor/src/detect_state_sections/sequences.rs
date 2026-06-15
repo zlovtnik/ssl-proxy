@@ -187,8 +187,8 @@ impl SequenceTracker {
             ssid: entry.ssid.clone(),
             attack_tag: attack_tag.clone(),
             sequence: sequence_tokens.clone(),
-            first_event_at: ssl_proxy::time::rfc3339_from_utc(first_seen),
-            last_event_at: ssl_proxy::time::rfc3339_from_utc(last_seen),
+            first_event_at: crate::timing::rfc3339_from_utc(first_seen),
+            last_event_at: crate::timing::rfc3339_from_utc(last_seen),
             factor_breakdown: vec![AlertExplanation {
                 factor: attack_tag.clone(),
                 observed: sequence_tokens.len() as f64,
@@ -300,13 +300,13 @@ impl AttackTimelineCorrelator {
             Some(AttackSequenceAlert {
                 schema_version: 1,
                 event_type: "wireless_attack_sequence".to_string(),
-                observed_at: ssl_proxy::time::rfc3339_from_utc(observed_at),
+                observed_at: crate::timing::rfc3339_from_utc(observed_at),
                 sensor_id: entry.sensor_id.clone(),
                 location_id: entry.location_id.clone(),
                 ssid: ssid.to_string(),
                 attack_chain: chain,
-                first_event_at: ssl_proxy::time::rfc3339_from_utc(first),
-                last_event_at: ssl_proxy::time::rfc3339_from_utc(last),
+                first_event_at: crate::timing::rfc3339_from_utc(first),
+                last_event_at: crate::timing::rfc3339_from_utc(last),
                 factor_breakdown: vec![
                     AlertExplanation {
                         factor: "karma_probe_response".to_string(),

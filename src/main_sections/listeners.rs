@@ -347,7 +347,7 @@ async fn main() {
 
     spawn_admin_listener(&config, state.clone(), shutdown.clone(), cors.clone()).await;
     log_runtime_ports(&config);
-    let _wg_relay = spawn_wireguard_relay(&config, shutdown.clone()).await;
+    let _wg_relay = spawn_wireguard_relay(&config, state.clone(), shutdown.clone()).await;
     let tproxy_handle = spawn_transparent_listener(
         &config,
         state.clone(),

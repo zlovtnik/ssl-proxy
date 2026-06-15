@@ -18,7 +18,7 @@ pub fn to_audit_entry(enriched: EnrichedFrame) -> AuditEntry {
     AuditEntry {
         schema_version: frame.schema_version,
         event_type: frame.event_type,
-        observed_at: ssl_proxy::time::rfc3339_from_utc(frame.observed_at),
+        observed_at: crate::timing::rfc3339_from_utc(frame.observed_at),
         sensor_id: enriched.sensor_id,
         location_id: enriched.location_id,
         interface: enriched.interface,

@@ -9,6 +9,8 @@ use crate::{
     boringtun_control,
     state::{ResolvedMeta, SharedState, WgPeerSnapshot},
 };
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use thiserror::Error;
 
 pub fn spawn_wg_stats_poller(state: SharedState, token: tokio_util::sync::CancellationToken) {
     tokio::spawn(async move {
@@ -38,7 +40,13 @@ pub fn spawn_wg_stats_poller(state: SharedState, token: tokio_util::sync::Cancel
                 }
             };
 
-            let peers = parse_wg_show_dump(&dump, &interface);
+            let peers = match parse_wg_show_dump(&dump, &interface) {
+                Ok(peers) => peers,
+                Err(err) => {
+                    warn!(%interface, %err, "failed to parse WireGuard dump");
+                    continue;
+                }
+            };
             state.refresh_wg_peers(&peers);
         }
     });
@@ -63,16 +71,36 @@ fn delta_with_reset(current: u64, previous: u64) -> u64 {
     }
 }
 
-pub fn parse_wg_show_dump(dump: &str, interface: &str) -> Vec<WgPeerSnapshot> {
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum WgDumpParseError {
+    #[error("malformed wg dump line {line}: expected at least 8 tab-delimited fields")]
+    MalformedLine { line: usize },
+    #[error("invalid WireGuard public key on dump line {line}")]
+    InvalidPublicKey { line: usize },
+    #[error("invalid numeric field {field} on wg dump line {line}")]
+    InvalidNumericField { line: usize, field: &'static str },
+}
+
+pub fn parse_wg_show_dump(
+    dump: &str,
+    interface: &str,
+) -> Result<Vec<WgPeerSnapshot>, WgDumpParseError> {
     dump.lines()
         .enumerate()
         .skip(1)
-        .filter_map(|(_idx, line)| {
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(idx, line)| {
+            let line_number = idx + 1;
             let parts: Vec<_> = line.split('\t').collect();
             if parts.len() < 8 {
                 debug!(%line, "skipping malformed wg dump line");
-                return None;
+                return Err(WgDumpParseError::MalformedLine { line: line_number });
             }
+            validate_wg_public_key(parts[0])
+                .then_some(())
+                .ok_or(WgDumpParseError::InvalidPublicKey { line: line_number })?;
+            let rx_bytes_total = parse_u64_dump_field(parts[5], line_number, "rx_bytes_total")?;
+            let tx_bytes_total = parse_u64_dump_field(parts[6], line_number, "tx_bytes_total")?;
 
             let allowed_ips: Vec<String> = parts[3]
                 .split(',')
@@ -84,18 +112,35 @@ pub fn parse_wg_show_dump(dump: &str, interface: &str) -> Vec<WgPeerSnapshot> {
                 .find_map(|entry| entry.split_once('/').map(|(ip, _)| ip.to_string()))
                 .or_else(|| allowed_ips.first().cloned());
 
-            Some(WgPeerSnapshot {
+            Ok(WgPeerSnapshot {
                 interface: interface.to_string(),
                 wg_pubkey: parts[0].to_string(),
                 endpoint: (!parts[2].is_empty()).then(|| parts[2].to_string()),
                 allowed_ips,
                 peer_ip,
                 last_handshake_at: parse_handshake(parts[4]),
-                rx_bytes_total: parts[5].parse::<u64>().unwrap_or(0),
-                tx_bytes_total: parts[6].parse::<u64>().unwrap_or(0),
+                rx_bytes_total,
+                tx_bytes_total,
             })
         })
         .collect()
+}
+
+fn validate_wg_public_key(value: &str) -> bool {
+    value.len() == 44
+        && STANDARD
+            .decode(value)
+            .is_ok_and(|decoded| decoded.len() == 32)
+}
+
+fn parse_u64_dump_field(
+    value: &str,
+    line: usize,
+    field: &'static str,
+) -> Result<u64, WgDumpParseError> {
+    value
+        .parse::<u64>()
+        .map_err(|_| WgDumpParseError::InvalidNumericField { line, field })
 }
 
 fn parse_handshake(value: &str) -> Option<String> {
@@ -143,13 +188,34 @@ mod tests {
 
     #[test]
     fn parses_wg_dump_rows() {
-        let dump = "priv\tpub\t51820\toff\npeerkey\tpsk\t198.51.100.10:443\t10.13.13.2/32\t1713225600\t10\t20\t25\n";
-        let peers = parse_wg_show_dump(dump, "wg0");
+        let dump = "priv\tpub\t51820\toff\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\tpsk\t198.51.100.10:443\t10.13.13.2/32\t1713225600\t10\t20\t25\n";
+        let peers = parse_wg_show_dump(dump, "wg0").unwrap();
         assert_eq!(peers.len(), 1);
-        assert_eq!(peers[0].wg_pubkey, "peerkey");
+        assert_eq!(
+            peers[0].wg_pubkey,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        );
         assert_eq!(peers[0].peer_ip.as_deref(), Some("10.13.13.2"));
         assert_eq!(peers[0].rx_bytes_total, 10);
         assert_eq!(peers[0].tx_bytes_total, 20);
+    }
+
+    #[test]
+    fn rejects_malformed_wg_dump_rows() {
+        let invalid_key = "priv\tpub\t51820\toff\npeerkey\tpsk\t198.51.100.10:443\t10.13.13.2/32\t1713225600\t10\t20\t25\n";
+        assert!(matches!(
+            parse_wg_show_dump(invalid_key, "wg0"),
+            Err(WgDumpParseError::InvalidPublicKey { line: 2 })
+        ));
+
+        let invalid_counter = "priv\tpub\t51820\toff\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\tpsk\t198.51.100.10:443\t10.13.13.2/32\t1713225600\tnope\t20\t25\n";
+        assert!(matches!(
+            parse_wg_show_dump(invalid_counter, "wg0"),
+            Err(WgDumpParseError::InvalidNumericField {
+                line: 2,
+                field: "rx_bytes_total"
+            })
+        ));
     }
 
     #[test]

@@ -212,6 +212,8 @@ pub struct ReplayWindow {
     bitmap: u64,
 }
 
+const _: () = assert!(u64::BITS == 64);
+
 impl ReplayWindow {
     pub fn check_and_update(&mut self, counter: u64) -> Result<(), PacketDecodeError> {
         let Some(highest) = self.highest else {
@@ -222,11 +224,11 @@ impl ReplayWindow {
 
         if counter > highest {
             let shift = counter - highest;
-            self.bitmap = if shift >= 64 {
-                1
-            } else {
-                (self.bitmap << shift) | 1
-            };
+            self.bitmap = self
+                .bitmap
+                .checked_shl(u32::try_from(shift).unwrap_or(u32::MAX))
+                .map(|bitmap| bitmap | 1)
+                .unwrap_or(1);
             self.highest = Some(counter);
             return Ok(());
         }

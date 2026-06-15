@@ -20,7 +20,7 @@ Environment=ATH_SENSOR_EXPORT_HANDSHAKES=false
 Environment=ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS=60
 Environment=ATH_SENSOR_SHUTDOWN_GRACE_SECS=5
 Environment=ATH_SENSOR_AUDIT_LAYER_STREAM=off
-Environment=RUST_LOG=warn,atheros_sensor=info,ssl_proxy=info
+Environment=RUST_LOG=warn,atheros_sensor=info
 Environment=SYNC_REDPANDA_BOOTSTRAP_SERVERS=redpanda://127.0.0.1:19092
 ExecStartPre=/opt/ssl-proxy/scripts/prep_ath.sh
 ExecStart=/opt/ssl-proxy/services/atheros-sensor/target/release/atheros-sensor

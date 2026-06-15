@@ -48,7 +48,7 @@ async fn init_sensor(config: &AppConfig) -> Result<SensorHandles, SensorError> {
         "atheros sensor starting"
     );
 
-    let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
+    let publisher = Arc::new(sync_plane::SyncPublisher::new(&config.sync));
     info!(
         redpanda_configured = config.sync.redpanda_bootstrap_servers.is_some(),
         redpanda_tls_enabled = config

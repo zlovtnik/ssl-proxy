@@ -36,6 +36,11 @@ pub enum ControlError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("failed to canonicalize BoringTun UAPI socket path {path}: {source}")]
+    UapiSocketPathCanonicalize {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error(
         "insecure BoringTun UAPI socket directory {path}: owner must be root and permissions must be 0700 (uid={uid}, mode={mode:o})"
     )]

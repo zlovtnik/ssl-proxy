@@ -228,8 +228,7 @@ impl TrafficBucket {
             .drain()
             .map(|(key, counters)| {
                 let source_mac = key.source_mac.to_string();
-                let inter_arrival_p50_ms =
-                    calculate_p50_inter_arrival(&counters.arrival_times_ms);
+                let inter_arrival_p50_ms = calculate_p50_inter_arrival(&counters.arrival_times_ms);
                 let inter_arrival_cv = calculate_inter_arrival_cv(&counters.arrival_times_ms);
                 let event = build_bandwidth_event(
                     key,
@@ -253,10 +252,7 @@ impl TrafficBucket {
             },
         ));
 
-        event_pairs
-            .into_iter()
-            .map(|(event, _, _)| event)
-            .collect()
+        event_pairs.into_iter().map(|(event, _, _)| event).collect()
     }
 
     fn enforce_entry_limit(&mut self) {
@@ -296,8 +292,8 @@ fn build_bandwidth_event(
     WirelessBandwidthEvent {
         schema_version: 1,
         event_type: "wireless_bandwidth_window".to_string(),
-        window_start: ssl_proxy::time::rfc3339_from_utc(window_start),
-        window_end: ssl_proxy::time::rfc3339_from_utc(window_end),
+        window_start: crate::timing::rfc3339_from_utc(window_start),
+        window_end: crate::timing::rfc3339_from_utc(window_end),
         sensor_id: key.sensor_id,
         location_id: key.location_id,
         interface: key.interface,

@@ -158,9 +158,17 @@ async fn run_health_server(
             .iter()
             .map(ShimHealthHandle::active_sessions)
             .sum::<u64>();
+        let replay_detected = handles
+            .iter()
+            .map(ShimHealthHandle::replay_detected)
+            .sum::<u64>();
         (
             StatusCode::OK,
-            Json(json!({"status": "ok", "sessions": sessions})),
+            Json(json!({
+                "status": "ok",
+                "sessions": sessions,
+                "replay_detected": replay_detected,
+            })),
         )
     }
 

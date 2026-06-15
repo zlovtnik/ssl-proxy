@@ -355,11 +355,11 @@ mod payload_ref_tests {
     use std::path::Path;
 
     use super::SyncPublisher;
-    use crate::{config::Config, sync::parse_payload_ref};
+    use crate::{parse_payload_ref, SyncConfig};
 
     #[test]
     fn inline_payload_ref_decodes_to_valid_json() {
-        let publisher = SyncPublisher::new(&Config::default().sync);
+        let publisher = SyncPublisher::new(&SyncConfig::default());
         let payload_ref = publisher
             .payload_ref_for_event("{\"small\":true}", "2026-04-17T00:00:00Z")
             .unwrap();
@@ -374,10 +374,10 @@ mod payload_ref_tests {
     #[test]
     fn outbox_payload_ref_file_contains_valid_json() {
         let outbox = tempfile::tempdir().unwrap();
-        let mut config = Config::default();
-        config.sync.inline_payload_max_bytes = 1;
-        config.sync.outbox_dir = outbox.path().display().to_string();
-        let publisher = SyncPublisher::new(&config.sync);
+        let mut config = SyncConfig::default();
+        config.inline_payload_max_bytes = 1;
+        config.outbox_dir = outbox.path().display().to_string();
+        let publisher = SyncPublisher::new(&config);
         let payload_ref = publisher
             .payload_ref_for_event(
                 "{\"large\":true,\"payload\":\"readable\"}",
@@ -386,7 +386,7 @@ mod payload_ref_tests {
             .unwrap();
 
         let parsed = parse_payload_ref(&payload_ref).unwrap();
-        let path = Path::new(&config.sync.outbox_dir).join(parsed.locator);
+        let path = Path::new(&config.outbox_dir).join(parsed.locator);
         let file_contents = std::fs::read_to_string(path).unwrap();
         serde_json::from_str::<serde_json::Value>(&file_contents).unwrap();
         assert_eq!(
@@ -399,7 +399,7 @@ mod payload_ref_tests {
 
     #[test]
     fn payload_ref_for_event_rejects_non_json_payloads() {
-        let publisher = SyncPublisher::new(&Config::default().sync);
+        let publisher = SyncPublisher::new(&SyncConfig::default());
         let error = publisher
             .payload_ref_for_event("not json", "2026-04-17T00:00:00Z")
             .unwrap_err();

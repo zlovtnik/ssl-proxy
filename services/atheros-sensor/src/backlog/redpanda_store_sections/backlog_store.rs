@@ -208,8 +208,8 @@ impl RedpandaBacklog {
             .iter()
             .map(|probe| probe.last_seen)
             .max()
-            .map(ssl_proxy::time::rfc3339_from_utc)
-            .unwrap_or_else(ssl_proxy::time::now_rfc3339);
+            .map(crate::timing::rfc3339_from_utc)
+            .unwrap_or_else(crate::timing::now_rfc3339);
         let payload = serialize(
             "flush_probe_batch",
             &Payload {
@@ -270,7 +270,7 @@ impl BacklogStore for RedpandaBacklog {
             stream_name: record.stream_name.to_string(),
             dedupe_key: record.dedupe_key.to_string(),
             payload_ref: record.payload_ref.to_string(),
-            observed_at: ssl_proxy::time::rfc3339_from_utc(record.observed_at),
+            observed_at: crate::timing::rfc3339_from_utc(record.observed_at),
         };
         let payload = serialize("record_ingest", &request)?;
         self.publish(SYNC_SCAN_REQUEST_TOPIC, &payload).await
@@ -434,5 +434,5 @@ fn payload_with_reply_topic(
 
 fn next_inbox_topic() -> String {
     let id = NEXT_INBOX_ID.fetch_add(1, Ordering::Relaxed);
-    format!("_INBOX.ssl_proxy.{}.{}", std::process::id(), id)
+    format!("_INBOX.atheros_sensor.{}.{}", std::process::id(), id)
 }

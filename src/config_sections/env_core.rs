@@ -1,3 +1,9 @@
+use std::collections::HashMap;
+
+use super::{parsing::*, sync_tls::*, types::*};
+use crate::wg_packet_obfuscation::{EncryptionMode, MagicPositionMode, PacketPadding};
+use sync_plane::SyncConfig;
+
 impl Config {
     /// Load and validate the application's configuration from environment variables.
     ///
@@ -20,7 +26,7 @@ impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let proxy = ProxyConfig::from_env()?;
         let admin = AdminConfig::from_env()?;
-        let sync = SyncConfig::from_env()?;
+        let sync = sync_config_from_env()?;
         let payload_audit = PayloadAuditConfig::from_env();
         let obfuscation = ObfuscationConfig::from_env();
         let tls = TlsConfig::from_env();
@@ -110,18 +116,18 @@ impl Config {
 
     /// Creates a configuration prefilled for use in tests.
     ///
-    /// The returned Config is `Default` with `admin.api_key` set to `"test-key"`.
+    /// The returned Config is `Default` with a valid test admin API key.
     ///
     /// # Examples
     ///
     /// ```
     /// let cfg = crate::config::Config::for_tests();
-    /// assert_eq!(cfg.admin.api_key, "test-key");
+    /// assert_eq!(cfg.admin.api_key, "test-admin-api-key-0000000000000");
     /// ```
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
         let mut config = Self::default();
-        config.admin.api_key = "test-key".to_string();
+        config.admin.api_key = "test-admin-api-key-0000000000000".to_string();
         config
     }
 }
@@ -172,23 +178,7 @@ impl Default for Config {
                 patch_cadence_report_path: None,
                 recovery_drill_report_path: None,
             },
-            sync: SyncConfig {
-                redpanda_bootstrap_servers: None,
-                connect_timeout_ms: 2_000,
-                publish_timeout_ms: 2_000,
-                security_protocol: None,
-                sasl_mechanisms: None,
-                sasl_username: None,
-                sasl_password: None,
-                ssl_ca_location: None,
-                ssl_certificate_location: None,
-                ssl_key_location: None,
-                inline_payload_max_bytes: 2_048,
-                outbox_dir: "/tmp/ssl-proxy-sync-outbox".to_string(),
-                publish_queue_capacity: 8_192,
-                publish_enqueue_timeout_ms: 25,
-                publish_spool_dir: "/tmp/ssl-proxy-sync-outbox/publish-spool".to_string(),
-            },
+            sync: SyncConfig::default(),
             payload_audit: PayloadAuditConfig {
                 enabled: false,
                 redpanda_topic: "proxy.payload_audit".to_string(),
@@ -330,18 +320,24 @@ impl AdminConfig {
     ///
     /// ```
     /// use std::env;
-    /// env::set_var("ADMIN_API_KEY", "secret-key");
+    /// env::set_var("ADMIN_API_KEY", "example-admin-api-key-0000000000");
     /// env::set_var("ADMIN_PORT", "4000");
     /// env::set_var("CORS_ALLOWED_ORIGINS", "https://a.example, https://b.example");
     ///
     /// let cfg = crate::AdminConfig::from_env().unwrap();
     /// assert_eq!(cfg.port, 4000);
-    /// assert_eq!(cfg.api_key, "secret-key");
+    /// assert_eq!(cfg.api_key, "example-admin-api-key-0000000000");
     /// assert_eq!(cfg.cors_allowed_origins, vec!["https://a.example".to_string(), "https://b.example".to_string()]);
     /// ```
     fn from_env() -> Result<Self, ConfigError> {
         let api_key = read_secret("ADMIN_API_KEY", "ADMIN_API_KEY_FILE")
             .ok_or(ConfigError::MissingAdminApiKey)?;
+        if api_key.len() < MIN_ADMIN_API_KEY_LEN {
+            return Err(ConfigError::AdminApiKeyTooShort {
+                min_len: MIN_ADMIN_API_KEY_LEN,
+                actual_len: api_key.len(),
+            });
+        }
         Ok(Self {
             port: read_port("ADMIN_PORT", 3002),
             bind_addr: std::env::var("ADMIN_BIND_ADDR")

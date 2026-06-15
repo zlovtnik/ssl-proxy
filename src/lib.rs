@@ -17,13 +17,12 @@ pub mod observability;
 pub mod payload_audit;
 pub(crate) mod payload_redaction;
 pub mod proxy;
+pub mod proxy_sync;
 #[cfg(feature = "quic")]
 pub mod quic;
 pub mod security;
 pub mod state;
-pub mod sync;
 pub mod time;
-pub mod transport;
 pub mod tunnel;
 pub mod wg_packet_obfuscation;
 pub mod wg_relay;

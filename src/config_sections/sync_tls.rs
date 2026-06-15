@@ -1,87 +1,94 @@
-impl SyncConfig {
-    fn from_env() -> Result<Self, ConfigError> {
-        let redpanda_bootstrap_servers = std::env::var("SYNC_REDPANDA_BOOTSTRAP_SERVERS")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let sasl_username = std::env::var("SYNC_REDPANDA_SASL_USERNAME")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let sasl_password = read_secret(
-            "SYNC_REDPANDA_SASL_PASSWORD",
-            "SYNC_REDPANDA_SASL_PASSWORD_FILE",
-        );
-        let (sasl_username, sasl_password) = match (sasl_username, sasl_password) {
-            (Some(username), Some(password)) => (Some(username), Some(password)),
-            (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSaslPassword),
-            (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSaslUsername),
-            (None, None) => (None, None),
-        };
-        let security_protocol = std::env::var("SYNC_REDPANDA_SECURITY_PROTOCOL")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let sasl_mechanisms = std::env::var("SYNC_REDPANDA_SASL_MECHANISMS")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let ssl_ca_location = std::env::var("SYNC_REDPANDA_SSL_CA_LOCATION")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let ssl_certificate_location = std::env::var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let ssl_key_location = std::env::var("SYNC_REDPANDA_SSL_KEY_LOCATION")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        match (&ssl_certificate_location, &ssl_key_location) {
-            (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSslKeyLocation),
-            (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSslCertificateLocation),
-            _ => {}
-        }
+use std::collections::HashMap;
 
-        let outbox_dir = std::env::var("SYNC_OUTBOX_DIR")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "/tmp/ssl-proxy-sync-outbox".to_string());
-        let publish_spool_dir = std::env::var("SYNC_PUBLISH_SPOOL_DIR")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| {
-                std::path::Path::new(&outbox_dir)
-                    .join("publish-spool")
-                    .display()
-                    .to_string()
-            });
+use super::{parsing::*, types::*};
+use crate::{
+    obfuscation::{Profile, FOX_DOMAINS},
+    wg_packet_obfuscation::EncryptionMode,
+};
+use sync_plane::SyncConfig;
 
-        Ok(Self {
-            redpanda_bootstrap_servers,
-            connect_timeout_ms: read_u64("SYNC_REDPANDA_CONNECT_TIMEOUT_MS", 2_000),
-            publish_timeout_ms: read_u64("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", 2_000),
-            publish_queue_capacity: read_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192),
-            publish_enqueue_timeout_ms: read_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25),
-            security_protocol,
-            sasl_mechanisms,
-            sasl_username,
-            sasl_password,
-            ssl_ca_location,
-            ssl_certificate_location,
-            ssl_key_location,
-            inline_payload_max_bytes: read_usize("SYNC_INLINE_PAYLOAD_MAX_BYTES", 2_048),
-            outbox_dir,
-            publish_spool_dir,
-        })
+pub(super) fn sync_config_from_env() -> Result<SyncConfig, ConfigError> {
+    let redpanda_bootstrap_servers = std::env::var("SYNC_REDPANDA_BOOTSTRAP_SERVERS")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let sasl_username = std::env::var("SYNC_REDPANDA_SASL_USERNAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let sasl_password = read_secret(
+        "SYNC_REDPANDA_SASL_PASSWORD",
+        "SYNC_REDPANDA_SASL_PASSWORD_FILE",
+    );
+    let (sasl_username, sasl_password) = match (sasl_username, sasl_password) {
+        (Some(username), Some(password)) => (Some(username), Some(password)),
+        (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSaslPassword),
+        (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSaslUsername),
+        (None, None) => (None, None),
+    };
+    let security_protocol = std::env::var("SYNC_REDPANDA_SECURITY_PROTOCOL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let sasl_mechanisms = std::env::var("SYNC_REDPANDA_SASL_MECHANISMS")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let ssl_ca_location = std::env::var("SYNC_REDPANDA_SSL_CA_LOCATION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let ssl_certificate_location = std::env::var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let ssl_key_location = std::env::var("SYNC_REDPANDA_SSL_KEY_LOCATION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    match (&ssl_certificate_location, &ssl_key_location) {
+        (Some(_), None) => return Err(ConfigError::MissingSyncRedpandaSslKeyLocation),
+        (None, Some(_)) => return Err(ConfigError::MissingSyncRedpandaSslCertificateLocation),
+        _ => {}
     }
+
+    let outbox_dir = std::env::var("SYNC_OUTBOX_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "/tmp/ssl-proxy-sync-outbox".to_string());
+    let publish_spool_dir = std::env::var("SYNC_PUBLISH_SPOOL_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            std::path::Path::new(&outbox_dir)
+                .join("publish-spool")
+                .display()
+                .to_string()
+        });
+
+    Ok(SyncConfig {
+        redpanda_bootstrap_servers,
+        connect_timeout_ms: read_u64("SYNC_REDPANDA_CONNECT_TIMEOUT_MS", 2_000),
+        publish_timeout_ms: read_u64("SYNC_REDPANDA_PUBLISH_TIMEOUT_MS", 2_000),
+        publish_queue_capacity: read_usize("SYNC_PUBLISH_QUEUE_CAPACITY", 8_192),
+        publish_enqueue_timeout_ms: read_u64("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", 25),
+        security_protocol,
+        sasl_mechanisms,
+        sasl_username,
+        sasl_password,
+        ssl_ca_location,
+        ssl_certificate_location,
+        ssl_key_location,
+        inline_payload_max_bytes: read_usize("SYNC_INLINE_PAYLOAD_MAX_BYTES", 2_048),
+        outbox_dir,
+        publish_spool_dir,
+    })
 }
 
 impl PayloadAuditConfig {
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         Self {
             enabled: read_bool("PAYLOAD_AUDIT_ENABLED", false),
             redpanda_topic: std::env::var("PAYLOAD_AUDIT_REDPANDA_TOPIC")
@@ -124,7 +131,7 @@ impl ObfuscationConfig {
     /// assert!(cfg.fox_ua_override.contains("Mozilla/5.0"));
     /// assert!(cfg.domain_map.len() > 0);
     /// ```
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         let enabled_profiles: Vec<String> = std::env::var("OBFUSCATION_PROFILE")
             .unwrap_or_else(|_| "fox-news,fox-sports".to_string())
             .split(',')
@@ -162,7 +169,7 @@ impl TlsConfig {
     /// assert_eq!(cfg.cert_path, None);
     /// assert_eq!(cfg.key_path.as_deref(), Some("/tmp/key.pem"));
     /// ```
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         Self {
             cert_path: std::env::var("TLS_CERT_PATH")
                 .ok()
@@ -208,7 +215,7 @@ impl WireGuardConfig {
     /// assert!(!cfg.drop_udp_443);
     /// assert_eq!(cfg.obfuscation_magic_byte, Some(0xAA));
     /// ```
-    fn from_env() -> Result<Self, ConfigError> {
+    pub(super) fn from_env() -> Result<Self, ConfigError> {
         let obfuscation_enabled = read_bool("WG_OBFUSCATION_ENABLED", true);
         let obfuscation_key =
             read_secret("WG_OBFUSCATION_KEY", "WG_OBFUSCATION_KEY_FILE").unwrap_or_default();
@@ -261,7 +268,7 @@ impl RuntimeConfig {
     /// let cfg = crate::RuntimeConfig::from_env();
     /// assert_eq!(cfg.log_format, "json");
     /// ```
-    fn from_env() -> Self {
+    pub(super) fn from_env() -> Self {
         Self {
             log_format: std::env::var("LOG_FORMAT").unwrap_or_else(|_| "human".to_string()),
             bandwidth_sample_interval_secs: read_u64("BANDWIDTH_SAMPLE_INTERVAL_SECS", 60),
@@ -294,7 +301,7 @@ impl RuntimeConfig {
 /// let map = build_domain_map(&[]);
 /// assert!(map.is_empty());
 /// ```
-fn build_domain_map(enabled_profiles: &[String]) -> HashMap<String, Profile> {
+pub(super) fn build_domain_map(enabled_profiles: &[String]) -> HashMap<String, Profile> {
     let mut map = HashMap::new();
     for (pattern, profile_name) in FOX_DOMAINS {
         let Some(profile) = Profile::from_name(profile_name) else {
@@ -315,24 +322,6 @@ fn build_domain_map(enabled_profiles: &[String]) -> HashMap<String, Profile> {
     map
 }
 
-fn redact_url_userinfo(value: Option<&str>) -> Option<String> {
-    value.map(|raw| {
-        if let Some((scheme, rest)) = raw.split_once("://") {
-            if let Some((userinfo, suffix)) = rest.split_once('@') {
-                if !userinfo.is_empty() {
-                    return format!("{scheme}://[REDACTED]@{suffix}");
-                }
-            }
-        }
-        if let Some((userinfo, suffix)) = raw.split_once('@') {
-            if userinfo.contains(':') {
-                return format!("[REDACTED]@{suffix}");
-            }
-        }
-        raw.to_string()
-    })
-}
-
 /// Read an environment variable as a port number, falling back to a provided default when the
 /// variable is missing or cannot be parsed as a valid port.
 ///
@@ -345,7 +334,7 @@ fn redact_url_userinfo(value: Option<&str>) -> Option<String> {
 /// env::remove_var("TEST_PORT");
 /// assert_eq!(read_port("TEST_PORT", 3000), 3000);
 /// ```
-fn read_port(var: &str, default: u16) -> u16 {
+pub(super) fn read_port(var: &str, default: u16) -> u16 {
     std::env::var(var)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -353,7 +342,7 @@ fn read_port(var: &str, default: u16) -> u16 {
 }
 
 /// Read an environment variable as `u64`, falling back to `default` on absence or parse failure.
-fn read_u64(var: &str, default: u64) -> u64 {
+pub(super) fn read_u64(var: &str, default: u64) -> u64 {
     std::env::var(var)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -372,7 +361,7 @@ fn read_u64(var: &str, default: u64) -> u64 {
 /// assert_eq!(read_usize("MY_TEST_USIZE", 7), 42);
 /// env::remove_var("MY_TEST_USIZE");
 /// ```
-fn read_usize(var: &str, default: usize) -> usize {
+pub(super) fn read_usize(var: &str, default: usize) -> usize {
     std::env::var(var)
         .ok()
         .and_then(|v| v.parse().ok())
@@ -400,7 +389,7 @@ fn read_usize(var: &str, default: usize) -> usize {
 /// std::env::set_var("MY_FLAG", "0");
 /// assert_eq!(read_bool("MY_FLAG", true), false);
 /// ```
-fn read_bool(var: &str, default: bool) -> bool {
+pub(super) fn read_bool(var: &str, default: bool) -> bool {
     std::env::var(var)
         .map(|v| match v.to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" | "on" => true,
@@ -410,7 +399,7 @@ fn read_bool(var: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-fn read_csv_list(var: &str, default: &[&str]) -> Vec<String> {
+pub(super) fn read_csv_list(var: &str, default: &[&str]) -> Vec<String> {
     std::env::var(var)
         .ok()
         .map(|value| {
