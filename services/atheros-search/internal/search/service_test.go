@@ -75,3 +75,64 @@ func TestIsWildcardAllSearch(t *testing.T) {
 		})
 	}
 }
+
+func TestSparsePatternTreatsWildcardOnlyAsMatchAll(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{"*", "%", " * % * "}
+	for _, query := range tests {
+		query := query
+		t.Run(query, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, "%", sparsePattern(query))
+		})
+	}
+}
+
+func TestSparseEventMatchClauseTreatsWildcardOnlyAsMatchAll(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{"*", "%", " * % * "}
+	for _, query := range tests {
+		query := query
+		t.Run(query, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, "true", sparseEventMatchClause(query))
+			require.Equal(t, "0.1::real", sparseEventRankExpr(query))
+		})
+	}
+}
+
+func TestSparseEventArgsAvoidSkippedParameterForWildcardAll(t *testing.T) {
+	t.Parallel()
+
+	args, filter, limitParam := sparseEventArgs("*", Options{
+		TopK: 50,
+		Filters: &searchv1.SearchFilters{
+			LocationIds: []string{"lab"},
+			ThreatOnly:  true,
+		},
+	})
+
+	require.Equal(t, 1, limitParam)
+	require.Equal(t, []any{200, []string{"lab"}}, args)
+	require.Contains(t, WhereSQL([]string{sparseEventMatchClause("*")}, filter.Clauses), "coalesce(se.location_id, '') = any($2::text[])")
+	require.NotContains(t, sparseEventMatchClause("*"), "$1")
+	require.NotContains(t, sparseEventRankExpr("*"), "$1")
+}
+
+func TestSparseEventArgsKeepsQueryFirstForTextSearch(t *testing.T) {
+	t.Parallel()
+
+	args, filter, limitParam := sparseEventArgs("deauth", Options{
+		TopK: 25,
+		Filters: &searchv1.SearchFilters{
+			LocationIds: []string{"lab"},
+		},
+	})
+
+	require.Equal(t, 2, limitParam)
+	require.Equal(t, []any{"deauth", 100, []string{"lab"}}, args)
+	require.Contains(t, WhereSQL([]string{sparseEventMatchClause("deauth")}, filter.Clauses), "$1")
+	require.Contains(t, WhereSQL([]string{sparseEventMatchClause("deauth")}, filter.Clauses), "$3::text[]")
+}

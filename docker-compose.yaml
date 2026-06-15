@@ -607,6 +607,7 @@ services:
       - -c
       - track_io_timing=on
     restart: unless-stopped
+    shm_size: ${POSTGRES_SHM_SIZE:-256m}
     deploy:
       resources:
         limits:

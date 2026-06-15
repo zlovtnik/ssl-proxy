@@ -52,16 +52,9 @@ func sparseKind(ctx context.Context, pool *pgxpool.Pool, query, kind string, opt
 }
 
 func sparseEvents(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) ([]RawResult, error) {
-	args := []any{query, opts.TopK * 4}
-	filter := BuildWirelessFilters(opts.Filters, len(args)+1)
-	args = append(args, filter.Args...)
-
-	var matchClause string
-	if strings.ContainsAny(query, "*%") {
-		matchClause = "lower(concat_ws(' ', wf.sensor_id, wf.source_mac, wf.bssid, wf.destination_bssid, wf.ssid, wf.wps_device_name, wf.wps_manufacturer, wf.wps_model_name, wf.device_fingerprint, wf.app_protocol, wf.src_ip, wf.dst_ip, wf.username)) like lower(replace($1, '*', '%'))"
-	} else {
-		matchClause = "wf.search_tsv @@ plainto_tsquery('simple', $1)"
-	}
+	args, filter, limitParam := sparseEventArgs(query, opts)
+	matchClause := sparseEventMatchClause(query)
+	rankExpr := sparseEventRankExpr(query)
 
 	where := WhereSQL([]string{matchClause, "se.status = 'batched'"}, filter.Clauses)
 	sql := fmt.Sprintf(`
@@ -77,18 +70,14 @@ SELECT
   coalesce(wf.ssid, '') as ssid,
   coalesce(wf.frame_subtype, '') as frame_subtype,
   0::real as cosine_similarity,
-  case
-    when wf.search_tsv @@ plainto_tsquery('simple', $1)
-    then ts_rank_cd(wf.search_tsv, plainto_tsquery('simple', $1))::real
-    else 0.1::real
-  end as keyword_rank,
+  %s as keyword_rank,
   coalesce(jsonb_path_query_array(%s, '$[*]'), '[]'::jsonb)::text as tags_json,
   %s::text as detail_json
 FROM wireless_frames wf
 JOIN sync_events_expanded se ON se.dedupe_key = wf.dedupe_key
 %s
 ORDER BY keyword_rank DESC, se.observed_at DESC
-LIMIT $2`, wirelessTagsSQL, compactEventDetailSQL, where)
+LIMIT $%d`, rankExpr, wirelessTagsSQL, compactEventDetailSQL, where, limitParam)
 
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -264,12 +253,51 @@ func scanSparse(rows interface {
 	return result, nil
 }
 
+func sparseEventArgs(query string, opts Options) ([]any, SQLFilter, int) {
+	limit := opts.TopK * 4
+	if isWildcardAllSearch(query) {
+		args := []any{limit}
+		filter := BuildWirelessFilters(opts.Filters, len(args)+1)
+		args = append(args, filter.Args...)
+		return args, filter, 1
+	}
+
+	args := []any{query, limit}
+	filter := BuildWirelessFilters(opts.Filters, len(args)+1)
+	args = append(args, filter.Args...)
+	return args, filter, 2
+}
+
 func sparsePattern(query string) string {
+	if isWildcardAllSearch(query) {
+		return "%"
+	}
 	if strings.Contains(query, "*") {
 		query = strings.ReplaceAll(query, "*", "%")
 		return query
 	}
 	return "%" + escapeLike(query) + "%"
+}
+
+func sparseEventMatchClause(query string) string {
+	if isWildcardAllSearch(query) {
+		return "true"
+	}
+	if strings.ContainsAny(query, "*%") {
+		return "lower(concat_ws(' ', wf.sensor_id, wf.source_mac, wf.bssid, wf.destination_bssid, wf.ssid, wf.wps_device_name, wf.wps_manufacturer, wf.wps_model_name, wf.device_fingerprint, wf.app_protocol, wf.src_ip, wf.dst_ip, wf.username)) like lower(replace($1, '*', '%'))"
+	}
+	return "wf.search_tsv @@ plainto_tsquery('simple', $1)"
+}
+
+func sparseEventRankExpr(query string) string {
+	if isWildcardAllSearch(query) {
+		return "0.1::real"
+	}
+	return `case
+    when wf.search_tsv @@ plainto_tsquery('simple', $1)
+    then ts_rank_cd(wf.search_tsv, plainto_tsquery('simple', $1))::real
+    else 0.1::real
+  end`
 }
 
 func BuildSourceFilters(filters *searchv1.SearchFilters, start int, sourceMACColumn, locationColumn, sensorColumn, observedColumn string) SQLFilter {
