@@ -97,12 +97,12 @@ LIMIT $%d`, rankExpr, wirelessTagsSQL, compactEventDetailSQL, where, limitParam)
 }
 
 func sparseDevices(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) ([]RawResult, error) {
-	pattern := sparsePattern(query)
-	args := []any{query, pattern, opts.TopK * 4}
-	filter := BuildSourceFilters(opts.Filters, len(args)+1, "d.mac_id", "", "", "d.last_seen")
-	args = append(args, filter.Args...)
 	searchText := "lower(concat_ws(' ', d.mac_id, d.display_name, d.username, d.hostname, d.os_hint, d.mac_hint))"
-	where := WhereSQL([]string{searchText + " ILIKE $2 ESCAPE '\\'"}, filter.Clauses)
+	args, filter, limitParam := sparseSourceArgs(query, opts, func(start int) SQLFilter {
+		return BuildSourceFilters(opts.Filters, start, "d.mac_id", "", "", "d.last_seen")
+	})
+	where := WhereSQL([]string{sparseSourceMatchClause(query, searchText)}, filter.Clauses)
+	rankExpr := sparseSourceRankExpr(query, searchText)
 	sql := fmt.Sprintf(`
 SELECT
   d.mac_id,
@@ -116,7 +116,7 @@ SELECT
   ''::text as ssid,
   ''::text as frame_subtype,
   0::real as cosine_similarity,
-  greatest(similarity(%s, lower($1)), 0.1)::real as keyword_rank,
+  %s as keyword_rank,
   '[]'::jsonb::text as tags_json,
   jsonb_build_object(
     'display_name', d.display_name,
@@ -128,17 +128,17 @@ SELECT
 FROM devices d
 %s
 ORDER BY keyword_rank DESC, d.last_seen DESC
-LIMIT $3`, searchText, where)
+LIMIT $%d`, rankExpr, where, limitParam)
 	return scanSparseRows(ctx, pool, sql, args...)
 }
 
 func sparseBehaviours(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) ([]RawResult, error) {
-	pattern := sparsePattern(query)
-	args := []any{query, pattern, opts.TopK * 4}
-	filter := BuildSourceFilters(opts.Filters, len(args)+1, "b.source_mac", "b.location_id", "b.sensor_id", "b.window_start")
-	args = append(args, filter.Args...)
 	searchText := "lower(concat_ws(' ', b.snapshot_key, b.source_mac, b.location_id, b.sensor_id, b.embedding_text, b.text_summary, b.protocol_mix::text, b.frame_type_distribution::text, b.mac_rotation_indicators::text))"
-	where := WhereSQL([]string{searchText + " ILIKE $2 ESCAPE '\\'"}, filter.Clauses)
+	args, filter, limitParam := sparseSourceArgs(query, opts, func(start int) SQLFilter {
+		return BuildSourceFilters(opts.Filters, start, "b.source_mac", "b.location_id", "b.sensor_id", "b.window_start")
+	})
+	where := WhereSQL([]string{sparseSourceMatchClause(query, searchText)}, filter.Clauses)
+	rankExpr := sparseSourceRankExpr(query, searchText)
 	sql := fmt.Sprintf(`
 SELECT
   b.snapshot_key,
@@ -152,7 +152,7 @@ SELECT
   ''::text as ssid,
   ''::text as frame_subtype,
   0::real as cosine_similarity,
-  greatest(similarity(%s, lower($1)), 0.1)::real as keyword_rank,
+  %s as keyword_rank,
   '[]'::jsonb::text as tags_json,
   jsonb_build_object(
     'snapshot_key', b.snapshot_key,
@@ -164,17 +164,17 @@ SELECT
 FROM vec_behaviour_snapshots b
 %s
 ORDER BY keyword_rank DESC, b.window_start DESC
-LIMIT $3`, searchText, where)
+LIMIT $%d`, rankExpr, where, limitParam)
 	return scanSparseRows(ctx, pool, sql, args...)
 }
 
 func sparseSequences(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) ([]RawResult, error) {
-	pattern := sparsePattern(query)
-	args := []any{query, pattern, opts.TopK * 4}
-	filter := BuildSourceFilters(opts.Filters, len(args)+1, "s.source_mac", "s.location_id", "s.sensor_id", "s.window_start")
-	args = append(args, filter.Args...)
 	searchText := "lower(concat_ws(' ', s.session_key, s.source_mac, s.location_id, s.sensor_id, s.sequence_tokens, s.semantic_tokens))"
-	where := WhereSQL([]string{searchText + " ILIKE $2 ESCAPE '\\'"}, filter.Clauses)
+	args, filter, limitParam := sparseSourceArgs(query, opts, func(start int) SQLFilter {
+		return BuildSourceFilters(opts.Filters, start, "s.source_mac", "s.location_id", "s.sensor_id", "s.window_start")
+	})
+	where := WhereSQL([]string{sparseSourceMatchClause(query, searchText)}, filter.Clauses)
+	rankExpr := sparseSourceRankExpr(query, searchText)
 	sql := fmt.Sprintf(`
 SELECT
   s.session_key,
@@ -188,7 +188,7 @@ SELECT
   ''::text as ssid,
   ''::text as frame_subtype,
   0::real as cosine_similarity,
-  greatest(similarity(%s, lower($1)), 0.1)::real as keyword_rank,
+  %s as keyword_rank,
   '[]'::jsonb::text as tags_json,
   jsonb_build_object(
     'session_key', s.session_key,
@@ -199,7 +199,7 @@ SELECT
 FROM vec_frame_sequences s
 %s
 ORDER BY keyword_rank DESC, s.window_start DESC
-LIMIT $3`, searchText, where)
+LIMIT $%d`, rankExpr, where, limitParam)
 	return scanSparseRows(ctx, pool, sql, args...)
 }
 
@@ -266,6 +266,35 @@ func sparseEventArgs(query string, opts Options) ([]any, SQLFilter, int) {
 	filter := BuildWirelessFilters(opts.Filters, len(args)+1)
 	args = append(args, filter.Args...)
 	return args, filter, 2
+}
+
+func sparseSourceArgs(query string, opts Options, buildFilter func(start int) SQLFilter) ([]any, SQLFilter, int) {
+	limit := opts.TopK * 4
+	if isWildcardAllSearch(query) {
+		args := []any{limit}
+		filter := buildFilter(len(args) + 1)
+		args = append(args, filter.Args...)
+		return args, filter, 1
+	}
+
+	args := []any{query, sparsePattern(query), limit}
+	filter := buildFilter(len(args) + 1)
+	args = append(args, filter.Args...)
+	return args, filter, 3
+}
+
+func sparseSourceMatchClause(query, searchText string) string {
+	if isWildcardAllSearch(query) {
+		return "true"
+	}
+	return searchText + " ILIKE $2 ESCAPE '\\'"
+}
+
+func sparseSourceRankExpr(query, searchText string) string {
+	if isWildcardAllSearch(query) {
+		return "0.1::real"
+	}
+	return fmt.Sprintf("greatest(similarity(%s, lower($1)), 0.1)::real", searchText)
 }
 
 func sparsePattern(query string) string {

@@ -9,8 +9,6 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
         return;
     }
 
-    const BEARER_MAX_MASK_LEN: usize = 2_048;
-
     fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
         if needle.is_empty() || start >= haystack.len() {
             return None;
@@ -21,19 +19,9 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
             .map(|index| start + index)
     }
 
-    fn mask_range(buf: &mut [u8], start: usize, delimiters: &[u8]) {
-        let _ = mask_range_with_limit(buf, start, delimiters, usize::MAX);
-    }
-
-    fn mask_range_with_limit(
-        buf: &mut [u8],
-        start: usize,
-        delimiters: &[u8],
-        max_len: usize,
-    ) -> usize {
+    fn mask_range(buf: &mut [u8], start: usize, delimiters: &[u8]) -> usize {
         let mut idx = start;
-        let end = start.saturating_add(max_len).min(buf.len());
-        while idx < end && (delimiters.is_empty() || !delimiters.contains(&buf[idx])) {
+        while idx < buf.len() && (delimiters.is_empty() || !delimiters.contains(&buf[idx])) {
             buf[idx] = b'*';
             idx += 1;
         }
@@ -93,7 +81,7 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     // Intentionally masks case-insensitive bearer tokens wherever they appear, not just header lines.
     while let Some(pos) = find_bytes(&lower, b"bearer ", search_from) {
         let value_start = pos + "bearer ".len();
-        search_from = mask_range_with_limit(buf, value_start, b"\r\n\"'}],", BEARER_MAX_MASK_LEN)
+        search_from = mask_range(buf, value_start, b"\r\n\"'}],")
             .saturating_add(1)
             .min(lower.len());
     }
@@ -416,5 +404,24 @@ access_token=formaccess&refresh_token=formrefresh&id_token=formid&client_secret=
         assert!(!redacted.contains("def"));
         assert!(!redacted.contains("ghi"));
         assert!(redacted.contains("Next: keep"));
+    }
+
+    #[test]
+    fn bearer_redaction_masks_tokens_longer_than_legacy_limit() {
+        let token = "a".repeat(2_200);
+        let payload = format!("Authorization: Bearer {token}\r\nNext: keep\r\n").into_bytes();
+        let mut log_payload = payload.clone();
+
+        redact_sensitive_data(&mut log_payload);
+        let redacted_log = String::from_utf8(log_payload).unwrap();
+        assert!(!redacted_log.contains(&token));
+        assert!(!redacted_log.contains(&"a".repeat(64)));
+        assert!(redacted_log.contains("Next: keep"));
+
+        let preview = payload_preview_json(&payload, b"", payload.len() as u64, 0, payload.len());
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains(&token));
+        assert!(!serialized.contains(&"a".repeat(64)));
+        assert!(serialized.contains("Next: keep"));
     }
 }

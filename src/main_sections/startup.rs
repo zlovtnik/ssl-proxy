@@ -125,6 +125,7 @@ fn admin_api_key_matches(provided: &str, key: &str) -> bool {
 
 const ADMIN_AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
 const ADMIN_AUTH_MAX_FAILURES: u32 = 8;
+const ADMIN_AUTH_MAX_TRACKED_IPS: usize = 4096;
 
 #[derive(Clone, Debug)]
 struct AdminAuthFailureState {
@@ -139,6 +140,16 @@ struct AdminAuthRateLimiter {
 
 impl AdminAuthRateLimiter {
     fn record_failure(&self, ip: IpAddr, now: Instant) -> u32 {
+        self.evict_expired(now);
+
+        if let Some(mut entry) = self.failures_by_ip.get_mut(&ip) {
+            return Self::increment_failure(entry.value_mut(), now);
+        }
+
+        if self.failures_by_ip.len() >= ADMIN_AUTH_MAX_TRACKED_IPS {
+            return ADMIN_AUTH_MAX_FAILURES;
+        }
+
         let mut entry = self
             .failures_by_ip
             .entry(ip)
@@ -146,7 +157,10 @@ impl AdminAuthRateLimiter {
                 window_started: now,
                 failures: 0,
             });
+        Self::increment_failure(entry.value_mut(), now)
+    }
 
+    fn increment_failure(entry: &mut AdminAuthFailureState, now: Instant) -> u32 {
         if now.duration_since(entry.window_started) >= ADMIN_AUTH_FAILURE_WINDOW {
             entry.window_started = now;
             entry.failures = 0;
@@ -154,6 +168,20 @@ impl AdminAuthRateLimiter {
 
         entry.failures = entry.failures.saturating_add(1);
         entry.failures
+    }
+
+    fn evict_expired(&self, now: Instant) {
+        let expired: Vec<IpAddr> = self
+            .failures_by_ip
+            .iter()
+            .filter_map(|entry| {
+                (now.duration_since(entry.window_started) >= ADMIN_AUTH_FAILURE_WINDOW)
+                    .then_some(*entry.key())
+            })
+            .collect();
+        for ip in expired {
+            self.failures_by_ip.remove(&ip);
+        }
     }
 
     fn record_success(&self, ip: IpAddr) {

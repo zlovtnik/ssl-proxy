@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -90,11 +91,13 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			return
 		}
 		log = log.With().
-			Str("query", truncate(req.Query, 120)).
+			Bool("has_query", strings.TrimSpace(req.Query) != "").
+			Str("query_hash", shortHash(req.Query)).
 			Str("kind", req.Kind.String()).
 			Str("mode", req.Mode.String()).
 			Int32("top_k", req.TopK).
-			Str("session_id", req.SessionId).
+			Bool("has_session_id", strings.TrimSpace(req.SessionId) != "").
+			Str("session_id_hash", shortHash(req.SessionId)).
 			Bool("has_filters", req.Filters != nil).
 			Logger()
 		log.Info().Msg("search dispatched")
@@ -135,11 +138,13 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			return
 		}
 		log = log.With().
-			Str("query", truncate(req.Query, 120)).
+			Bool("has_query", strings.TrimSpace(req.Query) != "").
+			Str("query_hash", shortHash(req.Query)).
 			Str("kind", req.Kind.String()).
 			Str("mode", req.Mode.String()).
 			Int32("top_k", req.TopK).
-			Str("session_id", req.SessionId).
+			Bool("has_session_id", strings.TrimSpace(req.SessionId) != "").
+			Str("session_id_hash", shortHash(req.SessionId)).
 			Bool("has_filters", req.Filters != nil).
 			Logger()
 		log.Info().Msg("search stream dispatched")
@@ -193,8 +198,10 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		query := r.URL.Query().Get("query")
 		kind := parseKind(r.URL.Query().Get("kind"))
 		log = log.With().
-			Str("source_key", sourceKey).
-			Str("query", truncate(query, 120)).
+			Bool("has_source_key", strings.TrimSpace(sourceKey) != "").
+			Str("source_key_hash", shortHash(sourceKey)).
+			Bool("has_query", strings.TrimSpace(query) != "").
+			Str("query_hash", shortHash(query)).
 			Str("kind", kind.String()).
 			Logger()
 		log.Info().Msg("explain request started")
@@ -225,7 +232,8 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			Str("endpoint", "/v1/suggest/filters").
 			Str("method", "GET").
 			Str("req_id", reqID).
-			Str("prefix", prefix).
+			Bool("has_prefix", strings.TrimSpace(prefix) != "").
+			Str("prefix_hash", shortHash(prefix)).
 			Logger()
 		log.Info().Msg("suggest filters request started")
 
@@ -242,7 +250,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			Int("sensor_ids", len(resp.SensorIds)).
 			Int("frame_subtypes", len(resp.FrameSubtypes)).
 			Msg("suggest filters completed")
-		writeJSON(w, http.StatusOK, resp)
+		writeProtoJSON(w, http.StatusOK, resp)
 	})
 	registerJSON(mux, "POST", "/v1/graph", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
@@ -264,8 +272,10 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 			}
 		}
 		log = log.With().
-			Str("mac", filters.SourceMAC).
-			Str("ssid", filters.SSID).
+			Bool("has_mac", strings.TrimSpace(filters.SourceMAC) != "").
+			Str("mac_hash", shortHash(filters.SourceMAC)).
+			Bool("has_ssid", strings.TrimSpace(filters.SSID) != "").
+			Str("ssid_hash", shortHash(filters.SSID)).
 			Int("kinds", len(filters.Kinds)).
 			Int("location_ids", len(filters.LocationIDs)).
 			Int("sensor_ids", len(filters.SensorIDs)).
@@ -355,15 +365,13 @@ func registerJSON(mux *runtime.ServeMux, method, pattern string, tokenAuth *auth
 }
 
 func writeProtoJSON(w http.ResponseWriter, status int, msg proto.Message) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
 	encoded, err := protojson.Marshal(msg)
 	if err != nil {
-		// Fallback — should not happen for well-formed messages
-		w.Header().Del("Content-Type")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_, _ = w.Write(encoded)
 }
 
@@ -392,11 +400,13 @@ func parseKind(value string) searchv1.SearchKind {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+func shortHash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
 	}
-	return s[:maxLen] + "..."
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func requestID() string {

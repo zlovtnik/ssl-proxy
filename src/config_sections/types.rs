@@ -240,7 +240,7 @@ fn redact_url_userinfo(value: Option<&str>) -> Option<String> {
             }
         }
         if let Some((userinfo, suffix)) = raw.split_once('@') {
-            if userinfo.contains(':') {
+            if !userinfo.is_empty() {
                 return format!("[REDACTED]@{suffix}");
             }
         }

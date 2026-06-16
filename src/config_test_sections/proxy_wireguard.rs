@@ -437,3 +437,28 @@
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("super-secret"));
     }
+
+    #[test]
+    fn proxy_config_debug_redacts_schemeless_userinfo() {
+        let config = ProxyConfig {
+            port: 8080,
+            transparent_port: 8081,
+            explicit_enabled: true,
+            max_connections: 100,
+            tarpit_max_connections: 10,
+            credentials: None,
+            upstream_proxy: Some("alice@proxy.internal:8080".to_string()),
+            tunnel_endpoint: Some("bob@example.internal:443".to_string()),
+            enable_dns_lookups: true,
+            fail_closed_no_sni: false,
+            capture_plaintext_payloads: false,
+            forensic_sentry_enabled: false,
+            forensic_monitor_interface: None,
+        };
+
+        let rendered = format!("{config:?}");
+        assert!(rendered.contains("[REDACTED]@proxy.internal:8080"));
+        assert!(rendered.contains("[REDACTED]@example.internal:443"));
+        assert!(!rendered.contains("alice@"));
+        assert!(!rendered.contains("bob@"));
+    }

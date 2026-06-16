@@ -32,17 +32,18 @@ ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.revision=$VCS_REF \
       org.opencontainers.image.created=$BUILD_DATE
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
         curl \
         iproute2 \
         iptables \
         iw \
+        libcap2-bin \
+        libpcap0.8 \
         openssl \
         procps \
         tzdata \
-        libpcap0.8 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/atheros-sensor /usr/local/bin/atheros-sensor
@@ -60,17 +61,18 @@ ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.revision=$VCS_REF \
       org.opencontainers.image.created=$BUILD_DATE
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
         curl \
         iproute2 \
         iptables \
         iw \
+        libcap2-bin \
+        libpcap0.8 \
         openssl \
         procps \
         tzdata \
-        libpcap0.8 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=coredns /coredns /usr/local/bin/coredns

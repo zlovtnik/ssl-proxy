@@ -93,7 +93,7 @@ pub fn parse_wg_show_dump(
             let line_number = idx + 1;
             let parts: Vec<_> = line.split('\t').collect();
             if parts.len() < 8 {
-                debug!(%line, "skipping malformed wg dump line");
+                debug!(line_number, "skipping malformed wg dump line");
                 return Err(WgDumpParseError::MalformedLine { line: line_number });
             }
             validate_wg_public_key(parts[0])

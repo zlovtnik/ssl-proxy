@@ -107,6 +107,10 @@ async fn run_session_receiver(
             metrics
                 .sessions_closed_shutdown
                 .fetch_add(1, Ordering::Relaxed);
+        } else {
+            metrics
+                .sessions_evicted_send_failure
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
     session.close();

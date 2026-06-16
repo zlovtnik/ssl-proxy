@@ -121,6 +121,32 @@ func TestSparseEventArgsAvoidSkippedParameterForWildcardAll(t *testing.T) {
 	require.NotContains(t, sparseEventRankExpr("*"), "$1")
 }
 
+func TestSparseSourceArgsAvoidRankingForWildcardAll(t *testing.T) {
+	t.Parallel()
+
+	opts := Options{
+		TopK: 25,
+		Filters: &searchv1.SearchFilters{
+			LocationIds: []string{"lab"},
+		},
+	}
+	args, filter, limitParam := sparseSourceArgs("*", opts, func(start int) SQLFilter {
+		return BuildSourceFilters(opts.Filters, start, "d.mac_id", "d.location_id", "d.sensor_id", "d.last_seen")
+	})
+
+	matchClause := sparseSourceMatchClause("*", "lower(d.mac_id)")
+	rankExpr := sparseSourceRankExpr("*", "lower(d.mac_id)")
+	where := WhereSQL([]string{matchClause}, filter.Clauses)
+
+	require.Equal(t, 1, limitParam)
+	require.Equal(t, []any{100, []string{"lab"}}, args)
+	require.Equal(t, "true", matchClause)
+	require.Equal(t, "0.1::real", rankExpr)
+	require.NotContains(t, where, "$1")
+	require.Contains(t, where, "$2::text[]")
+	require.NotContains(t, rankExpr, "similarity")
+}
+
 func TestSparseEventArgsKeepsQueryFirstForTextSearch(t *testing.T) {
 	t.Parallel()
 

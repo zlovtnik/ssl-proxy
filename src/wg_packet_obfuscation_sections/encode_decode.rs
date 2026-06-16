@@ -207,6 +207,12 @@ pub fn validate_framed_header(
     packet_len: usize,
     settings: &WgPacketObfuscation,
 ) -> Result<(), PacketDecodeError> {
+    if packet_len > buffer.len() {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: buffer.len(),
+            minimum: packet_len,
+        });
+    }
     if packet_len < FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN {
         return Err(PacketDecodeError::PacketTooShort {
             actual: packet_len,
