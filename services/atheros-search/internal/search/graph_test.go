@@ -35,15 +35,18 @@ func TestGraphDeviceSSIDScopeIncludesWirelessEvidenceSources(t *testing.T) {
 
 	clauses := []string{}
 	args := []any{200}
-	addGraphDeviceSSIDScope(&clauses, &args, "d.mac_id", "lab%net")
+	addGraphDeviceSSIDScope(&clauses, &args, "d.mac_id", "Lab%Net")
 
 	require.Len(t, clauses, 1)
 	require.Equal(t, "%lab\\%net%", args[1])
 	require.Contains(t, clauses[0], "FROM wireless_clients wc")
-	require.Contains(t, clauses[0], "FROM sync_events_expanded se")
+	require.Contains(t, clauses[0], "FROM wireless_frames wf")
 	require.Contains(t, clauses[0], "FROM wireless_shadow_alerts s")
 	require.Contains(t, clauses[0], "lower(wc.client_mac) = lower(d.mac_id)")
-	require.Contains(t, clauses[0], "se.ssid ilike $2")
+	require.Contains(t, clauses[0], "lower(coalesce(wc.ssid, '')) like $2")
+	require.Contains(t, clauses[0], "lower(coalesce(wf.ssid, '')) like $2")
+	require.Contains(t, clauses[0], "lower(coalesce(s.ssid, '')) like $2")
+	require.NotContains(t, strings.ToLower(clauses[0]), "ilike")
 }
 
 func TestGraphClusterSSIDScopeRequiresMemberEvidence(t *testing.T) {
@@ -57,7 +60,7 @@ func TestGraphClusterSSIDScopeRequiresMemberEvidence(t *testing.T) {
 	require.Equal(t, "%lab-net%", args[1])
 	require.Contains(t, clauses[0], "FROM unnest(c.mac_ids) AS member(mac)")
 	require.Contains(t, clauses[0], "lower(wc.client_mac) = lower(member.mac)")
-	require.Contains(t, clauses[0], "lower(coalesce(se.source_mac, '')) = lower(member.mac)")
+	require.Contains(t, clauses[0], "lower(coalesce(wf.source_mac, '')) = lower(member.mac)")
 	require.Contains(t, clauses[0], "lower(s.source_mac) = lower(member.mac)")
 }
 
@@ -80,12 +83,14 @@ func TestGraphObservedAPSQLBoundsRecentSourcesBeforeGrouping(t *testing.T) {
 
 	require.Equal(t, []any{graphDefaultLimit, 4000, []string{"lab"}, []string{"lab"}}, args)
 	require.Contains(t, sql, "WITH recent_event_ap AS")
-	require.Contains(t, sql, "se.stream_name = 'wireless.audit'")
-	require.Contains(t, sql, "se.status = 'batched'")
-	require.Contains(t, sql, "coalesce(se.location_id, '') = any($3::text[])")
+	require.Contains(t, sql, "FROM sync_events e")
+	require.Contains(t, sql, "JOIN wireless_frames wf ON wf.dedupe_key = e.dedupe_key")
+	require.Contains(t, sql, "e.stream_name = 'wireless.audit'")
+	require.Contains(t, sql, "e.status = 'batched'")
+	require.Contains(t, sql, "coalesce(wf.location_id, '') = any($3::text[])")
 	require.Contains(t, sql, "coalesce(wc.location_id, '') = any($4::text[])")
 
-	eventLimit := strings.Index(sql, "ORDER BY se.observed_at DESC\n  LIMIT $2")
+	eventLimit := strings.Index(sql, "ORDER BY e.observed_at DESC\n  LIMIT $2")
 	clientLimit := strings.Index(sql, "ORDER BY wc.last_seen DESC\n  LIMIT $2")
 	firstGroup := strings.Index(sql, "GROUP BY ssid, bssid, location_id")
 	require.NotEqual(t, -1, eventLimit)
@@ -93,6 +98,24 @@ func TestGraphObservedAPSQLBoundsRecentSourcesBeforeGrouping(t *testing.T) {
 	require.NotEqual(t, -1, firstGroup)
 	require.Less(t, eventLimit, firstGroup)
 	require.Less(t, clientLimit, firstGroup)
+}
+
+func TestGraphObservedAPSQLUsesIndexedSSIDPredicates(t *testing.T) {
+	t.Parallel()
+
+	sql, args := graphObservedAPSQL(GraphFilters{
+		Limit: graphDefaultLimit,
+		SSID:  "Lab%Net",
+	})
+
+	require.Equal(t, []any{graphDefaultLimit, 4000, "%lab\\%net%", "%lab\\%net%"}, args)
+	require.Contains(t, sql, "nullif(wf.ssid, '') is not null")
+	require.Contains(t, sql, "lower(coalesce(wf.ssid, '')) like $3 ESCAPE '\\'")
+	require.Contains(t, sql, "nullif(wc.ssid, '') is not null")
+	require.Contains(t, sql, "lower(coalesce(wc.ssid, '')) like $4 ESCAPE '\\'")
+	require.NotContains(t, sql, "lower(coalesce(wf.ssid, '')) = any")
+	require.NotContains(t, strings.ToLower(sql), "ilike")
+	require.NotContains(t, sql, "sync_events_expanded")
 }
 
 func TestPruneExpiredGraphCacheRemovesExpiredEntries(t *testing.T) {

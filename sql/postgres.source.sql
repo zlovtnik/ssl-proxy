@@ -688,6 +688,15 @@ create index if not exists wireless_clients_client_mac_idx on wireless_clients (
 create index if not exists wireless_clients_last_seen_idx on wireless_clients (last_seen desc);
 create index if not exists wireless_clients_known_bssid_idx on wireless_clients (known_bssid) where known_bssid is not null;
 create index if not exists wireless_shadow_alerts_open_idx on wireless_shadow_alerts (last_occurred_at desc) where resolved_at is null;
+create index if not exists wireless_clients_graph_ssid_trgm_idx
+  on wireless_clients using gin (lower(coalesce(ssid, '')) gin_trgm_ops)
+  where nullif(ssid, '') is not null;
+create index if not exists wireless_shadow_alerts_graph_ssid_trgm_idx
+  on wireless_shadow_alerts using gin (lower(coalesce(ssid, '')) gin_trgm_ops)
+  where nullif(ssid, '') is not null;
+create index if not exists wireless_authorized_networks_graph_ssid_trgm_idx
+  on wireless_authorized_networks using gin (lower(coalesce(ssid, '')) gin_trgm_ops)
+  where nullif(ssid, '') is not null;
 create index if not exists devices_wg_pubkey_idx on devices (wg_pubkey);
 create index if not exists devices_username_idx on devices (username, last_seen desc);
 create index if not exists wireless_frames_ssid_idx on wireless_frames (ssid);
@@ -714,6 +723,9 @@ create index if not exists wireless_frames_search_tsv_idx on wireless_frames usi
 create index if not exists wireless_frames_common_search_idx on wireless_frames using gin ((
   lower(coalesce(sensor_id, '')) || ' ' || lower(coalesce(source_mac, '')) || ' ' || lower(coalesce(ssid, ''))
 ) gin_trgm_ops);
+create index if not exists wireless_frames_graph_ssid_trgm_idx
+  on wireless_frames using gin (lower(coalesce(ssid, '')) gin_trgm_ops)
+  where nullif(ssid, '') is not null;
 create index if not exists wireless_frames_device_fingerprint_idx on wireless_frames (device_fingerprint) where device_fingerprint is not null;
 create index if not exists wireless_frames_security_flags_idx on wireless_frames (security_flags) where security_flags <> 0;
 create index if not exists wireless_frames_handshake_captured_idx on wireless_frames (dedupe_key) where handshake_captured;
@@ -2991,22 +3003,34 @@ begin
     where existing.embedding_id is null
        or fs.updated_at > existing.embedded_at
   ),
-  graph_jobs as (
-    select
-      'vec_infrastructure_graph'::text as source_table,
-      source_key,
-      p_model as embedding_model,
-      'infrastructure_subgraph'::text as embedding_kind,
-      15 as priority
+  graph_keys as (
+    select source_key, max(updated_at) as source_updated_at
     from (
-      select distinct node_a as source_key
+      select node_a as source_key, updated_at
       from vec_infrastructure_graph
       where node_a_type = 'bssid'
-      union
-      select distinct node_b as source_key
+      union all
+      select node_b as source_key, updated_at
       from vec_infrastructure_graph
       where node_b_type = 'bssid'
     ) keys
+    group by source_key
+  ),
+  graph_jobs as (
+    select
+      'vec_infrastructure_graph'::text as source_table,
+      keys.source_key,
+      p_model as embedding_model,
+      'infrastructure_subgraph'::text as embedding_kind,
+      15 as priority
+    from graph_keys keys
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_infrastructure_graph'
+     and existing.source_key = keys.source_key
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'infrastructure_subgraph'
+    where existing.embedding_id is null
+       or keys.source_updated_at > existing.embedded_at
   ),
   baseline_jobs as (
     select
@@ -4559,6 +4583,11 @@ begin
     select incoming.*
       from incoming
       join configured_streams on configured_streams.stream_name = incoming.stream_name
+      left join sync_event_tombstones tombstone
+        on tombstone.dedupe_key = incoming.dedupe_key
+       and tombstone.stream_name = incoming.stream_name
+       and tombstone.expires_at > now()
+     where tombstone.dedupe_key is null
   ),
   upserted as (
     insert into sync_events (
@@ -4612,14 +4641,25 @@ begin
   select count(*) into v_recorded_count from upserted;
 
   perform coordinator.upsert_wireless_frame_from_payload(
-    raw.request->>'dedupe_key',
-    raw.request->>'stream_name',
+    raw.dedupe_key,
+    raw.stream_name,
     raw.payload
   )
-  from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  from (
+    select raw.request,
+           raw.payload,
+           raw.request->>'stream_name' as stream_name,
+           raw.request->>'dedupe_key' as dedupe_key
+      from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  ) raw
   join unnest(p_stream_names) as configured(stream_name)
-    on btrim(configured.stream_name) = raw.request->>'stream_name'
-  where raw.request->>'stream_name' = 'wireless.audit';
+    on btrim(configured.stream_name) = raw.stream_name
+  left join sync_event_tombstones tombstone
+    on tombstone.dedupe_key = raw.dedupe_key
+   and tombstone.stream_name = raw.stream_name
+   and tombstone.expires_at > now()
+  where raw.stream_name = 'wireless.audit'
+    and tombstone.dedupe_key is null;
 
   return coalesce(v_recorded_count, 0);
 end;

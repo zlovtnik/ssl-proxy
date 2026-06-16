@@ -147,22 +147,34 @@ begin
     where existing.embedding_id is null
        or tp.updated_at > existing.embedded_at
   ),
-  graph_jobs as (
-    select
-      'vec_infrastructure_graph'::text as source_table,
-      source_key,
-      p_model as embedding_model,
-      'infrastructure_subgraph'::text as embedding_kind,
-      15 as priority
+  graph_keys as (
+    select source_key, max(updated_at) as source_updated_at
     from (
-      select distinct node_a as source_key
+      select node_a as source_key, updated_at
       from vec_infrastructure_graph
       where node_a_type = 'bssid'
-      union
-      select distinct node_b as source_key
+      union all
+      select node_b as source_key, updated_at
       from vec_infrastructure_graph
       where node_b_type = 'bssid'
     ) keys
+    group by source_key
+  ),
+  graph_jobs as (
+    select
+      'vec_infrastructure_graph'::text as source_table,
+      keys.source_key,
+      p_model as embedding_model,
+      'infrastructure_subgraph'::text as embedding_kind,
+      15 as priority
+    from graph_keys keys
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_infrastructure_graph'
+     and existing.source_key = keys.source_key
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'infrastructure_subgraph'
+    where existing.embedding_id is null
+       or keys.source_updated_at > existing.embedded_at
   ),
   baseline_jobs as (
     select

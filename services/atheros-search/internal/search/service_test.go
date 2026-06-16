@@ -162,3 +162,9 @@ func TestSparseEventArgsKeepsQueryFirstForTextSearch(t *testing.T) {
 	require.Contains(t, WhereSQL([]string{sparseEventMatchClause("deauth")}, filter.Clauses), "$1")
 	require.Contains(t, WhereSQL([]string{sparseEventMatchClause("deauth")}, filter.Clauses), "$3::text[]")
 }
+
+func TestSuggestSSIDQueryIsUncapped(t *testing.T) {
+	t.Parallel()
+
+	require.NotContains(t, suggestSSIDSQL, "LIMIT")
+}

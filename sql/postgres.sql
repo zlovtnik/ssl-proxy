@@ -61,6 +61,7 @@
 \ir indexes/014_vec_detector_support_indexes.sql
 \ir indexes/015_sync_event_retention_indexes.sql
 \ir indexes/016_device_graph_workmap_indexes.sql
+\ir indexes/017_graph_ssid_indexes.sql
 
 -- functions
 \ir functions/001_sync_stable_uuid.sql
