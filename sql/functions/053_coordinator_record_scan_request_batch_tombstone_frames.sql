@@ -1,6 +1,6 @@
--- object: coordinator.record_scan_request_batch
+-- object: coordinator.record_scan_request_batch tombstone-safe wireless frame upsert
 -- folder: functions
--- depends_on: sync_events, wireless_frames
+-- depends_on: sync_events, sync_event_tombstones, wireless_frames
 create or replace function coordinator.record_scan_request_batch(
   p_requests jsonb[],
   p_payloads jsonb[],
@@ -133,14 +133,25 @@ begin
   select count(*) into v_recorded_count from upserted;
 
   perform coordinator.upsert_wireless_frame_from_payload(
-    raw.request->>'dedupe_key',
-    raw.request->>'stream_name',
+    raw.dedupe_key,
+    raw.stream_name,
     raw.payload
   )
-  from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  from (
+    select raw.request,
+           raw.payload,
+           raw.request->>'stream_name' as stream_name,
+           raw.request->>'dedupe_key' as dedupe_key
+      from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  ) raw
   join unnest(p_stream_names) as configured(stream_name)
-    on btrim(configured.stream_name) = raw.request->>'stream_name'
-  where raw.request->>'stream_name' = 'wireless.audit';
+    on btrim(configured.stream_name) = raw.stream_name
+  left join sync_event_tombstones tombstone
+    on tombstone.dedupe_key = raw.dedupe_key
+   and tombstone.stream_name = raw.stream_name
+   and tombstone.expires_at > now()
+  where raw.stream_name = 'wireless.audit'
+    and tombstone.dedupe_key is null;
 
   return coalesce(v_recorded_count, 0);
 end;

@@ -17,15 +17,7 @@ begin
     return 0;
   end if;
 
-  with cursor_state as (
-    select coalesce(
-      (select cursor_value::timestamptz
-         from sync_cursors
-        where stream_name = 'vec_embeddings.sync_events.wireless.audit'),
-      timestamptz '1970-01-01 00:00:00+00'
-    ) as last_cursor
-  ),
-  event_jobs as (
+  with event_jobs as (
     select
       'sync_events'::text as source_table,
       dedupe_key::text as source_key,
@@ -33,14 +25,18 @@ begin
       'event'::text as embedding_kind,
       10 as priority
     from sync_events_expanded source
-    cross join cursor_state cursor_state
     left join vec_embeddings existing
       on existing.source_table = 'sync_events'
      and existing.source_key = source.dedupe_key
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'event'
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'sync_events'
+     and existing_job.source_key = source.dedupe_key
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'event'
+    where source.stream_name = 'wireless.audit'
+      and source.status = 'batched'
       and (
         coalesce(nullif(p_event_embedding_scope, ''), 'high_signal') = 'all'
         or coalesce(source.handshake_captured, false)
@@ -76,10 +72,13 @@ begin
       )
       and (
         existing.embedding_id is null
-        or source.updated_at > existing.embedded_at
         or (
-          source.status = 'batched'
-          and source.updated_at > cursor_state.last_cursor
+          existing_job.job_id is null
+          and source.updated_at > existing.embedded_at
+        )
+        or (
+          existing_job.status = 'completed'
+          and source.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
         )
       )
   ),
@@ -96,8 +95,20 @@ begin
      and existing.source_key = source.mac_id
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'device'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'devices'
+     and existing_job.source_key = source.mac_id
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'device'
     where existing.embedding_id is null
-       or source.last_seen > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and source.last_seen > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and source.last_seen > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   behaviour_jobs as (
     select
@@ -112,8 +123,20 @@ begin
      and existing.source_key = source.snapshot_id::text
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'behaviour_window'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_behaviour_snapshots'
+     and existing_job.source_key = source.snapshot_id::text
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'behaviour_window'
     where existing.embedding_id is null
-       or source.updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and source.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and source.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   frame_sequence_jobs as (
     select
@@ -128,8 +151,20 @@ begin
      and existing.source_key = fs.session_key
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'frame_sequence'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_frame_sequences'
+     and existing_job.source_key = fs.session_key
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'frame_sequence'
     where existing.embedding_id is null
-       or fs.updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and fs.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and fs.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   timing_profile_jobs as (
     select
@@ -144,8 +179,20 @@ begin
      and existing.source_key = tp.profile_id::text
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'timing_profile'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_timing_profiles'
+     and existing_job.source_key = tp.profile_id::text
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'timing_profile'
     where existing.embedding_id is null
-       or tp.updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and tp.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and tp.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   graph_keys as (
     select source_key, max(updated_at) as source_updated_at
@@ -173,8 +220,20 @@ begin
      and existing.source_key = keys.source_key
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'infrastructure_subgraph'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_infrastructure_graph'
+     and existing_job.source_key = keys.source_key
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'infrastructure_subgraph'
     where existing.embedding_id is null
-       or keys.source_updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and keys.source_updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and keys.source_updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   baseline_jobs as (
     select
@@ -209,10 +268,22 @@ begin
      and existing.source_key = bp.bssid
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'baseline_profile'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_baseline_profiles'
+     and existing_job.source_key = bp.bssid
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'baseline_profile'
     where frames.new_frame_count >= 50
       and (
         existing.embedding_id is null
-        or bp.updated_at > existing.embedded_at
+        or (
+          existing_job.job_id is null
+          and bp.updated_at > existing.embedded_at
+        )
+        or (
+          existing_job.status = 'completed'
+          and bp.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+        )
       )
   ),
   inserted as (
@@ -263,8 +334,8 @@ begin
     coalesce(max(updated_at)::text, now()::text),
     now()
   from sync_events_expanded
-  where stream_name = 'wireless.audit'
-    and status = 'batched'
+  where sync_events_expanded.stream_name = 'wireless.audit'
+    and sync_events_expanded.status = 'batched'
   on conflict (stream_name) do update set
     cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
     updated_at = now();

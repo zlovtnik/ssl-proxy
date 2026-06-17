@@ -1523,8 +1523,8 @@ begin
       coalesce(session_key, payload->>'session_key') as session_key,
       observed_at
     from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
+    where source.stream_name = 'wireless.audit'
+      and source.status = 'batched'
       and observed_at >= now() - interval '24 hours'
       and coalesce(session_key, payload->>'session_key') is not null
       and coalesce(
@@ -1677,8 +1677,8 @@ begin
       sensor_id,
       location_id
     from sync_events_expanded
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
+    where source.stream_name = 'wireless.audit'
+      and source.status = 'batched'
       and observed_at >= p_from
       and observed_at < p_to
       and nullif(coalesce(bssid, payload->>'bssid', destination_bssid, payload->>'destination_bssid'), '') is not null
@@ -2922,15 +2922,7 @@ begin
     return 0;
   end if;
 
-  with cursor_state as (
-    select coalesce(
-      (select cursor_value::timestamptz
-         from sync_cursors
-        where stream_name = 'vec_embeddings.sync_events.wireless.audit'),
-      timestamptz '1970-01-01 00:00:00+00'
-    ) as last_cursor
-  ),
-  event_jobs as (
+  with event_jobs as (
     select
       'sync_events'::text as source_table,
       dedupe_key::text as source_key,
@@ -2938,20 +2930,27 @@ begin
       'event'::text as embedding_kind,
       10 as priority
     from sync_events_expanded source
-    cross join cursor_state cursor_state
     left join vec_embeddings existing
       on existing.source_table = 'sync_events'
      and existing.source_key = source.dedupe_key
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'event'
-    where stream_name = 'wireless.audit'
-      and status = 'batched'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'sync_events'
+     and existing_job.source_key = source.dedupe_key
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'event'
+    where source.stream_name = 'wireless.audit'
+      and source.status = 'batched'
       and (
         existing.embedding_id is null
-        or source.updated_at > existing.embedded_at
         or (
-          source.status = 'batched'
-          and source.updated_at > cursor_state.last_cursor
+          existing_job.job_id is null
+          and source.updated_at > existing.embedded_at
+        )
+        or (
+          existing_job.status = 'completed'
+          and source.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
         )
       )
   ),
@@ -2968,8 +2967,20 @@ begin
      and existing.source_key = source.mac_id
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'device'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'devices'
+     and existing_job.source_key = source.mac_id
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'device'
     where existing.embedding_id is null
-       or source.last_seen > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and source.last_seen > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and source.last_seen > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   behaviour_jobs as (
     select
@@ -2984,8 +2995,20 @@ begin
      and existing.source_key = source.snapshot_id::text
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'behaviour_window'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_behaviour_snapshots'
+     and existing_job.source_key = source.snapshot_id::text
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'behaviour_window'
     where existing.embedding_id is null
-       or source.updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and source.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and source.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   frame_sequence_jobs as (
     select
@@ -3000,8 +3023,20 @@ begin
      and existing.source_key = fs.session_key
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'frame_sequence'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_frame_sequences'
+     and existing_job.source_key = fs.session_key
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'frame_sequence'
     where existing.embedding_id is null
-       or fs.updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and fs.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and fs.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   graph_keys as (
     select source_key, max(updated_at) as source_updated_at
@@ -3029,8 +3064,20 @@ begin
      and existing.source_key = keys.source_key
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'infrastructure_subgraph'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_infrastructure_graph'
+     and existing_job.source_key = keys.source_key
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'infrastructure_subgraph'
     where existing.embedding_id is null
-       or keys.source_updated_at > existing.embedded_at
+       or (
+         existing_job.job_id is null
+         and keys.source_updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and keys.source_updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
   ),
   baseline_jobs as (
     select
@@ -3065,10 +3112,22 @@ begin
      and existing.source_key = bp.bssid
      and existing.embedding_model = p_model
      and existing.embedding_kind = 'baseline_profile'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_baseline_profiles'
+     and existing_job.source_key = bp.bssid
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'baseline_profile'
     where frames.new_frame_count >= 50
       and (
         existing.embedding_id is null
-        or bp.updated_at > existing.embedded_at
+        or (
+          existing_job.job_id is null
+          and bp.updated_at > existing.embedded_at
+        )
+        or (
+          existing_job.status = 'completed'
+          and bp.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+        )
       )
   ),
   inserted as (
@@ -3117,8 +3176,8 @@ begin
     coalesce(max(updated_at)::text, now()::text),
     now()
   from sync_events_expanded
-  where stream_name = 'wireless.audit'
-    and status = 'batched'
+  where sync_events_expanded.stream_name = 'wireless.audit'
+    and sync_events_expanded.status = 'batched'
   on conflict (stream_name) do update set
     cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
     updated_at = now();
@@ -4641,25 +4700,14 @@ begin
   select count(*) into v_recorded_count from upserted;
 
   perform coordinator.upsert_wireless_frame_from_payload(
-    raw.dedupe_key,
-    raw.stream_name,
+    raw.request->>'dedupe_key',
+    raw.request->>'stream_name',
     raw.payload
   )
-  from (
-    select raw.request,
-           raw.payload,
-           raw.request->>'stream_name' as stream_name,
-           raw.request->>'dedupe_key' as dedupe_key
-      from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
-  ) raw
+  from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
   join unnest(p_stream_names) as configured(stream_name)
-    on btrim(configured.stream_name) = raw.stream_name
-  left join sync_event_tombstones tombstone
-    on tombstone.dedupe_key = raw.dedupe_key
-   and tombstone.stream_name = raw.stream_name
-   and tombstone.expires_at > now()
-  where raw.stream_name = 'wireless.audit'
-    and tombstone.dedupe_key is null;
+    on btrim(configured.stream_name) = raw.request->>'stream_name'
+  where raw.request->>'stream_name' = 'wireless.audit';
 
   return coalesce(v_recorded_count, 0);
 end;
@@ -5624,6 +5672,162 @@ begin
     v_inserted := v_inserted + 1;
   end loop;
   return v_inserted;
+end;
+$$;
+
+create or replace function coordinator.record_scan_request_batch(
+  p_requests jsonb[],
+  p_payloads jsonb[],
+  p_payload_sha256s text[],
+  p_stream_names text[]
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_recorded_count integer := 0;
+begin
+  if cardinality(p_requests) <> cardinality(p_payloads)
+     or cardinality(p_requests) <> cardinality(p_payload_sha256s) then
+    raise exception 'record_scan_request_batch array length mismatch';
+  end if;
+
+  if exists (
+    with incoming as (
+      select raw.request->>'stream_name' as stream_name,
+             raw.request->>'dedupe_key' as dedupe_key
+        from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+    ),
+    configured_streams as (
+      select btrim(configured.stream_name) as stream_name
+        from unnest(p_stream_names) as configured(stream_name)
+       where btrim(configured.stream_name) <> ''
+    )
+    select 1
+      from incoming
+      join configured_streams on configured_streams.stream_name = incoming.stream_name
+     where nullif(dedupe_key, '') is null
+  ) then
+    raise exception 'scan request missing dedupe_key';
+  end if;
+
+  if exists (
+    with incoming as (
+      select raw.request->>'stream_name' as stream_name,
+             raw.request->>'payload_ref' as payload_ref
+        from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+    ),
+    configured_streams as (
+      select btrim(configured.stream_name) as stream_name
+        from unnest(p_stream_names) as configured(stream_name)
+       where btrim(configured.stream_name) <> ''
+    )
+    select 1
+      from incoming
+      join configured_streams on configured_streams.stream_name = incoming.stream_name
+     where nullif(payload_ref, '') is null
+  ) then
+    raise exception 'scan request missing payload_ref';
+  end if;
+
+  with incoming as (
+    select raw.request,
+           raw.payload,
+           raw.payload_sha256,
+           raw.request->>'stream_name' as stream_name,
+           raw.request->>'dedupe_key' as dedupe_key,
+           raw.request->>'payload_ref' as payload_ref,
+           raw.request->>'observed_at' as observed_at_text
+      from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  ),
+  configured_streams as (
+    select btrim(configured.stream_name) as stream_name
+      from unnest(p_stream_names) as configured(stream_name)
+     where btrim(configured.stream_name) <> ''
+  ),
+  valid as (
+    select incoming.*
+      from incoming
+      join configured_streams on configured_streams.stream_name = incoming.stream_name
+      left join sync_event_tombstones tombstone
+        on tombstone.dedupe_key = incoming.dedupe_key
+       and tombstone.stream_name = incoming.stream_name
+       and tombstone.expires_at > now()
+     where tombstone.dedupe_key is null
+  ),
+  upserted as (
+    insert into sync_events (
+      dedupe_key,
+      stream_name,
+      observed_at,
+      payload_ref,
+      payload,
+      payload_sha256,
+      status,
+      attempt_count,
+      last_error,
+      producer,
+      event_kind,
+      created_at,
+      updated_at
+    )
+    select dedupe_key,
+           stream_name,
+           observed_at_text::timestamptz,
+           payload_ref,
+           payload,
+           payload_sha256,
+           'pending',
+           0,
+           null,
+           'ssl-proxy',
+           nullif(payload->>'type', ''),
+           now(),
+           now()
+      from valid
+    on conflict (dedupe_key)
+    do update set
+      observed_at = excluded.observed_at,
+      payload_ref = excluded.payload_ref,
+      payload = coalesce(excluded.payload, sync_events.payload),
+      payload_sha256 = excluded.payload_sha256,
+      producer = excluded.producer,
+      event_kind = coalesce(excluded.event_kind, sync_events.event_kind),
+      status = case
+        when sync_events.status in ('pending', 'failed') then 'pending'
+        else sync_events.status
+      end,
+      last_error = case
+        when sync_events.status in ('pending', 'failed') then null
+        else sync_events.last_error
+      end,
+      updated_at = now()
+    returning 1
+  )
+  select count(*) into v_recorded_count from upserted;
+
+  perform coordinator.upsert_wireless_frame_from_payload(
+    raw.dedupe_key,
+    raw.stream_name,
+    raw.payload
+  )
+  from (
+    select raw.request,
+           raw.payload,
+           raw.request->>'stream_name' as stream_name,
+           raw.request->>'dedupe_key' as dedupe_key
+      from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
+  ) raw
+  join unnest(p_stream_names) as configured(stream_name)
+    on btrim(configured.stream_name) = raw.stream_name
+  left join sync_event_tombstones tombstone
+    on tombstone.dedupe_key = raw.dedupe_key
+   and tombstone.stream_name = raw.stream_name
+   and tombstone.expires_at > now()
+  where raw.stream_name = 'wireless.audit'
+    and tombstone.dedupe_key is null;
+
+  return coalesce(v_recorded_count, 0);
 end;
 $$;
 
