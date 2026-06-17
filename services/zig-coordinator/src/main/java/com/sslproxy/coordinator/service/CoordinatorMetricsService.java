@@ -33,9 +33,11 @@ public class CoordinatorMetricsService {
     private final CoordinatorProperties props;
     private final AtomicLong pendingLedgerGauge = new AtomicLong(0);
     private final AtomicLong backpressureActiveGauge = new AtomicLong(0);
+    private final AtomicLong ingestLedgerLastSuccessTimestampSeconds = new AtomicLong(0);
     private final Map<String, RouteStateMeters> routeStateMeters = new ConcurrentHashMap<>();
 
     private final Counter loopAttemptsCounter;
+    private final Counter ingestLedgerInvocationsCounter;
     private final Counter ingestProcessedCounter;
     private final Counter batchesDispatchedCounter;
     private final Counter heartbeatCounter;
@@ -55,6 +57,16 @@ public class CoordinatorMetricsService {
 
         loopAttemptsCounter = Counter.builder("coordinator.loop.attempts.total")
                 .description("Total main loop iterations")
+                .register(registry);
+
+        ingestLedgerInvocationsCounter = Counter.builder("coordinator.ingest.ledger.invocations.total")
+                .description("Total process_ingest_ledger invocations")
+                .register(registry);
+
+        Gauge.builder("coordinator.ingest.ledger.last.success.timestamp.seconds",
+                        ingestLedgerLastSuccessTimestampSeconds, AtomicLong::get)
+                .description("Unix timestamp in seconds for the last successful process_ingest_ledger invocation")
+                .baseUnit("seconds")
                 .register(registry);
 
         ingestProcessedCounter = Counter.builder("coordinator.ingest.processed.total")
@@ -83,6 +95,13 @@ public class CoordinatorMetricsService {
 
     public void incrementLoopCounter() {
         loopAttemptsCounter.increment();
+    }
+
+    public void recordIngestLedgerInvocation(boolean success) {
+        ingestLedgerInvocationsCounter.increment();
+        if (success) {
+            ingestLedgerLastSuccessTimestampSeconds.set(System.currentTimeMillis() / 1000);
+        }
     }
 
     public void recordIngestProcessed(long count) {
