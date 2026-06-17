@@ -12,19 +12,38 @@ language plpgsql
 as $$
 declare
   v_count integer := 0;
+  v_event_cursor timestamptz;
 begin
   if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
     return 0;
   end if;
 
-  with event_jobs as (
+  select coalesce(
+    (select cursor_value::timestamptz
+       from sync_cursors
+      where stream_name = 'vec_embeddings.sync_events.wireless.audit'),
+    timestamptz '1970-01-01 00:00:00+00'
+  )
+  into v_event_cursor;
+
+  with event_keys as (
+    select e.dedupe_key
+    from sync_events e
+    where e.stream_name = 'wireless.audit'
+      and e.status = 'batched'
+      and e.updated_at > v_event_cursor
+    order by e.updated_at, e.dedupe_key
+  ),
+  event_jobs as (
     select
       'sync_events'::text as source_table,
-      dedupe_key::text as source_key,
+      source.dedupe_key::text as source_key,
       p_model as embedding_model,
       'event'::text as embedding_kind,
       10 as priority
-    from sync_events_expanded source
+    from event_keys keys
+    join sync_events_expanded source
+      on source.dedupe_key = keys.dedupe_key
     left join vec_embeddings existing
       on existing.source_table = 'sync_events'
      and existing.source_key = source.dedupe_key
@@ -322,23 +341,26 @@ begin
       priority = least(vec_embedding_jobs.priority, excluded.priority),
       completed_at = null,
       content_sha256 = null,
+      attempts = 0,
       updated_at = now()
     where vec_embedding_jobs.status = 'completed'
     returning 1
   )
   select count(*) into v_count from inserted;
 
-  insert into sync_cursors (stream_name, cursor_value, updated_at)
-  select
-    'vec_embeddings.sync_events.wireless.audit',
-    coalesce(max(updated_at)::text, now()::text),
-    now()
-  from sync_events_expanded
-  where sync_events_expanded.stream_name = 'wireless.audit'
-    and sync_events_expanded.status = 'batched'
-  on conflict (stream_name) do update set
-    cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
-    updated_at = now();
+  if v_count > 0 then
+    insert into sync_cursors (stream_name, cursor_value, updated_at)
+    select
+      'vec_embeddings.sync_events.wireless.audit',
+      coalesce(max(updated_at)::text, now()::text),
+      now()
+    from sync_events_expanded
+    where sync_events_expanded.stream_name = 'wireless.audit'
+      and sync_events_expanded.status = 'batched'
+    on conflict (stream_name) do update set
+      cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
+      updated_at = now();
+  end if;
 
   perform vec_finish_job('vec_enqueue_embedding_jobs');
   return v_count;

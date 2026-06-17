@@ -1382,7 +1382,7 @@ create table if not exists vec_embeddings (
   embedded_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
+  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph', 'timing_profile')),
   constraint vec_embeddings_dimensions_chk check (embedding_dimensions > 0),
   constraint chk_embedding_dims_matches_embedding_dimensions check (vector_dims(embedding) = embedding_dimensions),
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
@@ -1522,7 +1522,7 @@ begin
       ) as frame_subtype,
       coalesce(session_key, payload->>'session_key') as session_key,
       observed_at
-    from sync_events_expanded
+    from sync_events_expanded as source
     where source.stream_name = 'wireless.audit'
       and source.status = 'batched'
       and observed_at >= now() - interval '24 hours'
@@ -1676,7 +1676,7 @@ begin
       stream_name,
       sensor_id,
       location_id
-    from sync_events_expanded
+    from sync_events_expanded as source
     where source.stream_name = 'wireless.audit'
       and source.status = 'batched'
       and observed_at >= p_from
@@ -2617,7 +2617,7 @@ create table if not exists vec_embedding_jobs (
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
+  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph', 'timing_profile')),
   constraint vec_embedding_jobs_status_chk check (status in ('pending', 'leased', 'completed', 'failed')),
   constraint vec_embedding_jobs_attempts_chk check (attempts >= 0 and max_attempts > 0),
   constraint vec_embedding_jobs_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
@@ -2910,26 +2910,46 @@ end;
 $$;
 
 create or replace function vec_enqueue_embedding_jobs(
-  p_model text default 'nomic-embed-text-v2-moe'
+  p_model text default 'nomic-embed-text-v2-moe',
+  p_event_embedding_scope text default 'high_signal'
 )
 returns integer
 language plpgsql
 as $$
 declare
   v_count integer := 0;
+  v_event_cursor timestamptz;
 begin
   if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
     return 0;
   end if;
 
-  with event_jobs as (
+  select coalesce(
+    (select cursor_value::timestamptz
+       from sync_cursors
+      where stream_name = 'vec_embeddings.sync_events.wireless.audit'),
+    timestamptz '1970-01-01 00:00:00+00'
+  )
+  into v_event_cursor;
+
+  with event_keys as (
+    select e.dedupe_key
+    from sync_events e
+    where e.stream_name = 'wireless.audit'
+      and e.status = 'batched'
+      and e.updated_at > v_event_cursor
+    order by e.updated_at, e.dedupe_key
+  ),
+  event_jobs as (
     select
       'sync_events'::text as source_table,
-      dedupe_key::text as source_key,
+      source.dedupe_key::text as source_key,
       p_model as embedding_model,
       'event'::text as embedding_kind,
       10 as priority
-    from sync_events_expanded source
+    from event_keys keys
+    join sync_events_expanded source
+      on source.dedupe_key = keys.dedupe_key
     left join vec_embeddings existing
       on existing.source_table = 'sync_events'
      and existing.source_key = source.dedupe_key
@@ -2942,6 +2962,39 @@ begin
      and existing_job.embedding_kind = 'event'
     where source.stream_name = 'wireless.audit'
       and source.status = 'batched'
+      and (
+        coalesce(nullif(p_event_embedding_scope, ''), 'high_signal') = 'all'
+        or coalesce(source.handshake_captured, false)
+        or coalesce(source.risk_score, coordinator.safe_double(source.payload->>'risk_score'), 0::double precision) >= 0.5
+        or coordinator.has_threat_tag(
+          case
+            when source.tags is not null and source.tags <> '[]'::jsonb then source.tags
+            else coordinator.safe_jsonb_array(source.payload->'tags')
+          end
+        )
+        or exists (
+          select 1
+          from vec_alerts alert
+          where alert.created_at >= source.observed_at - interval '1 hour'
+            and alert.created_at <= source.observed_at + interval '24 hours'
+            and (
+              alert.metadata->>'dedupe_key' = source.dedupe_key
+              or alert.metadata->>'source_key' = source.dedupe_key
+              or (
+                source.source_mac is not null
+                and lower(alert.source_mac) = lower(source.source_mac)
+              )
+              or (
+                source.bssid is not null
+                and lower(alert.metadata->>'bssid') = lower(source.bssid)
+              )
+              or (
+                source.destination_bssid is not null
+                and lower(alert.metadata->>'destination_bssid') = lower(source.destination_bssid)
+              )
+            )
+        )
+      )
       and (
         existing.embedding_id is null
         or (
@@ -3036,6 +3089,34 @@ begin
        or (
          existing_job.status = 'completed'
          and fs.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
+  ),
+  timing_profile_jobs as (
+    select
+      'vec_timing_profiles'::text as source_table,
+      tp.profile_id::text as source_key,
+      p_model as embedding_model,
+      'timing_profile'::text as embedding_kind,
+      17 as priority
+    from vec_timing_profiles tp
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_timing_profiles'
+     and existing.source_key = tp.profile_id::text
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'timing_profile'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_timing_profiles'
+     and existing_job.source_key = tp.profile_id::text
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'timing_profile'
+    where existing.embedding_id is null
+       or (
+         existing_job.job_id is null
+         and tp.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and tp.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
        )
   ),
   graph_keys as (
@@ -3153,6 +3234,8 @@ begin
       union all
       select * from frame_sequence_jobs
       union all
+      select * from timing_profile_jobs
+      union all
       select * from baseline_jobs
       union all
       select * from graph_jobs
@@ -3164,23 +3247,26 @@ begin
       priority = least(vec_embedding_jobs.priority, excluded.priority),
       completed_at = null,
       content_sha256 = null,
+      attempts = 0,
       updated_at = now()
     where vec_embedding_jobs.status = 'completed'
     returning 1
   )
   select count(*) into v_count from inserted;
 
-  insert into sync_cursors (stream_name, cursor_value, updated_at)
-  select
-    'vec_embeddings.sync_events.wireless.audit',
-    coalesce(max(updated_at)::text, now()::text),
-    now()
-  from sync_events_expanded
-  where sync_events_expanded.stream_name = 'wireless.audit'
-    and sync_events_expanded.status = 'batched'
-  on conflict (stream_name) do update set
-    cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
-    updated_at = now();
+  if v_count > 0 then
+    insert into sync_cursors (stream_name, cursor_value, updated_at)
+    select
+      'vec_embeddings.sync_events.wireless.audit',
+      coalesce(max(updated_at)::text, now()::text),
+      now()
+    from sync_events_expanded
+    where sync_events_expanded.stream_name = 'wireless.audit'
+      and sync_events_expanded.status = 'batched'
+    on conflict (stream_name) do update set
+      cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
+      updated_at = now();
+  end if;
 
   perform vec_finish_job('vec_enqueue_embedding_jobs');
   return v_count;

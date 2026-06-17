@@ -245,6 +245,18 @@ fn log_idle_secs_accepts_override() {
 }
 
 #[test]
+fn channel_hopping_defaults_on_and_accepts_override() {
+    let _env = test_env();
+
+    let config = AppConfig::from_env().unwrap();
+    assert!(config.channel_hop_enabled);
+
+    std::env::set_var("ATH_SENSOR_CHANNEL_HOP_ENABLED", "false");
+    let config = AppConfig::from_env().unwrap();
+    assert!(!config.channel_hop_enabled);
+}
+
+#[test]
 fn log_idle_secs_allows_zero_to_disable() {
     let _env = test_env();
     std::env::set_var("ATH_SENSOR_LOG_IDLE_SECS", "0");

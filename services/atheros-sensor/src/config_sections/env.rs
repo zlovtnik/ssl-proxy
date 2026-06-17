@@ -189,7 +189,7 @@ impl AppConfig {
                 .map_err(ConfigError::InvalidLogIdleSecs)?,
             sync,
             audit_window: audit_window_from_env()?,
-            channel_hop_enabled: read_bool("ATH_SENSOR_CHANNEL_HOP_ENABLED", false),
+            channel_hop_enabled: read_bool("ATH_SENSOR_CHANNEL_HOP_ENABLED", true),
             channel_hop_interval_ms: parse_u64("ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS", 1_000)
                 .unwrap_or(1_000)
                 .max(100),

@@ -20,6 +20,8 @@ func TestHTTPStatusFromError(t *testing.T) {
 		{name: "canceled", err: context.Canceled, want: http.StatusGatewayTimeout},
 		{name: "too large", err: errors.New("request body too large"), want: http.StatusRequestEntityTooLarge},
 		{name: "graph validation", err: errors.New("unsupported graph node kind \"embedding\""), want: http.StatusBadRequest},
+		{name: "inventory validation", err: errors.New("unsupported inventory grouping \"topology\""), want: http.StatusBadRequest},
+		{name: "merge decision validation", err: errors.New("unsupported merge decision \"delete\""), want: http.StatusBadRequest},
 		{name: "range validation", err: errors.New("observed_after must be before observed_before"), want: http.StatusBadRequest},
 		{name: "search query validation", err: errors.New("search query is required and must contain meaningful terms"), want: http.StatusBadRequest},
 		{name: "fallback", err: errors.New("boom"), want: http.StatusInternalServerError},
