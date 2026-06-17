@@ -61,6 +61,7 @@
 \ir indexes/014_vec_detector_support_indexes.sql
 \ir indexes/015_sync_event_retention_indexes.sql
 \ir indexes/016_device_graph_workmap_indexes.sql
+\ir indexes/017_graph_ssid_indexes.sql
 
 -- functions
 \ir functions/001_sync_stable_uuid.sql
@@ -116,6 +117,7 @@
 \ir functions/050_vec_job_lock_ttl_helpers.sql
 \ir functions/051_vec_device_graph_retention.sql
 \ir functions/052_coordinator_flush_probe_batch_bigint.sql
+\ir functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql

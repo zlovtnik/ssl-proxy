@@ -8,7 +8,7 @@ use std::{
 
 use chrono::NaiveTime;
 use serde::Deserialize;
-use ssl_proxy::config::SyncConfig;
+use sync_plane::SyncConfig;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,

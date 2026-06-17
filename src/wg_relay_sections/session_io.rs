@@ -6,6 +6,7 @@ async fn get_or_create_session(
     sessions: Arc<DashMap<SocketAddr, Arc<RelaySession>>>,
     shutdown: CancellationToken,
     clock: Arc<RelayClock>,
+    metrics: Arc<RelayMetrics>,
 ) -> io::Result<Arc<RelaySession>> {
     if let Some(existing) = sessions.get(&client_addr) {
         let session = existing.value().clone();
@@ -23,6 +24,7 @@ async fn get_or_create_session(
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
                 let session = Arc::new(RelaySession::new(upstream_socket, clock.now_millis()));
                 vacant.insert(session.clone());
+                metrics.active_sessions.fetch_add(1, Ordering::Relaxed);
                 (session, true)
             }
         }
@@ -38,6 +40,7 @@ async fn get_or_create_session(
             sessions_for_task,
             shutdown,
             clock.clone(),
+            metrics,
         ));
     }
 
@@ -53,6 +56,7 @@ async fn run_session_receiver(
     sessions: Arc<DashMap<SocketAddr, Arc<RelaySession>>>,
     shutdown: CancellationToken,
     clock: Arc<RelayClock>,
+    metrics: Arc<RelayMetrics>,
 ) {
     let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
     loop {
@@ -80,6 +84,7 @@ async fn run_session_receiver(
                 ) {
                     Ok(encoded_len) => encoded_len,
                     Err(err) => {
+                        metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(%client_addr, %err, "failed to encode WireGuard relay reply");
                         break;
                     }
@@ -87,12 +92,27 @@ async fn run_session_receiver(
                 if let Err(err) = public_socket.send_to(&buf[..encoded_len], client_addr).await {
                     warn!(%client_addr, %err, "failed to send obfuscated WireGuard packet to client");
                     break;
+                } else {
+                    metrics
+                        .packets_server_to_client
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
     }
 
-    remove_session_if_current(&sessions, client_addr, &session);
+    if remove_session_if_current(&sessions, client_addr, &session) {
+        metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);
+        if shutdown.is_cancelled() || session.shutdown.is_cancelled() {
+            metrics
+                .sessions_closed_shutdown
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            metrics
+                .sessions_evicted_send_failure
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
     session.close();
 }
 
@@ -101,6 +121,7 @@ async fn run_cleanup_loop(
     shutdown: CancellationToken,
     idle_timeout: Duration,
     clock: Arc<RelayClock>,
+    metrics: Arc<RelayMetrics>,
 ) {
     let mut interval = tokio::time::interval(cleanup_interval(idle_timeout));
     loop {
@@ -118,7 +139,12 @@ async fn run_cleanup_loop(
                     .collect();
 
                 for (client_addr, session) in stale_sessions {
-                    remove_session_if_current(&sessions, client_addr, &session);
+                    if remove_session_if_current(&sessions, client_addr, &session) {
+                        metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);
+                        metrics
+                            .sessions_evicted_idle
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                     session.close();
                 }
             }
@@ -130,6 +156,8 @@ fn remove_session_if_current(
     sessions: &DashMap<SocketAddr, Arc<RelaySession>>,
     client_addr: SocketAddr,
     session: &Arc<RelaySession>,
-) {
-    let _ = sessions.remove_if(&client_addr, |_, current| Arc::ptr_eq(current, session));
+) -> bool {
+    sessions
+        .remove_if(&client_addr, |_, current| Arc::ptr_eq(current, session))
+        .is_some()
 }

@@ -13,10 +13,12 @@ type SuggestCache struct {
 	Response  *searchv1.SuggestFiltersResponse
 }
 
+const suggestSSIDSQL = "SELECT DISTINCT ssid FROM wireless_frames WHERE ssid IS NOT NULL AND ($1 = '' OR ssid ILIKE $1 || '%' ESCAPE '\\') ORDER BY ssid"
+
 func SuggestFilters(ctx context.Context, pool *pgxpool.Pool, prefix string) (*searchv1.SuggestFiltersResponse, error) {
 	resp := &searchv1.SuggestFiltersResponse{}
 	escapedPrefix := escapeLike(prefix)
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT ssid FROM wireless_frames WHERE ssid IS NOT NULL AND ($1 = '' OR ssid ILIKE $1 || '%' ESCAPE '\\') ORDER BY ssid LIMIT 50", escapedPrefix, &resp.Ssids); err != nil {
+	if err := scanDistinct(ctx, pool, suggestSSIDSQL, escapedPrefix, &resp.Ssids); err != nil {
 		return nil, err
 	}
 	if err := scanDistinct(ctx, pool, "SELECT DISTINCT location_id FROM wireless_frames WHERE location_id IS NOT NULL AND ($1 = '' OR location_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY location_id LIMIT 50", escapedPrefix, &resp.LocationIds); err != nil {

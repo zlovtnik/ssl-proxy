@@ -8,7 +8,16 @@
 #[path = "config_tests.rs"]
 mod tests;
 
-include!("config_sections/types.rs");
-include!("config_sections/env_core.rs");
-include!("config_sections/sync_tls.rs");
-include!("config_sections/parsing.rs");
+#[path = "config_sections/env_core.rs"]
+mod env_core;
+#[path = "config_sections/parsing.rs"]
+mod parsing;
+#[path = "config_sections/sync_tls.rs"]
+mod sync_tls;
+#[path = "config_sections/types.rs"]
+mod types;
+
+#[cfg(test)]
+pub(crate) use parsing::read_secret;
+pub use sync_plane::SyncConfig;
+pub use types::*;

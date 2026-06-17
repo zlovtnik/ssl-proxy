@@ -19,6 +19,10 @@ const (
 	graphDefaultLimit = 200
 	graphMaxLimit     = 500
 	graphCacheTTL     = 10 * time.Second
+
+	graphObservedAPScanMultiplier = 20
+	graphObservedAPMinScanLimit   = 1000
+	graphObservedAPMaxScanLimit   = 10000
 )
 
 type NodeKind string
@@ -312,11 +316,84 @@ func graphFocusBSSIDs(filters GraphFilters) []string {
 }
 
 func graphFocusSSIDs(filters GraphFilters) []string {
-	values := append([]string{}, filters.focusSSIDs...)
-	if filters.SSID != "" {
-		values = append(values, filters.SSID)
+	return normalizeLowerList(filters.focusSSIDs)
+}
+
+func graphSSIDLikePattern(ssid string) string {
+	return "%" + escapeLike(strings.ToLower(strings.TrimSpace(ssid))) + "%"
+}
+
+func graphSSIDContainsClause(expr string, param int) string {
+	return fmt.Sprintf("(nullif(%[1]s, '') is not null AND lower(coalesce(%[1]s, '')) like $%[2]d ESCAPE '\\')", expr, param)
+}
+
+func addGraphSSIDContains(clauses *[]string, args *[]any, expr string, ssid string) {
+	if strings.TrimSpace(ssid) == "" {
+		return
 	}
-	return normalizeLowerList(values)
+	*args = append(*args, graphSSIDLikePattern(ssid))
+	*clauses = append(*clauses, graphSSIDContainsClause(expr, len(*args)))
+}
+
+func graphObservedAPScanLimit(limit int) int {
+	if limit <= 0 {
+		limit = graphDefaultLimit
+	}
+	scanLimit := limit * graphObservedAPScanMultiplier
+	if scanLimit < graphObservedAPMinScanLimit {
+		return graphObservedAPMinScanLimit
+	}
+	if scanLimit > graphObservedAPMaxScanLimit {
+		return graphObservedAPMaxScanLimit
+	}
+	return scanLimit
+}
+
+func graphDeviceSSIDScopeClause(macExpr string, param int) string {
+	return fmt.Sprintf(`(
+EXISTS (
+  SELECT 1
+  FROM wireless_clients wc
+  WHERE lower(wc.client_mac) = lower(%[1]s)
+    AND %[3]s
+)
+OR EXISTS (
+  SELECT 1
+  FROM wireless_frames wf
+  WHERE lower(coalesce(wf.source_mac, '')) = lower(%[1]s)
+    AND %[4]s
+)
+OR EXISTS (
+  SELECT 1
+  FROM wireless_shadow_alerts s
+  WHERE lower(s.source_mac) = lower(%[1]s)
+    AND %[5]s
+)
+)`, macExpr, param, graphSSIDContainsClause("wc.ssid", param), graphSSIDContainsClause("wf.ssid", param), graphSSIDContainsClause("s.ssid", param))
+}
+
+func addGraphDeviceSSIDScope(clauses *[]string, args *[]any, macExpr string, ssid string) {
+	if strings.TrimSpace(ssid) == "" {
+		return
+	}
+	*args = append(*args, graphSSIDLikePattern(ssid))
+	*clauses = append(*clauses, graphDeviceSSIDScopeClause(macExpr, len(*args)))
+}
+
+func graphClusterSSIDScopeClause(param int) string {
+	return fmt.Sprintf(`EXISTS (
+  SELECT 1
+  FROM unnest(c.mac_ids) AS member(mac)
+  WHERE %s
+)`, graphDeviceSSIDScopeClause("member.mac", param))
+}
+
+func addGraphClusterSSIDScope(clauses *[]string, args *[]any, ssid string) {
+	if strings.TrimSpace(ssid) == "" {
+		return
+	}
+	*args = append(*args, graphSSIDLikePattern(ssid))
+	*clauses = append(*clauses, graphClusterSSIDScopeClause(len(*args)))
 }
 
 func expandGraphFocus(ctx context.Context, tx pgx.Tx, filters *GraphFilters) error {
@@ -686,6 +763,7 @@ func fetchGraphDevices(ctx context.Context, tx pgx.Tx, filters GraphFilters, bui
 	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
 		add("lower(d.mac_id) = any($%d::text[])", sourceMACs)
 	}
+	addGraphDeviceSSIDScope(&clauses, &args, "d.mac_id", filters.SSID)
 	if filters.ObservedAfter != nil {
 		add("d.last_seen >= $%d", *filters.ObservedAfter)
 	}
@@ -753,6 +831,7 @@ func fetchGraphClusters(ctx context.Context, tx pgx.Tx, filters GraphFilters, bu
   WHERE lower(member.mac) = any($%d::text[])
 )`, sourceMACs)
 	}
+	addGraphClusterSSIDScope(&clauses, &args, filters.SSID)
 	if filters.ObservedAfter != nil {
 		add("c.last_seen >= $%d", *filters.ObservedAfter)
 	}
@@ -811,9 +890,7 @@ func fetchGraphAPs(ctx context.Context, tx pgx.Tx, filters GraphFilters, builder
 	if len(filters.LocationIDs) > 0 {
 		add("coalesce(awn.location_id, '') = any($%d::text[])", filters.LocationIDs)
 	}
-	if filters.SSID != "" {
-		add("awn.ssid ilike $%d ESCAPE '\\'", "%"+escapeLike(filters.SSID)+"%")
-	}
+	addGraphSSIDContains(&clauses, &args, "awn.ssid", filters.SSID)
 	sourceBSSIDs := graphFocusBSSIDs(filters)
 	focusSSIDs := graphFocusSSIDs(filters)
 	if len(sourceBSSIDs) > 0 || len(focusSSIDs) > 0 {
@@ -873,7 +950,157 @@ LIMIT $1`, args...)
 			EventSSIDs: graphActionStrings(ssid),
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	return fetchGraphObservedAPs(ctx, tx, filters, builder)
+}
+
+func fetchGraphObservedAPs(ctx context.Context, tx pgx.Tx, filters GraphFilters, builder *graphBuilder) error {
+	sql, args := graphObservedAPSQL(filters)
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ssid, bssid, locationID string
+		var firstSeen, lastSeen pgtype.Timestamptz
+		if err := rows.Scan(&ssid, &bssid, &locationID, &firstSeen, &lastSeen); err != nil {
+			return err
+		}
+		if existing := builder.apsByBSSID[graphNorm(bssid)]; existing != "" {
+			continue
+		}
+		nodeKey := strings.Join([]string{ssid, bssid, locationID}, "|")
+		builder.addNode(GraphNode{
+			ID:         graphNodeID(NodeKindAP, "observed:"+nodeKey),
+			Kind:       NodeKindAP,
+			Label:      firstNonEmpty(ssid, bssid, "Observed AP"),
+			SSID:       ssid,
+			BSSID:      bssid,
+			LocationID: locationID,
+			FirstSeen:  graphTime(firstSeen),
+			LastSeen:   graphTime(lastSeen),
+			EventSSIDs: graphActionStrings(ssid),
+		})
+	}
 	return rows.Err()
+}
+
+func graphObservedAPSQL(filters GraphFilters) (string, []any) {
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = graphDefaultLimit
+	}
+	if limit > graphMaxLimit {
+		limit = graphMaxLimit
+	}
+	args := []any{limit, graphObservedAPScanLimit(limit)}
+	eventClauses := []string{
+		"e.stream_name = 'wireless.audit'",
+		"e.status = 'batched'",
+		"coalesce(wf.bssid, wf.destination_bssid, '') <> ''",
+	}
+	clientClauses := []string{"coalesce(wc.known_bssid, '') <> ''"}
+	addEvent := graphClause(&eventClauses, &args)
+	addClient := graphClause(&clientClauses, &args)
+
+	if len(filters.LocationIDs) > 0 {
+		addEvent("coalesce(wf.location_id, '') = any($%d::text[])", filters.LocationIDs)
+		addClient("coalesce(wc.location_id, '') = any($%d::text[])", filters.LocationIDs)
+	}
+	addGraphSSIDContains(&eventClauses, &args, "wf.ssid", filters.SSID)
+	addGraphSSIDContains(&clientClauses, &args, "wc.ssid", filters.SSID)
+
+	sourceBSSIDs := graphFocusBSSIDs(filters)
+	focusSSIDs := graphFocusSSIDs(filters)
+	if len(sourceBSSIDs) > 0 || len(focusSSIDs) > 0 {
+		eventParts := []string{}
+		clientParts := []string{}
+		if len(sourceBSSIDs) > 0 {
+			args = append(args, sourceBSSIDs)
+			param := len(args)
+			eventParts = append(eventParts, fmt.Sprintf("lower(coalesce(wf.bssid, wf.destination_bssid, '')) = any($%d::text[])", param))
+			clientParts = append(clientParts, fmt.Sprintf("lower(coalesce(wc.known_bssid, '')) = any($%d::text[])", param))
+		}
+		if len(focusSSIDs) > 0 {
+			args = append(args, focusSSIDs)
+			param := len(args)
+			eventParts = append(eventParts, fmt.Sprintf("lower(coalesce(wf.ssid, '')) = any($%d::text[])", param))
+			clientParts = append(clientParts, fmt.Sprintf("lower(coalesce(wc.ssid, '')) = any($%d::text[])", param))
+		}
+		eventClauses = append(eventClauses, "("+strings.Join(eventParts, " OR ")+")")
+		clientClauses = append(clientClauses, "("+strings.Join(clientParts, " OR ")+")")
+	}
+	if filters.ObservedAfter != nil {
+		addEvent("e.observed_at >= $%d", *filters.ObservedAfter)
+		addClient("wc.last_seen >= $%d", *filters.ObservedAfter)
+	}
+	if filters.ObservedBefore != nil {
+		addEvent("e.observed_at <= $%d", *filters.ObservedBefore)
+		addClient("wc.last_seen <= $%d", *filters.ObservedBefore)
+	}
+
+	sql := fmt.Sprintf(`
+WITH recent_event_ap AS (
+  SELECT
+    coalesce(wf.ssid, '') AS ssid,
+    lower(coalesce(wf.bssid, wf.destination_bssid, '')) AS bssid,
+    coalesce(wf.location_id, '') AS location_id,
+    e.observed_at AS first_seen,
+    e.observed_at AS last_seen
+  FROM sync_events e
+  JOIN wireless_frames wf ON wf.dedupe_key = e.dedupe_key
+  %s
+  ORDER BY e.observed_at DESC
+  LIMIT $2
+),
+recent_client_ap AS (
+  SELECT
+    coalesce(wc.ssid, '') AS ssid,
+    lower(coalesce(wc.known_bssid, '')) AS bssid,
+    coalesce(wc.location_id, '') AS location_id,
+    wc.first_seen,
+    wc.last_seen
+  FROM wireless_clients wc
+  %s
+  ORDER BY wc.last_seen DESC
+  LIMIT $2
+),
+observed_ap AS (
+  SELECT
+    ssid,
+    bssid,
+    location_id,
+    min(first_seen) AS first_seen,
+    max(last_seen) AS last_seen
+  FROM recent_event_ap
+  GROUP BY ssid, bssid, location_id
+
+  UNION ALL
+
+  SELECT
+    ssid,
+    bssid,
+    location_id,
+    min(first_seen) AS first_seen,
+    max(last_seen) AS last_seen
+  FROM recent_client_ap
+  GROUP BY ssid, bssid, location_id
+)
+SELECT
+  ssid,
+  bssid,
+  location_id,
+  min(first_seen),
+  max(last_seen)
+FROM observed_ap
+GROUP BY ssid, bssid, location_id
+ORDER BY max(last_seen) DESC
+LIMIT $1`, graphWhere(eventClauses), graphWhere(clientClauses))
+	return sql, args
 }
 
 func fetchGraphClients(ctx context.Context, tx pgx.Tx, filters GraphFilters, builder *graphBuilder) error {
@@ -883,9 +1110,7 @@ func fetchGraphClients(ctx context.Context, tx pgx.Tx, filters GraphFilters, bui
 	if len(filters.LocationIDs) > 0 {
 		add("coalesce(wc.location_id, '') = any($%d::text[])", filters.LocationIDs)
 	}
-	if filters.SSID != "" {
-		add("wc.ssid ilike $%d ESCAPE '\\'", "%"+escapeLike(filters.SSID)+"%")
-	}
+	addGraphSSIDContains(&clauses, &args, "wc.ssid", filters.SSID)
 	sourceMACs := graphFocusMACs(filters)
 	sourceBSSIDs := graphFocusBSSIDs(filters)
 	focusSSIDs := graphFocusSSIDs(filters)
@@ -966,9 +1191,7 @@ func fetchGraphShadowAlerts(ctx context.Context, tx pgx.Tx, filters GraphFilters
 	if len(filters.SensorIDs) > 0 {
 		add("coalesce(s.sensor_id, '') = any($%d::text[])", filters.SensorIDs)
 	}
-	if filters.SSID != "" {
-		add("s.ssid ilike $%d ESCAPE '\\'", "%"+escapeLike(filters.SSID)+"%")
-	}
+	addGraphSSIDContains(&clauses, &args, "s.ssid", filters.SSID)
 	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
 		add("lower(s.source_mac) = any($%d::text[])", sourceMACs)
 	}
@@ -1046,6 +1269,7 @@ func fetchGraphAlerts(ctx context.Context, tx pgx.Tx, filters GraphFilters, buil
 	if sourceMACs := graphFocusMACs(filters); len(sourceMACs) > 0 {
 		add("lower(coalesce(a.source_mac, '')) = any($%d::text[])", sourceMACs)
 	}
+	addGraphDeviceSSIDScope(&clauses, &args, "coalesce(a.source_mac, '')", filters.SSID)
 	if filters.ObservedAfter != nil {
 		add("a.created_at >= $%d", *filters.ObservedAfter)
 	}

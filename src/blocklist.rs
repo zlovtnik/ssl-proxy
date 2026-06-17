@@ -13,6 +13,9 @@ use crate::state::SharedState;
 /// Remote source of the periodically refreshed domain blocklist.
 pub const BLOCKLIST_URL: &str =
     "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/domains/ultimate.txt";
+const REFRESH_INTERVAL_SECS: u64 = 86_400;
+const INITIAL_FETCH_JITTER_MAX_SECS: u64 = 60;
+const MAX_LABEL_WALK_DEPTH: usize = 10;
 
 /// Hardcoded seed — active immediately on startup before the remote fetch completes.
 pub const SEED: &[&str] = &[
@@ -67,6 +70,15 @@ pub const SEED: &[&str] = &[
 /// ```
 pub fn spawn_refresh_task(state: SharedState, token: tokio_util::sync::CancellationToken) {
     tokio::spawn(async move {
+        let jitter_secs = initial_fetch_jitter_secs();
+        tokio::select! {
+            _ = token.cancelled() => {
+                info!("blocklist task shutting down");
+                return;
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(jitter_secs)) => {}
+        }
+
         loop {
             match fetch().await {
                 Ok(remote) => {
@@ -92,7 +104,7 @@ pub fn spawn_refresh_task(state: SharedState, token: tokio_util::sync::Cancellat
             }
             tokio::select! {
                 _ = token.cancelled() => { info!("blocklist task shutting down"); return; }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(86_400)) => {}
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(REFRESH_INTERVAL_SECS)) => {}
             }
         }
     });
@@ -135,16 +147,17 @@ pub fn spawn_refresh_task(state: SharedState, token: tokio_util::sync::Cancellat
 /// # let mut set = HashSet::new();
 /// # set.insert("tracker.com".to_string());
 /// # state.blocklist.store(Arc::new(set));
-/// let blocked = is_blocked("sub.TRACKER.com.", &state).await;
+/// let blocked = is_blocked("sub.TRACKER.com.", &state);
 /// assert!(blocked);
 /// # });
 /// ```
-pub async fn is_blocked(hostname: &str, state: &SharedState) -> bool {
-    let normalized = hostname.to_ascii_lowercase();
-    let normalized = normalized.trim_end_matches('.');
+pub fn is_blocked(hostname: &str, state: &SharedState) -> bool {
+    let Some(normalized) = normalize_hostname(hostname) else {
+        return true;
+    };
     let bl = state.blocklist.load();
-    let mut domain = normalized;
-    loop {
+    let mut domain = normalized.as_str();
+    for depth in 0..MAX_LABEL_WALK_DEPTH {
         if bl.contains(domain) {
             return true;
         }
@@ -152,10 +165,41 @@ pub async fn is_blocked(hostname: &str, state: &SharedState) -> bool {
             Some(idx) => domain = &domain[idx + 1..],
             None => return false,
         }
+        if depth + 1 == MAX_LABEL_WALK_DEPTH {
+            return true;
+        }
     }
+    true
 }
 
-async fn fetch() -> Result<HashSet<String>, reqwest::Error> {
+fn normalize_hostname(hostname: &str) -> Option<String> {
+    let normalized = hostname.to_ascii_lowercase();
+    let normalized = normalized.trim_end_matches('.');
+    if normalized.is_empty() {
+        return None;
+    }
+    normalized
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b':'))
+        .then(|| normalized.to_string())
+}
+
+fn initial_fetch_jitter_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::from(duration.subsec_nanos()) % (INITIAL_FETCH_JITTER_MAX_SECS + 1))
+        .unwrap_or(0)
+}
+
+#[derive(Debug, thiserror::Error)]
+enum BlocklistFetchError {
+    #[error(transparent)]
+    Request(#[from] reqwest::Error),
+    #[error("blocklist parse task failed: {0}")]
+    ParseTask(#[from] tokio::task::JoinError),
+}
+
+async fn fetch() -> Result<HashSet<String>, BlocklistFetchError> {
     info!(url = BLOCKLIST_URL, "fetching remote blocklist");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -167,11 +211,14 @@ async fn fetch() -> Result<HashSet<String>, reqwest::Error> {
         .error_for_status()?
         .text()
         .await?;
-    let set = text
-        .lines()
-        .filter(|l| !l.starts_with('#') && !l.is_empty())
-        .map(|l| l.trim().to_lowercase())
-        .collect::<HashSet<String>>();
+    let set = tokio::task::spawn_blocking(move || {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+            .map(str::to_lowercase)
+            .collect::<HashSet<String>>()
+    })
+    .await?;
     info!(entries = set.len(), "remote blocklist parsed");
     Ok(set)
 }
@@ -224,15 +271,15 @@ mod tests {
             .store(Arc::new(HashSet::from(["tracker.com".to_string()])));
 
         // Test that subdomains correctly match parent domain
-        assert!(is_blocked("tracker.com", &state).await);
-        assert!(is_blocked("sub.tracker.com", &state).await);
-        assert!(is_blocked("sub.sub.tracker.com", &state).await);
-        assert!(is_blocked("deep.sub.sub.tracker.com", &state).await);
+        assert!(is_blocked("tracker.com", &state));
+        assert!(is_blocked("sub.tracker.com", &state));
+        assert!(is_blocked("sub.sub.tracker.com", &state));
+        assert!(is_blocked("deep.sub.sub.tracker.com", &state));
 
         // Test non-matching domains
-        assert!(!is_blocked("example.com", &state).await);
-        assert!(!is_blocked("com", &state).await);
-        assert!(!is_blocked("tracker.co", &state).await);
+        assert!(!is_blocked("example.com", &state));
+        assert!(!is_blocked("com", &state));
+        assert!(!is_blocked("tracker.co", &state));
     }
 
     #[tokio::test]
@@ -244,11 +291,25 @@ mod tests {
             .store(Arc::new(HashSet::from(["tracker.com".to_string()])));
 
         // Case insensitivity
-        assert!(is_blocked("TRACKER.COM", &state).await);
-        assert!(is_blocked("Sub.Tracker.Com", &state).await);
+        assert!(is_blocked("TRACKER.COM", &state));
+        assert!(is_blocked("Sub.Tracker.Com", &state));
 
         // Trailing dot handling
-        assert!(is_blocked("tracker.com.", &state).await);
-        assert!(is_blocked("sub.tracker.com.", &state).await);
+        assert!(is_blocked("tracker.com.", &state));
+        assert!(is_blocked("sub.tracker.com.", &state));
+    }
+
+    #[tokio::test]
+    async fn test_is_blocked_fails_closed_for_invalid_or_too_deep_names() {
+        let state = create_test_state().await;
+
+        state.blocklist.store(Arc::new(HashSet::new()));
+
+        assert!(is_blocked("tracker%2ecom", &state));
+        assert!(is_blocked("tracker.com\0.example", &state));
+        assert!(is_blocked(
+            "l1.l2.l3.l4.l5.l6.l7.l8.l9.l10.l11.example.com",
+            &state
+        ));
     }
 }

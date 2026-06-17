@@ -51,7 +51,7 @@ pub struct HostSnapshot {
 
 #[derive(Serialize)]
 pub struct ReadySyncStatus {
-    pub publisher: crate::transport::SyncPublisherHealthSnapshot,
+    pub publisher: sync_plane::SyncPublisherHealthSnapshot,
 }
 
 #[derive(Serialize)]
@@ -70,14 +70,21 @@ pub struct SyncTopicCount {
 #[derive(Serialize)]
 pub struct SyncStatusReport {
     pub status: &'static str,
-    pub publisher: crate::transport::SyncPublisherHealthSnapshot,
+    pub publisher: sync_plane::SyncPublisherHealthSnapshot,
     pub published_topics: Vec<SyncTopicCount>,
     pub last_error: Option<String>,
 }
 
 /// GET /health — liveness probe for the admin surface.
-pub async fn health() -> impl IntoResponse {
-    (StatusCode::OK, "ok").into_response()
+pub async fn health(State(state): State<SharedState>) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "ok",
+            "wireguard_relay": state.wg_relay_metrics.snapshot(),
+        })),
+    )
+        .into_response()
 }
 
 /// GET /metrics - Prometheus exposition for the proxy admin surface.
@@ -116,6 +123,7 @@ pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
 
 fn render_metrics_body(state: &crate::state::AppState) -> String {
     let publisher = state.publisher.health_snapshot();
+    let wg_relay = state.wg_relay_metrics.snapshot();
     format!(
         concat!(
             "# HELP ssl_proxy_up Process health status.\n",
@@ -169,6 +177,27 @@ fn render_metrics_body(state: &crate::state::AppState) -> String {
             "# HELP ssl_proxy_sync_publish_enqueue_timeouts_total Sync publisher enqueue timeouts.\n",
             "# TYPE ssl_proxy_sync_publish_enqueue_timeouts_total counter\n",
             "ssl_proxy_sync_publish_enqueue_timeouts_total {sync_enqueue_timeouts}\n",
+            "# HELP ssl_proxy_wg_relay_active_sessions Active WireGuard relay sessions.\n",
+            "# TYPE ssl_proxy_wg_relay_active_sessions gauge\n",
+            "ssl_proxy_wg_relay_active_sessions {wg_relay_active_sessions}\n",
+            "# HELP ssl_proxy_wg_relay_packets_forwarded_total WireGuard relay packets forwarded.\n",
+            "# TYPE ssl_proxy_wg_relay_packets_forwarded_total counter\n",
+            "ssl_proxy_wg_relay_packets_forwarded_total{{direction=\"client_to_server\"}} {wg_relay_packets_client_to_server}\n",
+            "ssl_proxy_wg_relay_packets_forwarded_total{{direction=\"server_to_client\"}} {wg_relay_packets_server_to_client}\n",
+            "# HELP ssl_proxy_wg_relay_decode_errors_total WireGuard relay packet decode errors.\n",
+            "# TYPE ssl_proxy_wg_relay_decode_errors_total counter\n",
+            "ssl_proxy_wg_relay_decode_errors_total {wg_relay_decode_errors}\n",
+            "# HELP ssl_proxy_wg_relay_encode_errors_total WireGuard relay packet encode errors.\n",
+            "# TYPE ssl_proxy_wg_relay_encode_errors_total counter\n",
+            "ssl_proxy_wg_relay_encode_errors_total {wg_relay_encode_errors}\n",
+            "# HELP ssl_proxy_wg_relay_replay_detected_total WireGuard relay replay-detected drops.\n",
+            "# TYPE ssl_proxy_wg_relay_replay_detected_total counter\n",
+            "ssl_proxy_wg_relay_replay_detected_total {wg_relay_replay_detected}\n",
+            "# HELP ssl_proxy_wg_relay_sessions_evicted_total WireGuard relay sessions evicted.\n",
+            "# TYPE ssl_proxy_wg_relay_sessions_evicted_total counter\n",
+            "ssl_proxy_wg_relay_sessions_evicted_total{{reason=\"idle\"}} {wg_relay_sessions_evicted_idle}\n",
+            "ssl_proxy_wg_relay_sessions_evicted_total{{reason=\"send_failure\"}} {wg_relay_sessions_evicted_send_failure}\n",
+            "ssl_proxy_wg_relay_sessions_evicted_total{{reason=\"shutdown\"}} {wg_relay_sessions_closed_shutdown}\n",
         ),
         tunnels_opened = state.tunnels_opened.load(Ordering::Relaxed),
         active_tunnels = state.active_tunnels.load(Ordering::Relaxed),
@@ -186,6 +215,15 @@ fn render_metrics_body(state: &crate::state::AppState) -> String {
         sync_spool_pending = publisher.spool_pending,
         sync_spooled_total = publisher.spooled_total,
         sync_enqueue_timeouts = publisher.enqueue_timeouts_total,
+        wg_relay_active_sessions = wg_relay.active_sessions,
+        wg_relay_packets_client_to_server = wg_relay.packets_client_to_server,
+        wg_relay_packets_server_to_client = wg_relay.packets_server_to_client,
+        wg_relay_decode_errors = wg_relay.decode_errors,
+        wg_relay_encode_errors = wg_relay.encode_errors,
+        wg_relay_replay_detected = wg_relay.replay_detected,
+        wg_relay_sessions_evicted_idle = wg_relay.sessions_evicted_idle,
+        wg_relay_sessions_evicted_send_failure = wg_relay.sessions_evicted_send_failure,
+        wg_relay_sessions_closed_shutdown = wg_relay.sessions_closed_shutdown,
     )
 }
 

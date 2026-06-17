@@ -201,7 +201,7 @@ async fn emit_serializable_uses_one_timestamp_and_top_level_identity_fields() {
 
     let published = state.publisher.published_messages();
     assert_eq!(published.len(), 1);
-    let request: crate::sync::ScanRequest =
+    let request: sync_plane::ScanRequest =
         serde_json::from_str(&published[0].payload).expect("scan request should decode");
     assert_eq!(
         envelope["time"].as_str(),

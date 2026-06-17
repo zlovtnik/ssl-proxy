@@ -10,10 +10,7 @@ use std::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use ssl_proxy::{
-    config::SyncConfig,
-    sync::{ScanRequest, SYNC_SCAN_REQUEST_TOPIC},
-};
+use sync_plane::{ScanRequest, SyncConfig, SYNC_SCAN_REQUEST_TOPIC};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,

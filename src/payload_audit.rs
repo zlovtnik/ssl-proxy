@@ -1,6 +1,7 @@
 //! HTTP payload audit extraction and redaction for transparent plaintext flows.
 
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -146,8 +147,7 @@ pub fn audit_http_preview(
 }
 
 fn redact_json_value(value: &mut Value) {
-    let keys = sensitive_keys();
-    redact_json_value_with_keys(value, &keys);
+    redact_json_value_with_keys(value, sensitive_keys());
 }
 
 fn redact_json_value_with_keys(value: &mut Value, sensitive_keys: &HashSet<&'static str>) {
@@ -170,32 +170,35 @@ fn redact_json_value_with_keys(value: &mut Value, sensitive_keys: &HashSet<&'sta
     }
 }
 
-fn sensitive_keys() -> HashSet<&'static str> {
-    [
-        "password",
-        "passwd",
-        "pass",
-        "token",
-        "access_token",
-        "refresh_token",
-        "id_token",
-        "secret",
-        "api_key",
-        "apikey",
-        "private_key",
-        "client_secret",
-        "authorization",
-        "auth",
-        "credential",
-        "credentials",
-        "ssn",
-        "credit_card",
-        "card_number",
-        "cvv",
-        "pin",
-    ]
-    .into_iter()
-    .collect()
+fn sensitive_keys() -> &'static HashSet<&'static str> {
+    static SENSITIVE_KEYS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    SENSITIVE_KEYS.get_or_init(|| {
+        [
+            "password",
+            "passwd",
+            "pass",
+            "token",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "secret",
+            "api_key",
+            "apikey",
+            "private_key",
+            "client_secret",
+            "authorization",
+            "auth",
+            "credential",
+            "credentials",
+            "ssn",
+            "credit_card",
+            "card_number",
+            "cvv",
+            "pin",
+        ]
+        .into_iter()
+        .collect()
+    })
 }
 
 fn parse_path_and_query_keys(target: &str) -> (String, Vec<String>) {

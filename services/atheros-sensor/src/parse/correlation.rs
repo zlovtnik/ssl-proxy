@@ -116,7 +116,7 @@ pub(super) fn frame_fingerprint(
             .and_then(normalize_mac)
             .unwrap_or("")
     );
-    ssl_proxy::sha256_hex(&[normalized.as_bytes(), frame_bytes])
+    crate::digest::sha256_hex(&[normalized.as_bytes(), frame_bytes])
 }
 /// Returns `true` if two MAC addresses share the first five octets and differ
 /// in the last octet by 1-4.

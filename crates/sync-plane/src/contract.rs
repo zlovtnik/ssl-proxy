@@ -1,9 +1,8 @@
-//! Shared sync-plane contracts used by the proxy, coordinator, and worker.
+//! Shared sync-plane wire contracts.
 
 use serde::{Deserialize, Serialize};
 
 pub const SYNC_SCAN_REQUEST_TOPIC: &str = "sync.scan.request";
-pub const PAYLOAD_AUDIT_TOPIC: &str = "proxy.payload_audit";
 pub const INLINE_PAYLOAD_REF_PREFIX: &str = "inline://json/";
 pub const OUTBOX_PAYLOAD_REF_PREFIX: &str = "outbox://";
 
@@ -50,28 +49,10 @@ pub fn parse_payload_ref(payload_ref: &str) -> Option<ParsedPayloadRef<'_>> {
         })
 }
 
-pub fn should_publish_scan_request(event: &str) -> bool {
-    matches!(
-        event,
-        "block"
-            | "http_blocked"
-            | "session.blocked"
-            | "http_proxied"
-            | "http_error"
-            | "tunnel_open"
-            | "tunnel_close"
-    )
-}
-
-pub fn should_publish_payload_audit(topic: &str) -> bool {
-    topic == PAYLOAD_AUDIT_TOPIC
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_payload_ref, should_publish_payload_audit, should_publish_scan_request,
-        PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX, PAYLOAD_AUDIT_TOPIC,
+        parse_payload_ref, PayloadRefKind, INLINE_PAYLOAD_REF_PREFIX, OUTBOX_PAYLOAD_REF_PREFIX,
     };
 
     #[test]
@@ -86,24 +67,5 @@ mod tests {
         let parsed_outbox = parse_payload_ref(&outbox).unwrap();
         assert_eq!(parsed_outbox.kind, PayloadRefKind::Outbox);
         assert_eq!(parsed_outbox.locator, "20260417T000000Z-deadbeef.json");
-    }
-
-    #[test]
-    fn publish_filter_allows_only_sink_events() {
-        assert!(should_publish_scan_request("block"));
-        assert!(should_publish_scan_request("http_blocked"));
-        assert!(should_publish_scan_request("session.blocked"));
-        assert!(should_publish_scan_request("http_proxied"));
-        assert!(should_publish_scan_request("http_error"));
-        assert!(should_publish_scan_request("tunnel_open"));
-        assert!(should_publish_scan_request("tunnel_close"));
-        assert!(!should_publish_scan_request("stats_live"));
-    }
-
-    #[test]
-    fn payload_audit_topic_filter_matches_constant() {
-        assert_eq!(PAYLOAD_AUDIT_TOPIC, "proxy.payload_audit");
-        assert!(should_publish_payload_audit(PAYLOAD_AUDIT_TOPIC));
-        assert!(!should_publish_payload_audit("sync.scan.request"));
     }
 }

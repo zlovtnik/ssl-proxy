@@ -13,7 +13,7 @@ fn bandwidth_entry(
     serde_json::from_value(serde_json::json!({
         "schema_version": 2,
         "event_type": "wifi_data_frame",
-        "observed_at": ssl_proxy::time::rfc3339_from_utc(observed_at),
+        "observed_at": crate::timing::rfc3339_from_utc(observed_at),
         "sensor_id": "sensor-1",
         "location_id": "lab",
         "interface": "wlan0",

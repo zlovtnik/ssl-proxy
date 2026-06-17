@@ -74,7 +74,7 @@ FROM candidates c
 LEFT JOIN sync_events_expanded se
   ON c.source_table = 'sync_events'
  AND se.dedupe_key = c.source_key
-`, wirelessTagsSQL, compactEventDetailSQL, where)
+`, where, wirelessTagsSQL, compactEventDetailSQL)
 	sql += `
 ORDER BY cosine_similarity DESC
 LIMIT $4`

@@ -66,7 +66,7 @@ The sensor writes JSON logs to stdout/stderr for Docker and systemd collection.
 If `RUST_LOG` is missing or invalid, it falls back to:
 
 ```text
-warn,atheros_sensor=info,ssl_proxy=info
+warn,atheros_sensor=info
 ```
 
 When running through Docker Compose, override the sensor log filter with

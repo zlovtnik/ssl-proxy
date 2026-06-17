@@ -1,4 +1,4 @@
-.PHONY: build test bench docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto
+.PHONY: build test dependency-boundaries bench docker lint clean deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -6,15 +6,26 @@ GO_BIN_DIR := $(shell go env GOPATH)/bin
 
 # Build project binaries: root proxy, Atheros sensor, and Java coordinator.
 build:
-	cargo build --release
-	cd services/atheros-sensor && cargo build --release
+	cargo build --release -p sync-plane
+	cargo build --release -p ssl-proxy
+	cargo build --release -p atheros-sensor
+	cargo build --release -p db-migrator
 	cd services/zig-coordinator && gradle build
 
 # Run tests
 test:
-	cargo test
-	cd services/atheros-sensor && cargo test
+	cargo test -p sync-plane
+	cargo test -p ssl-proxy
+	cargo test -p atheros-sensor
+	cargo test -p db-migrator
+	$(MAKE) dependency-boundaries
 	cd services/zig-coordinator && gradle test
+
+dependency-boundaries:
+	@command -v rg >/dev/null
+	@! rg -n 'use ssl_proxy|ssl_proxy::|ssl-proxy = \{ path = "\.\./\.\."' services/atheros-sensor services/atheros-sensor/Cargo.toml
+	@cargo tree -p atheros-sensor --depth 1 --prefix none | awk '$$1 == "ssl-proxy" { found=1; print; } END { exit found ? 1 : 0 }'
+	@cargo tree -p ssl-proxy --depth 1 --prefix none | awk '$$1 == "atheros-sensor" { found=1; print; } END { exit found ? 1 : 0 }'
 
 # Run local benchmark baselines.
 bench:

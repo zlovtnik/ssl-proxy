@@ -43,12 +43,16 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*sea
 	if req == nil {
 		return nil, errors.New("request is required")
 	}
-	if !hasMeaningfulSearchTerms(req.Query) {
+	wildcardAll := isWildcardAllSearch(req.Query)
+	if !wildcardAll && !hasMeaningfulSearchTerms(req.Query) {
 		return nil, errors.New("search query is required and must contain meaningful terms")
 	}
 	query := req.Query
 	topK := config.ClampTopK(req.TopK)
 	mode := normalizeMode(req.Mode)
+	if wildcardAll {
+		mode = searchv1.SearchMode_SEARCH_MODE_SPARSE
+	}
 	kinds, err := requestKinds(req.Kind)
 	if err != nil {
 		return nil, err
@@ -272,6 +276,11 @@ func normalizeMode(mode searchv1.SearchMode) searchv1.SearchMode {
 
 func hasMeaningfulSearchTerms(query string) bool {
 	return strings.Trim(query, " \t\n\r*%") != ""
+}
+
+func isWildcardAllSearch(query string) bool {
+	trimmed := strings.TrimSpace(query)
+	return trimmed != "" && strings.Trim(trimmed, "*% \t\n\r") == ""
 }
 
 func responseKind(kind searchv1.SearchKind) string {

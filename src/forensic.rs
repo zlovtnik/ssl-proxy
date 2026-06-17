@@ -373,10 +373,13 @@ fn verify_monitor_interface(interface: &str) -> Result<(), String> {
 }
 
 fn fingerprint_identity(peer_ip: Option<&str>, wg_pubkey: Option<&str>) -> String {
-    let raw = wg_pubkey
-        .or(peer_ip)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("anonymous");
+    let wg_pubkey = wg_pubkey.unwrap_or_default();
+    let peer_ip = peer_ip.unwrap_or_default();
+    let raw = if wg_pubkey.is_empty() && peer_ip.is_empty() {
+        "anonymous".to_string()
+    } else {
+        format!("{wg_pubkey}|{peer_ip}")
+    };
     let digest = Sha256::digest(raw.as_bytes());
     let mut out = String::with_capacity(16);
     for byte in &digest[..8] {
@@ -462,5 +465,15 @@ mod tests {
                 None,
             )
             .is_none());
+    }
+
+    #[test]
+    fn fingerprint_identity_uses_key_and_ip_tuple() {
+        let ip_only = fingerprint_identity(Some("10.0.0.2"), None);
+        let key_and_same_ip = fingerprint_identity(Some("10.0.0.2"), Some("pubkey-a"));
+        let other_key_same_ip = fingerprint_identity(Some("10.0.0.2"), Some("pubkey-b"));
+
+        assert_ne!(ip_only, key_and_same_ip);
+        assert_ne!(key_and_same_ip, other_key_same_ip);
     }
 }

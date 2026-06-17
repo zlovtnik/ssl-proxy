@@ -19,12 +19,13 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
             .map(|index| start + index)
     }
 
-    fn mask_range(buf: &mut [u8], start: usize, delimiters: &[u8]) {
+    fn mask_range(buf: &mut [u8], start: usize, delimiters: &[u8]) -> usize {
         let mut idx = start;
-        while idx < buf.len() && !delimiters.contains(&buf[idx]) {
+        while idx < buf.len() && (delimiters.is_empty() || !delimiters.contains(&buf[idx])) {
             buf[idx] = b'*';
             idx += 1;
         }
+        idx
     }
 
     fn next_line_start(buf: &[u8], pos: usize) -> usize {
@@ -79,8 +80,10 @@ pub(crate) fn redact_sensitive_data(buf: &mut [u8]) {
     let mut search_from = 0usize;
     // Intentionally masks case-insensitive bearer tokens wherever they appear, not just header lines.
     while let Some(pos) = find_bytes(&lower, b"bearer ", search_from) {
-        mask_range(buf, pos + "bearer ".len(), b"\r\n;& \t\"'},");
-        search_from = pos + "bearer ".len();
+        let value_start = pos + "bearer ".len();
+        search_from = mask_range(buf, value_start, b"\r\n\"'}],")
+            .saturating_add(1)
+            .min(lower.len());
     }
 
     for key in [
@@ -162,6 +165,15 @@ pub(crate) fn payload_preview_json(
     bytes_down: u64,
     limit: usize,
 ) -> serde_json::Value {
+    if up_buf.is_empty() && down_buf.is_empty() {
+        return json!({
+            "schema_version": 2,
+            "up": readable_direction_preview(up_buf, bytes_up, bytes_up > limit as u64),
+            "down": readable_direction_preview(down_buf, bytes_down, bytes_down > limit as u64),
+            "redaction": "byte",
+        });
+    }
+
     let mut up_redacted = up_buf.to_vec();
     let mut down_redacted = down_buf.to_vec();
     redact_sensitive_data(&mut up_redacted);
@@ -370,5 +382,46 @@ access_token=formaccess&refresh_token=formrefresh&id_token=formid&client_secret=
         assert!(preview["up"]["sha256"].as_str().unwrap().len() == 64);
         assert!(preview["up"].get("text").is_none());
         assert!(preview["up"].get("json").is_none());
+    }
+
+    #[test]
+    fn payload_preview_json_omits_empty_directions_without_payload() {
+        let preview = payload_preview_json(b"", b"", 0, 0, 4096);
+
+        assert_eq!(preview["up"]["format"], "omitted");
+        assert_eq!(preview["up"]["omitted_reason"], "empty");
+        assert_eq!(preview["down"]["format"], "omitted");
+        assert_eq!(preview["down"]["omitted_reason"], "empty");
+    }
+
+    #[test]
+    fn bearer_redaction_masks_delimiter_bytes_after_token_start() {
+        let mut payload = b"Authorization: Bearer abc&def;ghi\nNext: keep".to_vec();
+        redact_sensitive_data(&mut payload);
+        let redacted = String::from_utf8(payload).unwrap();
+
+        assert!(!redacted.contains("abc"));
+        assert!(!redacted.contains("def"));
+        assert!(!redacted.contains("ghi"));
+        assert!(redacted.contains("Next: keep"));
+    }
+
+    #[test]
+    fn bearer_redaction_masks_tokens_longer_than_legacy_limit() {
+        let token = "a".repeat(2_200);
+        let payload = format!("Authorization: Bearer {token}\r\nNext: keep\r\n").into_bytes();
+        let mut log_payload = payload.clone();
+
+        redact_sensitive_data(&mut log_payload);
+        let redacted_log = String::from_utf8(log_payload).unwrap();
+        assert!(!redacted_log.contains(&token));
+        assert!(!redacted_log.contains(&"a".repeat(64)));
+        assert!(redacted_log.contains("Next: keep"));
+
+        let preview = payload_preview_json(&payload, b"", payload.len() as u64, 0, payload.len());
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains(&token));
+        assert!(!serialized.contains(&"a".repeat(64)));
+        assert!(serialized.contains("Next: keep"));
     }
 }

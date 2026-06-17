@@ -158,6 +158,21 @@ fn validate_uapi_socket_dir(path: &Path) -> Result<(), ControlError> {
         });
     };
 
+    validate_uapi_socket_parent(parent)?;
+    let canonical_path =
+        fs::canonicalize(path).map_err(|source| ControlError::UapiSocketPathCanonicalize {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let Some(canonical_parent) = canonical_path.parent() else {
+        return Err(ControlError::SocketPathHasNoParent {
+            path: canonical_path,
+        });
+    };
+    validate_uapi_socket_parent(canonical_parent)
+}
+
+fn validate_uapi_socket_parent(parent: &Path) -> Result<(), ControlError> {
     let metadata = fs::metadata(parent).map_err(|source| ControlError::UapiSocketDirStat {
         path: parent.to_path_buf(),
         source,

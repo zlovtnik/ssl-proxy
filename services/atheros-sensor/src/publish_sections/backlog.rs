@@ -105,7 +105,8 @@ pub async fn reconcile_backlog(
             }
         }
 
-        if let Err(error) = enqueue_prepared_publish(publisher, &entry.dedupe_key, &prepared).await {
+        if let Err(error) = enqueue_prepared_publish(publisher, &entry.dedupe_key, &prepared).await
+        {
             warn!(
                 dedupe_key = %entry.dedupe_key,
                 stream_name = %entry.stream_name,
@@ -262,7 +263,7 @@ fn dedupe_key(payload: &str) -> String {
 }
 
 fn sha256_hex(payload: &str) -> String {
-    ssl_proxy::sha256_hex(&[payload.as_bytes()])
+    crate::digest::sha256_hex(&[payload.as_bytes()])
 }
 
 /// Periodic drain of memory backlog -- runs regardless of circuit breaker state.

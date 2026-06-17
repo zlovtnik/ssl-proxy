@@ -7,7 +7,7 @@
 FROM azul/zulu-openjdk-alpine:21 AS builder
 
 # Install Gradle
-ARG GRADLE_VERSION=9.3.0
+ARG GRADLE_VERSION=9.3.1
 RUN apk add --no-cache curl unzip \
     && curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
       -o /tmp/gradle.zip \

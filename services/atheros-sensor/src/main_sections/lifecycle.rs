@@ -51,7 +51,7 @@ use crate::{
     },
 };
 /// Default log level filter when RUST_LOG is not set.
-const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info,ssl_proxy=info";
+const DEFAULT_RUST_LOG: &str = "warn,atheros_sensor=info";
 const MAC_DEVICE_CACHE_SIZE: usize = 4_096;
 const BACKLOG_RECONCILE_INTERVAL_SECS: u64 = 60;
 const BACKLOG_PRUNE_INTERVAL_SECS: u64 = 3_600;
@@ -112,7 +112,7 @@ async fn run_healthcheck() -> Result<(), SensorError> {
     )?;
 
     // Verify Redpanda publisher initializes
-    let publisher = Arc::new(ssl_proxy::transport::SyncPublisher::new(&config.sync));
+    let publisher = Arc::new(sync_plane::SyncPublisher::new(&config.sync));
     let publish_client: Arc<dyn PublishClient> =
         Arc::new(SyncPublisherClient::new(Arc::clone(&publisher)));
     let backlog = step(

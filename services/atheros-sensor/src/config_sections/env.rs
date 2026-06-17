@@ -1,7 +1,7 @@
 use chrono::NaiveTime;
-use ssl_proxy::config::SyncConfig;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use sync_plane::SyncConfig;
 use thiserror::Error;
 
 use crate::audit::AuditWindow;
@@ -361,7 +361,7 @@ fn audit_window_from_env() -> Result<AuditWindow, ConfigError> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| Some(ssl_proxy::time::EASTERN_TIME_ZONE_NAME.to_string()));
+        .or_else(|| Some(crate::timing::EASTERN_TIME_ZONE_NAME.to_string()));
     let days = std::env::var("AUDIT_WINDOW_DAYS")
         .ok()
         .map(|value| value.trim().to_string())

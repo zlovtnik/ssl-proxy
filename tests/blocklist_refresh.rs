@@ -48,15 +48,15 @@ mod tests {
             .blocklist
             .store(Arc::new(HashSet::from(["example.com".to_string()])));
 
-        assert!(blocklist::is_blocked("example.com", &state).await);
-        assert!(blocklist::is_blocked("sub.example.com", &state).await);
-        assert!(!blocklist::is_blocked("allowed.com", &state).await);
+        assert!(blocklist::is_blocked("example.com", &state));
+        assert!(blocklist::is_blocked("sub.example.com", &state));
+        assert!(!blocklist::is_blocked("allowed.com", &state));
 
         state
             .blocklist
             .store(Arc::new(HashSet::from(["blocked.net".to_string()])));
 
-        assert!(!blocklist::is_blocked("example.com", &state).await);
-        assert!(blocklist::is_blocked("blocked.net", &state).await);
+        assert!(!blocklist::is_blocked("example.com", &state));
+        assert!(blocklist::is_blocked("blocked.net", &state));
     }
 }

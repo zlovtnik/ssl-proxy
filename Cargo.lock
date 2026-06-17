@@ -148,6 +148,8 @@ dependencies = [
  "ieee80211",
  "lru",
  "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "pbkdf2",
  "pcap",
  "rustls 0.23.38",
@@ -155,7 +157,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "ssl-proxy",
+ "sha2 0.10.9",
+ "sync-plane",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3375,7 +3378,6 @@ dependencies = [
  "proptest",
  "quinn",
  "rand_core 0.6.4",
- "rdkafka",
  "reqwest",
  "rustls 0.23.38",
  "rustls-pemfile 2.2.0",
@@ -3384,6 +3386,7 @@ dependencies = [
  "sha2 0.10.9",
  "socket2 0.5.10",
  "subtle",
+ "sync-plane",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3437,6 +3440,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "sync-plane"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "opentelemetry",
+ "rdkafka",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "uuid",
 ]
 
 [[package]]

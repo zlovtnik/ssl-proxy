@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "services/atheros-sensor", "services/db-migrator"]
+members = [".", "crates/sync-plane", "services/atheros-sensor", "services/db-migrator"]
 
 [lints.rustdoc]
 html-tags = "allow"
@@ -55,7 +55,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
-rdkafka = { version = "0.36", features = ["tokio", "cmake-build"] }
+sync-plane = { path = "crates/sync-plane" }
 
 [features]
 default = ["quic"]

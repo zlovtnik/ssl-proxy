@@ -38,7 +38,9 @@ pub async fn handle(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
-                .expect("CONNECT bad request response must build"));
+                .unwrap_or_else(|_| {
+                    unreachable!("static CONNECT bad request response must build")
+                }));
         }
     };
 
@@ -61,7 +63,7 @@ pub async fn handle(
     let upgrade_fut = hyper::upgrade::on(&mut req);
     let hostname = hostname_owned.as_str();
 
-    if blocklist::is_blocked(hostname, &state).await {
+    if blocklist::is_blocked(hostname, &state) {
         let blocked_session_id = uuid::Uuid::new_v4().to_string();
         state.record_blocked();
         let approx_bytes = (50 + hostname.len()) as u64;
@@ -175,7 +177,9 @@ pub async fn handle(
                 .status(StatusCode::FORBIDDEN)
                 .header("Content-Type", "text/plain; charset=utf-8")
                 .body(Body::from("Access denied"))
-                .expect("CONNECT tarpit denial response must build"));
+                .unwrap_or_else(|_| {
+                    unreachable!("static CONNECT tarpit denial response must build")
+                }));
         }
 
         tokio::spawn(async move {
@@ -193,7 +197,7 @@ pub async fn handle(
             .status(StatusCode::FORBIDDEN)
             .header("Content-Type", "text/plain; charset=utf-8")
             .body(Body::from("Access denied"))
-            .expect("CONNECT denial response must build"));
+            .unwrap_or_else(|_| unreachable!("static CONNECT denial response must build")));
     }
 
     let is_pinned_app = is_cert_pinned_host(hostname);
@@ -313,7 +317,7 @@ pub async fn handle(
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .body(Body::empty())
-            .expect("CONNECT bypass response must build"));
+            .unwrap_or_else(|_| unreachable!("static CONNECT bypass response must build")));
     }
 
     let profile = obfuscation::classify_obfuscation(hostname, &state.config.obfuscation);
@@ -348,7 +352,7 @@ pub async fn handle(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .body(Body::empty())
-        .expect("CONNECT success response must build"))
+        .unwrap_or_else(|_| unreachable!("static CONNECT success response must build")))
 }
 
 /// Handle a fully upgraded CONNECT tunnel: establish an upstream connection, forward bidirectional traffic, and record/emit tunnel lifecycle events.

@@ -13,9 +13,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::timing::EASTERN_TIME_ZONE;
 use chrono::{DateTime, Datelike, NaiveTime, Utc, Weekday};
 use chrono_tz::Tz;
-use ssl_proxy::time::EASTERN_TIME_ZONE;
 use tracing::warn;
 
 #[derive(Clone, Debug)]

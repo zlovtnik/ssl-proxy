@@ -26,11 +26,8 @@ use tracing::{debug, field, info_span, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
-    config::SyncConfig,
-    sync::{
-        parse_payload_ref, PublishedMessage, ScanRequest, INLINE_PAYLOAD_REF_PREFIX,
-        OUTBOX_PAYLOAD_REF_PREFIX, SYNC_SCAN_REQUEST_TOPIC,
-    },
+    parse_payload_ref, PublishedMessage, ScanRequest, SyncConfig, INLINE_PAYLOAD_REF_PREFIX,
+    OUTBOX_PAYLOAD_REF_PREFIX, SYNC_SCAN_REQUEST_TOPIC,
 };
 
 pub const ENQUEUE_TIMEOUT_ERROR: &str = "sync publisher enqueue timed out";

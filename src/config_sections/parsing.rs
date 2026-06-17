@@ -1,3 +1,8 @@
+use super::types::ConfigError;
+use crate::wg_packet_obfuscation::{
+    parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding,
+};
+
 /// Returns a secret value taken from an environment variable or, if that is empty/missing,
 /// from a file whose path is specified by a second environment variable.
 ///
@@ -19,7 +24,7 @@
 /// std::env::set_var("MY_SECRET", "  s3cr3t  ");
 /// assert_eq!(read_secret("MY_SECRET", "MY_SECRET_FILE"), Some("s3cr3t".to_string()));
 /// ```
-fn read_secret(var: &str, file_var: &str) -> Option<String> {
+pub(crate) fn read_secret(var: &str, file_var: &str) -> Option<String> {
     std::env::var(var)
         .ok()
         .map(|s| s.trim().to_string())
@@ -36,7 +41,7 @@ fn read_secret(var: &str, file_var: &str) -> Option<String> {
         })
 }
 
-fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
+pub(super) fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
     let Some(raw) = std::env::var(var)
         .ok()
         .map(|value| value.trim().to_string())
@@ -52,7 +57,7 @@ fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
         .ok_or(ConfigError::InvalidWireGuardObfuscationMagicByte(raw))
 }
 
-fn read_optional_u64(var: &'static str) -> Result<Option<u64>, ConfigError> {
+pub(super) fn read_optional_u64(var: &'static str) -> Result<Option<u64>, ConfigError> {
     let Some(raw) = std::env::var(var).ok() else {
         return Ok(None);
     };
@@ -74,7 +79,9 @@ fn read_optional_u64(var: &'static str) -> Result<Option<u64>, ConfigError> {
     Ok(Some(parsed))
 }
 
-fn read_wireguard_obfuscation_encryption_mode(var: &str) -> Result<EncryptionMode, ConfigError> {
+pub(super) fn read_wireguard_obfuscation_encryption_mode(
+    var: &str,
+) -> Result<EncryptionMode, ConfigError> {
     let Some(raw) = std::env::var(var)
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
@@ -90,7 +97,7 @@ fn read_wireguard_obfuscation_encryption_mode(var: &str) -> Result<EncryptionMod
     }
 }
 
-fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadding, ConfigError> {
+pub(super) fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadding, ConfigError> {
     let Some(raw) = std::env::var(var)
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
@@ -113,7 +120,9 @@ fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadding, Config
     }
 }
 
-fn read_wireguard_obfuscation_magic_position(var: &str) -> Result<MagicPositionMode, ConfigError> {
+pub(super) fn read_wireguard_obfuscation_magic_position(
+    var: &str,
+) -> Result<MagicPositionMode, ConfigError> {
     let Some(raw) = std::env::var(var)
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())

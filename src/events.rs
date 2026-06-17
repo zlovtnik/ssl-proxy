@@ -207,7 +207,7 @@ pub(crate) fn emit_serializable<T>(
         state.flush_dashboard_event_queue();
     }
 
-    if !crate::sync::should_publish_scan_request(event) {
+    if !crate::proxy_sync::should_publish_scan_request(event) {
         return;
     }
 
@@ -231,7 +231,7 @@ pub(crate) fn emit_serializable<T>(
     };
     state
         .publisher
-        .publish_scan_request(crate::sync::ScanRequest {
+        .publish_scan_request(sync_plane::ScanRequest {
             stream_name: "proxy.events".to_string(),
             dedupe_key,
             payload_ref,

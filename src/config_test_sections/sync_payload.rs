@@ -3,7 +3,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert_eq!(result.sync.connect_timeout_ms, 2_000);
@@ -36,7 +36,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         std::env::set_var("SYNC_OUTBOX_DIR", "/tmp/custom-sync-outbox");
         std::env::set_var("SYNC_PUBLISH_QUEUE_CAPACITY", "4096");
         std::env::set_var("SYNC_PUBLISH_ENQUEUE_TIMEOUT_MS", "50");
@@ -60,7 +60,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         std::env::set_var("SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION", "/tmp/client.pem");
         let result = Config::from_env();
@@ -75,7 +75,7 @@
         let _guard = env_lock();
         clear_env();
         set_test_env_defaults();
-        std::env::set_var("ADMIN_API_KEY", "test-key");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
         assert!(!result.payload_audit.enabled);
@@ -141,5 +141,5 @@
 
     #[test]
     fn config_for_tests_uses_test_admin_api_key() {
-        assert_eq!(Config::for_tests().admin.api_key, "test-key");
+        assert_eq!(Config::for_tests().admin.api_key, "test-admin-api-key-0000000000000");
     }

@@ -151,6 +151,21 @@ fn decode_in_place_rejects_packet_len_larger_than_buffer() {
 }
 
 #[test]
+fn validate_framed_header_rejects_packet_len_larger_than_buffer() {
+    let settings = test_settings(Some(0xAA));
+    let packet = vec![0u8; FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN];
+    let packet_len = packet.len() + 1;
+
+    assert_eq!(
+        validate_framed_header(&packet, packet_len, &settings),
+        Err(PacketDecodeError::PacketTooShort {
+            actual: packet.len(),
+            minimum: packet_len,
+        })
+    );
+}
+
+#[test]
 fn decode_rejects_oversized_packet_as_too_large() {
     let settings = test_settings(None);
     let packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];

@@ -119,6 +119,7 @@ async fn apply_with_lock(
     let prepared = prepare_manifest(client, manifest).await?;
     let total = prepared.len();
     let mut report = ApplyReport::default();
+    let mut non_retryable_error: Option<ExecutionError> = None;
 
     for (index, object) in prepared.iter().enumerate() {
         let position = index + 1;
@@ -157,6 +158,7 @@ async fn apply_with_lock(
                 );
             }
             Err(error) => {
+                let is_non_retryable = error.is_non_retryable_apply();
                 report.failed_files += 1;
                 print_progress_line(
                     failed_message(
@@ -168,6 +170,15 @@ async fn apply_with_lock(
                     true,
                 );
                 eprintln!("{} {}", "error:".red().bold(), error);
+                if is_non_retryable {
+                    if !continue_on_error {
+                        return Err(error);
+                    }
+                    if non_retryable_error.is_none() {
+                        non_retryable_error = Some(error);
+                    }
+                    continue;
+                }
                 if !continue_on_error {
                     return Err(ExecutionError::apply(format!(
                         "aborted after failure in {}",
@@ -176,6 +187,10 @@ async fn apply_with_lock(
                 }
             }
         }
+    }
+
+    if let Some(error) = non_retryable_error {
+        return Err(error);
     }
 
     Ok(report)
@@ -231,7 +246,12 @@ async fn apply_one_file_without_transaction(
     match client.batch_execute(&object.object.raw_sql).await {
         Ok(()) => {
             let duration = started.elapsed();
-            record_applied(client, object, duration).await?;
+            if let Err(error) = record_applied(client, object, duration).await {
+                return Err(ExecutionError::non_retryable_apply(format!(
+                    "{}: applied SQL but failed to record migration state (non-retriable): {error}",
+                    object.object.source_file
+                )));
+            }
             Ok(duration)
         }
         Err(error) => {

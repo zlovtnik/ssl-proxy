@@ -318,8 +318,9 @@ pub struct AppState {
     pub dns_cache: DashMap<String, ResolvedMeta>,
     pub dns_negative_cache: DashMap<String, Instant>,
     pub ptr_cache: DashMap<String, ResolvedMeta>,
-    pub publisher: std::sync::Arc<crate::transport::SyncPublisher>,
+    pub publisher: std::sync::Arc<sync_plane::SyncPublisher>,
     pub forensic: crate::forensic::SharedForensicState,
+    pub wg_relay_metrics: Arc<crate::wg_relay::RelayMetrics>,
     pub config: crate::config::Config,
 
     /// Bandwidth rate calculation snapshot

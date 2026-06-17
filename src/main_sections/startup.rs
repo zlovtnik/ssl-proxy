@@ -23,7 +23,11 @@ use ssl_proxy::{
     blocklist, boringtun_control, check_proxy_auth, config, constant_time_eq, dashboard, forensic,
     observability, proxy, security, state, tunnel, wg_relay, wg_stats,
 };
-use std::net::SocketAddr;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{sync::broadcast, task::JoinSet};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
@@ -117,6 +121,72 @@ fn run_boringtun_subcommand() -> Option<i32> {
 /// `true` if `provided` equals `key` and `key` is not empty, `false` otherwise.
 fn admin_api_key_matches(provided: &str, key: &str) -> bool {
     !key.is_empty() && constant_time_eq(provided, key)
+}
+
+const ADMIN_AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+const ADMIN_AUTH_MAX_FAILURES: u32 = 8;
+const ADMIN_AUTH_MAX_TRACKED_IPS: usize = 4096;
+
+#[derive(Clone, Debug)]
+struct AdminAuthFailureState {
+    window_started: Instant,
+    failures: u32,
+}
+
+#[derive(Default)]
+struct AdminAuthRateLimiter {
+    failures_by_ip: dashmap::DashMap<IpAddr, AdminAuthFailureState>,
+}
+
+impl AdminAuthRateLimiter {
+    fn record_failure(&self, ip: IpAddr, now: Instant) -> u32 {
+        self.evict_expired(now);
+
+        if let Some(mut entry) = self.failures_by_ip.get_mut(&ip) {
+            return Self::increment_failure(entry.value_mut(), now);
+        }
+
+        if self.failures_by_ip.len() >= ADMIN_AUTH_MAX_TRACKED_IPS {
+            return ADMIN_AUTH_MAX_FAILURES;
+        }
+
+        let mut entry = self
+            .failures_by_ip
+            .entry(ip)
+            .or_insert_with(|| AdminAuthFailureState {
+                window_started: now,
+                failures: 0,
+            });
+        Self::increment_failure(entry.value_mut(), now)
+    }
+
+    fn increment_failure(entry: &mut AdminAuthFailureState, now: Instant) -> u32 {
+        if now.duration_since(entry.window_started) >= ADMIN_AUTH_FAILURE_WINDOW {
+            entry.window_started = now;
+            entry.failures = 0;
+        }
+
+        entry.failures = entry.failures.saturating_add(1);
+        entry.failures
+    }
+
+    fn evict_expired(&self, now: Instant) {
+        let expired: Vec<IpAddr> = self
+            .failures_by_ip
+            .iter()
+            .filter_map(|entry| {
+                (now.duration_since(entry.window_started) >= ADMIN_AUTH_FAILURE_WINDOW)
+                    .then_some(*entry.key())
+            })
+            .collect();
+        for ip in expired {
+            self.failures_by_ip.remove(&ip);
+        }
+    }
+
+    fn record_success(&self, ip: IpAddr) {
+        self.failures_by_ip.remove(&ip);
+    }
 }
 
 fn install_rustls_provider() {
@@ -267,6 +337,7 @@ fn build_admin_router(
     let admin_api_key = config.admin.api_key.clone();
     let require_mfa_claim = config.admin.require_mfa_claim;
     let mfa_header_names = config.admin.mfa_header_names.clone();
+    let auth_rate_limiter = Arc::new(AdminAuthRateLimiter::default());
     let admin_routes = Router::new()
         .route("/hosts", get(dashboard::hosts_snapshot))
         .route("/hosts/:hostname", get(dashboard::host_detail))
@@ -289,7 +360,13 @@ fn build_admin_router(
             move |req: Request<Body>, next: Next| {
                 let key = admin_api_key.clone();
                 let mfa_headers = mfa_header_names.clone();
+                let auth_rate_limiter = auth_rate_limiter.clone();
                 async move {
+                    let source_ip = req
+                        .extensions()
+                        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                        .map(|axum::extract::ConnectInfo(addr)| addr.ip())
+                        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
                     // If no admin API key configured, deny all access to admin endpoints
                     let provided = req
                         .headers()
@@ -298,8 +375,20 @@ fn build_admin_router(
                         .unwrap_or("");
 
                     if !admin_api_key_matches(provided, &key) {
+                        let failures =
+                            auth_rate_limiter.record_failure(source_ip, Instant::now());
+                        if failures >= ADMIN_AUTH_MAX_FAILURES {
+                            warn!(
+                                source_ip = %source_ip,
+                                failures,
+                                window_secs = ADMIN_AUTH_FAILURE_WINDOW.as_secs(),
+                                "admin access throttled after repeated API key failures"
+                            );
+                            return StatusCode::TOO_MANY_REQUESTS.into_response();
+                        }
                         return StatusCode::UNAUTHORIZED.into_response();
                     }
+                    auth_rate_limiter.record_success(source_ip);
                     if require_mfa_claim
                         && !security::has_required_mfa_claim(req.headers(), &mfa_headers)
                     {
@@ -392,11 +481,16 @@ fn log_runtime_ports(config: &config::Config) {
 
 async fn spawn_wireguard_relay(
     config: &config::Config,
+    state: state::SharedState,
     shutdown: CancellationToken,
 ) -> Option<tokio::task::JoinHandle<()>> {
     if config.wireguard.obfuscation_enabled {
         Some(
-            wg_relay::spawn(&config.wireguard, shutdown.clone())
+            wg_relay::spawn_with_metrics(
+                &config.wireguard,
+                shutdown.clone(),
+                state.wg_relay_metrics.clone(),
+            )
                 .await
                 .unwrap_or_else(|e| {
                     error!(

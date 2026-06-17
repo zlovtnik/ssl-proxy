@@ -7,10 +7,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ssl_proxy::{
-    sync::{ScanRequest, SYNC_SCAN_REQUEST_TOPIC},
-    transport::ENQUEUE_TIMEOUT_ERROR,
-};
+use sync_plane::{ScanRequest, ENQUEUE_TIMEOUT_ERROR, SYNC_SCAN_REQUEST_TOPIC};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -45,13 +42,13 @@ pub trait PublishClient: Send + Sync {
         -> Result<String, String>;
 }
 
-/// Wrapper around ssl_proxy::transport::SyncPublisher implementing PublishClient trait.
+/// Wrapper around sync_plane::SyncPublisher implementing PublishClient trait.
 pub struct SyncPublisherClient {
-    publisher: Arc<ssl_proxy::transport::SyncPublisher>,
+    publisher: Arc<sync_plane::SyncPublisher>,
 }
 
 impl SyncPublisherClient {
-    pub fn new(publisher: Arc<ssl_proxy::transport::SyncPublisher>) -> Self {
+    pub fn new(publisher: Arc<sync_plane::SyncPublisher>) -> Self {
         Self { publisher }
     }
 }
@@ -204,7 +201,7 @@ impl PublishState {
             "payload": payload,
             "error": error,
             "failure_stage": failure_stage.as_str(),
-            "timestamp": ssl_proxy::time::now_rfc3339(),
+            "timestamp": crate::timing::now_rfc3339(),
         });
         let line = serde_json::to_string(&entry).unwrap_or_default();
         let pending_bytes = line.as_bytes().len() as u64 + 1; // +1 for trailing newline
@@ -246,8 +243,8 @@ impl PublishState {
             .lines()
             .filter(|line| {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
-                    let keep =
-                        parsed.get("dedupe_key").and_then(|value| value.as_str()) != Some(dedupe_key);
+                    let keep = parsed.get("dedupe_key").and_then(|value| value.as_str())
+                        != Some(dedupe_key);
                     removed |= !keep;
                     keep
                 } else {
@@ -270,7 +267,8 @@ impl PublishState {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("publish-journal");
-        let temp_path = journal_path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
+        let temp_path =
+            journal_path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
         if std::fs::write(&temp_path, retained.as_bytes()).is_err() {
             return;
         }
@@ -441,7 +439,7 @@ pub async fn publish_bandwidth_event(
     event: &WirelessBandwidthEvent,
 ) -> Result<(), PublishError> {
     let mut event = event.clone();
-    event.published_at = Some(ssl_proxy::time::now_rfc3339());
+    event.published_at = Some(crate::timing::now_rfc3339());
     publish_oracle_json_durable(
         state,
         backlog,

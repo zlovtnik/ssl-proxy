@@ -91,11 +91,11 @@ impl ShimSession {
 
     fn record_upstream_send(&self, now_millis: u64) {
         self.last_upstream_send_millis
-            .store(now_millis, Ordering::Relaxed);
+            .store(now_millis, Ordering::Release);
     }
 
     fn record_server_reply(&self, now_millis: u64) {
-        let last_send = self.last_upstream_send_millis.load(Ordering::Relaxed);
+        let last_send = self.last_upstream_send_millis.load(Ordering::Acquire);
         if last_send > 0 {
             self.last_server_rtt_millis
                 .store(now_millis.saturating_sub(last_send), Ordering::Relaxed);

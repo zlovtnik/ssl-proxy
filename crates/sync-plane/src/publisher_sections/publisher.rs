@@ -258,14 +258,14 @@ impl SyncPublisher {
         let parsed = parse_payload_ref(payload_ref)
             .ok_or_else(|| format!("unsupported payload_ref: {payload_ref}"))?;
         let contents = match parsed.kind {
-            crate::sync::PayloadRefKind::Inline => URL_SAFE_NO_PAD
+            crate::PayloadRefKind::Inline => URL_SAFE_NO_PAD
                 .decode(parsed.locator.as_bytes())
                 .map_err(|error| format!("decode inline payload_ref: {error}"))
                 .and_then(|bytes| {
                     String::from_utf8(bytes)
                         .map_err(|error| format!("inline payload_ref UTF-8: {error}"))
                 }),
-            crate::sync::PayloadRefKind::Outbox => {
+            crate::PayloadRefKind::Outbox => {
                 let canonical_outbox = std::fs::canonicalize(&self.config.outbox_dir)
                     .map_err(|error| format!("canonicalize outbox directory: {error}"))?;
 

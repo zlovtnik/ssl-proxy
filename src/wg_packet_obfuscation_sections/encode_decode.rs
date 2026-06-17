@@ -201,6 +201,55 @@ fn decode_framed_in_place(
     Ok(original_len)
 }
 
+/// Validate a framed packet's cleartext header fields without decrypting or mutating the body.
+pub fn validate_framed_header(
+    buffer: &[u8],
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+) -> Result<(), PacketDecodeError> {
+    if packet_len > buffer.len() {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: buffer.len(),
+            minimum: packet_len,
+        });
+    }
+    if packet_len < FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: packet_len,
+            minimum: FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN,
+        });
+    }
+
+    let version = buffer[0];
+    if version != FRAME_VERSION {
+        return Err(PacketDecodeError::UnsupportedVersion(version));
+    }
+
+    let flags = buffer[1];
+    let frame_mode = if flags & FRAME_FLAG_AEAD != 0 {
+        EncryptionMode::Aead
+    } else {
+        EncryptionMode::Xor
+    };
+    if frame_mode != settings.encryption_mode {
+        return Err(PacketDecodeError::UnsupportedMode);
+    }
+
+    let salt = read_salt(buffer);
+    let counter = read_u64_at(buffer, 19);
+    validate_marker(buffer, settings, &salt, counter, flags)?;
+
+    let tag_len = tag_len(frame_mode);
+    if packet_len < FRAME_HEADER_LEN + tag_len + BODY_LEN_FIELD_LEN {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: packet_len,
+            minimum: FRAME_HEADER_LEN + tag_len + BODY_LEN_FIELD_LEN,
+        });
+    }
+
+    Ok(())
+}
+
 fn write_frame_header(
     buffer: &mut [u8],
     settings: &WgPacketObfuscation,
