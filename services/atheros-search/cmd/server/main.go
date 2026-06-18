@@ -167,7 +167,7 @@ func logStartupConfig(logger zerolog.Logger, cfg config.Config) {
 		Bool("embedder_enabled", cfg.EmbedderEnabled).
 		Bool("ingest_enabled", cfg.IngestEnabled).
 		Bool("alert_enabled", cfg.AlertEnabled).
-		Str("embedding_backend", cfg.EmbeddingBackend).
+		Bool("embedding_backend_configured", cfg.EmbeddingBackend != "").
 		Str("embedding_model", cfg.EmbeddingModel).
 		Str("event_embedding_scope", cfg.EventEmbeddingScope).
 		Msg("atheros-search startup feature flags")

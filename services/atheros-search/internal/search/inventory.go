@@ -173,26 +173,28 @@ func (s *Service) Inventory(ctx context.Context, filters InventoryFilters) (*Inv
 		}
 		attachInventoryClusters(devices, clusters)
 		devices = filterInventoryDevicesByTags(devices, filters.Tags)
-		if len(filters.Tags) > 0 {
-			totalRegisteredCount = len(devices)
-		}
 	}
 
 	builder := newInventoryBuilder()
 	for _, device := range devices {
-		builder.addDevice(device)
+		builder.addDevice(device, filters.Grouping)
 	}
-	builder.addClusterNodes()
+	if filters.Grouping == InventoryGroupingSimilarity {
+		builder.addClusterNodes()
+		builder.addClusterMemberEdges()
+	}
 
-	candidates, err := fetchInventoryCandidates(ctx, tx, builder.deviceMACs(), inventoryMinConfidence(filters), filters.Limit)
-	if err != nil {
-		return nil, err
-	}
-	for _, candidate := range candidates {
-		if s.inventoryCandidateSuppressed(inventoryCandidateID(candidate.MACA, candidate.MACB)) {
-			continue
+	if filters.Grouping == InventoryGroupingSimilarity {
+		candidates, err := fetchInventoryCandidates(ctx, tx, builder.deviceMACs(), inventoryMinConfidence(filters), filters.Limit)
+		if err != nil {
+			return nil, err
 		}
-		builder.addMergeCandidate(candidate)
+		for _, candidate := range candidates {
+			if s.inventoryCandidateSuppressed(inventoryCandidateID(candidate.MACA, candidate.MACB)) {
+				continue
+			}
+			builder.addMergeCandidate(candidate)
+		}
 	}
 
 	nodes := builder.sortedNodes()
@@ -340,7 +342,7 @@ all_devices AS (
 filtered AS (
   SELECT
     *,
-    count(*) OVER () AS total_count
+    count(*) FILTER (WHERE registered) OVER () AS total_count
   FROM all_devices
   `+graphWhere(clauses)+`
   ORDER BY last_seen DESC NULLS LAST, mac ASC
@@ -525,7 +527,7 @@ func newInventoryBuilder() *inventoryBuilder {
 	}
 }
 
-func (b *inventoryBuilder) addDevice(row *inventoryDeviceRow) {
+func (b *inventoryBuilder) addDevice(row *inventoryDeviceRow, grouping InventoryGrouping) {
 	mac := graphNorm(row.MAC)
 	if mac == "" {
 		return
@@ -536,9 +538,11 @@ func (b *inventoryBuilder) addDevice(row *inventoryDeviceRow) {
 	if row.Cluster != nil {
 		knownMACs = row.Cluster.MACs
 		clusterID = inventoryNodeID(InventoryNodeCluster, fmt.Sprintf("%d", row.Cluster.ID))
-		b.clusters[row.Cluster.ID] = *row.Cluster
-		if row.Active {
-			b.clusterActive[row.Cluster.ID] = true
+		if grouping == InventoryGroupingSimilarity {
+			b.clusters[row.Cluster.ID] = *row.Cluster
+			if row.Active {
+				b.clusterActive[row.Cluster.ID] = true
+			}
 		}
 	}
 	tags := inventoryDeviceTags(row)
@@ -560,7 +564,7 @@ func (b *inventoryBuilder) addDevice(row *inventoryDeviceRow) {
 	b.addNode(node)
 	b.devicesByMAC[mac] = node
 
-	if row.OwnerID != "" {
+	if grouping == InventoryGroupingCMDB && row.OwnerID != "" {
 		ownerID := inventoryNodeID(InventoryNodeOwner, row.OwnerID)
 		b.addNode(InventoryNode{
 			ID:     ownerID,
@@ -576,7 +580,7 @@ func (b *inventoryBuilder) addDevice(row *inventoryDeviceRow) {
 			Kind:   InventoryEdgeOwns,
 		})
 	}
-	if row.LocationID != "" {
+	if grouping == InventoryGroupingCMDB && row.LocationID != "" {
 		locationID := inventoryNodeID(InventoryNodeLocationAsset, row.LocationID)
 		b.addNode(InventoryNode{
 			ID:         locationID,
@@ -591,14 +595,6 @@ func (b *inventoryBuilder) addDevice(row *inventoryDeviceRow) {
 			Source: nodeID,
 			Target: locationID,
 			Kind:   InventoryEdgeLocatedAt,
-		})
-	}
-	if clusterID != "" {
-		b.addEdge(InventoryEdge{
-			ID:     "cluster_member:" + nodeID + ":" + clusterID,
-			Source: nodeID,
-			Target: clusterID,
-			Kind:   InventoryEdgeClusterMember,
 		})
 	}
 }
@@ -616,6 +612,20 @@ func (b *inventoryBuilder) addClusterNodes() {
 			Active:              b.clusterActive[cluster.ID],
 			SimilarityClusterID: nodeID,
 			Tags:                []string{"cluster", "clustered"},
+		})
+	}
+}
+
+func (b *inventoryBuilder) addClusterMemberEdges() {
+	for _, node := range b.devicesByMAC {
+		if node.SimilarityClusterID == "" {
+			continue
+		}
+		b.addEdge(InventoryEdge{
+			ID:     "cluster_member:" + node.ID + ":" + node.SimilarityClusterID,
+			Source: node.ID,
+			Target: node.SimilarityClusterID,
+			Kind:   InventoryEdgeClusterMember,
 		})
 	}
 }

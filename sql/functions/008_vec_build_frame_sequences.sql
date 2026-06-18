@@ -72,11 +72,17 @@ begin
       min(sensor_id) as sensor_id,
       min(observed_at) as window_start,
       max(observed_at) as window_end,
-      string_agg(
-        upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
-        ' ' order by observed_at
+      left(
+        string_agg(
+          upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
+          ' ' order by observed_at
+        ),
+        65535
       ) as sequence_tokens,
-      string_agg(semantic_token, ' ' order by observed_at) as semantic_tokens,
+      left(
+        string_agg(semantic_token, ' ' order by observed_at),
+        65535
+      ) as semantic_tokens,
       count(*)::bigint as frame_count
     from base
     where session_key is not null

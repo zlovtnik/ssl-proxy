@@ -36,7 +36,7 @@ func httpStatusFromError(err error) int {
 	if strings.Contains(msg, "request body too large") {
 		return http.StatusRequestEntityTooLarge
 	}
-	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "unsupported graph node kind") || strings.Contains(msg, "unsupported inventory grouping") || strings.Contains(msg, "unsupported merge decision") || strings.Contains(msg, "must be before") || strings.Contains(msg, "is required") || strings.Contains(msg, "required") {
+	if strings.Contains(msg, "unsupported search kind") || strings.Contains(msg, "unsupported graph node kind") || strings.Contains(msg, "unsupported inventory grouping") || strings.Contains(msg, "unsupported merge decision") || strings.Contains(msg, "must be before") || strings.Contains(msg, "is required") {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError

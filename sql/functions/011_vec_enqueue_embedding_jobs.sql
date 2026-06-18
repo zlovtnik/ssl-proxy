@@ -12,7 +12,9 @@ language plpgsql
 as $$
 declare
   v_count integer := 0;
+  v_event_count integer := 0;
   v_event_cursor timestamptz;
+  v_event_cursor_next timestamptz;
 begin
   if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
     return 0;
@@ -27,12 +29,15 @@ begin
   into v_event_cursor;
 
   with event_keys as (
-    select e.dedupe_key
+    select
+      e.dedupe_key,
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as event_updated_at
     from sync_events e
+    left join wireless_frames frame on frame.dedupe_key = e.dedupe_key
     where e.stream_name = 'wireless.audit'
       and e.status = 'batched'
-      and e.updated_at > v_event_cursor
-    order by e.updated_at, e.dedupe_key
+      and greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) > v_event_cursor
+    order by event_updated_at, e.dedupe_key
   ),
   event_jobs as (
     select
@@ -59,13 +64,8 @@ begin
       and (
         coalesce(nullif(p_event_embedding_scope, ''), 'high_signal') = 'all'
         or coalesce(source.handshake_captured, false)
-        or coalesce(source.risk_score, coordinator.safe_double(source.payload->>'risk_score'), 0::double precision) >= 0.5
-        or coordinator.has_threat_tag(
-          case
-            when source.tags is not null and source.tags <> '[]'::jsonb then source.tags
-            else coordinator.safe_jsonb_array(source.payload->'tags')
-          end
-        )
+        or coalesce(coordinator.safe_double(source.payload->>'risk_score'), 0::double precision) >= 0.5
+        or coordinator.has_threat_tag(coordinator.safe_jsonb_array(source.payload->'tags'))
         or exists (
           select 1
           from vec_alerts alert
@@ -344,19 +344,32 @@ begin
       attempts = 0,
       updated_at = now()
     where vec_embedding_jobs.status = 'completed'
-    returning 1
+    returning source_table, source_key, embedding_kind
   )
-  select count(*) into v_count from inserted;
+  select
+    count(*),
+    count(*) filter (
+      where inserted.source_table = 'sync_events'
+        and inserted.embedding_kind = 'event'
+    ),
+    max(keys.event_updated_at) filter (
+      where inserted.source_table = 'sync_events'
+        and inserted.embedding_kind = 'event'
+    )
+    into v_count, v_event_count, v_event_cursor_next
+  from inserted
+  left join event_keys keys
+    on keys.dedupe_key = inserted.source_key
+   and inserted.source_table = 'sync_events'
+   and inserted.embedding_kind = 'event';
 
-  if v_count > 0 then
+  if v_event_count > 0 and v_event_cursor_next is not null then
     insert into sync_cursors (stream_name, cursor_value, updated_at)
-    select
+    values (
       'vec_embeddings.sync_events.wireless.audit',
-      coalesce(max(updated_at)::text, now()::text),
+      v_event_cursor_next::text,
       now()
-    from sync_events_expanded
-    where sync_events_expanded.stream_name = 'wireless.audit'
-      and sync_events_expanded.status = 'batched'
+    )
     on conflict (stream_name) do update set
       cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
       updated_at = now();

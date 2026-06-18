@@ -59,6 +59,44 @@ func TestInventoryDeviceTagsIncludeDerivedOperationalTags(t *testing.T) {
 	require.True(t, inventoryTagsMatch(device.Tags, nil))
 }
 
+func TestInventoryBuilderAppliesGrouping(t *testing.T) {
+	t.Parallel()
+
+	device := &inventoryDeviceRow{
+		MAC:        "aa:bb:cc:dd:ee:01",
+		OwnerID:    "security",
+		LocationID: "floor-2",
+		Active:     true,
+		Registered: true,
+		Cluster: &inventoryClusterRow{
+			ID:   7,
+			MACs: []string{"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"},
+		},
+	}
+
+	registry := newInventoryBuilder()
+	registry.addDevice(device, InventoryGroupingRegistry)
+	require.Len(t, registry.nodes, 1)
+	require.Empty(t, registry.edges)
+
+	cmdb := newInventoryBuilder()
+	cmdb.addDevice(device, InventoryGroupingCMDB)
+	require.Contains(t, cmdb.nodes, "owner:security")
+	require.Contains(t, cmdb.nodes, "location:floor-2")
+	require.Contains(t, cmdb.edges, "owns:owner:security:device:aa:bb:cc:dd:ee:01")
+	require.Contains(t, cmdb.edges, "located_at:device:aa:bb:cc:dd:ee:01:location:floor-2")
+	require.NotContains(t, cmdb.nodes, "cluster:7")
+
+	similarity := newInventoryBuilder()
+	similarity.addDevice(device, InventoryGroupingSimilarity)
+	similarity.addClusterNodes()
+	similarity.addClusterMemberEdges()
+	require.Contains(t, similarity.nodes, "cluster:7")
+	require.Contains(t, similarity.edges, "cluster_member:device:aa:bb:cc:dd:ee:01:cluster:7")
+	require.NotContains(t, similarity.nodes, "owner:security")
+	require.NotContains(t, similarity.nodes, "location:floor-2")
+}
+
 func TestMergeDecisionSuppressesCandidateUntilUndo(t *testing.T) {
 	t.Parallel()
 
