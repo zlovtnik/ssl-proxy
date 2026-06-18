@@ -290,14 +290,32 @@ async fn run_sensor() -> Result<(), SensorError> {
             _ = inventory_flush.tick() => {
                 // Flush client inventory snapshot
                 let snapshot = pipeline_state.client_inventory.snapshot();
+                let stats = handles.stats.snapshot();
                 let observed_at = snapshot.observed_at.clone();
                 let context = context_snapshot(&handles.context);
+                let bpf = filter_snapshot(&handles.current_filter, &handles.config.bpf);
                 let inventory_payload = serde_json::json!({
                     "schema_version": snapshot.schema_version,
                     "event_type": snapshot.event_type,
                     "observed_at": observed_at.clone(),
                     "sensor_id": context.sensor_id,
                     "location_id": context.location_id,
+                    "interface": context.interface,
+                    "channel": context.channel,
+                    "bpf": bpf,
+                    "capture_stats": {
+                        "packets_seen": stats.packets_seen,
+                        "decoded_frames": stats.decoded_frames,
+                        "unsupported_frames": stats.unsupported_frames,
+                        "malformed_frames": stats.malformed_frames,
+                        "audit_window_drops": stats.audit_window_drops,
+                        "capture_errors": stats.capture_errors,
+                        "pipeline_errors": stats.pipeline_errors,
+                        "mac_lookup_failures": stats.mac_lookup_failures,
+                        "channel_hop_count": stats.channel_hop_count,
+                        "memory_backlog_len": stats.memory_backlog_len,
+                        "probe_accumulator_len": stats.probe_accumulator_len,
+                    },
                     "clients": snapshot.clients,
                 });
                 if let Err(error) = publish_oracle_json_durable(

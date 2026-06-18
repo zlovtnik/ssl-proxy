@@ -45,6 +45,7 @@ func main() {
 	}
 	zerolog.SetGlobalLevel(level)
 	logger := log.With().Str("service", "atheros-search").Logger()
+	logStartupConfig(logger, cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -158,6 +159,18 @@ func main() {
 		grpcServer.Stop()
 		logger.Warn().Err(shutdownCtx.Err()).Msg("grpc graceful shutdown timed out")
 	}
+}
+
+func logStartupConfig(logger zerolog.Logger, cfg config.Config) {
+	logger.Warn().
+		Bool("worker_enabled", cfg.WorkerEnabled).
+		Bool("embedder_enabled", cfg.EmbedderEnabled).
+		Bool("ingest_enabled", cfg.IngestEnabled).
+		Bool("alert_enabled", cfg.AlertEnabled).
+		Bool("embedding_backend_configured", cfg.EmbeddingBackend != "").
+		Str("embedding_model", cfg.EmbeddingModel).
+		Str("event_embedding_scope", cfg.EventEmbeddingScope).
+		Msg("atheros-search startup feature flags")
 }
 
 func runHealthcheck() error {

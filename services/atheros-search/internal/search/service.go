@@ -30,6 +30,7 @@ type Service struct {
 	suggMu                sync.Mutex
 	graphCache            sync.Map
 	graphCacheJanitorOnce sync.Once
+	inventoryDecisions    sync.Map
 }
 
 func NewService(pool *pgxpool.Pool, embedder embed.Client, cfg config.Config, m *metrics.Metrics, logger zerolog.Logger) *Service {

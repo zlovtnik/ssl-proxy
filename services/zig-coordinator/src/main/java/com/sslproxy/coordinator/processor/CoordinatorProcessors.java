@@ -48,7 +48,8 @@ public class CoordinatorProcessors {
                         pendingCount, budget, props.ingestBatchSize());
             }
 
-            long processed = switch (db.processIngestLedger()) {
+            DbResult<Long> ingestResult = db.processIngestLedger();
+            long processed = switch (ingestResult) {
                 case DbResult.Ok<Long> ok -> ok.value();
                 case DbResult.Empty<Long> ignored -> 0L;
                 case DbResult.Err<Long> err -> {
@@ -57,6 +58,8 @@ public class CoordinatorProcessors {
                     yield 0L;
                 }
             };
+            boolean ingestSucceeded = !(ingestResult instanceof DbResult.Err<?>);
+            metrics.recordIngestLedgerInvocation(ingestSucceeded);
             if (processed > 0) {
                 log.info("event=ingest_ledger status=processed count={}", processed);
             }

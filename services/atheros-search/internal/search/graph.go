@@ -604,10 +604,72 @@ func (b *graphBuilder) prune(limit int) {
 	for _, node := range nodes[:limit] {
 		keep[node.ID] = struct{}{}
 	}
+	graphDeviceMACs := map[string]struct{}{}
+	keptDeviceMACs := map[string]struct{}{}
+	for _, node := range b.nodes {
+		if node.Kind != NodeKindDevice {
+			continue
+		}
+		key := graphNorm(node.MAC)
+		if key == "" {
+			continue
+		}
+		graphDeviceMACs[key] = struct{}{}
+		if _, ok := keep[node.ID]; ok {
+			keptDeviceMACs[key] = struct{}{}
+		}
+	}
 	for id := range b.nodes {
 		if _, ok := keep[id]; !ok {
 			delete(b.nodes, id)
 			delete(b.clusterMembers, id)
+		}
+	}
+	b.pruneClusterMembers(graphDeviceMACs, keptDeviceMACs)
+	b.pruneEdges()
+}
+
+func (b *graphBuilder) pruneClusterMembers(graphDeviceMACs, keptDeviceMACs map[string]struct{}) {
+	for clusterID, members := range b.clusterMembers {
+		if _, ok := b.nodes[clusterID]; !ok {
+			delete(b.clusterMembers, clusterID)
+			continue
+		}
+
+		hadGraphMember := false
+		keptMembers := members[:0]
+		for _, mac := range members {
+			key := graphNorm(mac)
+			if key == "" {
+				continue
+			}
+			if _, ok := graphDeviceMACs[key]; ok {
+				hadGraphMember = true
+			}
+			if _, ok := keptDeviceMACs[key]; ok {
+				keptMembers = append(keptMembers, mac)
+			}
+		}
+		if !hadGraphMember {
+			continue
+		}
+		if len(keptMembers) == 0 {
+			delete(b.nodes, clusterID)
+			delete(b.clusterMembers, clusterID)
+			continue
+		}
+		b.clusterMembers[clusterID] = keptMembers
+	}
+}
+
+func (b *graphBuilder) pruneEdges() {
+	for id, edge := range b.edges {
+		if _, ok := b.nodes[edge.Source]; !ok {
+			delete(b.edges, id)
+			continue
+		}
+		if _, ok := b.nodes[edge.Target]; !ok {
+			delete(b.edges, id)
 		}
 	}
 }

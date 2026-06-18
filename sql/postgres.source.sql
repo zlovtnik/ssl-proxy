@@ -1382,7 +1382,7 @@ create table if not exists vec_embeddings (
   embedded_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
+  constraint vec_embeddings_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph', 'timing_profile')),
   constraint vec_embeddings_dimensions_chk check (embedding_dimensions > 0),
   constraint chk_embedding_dims_matches_embedding_dimensions check (vector_dims(embedding) = embedding_dimensions),
   constraint vec_embeddings_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
@@ -1476,6 +1476,7 @@ create table if not exists vec_frame_sequences (
   window_start timestamptz not null,
   window_end timestamptz not null,
   sequence_tokens text not null,
+  semantic_tokens text,
   frame_count bigint not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -1486,6 +1487,27 @@ create index if not exists vec_frame_sequences_sensor_idx
 
 create index if not exists vec_frame_sequences_location_idx
   on vec_frame_sequences (location_id, window_start desc);
+
+create table if not exists vec_timing_profiles (
+  profile_id bigserial primary key,
+  profile_key text not null unique,
+  source_mac text not null,
+  sensor_id text,
+  location_id text,
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  tsft_p50_us numeric,
+  tsft_p95_us numeric,
+  tsft_jitter numeric,
+  wall_p50_ms numeric,
+  wall_jitter_ms numeric,
+  beacon_interval_median_ms numeric,
+  beacon_jitter_ms numeric,
+  embedding_text text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vec_timing_profiles_window_chk check (window_end > window_start)
+);
 
 -- Track 5.1: Bigram transition model for sequence scoring
 create table if not exists vec_transition_model (
@@ -1522,7 +1544,7 @@ begin
       ) as frame_subtype,
       coalesce(session_key, payload->>'session_key') as session_key,
       observed_at
-    from sync_events_expanded
+    from sync_events_expanded as source
     where source.stream_name = 'wireless.audit'
       and source.status = 'batched'
       and observed_at >= now() - interval '24 hours'
@@ -1676,7 +1698,7 @@ begin
       stream_name,
       sensor_id,
       location_id
-    from sync_events_expanded
+    from sync_events_expanded as source
     where source.stream_name = 'wireless.audit'
       and source.status = 'batched'
       and observed_at >= p_from
@@ -2203,7 +2225,23 @@ begin
       coalesce(
         nullif(frame_subtype, ''),
         nullif(payload->>'frame_subtype', '')
-      ) as frame_subtype_value
+      ) as frame_subtype_value,
+      case
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('PROBE_REQ', 'PROBE_REQUEST', 'PROBE_RESP', 'PROBE_RESPONSE') then 'DISCOVERY'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('AUTH', 'AUTHENTICATION', 'ASSOC_REQ', 'ASSOCIATION_REQUEST', 'ASSOC_RESP', 'ASSOCIATION_RESPONSE',
+              'REASSOC_REQ', 'REASSOCIATION_REQUEST', 'REASSOC_RESP', 'REASSOCIATION_RESPONSE') then 'ASSOCIATION'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('DEAUTH', 'DEAUTHENTICATION', 'DISASSOC', 'DISASSOCIATION') then 'TERMINATION'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('EAPOL', 'EAPOL_KEY') then 'HANDSHAKE'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) in
+             ('DATA', 'DATA_QOS', 'QOS_DATA', 'NULL_DATA') then 'DATA'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) = 'BEACON' then 'BEACON'
+        when upper(regexp_replace(coalesce(nullif(frame_subtype, ''), nullif(payload->>'frame_subtype', '')), '-', '_', 'g')) = 'ACTION' then 'ACTION'
+        else 'OTHER'
+      end as semantic_token
     from sync_events_expanded
     where stream_name = 'wireless.audit'
       and status = 'batched'
@@ -2222,10 +2260,17 @@ begin
       min(sensor_id) as sensor_id,
       min(observed_at) as window_start,
       max(observed_at) as window_end,
-      string_agg(
-        upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
-        ' ' order by observed_at
+      left(
+        string_agg(
+          upper(regexp_replace(frame_subtype_value, '-', '_', 'g')),
+          ' ' order by observed_at
+        ),
+        65535
       ) as sequence_tokens,
+      left(
+        string_agg(semantic_token, ' ' order by observed_at),
+        65535
+      ) as semantic_tokens,
       count(*)::bigint as frame_count
     from base
     where session_key is not null
@@ -2239,6 +2284,7 @@ begin
     window_start,
     window_end,
     sequence_tokens,
+    semantic_tokens,
     frame_count,
     created_at,
     updated_at
@@ -2251,6 +2297,7 @@ begin
     window_start,
     window_end,
     sequence_tokens,
+    semantic_tokens,
     frame_count,
     now(),
     now()
@@ -2262,6 +2309,7 @@ begin
     window_start = excluded.window_start,
     window_end = excluded.window_end,
     sequence_tokens = excluded.sequence_tokens,
+    semantic_tokens = excluded.semantic_tokens,
     frame_count = excluded.frame_count,
     updated_at = now();
 
@@ -2617,7 +2665,7 @@ create table if not exists vec_embedding_jobs (
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph')),
+  constraint vec_embedding_jobs_kind_chk check (embedding_kind in ('event', 'device', 'behaviour_window', 'baseline_profile', 'frame_sequence', 'infrastructure_subgraph', 'timing_profile')),
   constraint vec_embedding_jobs_status_chk check (status in ('pending', 'leased', 'completed', 'failed')),
   constraint vec_embedding_jobs_attempts_chk check (attempts >= 0 and max_attempts > 0),
   constraint vec_embedding_jobs_source_unique unique (source_table, source_key, embedding_model, embedding_kind)
@@ -2910,26 +2958,51 @@ end;
 $$;
 
 create or replace function vec_enqueue_embedding_jobs(
-  p_model text default 'nomic-embed-text-v2-moe'
+  p_model text default 'nomic-embed-text-v2-moe',
+  p_event_embedding_scope text default 'high_signal'
 )
 returns integer
 language plpgsql
 as $$
 declare
   v_count integer := 0;
+  v_event_count integer := 0;
+  v_event_cursor timestamptz;
+  v_event_cursor_next timestamptz;
 begin
   if not vec_try_begin_job('vec_enqueue_embedding_jobs') then
     return 0;
   end if;
 
-  with event_jobs as (
+  select coalesce(
+    (select cursor_value::timestamptz
+       from sync_cursors
+      where stream_name = 'vec_embeddings.sync_events.wireless.audit'),
+    timestamptz '1970-01-01 00:00:00+00'
+  )
+  into v_event_cursor;
+
+  with event_keys as (
+    select
+      e.dedupe_key,
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as event_updated_at
+    from sync_events e
+    left join wireless_frames frame on frame.dedupe_key = e.dedupe_key
+    where e.stream_name = 'wireless.audit'
+      and e.status = 'batched'
+      and greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) > v_event_cursor
+    order by event_updated_at, e.dedupe_key
+  ),
+  event_jobs as (
     select
       'sync_events'::text as source_table,
-      dedupe_key::text as source_key,
+      source.dedupe_key::text as source_key,
       p_model as embedding_model,
       'event'::text as embedding_kind,
       10 as priority
-    from sync_events_expanded source
+    from event_keys keys
+    join sync_events_expanded source
+      on source.dedupe_key = keys.dedupe_key
     left join vec_embeddings existing
       on existing.source_table = 'sync_events'
      and existing.source_key = source.dedupe_key
@@ -2942,6 +3015,34 @@ begin
      and existing_job.embedding_kind = 'event'
     where source.stream_name = 'wireless.audit'
       and source.status = 'batched'
+      and (
+        coalesce(nullif(p_event_embedding_scope, ''), 'high_signal') = 'all'
+        or coalesce(source.handshake_captured, false)
+        or coalesce(coordinator.safe_double(source.payload->>'risk_score'), 0::double precision) >= 0.5
+        or coordinator.has_threat_tag(coordinator.safe_jsonb_array(source.payload->'tags'))
+        or exists (
+          select 1
+          from vec_alerts alert
+          where alert.created_at >= source.observed_at - interval '1 hour'
+            and alert.created_at <= source.observed_at + interval '24 hours'
+            and (
+              alert.metadata->>'dedupe_key' = source.dedupe_key
+              or alert.metadata->>'source_key' = source.dedupe_key
+              or (
+                source.source_mac is not null
+                and lower(alert.source_mac) = lower(source.source_mac)
+              )
+              or (
+                source.bssid is not null
+                and lower(alert.metadata->>'bssid') = lower(source.bssid)
+              )
+              or (
+                source.destination_bssid is not null
+                and lower(alert.metadata->>'destination_bssid') = lower(source.destination_bssid)
+              )
+            )
+        )
+      )
       and (
         existing.embedding_id is null
         or (
@@ -3036,6 +3137,34 @@ begin
        or (
          existing_job.status = 'completed'
          and fs.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+       )
+  ),
+  timing_profile_jobs as (
+    select
+      'vec_timing_profiles'::text as source_table,
+      tp.profile_id::text as source_key,
+      p_model as embedding_model,
+      'timing_profile'::text as embedding_kind,
+      17 as priority
+    from vec_timing_profiles tp
+    left join vec_embeddings existing
+      on existing.source_table = 'vec_timing_profiles'
+     and existing.source_key = tp.profile_id::text
+     and existing.embedding_model = p_model
+     and existing.embedding_kind = 'timing_profile'
+    left join vec_embedding_jobs existing_job
+      on existing_job.source_table = 'vec_timing_profiles'
+     and existing_job.source_key = tp.profile_id::text
+     and existing_job.embedding_model = p_model
+     and existing_job.embedding_kind = 'timing_profile'
+    where existing.embedding_id is null
+       or (
+         existing_job.job_id is null
+         and tp.updated_at > existing.embedded_at
+       )
+       or (
+         existing_job.status = 'completed'
+         and tp.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
        )
   ),
   graph_keys as (
@@ -3153,6 +3282,8 @@ begin
       union all
       select * from frame_sequence_jobs
       union all
+      select * from timing_profile_jobs
+      union all
       select * from baseline_jobs
       union all
       select * from graph_jobs
@@ -3164,23 +3295,39 @@ begin
       priority = least(vec_embedding_jobs.priority, excluded.priority),
       completed_at = null,
       content_sha256 = null,
+      attempts = 0,
       updated_at = now()
     where vec_embedding_jobs.status = 'completed'
-    returning 1
+    returning source_table, source_key, embedding_kind
   )
-  select count(*) into v_count from inserted;
-
-  insert into sync_cursors (stream_name, cursor_value, updated_at)
   select
-    'vec_embeddings.sync_events.wireless.audit',
-    coalesce(max(updated_at)::text, now()::text),
-    now()
-  from sync_events_expanded
-  where sync_events_expanded.stream_name = 'wireless.audit'
-    and sync_events_expanded.status = 'batched'
-  on conflict (stream_name) do update set
-    cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
-    updated_at = now();
+    count(*),
+    count(*) filter (
+      where inserted.source_table = 'sync_events'
+        and inserted.embedding_kind = 'event'
+    ),
+    max(keys.event_updated_at) filter (
+      where inserted.source_table = 'sync_events'
+        and inserted.embedding_kind = 'event'
+    )
+    into v_count, v_event_count, v_event_cursor_next
+  from inserted
+  left join event_keys keys
+    on keys.dedupe_key = inserted.source_key
+   and inserted.source_table = 'sync_events'
+   and inserted.embedding_kind = 'event';
+
+  if v_event_count > 0 and v_event_cursor_next is not null then
+    insert into sync_cursors (stream_name, cursor_value, updated_at)
+    values (
+      'vec_embeddings.sync_events.wireless.audit',
+      v_event_cursor_next::text,
+      now()
+    )
+    on conflict (stream_name) do update set
+      cursor_value = greatest(sync_cursors.cursor_value::timestamptz, excluded.cursor_value::timestamptz)::text,
+      updated_at = now();
+  end if;
 
   perform vec_finish_job('vec_enqueue_embedding_jobs');
   return v_count;

@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/opt/ssl-proxy/services/atheros-sensor
 Environment=ATH_SENSOR_LOCATION_ID=North-Wing-Entry
 Environment=ATH_SENSOR_CHANNEL=6
-Environment=ATH_SENSOR_CHANNEL_HOP_ENABLED=false
+Environment=ATH_SENSOR_CHANNEL_HOP_ENABLED=true
 Environment=ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS=1000
 Environment=ATH_SENSOR_REG_DOMAIN=US
 Environment=ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS=60

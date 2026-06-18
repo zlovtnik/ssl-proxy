@@ -118,6 +118,97 @@ func TestGraphObservedAPSQLUsesIndexedSSIDPredicates(t *testing.T) {
 	require.NotContains(t, sql, "sync_events_expanded")
 }
 
+func TestGraphBuilderPruneDropsClusterWithNoRemainingFetchedMembers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_000, 0).UTC()
+	builder := newGraphBuilder()
+	clusterID := graphNodeID(NodeKindCluster, "7")
+	memberID := graphNodeID(NodeKindDevice, "aa:bb:cc:dd:ee:01")
+	unrelatedID := graphNodeID(NodeKindDevice, "aa:bb:cc:dd:ee:02")
+
+	builder.addNode(GraphNode{
+		ID:       clusterID,
+		Kind:     NodeKindCluster,
+		Label:    "Cluster 7",
+		LastSeen: timePtr(now.Add(3 * time.Minute)),
+	})
+	builder.clusterMembers[clusterID] = []string{"aa:bb:cc:dd:ee:01"}
+	builder.addNode(GraphNode{
+		ID:       unrelatedID,
+		Kind:     NodeKindDevice,
+		Label:    "unrelated",
+		MAC:      "aa:bb:cc:dd:ee:02",
+		LastSeen: timePtr(now.Add(2 * time.Minute)),
+	})
+	builder.addNode(GraphNode{
+		ID:       memberID,
+		Kind:     NodeKindDevice,
+		Label:    "member",
+		MAC:      "aa:bb:cc:dd:ee:01",
+		LastSeen: timePtr(now.Add(time.Minute)),
+	})
+	builder.addEdge(GraphResponseEdge{
+		ID:     "cluster_member:" + memberID + ":" + clusterID,
+		Source: memberID,
+		Target: clusterID,
+		Kind:   EdgeKindClusterMember,
+	})
+
+	builder.prune(2)
+
+	require.Contains(t, builder.nodes, unrelatedID)
+	require.NotContains(t, builder.nodes, memberID)
+	require.NotContains(t, builder.nodes, clusterID)
+	require.NotContains(t, builder.clusterMembers, clusterID)
+	require.Empty(t, builder.edges)
+}
+
+func TestGraphBuilderPruneKeepsClusterWithRemainingFetchedMember(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_000, 0).UTC()
+	builder := newGraphBuilder()
+	clusterID := graphNodeID(NodeKindCluster, "7")
+	keptMemberID := graphNodeID(NodeKindDevice, "aa:bb:cc:dd:ee:01")
+	prunedMemberID := graphNodeID(NodeKindDevice, "aa:bb:cc:dd:ee:02")
+
+	builder.addNode(GraphNode{
+		ID:       clusterID,
+		Kind:     NodeKindCluster,
+		Label:    "Cluster 7",
+		LastSeen: timePtr(now.Add(3 * time.Minute)),
+	})
+	builder.clusterMembers[clusterID] = []string{
+		"aa:bb:cc:dd:ee:01",
+		"aa:bb:cc:dd:ee:02",
+	}
+	builder.addNode(GraphNode{
+		ID:       keptMemberID,
+		Kind:     NodeKindDevice,
+		Label:    "kept member",
+		MAC:      "aa:bb:cc:dd:ee:01",
+		LastSeen: timePtr(now.Add(2 * time.Minute)),
+	})
+	builder.addNode(GraphNode{
+		ID:       prunedMemberID,
+		Kind:     NodeKindDevice,
+		Label:    "pruned member",
+		MAC:      "aa:bb:cc:dd:ee:02",
+		LastSeen: timePtr(now.Add(time.Minute)),
+	})
+
+	builder.prune(2)
+	builder.rebuildIndexes()
+	builder.addLocalEdges()
+
+	require.Contains(t, builder.nodes, clusterID)
+	require.Contains(t, builder.nodes, keptMemberID)
+	require.NotContains(t, builder.nodes, prunedMemberID)
+	require.Equal(t, []string{"aa:bb:cc:dd:ee:01"}, builder.clusterMembers[clusterID])
+	require.Contains(t, builder.edges, "cluster_member:"+keptMemberID+":"+clusterID)
+}
+
 func TestPruneExpiredGraphCacheRemovesExpiredEntries(t *testing.T) {
 	t.Parallel()
 
@@ -139,4 +230,8 @@ func TestPruneExpiredGraphCacheRemovesExpiredEntries(t *testing.T) {
 
 	_, ok = svc.graphCache.Load("fresh")
 	require.True(t, ok)
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
 }

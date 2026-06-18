@@ -79,8 +79,8 @@ binary and systemd runs should set `RUST_LOG` directly.
 is `30`, which emits periodic logs with packet, decoded-frame, drop, and error
 counters while capture is open. Set it to `0` to disable the heartbeat.
 
-`ATH_SENSOR_CHANNEL_HOP_ENABLED=true` cycles capture across 2.4 GHz channels
-`1`, `6`, and `11`. `ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS` controls the dwell
+`ATH_SENSOR_CHANNEL_HOP_ENABLED` defaults to `true` and cycles capture across
+2.4 GHz channels `1`, `6`, and `11`. `ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS` controls the dwell
 time and the sensor reapplies the active BPF filter after each channel switch.
 5 GHz and 6 GHz are parsed from radiotap metadata when present, but are not in
 the default hop list.
