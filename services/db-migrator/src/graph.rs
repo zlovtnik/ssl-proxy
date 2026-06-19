@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::error::ExecutionError;
 use crate::schema_control::SchemaObject;
@@ -83,7 +83,7 @@ where
         }
     }
 
-    let mut queue: VecDeque<usize> = in_degree
+    let mut available: BTreeSet<usize> = in_degree
         .iter()
         .enumerate()
         .filter(|(_, degree)| **degree == 0)
@@ -91,12 +91,12 @@ where
         .collect();
 
     let mut sorted = Vec::with_capacity(count);
-    while let Some(index) = queue.pop_front() {
+    while let Some(index) = available.pop_first() {
         sorted.push(index);
         for &dependent in &adjacency[index] {
             in_degree[dependent] -= 1;
             if in_degree[dependent] == 0 {
-                queue.push_back(dependent);
+                available.insert(dependent);
             }
         }
     }
@@ -155,6 +155,22 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn preserves_source_order_when_dependency_becomes_available() {
+        let sorted = topological_sort(vec![
+            object("view", &[]),
+            object("materialized_view", &["view"]),
+            object("cron_job", &[]),
+        ])
+        .expect("sort");
+        let names: Vec<_> = sorted
+            .iter()
+            .map(|object| object.object_name.as_str())
+            .collect();
+
+        assert_eq!(names, vec!["view", "materialized_view", "cron_job"]);
     }
 
     #[test]

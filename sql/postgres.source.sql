@@ -4322,69 +4322,98 @@ create or replace function vec_install_cron_jobs()
 returns void
 language plpgsql
 as $$
+declare
+  j record;
 begin
   if to_regnamespace('cron') is null then
     raise exception 'pg_cron schema is unavailable';
   end if;
 
+  for j in
+    select jobid
+    from cron.job
+    where jobname = any (array[
+      'vec-build-behaviour-snapshots',
+      'vec-build-frame-sequences',
+      'vec-build-timing-profiles',
+      'vec-build-baseline-profiles',
+      'vec-build-infrastructure-graph',
+      'vec-detect-rogue-clusters',
+      'vec-enqueue-embedding-jobs',
+      'vec-materialize-similarity-pairs',
+      'vec-apply-similarity-flags',
+      'vec-fuse-device-identities',
+      'vec-refresh-device-repetition-score',
+      'vec-release-expired-leases',
+      'vec-reap-stale-workers',
+      'vec-update-transition-model',
+      'vec-update-device-centroids',
+      'vec-refresh-ap-risk-score',
+      'search-purge-expired-queries'
+    ])
+    order by jobid
+  loop
+    perform cron.unschedule(j.jobid);
+  end loop;
+
   perform cron.schedule(
     'vec-build-behaviour-snapshots',
     '0,10,20,30,40,50 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-build-behaviour-snapshots', $$select vec_build_behaviour_snapshots()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-build-behaviour-snapshots', $stmt$select vec_build_behaviour_snapshots()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-frame-sequences',
     '2,12,22,32,42,52 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-build-frame-sequences', $$select vec_build_frame_sequences()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-build-frame-sequences', $stmt$select vec_build_frame_sequences()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-timing-profiles',
     '4,19,34,49 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-build-timing-profiles', $$select vec_build_timing_profiles()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-build-timing-profiles', $stmt$select vec_build_timing_profiles()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-baseline-profiles',
     '6,21,36,51 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-build-baseline-profiles', $$select vec_build_baseline_profiles()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-build-baseline-profiles', $stmt$select vec_build_baseline_profiles()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-build-infrastructure-graph',
     '8,23,38,53 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-build-infrastructure-graph', $$select vec_build_infrastructure_graph()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-build-infrastructure-graph', $stmt$select vec_build_infrastructure_graph()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-detect-rogue-clusters',
     '10,25,40,55 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-detect-rogue-clusters', $$select vec_detect_rogue_clusters()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-detect-rogue-clusters', $stmt$select vec_detect_rogue_clusters()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-enqueue-embedding-jobs',
     '*/5 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-enqueue-embedding-jobs', $$select vec_enqueue_embedding_jobs()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-enqueue-embedding-jobs', $stmt$select vec_enqueue_embedding_jobs('nomic-embed-text-v2-moe'::text, 'high_signal'::text)$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-materialize-similarity-pairs',
     '12,27,42,57 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-materialize-similarity-pairs', $$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.88::double precision, 0.10::double precision, 0.05::double precision)$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-materialize-similarity-pairs', $stmt$select vec_materialize_similarity_pairs('nomic-embed-text-v2-moe'::text, 10::integer, 0.05::double precision, 0.88::double precision, 0.10::double precision, 0.05::double precision)$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-apply-similarity-flags',
     '14,29,44,59 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-apply-similarity-flags', $$select vec_apply_similarity_flags('nomic-embed-text-v2-moe'::text, 0.05::double precision, 0.88::double precision)$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-apply-similarity-flags', $stmt$select vec_apply_similarity_flags('nomic-embed-text-v2-moe'::text, 0.05::double precision, 0.88::double precision)$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-fuse-device-identities',
     '5,20,35,50 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-fuse-device-identities', $$select vec_fuse_device_identities()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-fuse-device-identities', $stmt$select vec_fuse_device_identities()$stmt$);$cron$
   );
 
   perform cron.schedule(
@@ -4408,13 +4437,13 @@ begin
   perform cron.schedule(
     'vec-update-transition-model',
     '7,22,37,52 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-update-transition-model', $$select vec_update_transition_model()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-update-transition-model', $stmt$select vec_update_transition_model()$stmt$);$cron$
   );
 
   perform cron.schedule(
     'vec-update-device-centroids',
     '10,25,40,55 * * * *',
-    $cron$select vec_run_maintenance_sql('vec-update-device-centroids', $$select vec_update_device_centroids()$$);$cron$
+    $cron$select vec_run_maintenance_sql('vec-update-device-centroids', $stmt$select vec_update_device_centroids()$stmt$);$cron$
   );
 
   perform cron.schedule(

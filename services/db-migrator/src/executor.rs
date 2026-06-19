@@ -17,9 +17,9 @@ use crate::discovery::SqlFile;
 use crate::error::{format_pg_error, ExecutionError, ExecutionErrorKind};
 use crate::graph::topological_sort;
 use crate::schema_control::{
-    acquire_apply_lock, bootstrap, build_manifest, fetch_rollback_target, prepare_manifest,
-    record_applied, record_failed, record_rolled_back, record_skipped, release_apply_lock,
-    ObjectStatus, PreparedSchemaObject, SchemaReadyStatus,
+    acquire_apply_lock, bootstrap, build_manifest, fetch_rollback_target, phase_for_kind,
+    prepare_manifest, record_applied, record_failed, record_rolled_back, record_skipped,
+    release_apply_lock, ObjectStatus, Phase, PreparedSchemaObject, SchemaReadyStatus,
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -300,11 +300,70 @@ async fn apply_with_lock(
 ) -> Result<ApplyReport, ExecutionError> {
     let prepared = prepare_manifest(client, manifest).await?;
     let backend_pid = read_backend_pid(client).await?;
-    let total = prepared.len();
+    let (structural, behavioral) = split_apply_phases(prepared);
+
+    let mut report = ApplyReport::default();
+
+    if !structural.is_empty() {
+        println!("{}", "── Phase 1/2: Structural objects ──".bold().cyan());
+        let phase_report = apply_phase(
+            client,
+            database_url,
+            structural,
+            verbose,
+            continue_on_error,
+            backend_pid,
+        )
+        .await?;
+        report.applied_files += phase_report.applied_files;
+        report.skipped_files += phase_report.skipped_files;
+        report.failed_files += phase_report.failed_files;
+
+        if phase_report.failed_files > 0 && !continue_on_error {
+            return Ok(report);
+        }
+    }
+
+    if !behavioral.is_empty() {
+        println!("{}", "── Phase 2/2: Behavioral objects ──".bold().cyan());
+        let phase_report = apply_phase(
+            client,
+            database_url,
+            behavioral,
+            verbose,
+            continue_on_error,
+            backend_pid,
+        )
+        .await?;
+        report.applied_files += phase_report.applied_files;
+        report.skipped_files += phase_report.skipped_files;
+        report.failed_files += phase_report.failed_files;
+    }
+
+    Ok(report)
+}
+
+fn split_apply_phases(
+    prepared: Vec<PreparedSchemaObject>,
+) -> (Vec<PreparedSchemaObject>, Vec<PreparedSchemaObject>) {
+    prepared
+        .into_iter()
+        .partition(|object| phase_for_kind(&object.object.kind) == Phase::Structural)
+}
+
+async fn apply_phase(
+    client: &mut Client,
+    database_url: &str,
+    objects: Vec<PreparedSchemaObject>,
+    verbose: bool,
+    continue_on_error: bool,
+    backend_pid: i32,
+) -> Result<ApplyReport, ExecutionError> {
+    let total = objects.len();
     let mut report = ApplyReport::default();
     let mut non_retryable_error: Option<ExecutionError> = None;
 
-    for (index, object) in prepared.iter().enumerate() {
+    for (index, object) in objects.iter().enumerate() {
         let position = index + 1;
 
         if !object.needs_apply {
@@ -1478,6 +1537,7 @@ fn sslmode_requires_tls(database_url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema_control::SchemaObject;
 
     #[test]
     fn preview_truncates_long_sql() {
@@ -1493,6 +1553,56 @@ mod tests {
         assert!(sslmode_requires_tls(
             "postgres://sync:sync@localhost:5432/sync?sslmode=require"
         ));
+    }
+
+    fn prepared(kind: &str, source_file: &str) -> PreparedSchemaObject {
+        PreparedSchemaObject {
+            object: SchemaObject {
+                kind: kind.to_string(),
+                object_name: source_file.to_string(),
+                source_file: source_file.to_string(),
+                depends_on: Vec::new(),
+                rollback_file: None,
+                transactional: true,
+                raw_sql: "select 1;".to_string(),
+                canonical_sql: "select 1;".to_string(),
+                sha256: source_file.to_string(),
+            },
+            old_sha256: None,
+            needs_apply: true,
+        }
+    }
+
+    #[test]
+    fn split_apply_phases_preserves_manifest_order_for_cron_and_materialized_views() {
+        let (_structural, behavioral) = split_apply_phases(vec![
+            prepared("function", "functions/001_fn.sql"),
+            prepared("view", "views/001_view.sql"),
+            prepared("pre_apply_hook", "cron/000_unschedule_cron_jobs.sql"),
+            prepared(
+                "materialized_view",
+                "materialized_views/001_mv_ap_risk_score.sql",
+            ),
+            prepared("cron_job", "cron/001_vec_install_cron_jobs.sql"),
+            prepared("cron_job", "cron/002_device_graph_workmap_cron_jobs.sql"),
+        ]);
+
+        let source_files: Vec<_> = behavioral
+            .iter()
+            .map(|object| object.object.source_file.as_str())
+            .collect();
+
+        assert_eq!(
+            source_files,
+            vec![
+                "functions/001_fn.sql",
+                "views/001_view.sql",
+                "cron/000_unschedule_cron_jobs.sql",
+                "materialized_views/001_mv_ap_risk_score.sql",
+                "cron/001_vec_install_cron_jobs.sql",
+                "cron/002_device_graph_workmap_cron_jobs.sql",
+            ]
+        );
     }
 
     #[test]

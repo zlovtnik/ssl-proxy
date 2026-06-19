@@ -693,6 +693,24 @@ fn kind_for_folder(folder: &str, name: &str) -> &'static str {
     }
 }
 
+/// Application phase: structural objects run in phase 1, behavioral in phase 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Structural,
+    Behavioral,
+}
+
+/// Returns the phase for a given schema object kind.
+/// Structural objects (extensions, schemas, types, tables, indexes, and
+/// catch-all sql_files) are applied first. Behavioral objects (functions,
+/// views, pre_apply_hooks, materialized_views, cron_jobs) are applied second.
+pub fn phase_for_kind(kind: &str) -> Phase {
+    match kind {
+        "extension" | "schema" | "type" | "table" | "index" | "sql_file" => Phase::Structural,
+        _ => Phase::Behavioral,
+    }
+}
+
 fn canonicalize_sql(sql: &str) -> String {
     let bytes = sql.as_bytes();
     let mut output = String::with_capacity(sql.len());
@@ -944,5 +962,30 @@ $$;
 
         assert_eq!(error.kind, crate::error::ExecutionErrorKind::LockNotHeld);
         assert!(error.to_string().contains("was not held"));
+    }
+
+    #[test]
+    fn phase_for_kind_structural_classification() {
+        assert_eq!(phase_for_kind("extension"), Phase::Structural);
+        assert_eq!(phase_for_kind("schema"), Phase::Structural);
+        assert_eq!(phase_for_kind("type"), Phase::Structural);
+        assert_eq!(phase_for_kind("table"), Phase::Structural);
+        assert_eq!(phase_for_kind("index"), Phase::Structural);
+        assert_eq!(phase_for_kind("sql_file"), Phase::Structural);
+    }
+
+    #[test]
+    fn phase_for_kind_behavioral_classification() {
+        assert_eq!(phase_for_kind("function"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("view"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("pre_apply_hook"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("materialized_view"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("cron_job"), Phase::Behavioral);
+    }
+
+    #[test]
+    fn phase_for_kind_unknown_kind_defaults_to_behavioral() {
+        assert_eq!(phase_for_kind("unknown"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("something_else"), Phase::Behavioral);
     }
 }
