@@ -48,9 +48,7 @@ public class ResultProcessor implements Processor {
             throw new IllegalStateException("Pending result accumulator is full");
         }
 
-        if (accumulator.size() >= props.resultFetchCount()) {
-            flushPending();
-        }
+        flushPendingOrThrow();
     }
 
     /**
@@ -58,6 +56,14 @@ public class ResultProcessor implements Processor {
      * Can be called externally on a timer to drain partial batches.
      */
     public void flushPending() {
+        flushPending(false);
+    }
+
+    private void flushPendingOrThrow() {
+        flushPending(true);
+    }
+
+    private void flushPending(boolean failOnError) {
         List<String> batch = accumulator.drain(props.resultFetchCount());
         if (batch.isEmpty()) {
             return;
@@ -71,6 +77,9 @@ public class ResultProcessor implements Processor {
             case DbResult.Err<Integer> err -> {
                 log.error("event=batch_result_ingest status=failed operation={} batch_size={} error=\"{}\"",
                         err.operation(), batch.size(), sanitize(err.cause().getMessage()));
+                if (failOnError) {
+                    throw new IllegalStateException(err.operation(), err.cause());
+                }
                 int dropped = accumulator.requeueFront(batch);
                 if (dropped > 0) {
                     log.error("event=batch_result_ingest status=dropped reason=accumulator_full "

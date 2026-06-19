@@ -60,7 +60,6 @@ postgres_unavailable::postgres unhealthy|Postgres unavailable::Postgres dependen
 redpanda_unavailable::redpanda unhealthy|Redpanda unavailable::Redpanda dependency unavailable::Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:9092::manual
 coordinator_wallet_missing::missing Oracle wallet artifact|wallet directory missing|missing Oracle password file::Coordinator Oracle assets are missing::Mount wallet and secrets into java-coordinator::manual
 rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages::Builder Rust toolchain too old for locked dependencies::Bump the builder Rust image (or pin compatible crate versions) and rebuild::manual
-schema_apply_failed::psql failed::Coordinator could not apply or validate the sync schema::Check DATABASE_URL and Postgres readiness::manual
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict (often 443 in local tests)::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
 peer_config_permission_denied::awk: cannot open /config/.*\.conf \(Permission denied\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual

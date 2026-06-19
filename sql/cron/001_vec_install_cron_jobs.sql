@@ -42,10 +42,41 @@ create or replace function vec_install_cron_jobs()
 returns void
 language plpgsql
 as $$
+declare
+  j record;
 begin
   if to_regnamespace('cron') is null then
     raise exception 'pg_cron schema is unavailable';
   end if;
+
+  for j in
+    select jobid
+    from cron.job
+    where jobname = any (array[
+      'vec-build-behaviour-snapshots',
+      'vec-build-frame-sequences',
+      'vec-build-timing-profiles',
+      'vec-build-baseline-profiles',
+      'vec-build-infrastructure-graph',
+      'vec-detect-rogue-clusters',
+      'vec-enqueue-embedding-jobs',
+      'sync-event-retention-prune',
+      'vec-prune-retention',
+      'vec-materialize-similarity-pairs',
+      'vec-apply-similarity-flags',
+      'vec-fuse-device-identities',
+      'vec-refresh-device-repetition-score',
+      'vec-release-expired-leases',
+      'vec-reap-stale-workers',
+      'vec-update-transition-model',
+      'vec-update-device-centroids',
+      'vec-refresh-ap-risk-score',
+      'search-purge-expired-queries'
+    ])
+    order by jobid
+  loop
+    perform cron.unschedule(j.jobid);
+  end loop;
 
   perform cron.schedule(
     'vec-build-behaviour-snapshots',

@@ -1,8 +1,8 @@
 -- object: wireless_frames
 -- folder: tables
--- depends_on: sync_events
+-- depends_on: -
 create table if not exists wireless_frames (
-  dedupe_key text primary key references sync_events(dedupe_key) on delete cascade,
+  dedupe_key text primary key,
   sensor_id text,
   location_id text,
   username text,
@@ -105,6 +105,9 @@ create table if not exists wireless_frames (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table wireless_frames
+  drop constraint if exists wireless_frames_dedupe_key_fkey;
 
 alter table wireless_frames add column if not exists frame_subtype text;
 

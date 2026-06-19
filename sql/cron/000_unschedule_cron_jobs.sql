@@ -12,8 +12,16 @@ declare
   j record;
 begin
   if to_regnamespace('cron') is not null then
-    for j in select jobname from cron.job where jobname like 'vec-%' or jobname like 'search-%' or jobname like 'sync-%' loop
-      perform cron.unschedule(j.jobname);
+    for j in
+      select jobid
+      from cron.job
+      where jobname like 'vec-%'
+         or jobname like 'search-%'
+         or jobname like 'sync-%'
+         or jobname = 'sync-event-retention-prune'
+      order by jobid
+    loop
+      perform cron.unschedule(j.jobid);
     end loop;
   end if;
 end $$;

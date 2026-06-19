@@ -3,6 +3,7 @@ mod cli;
 mod discovery;
 mod error;
 mod executor;
+mod graph;
 mod schema_control;
 
 use std::path::PathBuf;
@@ -14,8 +15,12 @@ use colored::Colorize;
 
 use crate::audit::validate_sql_files;
 use crate::cli::{Cli, Commands};
-use crate::discovery::discover_sql_files;
-use crate::executor::{apply_sql_files, print_dry_run};
+use crate::discovery::{discover_sql_files, DiscoveryResult};
+use crate::error::ExecutionError;
+use crate::executor::{
+    apply_sql_files, connect_client, print_dry_run, print_status_table, rollback_object,
+};
+use crate::schema_control::{check_ready, fetch_ready_status, fetch_status};
 
 const EXIT_SUCCESS: u8 = 0;
 const EXIT_PARTIAL_FAILURE: u8 = 1;
@@ -40,20 +45,16 @@ async fn run() -> Result<u8> {
     let command = cli.command.clone().unwrap_or(Commands::Apply);
     let sql_dir = resolve_sql_dir(cli.sql_dir.clone());
 
-    let discovery = discover_sql_files(&sql_dir)
-        .with_context(|| format!("failed to discover SQL files in {}", sql_dir.display()))?;
-    for warning in &discovery.warnings {
-        eprintln!("{} {}", "warning:".yellow(), warning);
-    }
-
     match command {
         Commands::List => {
+            let discovery = discover_and_warn(&sql_dir)?;
             for file in &discovery.files {
                 println!("{}", file.relative_path());
             }
             Ok(EXIT_SUCCESS)
         }
         Commands::Validate => {
+            let discovery = discover_and_warn(&sql_dir)?;
             let report = validate_sql_files(&discovery.files);
             let has_errors = report.has_errors();
             for warning in &report.warnings {
@@ -69,6 +70,7 @@ async fn run() -> Result<u8> {
             }
         }
         Commands::Apply => {
+            let discovery = discover_and_warn(&sql_dir)?;
             if cli.dry_run {
                 print_dry_run(&discovery.files)?;
                 return Ok(EXIT_SUCCESS);
@@ -82,6 +84,8 @@ async fn run() -> Result<u8> {
                 &discovery.files,
                 cli.verbose,
                 cli.continue_on_error,
+                cli.connect_retries,
+                cli.connect_retry_backoff,
             )
             .await
             {
@@ -105,6 +109,73 @@ async fn run() -> Result<u8> {
                     Ok(EXIT_PARTIAL_FAILURE)
                 }
             }
+        }
+        Commands::Status => {
+            let database_url = resolve_database_url(cli.database_url)
+                .context("DATABASE_URL is required for status")?;
+            let result: std::result::Result<(), ExecutionError> = async {
+                let client = connect_client(&database_url).await?;
+                let statuses = fetch_status(&client).await?;
+                let ready = fetch_ready_status(&client).await?;
+                print_status_table(&statuses, &ready);
+                Ok(())
+            }
+            .await;
+            Ok(execution_result_to_exit_code(result))
+        }
+        Commands::Rollback { object } => {
+            let database_url = resolve_database_url(cli.database_url)
+                .context("DATABASE_URL is required for rollback")?;
+            let result = rollback_object(&database_url, &sql_dir, &object).await;
+            Ok(execution_result_to_exit_code(result))
+        }
+        Commands::Ready { strict: _ } => {
+            let database_url = resolve_database_url(cli.database_url)
+                .context("DATABASE_URL is required for ready check")?;
+            let result: std::result::Result<bool, ExecutionError> = async {
+                let client = connect_client(&database_url).await?;
+                check_ready(&client).await
+            }
+            .await;
+
+            match result {
+                Ok(true) => {
+                    println!("schema ready");
+                    Ok(EXIT_SUCCESS)
+                }
+                Ok(false) => {
+                    eprintln!("schema not ready");
+                    Ok(EXIT_PARTIAL_FAILURE)
+                }
+                Err(error) => Ok(execution_result_to_exit_code(Err(error))),
+            }
+        }
+    }
+}
+
+fn discover_and_warn(sql_dir: &PathBuf) -> Result<DiscoveryResult> {
+    let discovery = discover_sql_files(sql_dir)
+        .with_context(|| format!("failed to discover SQL files in {}", sql_dir.display()))?;
+    for warning in &discovery.warnings {
+        eprintln!("{} {}", "warning:".yellow(), warning);
+    }
+    Ok(discovery)
+}
+
+fn execution_result_to_exit_code(result: std::result::Result<(), ExecutionError>) -> u8 {
+    match result {
+        Ok(()) => EXIT_SUCCESS,
+        Err(error) if error.is_connection_failure() => {
+            eprintln!("{} {}", "error:".red().bold(), error);
+            EXIT_CONNECTION_FAILURE
+        }
+        Err(error) if error.is_non_retryable_apply() => {
+            eprintln!("{} {}", "error:".red().bold(), error);
+            EXIT_NON_RETRYABLE_FAILURE
+        }
+        Err(error) => {
+            eprintln!("{} {}", "error:".red().bold(), error);
+            EXIT_PARTIAL_FAILURE
         }
     }
 }

@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 
 import static com.sslproxy.coordinator.oracle.JsonFields.boolFlag;
 import static com.sslproxy.coordinator.oracle.JsonFields.jsonArrayString;
@@ -36,30 +39,33 @@ public class OracleTransformService {
     OracleRowSet transform(OracleSinkTarget target, List<JsonNode> rows) {
         return switch (target) {
             case PROXY_EVENTS -> transformProxyRows(rows);
+            case PROXY_PAYLOAD_AUDIT -> new OracleRowSet(
+                    List.of(), List.of(), transformProxyPayloadAudit(rows), List.of(), List.of(),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
             case WIRELESS_AUDIT_FRAMES -> new OracleRowSet(
-                    List.of(), List.of(), transformWirelessAudit(rows), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), transformWirelessAudit(rows), List.of(),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
             case WIRELESS_BANDWIDTH -> new OracleRowSet(
-                    List.of(), List.of(), List.of(), transformWirelessBandwidth(rows), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), List.of(), transformWirelessBandwidth(rows),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
             case WIRELESS_ROGUE_AP -> new OracleRowSet(
-                    List.of(), List.of(), List.of(), List.of(), transformRogueAp(rows),
-                    List.of(), List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), List.of(), List.of(),
+                    transformRogueAp(rows), List.of(), List.of(), List.of(), List.of(), List.of());
             case WIRELESS_DEAUTH_FLOOD -> new OracleRowSet(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    transformDeauthFlood(rows), List.of(), List.of(), List.of(), List.of());
+                    List.of(), transformDeauthFlood(rows), List.of(), List.of(), List.of(), List.of());
             case WIRELESS_SIGNAL_ANOMALY -> new OracleRowSet(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), transformSignalAnomaly(rows), List.of(), List.of(), List.of());
+                    List.of(), List.of(), transformSignalAnomaly(rows), List.of(), List.of(), List.of());
             case WIRELESS_PMF_ATTACK -> new OracleRowSet(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), transformPmfAttack(rows), List.of(), List.of());
+                    List.of(), List.of(), List.of(), transformPmfAttack(rows), List.of(), List.of());
             case WIRELESS_CLIENT_INVENTORY -> new OracleRowSet(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), transformClientInventory(rows), List.of());
+                    List.of(), List.of(), List.of(), List.of(), transformClientInventory(rows), List.of());
             case WIRELESS_PROBE_REQUESTS -> new OracleRowSet(
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), transformProbeRequests(rows));
+                    List.of(), List.of(), List.of(), List.of(), List.of(), transformProbeRequests(rows));
         };
     }
 
@@ -74,7 +80,7 @@ public class OracleTransformService {
         }
         return new OracleRowSet(
                 List.copyOf(proxyRows), List.copyOf(blockedRows), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 
     private ProxyEventInsert proxyEvent(JsonNode row) {
@@ -102,6 +108,30 @@ public class OracleTransformService {
                 optionalString(row, "reason").orElse(null),
                 rawJson(objectMapper, row, "proxy row")
         );
+    }
+
+    private List<ProxyPayloadAuditInsert> transformProxyPayloadAudit(List<JsonNode> rows) {
+        List<ProxyPayloadAuditInsert> inserts = new ArrayList<>(rows.size());
+        for (JsonNode row : rows) {
+            String raw = rawJson(objectMapper, row, "proxy.payload_audit row");
+            inserts.add(new ProxyPayloadAuditInsert(
+                    optionalString(row, "correlation_id").orElse(stableCorrelationId(raw)),
+                    requiredString(row, "host", "proxy.payload_audit"),
+                    optionalString(row, "direction").orElse("UP").toUpperCase(Locale.ROOT),
+                    requiredTimestamp(row, "observed_at", "proxy.payload_audit"),
+                    optionalLong(row, "byte_offset").orElse(0L),
+                    optionalString(row, "payload_object_key").orElse(null),
+                    optionalString(row, "content_type").orElse(null),
+                    optionalString(row, "method").orElse(null),
+                    optionalLong(row, "http_status").or(() -> optionalLong(row, "status_code")).orElse(null),
+                    optionalString(row, "path").orElse(null),
+                    boolFlag(row, "is_encrypted"),
+                    boolFlag(row, "truncated"),
+                    optionalString(row, "peer_ip").orElse(null),
+                    optionalString(row, "notes").orElse(null)
+            ));
+        }
+        return List.copyOf(inserts);
     }
 
     private java.util.Optional<BlockedEventInsert> blockedEvent(int index, JsonNode row, ProxyEventInsert proxyRow) {
@@ -365,5 +395,9 @@ public class OracleTransformService {
             }
         }
         return 0L;
+    }
+
+    private String stableCorrelationId(String rawJson) {
+        return UUID.nameUUIDFromBytes(rawJson.getBytes(StandardCharsets.UTF_8)).toString();
     }
 }

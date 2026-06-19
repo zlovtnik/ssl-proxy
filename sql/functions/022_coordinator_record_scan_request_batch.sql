@@ -71,15 +71,21 @@ begin
       from unnest(p_stream_names) as configured(stream_name)
      where btrim(configured.stream_name) <> ''
   ),
-  valid as (
-    select incoming.*
+  typed as (
+    select incoming.*,
+           coordinator.safe_timestamptz(incoming.observed_at_text) as observed_at
       from incoming
-      join configured_streams on configured_streams.stream_name = incoming.stream_name
+  ),
+  valid as (
+    select typed.*
+      from typed
+      join configured_streams on configured_streams.stream_name = typed.stream_name
       left join sync_event_tombstones tombstone
-        on tombstone.dedupe_key = incoming.dedupe_key
-       and tombstone.stream_name = incoming.stream_name
+        on tombstone.dedupe_key = typed.dedupe_key
+       and tombstone.stream_name = typed.stream_name
        and tombstone.expires_at > now()
      where tombstone.dedupe_key is null
+       and typed.observed_at is not null
   ),
   upserted as (
     insert into sync_events (
@@ -99,7 +105,7 @@ begin
     )
     select dedupe_key,
            stream_name,
-           observed_at_text::timestamptz,
+           observed_at,
            payload_ref,
            payload,
            payload_sha256,
@@ -140,7 +146,8 @@ begin
   from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
   join unnest(p_stream_names) as configured(stream_name)
     on btrim(configured.stream_name) = raw.request->>'stream_name'
-  where raw.request->>'stream_name' = 'wireless.audit';
+  where raw.request->>'stream_name' = 'wireless.audit'
+    and coordinator.safe_timestamptz(raw.request->>'observed_at') is not null;
 
   return coalesce(v_recorded_count, 0);
 end;

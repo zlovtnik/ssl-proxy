@@ -2,6 +2,7 @@ package com.sslproxy.coordinator.route;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
 import com.sslproxy.coordinator.processor.ResultProcessor;
+import org.apache.camel.Exchange;
 import org.apache.camel.LoggingLevel;
 import org.apache.camel.builder.RouteBuilder;
 import org.slf4j.Logger;
@@ -35,7 +36,12 @@ public class OracleResultRoute extends RouteBuilder {
     @Override
     public void configure() {
         onException(Exception.class)
-                .log(LoggingLevel.ERROR, "event=batch_result_ingest status=error error=${exception.message}");
+                .maximumRedeliveries("{{coordinator.result-route-max-retries:3}}")
+                .redeliveryDelay(500)
+                .useOriginalMessage()
+                .handled(true)
+                .process(exchange -> logRouteFailure(exchange, props.resultTopic() + ".dlq"))
+                .to("kafka:{{coordinator.result-topic}}.dlq");
 
         // Consume from sync.oracle.result with the zig-coordinator-result consumer group
         from("kafka:{{coordinator.result-topic}}"
@@ -67,5 +73,22 @@ public class OracleResultRoute extends RouteBuilder {
                 .routeId("oracle-result-flush-timer")
                 .bean(resultProcessor, "flushPending")
                 .log(LoggingLevel.TRACE, "event=result_flush_timer status=tick");
+    }
+
+    private void logRouteFailure(Exchange exchange, String dlqTopic) {
+        Exception error = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
+        log.atError()
+                .addKeyValue("event", "batch_result_ingest")
+                .addKeyValue("status", "dlq")
+                .addKeyValue("dlq_topic", dlqTopic)
+                .addKeyValue("error", sanitize(error == null ? "" : error.getMessage()))
+                .log("oracle result routed to DLQ");
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 }

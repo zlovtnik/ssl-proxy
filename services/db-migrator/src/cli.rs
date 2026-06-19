@@ -43,6 +43,22 @@ pub struct Cli {
     )]
     pub continue_on_error: bool,
 
+    #[arg(
+        long,
+        global = true,
+        default_value_t = 0,
+        help = "Retry connection N times before failing (0 = no retry)"
+    )]
+    pub connect_retries: u32,
+
+    #[arg(
+        long,
+        global = true,
+        default_value_t = 2,
+        help = "Base backoff seconds between connection retries"
+    )]
+    pub connect_retry_backoff: u64,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -55,4 +71,20 @@ pub enum Commands {
     Validate,
     /// Print discovered files in apply order
     List,
+    /// Print tracked schema object status without applying SQL
+    Status,
+    /// Execute an explicit rollback script for a tracked object
+    Rollback {
+        #[arg(help = "object_name to roll back")]
+        object: String,
+    },
+    /// Check schema readiness from schema_control.schema_ready
+    Ready {
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Exit 0 only if all objects applied and none failed"
+        )]
+        strict: bool,
+    },
 }

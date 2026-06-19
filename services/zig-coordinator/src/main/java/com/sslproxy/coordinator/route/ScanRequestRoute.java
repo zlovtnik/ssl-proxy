@@ -2,6 +2,7 @@ package com.sslproxy.coordinator.route;
 
 import com.sslproxy.coordinator.config.CoordinatorProperties;
 import com.sslproxy.coordinator.processor.ScanRecordProcessor;
+import org.apache.camel.Exchange;
 import org.apache.camel.LoggingLevel;
 import org.apache.camel.builder.RouteBuilder;
 import org.slf4j.Logger;
@@ -40,10 +41,13 @@ public class ScanRequestRoute extends RouteBuilder {
 
     @Override
     public void configure() {
-        // Error handling — record failures and continue
         onException(Exception.class)
-                .log(LoggingLevel.ERROR, "event=scan_request_ingest status=error error=${exception.message}")
-                .continued(true);
+                .maximumRedeliveries("{{coordinator.scan-route-max-retries:3}}")
+                .redeliveryDelay(500)
+                .useOriginalMessage()
+                .handled(true)
+                .process(exchange -> logRouteFailure(exchange, props.scanTopic() + ".dlq"))
+                .to("kafka:{{coordinator.scan-topic}}.dlq");
 
         // Consume from sync.scan.request with the zig-coordinator-scan consumer group
         from("kafka:{{coordinator.scan-topic}}"
@@ -73,5 +77,22 @@ public class ScanRequestRoute extends RouteBuilder {
                 .routeId("scan-request-flush-timer")
                 .bean(scanRecordProcessor, "flushPending")
                 .log(LoggingLevel.TRACE, "event=scan_request_flush_timer status=tick");
+    }
+
+    private void logRouteFailure(Exchange exchange, String dlqTopic) {
+        Exception error = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
+        log.atError()
+                .addKeyValue("event", "scan_request_ingest")
+                .addKeyValue("status", "dlq")
+                .addKeyValue("dlq_topic", dlqTopic)
+                .addKeyValue("error", sanitize(error == null ? "" : error.getMessage()))
+                .log("scan request routed to DLQ");
+    }
+
+    private String sanitize(String message) {
+        if (message == null || message.isBlank()) {
+            return "";
+        }
+        return message.replace('\n', ' ').replace('\r', ' ');
     }
 }

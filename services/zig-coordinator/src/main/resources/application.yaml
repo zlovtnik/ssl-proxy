@@ -37,20 +37,28 @@ coordinator:
   scan-topic: ${SYNC_SCAN_TOPIC:sync.scan.request}
   load-topic: ${SYNC_LOAD_TOPIC:sync.oracle.load}
   result-topic: ${SYNC_RESULT_TOPIC:sync.oracle.result}
+  payload-audit-topic: ${PAYLOAD_AUDIT_REDPANDA_TOPIC:proxy.payload_audit}
   database-url: ${DATABASE_URL:}
   sync-redpanda-url: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:}
   redpanda-topic-manifest-file: ${SYNC_REDPANDA_TOPIC_MANIFEST:/app/docker/redpanda/topics.manifest}
-  sync-schema-file: ${SYNC_SCHEMA_FILE:/app/sql/postgres.sql}
   redpanda-publish-timeout-ms: ${SYNC_REDPANDA_PUBLISH_TIMEOUT_MS:10000}
   audit-stream-name: ${AUDIT_STREAM_NAME:AUDIT_STREAM}
   result-stream-name: ${SYNC_RESULT_STREAM_NAME:ORACLE_RESULT_STREAM}
   scan-consumer: ${SYNC_SCAN_CONSUMER:zig-coordinator-scan}
   load-consumer: ${SYNC_LOAD_CONSUMER:oracle-worker-load}
   result-consumer: ${SYNC_RESULT_CONSUMER:zig-coordinator-result}
+  payload-audit-consumer: ${PAYLOAD_AUDIT_CONSUMER:zig-coordinator-payload-audit}
   wireless-backlog-stream-name: ${WIRELESS_BACKLOG_STREAM_NAME:WIRELESS_BACKLOG_STREAM}
   wireless-mac-stream-name: ${WIRELESS_MAC_STREAM_NAME:WIRELESS_MAC_STREAM}
   wireless-networks-stream-name: ${WIRELESS_NETWORKS_STREAM_NAME:WIRELESS_NETWORKS_STREAM}
   wireless-probe-stream-name: ${WIRELESS_PROBE_STREAM_NAME:WIRELESS_PROBE_STREAM}
+  wireless-backlog-save-topic: ${WIRELESS_BACKLOG_SAVE_TOPIC:wireless.backlog.save}
+  wireless-backlog-list-topic: ${WIRELESS_BACKLOG_LIST_TOPIC:wireless.backlog.list}
+  wireless-backlog-synced-topic: ${WIRELESS_BACKLOG_SYNCED_TOPIC:wireless.backlog.synced}
+  wireless-backlog-prune-topic: ${WIRELESS_BACKLOG_PRUNE_TOPIC:wireless.backlog.prune}
+  wireless-mac-lookup-topic: ${WIRELESS_MAC_LOOKUP_TOPIC:wireless.mac.lookup}
+  wireless-networks-authorized-topic: ${WIRELESS_NETWORKS_AUTHORIZED_TOPIC:wireless.networks.authorized}
+  wireless-probe-flush-topic: ${WIRELESS_PROBE_FLUSH_TOPIC:wireless.probe.flush}
   wireless-backlog-save-consumer: ${WIRELESS_BACKLOG_SAVE_CONSUMER:wireless-backlog-save}
   wireless-backlog-list-consumer: ${WIRELESS_BACKLOG_LIST_CONSUMER:wireless-backlog-list}
   wireless-backlog-synced-consumer: ${WIRELESS_BACKLOG_SYNCED_CONSUMER:wireless-backlog-synced}

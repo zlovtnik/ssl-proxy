@@ -65,3 +65,8 @@ func TestFailJobSQLUsesExplicitCasts(t *testing.T) {
 	require.Contains(t, failJobSQL, "lease_token IS NOT DISTINCT FROM $6::text")
 	require.Contains(t, failJobSQL, "last_error = $1::text")
 }
+
+func TestCountWorkerQueueDepthOnlyCountsLeaseableJobs(t *testing.T) {
+	require.Contains(t, countWorkerQueueDepthSQL, "status IN ('pending', 'failed')")
+	require.Contains(t, countWorkerQueueDepthSQL, "attempts < max_attempts")
+}

@@ -26,6 +26,7 @@ public record CoordinatorProperties(
     String scanTopic,
     String loadTopic,
     String resultTopic,
+    String payloadAuditTopic,
 
     // === Database ===
     String databaseUrl,
@@ -33,7 +34,6 @@ public record CoordinatorProperties(
     // === Redpanda ===
     String syncRedpandaUrl,
     String redpandaTopicManifestFile,
-    String syncSchemaFile,
     @Min(1) int redpandaPublishTimeoutMs,
 
     // === Stream names ===
@@ -44,12 +44,22 @@ public record CoordinatorProperties(
     String scanConsumer,
     String loadConsumer,
     String resultConsumer,
+    String payloadAuditConsumer,
 
     // === Wireless stream names ===
     String wirelessBacklogStreamName,
     String wirelessMacStreamName,
     String wirelessNetworksStreamName,
     String wirelessProbeStreamName,
+
+    // === Wireless operation topics ===
+    String wirelessBacklogSaveTopic,
+    String wirelessBacklogListTopic,
+    String wirelessBacklogSyncedTopic,
+    String wirelessBacklogPruneTopic,
+    String wirelessMacLookupTopic,
+    String wirelessNetworksAuthorizedTopic,
+    String wirelessProbeFlushTopic,
 
     // === Wireless consumer groups ===
     String wirelessBacklogSaveConsumer,
@@ -124,28 +134,36 @@ public record CoordinatorProperties(
         List.of("proxy.events", "wireless.audit", "audit.wireless.bandwidth",
                 "wireless.alert.rogue_ap", "wireless.alert.deauth_flood",
                 "wireless.alert.signal_anomaly", "wireless.alert.pmf_attack",
-                "wireless.client.inventory", "wireless.probe.flush"),
+                "wireless.client.inventory", "wireless.probe.flush", "proxy.payload_audit"),
         List.of("proxy.events", "wireless.audit", "audit.wireless.bandwidth",
                 "wireless.alert.rogue_ap", "wireless.alert.deauth_flood",
                 "wireless.alert.signal_anomaly", "wireless.alert.pmf_attack",
-                "wireless.client.inventory", "wireless.probe.flush"),
+                "wireless.client.inventory", "wireless.probe.flush", "proxy.payload_audit"),
         "sync.scan.request",
         "sync.oracle.load",
         "sync.oracle.result",
+        "proxy.payload_audit",
         "",
         "",
         "/app/docker/redpanda/topics.manifest",
-        "/app/sql/postgres.sql",
         10_000,
         "AUDIT_STREAM",
         "ORACLE_RESULT_STREAM",
         "zig-coordinator-scan",
         "oracle-worker-load",
         "zig-coordinator-result",
+        "zig-coordinator-payload-audit",
         "WIRELESS_BACKLOG_STREAM",
         "WIRELESS_MAC_STREAM",
         "WIRELESS_NETWORKS_STREAM",
         "WIRELESS_PROBE_STREAM",
+        "wireless.backlog.save",
+        "wireless.backlog.list",
+        "wireless.backlog.synced",
+        "wireless.backlog.prune",
+        "wireless.mac.lookup",
+        "wireless.networks.authorized",
+        "wireless.probe.flush",
         "wireless-backlog-save",
         "wireless-backlog-list",
         "wireless-backlog-synced",

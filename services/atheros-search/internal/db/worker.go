@@ -225,14 +225,19 @@ func CountHighRiskAPs(ctx context.Context, pool *pgxpool.Pool, threshold float64
 
 func CountWorkerQueueDepth(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	var count int64
-	err := pool.QueryRow(ctx,
-		"SELECT count(*) FROM vec_embedding_jobs WHERE status IN ('pending', 'failed')",
-	).Scan(&count)
+	err := pool.QueryRow(ctx, countWorkerQueueDepthSQL).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count worker queue depth: %w", err)
 	}
 	return count, nil
 }
+
+const countWorkerQueueDepthSQL = `
+SELECT count(*)
+FROM vec_embedding_jobs
+WHERE status IN ('pending', 'failed')
+  AND attempts < max_attempts
+`
 
 func backoffSeconds(attempts int32) int32 {
 	raw := int64(attempts) * 10

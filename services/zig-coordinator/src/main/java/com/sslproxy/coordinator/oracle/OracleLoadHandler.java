@@ -122,6 +122,7 @@ public class OracleLoadHandler {
     private long insert(String batchId, OracleSinkTarget target, OracleRowSet rows) throws Exception {
         return switch (target) {
             case PROXY_EVENTS -> sink.insertProxyEvents(batchId, rows.proxyEvents(), rows.blockedEvents());
+            case PROXY_PAYLOAD_AUDIT -> sink.insertProxyPayloadAudit(batchId, rows.proxyPayloadAudit());
             case WIRELESS_AUDIT_FRAMES -> sink.insertWirelessAuditFrames(batchId, rows.wirelessAuditFrames());
             case WIRELESS_BANDWIDTH -> sink.insertWirelessBandwidth(batchId, rows.wirelessBandwidth());
             case WIRELESS_ROGUE_AP -> sink.insertWirelessRogueAp(batchId, rows.wirelessRogueAp());

@@ -9,6 +9,8 @@ class OracleSinkTargetTest {
 
     @Test
     void mapsLegacyAndCurrentWirelessStreamNamesToCanonicalTargets() {
+        assertEquals(OracleSinkTarget.PROXY_PAYLOAD_AUDIT,
+                OracleSinkTarget.fromStreamName("proxy.payload_audit").orElseThrow());
         assertEquals(OracleSinkTarget.WIRELESS_ROGUE_AP,
                 OracleSinkTarget.fromStreamName("wireless.rogue_ap").orElseThrow());
         assertEquals(OracleSinkTarget.WIRELESS_ROGUE_AP,

@@ -31,7 +31,6 @@ ENV TNS_ADMIN="/app/wallet" \
 RUN apk add --no-cache \
         bash \
         ca-certificates \
-        postgresql-client \
         tzdata
 
 WORKDIR /app
@@ -42,15 +41,13 @@ RUN addgroup -S coordinator \
 # Copy the built fat JAR
 COPY --chown=coordinator:coordinator --from=builder /app/build/libs/*.jar /app/java-coordinator.jar
 
-# Copy SQL schema (used by the init/healthcheck logic)
-COPY --chown=coordinator:coordinator sql /app/sql
 COPY --chown=coordinator:coordinator docker/redpanda /app/docker/redpanda
 
 RUN mkdir -p /app/wallet \
     && chown coordinator:coordinator /app /app/wallet \
     && chmod 500 /app \
     && chmod 400 /app/java-coordinator.jar \
-    && chmod -R a=rX /app/sql /app/docker/redpanda \
+    && chmod -R a=rX /app/docker/redpanda \
     && chmod 500 /app/wallet
 
 EXPOSE 8081

@@ -31,6 +31,7 @@ pub struct SchemaObject {
     pub object_name: String,
     pub source_file: String,
     pub depends_on: Vec<String>,
+    pub rollback_file: Option<String>,
     pub transactional: bool,
     pub raw_sql: String,
     pub canonical_sql: String,
@@ -42,6 +43,38 @@ pub struct PreparedSchemaObject {
     pub object: SchemaObject,
     pub old_sha256: Option<String>,
     pub needs_apply: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjectStatus {
+    pub kind: String,
+    pub object_name: String,
+    pub source_file: String,
+    pub apply_status: String,
+    pub content_sha256: String,
+    pub applied_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SchemaReadyStatus {
+    pub total_count: i64,
+    pub pending_count: i64,
+    pub failed_count: i64,
+    pub applied_count: i64,
+    pub ready: bool,
+    pub failed_objects: Vec<String>,
+    pub last_updated_at: Option<String>,
+    pub last_applied_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RollbackTarget {
+    pub kind: String,
+    pub object_name: String,
+    pub source_file: String,
+    pub content_sha256: String,
+    pub rollback_file: String,
 }
 
 pub fn build_manifest(files: &[SqlFile]) -> Result<Vec<SchemaObject>, ExecutionError> {
@@ -63,6 +96,7 @@ create table if not exists schema_control.schema_objects (
   object_name     text        not null,
   source_file     text        not null,
   depends_on      text[]      not null default '{}',
+  rollback_file   text,
   canonical_sql   text        not null,
   content_sha256  text        not null,
   applied_at      timestamptz,
@@ -75,6 +109,9 @@ create table if not exists schema_control.schema_objects (
     apply_status in ('pending', 'applied', 'failed', 'skipped')
   )
 );
+
+alter table schema_control.schema_objects
+  add column if not exists rollback_file text;
 
 create table if not exists schema_control.schema_apply_log (
   log_id        bigserial primary key,
@@ -201,16 +238,17 @@ where kind = $1 and object_name = $2
             .execute(
                 r#"
 insert into schema_control.schema_objects (
-  kind, object_name, source_file, depends_on, canonical_sql, content_sha256,
+  kind, object_name, source_file, depends_on, rollback_file, canonical_sql, content_sha256,
   applied_at, apply_status, last_error, updated_at
 ) values (
-  $1, $2, $3, $4, $5, $6,
-  case when $7::text = 'pending' then null else now() end,
-  $7, null, now()
+  $1, $2, $3, $4, $5, $6, $7,
+  case when $8::text = 'pending' then null else now() end,
+  $8, null, now()
 )
 on conflict (kind, object_name) do update set
   source_file = excluded.source_file,
   depends_on = excluded.depends_on,
+  rollback_file = excluded.rollback_file,
   canonical_sql = excluded.canonical_sql,
   content_sha256 = excluded.content_sha256,
   applied_at = case
@@ -226,6 +264,7 @@ on conflict (kind, object_name) do update set
                     &object.object_name,
                     &object.source_file,
                     &object.depends_on,
+                    &object.rollback_file,
                     &object.canonical_sql,
                     &object.sha256,
                     &apply_status,
@@ -342,6 +381,179 @@ update schema_control.schema_objects
     .await
 }
 
+pub async fn record_rolled_back<C>(
+    client: &C,
+    target: &RollbackTarget,
+    duration: Duration,
+) -> Result<(), ExecutionError>
+where
+    C: tokio_postgres::GenericClient + Sync,
+{
+    let duration_ms = duration_ms(duration);
+    client
+        .execute(
+            r#"
+update schema_control.schema_objects
+   set apply_status = 'pending',
+       applied_at = null,
+       last_error = null,
+       updated_at = now()
+ where kind = $1 and object_name = $2
+"#,
+            &[&target.kind, &target.object_name],
+        )
+        .await
+        .map_err(|error| {
+            ExecutionError::apply(format!(
+                "failed to mark {}:{} pending after rollback: {error}",
+                target.kind, target.object_name
+            ))
+        })?;
+
+    let applied_by = applied_by();
+    client
+        .execute(
+            r#"
+insert into schema_control.schema_apply_log (
+  kind, object_name, source_file, action, old_sha256, new_sha256,
+  duration_ms, error_text, applied_by
+) values ($1, $2, $3, 'rolled_back', $4, $4, $5, null, $6)
+"#,
+            &[
+                &target.kind,
+                &target.object_name,
+                &target.source_file,
+                &target.content_sha256,
+                &duration_ms,
+                &applied_by,
+            ],
+        )
+        .await
+        .map_err(|error| {
+            ExecutionError::apply(format!(
+                "failed to write rollback log for {}:{}: {error}",
+                target.kind, target.object_name
+            ))
+        })?;
+    Ok(())
+}
+
+pub async fn fetch_status(client: &Client) -> Result<Vec<ObjectStatus>, ExecutionError> {
+    let rows = client
+        .query(
+            r#"
+select kind, object_name, source_file, apply_status,
+       content_sha256,
+       to_char(applied_at, 'YYYY-MM-DD HH24:MI:SS') as applied_at,
+       last_error
+  from schema_control.schema_objects
+ order by kind, object_name
+"#,
+            &[],
+        )
+        .await
+        .map_err(|error| ExecutionError::apply(format!("status query failed: {error}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| ObjectStatus {
+            kind: row.get("kind"),
+            object_name: row.get("object_name"),
+            source_file: row.get("source_file"),
+            apply_status: row.get("apply_status"),
+            content_sha256: row.get("content_sha256"),
+            applied_at: row.get("applied_at"),
+            last_error: row.get("last_error"),
+        })
+        .collect())
+}
+
+pub async fn fetch_ready_status(client: &Client) -> Result<SchemaReadyStatus, ExecutionError> {
+    let row = client
+        .query_one(
+            r#"
+select total_count, pending_count, failed_count, applied_count, ready,
+       failed_objects,
+       to_char(last_updated_at, 'YYYY-MM-DD HH24:MI:SS') as last_updated_at,
+       to_char(last_applied_at, 'YYYY-MM-DD HH24:MI:SS') as last_applied_at
+  from schema_control.schema_ready
+"#,
+            &[],
+        )
+        .await
+        .map_err(|error| ExecutionError::apply(format!("ready status query failed: {error}")))?;
+
+    Ok(SchemaReadyStatus {
+        total_count: row.get("total_count"),
+        pending_count: row.get("pending_count"),
+        failed_count: row.get("failed_count"),
+        applied_count: row.get("applied_count"),
+        ready: row.get("ready"),
+        failed_objects: row.get("failed_objects"),
+        last_updated_at: row.get("last_updated_at"),
+        last_applied_at: row.get("last_applied_at"),
+    })
+}
+
+pub async fn check_ready(client: &Client) -> Result<bool, ExecutionError> {
+    let row = client
+        .query_one("select ready from schema_control.schema_ready", &[])
+        .await
+        .map_err(|error| ExecutionError::apply(format!("ready check failed: {error}")))?;
+    Ok(row.get("ready"))
+}
+
+pub async fn fetch_rollback_target(
+    client: &Client,
+    object_name: &str,
+) -> Result<RollbackTarget, ExecutionError> {
+    let rows = client
+        .query(
+            r#"
+select kind, object_name, source_file, content_sha256, rollback_file
+  from schema_control.schema_objects
+ where object_name = $1
+ order by kind, object_name
+"#,
+            &[&object_name],
+        )
+        .await
+        .map_err(|error| {
+            ExecutionError::apply(format!(
+                "rollback metadata query failed for {object_name}: {error}"
+            ))
+        })?;
+
+    match rows.as_slice() {
+        [] => Err(ExecutionError::apply(format!(
+            "no tracked schema object named {object_name}"
+        ))),
+        [row] => {
+            let rollback_file: Option<String> = row.get("rollback_file");
+            let rollback_file = rollback_file.ok_or_else(|| {
+                ExecutionError::apply(format!("{object_name} does not declare a rollback file"))
+            })?;
+            Ok(RollbackTarget {
+                kind: row.get("kind"),
+                object_name: row.get("object_name"),
+                source_file: row.get("source_file"),
+                content_sha256: row.get("content_sha256"),
+                rollback_file,
+            })
+        }
+        _ => {
+            let matches = rows
+                .iter()
+                .map(|row| format!("{}:{}", row.get::<_, String>("kind"), object_name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(ExecutionError::apply(format!(
+                "object name {object_name} is ambiguous; matches: {matches}"
+            )))
+        }
+    }
+}
+
 async fn insert_apply_log<C>(
     client: &C,
     object: &SchemaObject,
@@ -400,6 +612,7 @@ fn schema_object_from_file(file: &SqlFile) -> Result<SchemaObject, ExecutionErro
     let depends_on = parse_header_value(&raw_sql, "depends_on")
         .map(|value| parse_depends_on(&value))
         .unwrap_or_default();
+    let rollback_file = parse_header_value(&raw_sql, "rollback");
     let transactional = parse_transactional(&raw_sql)?;
     let canonical_sql = canonicalize_sql(&raw_sql);
     let sha256 = sha256_hex(&canonical_sql);
@@ -409,6 +622,7 @@ fn schema_object_from_file(file: &SqlFile) -> Result<SchemaObject, ExecutionErro
         object_name,
         source_file: file.relative_path(),
         depends_on,
+        rollback_file,
         transactional,
         raw_sql,
         canonical_sql,
@@ -416,7 +630,7 @@ fn schema_object_from_file(file: &SqlFile) -> Result<SchemaObject, ExecutionErro
     })
 }
 
-fn parse_header_value(sql: &str, key: &str) -> Option<String> {
+pub(crate) fn parse_header_value(sql: &str, key: &str) -> Option<String> {
     let prefix = format!("-- {key}:");
     sql.lines()
         .find_map(|line| line.strip_prefix(&prefix))
@@ -425,7 +639,7 @@ fn parse_header_value(sql: &str, key: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn parse_depends_on(value: &str) -> Vec<String> {
+pub(crate) fn parse_depends_on(value: &str) -> Vec<String> {
     value
         .split(',')
         .map(str::trim)
@@ -476,6 +690,24 @@ fn kind_for_folder(folder: &str, name: &str) -> &'static str {
         "cron" if name.starts_with("000_") => "pre_apply_hook",
         "cron" => "cron_job",
         _ => "sql_file",
+    }
+}
+
+/// Application phase: structural objects run in phase 1, behavioral in phase 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Structural,
+    Behavioral,
+}
+
+/// Returns the phase for a given schema object kind.
+/// Structural objects (extensions, schemas, types, tables, indexes, and
+/// catch-all sql_files) are applied first. Behavioral objects (functions,
+/// views, pre_apply_hooks, materialized_views, cron_jobs) are applied second.
+pub fn phase_for_kind(kind: &str) -> Phase {
+    match kind {
+        "extension" | "schema" | "type" | "table" | "index" | "sql_file" => Phase::Structural,
+        _ => Phase::Behavioral,
     }
 }
 
@@ -730,5 +962,30 @@ $$;
 
         assert_eq!(error.kind, crate::error::ExecutionErrorKind::LockNotHeld);
         assert!(error.to_string().contains("was not held"));
+    }
+
+    #[test]
+    fn phase_for_kind_structural_classification() {
+        assert_eq!(phase_for_kind("extension"), Phase::Structural);
+        assert_eq!(phase_for_kind("schema"), Phase::Structural);
+        assert_eq!(phase_for_kind("type"), Phase::Structural);
+        assert_eq!(phase_for_kind("table"), Phase::Structural);
+        assert_eq!(phase_for_kind("index"), Phase::Structural);
+        assert_eq!(phase_for_kind("sql_file"), Phase::Structural);
+    }
+
+    #[test]
+    fn phase_for_kind_behavioral_classification() {
+        assert_eq!(phase_for_kind("function"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("view"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("pre_apply_hook"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("materialized_view"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("cron_job"), Phase::Behavioral);
+    }
+
+    #[test]
+    fn phase_for_kind_unknown_kind_defaults_to_behavioral() {
+        assert_eq!(phase_for_kind("unknown"), Phase::Behavioral);
+        assert_eq!(phase_for_kind("something_else"), Phase::Behavioral);
     }
 }
