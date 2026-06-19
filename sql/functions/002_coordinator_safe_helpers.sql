@@ -50,6 +50,25 @@ as $$
   end
 $$;
 
+create or replace function coordinator.safe_timestamptz(p_value text)
+returns timestamptz
+language plpgsql
+stable
+as $$
+begin
+  if p_value is null or btrim(p_value) = '' then
+    return null;
+  end if;
+
+  begin
+    return p_value::timestamptz;
+  exception
+    when others then
+      return null;
+  end;
+end;
+$$;
+
 create or replace function coordinator.safe_jsonb_array(p_value jsonb)
 returns jsonb
 language sql

@@ -1,6 +1,6 @@
 -- object: coordinator event retention
 -- folder: functions
--- depends_on: sync_events, sync_event_payload_archives, sync_event_tombstones
+-- depends_on: sync_events, wireless_frames, sync_event_payload_archives, sync_event_tombstones
 create or replace function coordinator.list_wireless_payload_archive_candidates(
   p_hot_days integer default 7,
   p_limit integer default 100
@@ -128,6 +128,7 @@ language plpgsql
 as $$
 declare
   v_tombstoned integer := 0;
+  v_wireless_frames_deleted integer := 0;
   v_deleted integer := 0;
   v_expired_tombstones integer := 0;
 begin
@@ -203,6 +204,36 @@ begin
     order by event.observed_at asc, event.dedupe_key asc
     limit greatest(coalesce(p_limit, 5000), 1)
   ),
+  wireless_deleted as (
+    delete from wireless_frames frame
+    using candidates
+    where frame.dedupe_key = candidates.dedupe_key
+    returning 1
+  )
+  select count(*) into v_wireless_frames_deleted from wireless_deleted;
+
+  with candidates as materialized (
+    select event.dedupe_key
+    from sync_events event
+    where event.observed_at < now() - make_interval(days => greatest(coalesce(p_event_retention_days, 30), 1))
+      and event.status not in ('pending', 'processing')
+      and exists (
+        select 1
+        from sync_event_tombstones tombstone
+        where tombstone.dedupe_key = event.dedupe_key
+      )
+      and (
+        event.stream_name <> 'wireless.audit'
+        or event.payload is null
+        or exists (
+          select 1
+          from sync_event_payload_archives archive
+          where archive.dedupe_key = event.dedupe_key
+        )
+      )
+    order by event.observed_at asc, event.dedupe_key asc
+    limit greatest(coalesce(p_limit, 5000), 1)
+  ),
   deleted as (
     delete from sync_events event
     using candidates
@@ -217,6 +248,7 @@ begin
 
   return jsonb_build_object(
     'tombstoned', v_tombstoned,
+    'wireless_frames_deleted', v_wireless_frames_deleted,
     'deleted', v_deleted,
     'expired_tombstones', v_expired_tombstones
   );

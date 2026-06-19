@@ -13,12 +13,21 @@ declare
   v_count integer;
 begin
   update vec_embedding_jobs
-     set status = 'pending',
+     set status = case
+           when attempts >= max_attempts then 'failed'
+           else 'pending'
+         end,
          lease_token = null,
          leased_at = null,
          locked_by = null,
-         due_at = now(),
-         last_error = 'lease expired',
+         due_at = case
+           when attempts >= max_attempts then due_at
+           else now()
+         end,
+         last_error = case
+           when attempts >= max_attempts then 'lease expired after max attempts'
+           else 'lease expired'
+         end,
          updated_at = now()
    where status = 'leased'
      and leased_at < now() - p_lease_interval

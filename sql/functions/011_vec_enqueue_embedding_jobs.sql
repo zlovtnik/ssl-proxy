@@ -28,16 +28,39 @@ begin
   )
   into v_event_cursor;
 
-  with event_keys as (
+  with cursor_event_keys as (
     select
       e.dedupe_key,
-      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as event_updated_at
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as event_updated_at,
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as cursor_updated_at
     from sync_events e
     left join wireless_frames frame on frame.dedupe_key = e.dedupe_key
     where e.stream_name = 'wireless.audit'
       and e.status = 'batched'
       and greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) > v_event_cursor
-    order by event_updated_at, e.dedupe_key
+    order by cursor_updated_at, e.dedupe_key
+  ),
+  alert_event_keys as (
+    select
+      e.dedupe_key,
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at), alert.created_at) as event_updated_at,
+      alert.created_at as cursor_updated_at
+    from vec_alerts alert
+    join sync_events e
+      on e.stream_name = 'wireless.audit'
+     and e.status = 'batched'
+     and alert.created_at > v_event_cursor
+     and (
+       alert.metadata->>'dedupe_key' = e.dedupe_key
+       or alert.metadata->>'source_key' = e.dedupe_key
+     )
+    left join wireless_frames frame on frame.dedupe_key = e.dedupe_key
+    order by cursor_updated_at, e.dedupe_key
+  ),
+  event_keys as (
+    select * from cursor_event_keys
+    union
+    select * from alert_event_keys
   ),
   event_jobs as (
     select
@@ -93,11 +116,11 @@ begin
         existing.embedding_id is null
         or (
           existing_job.job_id is null
-          and source.updated_at > existing.embedded_at
+          and keys.event_updated_at > existing.embedded_at
         )
         or (
           existing_job.status = 'completed'
-          and source.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+          and keys.event_updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
         )
       )
   ),
@@ -347,21 +370,11 @@ begin
     returning source_table, source_key, embedding_kind
   )
   select
-    count(*),
-    count(*) filter (
-      where inserted.source_table = 'sync_events'
-        and inserted.embedding_kind = 'event'
-    ),
-    max(keys.event_updated_at) filter (
-      where inserted.source_table = 'sync_events'
-        and inserted.embedding_kind = 'event'
-    )
+    (select count(*) from inserted),
+    (select count(*) from event_keys),
+    (select max(cursor_updated_at) from event_keys)
     into v_count, v_event_count, v_event_cursor_next
-  from inserted
-  left join event_keys keys
-    on keys.dedupe_key = inserted.source_key
-   and inserted.source_table = 'sync_events'
-   and inserted.embedding_kind = 'event';
+  ;
 
   if v_event_count > 0 and v_event_cursor_next is not null then
     insert into sync_cursors (stream_name, cursor_value, updated_at)
