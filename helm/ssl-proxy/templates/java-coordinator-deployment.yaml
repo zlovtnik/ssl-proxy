@@ -71,8 +71,6 @@ spec:
                   key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
             - name: SYNC_REDPANDA_TOPIC_MANIFEST
               value: "/app/docker/redpanda/topics.manifest"
-            - name: SYNC_SCHEMA_FILE
-              value: "/app/sql/postgres.sql"
             # Topics
             - name: SYNC_SCAN_TOPIC
               valueFrom:

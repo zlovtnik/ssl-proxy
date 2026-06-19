@@ -174,7 +174,6 @@ class RedpandaLagMetricsServiceTest {
             d.databaseUrl(),
             "redpanda://redpanda:9092",
             d.redpandaTopicManifestFile(),
-            d.syncSchemaFile(),
             d.redpandaPublishTimeoutMs(),
             d.auditStreamName(),
             d.resultStreamName(),

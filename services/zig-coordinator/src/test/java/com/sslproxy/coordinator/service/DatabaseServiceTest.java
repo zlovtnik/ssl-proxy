@@ -196,7 +196,6 @@ class DatabaseServiceTest {
             d.databaseUrl(),
             d.syncRedpandaUrl(),
             d.redpandaTopicManifestFile(),
-            d.syncSchemaFile(),
             d.redpandaPublishTimeoutMs(),
             d.auditStreamName(),
             d.resultStreamName(),

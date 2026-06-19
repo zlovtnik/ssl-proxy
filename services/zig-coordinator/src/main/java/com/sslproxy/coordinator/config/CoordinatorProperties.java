@@ -34,7 +34,6 @@ public record CoordinatorProperties(
     // === Redpanda ===
     String syncRedpandaUrl,
     String redpandaTopicManifestFile,
-    String syncSchemaFile,
     @Min(1) int redpandaPublishTimeoutMs,
 
     // === Stream names ===
@@ -147,7 +146,6 @@ public record CoordinatorProperties(
         "",
         "",
         "/app/docker/redpanda/topics.manifest",
-        "/app/sql/postgres.sql",
         10_000,
         "AUDIT_STREAM",
         "ORACLE_RESULT_STREAM",

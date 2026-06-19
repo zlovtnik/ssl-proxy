@@ -41,7 +41,6 @@ coordinator:
   database-url: ${DATABASE_URL:}
   sync-redpanda-url: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:}
   redpanda-topic-manifest-file: ${SYNC_REDPANDA_TOPIC_MANIFEST:/app/docker/redpanda/topics.manifest}
-  sync-schema-file: ${SYNC_SCHEMA_FILE:/app/sql/postgres.sql}
   redpanda-publish-timeout-ms: ${SYNC_REDPANDA_PUBLISH_TIMEOUT_MS:10000}
   audit-stream-name: ${AUDIT_STREAM_NAME:AUDIT_STREAM}
   result-stream-name: ${SYNC_RESULT_STREAM_NAME:ORACLE_RESULT_STREAM}
