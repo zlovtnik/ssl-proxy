@@ -90,6 +90,25 @@ as $$
   end
 $$;
 
+create or replace function coordinator.safe_timestamptz(p_value text)
+returns timestamptz
+language plpgsql
+stable
+as $$
+begin
+  if p_value is null or btrim(p_value) = '' then
+    return null;
+  end if;
+
+  begin
+    return p_value::timestamptz;
+  exception
+    when others then
+      return null;
+  end;
+end;
+$$;
+
 create or replace function coordinator.safe_jsonb_array(p_value jsonb)
 returns jsonb
 language sql
@@ -229,7 +248,7 @@ alter table sync_events set (
 );
 
 create table if not exists wireless_frames (
-  dedupe_key text primary key references sync_events(dedupe_key) on delete cascade,
+  dedupe_key text primary key,
   sensor_id text,
   location_id text,
   username text,
@@ -320,6 +339,9 @@ create table if not exists wireless_frames (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table wireless_frames
+  drop constraint if exists wireless_frames_dedupe_key_fkey;
 
 alter table wireless_frames add column if not exists frame_subtype text;
 
@@ -2957,6 +2979,11 @@ exception when others then
 end;
 $$;
 
+-- object: vec_enqueue_embedding_jobs
+-- folder: functions
+-- depends_on: vec_embedding_jobs
+drop function if exists vec_enqueue_embedding_jobs(text);
+
 create or replace function vec_enqueue_embedding_jobs(
   p_model text default 'nomic-embed-text-v2-moe',
   p_event_embedding_scope text default 'high_signal'
@@ -2982,16 +3009,39 @@ begin
   )
   into v_event_cursor;
 
-  with event_keys as (
+  with cursor_event_keys as (
     select
       e.dedupe_key,
-      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as event_updated_at
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as event_updated_at,
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) as cursor_updated_at
     from sync_events e
     left join wireless_frames frame on frame.dedupe_key = e.dedupe_key
     where e.stream_name = 'wireless.audit'
       and e.status = 'batched'
       and greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at)) > v_event_cursor
-    order by event_updated_at, e.dedupe_key
+    order by cursor_updated_at, e.dedupe_key
+  ),
+  alert_event_keys as (
+    select
+      e.dedupe_key,
+      greatest(e.updated_at, coalesce(frame.updated_at, e.updated_at), alert.created_at) as event_updated_at,
+      alert.created_at as cursor_updated_at
+    from vec_alerts alert
+    join sync_events e
+      on e.stream_name = 'wireless.audit'
+     and e.status = 'batched'
+     and alert.created_at > v_event_cursor
+     and (
+       alert.metadata->>'dedupe_key' = e.dedupe_key
+       or alert.metadata->>'source_key' = e.dedupe_key
+     )
+    left join wireless_frames frame on frame.dedupe_key = e.dedupe_key
+    order by cursor_updated_at, e.dedupe_key
+  ),
+  event_keys as (
+    select * from cursor_event_keys
+    union
+    select * from alert_event_keys
   ),
   event_jobs as (
     select
@@ -3047,11 +3097,11 @@ begin
         existing.embedding_id is null
         or (
           existing_job.job_id is null
-          and source.updated_at > existing.embedded_at
+          and keys.event_updated_at > existing.embedded_at
         )
         or (
           existing_job.status = 'completed'
-          and source.updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
+          and keys.event_updated_at > coalesce(existing_job.completed_at, existing.embedded_at)
         )
       )
   ),
@@ -3301,21 +3351,11 @@ begin
     returning source_table, source_key, embedding_kind
   )
   select
-    count(*),
-    count(*) filter (
-      where inserted.source_table = 'sync_events'
-        and inserted.embedding_kind = 'event'
-    ),
-    max(keys.event_updated_at) filter (
-      where inserted.source_table = 'sync_events'
-        and inserted.embedding_kind = 'event'
-    )
+    (select count(*) from inserted),
+    (select count(*) from event_keys),
+    (select max(cursor_updated_at) from event_keys)
     into v_count, v_event_count, v_event_cursor_next
-  from inserted
-  left join event_keys keys
-    on keys.dedupe_key = inserted.source_key
-   and inserted.source_table = 'sync_events'
-   and inserted.embedding_kind = 'event';
+  ;
 
   if v_event_count > 0 and v_event_cursor_next is not null then
     insert into sync_cursors (stream_name, cursor_value, updated_at)
@@ -3647,15 +3687,20 @@ begin
 end;
 $$;
 
+-- object: vec_materialize_similarity_pairs
+-- folder: functions
+-- depends_on: vec_similarity_pairs, sync_cursors, vec_job_locks
 drop function if exists vec_materialize_similarity_pairs(text, integer, double precision, double precision);
 drop function if exists vec_materialize_similarity_pairs(text, integer, double precision, double precision, double precision);
+drop function if exists vec_materialize_similarity_pairs(text, integer, double precision, double precision, double precision, double precision);
 
 create or replace function vec_materialize_similarity_pairs(
   p_model text default 'nomic-embed-text-v2-moe',
   p_top_k integer default 10,
   p_event_dup_distance_threshold double precision default 0.05,
-  p_behaviour_similarity_threshold double precision default 0.92,
-  p_sequence_similarity_threshold double precision default 0.10
+  p_behaviour_similarity_threshold double precision default 0.88,
+  p_sequence_similarity_threshold double precision default 0.10,
+  p_timing_similarity_threshold double precision default 0.05
 )
 returns integer
 language plpgsql
@@ -3929,6 +3974,73 @@ begin
   get diagnostics v_count = row_count;
   v_total := v_total + v_count;
 
+  with last_run as materialized (
+    select cursor_value::timestamptz as ts
+    from sync_cursors
+    where stream_name = 'vec_similarity_pairs.last_run'
+  ),
+  candidates as (
+    select
+      least(e1.embedding_id, neighbor.embedding_id) as left_embedding_id,
+      greatest(e1.embedding_id, neighbor.embedding_id) as right_embedding_id,
+      min(neighbor.cosine_distance) as cosine_distance
+    from vec_embeddings e1
+    cross join last_run
+    join lateral (
+      select
+        e2.embedding_id,
+        (e2.embedding::vector(768) <=> e1.embedding::vector(768)) as cosine_distance
+      from vec_embeddings e2
+      where e2.embedding_kind = 'timing_profile'
+        and e2.embedding_model = p_model
+        and e2.embedding_dimensions = 768
+        and e2.embedding_id <> e1.embedding_id
+        and e2.source_mac is not null
+        and e1.source_mac is not null
+        and e2.source_mac <> e1.source_mac
+        and e2.source_sensor_id is not distinct from e1.source_sensor_id
+        and e2.source_location_id is not distinct from e1.source_location_id
+      order by e2.embedding::vector(768) <=> e1.embedding::vector(768)
+      limit greatest(p_top_k, 1)
+    ) neighbor on true
+    where e1.embedding_kind = 'timing_profile'
+      and e1.embedding_model = p_model
+      and e1.embedding_dimensions = 768
+      and e1.embedded_at > last_run.ts
+      and e1.embedded_at <= v_started_at
+      and neighbor.cosine_distance <= p_timing_similarity_threshold
+    group by least(e1.embedding_id, neighbor.embedding_id), greatest(e1.embedding_id, neighbor.embedding_id)
+  )
+  insert into vec_similarity_pairs (
+    pair_kind, embedding_model, embedding_kind,
+    left_embedding_id, right_embedding_id,
+    left_source_table, left_source_key, left_source_mac, left_sensor_id, left_location_id, left_observed_at,
+    right_source_table, right_source_key, right_source_mac, right_sensor_id, right_location_id, right_observed_at,
+    cosine_distance, cosine_similarity, rank, evidence, computed_at, created_at, updated_at
+  )
+  select
+    'timing_timing', p_model, 'timing_profile',
+    candidates.left_embedding_id, candidates.right_embedding_id,
+    left_e.source_table, left_e.source_key, left_e.source_mac, left_e.source_sensor_id, left_e.source_location_id, left_e.source_observed_at,
+    right_e.source_table, right_e.source_key, right_e.source_mac, right_e.source_sensor_id, right_e.source_location_id, right_e.source_observed_at,
+    candidates.cosine_distance,
+    1 - candidates.cosine_distance,
+    1,
+    jsonb_build_object('detector', 'timing_fingerprint_match', 'threshold', p_timing_similarity_threshold),
+    now(), now(), now()
+  from candidates
+  join vec_embeddings left_e on left_e.embedding_id = candidates.left_embedding_id
+  join vec_embeddings right_e on right_e.embedding_id = candidates.right_embedding_id
+  on conflict (pair_kind, embedding_model, embedding_kind, left_embedding_id, right_embedding_id) do update set
+    cosine_distance = excluded.cosine_distance,
+    cosine_similarity = excluded.cosine_similarity,
+    evidence = excluded.evidence,
+    computed_at = now(),
+    updated_at = now();
+
+  get diagnostics v_count = row_count;
+  v_total := v_total + v_count;
+
   insert into sync_cursors (stream_name, cursor_value, updated_at)
   values ('vec_similarity_pairs.last_run', v_started_at::text, now())
   on conflict (stream_name) do update
@@ -4115,12 +4227,21 @@ declare
   v_count integer;
 begin
   update vec_embedding_jobs
-     set status = 'pending',
+     set status = case
+           when attempts >= max_attempts then 'failed'
+           else 'pending'
+         end,
          lease_token = null,
          leased_at = null,
          locked_by = null,
-         due_at = now(),
-         last_error = 'lease expired',
+         due_at = case
+           when attempts >= max_attempts then due_at
+           else now()
+         end,
+         last_error = case
+           when attempts >= max_attempts then 'lease expired after max attempts'
+           else 'lease expired'
+         end,
          updated_at = now()
    where status = 'leased'
      and leased_at < now() - p_lease_interval
@@ -4785,15 +4906,21 @@ begin
       from unnest(p_stream_names) as configured(stream_name)
      where btrim(configured.stream_name) <> ''
   ),
-  valid as (
-    select incoming.*
+  typed as (
+    select incoming.*,
+           coordinator.safe_timestamptz(incoming.observed_at_text) as observed_at
       from incoming
-      join configured_streams on configured_streams.stream_name = incoming.stream_name
+  ),
+  valid as (
+    select typed.*
+      from typed
+      join configured_streams on configured_streams.stream_name = typed.stream_name
       left join sync_event_tombstones tombstone
-        on tombstone.dedupe_key = incoming.dedupe_key
-       and tombstone.stream_name = incoming.stream_name
+        on tombstone.dedupe_key = typed.dedupe_key
+       and tombstone.stream_name = typed.stream_name
        and tombstone.expires_at > now()
      where tombstone.dedupe_key is null
+       and typed.observed_at is not null
   ),
   upserted as (
     insert into sync_events (
@@ -4813,7 +4940,7 @@ begin
     )
     select dedupe_key,
            stream_name,
-           observed_at_text::timestamptz,
+           observed_at,
            payload_ref,
            payload,
            payload_sha256,
@@ -4854,7 +4981,8 @@ begin
   from unnest(p_requests, p_payloads, p_payload_sha256s) as raw(request, payload, payload_sha256)
   join unnest(p_stream_names) as configured(stream_name)
     on btrim(configured.stream_name) = raw.request->>'stream_name'
-  where raw.request->>'stream_name' = 'wireless.audit';
+  where raw.request->>'stream_name' = 'wireless.audit'
+    and coordinator.safe_timestamptz(raw.request->>'observed_at') is not null;
 
   return coalesce(v_recorded_count, 0);
 end;
@@ -5892,15 +6020,21 @@ begin
       from unnest(p_stream_names) as configured(stream_name)
      where btrim(configured.stream_name) <> ''
   ),
-  valid as (
-    select incoming.*
+  typed as (
+    select incoming.*,
+           coordinator.safe_timestamptz(incoming.observed_at_text) as observed_at
       from incoming
-      join configured_streams on configured_streams.stream_name = incoming.stream_name
+  ),
+  valid as (
+    select typed.*
+      from typed
+      join configured_streams on configured_streams.stream_name = typed.stream_name
       left join sync_event_tombstones tombstone
-        on tombstone.dedupe_key = incoming.dedupe_key
-       and tombstone.stream_name = incoming.stream_name
+        on tombstone.dedupe_key = typed.dedupe_key
+       and tombstone.stream_name = typed.stream_name
        and tombstone.expires_at > now()
      where tombstone.dedupe_key is null
+       and typed.observed_at is not null
   ),
   upserted as (
     insert into sync_events (
@@ -5920,7 +6054,7 @@ begin
     )
     select dedupe_key,
            stream_name,
-           observed_at_text::timestamptz,
+           observed_at,
            payload_ref,
            payload,
            payload_sha256,
@@ -5972,7 +6106,8 @@ begin
    and tombstone.stream_name = raw.stream_name
    and tombstone.expires_at > now()
   where raw.stream_name = 'wireless.audit'
-    and tombstone.dedupe_key is null;
+    and tombstone.dedupe_key is null
+    and coordinator.safe_timestamptz(raw.request->>'observed_at') is not null;
 
   return coalesce(v_recorded_count, 0);
 end;

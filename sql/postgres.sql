@@ -39,7 +39,8 @@
 \ir tables/025_vec_rf_sensor_locations.sql
 \ir tables/026_vec_dns_policy.sql
 \ir tables/027_vec_dns_resolver_ledger.sql
-\ir tables/028_search_feedback.sql
+\ir tables/028_search_queries.sql
+\ir tables/028a_search_feedback.sql
 \ir tables/029_sync_event_payload_archives.sql
 \ir tables/030_sync_event_tombstones.sql
 \ir tables/031_device_graph_workmap_hardening.sql
