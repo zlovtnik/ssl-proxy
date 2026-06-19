@@ -62,25 +62,29 @@ public class ScanRecordProcessor implements Processor {
             return;
         }
 
-        buildRecord(rawJson)
-                .onSuccess(record -> {
-                    if (!accumulator.offer(record)) {
-                        log.atError()
-                                .addKeyValue("event", "scan_request_ingest")
-                                .addKeyValue("status", "rejected")
-                                .addKeyValue("reason", "accumulator_full")
-                                .addKeyValue("pending_count", accumulator.size())
-                                .addKeyValue("max_pending", accumulator.capacity())
-                                .log("scan request accumulator rejected record");
-                        throw new IllegalStateException("Pending scan request accumulator is full");
-                    }
-                    flushPendingOrThrow();
-                })
-                .onFailure(e -> log.atError()
-                        .addKeyValue("event", "scan_request_invalid")
-                        .addKeyValue("error", sanitize(e.getMessage()))
-                        .addKeyValue("payload_bytes", rawJson.length())
-                        .log("scan request rejected"));
+        Try<DatabaseService.ScanRequestRecord> result = buildRecord(rawJson);
+        if (result.isFailure()) {
+            Throwable error = result.getCause();
+            log.atError()
+                    .addKeyValue("event", "scan_request_invalid")
+                    .addKeyValue("error", sanitize(error.getMessage()))
+                    .addKeyValue("payload_bytes", rawJson.length())
+                    .log("scan request rejected");
+            throw new IllegalArgumentException("scan request rejected", error);
+        }
+
+        DatabaseService.ScanRequestRecord record = result.get();
+        if (!accumulator.offer(record)) {
+            log.atError()
+                    .addKeyValue("event", "scan_request_ingest")
+                    .addKeyValue("status", "rejected")
+                    .addKeyValue("reason", "accumulator_full")
+                    .addKeyValue("pending_count", accumulator.size())
+                    .addKeyValue("max_pending", accumulator.capacity())
+                    .log("scan request accumulator rejected record");
+            throw new IllegalStateException("Pending scan request accumulator is full");
+        }
+        flushPendingOrThrow();
 
     }
 
@@ -168,9 +172,6 @@ public class ScanRecordProcessor implements Processor {
                         .addKeyValue("error", sanitize(err.cause().getMessage()))
                         .addKeyValue("root_cause", rootCauseSummary(err.cause()))
                         .log("scan request batch failed");
-                if (failOnError) {
-                    throw new IllegalStateException(err.operation(), err.cause());
-                }
                 int dropped = accumulator.requeueFront(batch);
                 if (dropped > 0) {
                     log.atError()
@@ -181,6 +182,9 @@ public class ScanRecordProcessor implements Processor {
                             .addKeyValue("pending_count", accumulator.size())
                             .addKeyValue("max_pending", accumulator.capacity())
                             .log("scan request retry records dropped");
+                }
+                if (failOnError) {
+                    throw new IllegalStateException(err.operation(), err.cause());
                 }
             }
         }

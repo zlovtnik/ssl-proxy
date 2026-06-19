@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Scope
-This file governs `/Users/rcs/git/ssl-proxy/services/atheros-search`.
+This file governs `services/atheros-search` relative to the repository root.
 
 ## Project Shape
 - Go module: `github.com/zlovtnik/ssl-proxy/services/atheros-search`.

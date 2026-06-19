@@ -87,11 +87,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: SYNC_RESULT_TOPIC
-            - name: PAYLOAD_AUDIT_REDPANDA_TOPIC
+            - name: SYNC_PAYLOAD_AUDIT_TOPIC
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
-                  key: PAYLOAD_AUDIT_REDPANDA_TOPIC
+                  key: SYNC_PAYLOAD_AUDIT_TOPIC
             # Consumer groups
             - name: SYNC_SCAN_CONSUMER
               valueFrom:
@@ -108,11 +108,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: SYNC_RESULT_CONSUMER
-            - name: PAYLOAD_AUDIT_CONSUMER
+            - name: SYNC_PAYLOAD_AUDIT_CONSUMER
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
-                  key: PAYLOAD_AUDIT_CONSUMER
+                  key: SYNC_PAYLOAD_AUDIT_CONSUMER
             - name: SYNC_SCAN_CONSUMERS_COUNT
               value: {{ .Values.javaCoordinator.consumerConcurrency.scan | quote }}
             - name: SYNC_RESULT_CONSUMERS_COUNT

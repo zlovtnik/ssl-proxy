@@ -64,6 +64,14 @@ class WirelessRoutesTest {
     }
 
     @Test
+    void validButUnapprovedReplyTopicFallsBackToConfiguredDefault() {
+        assertEquals(
+                "wireless.reply",
+                routes.resolveReplyTopic("{\"reply_topic\":\"wireless.attacker.reply\"}", "wireless.reply")
+        );
+    }
+
+    @Test
     void nullReplyDoesNotPublish() throws Exception {
         ProducerTemplate producerTemplate = mock(ProducerTemplate.class);
         WirelessRoutes localRoutes = new WirelessRoutes(

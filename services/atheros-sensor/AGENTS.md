@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Scope
-This file governs `/Users/rcs/git/ssl-proxy/services/atheros-sensor`.
+This file governs `services/atheros-sensor` relative to the repository root.
 
 ## Project Shape
 - Rust 2021 workspace package `atheros-sensor`.

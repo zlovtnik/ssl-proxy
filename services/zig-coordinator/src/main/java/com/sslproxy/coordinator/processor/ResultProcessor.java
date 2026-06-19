@@ -77,14 +77,14 @@ public class ResultProcessor implements Processor {
             case DbResult.Err<Integer> err -> {
                 log.error("event=batch_result_ingest status=failed operation={} batch_size={} error=\"{}\"",
                         err.operation(), batch.size(), sanitize(err.cause().getMessage()));
-                if (failOnError) {
-                    throw new IllegalStateException(err.operation(), err.cause());
-                }
                 int dropped = accumulator.requeueFront(batch);
                 if (dropped > 0) {
                     log.error("event=batch_result_ingest status=dropped reason=accumulator_full "
                                     + "dropped_count={} pending_count={} max_pending={}",
                             dropped, accumulator.size(), accumulator.capacity());
+                }
+                if (failOnError) {
+                    throw new IllegalStateException(err.operation(), err.cause());
                 }
             }
         }

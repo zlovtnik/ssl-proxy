@@ -214,7 +214,12 @@ class SqlFunctionContractTest {
 
     private void assertEventEmbeddingCursorAdvanceGuard(String sql) {
         int functionStart = sql.indexOf("create or replace function vec_enqueue_embedding_jobs");
-        int insertedCount = sql.indexOf("(select count(*) from inserted)", sql.indexOf("returning source_table, source_key, embedding_kind", functionStart));
+        assertTrue(functionStart >= 0, "expected enqueue function");
+
+        int returningMarker = sql.indexOf("returning source_table, source_key, embedding_kind", functionStart);
+        assertTrue(returningMarker > functionStart, "expected embedding insert returning marker");
+
+        int insertedCount = sql.indexOf("(select count(*) from inserted)", returningMarker);
         int eventCount = sql.indexOf("(select count(*) from event_keys)", insertedCount + 1);
         int eventCursorMax = sql.indexOf("(select max(cursor_updated_at) from event_keys)", eventCount);
         int intoCounts = sql.indexOf("into v_count, v_event_count, v_event_cursor_next", eventCursorMax);
@@ -223,7 +228,6 @@ class SqlFunctionContractTest {
         int guardEnd = sql.indexOf("end if;", cursorAdvance);
         int finishJob = sql.indexOf("perform vec_finish_job('vec_enqueue_embedding_jobs')", guardEnd);
 
-        assertTrue(functionStart >= 0, "expected enqueue function");
         assertTrue(insertedCount > functionStart, "expected inserted job count");
         assertTrue(eventCount > insertedCount, "embedding cursor must count scanned event keys");
         assertTrue(eventCursorMax > eventCount, "embedding cursor must use scanned key freshness");

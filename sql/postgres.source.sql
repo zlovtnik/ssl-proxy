@@ -4340,6 +4340,8 @@ begin
       'vec-build-infrastructure-graph',
       'vec-detect-rogue-clusters',
       'vec-enqueue-embedding-jobs',
+      'sync-event-retention-prune',
+      'vec-prune-retention',
       'vec-materialize-similarity-pairs',
       'vec-apply-similarity-flags',
       'vec-fuse-device-identities',

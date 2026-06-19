@@ -12,10 +12,12 @@ import org.mockito.ArgumentCaptor;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -69,6 +71,37 @@ class PayloadAuditRecordProcessorTest {
         processor.process(exchangeWithBody("{\"host\":\"api.example\"}"));
 
         verify(databaseService, never()).recordScanRequests(any());
+    }
+
+    @Test
+    void requeuesPayloadAuditBatchBeforeFailFastThrow() {
+        DatabaseService databaseService = mock(DatabaseService.class);
+        when(databaseService.recordScanRequests(any()))
+                .thenReturn(new DbResult.Err<>("recordScanRequests", new RuntimeException("database unavailable")))
+                .thenReturn(new DbResult.Ok<>(1));
+        PayloadAuditRecordProcessor processor = new PayloadAuditRecordProcessor(
+                objectMapper,
+                databaseService,
+                CoordinatorProperties.DEFAULTS
+        );
+
+        String payload = """
+                {
+                  "observed_at":"2026-06-01T12:00:00Z",
+                  "host":"api.example",
+                  "method":"POST",
+                  "path":"/login",
+                  "content_type":"application/json"
+                }
+                """;
+
+        assertThrows(IllegalStateException.class, () -> processor.process(exchangeWithBody(payload)));
+        processor.flushPending();
+
+        ArgumentCaptor<List<DatabaseService.ScanRequestRecord>> records = ArgumentCaptor.forClass(List.class);
+        verify(databaseService, times(2)).recordScanRequests(records.capture());
+        assertEquals(1, records.getAllValues().get(1).size());
+        assertEquals(payload, records.getAllValues().get(1).getFirst().payloadJson());
     }
 
     private Exchange exchangeWithBody(String body) {
