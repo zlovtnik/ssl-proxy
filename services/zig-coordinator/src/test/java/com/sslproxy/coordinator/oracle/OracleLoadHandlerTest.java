@@ -61,6 +61,46 @@ class OracleLoadHandlerTest {
     }
 
     @Test
+    void handlesProxyPayloadAuditLoad(@TempDir Path outbox) {
+        FakeSink sink = new FakeSink();
+        OracleLoadHandler handler = handler(outbox, sink);
+        String payload = """
+                {
+                  "observed_at":"2026-06-01T12:00:00Z",
+                  "host":"api.example",
+                  "method":"POST",
+                  "path":"/login",
+                  "content_type":"application/json",
+                  "truncated":true,
+                  "peer_ip":"10.0.0.2",
+                  "body":{"password":"[REDACTED]"}
+                }
+                """;
+
+        OracleResult result = handler.handle(new OracleLoad(
+                "job-1",
+                "batch-1",
+                1,
+                "proxy.payload_audit",
+                inline(payload),
+                "",
+                "",
+                1
+        ));
+
+        assertEquals("success", result.status());
+        assertEquals(1, result.rowCount());
+        assertEquals("batch-1", sink.batchId);
+        assertEquals(1, sink.payloadAuditRows.size());
+        ProxyPayloadAuditInsert row = sink.payloadAuditRows.getFirst();
+        assertEquals("api.example", row.host());
+        assertEquals("UP", row.direction());
+        assertEquals("POST", row.httpMethod());
+        assertEquals("/login", row.httpPath());
+        assertEquals(1L, row.truncated());
+    }
+
+    @Test
     void returnsPermanentFailureForUnsupportedStream(@TempDir Path outbox) {
         OracleLoadHandler handler = handler(outbox, new FakeSink());
 
@@ -168,12 +208,20 @@ class OracleLoadHandlerTest {
         private String batchId;
         private List<ProxyEventInsert> proxyRows = List.of();
         private List<BlockedEventInsert> blockedRows = List.of();
+        private List<ProxyPayloadAuditInsert> payloadAuditRows = List.of();
 
         @Override
         public long insertProxyEvents(String batchId, List<ProxyEventInsert> rows, List<BlockedEventInsert> blockedRows) {
             this.batchId = batchId;
             this.proxyRows = rows;
             this.blockedRows = blockedRows;
+            return rows.size();
+        }
+
+        @Override
+        public long insertProxyPayloadAudit(String batchId, List<ProxyPayloadAuditInsert> rows) {
+            this.batchId = batchId;
+            this.payloadAuditRows = rows;
             return rows.size();
         }
 

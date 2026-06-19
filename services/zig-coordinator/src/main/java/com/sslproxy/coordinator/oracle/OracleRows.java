@@ -6,6 +6,7 @@ import java.util.List;
 record OracleRowSet(
         List<ProxyEventInsert> proxyEvents,
         List<BlockedEventInsert> blockedEvents,
+        List<ProxyPayloadAuditInsert> proxyPayloadAudit,
         List<WirelessAuditFrameInsert> wirelessAuditFrames,
         List<WirelessBandwidthInsert> wirelessBandwidth,
         List<WirelessRogueApInsert> wirelessRogueAp,
@@ -26,6 +27,7 @@ record OracleRowSet(
                 List.of(),
                 List.of(),
                 List.of(),
+                List.of(),
                 List.of()
         );
     }
@@ -33,6 +35,7 @@ record OracleRowSet(
     int inputRowCount(OracleSinkTarget target) {
         return switch (target) {
             case PROXY_EVENTS -> proxyEvents.size();
+            case PROXY_PAYLOAD_AUDIT -> proxyPayloadAudit.size();
             case WIRELESS_AUDIT_FRAMES -> wirelessAuditFrames.size();
             case WIRELESS_BANDWIDTH -> wirelessBandwidth.size();
             case WIRELESS_ROGUE_AP -> wirelessRogueAp.size();
@@ -85,6 +88,23 @@ record BlockedEventInsert(
         String ja3Lite,
         String resolvedIp,
         String asnOrg
+) {}
+
+record ProxyPayloadAuditInsert(
+        String correlationId,
+        String host,
+        String direction,
+        OffsetDateTime capturedAt,
+        long byteOffset,
+        String payloadObjectKey,
+        String contentType,
+        String httpMethod,
+        Long httpStatus,
+        String httpPath,
+        long isEncrypted,
+        long truncated,
+        String peerIp,
+        String notes
 ) {}
 
 record WirelessAuditFrameInsert(

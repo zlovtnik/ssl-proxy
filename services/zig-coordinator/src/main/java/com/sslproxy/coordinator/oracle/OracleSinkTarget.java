@@ -4,6 +4,7 @@ import java.util.Optional;
 
 public enum OracleSinkTarget {
     PROXY_EVENTS("proxy.events"),
+    PROXY_PAYLOAD_AUDIT("proxy.payload_audit"),
     WIRELESS_AUDIT_FRAMES("wireless.audit"),
     WIRELESS_BANDWIDTH("audit.wireless.bandwidth"),
     WIRELESS_ROGUE_AP("wireless.alert.rogue_ap"),
@@ -26,6 +27,7 @@ public enum OracleSinkTarget {
     public static Optional<OracleSinkTarget> fromStreamName(String streamName) {
         return switch (streamName == null ? "" : streamName) {
             case "proxy.events" -> Optional.of(PROXY_EVENTS);
+            case "proxy.payload_audit" -> Optional.of(PROXY_PAYLOAD_AUDIT);
             case "wireless.audit" -> Optional.of(WIRELESS_AUDIT_FRAMES);
             case "audit.wireless.bandwidth" -> Optional.of(WIRELESS_BANDWIDTH);
             case "wireless.rogue_ap", "wireless.alert.rogue_ap" -> Optional.of(WIRELESS_ROGUE_AP);

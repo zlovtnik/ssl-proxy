@@ -17,6 +17,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 
 /**
@@ -62,35 +64,45 @@ public class ScanRecordProcessor implements Processor {
 
         buildRecord(rawJson)
                 .onSuccess(record -> {
-                    // Scan discovery is lower priority than batch results, so this path soft-drops
-                    // under backpressure instead of failing the route like ResultProcessor.
                     if (!accumulator.offer(record)) {
                         log.atError()
                                 .addKeyValue("event", "scan_request_ingest")
-                                .addKeyValue("status", "dropped")
+                                .addKeyValue("status", "rejected")
                                 .addKeyValue("reason", "accumulator_full")
                                 .addKeyValue("pending_count", accumulator.size())
                                 .addKeyValue("max_pending", accumulator.capacity())
-                                .log("scan request accumulator dropped record");
+                                .log("scan request accumulator rejected record");
+                        throw new IllegalStateException("Pending scan request accumulator is full");
                     }
+                    flushPendingOrThrow();
                 })
                 .onFailure(e -> log.atError()
-                        .addKeyValue("event", "scan_request_deserialize_failed")
+                        .addKeyValue("event", "scan_request_invalid")
                         .addKeyValue("error", sanitize(e.getMessage()))
                         .addKeyValue("payload_bytes", rawJson.length())
-                        .log("scan request deserialize failed"));
+                        .log("scan request rejected"));
 
-        if (accumulator.size() >= props.scanFetchCount()) {
-            flushPending();
-        }
     }
 
     private Try<DatabaseService.ScanRequestRecord> buildRecord(String rawJson) {
         return Try.of(() -> objectMapper.readValue(rawJson, ScanRequest.class))
                 .map(scanRequest -> {
+                    validateObservedAt(scanRequest);
                     Tuple2<String, String> resolved = resolvePayload(scanRequest);
                     return new DatabaseService.ScanRequestRecord(rawJson, resolved._1, resolved._2);
                 });
+    }
+
+    private void validateObservedAt(ScanRequest scanRequest) {
+        String observedAt = scanRequest.getObservedAt();
+        if (observedAt == null || observedAt.isBlank()) {
+            throw new IllegalArgumentException("scan request missing observed_at");
+        }
+        try {
+            OffsetDateTime.parse(observedAt);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException("scan request observed_at must be RFC3339 timestamp");
+        }
     }
 
     private Tuple2<String, String> resolvePayload(ScanRequest scanRequest) {
@@ -121,6 +133,14 @@ public class ScanRecordProcessor implements Processor {
      * on a timer to drain partial batches.
      */
     public void flushPending() {
+        flushPending(false);
+    }
+
+    private void flushPendingOrThrow() {
+        flushPending(true);
+    }
+
+    private void flushPending(boolean failOnError) {
         List<DatabaseService.ScanRequestRecord> batch = accumulator.drain(props.scanFetchCount());
         if (batch.isEmpty()) {
             return;
@@ -148,6 +168,9 @@ public class ScanRecordProcessor implements Processor {
                         .addKeyValue("error", sanitize(err.cause().getMessage()))
                         .addKeyValue("root_cause", rootCauseSummary(err.cause()))
                         .log("scan request batch failed");
+                if (failOnError) {
+                    throw new IllegalStateException(err.operation(), err.cause());
+                }
                 int dropped = accumulator.requeueFront(batch);
                 if (dropped > 0) {
                     log.atError()

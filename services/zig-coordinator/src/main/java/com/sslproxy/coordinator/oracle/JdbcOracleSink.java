@@ -34,7 +34,8 @@ public class JdbcOracleSink implements OracleSink {
 
     static final List<OracleObjectRequirement> CORE_SCHEMA_OBJECTS = List.of(
             OracleObjectRequirement.table("PROXY_EVENTS"),
-            OracleObjectRequirement.table("PROXY_BLOCKED_HOST_ROLLUPS")
+            OracleObjectRequirement.table("PROXY_BLOCKED_HOST_ROLLUPS"),
+            OracleObjectRequirement.table("PROXY_PAYLOAD_AUDIT")
     );
 
     static final List<OracleObjectRequirement> WIRELESS_SCHEMA_OBJECTS = List.of(
@@ -149,6 +150,62 @@ public class JdbcOracleSink implements OracleSink {
                         () -> withTransaction(connection -> insertProxyEventsTransaction(connection, batchId, rows, blockedRows)));
             }
             return firstAttempt.get();
+        });
+    }
+
+    @Override
+    public long insertProxyPayloadAudit(String batchId, List<ProxyPayloadAuditInsert> rows) throws Exception {
+        return observeOracle("oracle.insert_proxy_payload_audit", () -> {
+            long inserted = withRetry("insert_proxy_payload_audit", 2, () -> withTransaction(connection -> {
+                String sql = """
+                        merge into PROXY_PAYLOAD_AUDIT tgt
+                        using (
+                            select ? CORRELATION_ID, ? HOST, ? DIRECTION, ? CAPTURED_AT,
+                                   ? BYTE_OFFSET, ? PAYLOAD_OBJECT_KEY, ? CONTENT_TYPE,
+                                   ? HTTP_METHOD, ? HTTP_STATUS, ? HTTP_PATH,
+                                   ? IS_ENCRYPTED, ? TRUNCATED, ? PEER_IP, ? NOTES
+                            from dual
+                        ) src
+                        on (tgt.CORRELATION_ID = src.CORRELATION_ID)
+                        when matched then update set
+                            tgt.HOST = src.HOST,
+                            tgt.DIRECTION = src.DIRECTION,
+                            tgt.CAPTURED_AT = src.CAPTURED_AT,
+                            tgt.BYTE_OFFSET = src.BYTE_OFFSET,
+                            tgt.PAYLOAD_OBJECT_KEY = src.PAYLOAD_OBJECT_KEY,
+                            tgt.CONTENT_TYPE = src.CONTENT_TYPE,
+                            tgt.HTTP_METHOD = src.HTTP_METHOD,
+                            tgt.HTTP_STATUS = src.HTTP_STATUS,
+                            tgt.HTTP_PATH = src.HTTP_PATH,
+                            tgt.IS_ENCRYPTED = src.IS_ENCRYPTED,
+                            tgt.TRUNCATED = src.TRUNCATED,
+                            tgt.PEER_IP = src.PEER_IP,
+                            tgt.NOTES = src.NOTES
+                        when not matched then insert (
+                            CORRELATION_ID, HOST, DIRECTION, CAPTURED_AT, BYTE_OFFSET,
+                            PAYLOAD_OBJECT_KEY, CONTENT_TYPE, HTTP_METHOD, HTTP_STATUS,
+                            HTTP_PATH, IS_ENCRYPTED, TRUNCATED, PEER_IP, NOTES
+                        ) values (
+                            src.CORRELATION_ID, src.HOST, src.DIRECTION, src.CAPTURED_AT,
+                            src.BYTE_OFFSET, src.PAYLOAD_OBJECT_KEY, src.CONTENT_TYPE,
+                            src.HTTP_METHOD, src.HTTP_STATUS, src.HTTP_PATH,
+                            src.IS_ENCRYPTED, src.TRUNCATED, src.PEER_IP, src.NOTES
+                        )
+                        """;
+                try (PreparedStatement statement = prepare(connection, sql)) {
+                    for (ProxyPayloadAuditInsert row : rows) {
+                        bindAll(statement, row.correlationId(), row.host(), row.direction(), row.capturedAt(),
+                                row.byteOffset(), row.payloadObjectKey(), row.contentType(), row.httpMethod(),
+                                row.httpStatus(), row.httpPath(), row.isEncrypted(), row.truncated(),
+                                row.peerIp(), row.notes());
+                        statement.executeUpdate();
+                    }
+                }
+                return (long) rows.size();
+            }));
+            log.info("event=oracle_insert status=ok target=proxy_payload_audit batch_id={} rows={}",
+                    batchId, inserted);
+            return inserted;
         });
     }
 

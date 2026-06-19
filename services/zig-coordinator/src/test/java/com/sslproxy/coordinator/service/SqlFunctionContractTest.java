@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SqlFunctionContractTest {
@@ -13,6 +14,42 @@ class SqlFunctionContractTest {
     void recordScanRequestBatchSkipsTombstonedWirelessFrameUpserts() throws Exception {
         assertRecordScanRequestBatchTombstoneGuard(readSql("../../sql/functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql"));
         assertRecordScanRequestBatchTombstoneGuard(readSql("../../sql/postgres.source.sql"));
+    }
+
+    @Test
+    void recordScanRequestBatchSafelyFiltersInvalidObservedAt() throws Exception {
+        assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/functions/022_coordinator_record_scan_request_batch.sql"));
+        assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql"));
+        assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/postgres.source.sql"));
+    }
+
+    @Test
+    void expiredEmbeddingLeaseReleaseDoesNotRequeueTerminalAttempts() throws Exception {
+        assertExpiredLeaseReleaseCapsAttempts(readSql("../../sql/functions/016_vec_release_expired_leases.sql"));
+        assertExpiredLeaseReleaseCapsAttempts(readSql("../../sql/postgres.source.sql"));
+    }
+
+    @Test
+    void wirelessFramesUsesSoftSyncEventReference() throws Exception {
+        assertWirelessFramesSoftReference(readSql("../../sql/tables/003_wireless_frames.sql"));
+        assertWirelessFramesSoftReference(readSql("../../sql/postgres.source.sql"));
+    }
+
+    @Test
+    void searchQueryAndFeedbackSchemaObjectsAreSplit() throws Exception {
+        String bootstrap = readSql("../../sql/postgres.sql");
+        assertTrue(bootstrap.contains("\\ir tables/028_search_queries.sql"));
+        assertTrue(bootstrap.contains("\\ir tables/028a_search_feedback.sql"));
+
+        String queries = readSql("../../sql/tables/028_search_queries.sql");
+        String feedback = readSql("../../sql/tables/028a_search_feedback.sql");
+
+        assertTrue(queries.contains("-- object: search_queries"));
+        assertTrue(queries.contains("create table if not exists search_queries"));
+        assertFalse(queries.contains("create table if not exists search_feedback"));
+        assertTrue(feedback.contains("-- object: search_feedback"));
+        assertTrue(feedback.contains("-- depends_on: search_queries"));
+        assertTrue(feedback.contains("create table if not exists search_feedback"));
     }
 
     @Test
@@ -74,6 +111,51 @@ class SqlFunctionContractTest {
         assertTrue(frameUpsert > functionStart, "expected wireless frame upsert call");
         assertTrue(tombstoneJoin > frameUpsert, "frame upsert source must join tombstones");
         assertTrue(tombstoneFilter > tombstoneJoin, "frame upsert source must skip live tombstones");
+    }
+
+    private void assertRecordScanRequestBatchSafeObservedAt(String sql) {
+        int functionStart = sql.lastIndexOf("create or replace function coordinator.record_scan_request_batch");
+        int typed = sql.indexOf("typed as", functionStart);
+        int safeCast = sql.indexOf("coordinator.safe_timestamptz(incoming.observed_at_text) as observed_at", typed);
+        int valid = sql.indexOf("valid as", safeCast);
+        int validGuard = sql.indexOf("and typed.observed_at is not null", valid);
+        int insertSelect = sql.indexOf("select dedupe_key,\n           stream_name,\n           observed_at,", validGuard);
+        int frameUpsert = sql.indexOf("perform coordinator.upsert_wireless_frame_from_payload", insertSelect);
+        int frameGuard = sql.indexOf("coordinator.safe_timestamptz(raw.request->>'observed_at') is not null", frameUpsert);
+        int unsafeCast = sql.indexOf("observed_at_text::timestamptz", functionStart);
+
+        assertTrue(functionStart >= 0, "expected batch ingest function");
+        assertTrue(typed > functionStart, "batch ingest must parse observed_at before insert");
+        assertTrue(safeCast > typed, "batch ingest must use safe timestamptz parsing");
+        assertTrue(valid > safeCast, "valid rows must be filtered after timestamp parsing");
+        assertTrue(validGuard > valid, "invalid observed_at rows must be skipped");
+        assertTrue(insertSelect > validGuard, "insert must use the parsed timestamp");
+        assertTrue(frameGuard > frameUpsert, "wireless frame upsert must skip invalid observed_at rows");
+        assertFalse(unsafeCast > functionStart, "batch ingest must not cast observed_at_text directly");
+    }
+
+    private void assertExpiredLeaseReleaseCapsAttempts(String sql) {
+        int functionStart = sql.indexOf("create or replace function vec_release_expired_leases");
+        int terminalStatus = sql.indexOf("when attempts >= max_attempts then 'failed'", functionStart);
+        int retryStatus = sql.indexOf("else 'pending'", terminalStatus);
+        int terminalError = sql.indexOf("when attempts >= max_attempts then 'lease expired after max attempts'", retryStatus);
+
+        assertTrue(functionStart >= 0, "expected expired lease release function");
+        assertTrue(terminalStatus > functionStart, "expired terminal leases must become failed");
+        assertTrue(retryStatus > terminalStatus, "expired retryable leases must return to pending");
+        assertTrue(terminalError > retryStatus, "terminal lease failures need an explicit error");
+    }
+
+    private void assertWirelessFramesSoftReference(String sql) {
+        int tableStart = sql.indexOf("create table if not exists wireless_frames");
+        int tableEnd = sql.indexOf(");", tableStart);
+        int fk = sql.indexOf("references sync_events(dedupe_key)", tableStart);
+        int dropFk = sql.indexOf("drop constraint if exists wireless_frames_dedupe_key_fkey", tableEnd);
+
+        assertTrue(tableStart >= 0, "expected wireless_frames table");
+        assertTrue(tableEnd > tableStart, "expected wireless_frames table end");
+        assertFalse(fk > tableStart && fk < tableEnd, "wireless_frames must not enforce sync_events FK");
+        assertTrue(dropFk > tableEnd, "existing wireless_frames FK must be dropped idempotently");
     }
 
     private void assertGraphEmbeddingFreshnessGuard(String sql) {

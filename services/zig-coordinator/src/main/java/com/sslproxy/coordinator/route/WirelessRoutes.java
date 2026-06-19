@@ -5,8 +5,7 @@ import com.sslproxy.coordinator.config.CoordinatorProperties;
 import com.sslproxy.coordinator.fp.CheckedConsumer;
 import com.sslproxy.coordinator.fp.WirelessHandler;
 import com.sslproxy.coordinator.service.DatabaseService;
-import io.vavr.control.Try;
-import org.apache.camel.LoggingLevel;
+import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.apache.camel.ProducerTemplate;
 import org.apache.camel.builder.RouteBuilder;
@@ -15,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Wireless operation routes that handle the 7 wireless handlers from
@@ -38,6 +38,7 @@ import java.util.Map;
 public class WirelessRoutes extends RouteBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(WirelessRoutes.class);
+    private static final Pattern KAFKA_TOPIC_PATTERN = Pattern.compile("[A-Za-z0-9._-]{1,249}");
 
     private final CoordinatorProperties props;
     private final DatabaseService db;
@@ -57,38 +58,33 @@ public class WirelessRoutes extends RouteBuilder {
     @Override
     public void configure() {
         onException(Exception.class)
-                .log(LoggingLevel.ERROR, "event=wireless_operation status=error error=${exception.message}")
-                .continued(true);
+                .maximumRedeliveries("{{coordinator.wireless-route-max-retries:3}}")
+                .redeliveryDelay(500)
+                .useOriginalMessage()
+                .handled(true)
+                .process(this::logRouteFailure)
+                .toD("kafka:${exchangeProperty.dlqTopic}");
 
-        from("kafka:{{coordinator.wireless-backlog-stream-name}}"
-                + "?groupId={{coordinator.wireless-backlog-save-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessBacklogSaveTopic(), props.wirelessBacklogSaveConsumer()))
         .routeId("wireless-backlog-save")
+        .setProperty("dlqTopic", constant(props.wirelessBacklogSaveTopic() + ".dlq"))
         .process(voidHandler(payload -> {
             db.saveBacklogEntry(payload).orElseThrow();
             log.info("event=backlog_save status=ok payload_bytes={}", payload.length());
         }));
 
-        from("kafka:{{coordinator.wireless-backlog-stream-name}}"
-                + "?groupId={{coordinator.wireless-backlog-list-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessBacklogListTopic(), props.wirelessBacklogListConsumer()))
         .routeId("wireless-backlog-list")
+        .setProperty("dlqTopic", constant(props.wirelessBacklogListTopic() + ".dlq"))
         .process(replyingHandler(
                 payload -> db.listPendingBacklog().orElse("[]"),
                 props.wirelessBacklogListReplyTopic(),
                 "backlog_list"
         ));
 
-        from("kafka:{{coordinator.wireless-backlog-stream-name}}"
-                + "?groupId={{coordinator.wireless-backlog-synced-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessBacklogSyncedTopic(), props.wirelessBacklogSyncedConsumer()))
         .routeId("wireless-backlog-synced")
+        .setProperty("dlqTopic", constant(props.wirelessBacklogSyncedTopic() + ".dlq"))
         .process(voidHandler(payload -> {
             String dedupeKey = extractField(payload, "dedupe_key");
             if (dedupeKey == null || dedupeKey.isEmpty()) {
@@ -99,24 +95,18 @@ public class WirelessRoutes extends RouteBuilder {
             log.info("event=backlog_synced status=ok dedupe_key={}", dedupeKey);
         }));
 
-        from("kafka:{{coordinator.wireless-backlog-stream-name}}"
-                + "?groupId={{coordinator.wireless-backlog-prune-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessBacklogPruneTopic(), props.wirelessBacklogPruneConsumer()))
         .routeId("wireless-backlog-prune")
+        .setProperty("dlqTopic", constant(props.wirelessBacklogPruneTopic() + ".dlq"))
         .process(replyingHandler(
                 payload -> String.format("{\"pruned\":%d}", parseLongOrZero(db.pruneBacklog().orElse("0"))),
                 props.wirelessBacklogPruneReplyTopic(),
                 "backlog_prune"
         ));
 
-        from("kafka:{{coordinator.wireless-mac-stream-name}}"
-                + "?groupId={{coordinator.wireless-mac-lookup-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessMacLookupTopic(), props.wirelessMacLookupConsumer()))
         .routeId("wireless-mac-lookup")
+        .setProperty("dlqTopic", constant(props.wirelessMacLookupTopic() + ".dlq"))
         .process(replyingHandler(
                 payload -> {
                     String mac = extractField(payload, "mac");
@@ -130,33 +120,27 @@ public class WirelessRoutes extends RouteBuilder {
                 "mac_lookup"
         ));
 
-        from("kafka:{{coordinator.wireless-networks-stream-name}}"
-                + "?groupId={{coordinator.wireless-networks-authorized-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessNetworksAuthorizedTopic(), props.wirelessNetworksAuthorizedConsumer()))
         .routeId("wireless-networks-authorized")
+        .setProperty("dlqTopic", constant(props.wirelessNetworksAuthorizedTopic() + ".dlq"))
         .process(replyingHandler(
                 payload -> db.listAuthorizedNetworks().orElse("[]"),
                 props.wirelessNetworksAuthorizedReplyTopic(),
                 "networks_authorized"
         ));
 
-        from("kafka:{{coordinator.wireless-probe-stream-name}}"
-                + "?groupId={{coordinator.wireless-probe-flush-consumer}}"
-                + "&autoOffsetReset=earliest"
-                + "&maxPollRecords={{coordinator.wireless-max-poll-records}}"
-                + "&consumersCount={{coordinator.wireless-consumers-count}}")
+        from(wirelessConsumerUri(props.wirelessProbeFlushTopic(), props.wirelessProbeFlushConsumer()))
         .routeId("wireless-probe-flush")
+        .setProperty("dlqTopic", constant(props.wirelessProbeFlushTopic() + ".dlq"))
         .process(voidHandler(payload -> {
             db.flushProbeBatch(payload).orElseThrow();
             log.info("event=probe_flush status=ok payload_bytes={}", payload.length());
         }));
     }
 
-    private Processor replyingHandler(WirelessHandler handler,
-                                      String defaultReplyTopic,
-                                      String eventName) {
+    Processor replyingHandler(WirelessHandler handler,
+                              String defaultReplyTopic,
+                              String eventName) {
         return exchange -> {
             String payload = exchange.getIn().getBody(String.class);
             if (payload == null || payload.isEmpty()) {
@@ -164,28 +148,34 @@ public class WirelessRoutes extends RouteBuilder {
             }
 
             String replyTopic = resolveReplyTopic(payload, defaultReplyTopic);
-            Try.of(() -> handler.handle(payload))
-                    .onSuccess(reply -> {
-                        if (reply == null) {
-                            return;
-                        }
-                        producerTemplate.sendBody("kafka:" + replyTopic, reply);
-                        log.info("event={} status=ok reply_topic={} payload_bytes={}",
-                                eventName, replyTopic, reply.length());
-                    })
-                    .onFailure(e -> log.error("event={} status=failed reply_topic={} error={}",
-                            eventName, replyTopic, sanitize(e.getMessage())));
+            try {
+                String reply = handler.handle(payload);
+                if (reply == null) {
+                    return;
+                }
+                producerTemplate.sendBody("kafka:" + replyTopic, reply);
+                log.info("event={} status=ok reply_topic={} payload_bytes={}",
+                        eventName, replyTopic, reply.length());
+            } catch (Exception e) {
+                log.error("event={} status=failed reply_topic={} error={}",
+                        eventName, replyTopic, sanitize(e.getMessage()));
+                throw e;
+            }
         };
     }
 
-    private Processor voidHandler(CheckedConsumer<String> handler) {
+    Processor voidHandler(CheckedConsumer<String> handler) {
         return exchange -> {
             String payload = exchange.getIn().getBody(String.class);
             if (payload == null || payload.isEmpty()) {
                 return;
             }
-            Try.run(() -> handler.accept(payload))
-                    .onFailure(e -> log.error("event=wireless_void_handler_failed error={}", sanitize(e.getMessage())));
+            try {
+                handler.accept(payload);
+            } catch (Exception e) {
+                log.error("event=wireless_void_handler_failed error={}", sanitize(e.getMessage()));
+                throw e;
+            }
         };
     }
 
@@ -193,13 +183,17 @@ public class WirelessRoutes extends RouteBuilder {
      * Resolves the reply topic from a JSON payload containing an optional
      * {@code reply_topic} field. Falls back to the configured default topic.
      */
-    private String resolveReplyTopic(String payload, String defaultTopic) {
+    String resolveReplyTopic(String payload, String defaultTopic) {
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> parsed = objectMapper.readValue(payload, Map.class);
             Object topic = parsed.get("reply_topic");
-            if (topic instanceof String && !((String) topic).isEmpty()) {
-                return (String) topic;
+            if (topic instanceof String topicName && !topicName.isBlank()) {
+                String trimmedTopic = topicName.trim();
+                if (isValidKafkaTopic(trimmedTopic)) {
+                    return trimmedTopic;
+                }
+                log.warn("event=resolve_reply_topic status=invalid_reply_topic");
             }
         } catch (Exception e) {
             log.trace("event=resolve_reply_topic status=parse_error message={}", e.getMessage());
@@ -223,6 +217,32 @@ public class WirelessRoutes extends RouteBuilder {
         } catch (NumberFormatException e) {
             return 0L;
         }
+    }
+
+    private String wirelessConsumerUri(String topic, String consumerGroup) {
+        return "kafka:" + topic
+                + "?groupId=" + consumerGroup
+                + "&autoOffsetReset=earliest"
+                + "&maxPollRecords=" + props.wirelessMaxPollRecords()
+                + "&consumersCount=" + props.wirelessConsumersCount()
+                + "&breakOnFirstError=true";
+    }
+
+    private void logRouteFailure(Exchange exchange) {
+        Exception error = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
+        String dlqTopic = exchange.getProperty("dlqTopic", String.class);
+        log.atError()
+                .addKeyValue("event", "wireless_operation")
+                .addKeyValue("status", "dlq")
+                .addKeyValue("dlq_topic", dlqTopic == null ? "" : dlqTopic)
+                .addKeyValue("error", sanitize(error == null ? "" : error.getMessage()))
+                .log("wireless operation routed to DLQ");
+    }
+
+    private boolean isValidKafkaTopic(String topic) {
+        return KAFKA_TOPIC_PATTERN.matcher(topic).matches()
+                && !".".equals(topic)
+                && !"..".equals(topic);
     }
 
     private String sanitize(String message) {
