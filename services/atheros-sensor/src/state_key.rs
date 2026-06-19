@@ -140,11 +140,11 @@ pub struct SsidKey(Box<str>);
 
 impl SsidKey {
     pub fn new(value: &str) -> Option<Self> {
-        let normalized = value.trim().to_ascii_lowercase();
+        let normalized = value.trim();
         if normalized.is_empty() {
             return None;
         }
-        Some(Self(normalized.into_boxed_str()))
+        Some(Self(Box::<str>::from(normalized)))
     }
 }
 
@@ -290,14 +290,25 @@ mod tests {
     }
 
     #[test]
-    fn ssid_key_normalizes_for_hashing() {
+    fn ssid_key_trims_for_hashing() {
         let left = SsidKey::new(" CorpWiFi ").unwrap();
-        let right = SsidKey::new("corpwifi").unwrap();
+        let right = SsidKey::new("CorpWiFi").unwrap();
         let mut keys = HashSet::new();
         keys.insert(left);
         keys.insert(right);
 
         assert_eq!(keys.len(), 1);
+    }
+
+    #[test]
+    fn ssid_key_preserves_case_for_hashing() {
+        let left = SsidKey::new("CorpWiFi").unwrap();
+        let right = SsidKey::new("corpwifi").unwrap();
+        let mut keys = HashSet::new();
+        keys.insert(left);
+        keys.insert(right);
+
+        assert_eq!(keys.len(), 2);
     }
 
     #[test]
