@@ -89,6 +89,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: SYNC_RESULT_TOPIC
+            - name: PAYLOAD_AUDIT_REDPANDA_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: PAYLOAD_AUDIT_REDPANDA_TOPIC
             # Consumer groups
             - name: SYNC_SCAN_CONSUMER
               valueFrom:
@@ -105,6 +110,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: SYNC_RESULT_CONSUMER
+            - name: PAYLOAD_AUDIT_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: PAYLOAD_AUDIT_CONSUMER
             - name: SYNC_SCAN_CONSUMERS_COUNT
               value: {{ .Values.javaCoordinator.consumerConcurrency.scan | quote }}
             - name: SYNC_RESULT_CONSUMERS_COUNT
@@ -183,6 +193,42 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.fullname" . }}-config
                   key: WIRELESS_PROBE_STREAM_NAME
+            # Wireless operation topics
+            - name: WIRELESS_BACKLOG_SAVE_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_SAVE_TOPIC
+            - name: WIRELESS_BACKLOG_LIST_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_LIST_TOPIC
+            - name: WIRELESS_BACKLOG_SYNCED_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_SYNCED_TOPIC
+            - name: WIRELESS_BACKLOG_PRUNE_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_BACKLOG_PRUNE_TOPIC
+            - name: WIRELESS_MAC_LOOKUP_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_MAC_LOOKUP_TOPIC
+            - name: WIRELESS_NETWORKS_AUTHORIZED_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_NETWORKS_AUTHORIZED_TOPIC
+            - name: WIRELESS_PROBE_FLUSH_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.fullname" . }}-config
+                  key: WIRELESS_PROBE_FLUSH_TOPIC
             # Wireless consumer groups
             - name: WIRELESS_BACKLOG_SAVE_CONSUMER
               valueFrom:
