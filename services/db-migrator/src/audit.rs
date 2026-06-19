@@ -1,6 +1,9 @@
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::discovery::SqlFile;
+use crate::graph::find_dependency_cycle;
+use crate::schema_control::{parse_depends_on, parse_header_value};
 
 const TABLE_COLUMN_WARNING_LIMIT: usize = 15;
 
@@ -57,7 +60,140 @@ pub fn validate_sql_files(files: &[SqlFile]) -> ValidationReport {
         apply_folder_heuristics(&mut report, file, &sql);
     }
 
+    report.errors.extend(validate_dependency_graph(files));
+    report.errors.extend(validate_rollback_files(files));
+
     report
+}
+
+pub fn validate_dependency_graph(files: &[SqlFile]) -> Vec<String> {
+    let objects = audit_objects(files);
+    let names = objects
+        .iter()
+        .map(|object| object.object_name.as_str())
+        .collect::<Vec<_>>();
+    let dependencies = objects
+        .iter()
+        .map(|object| {
+            object
+                .depends_on
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    find_dependency_cycle(
+        objects.len(),
+        |index| names[index],
+        |index| dependencies[index].clone(),
+    )
+    .map(|cycle| {
+        vec![format!(
+            "dependency cycle detected among: {}",
+            cycle.join(", ")
+        )]
+    })
+    .unwrap_or_default()
+}
+
+pub fn validate_rollback_files(files: &[SqlFile]) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    for file in files {
+        let Ok(sql) = fs::read_to_string(&file.path) else {
+            continue;
+        };
+        let Some(rollback) = parse_header_value(&sql, "rollback") else {
+            continue;
+        };
+        let Some(path) = resolve_existing_rollback_path(file, &rollback) else {
+            errors.push(format!(
+                "{}: rollback file '{}' does not exist",
+                file.relative_path(),
+                rollback
+            ));
+            continue;
+        };
+
+        match fs::read_to_string(&path) {
+            Ok(sql) if sql.trim().is_empty() => errors.push(format!(
+                "{}: rollback file '{}' is empty",
+                file.relative_path(),
+                path.display()
+            )),
+            Ok(_) => {}
+            Err(error) => errors.push(format!(
+                "{}: rollback file '{}' is unreadable ({error})",
+                file.relative_path(),
+                path.display()
+            )),
+        }
+    }
+
+    errors
+}
+
+#[derive(Debug)]
+struct AuditObject {
+    object_name: String,
+    depends_on: Vec<String>,
+}
+
+fn audit_objects(files: &[SqlFile]) -> Vec<AuditObject> {
+    files
+        .iter()
+        .filter_map(|file| {
+            let sql = fs::read_to_string(&file.path).ok()?;
+            let object_name = parse_header_value(&sql, "object")?;
+            let depends_on = parse_header_value(&sql, "depends_on")
+                .map(|value| parse_depends_on(&value))
+                .unwrap_or_default();
+            Some(AuditObject {
+                object_name,
+                depends_on,
+            })
+        })
+        .collect()
+}
+
+fn resolve_existing_rollback_path(file: &SqlFile, rollback: &str) -> Option<PathBuf> {
+    rollback_path_candidates(file, rollback)
+        .into_iter()
+        .find(|path| path.exists())
+}
+
+fn rollback_path_candidates(file: &SqlFile, rollback: &str) -> Vec<PathBuf> {
+    let reference = Path::new(rollback);
+    if reference.is_absolute() {
+        return vec![reference.to_path_buf()];
+    }
+
+    let mut candidates = vec![reference.to_path_buf()];
+    if let Some(sql_dir) = file.path.parent().and_then(Path::parent) {
+        candidates.push(sql_dir.join(reference));
+        if let Ok(stripped) = reference.strip_prefix("sql") {
+            candidates.push(sql_dir.join(stripped));
+        }
+        if let Some(repo_dir) = sql_dir.parent() {
+            candidates.push(repo_dir.join(reference));
+        }
+    }
+    if let Some(file_dir) = file.path.parent() {
+        candidates.push(file_dir.join(reference));
+    }
+
+    dedupe_paths(candidates)
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        if !deduped.iter().any(|existing| existing == &path) {
+            deduped.push(path);
+        }
+    }
+    deduped
 }
 
 fn has_header(sql: &str) -> bool {
@@ -455,5 +591,86 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("table has 16 columns")));
         assert!(!report.has_errors());
+    }
+
+    #[test]
+    fn validate_dependency_graph_reports_cycles() {
+        let tmp = tempdir().expect("tempdir");
+        let a_path = tmp.path().join("001_a.sql");
+        let b_path = tmp.path().join("002_b.sql");
+        fs::write(
+            &a_path,
+            "-- object: a\n-- folder: tables\n-- depends_on: b\ncreate table if not exists a(id int);\n",
+        )
+        .expect("write a");
+        fs::write(
+            &b_path,
+            "-- object: b\n-- folder: tables\n-- depends_on: a\ncreate table if not exists b(id int);\n",
+        )
+        .expect("write b");
+
+        let errors = validate_dependency_graph(&[
+            sql_file("tables", "001_a.sql", a_path),
+            sql_file("tables", "002_b.sql", b_path),
+        ]);
+
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("dependency cycle detected among: a, b")));
+    }
+
+    #[test]
+    fn validate_dependency_graph_ignores_external_dependencies() {
+        let tmp = tempdir().expect("tempdir");
+        let file_path = tmp.path().join("001_a.sql");
+        fs::write(
+            &file_path,
+            "-- object: a\n-- folder: tables\n-- depends_on: pgvector extension\ncreate table if not exists a(id int);\n",
+        )
+        .expect("write");
+
+        let errors = validate_dependency_graph(&[sql_file("tables", "001_a.sql", file_path)]);
+
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn validate_rollback_files_reports_missing_reference() {
+        let tmp = tempdir().expect("tempdir");
+        let file_path = tmp.path().join("001_table.sql");
+        fs::write(
+            &file_path,
+            "-- object: sample\n-- folder: tables\n-- depends_on: -\n-- rollback: sql/rollbacks/001_sample.sql\ncreate table if not exists sample(id int);\n",
+        )
+        .expect("write");
+
+        let errors = validate_rollback_files(&[sql_file("tables", "001_table.sql", file_path)]);
+
+        assert!(errors
+            .iter()
+            .any(|error| error
+                .contains("rollback file 'sql/rollbacks/001_sample.sql' does not exist")));
+    }
+
+    #[test]
+    fn validate_rollback_files_accepts_non_empty_reference() {
+        let tmp = tempdir().expect("tempdir");
+        let sql_dir = tmp.path().join("sql");
+        let tables_dir = sql_dir.join("tables");
+        let rollback_dir = sql_dir.join("rollbacks");
+        fs::create_dir_all(&tables_dir).expect("tables dir");
+        fs::create_dir_all(&rollback_dir).expect("rollback dir");
+        let file_path = tables_dir.join("001_table.sql");
+        let rollback_path = rollback_dir.join("001_sample.sql");
+        fs::write(
+            &file_path,
+            "-- object: sample\n-- folder: tables\n-- depends_on: -\n-- rollback: sql/rollbacks/001_sample.sql\ncreate table if not exists sample(id int);\n",
+        )
+        .expect("write table");
+        fs::write(&rollback_path, "drop table if exists sample;\n").expect("write rollback");
+
+        let errors = validate_rollback_files(&[sql_file("tables", "001_table.sql", file_path)]);
+
+        assert!(errors.is_empty());
     }
 }
