@@ -519,25 +519,33 @@ resolve_peer_public_key() {
 	legacy_peer_public_key_file="$(dirname "$peer_public_key_file")/pubickey-$(basename "$peer_public_key_file" | sed 's/^publickey-//')"
 	peer_public_key="$(try_read_trimmed_file "$legacy_peer_public_key_file" || true)"
 	if [ -n "$peer_public_key" ]; then
-		echo "[#] Using legacy peer public key file: $legacy_peer_public_key_file"
+		echo "[#] Using legacy peer public key file: $legacy_peer_public_key_file" >&2
 		write_trimmed_file "$peer_public_key_file" "$peer_public_key" 644
-		echo "[#] Synced peer public key to $peer_public_key_file"
+		echo "[#] Synced peer public key to $peer_public_key_file" >&2
 		printf '%s' "$peer_public_key"
 		return 0
 	fi
 
+	if [ ! -f "$peer_config" ]; then
+		echo "missing peer public key: set $peer_public_key_file or provide $peer_config with Interface.PrivateKey" >&2
+		return 1
+	fi
+
 	peer_private_key="$(trim "$(extract_ini_value "$peer_config" "Interface" "PrivateKey")")"
 	if [ -n "$peer_private_key" ]; then
-		peer_public_key="$("$PROXY_BIN" boringtun pubkey "$peer_private_key")"
-		echo "[#] Derived peer public key from $peer_config"
+		if ! peer_public_key="$("$PROXY_BIN" boringtun pubkey "$peer_private_key")"; then
+			echo "invalid peer private key in $peer_config" >&2
+			return 1
+		fi
+		echo "[#] Derived peer public key from $peer_config" >&2
 		write_trimmed_file "$peer_public_key_file" "$peer_public_key" 644
-		echo "[#] Wrote derived peer public key to $peer_public_key_file"
+		echo "[#] Wrote derived peer public key to $peer_public_key_file" >&2
 		printf '%s' "$peer_public_key"
 		return 0
 	fi
 
 	echo "missing peer public key: set $peer_public_key_file or include Interface.PrivateKey in $peer_config" >&2
-	exit 1
+	return 1
 }
 
 resolve_peer_preshared_key() {
@@ -548,13 +556,17 @@ resolve_peer_preshared_key() {
 	if [ -f "$peer_preshared_key_file" ]; then
 		peer_preshared_key="$(read_trimmed_file "$peer_preshared_key_file")"
 	else
+		if [ ! -f "$peer_config" ]; then
+			echo "missing peer preshared key; set $peer_preshared_key_file or provide $peer_config" >&2
+			return 1
+		fi
 		peer_preshared_key="$(extract_ini_value "$peer_config" "Peer" "PresharedKey")"
 		peer_preshared_key="$(trim "$peer_preshared_key")"
 	fi
 
 	if [ -z "$peer_preshared_key" ]; then
 		echo "missing peer preshared key; set $peer_preshared_key_file or populate $peer_config" >&2
-		exit 1
+		return 1
 	fi
 
 	printf '%s' "$peer_preshared_key"
@@ -568,6 +580,11 @@ resolve_peer_allowed_ips() {
 	if [ -n "$peer_allowed_ips" ]; then
 		printf '%s' "$peer_allowed_ips"
 		return 0
+	fi
+
+	if [ ! -f "$peer_config" ]; then
+		echo "missing peer allowed IPs: set WG_PEER*_ALLOWED_IPS or provide $peer_config with Interface.Address" >&2
+		return 1
 	fi
 
 	peer_address="$(extract_ini_value "$peer_config" "Interface" "Address")"
@@ -647,13 +664,25 @@ log_wireguard_peer_status() {
 sync_peer_server_public_key() {
 	local public_key="$1"
 	local peer_config="$2"
+	local peer_config_dir
 	local tmp_file
+	local current_public_key
 
 	if [ ! -f "$peer_config" ]; then
 		return
 	fi
 
-	tmp_file="$(mktemp)"
+	current_public_key="$(trim "$(extract_ini_value "$peer_config" "Peer" "PublicKey")")"
+	if [ "$current_public_key" = "$public_key" ]; then
+		return
+	fi
+
+	peer_config_dir="$(dirname "$peer_config")"
+	if ! tmp_file="$(mktemp "${peer_config_dir}/.$(basename "$peer_config").tmp.XXXXXX" 2>/dev/null)"; then
+		echo "[#] Peer config is read-only; leaving server public key unchanged in $peer_config" >&2
+		return
+	fi
+
 	awk -v public_key="$public_key" '
         BEGIN { in_peer = 0 }
         /^\[Peer\]/ { in_peer = 1; print; next }
@@ -669,7 +698,11 @@ sync_peer_server_public_key() {
         }
         { print }
     ' "$peer_config" >"$tmp_file"
-	mv "$tmp_file" "$peer_config"
+	if ! mv "$tmp_file" "$peer_config"; then
+		rm -f "$tmp_file"
+		echo "failed to sync server public key into $peer_config" >&2
+		return 1
+	fi
 }
 
 ensure_wireguard_server_keys() {
@@ -705,7 +738,7 @@ ensure_wireguard_server_keys() {
 	for peer_config in "$WG_PEER1_CONFIG_PATH" "$WG_PEER2_CONFIG_PATH" "$WG_OBFUSCATED_PEER1_CONFIG_PATH" "$WG_OBFUSCATED_PEER2_CONFIG_PATH"; do
 		if [ -f "$peer_config" ]; then
 			echo "[#] Syncing server public key into $peer_config"
-			sync_peer_server_public_key "$server_public_key" "$peer_config"
+			sync_peer_server_public_key "$server_public_key" "$peer_config" || exit 1
 		fi
 	done
 }
@@ -722,9 +755,9 @@ render_peer_values() {
 	local peer_allowed_ips_value
 
 	peer_config="$(choose_peer_config_path "$primary_peer_config" "$secondary_peer_config")"
-	peer_public_key="$(resolve_peer_public_key "$peer_public_key_file" "$peer_config")"
-	peer_preshared_key="$(resolve_peer_preshared_key "$peer_config" "$peer_preshared_key_file")"
-	peer_allowed_ips_value="$(resolve_peer_allowed_ips "$peer_allowed_ips" "$peer_config")"
+	peer_public_key="$(resolve_peer_public_key "$peer_public_key_file" "$peer_config")" || return 1
+	peer_preshared_key="$(resolve_peer_preshared_key "$peer_config" "$peer_preshared_key_file")" || return 1
+	peer_allowed_ips_value="$(resolve_peer_allowed_ips "$peer_allowed_ips" "$peer_config")" || return 1
 
 	printf '%s\n%s\n%s' "$peer_public_key" "$peer_preshared_key" "$peer_allowed_ips_value"
 }
@@ -760,11 +793,15 @@ render_wireguard_config() {
 	fi
 
 	server_private_key="$(read_trimmed_file "$WG_SERVER_PRIVATE_KEY_FILE")"
-	peer1_values="$(render_peer_values "$WG_PEER1_PUBLIC_KEY_FILE" "$WG_PEER1_PRESHARED_KEY_FILE" "$WG_PEER1_CONFIG_PATH" "$WG_OBFUSCATED_PEER1_CONFIG_PATH" "$WG_PEER1_ALLOWED_IPS")"
+	if ! peer1_values="$(render_peer_values "$WG_PEER1_PUBLIC_KEY_FILE" "$WG_PEER1_PRESHARED_KEY_FILE" "$WG_PEER1_CONFIG_PATH" "$WG_OBFUSCATED_PEER1_CONFIG_PATH" "$WG_PEER1_ALLOWED_IPS")"; then
+		exit 1
+	fi
 	peer1_public_key="$(printf '%s\n' "$peer1_values" | sed -n '1p')"
 	peer1_preshared_key="$(printf '%s\n' "$peer1_values" | sed -n '2p')"
 	peer1_allowed_ips="$(printf '%s\n' "$peer1_values" | sed -n '3p')"
-	peer2_values="$(render_peer_values "$WG_PEER2_PUBLIC_KEY_FILE" "$WG_PEER2_PRESHARED_KEY_FILE" "$WG_PEER2_CONFIG_PATH" "$WG_OBFUSCATED_PEER2_CONFIG_PATH" "$WG_PEER2_ALLOWED_IPS")"
+	if ! peer2_values="$(render_peer_values "$WG_PEER2_PUBLIC_KEY_FILE" "$WG_PEER2_PRESHARED_KEY_FILE" "$WG_PEER2_CONFIG_PATH" "$WG_OBFUSCATED_PEER2_CONFIG_PATH" "$WG_PEER2_ALLOWED_IPS")"; then
+		exit 1
+	fi
 	peer2_public_key="$(printf '%s\n' "$peer2_values" | sed -n '1p')"
 	peer2_preshared_key="$(printf '%s\n' "$peer2_values" | sed -n '2p')"
 	peer2_allowed_ips="$(printf '%s\n' "$peer2_values" | sed -n '3p')"

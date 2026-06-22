@@ -30,6 +30,7 @@ LAST_FAILURE_TEXT=""
 AUTO_FIXED_CLASSES="|"
 PEER_KEYS="|"
 PEER_CONFIGS="|"
+PEER_KEY_HELPER_READY=0
 
 compose() {
     docker compose "$@"
@@ -66,6 +67,7 @@ wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
 peer_config_permission_denied::awk: cannot open /config/.*\.conf \(Permission denied\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
+wg_peer_material_missing::missing peer public key|missing peer preshared key|invalid config: peer [0-9]+ is missing PublicKey::WireGuard peer material is missing::Bootstrap local peer configs or provide config/peer*/ key files::auto
 SIGEOF
 }
 
@@ -150,6 +152,242 @@ ensure_obfuscation_key_file() {
     WG_OBFUSCATION_KEY_FILE="${WG_OBFUSCATION_KEY_FILE:-$ROOT_DIR/secrets/wg_obfuscation_key}"
     ensure_secret_file "$WG_OBFUSCATION_KEY_FILE" "WireGuard obfuscation key"
     export WG_OBFUSCATION_KEY_FILE
+}
+
+read_ini_value() {
+    local file="$1"
+    local section="$2"
+    local key="$3"
+
+    [ -f "$file" ] || return 1
+    awk -F= -v section="$section" -v key="$key" '
+        BEGIN { in_section = 0 }
+        /^\[/ {
+            in_section = ($0 == "[" section "]")
+            next
+        }
+        in_section {
+            lhs = $1
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", lhs)
+            if (lhs == key) {
+                rhs = substr($0, index($0, "=") + 1)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", rhs)
+                print rhs
+                exit
+            }
+        }
+    ' "$file"
+}
+
+trim_key_value() {
+    tr -d '\r\n[:space:]'
+}
+
+is_placeholder_value() {
+    local value="$1"
+    case "$value" in
+        ""|"<"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+read_peer_config_value() {
+    local peer_id="$1"
+    local section="$2"
+    local key="$3"
+    local peer_dir="$ROOT_DIR/config/$peer_id"
+    local cfg value
+
+    for cfg in "$peer_dir/$peer_id.conf" "$peer_dir/$peer_id-obfuscated.conf"; do
+        [ -f "$cfg" ] || continue
+        value="$(read_ini_value "$cfg" "$section" "$key" | trim_key_value || true)"
+        if ! is_placeholder_value "$value"; then
+            printf '%s' "$value"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+peer_tunnel_address() {
+    case "$1" in
+        peer1) printf '10.13.13.2/32' ;;
+        peer2) printf '10.13.13.3/32' ;;
+        *)
+            fail "Unsupported peer id: $1"
+            ;;
+    esac
+}
+
+escape_sed_replacement() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//&/\\&}"
+    printf '%s' "$value"
+}
+
+ensure_peer_key_helper() {
+    if [ "$PEER_KEY_HELPER_READY" -eq 1 ]; then
+        return 0
+    fi
+
+    step S00 "peer_bootstrap: docker compose build ssl-proxy"
+    compose build ssl-proxy || return 1
+    PEER_KEY_HELPER_READY=1
+}
+
+run_peer_key_helper() {
+    compose run --rm --no-deps -T --entrypoint /app/ssl-proxy ssl-proxy boringtun "$@" | trim_key_value
+}
+
+generate_peer_private_key() {
+    run_peer_key_helper genkey
+}
+
+derive_peer_public_key() {
+    local private_key="$1"
+    run_peer_key_helper pubkey "$private_key"
+}
+
+generate_peer_preshared_key() {
+    require_command openssl
+    openssl rand -base64 32 | trim_key_value
+}
+
+write_secret_text() {
+    local path="$1"
+    local value="$2"
+    local mode="${3:-600}"
+
+    mkdir -p "$(dirname "$path")" || return 1
+    umask 077
+    printf '%s\n' "$value" >"$path" || return 1
+    chmod "$mode" "$path" || return 1
+}
+
+render_direct_peer_config() {
+    local peer_id="$1"
+    local private_key="$2"
+    local preshared_key="$3"
+    local output="$ROOT_DIR/config/$peer_id/$peer_id.conf"
+    local address endpoint_port
+
+    address="$(peer_tunnel_address "$peer_id")"
+    endpoint_port="${WG_PORT:-443}"
+    mkdir -p "$(dirname "$output")" || return 1
+    umask 077
+    cat >"$output" <<EOF_PEER_DIRECT || return 1
+# Raw direct WireGuard reference profile only.
+# This profile is not usable against an obfuscation-only public server port.
+# When WG_OBFUSCATION_ENABLED=true on the server, use ${peer_id}-obfuscated.conf plus a local UDP shim instead.
+[Interface]
+Address = $address
+PrivateKey = $private_key
+ListenPort = 51820
+MTU = 1280
+DNS = 10.13.13.1
+
+[Peer]
+PublicKey = <server-public-key>
+PresharedKey = $preshared_key
+# Endpoint must be the Docker host's LAN/public IP, not a container bridge IP.
+Endpoint = ${SERVER_IP}:${endpoint_port}
+AllowedIPs = 0.0.0.0/0, ::/0
+EOF_PEER_DIRECT
+    chmod 600 "$output" || return 1
+    step S00 "peer_bootstrap: wrote $output"
+}
+
+render_obfuscated_peer_config() {
+    local peer_id="$1"
+    local private_key="$2"
+    local preshared_key="$3"
+    local peer_dir="$ROOT_DIR/config/$peer_id"
+    local example="$peer_dir/$peer_id-obfuscated.conf.example"
+    local output="$peer_dir/$peer_id-obfuscated.conf"
+    local escaped_private escaped_psk
+
+    [ -f "$example" ] || fail "Missing peer config template: $example"
+    escaped_private="$(escape_sed_replacement "$private_key")"
+    escaped_psk="$(escape_sed_replacement "$preshared_key")"
+    sed \
+        -e "s|<${peer_id}-private-key>|$escaped_private|g" \
+        -e "s|<${peer_id}-preshared-key>|$escaped_psk|g" \
+        "$example" >"$output" || return 1
+    chmod 600 "$output" || return 1
+    step S00 "peer_bootstrap: wrote $output"
+}
+
+peer_material_complete() {
+    local peer_id="$1"
+    local peer_dir="$ROOT_DIR/config/$peer_id"
+
+    [ -s "$peer_dir/publickey-$peer_id" ] &&
+        [ -s "$peer_dir/presharedkey-$peer_id" ] &&
+        [ -s "$peer_dir/$peer_id.conf" ] &&
+        [ -s "$peer_dir/$peer_id-obfuscated.conf" ]
+}
+
+ensure_one_peer_material() {
+    local peer_id="$1"
+    local peer_dir="$ROOT_DIR/config/$peer_id"
+    local private_key_file="$peer_dir/privatekey-$peer_id"
+    local public_key_file="$peer_dir/publickey-$peer_id"
+    local preshared_key_file="$peer_dir/presharedkey-$peer_id"
+    local private_key public_key preshared_key
+
+    mkdir -p "$peer_dir" || return 1
+
+    private_key="$(test -s "$private_key_file" && trim_key_value <"$private_key_file" || true)"
+    if is_placeholder_value "$private_key"; then
+        private_key="$(read_peer_config_value "$peer_id" "Interface" "PrivateKey" || true)"
+    fi
+    if is_placeholder_value "$private_key"; then
+        private_key="$(generate_peer_private_key)" || return 1
+        step S00 "peer_bootstrap: generated private key for $peer_id"
+    fi
+    [ -n "$private_key" ] || fail "Unable to resolve private key for $peer_id"
+    [ -s "$private_key_file" ] || write_secret_text "$private_key_file" "$private_key" 600 || return 1
+
+    public_key="$(test -s "$public_key_file" && trim_key_value <"$public_key_file" || true)"
+    if is_placeholder_value "$public_key"; then
+        public_key="$(derive_peer_public_key "$private_key")" || return 1
+        write_secret_text "$public_key_file" "$public_key" 644 || return 1
+        step S00 "peer_bootstrap: wrote public key for $peer_id"
+    fi
+
+    preshared_key="$(test -s "$preshared_key_file" && trim_key_value <"$preshared_key_file" || true)"
+    if is_placeholder_value "$preshared_key"; then
+        preshared_key="$(read_peer_config_value "$peer_id" "Peer" "PresharedKey" || true)"
+    fi
+    if is_placeholder_value "$preshared_key"; then
+        preshared_key="$(generate_peer_preshared_key)" || return 1
+        step S00 "peer_bootstrap: generated preshared key for $peer_id"
+    fi
+    [ -n "$preshared_key" ] || fail "Unable to resolve preshared key for $peer_id"
+    [ -s "$preshared_key_file" ] || write_secret_text "$preshared_key_file" "$preshared_key" 600 || return 1
+
+    [ -s "$peer_dir/$peer_id.conf" ] || render_direct_peer_config "$peer_id" "$private_key" "$preshared_key" || return 1
+    [ -s "$peer_dir/$peer_id-obfuscated.conf" ] || render_obfuscated_peer_config "$peer_id" "$private_key" "$preshared_key" || return 1
+}
+
+ensure_local_peer_material() {
+    local needs_bootstrap=0
+    local peer_id
+
+    for peer_id in peer1 peer2; do
+        if ! peer_material_complete "$peer_id"; then
+            needs_bootstrap=1
+        fi
+    done
+
+    [ "$needs_bootstrap" -eq 1 ] || return 0
+    ensure_peer_key_helper || return 1
+
+    for peer_id in peer1 peer2; do
+        ensure_one_peer_material "$peer_id" || return 1
+    done
 }
 
 require_profile_mode() {
@@ -574,6 +812,14 @@ auto_fix() {
             mark_auto_fixed "$class"
             return 0
             ;;
+        wg_peer_material_missing)
+            step S09 "auto_fix[$class]: bootstrap peer material and recreate"
+            ensure_local_peer_material || return 1
+            if compose up -d --build --force-recreate; then
+                mark_auto_fixed "$class"
+                return 0
+            fi
+            ;;
     esac
 
     return 1
@@ -610,6 +856,7 @@ preflight() {
 main() {
     preflight
     apply_profile_runtime_env
+    ensure_local_peer_material || fail "peer bootstrap failed"
 
     if ! compose_up; then
         diagnostics
