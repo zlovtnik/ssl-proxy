@@ -1,10 +1,23 @@
 use hickory_resolver::TokioAsyncResolver;
 use serde::ser::{Error as _, Serializer};
+use std::sync::{Mutex, OnceLock};
 use tokio::sync::broadcast;
 
 use super::*;
 
 struct FailingExtra;
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+fn clear_audit_env() {
+    std::env::remove_var("AUDIT_SANITIZE_HOSTNAMES");
+    std::env::remove_var("AUDIT_HMAC_KEY");
+}
 
 impl Serialize for FailingExtra {
     /// Always returns a serialization error when attempting to serialize this value.
@@ -94,6 +107,8 @@ async fn create_test_state() -> SharedState {
 async fn emit_serializable_skips_broadcast_when_serialization_fails() {
     let state = create_test_state().await;
     let mut rx = state.events_tx.subscribe();
+    let _guard = env_lock();
+    clear_audit_env();
 
     emit_serializable(
         &state,
@@ -122,6 +137,8 @@ async fn emit_serializable_skips_broadcast_when_serialization_fails() {
 #[tokio::test]
 async fn emit_serializable_publishes_sync_request_only_for_allowed_events() {
     let state = create_test_state().await;
+    let _guard = env_lock();
+    clear_audit_env();
 
     emit_serializable(
         &state,
@@ -171,6 +188,8 @@ async fn emit_serializable_publishes_sync_request_only_for_allowed_events() {
 async fn emit_serializable_uses_one_timestamp_and_top_level_identity_fields() {
     let state = create_test_state().await;
     let mut events = state.events_tx.subscribe();
+    let _guard = env_lock();
+    clear_audit_env();
 
     emit_serializable(
         &state,
@@ -219,6 +238,8 @@ async fn emit_serializable_uses_one_timestamp_and_top_level_identity_fields() {
 #[tokio::test]
 async fn emit_serializable_queues_dashboard_event_when_no_subscriber() {
     let state = create_test_state().await;
+    let _guard = env_lock();
+    clear_audit_env();
     assert_eq!(state.dashboard_event_queue_len(), 0);
 
     emit_serializable(
@@ -254,6 +275,8 @@ async fn emit_serializable_queues_dashboard_event_when_no_subscriber() {
 #[tokio::test]
 async fn flush_dashboard_event_queue_drops_event_after_retry_limit() {
     let state = create_test_state().await;
+    let _guard = env_lock();
+    clear_audit_env();
 
     emit_serializable(
         &state,
@@ -279,4 +302,78 @@ async fn flush_dashboard_event_queue_drops_event_after_retry_limit() {
     }
 
     assert_eq!(state.dashboard_event_queue_len(), 0);
+}
+
+#[tokio::test]
+async fn emit_serializable_coalesces_duplicate_blocked_events() {
+    let state = create_test_state().await;
+    let mut rx = state.events_tx.subscribe();
+    let _guard = env_lock();
+    clear_audit_env();
+
+    for _ in 0..2 {
+        emit_serializable(
+            &state,
+            "http_blocked",
+            "blocked.example",
+            Some("10.13.13.2".to_string()),
+            Some("wg-pubkey".to_string()),
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            Some(403),
+            true,
+            None,
+            serde_json::json!({ "path": "/" }),
+        );
+    }
+
+    let _ = rx.try_recv().expect("first blocked event should emit");
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
+async fn emit_serializable_sanitizes_audit_hostnames_when_enabled() {
+    let state = create_test_state().await;
+    let mut rx = state.events_tx.subscribe();
+    let _guard = env_lock();
+    std::env::set_var("AUDIT_SANITIZE_HOSTNAMES", "true");
+    std::env::set_var("AUDIT_HMAC_KEY", "audit-secret");
+
+    emit_serializable(
+        &state,
+        "tunnel_open",
+        "example.com",
+        Some("10.13.13.2".to_string()),
+        None,
+        None,
+        None,
+        Some("phone.local".to_string()),
+        None,
+        0,
+        0,
+        None,
+        false,
+        None,
+        serde_json::json!({ "sni": "api.example.com" }),
+    );
+
+    let raw = rx.try_recv().expect("event should emit");
+    let event: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(event["host"].as_str().unwrap().starts_with("hmac:"));
+    assert!(event["peer_hostname"]
+        .as_str()
+        .unwrap()
+        .starts_with("hmac:"));
+    assert!(event["sni"].as_str().unwrap().starts_with("hmac:"));
+    assert!(!raw.contains("example.com"));
+    assert!(!raw.contains("phone.local"));
+
+    clear_audit_env();
 }

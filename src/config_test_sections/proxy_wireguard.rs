@@ -95,6 +95,72 @@
         std::env::set_var("WG_OBFUSCATION_KEY", "test-obfuscation-key");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn wireguard_obfuscation_key_file_requires_strict_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_lock();
+        clear_env();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "file-key").unwrap();
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
+
+        let err = Config::from_env().unwrap_err();
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidSecretFile {
+                file_var: "WG_OBFUSCATION_KEY_FILE",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wireguard_obfuscation_key_file_loads_with_strict_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_lock();
+        clear_env();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "file-key").unwrap();
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o400)).unwrap();
+        std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
+
+        let config = Config::from_env().unwrap();
+
+        assert_eq!(config.wireguard.obfuscation_key.as_slice(), b"file-key");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wireguard_obfuscation_key_file_must_be_regular_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_lock();
+        clear_env();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o400)).unwrap();
+        std::env::set_var("WG_OBFUSCATION_KEY_FILE", dir.path());
+
+        let err = Config::from_env().unwrap_err();
+
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidSecretFile {
+                file_var: "WG_OBFUSCATION_KEY_FILE",
+                message,
+            } if message.contains("regular file")
+        ));
+    }
+
     #[test]
     fn admin_api_key_must_be_at_least_32_bytes() {
         let _guard = env_lock();
@@ -281,6 +347,22 @@
     }
 
     #[test]
+    fn wireguard_random_bucket_padding_is_loaded() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        std::env::set_var("WG_OBFUSCATION_PADDING", "random-bucket:1200,1280,1400");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(
+            result.wireguard.obfuscation_padding,
+            PacketPadding::RandomBucket(vec![1200, 1280, 1400])
+        );
+    }
+
+    #[test]
     fn wireguard_xor_rekey_values_must_be_positive_integers() {
         let _guard = env_lock();
         clear_env();
@@ -331,6 +413,22 @@
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
 
         let result = Config::from_env().unwrap();
+        assert!(!result.wireguard.obfuscation_enabled);
+        assert!(result.wireguard.obfuscation_key.is_empty());
+    }
+
+    #[test]
+    fn wireguard_obfuscation_disabled_ignores_key_file() {
+        let _guard = env_lock();
+        clear_env();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "disabled-key").unwrap();
+        std::env::set_var("WG_OBFUSCATION_ENABLED", "false");
+        std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+
+        let result = Config::from_env().unwrap();
+
         assert!(!result.wireguard.obfuscation_enabled);
         assert!(result.wireguard.obfuscation_key.is_empty());
     }

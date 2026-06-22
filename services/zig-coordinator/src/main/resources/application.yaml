@@ -37,7 +37,7 @@ coordinator:
   scan-topic: ${SYNC_SCAN_TOPIC:sync.scan.request}
   load-topic: ${SYNC_LOAD_TOPIC:sync.oracle.load}
   result-topic: ${SYNC_RESULT_TOPIC:sync.oracle.result}
-  payload-audit-topic: ${PAYLOAD_AUDIT_REDPANDA_TOPIC:proxy.payload_audit}
+  payload-audit-topic: ${SYNC_PAYLOAD_AUDIT_TOPIC:${PAYLOAD_AUDIT_REDPANDA_TOPIC:proxy.payload_audit}}
   database-url: ${DATABASE_URL:}
   sync-redpanda-url: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:}
   redpanda-topic-manifest-file: ${SYNC_REDPANDA_TOPIC_MANIFEST:/app/docker/redpanda/topics.manifest}
@@ -47,7 +47,7 @@ coordinator:
   scan-consumer: ${SYNC_SCAN_CONSUMER:zig-coordinator-scan}
   load-consumer: ${SYNC_LOAD_CONSUMER:oracle-worker-load}
   result-consumer: ${SYNC_RESULT_CONSUMER:zig-coordinator-result}
-  payload-audit-consumer: ${PAYLOAD_AUDIT_CONSUMER:zig-coordinator-payload-audit}
+  payload-audit-consumer: ${SYNC_PAYLOAD_AUDIT_CONSUMER:zig-coordinator-payload-audit}
   wireless-backlog-stream-name: ${WIRELESS_BACKLOG_STREAM_NAME:WIRELESS_BACKLOG_STREAM}
   wireless-mac-stream-name: ${WIRELESS_MAC_STREAM_NAME:WIRELESS_MAC_STREAM}
   wireless-networks-stream-name: ${WIRELESS_NETWORKS_STREAM_NAME:WIRELESS_NETWORKS_STREAM}

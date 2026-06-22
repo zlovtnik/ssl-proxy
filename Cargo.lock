@@ -3400,6 +3400,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

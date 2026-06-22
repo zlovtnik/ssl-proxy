@@ -190,7 +190,7 @@ public class WirelessRoutes extends RouteBuilder {
             Object topic = parsed.get("reply_topic");
             if (topic instanceof String topicName && !topicName.isBlank()) {
                 String trimmedTopic = topicName.trim();
-                if (isValidKafkaTopic(trimmedTopic)) {
+                if (isValidKafkaTopic(trimmedTopic) && isAllowedReplyTopic(trimmedTopic, defaultTopic)) {
                     return trimmedTopic;
                 }
                 log.warn("event=resolve_reply_topic status=invalid_reply_topic");
@@ -243,6 +243,20 @@ public class WirelessRoutes extends RouteBuilder {
         return KAFKA_TOPIC_PATTERN.matcher(topic).matches()
                 && !".".equals(topic)
                 && !"..".equals(topic);
+    }
+
+    private boolean isAllowedReplyTopic(String topic, String defaultTopic) {
+        return topic.equals(defaultTopic)
+                || topic.equals(props.wirelessBacklogListReplyTopic())
+                || topic.equals(props.wirelessBacklogPruneReplyTopic())
+                || topic.equals(props.wirelessMacLookupReplyTopic())
+                || topic.equals(props.wirelessNetworksAuthorizedReplyTopic())
+                || isSensorInboxReplyTopic(topic);
+    }
+
+    private boolean isSensorInboxReplyTopic(String topic) {
+        String prefix = "_INBOX.atheros_sensor.";
+        return topic.startsWith(prefix) && topic.length() > prefix.length();
     }
 
     private String sanitize(String message) {

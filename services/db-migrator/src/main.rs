@@ -129,7 +129,7 @@ async fn run() -> Result<u8> {
             let result = rollback_object(&database_url, &sql_dir, &object).await;
             Ok(execution_result_to_exit_code(result))
         }
-        Commands::Ready { strict: _ } => {
+        Commands::Ready { strict } => {
             let database_url = resolve_database_url(cli.database_url)
                 .context("DATABASE_URL is required for ready check")?;
             let result: std::result::Result<bool, ExecutionError> = async {
@@ -145,11 +145,19 @@ async fn run() -> Result<u8> {
                 }
                 Ok(false) => {
                     eprintln!("schema not ready");
-                    Ok(EXIT_PARTIAL_FAILURE)
+                    Ok(ready_false_exit_code(strict))
                 }
                 Err(error) => Ok(execution_result_to_exit_code(Err(error))),
             }
         }
+    }
+}
+
+fn ready_false_exit_code(strict: bool) -> u8 {
+    if strict {
+        EXIT_PARTIAL_FAILURE
+    } else {
+        EXIT_SUCCESS
     }
 }
 
@@ -209,5 +217,11 @@ mod tests {
     fn resolve_sql_dir_prefers_cli_flag() {
         let dir = resolve_sql_dir(Some(PathBuf::from("/tmp/custom")));
         assert_eq!(dir, PathBuf::from("/tmp/custom"));
+    }
+
+    #[test]
+    fn ready_false_is_success_unless_strict() {
+        assert_eq!(ready_false_exit_code(false), EXIT_SUCCESS);
+        assert_eq!(ready_false_exit_code(true), EXIT_PARTIAL_FAILURE);
     }
 }

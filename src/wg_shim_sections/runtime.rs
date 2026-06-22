@@ -1,3 +1,6 @@
+use rand_core::{OsRng, RngCore};
+use tokio::time::MissedTickBehavior;
+
 async fn get_or_create_session(
     client_addr: SocketAddr,
     config: Arc<WgObfsShimConfig>,
@@ -86,6 +89,19 @@ async fn run_session_receiver(
         }
     };
 
+    let mut chaff_interval = session.config.chaff_interval().map(|period| {
+        let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        interval
+    });
+    if session.config.chaff_pps > 0 && chaff_interval.is_none() {
+        warn!(
+            %client_addr,
+            session_id = session.id,
+            "WG_OBFS_SHIM_CHAFF_PPS is set but chaff requires framed obfuscation; ignoring chaff for this session"
+        );
+    }
+
     loop {
         let Some(mut lease) = lease_buffer_or_wait(&context, Some(&session.shutdown)).await else {
             break;
@@ -98,6 +114,9 @@ async fn run_session_receiver(
                 let Some(packet) = queued else {
                     break;
                 };
+                if !await_send_jitter(&context, &session).await {
+                    break;
+                }
                 match send_with_failover(
                     &mut connection,
                     packet,
@@ -105,6 +124,7 @@ async fn run_session_receiver(
                     client_addr,
                     &session.config,
                     &context.next_server_index,
+                    &context.shutdown,
                     &context.clock,
                 )
                 .await
@@ -120,6 +140,75 @@ async fn run_session_receiver(
                             last_server_rtt_ms = ?session.last_server_rtt_millis(),
                             %err,
                             "failed to send obfuscated WireGuard packet to all configured upstream servers"
+                        );
+                        close_session_if_current(
+                            &context.sessions,
+                            client_addr,
+                            &session,
+                            &context.metrics,
+                            SessionCloseReason::SendFailure,
+                        );
+                        break;
+                    }
+                }
+            }
+            _ = optional_interval_tick(chaff_interval.as_mut()) => {
+                let now = context.clock.now_millis();
+                if session
+                    .config
+                    .chaff_interval()
+                    .is_some_and(|interval| session.idle_for(now) < interval)
+                {
+                    continue;
+                }
+
+                let encoded_len = match encode_packet_in_place(
+                    &mut lease,
+                    0,
+                    &session.config.obfuscation,
+                    &session.client_to_server_encode,
+                    PacketDirection::ClientToServer,
+                    now,
+                ) {
+                    Ok(encoded_len) => encoded_len,
+                    Err(err) => {
+                        context.metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
+                        warn!(%client_addr, session_id = session.id, %err, "failed to encode WireGuard shim chaff packet");
+                        continue;
+                    }
+                };
+
+                if !await_send_jitter(&context, &session).await {
+                    break;
+                }
+
+                let packet = QueuedUpstreamPacket {
+                    bytes: lease[..encoded_len].to_vec(),
+                    queued_at_millis: now,
+                    is_chaff: true,
+                };
+                match send_with_failover(
+                    &mut connection,
+                    packet,
+                    &session,
+                    client_addr,
+                    &session.config,
+                    &context.next_server_index,
+                    &context.shutdown,
+                    &context.clock,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        context.metrics.chaff_packets_sent.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(err) => {
+                        warn!(
+                            %client_addr,
+                            session_id = session.id,
+                            upstream_port = session.upstream_port.load(Ordering::Relaxed),
+                            %err,
+                            "failed to send WireGuard shim chaff packet to all configured upstream servers"
                         );
                         close_session_if_current(
                             &context.sessions,
@@ -266,6 +355,7 @@ async fn send_with_failover(
     client_addr: SocketAddr,
     config: &WgObfsShimConfig,
     next_server_index: &AtomicUsize,
+    shutdown: &CancellationToken,
     clock: &ShimClock,
 ) -> io::Result<()> {
     let mut last_error = None;
@@ -273,7 +363,9 @@ async fn send_with_failover(
     for attempt in 0..max_attempts {
         match connection.socket.send(&packet.bytes).await {
             Ok(_) => {
-                session.record_upstream_send(packet.queued_at_millis);
+                if !packet.is_chaff {
+                    session.record_upstream_send(packet.queued_at_millis);
+                }
                 return Ok(());
             }
             Err(err) => {
@@ -282,19 +374,84 @@ async fn send_with_failover(
                     %client_addr,
                     session_id = session.id,
                     attempt = attempt + 1,
+                    will_retry = attempt + 1 < max_attempts,
                     upstream_addr = %connection.server_addr,
                     upstream_port = connection.local_port,
-                    "WireGuard shim upstream send failed; trying next configured server"
+                    "WireGuard shim upstream send failed"
                 );
+                if attempt + 1 == max_attempts {
+                    break;
+                }
+                if !await_retry_backoff(shutdown, &session.shutdown, attempt).await {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "WireGuard shim session shutdown interrupted upstream retry backoff",
+                    ));
+                }
                 *connection = connect_next_upstream(config, next_server_index).await?;
                 session.set_upstream_port(connection.local_port);
-                session.record_upstream_send(clock.now_millis());
+                if !packet.is_chaff {
+                    session.record_upstream_send(clock.now_millis());
+                }
             }
         }
     }
 
     Err(last_error
         .unwrap_or_else(|| io::Error::other("failed to send WireGuard shim upstream packet")))
+}
+
+async fn await_retry_backoff(
+    shutdown: &CancellationToken,
+    session_shutdown: &CancellationToken,
+    attempt: usize,
+) -> bool {
+    tokio::select! {
+        _ = shutdown.cancelled() => false,
+        _ = session_shutdown.cancelled() => false,
+        _ = tokio::time::sleep(retry_backoff_delay(attempt)) => true,
+    }
+}
+
+async fn await_send_jitter(context: &ShimSessionContext, session: &ShimSession) -> bool {
+    let delay = random_jitter_delay(session.config.send_jitter_max);
+    if delay.is_zero() {
+        return true;
+    }
+
+    tokio::select! {
+        _ = context.shutdown.cancelled() => false,
+        _ = session.shutdown.cancelled() => false,
+        _ = tokio::time::sleep(delay) => true,
+    }
+}
+
+fn random_jitter_delay(max: Duration) -> Duration {
+    let max_nanos = max.as_nanos().min(u128::from(u64::MAX)) as u64;
+    if max_nanos == 0 {
+        return Duration::ZERO;
+    }
+    let nanos = if max_nanos == u64::MAX {
+        OsRng.next_u64()
+    } else {
+        OsRng.next_u64() % (max_nanos + 1)
+    };
+    Duration::from_nanos(nanos)
+}
+
+fn retry_backoff_delay(attempt: usize) -> Duration {
+    const BASE: Duration = Duration::from_millis(100);
+    const MAX: Duration = Duration::from_secs(30);
+
+    let multiplier = 1u32 << attempt.min(8);
+    let capped = BASE.saturating_mul(multiplier).min(MAX);
+    let jitter_percent = 75u128 + u128::from(OsRng.next_u32() % 51);
+    let nanos = capped
+        .as_nanos()
+        .saturating_mul(jitter_percent)
+        .saturating_div(100)
+        .min(u128::from(u64::MAX)) as u64;
+    Duration::from_nanos(nanos)
 }
 
 async fn connect_upstream(
@@ -381,6 +538,14 @@ async fn lease_buffer_or_wait(
 async fn optional_cancelled(token: Option<&CancellationToken>) {
     if let Some(token) = token {
         token.cancelled().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
+async fn optional_interval_tick(interval: Option<&mut tokio::time::Interval>) {
+    if let Some(interval) = interval {
+        interval.tick().await;
     } else {
         std::future::pending::<()>().await;
     }

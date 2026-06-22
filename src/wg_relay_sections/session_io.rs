@@ -22,7 +22,11 @@ async fn get_or_create_session(
         match entry {
             dashmap::mapref::entry::Entry::Occupied(existing) => (existing.get().clone(), false),
             dashmap::mapref::entry::Entry::Vacant(vacant) => {
-                let session = Arc::new(RelaySession::new(upstream_socket, clock.now_millis()));
+                let session = Arc::new(RelaySession::new(
+                    upstream_socket,
+                    clock.now_millis(),
+                    settings.idle_timeout,
+                ));
                 vacant.insert(session.clone());
                 metrics.active_sessions.fetch_add(1, Ordering::Relaxed);
                 (session, true)
@@ -134,7 +138,9 @@ async fn run_cleanup_loop(
                     .filter_map(|entry| {
                         let client_addr = *entry.key();
                         let session = entry.value().clone();
-                        (session.idle_for(now) >= idle_timeout).then_some((client_addr, session))
+                        session
+                            .idle_expired(now, idle_timeout)
+                            .then_some((client_addr, session))
                     })
                     .collect();
 

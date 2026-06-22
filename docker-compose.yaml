@@ -45,6 +45,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - ./config:/config
+      - ./secrets:/run/local-secrets:ro
       - sync-outbox:/sync-outbox
     environment:
       - WG_INTERFACE_NAME=wg0
@@ -56,6 +57,7 @@ services:
       - WG_INTERNAL_PORT=${WG_INTERNAL_PORT:-51820}
       - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-false}
       - WG_OBFUSCATION_KEY=${WG_OBFUSCATION_KEY:-}
+      - WG_OBFUSCATION_KEY_FILE=${WG_OBFUSCATION_KEY_FILE:-/run/local-secrets/wg_obfuscation_key}
       - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
       - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
       - WG_MTU=1280
@@ -65,20 +67,21 @@ services:
       - WG_RUNTIME_SYSCTLS=0
       - WG_SERVER_PRIVATE_KEY_FILE=/config/server/privatekey-server
       - WG_PEER1_CONFIG_PATH=/config/peer1/peer1.conf
-      - WG_OBFUSCATED_PEER1_CONFIG_PATH=/config/peer1/peer1-obfuscated.conf.example
+      - WG_OBFUSCATED_PEER1_CONFIG_PATH=/config/peer1/peer1-obfuscated.conf
       - WG_PEER1_PUBLIC_KEY_FILE=/config/peer1/publickey-peer1
       - WG_PEER1_PRESHARED_KEY_FILE=/config/peer1/presharedkey-peer1
       - WG_PEER1_ALLOWED_IPS=10.13.13.2/32
       - WG_PEER2_CONFIG_PATH=/config/peer2/peer2.conf
-      - WG_OBFUSCATED_PEER2_CONFIG_PATH=/config/peer2/peer2-obfuscated.conf.example
+      - WG_OBFUSCATED_PEER2_CONFIG_PATH=/config/peer2/peer2-obfuscated.conf
       - WG_PEER2_PUBLIC_KEY_FILE=/config/peer2/publickey-peer2
       - WG_PEER2_PRESHARED_KEY_FILE=/config/peer2/presharedkey-peer2
       - WG_PEER2_ALLOWED_IPS=10.13.13.3/32
       - WG_SUDO=1
       - RUST_LOG=ssl_proxy=info
       - EXPLICIT_PROXY_ENABLED=false
-      # Development stacks must set ADMIN_API_KEY; the service rejects empty admin auth.
-      - ADMIN_API_KEY=mAcacoAmareloTemGostoDeBananaVerde
+      # Development stacks must set ADMIN_API_KEY or ADMIN_API_KEY_FILE; empty admin auth is rejected.
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      - ADMIN_API_KEY_FILE=${ADMIN_API_KEY_FILE:-/run/local-secrets/admin_api_key}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_OUTBOX_DIR=/sync-outbox
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
@@ -87,9 +90,7 @@ services:
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=ssl-proxy
 
     ports:
-      # Publish the plain and obfuscated WireGuard UDP entrypoints on the Docker host.
-      - "443:443/udp"
-      - "51820:51820/udp"
+      # Public WireGuard UDP entrypoints are owned by wg-udp-frontdoor.
       # Keep policy-enforcement and admin surfaces local to the host.
       - "127.0.0.1:3001:3001"
       - "127.0.0.1:3002:3002"
@@ -101,6 +102,177 @@ services:
       - net.ipv4.conf.all.src_valid_mark=1
       - net.ipv4.conf.all.rp_filter=0
       - net.ipv4.conf.default.rp_filter=0
+
+  wg-udp-frontdoor:
+    depends_on:
+      ssl-proxy:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    command: ["/usr/local/bin/wg-udp-frontdoor"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3003/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./secrets/wg-rotation/frontdoor:/run/wg-rotation/frontdoor:ro
+    environment:
+      - WG_FRONTDOOR_CONFIG_FILE=${WG_FRONTDOOR_CONFIG_FILE:-/run/wg-rotation/frontdoor/wg-udp-frontdoor.toml}
+      - WG_FRONTDOOR_HEALTH_ADDR=${WG_FRONTDOOR_HEALTH_ADDR:-0.0.0.0:3003}
+      - WG_FRONTDOOR_SESSION_IDLE_SECS=${WG_FRONTDOOR_SESSION_IDLE_SECS:-300}
+      - WG_FRONTDOOR_RATE_LIMIT_PPS=${WG_FRONTDOOR_RATE_LIMIT_PPS:-500}
+      - RUST_LOG=wg_udp_frontdoor=info
+    ports:
+      - "443:443/udp"
+      - "51820:51820/udp"
+      - "127.0.0.1:3003:3003"
+
+  ssl-proxy-next:
+    profiles: ["rotation"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    user: "0:0"
+    command: ["/usr/local/bin/start-proxy-wg"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3012/health && /app/ssl-proxy boringtun show wg1 >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./config:/config
+      - ./secrets/wg-rotation/candidate:/run/wg-rotation/candidate:ro
+      - sync-outbox:/sync-outbox
+    environment:
+      - WG_INTERFACE_NAME=wg1
+      - WG_TEMPLATE_PATH=/config/templates/server.conf
+      - WG_CONFIG_PATH=/run/wireguard/wg1.conf
+      - WG_UAPI_SOCKET_DIR=/var/run/wireguard
+      - WG_SERVER_ADDRESS=${WG_SERVER_ADDRESS:-10.13.13.1/24}
+      - WG_PORT=${ROTATOR_NEXT_WG_PORT:-443}
+      - WG_INTERNAL_PORT=${ROTATOR_NEXT_WG_INTERNAL_PORT:-51820}
+      - WG_OBFUSCATION_ENABLED=${WG_OBFUSCATION_ENABLED:-false}
+      - WG_OBFUSCATION_KEY=
+      - WG_OBFUSCATION_KEY_FILE=/run/wg-rotation/candidate/secrets/wg_obfuscation_key
+      - WG_OBFUSCATION_MAGIC_BYTE=${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}
+      - WG_OBFUSCATION_SESSION_IDLE_SECS=${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}
+      - WG_MTU=1280
+      - WG_WAN_INTERFACE=auto
+      - WG_SYSCTL_RETRIES=3
+      - WG_SYSCTL_RETRY_DELAY_MS=200
+      - WG_RUNTIME_SYSCTLS=0
+      - WG_SERVER_PRIVATE_KEY_FILE=/run/wg-rotation/candidate/config/server/privatekey-server
+      - WG_SERVER_PUBLIC_KEY_FILE=/run/wg-rotation/candidate/config/server/publickey-server
+      - WG_PEER1_CONFIG_PATH=/run/wg-rotation/candidate/config/peer1/peer1.conf
+      - WG_OBFUSCATED_PEER1_CONFIG_PATH=/run/wg-rotation/candidate/config/peer1/peer1-obfuscated.conf
+      - WG_PEER1_PUBLIC_KEY_FILE=/run/wg-rotation/candidate/config/peer1/publickey-peer1
+      - WG_PEER1_PRESHARED_KEY_FILE=/run/wg-rotation/candidate/config/peer1/presharedkey-peer1
+      - WG_PEER1_ALLOWED_IPS=10.13.13.2/32
+      - WG_PEER2_CONFIG_PATH=/run/wg-rotation/candidate/config/peer2/peer2.conf
+      - WG_OBFUSCATED_PEER2_CONFIG_PATH=/run/wg-rotation/candidate/config/peer2/peer2-obfuscated.conf
+      - WG_PEER2_PUBLIC_KEY_FILE=/run/wg-rotation/candidate/config/peer2/publickey-peer2
+      - WG_PEER2_PRESHARED_KEY_FILE=/run/wg-rotation/candidate/config/peer2/presharedkey-peer2
+      - WG_PEER2_ALLOWED_IPS=10.13.13.3/32
+      - WG_SUDO=1
+      - RUST_LOG=ssl_proxy=info
+      - EXPLICIT_PROXY_ENABLED=false
+      - ADMIN_API_KEY=
+      - ADMIN_API_KEY_FILE=/run/wg-rotation/candidate/secrets/admin_api_key
+      - ADMIN_PORT=${ROTATOR_NEXT_ADMIN_PORT:-3012}
+      - TPROXY_PORT=${ROTATOR_NEXT_TPROXY_PORT:-3011}
+      - PROXY_PORT=${ROTATOR_NEXT_PROXY_PORT:-3010}
+      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
+      - SYNC_OUTBOX_DIR=/sync-outbox
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=ssl-proxy-next
+      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=ssl-proxy-next
+    ports:
+      - "127.0.0.1:${ROTATOR_NEXT_ADMIN_PORT:-3012}:3012"
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv4.conf.all.rp_filter=0
+      - net.ipv4.conf.default.rp_filter=0
+
+  waha:
+    profiles: ["rotator"]
+    image: ${WAHA_IMAGE:-devlikeapro/waha}
+    platform: ${WAHA_PLATFORM:-linux/amd64}
+    restart: unless-stopped
+    environment:
+      - WAHA_NO_API_KEY=${WAHA_NO_API_KEY:-True}
+      - WAHA_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-True}
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-}
+      - WHATSAPP_SWAGGER_NO_PASSWORD=${WHATSAPP_SWAGGER_NO_PASSWORD:-True}
+      - WHATSAPP_SWAGGER_USERNAME=${WHATSAPP_SWAGGER_USERNAME:-admin}
+      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD:-}
+    volumes:
+      - waha-sessions:/app/.sessions
+      - waha-media:/app/.media
+    ports:
+      - "127.0.0.1:${WAHA_HOST_PORT:-3006}:3000/tcp"
+
+  wg-key-rotator:
+    profiles: ["rotator"]
+    depends_on:
+      waha:
+        condition: service_started
+    build:
+      context: ./apps/wg-key-rotator
+      dockerfile: Dockerfile
+    restart: "no"
+    working_dir: "${ROTATOR_REPO_ROOT:-${PWD}}"
+    command: ["status"]
+    environment:
+      - ROTATOR_REPO_ROOT=${ROTATOR_REPO_ROOT:-${PWD}}
+      - ROTATOR_HEALTH_URL=http://ssl-proxy:3002/health
+      - ROTATOR_HEALTH_TIMEOUT_MS=${ROTATOR_HEALTH_TIMEOUT_MS:-5000}
+      - ROTATOR_INCLUDE_PUBLIC_KEY=${ROTATOR_INCLUDE_PUBLIC_KEY:-true}
+      - ROTATOR_STATE_DIR=${ROTATOR_STATE_DIR:-secrets/wg-rotation}
+      - ROTATOR_PEERS=${ROTATOR_PEERS:-peer1,peer2}
+      - ROTATOR_MIGRATION_TIMEOUT_SECS=${ROTATOR_MIGRATION_TIMEOUT_SECS:-86400}
+      - ROTATOR_HANDSHAKE_GRACE_SECS=${ROTATOR_HANDSHAKE_GRACE_SECS:-600}
+      - ROTATOR_COMMAND_TIMEOUT_MS=${ROTATOR_COMMAND_TIMEOUT_MS:-600000}
+      - ROTATOR_FRONTDOOR_CONFIG_PATH=${ROTATOR_FRONTDOOR_CONFIG_PATH:-secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml}
+      - ROTATOR_NEXT_ADMIN_PORT=${ROTATOR_NEXT_ADMIN_PORT:-3012}
+      - WAHA_BASE_URL=http://waha:3000
+      - WAHA_SESSION=${WAHA_SESSION:-default}
+      - WAHA_CHAT_ID=${WAHA_CHAT_ID:-}
+      - WAHA_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_API_KEY_FILE=${WAHA_API_KEY_FILE:-}
+    volumes:
+      # The rotator invokes docker compose through the host Docker socket, so the
+      # repo must exist at the same absolute path inside the container and host.
+      - type: bind
+        source: "${ROTATOR_REPO_ROOT:-${PWD}}"
+        target: "${ROTATOR_REPO_ROOT:-${PWD}}"
+      - /var/run/docker.sock:/var/run/docker.sock
 
   java-coordinator:
     depends_on:
@@ -238,7 +410,7 @@ services:
       - OTEL_SERVICE_NAME=integration-console-web
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-web
     ports:
-      - "3003:3000"
+      - "3005:3000"
 
   integration-console-worker:
     depends_on:
@@ -788,6 +960,8 @@ volumes:
   sync-outbox:
   minio-data:
   ollama-data:
+  waha-sessions:
+  waha-media:
   prometheus-data:
   loki-data:
   grafana-data:

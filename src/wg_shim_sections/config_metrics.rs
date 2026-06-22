@@ -28,6 +28,9 @@ pub const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 5;
 pub const DEFAULT_BUFFER_POOL_CAPACITY: usize = 256;
 pub const DEFAULT_SEND_QUEUE_CAPACITY: usize = 128;
 pub const DEFAULT_HEALTH_ADDR: &str = "127.0.0.1:51822";
+pub const DEFAULT_JITTER_MAX_MS: u64 = 0;
+pub const DEFAULT_CHAFF_PPS: u64 = 0;
+pub const MAX_CHAFF_PPS: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RateLimitConfig {
@@ -58,6 +61,8 @@ pub struct WgObfsShimConfig {
     pub send_queue_capacity: usize,
     pub health_addr: Option<SocketAddr>,
     pub metrics_addr: Option<SocketAddr>,
+    pub send_jitter_max: Duration,
+    pub chaff_pps: u64,
 }
 
 impl WgObfsShimConfig {
@@ -80,6 +85,8 @@ impl WgObfsShimConfig {
             send_queue_capacity: DEFAULT_SEND_QUEUE_CAPACITY,
             health_addr: None,
             metrics_addr: None,
+            send_jitter_max: Duration::from_millis(DEFAULT_JITTER_MAX_MS),
+            chaff_pps: DEFAULT_CHAFF_PPS,
         }
     }
 
@@ -109,6 +116,8 @@ impl WgObfsShimConfig {
             send_queue_capacity: DEFAULT_SEND_QUEUE_CAPACITY,
             health_addr: None,
             metrics_addr: None,
+            send_jitter_max: Duration::from_millis(DEFAULT_JITTER_MAX_MS),
+            chaff_pps: DEFAULT_CHAFF_PPS,
         })
     }
 
@@ -127,6 +136,17 @@ impl WgObfsShimConfig {
 
     fn buffer_pool_capacity(&self) -> usize {
         self.buffer_pool_capacity.max(1)
+    }
+
+    fn chaff_interval(&self) -> Option<Duration> {
+        if self.chaff_pps == 0
+            || self.chaff_pps > MAX_CHAFF_PPS
+            || !self.obfuscation.uses_framed_encoding()
+        {
+            return None;
+        }
+        let nanos_per_packet = 1_000_000_000u64 / self.chaff_pps.max(1);
+        Some(Duration::from_nanos(nanos_per_packet.max(1)))
     }
 }
 
@@ -158,6 +178,7 @@ pub struct ShimMetrics {
     buffer_pool_exhausted: AtomicU64,
     buffer_pool_wait_millis_total: AtomicU64,
     send_queue_drops: AtomicU64,
+    chaff_packets_sent: AtomicU64,
 }
 
 impl ShimMetrics {
@@ -193,6 +214,8 @@ impl ShimMetrics {
                 "wg_obfs_shim_buffer_pool_wait_millis_total {}\n",
                 "# TYPE wg_obfs_shim_send_queue_drops_total counter\n",
                 "wg_obfs_shim_send_queue_drops_total {}\n",
+                "# TYPE wg_obfs_shim_chaff_packets_sent_total counter\n",
+                "wg_obfs_shim_chaff_packets_sent_total {}\n",
                 "# EOF\n"
             ),
             self.active_sessions.load(Ordering::Relaxed),
@@ -209,6 +232,7 @@ impl ShimMetrics {
             self.buffer_pool_exhausted.load(Ordering::Relaxed),
             self.buffer_pool_wait_millis_total.load(Ordering::Relaxed),
             self.send_queue_drops.load(Ordering::Relaxed),
+            self.chaff_packets_sent.load(Ordering::Relaxed),
         )
     }
 }

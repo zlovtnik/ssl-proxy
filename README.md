@@ -94,13 +94,15 @@ wg genpsk > presharedkey-peer1
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| WireGuard VPN | 443 | UDP | Plain iPhone/direct tunnel endpoint |
-| WireGuard Relay | 51820 | UDP | Obfuscated Mac/shim tunnel endpoint |
+| WireGuard Frontdoor | 443 | UDP | Stable public UDP entrypoint, fanned out to active/candidate backends during rotation |
+| WireGuard Frontdoor | 51820 | UDP | Stable alternate public UDP entrypoint for obfuscated Mac/shim profiles |
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
+| Frontdoor Health | 3003 | TCP | Host-local health and metrics for `wg-udp-frontdoor` |
+| WAHA | 3006 | TCP | Host-local WhatsApp HTTP API for rotator notifications (`rotator` profile) |
 | Explicit Proxy | 3000 | TCP | Legacy opt-in listener, disabled by default |
 | Coordinator Actuator | 8081 | TCP | Health/actuator (internal) |
-| Integration Console | 3003 | TCP | Rails dashboard (device inventory, heatmaps) |
+| Integration Console | 3005 | TCP | Rails dashboard (device inventory, heatmaps) |
 | Redis | 6379 | TCP | Caching and job queues (internal) |
 | MinIO API | 9000 | TCP | S3-compatible object storage (internal) |
 | MinIO Console | 9001 | TCP | MinIO admin UI (internal) |
@@ -157,6 +159,16 @@ wg genpsk > presharedkey-peer1
 | **atheros-search** | Go gRPC search service for wireless audit embeddings | [services/atheros-search/](services/atheros-search/) |
 | **ollama** | Local embedding model server | - |
 
+### Rotator Profile (optional)
+
+The `rotator` profile runs WAHA and the containerized WireGuard key rotator. WAHA is bound to `http://127.0.0.1:${WAHA_HOST_PORT:-3006}` on the host, while the rotator container calls it at `http://waha:3000`. Run these commands from the repository root, or set `ROTATOR_REPO_ROOT` to the absolute checkout path.
+
+```bash
+docker compose --profile rotator up -d waha
+docker compose --profile rotator run --rm wg-key-rotator status
+docker compose --profile rotator run --rm wg-key-rotator rotate --scheduled
+```
+
 ### Wireless Sensor (host-mode, optional)
 
 | Service | Description | README |
@@ -206,11 +218,26 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_PORT` | `443` | Plain WireGuard UDP port |
 | `WG_INTERNAL_PORT` | `51820` | Obfuscated WireGuard UDP port |
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
+| `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
+| `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config |
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
-| `ADMIN_API_KEY` | *required* | Bearer token for admin endpoints |
+| `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
 | `DATABASE_URL` | `postgres://sync:sync@postgres:5432/sync` | Primary Postgres connection |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
+
+### Rotator Profile
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WAHA_HOST_PORT` | `3006` | Host-local port for WAHA dashboard/API |
+| `WAHA_IMAGE` | `devlikeapro/waha` | WAHA Core image; use `devlikeapro/waha:arm` for native ARM |
+| `WAHA_PLATFORM` | `linux/amd64` | Default platform for the Core image; use `linux/arm64` with the ARM image |
+| `WAHA_NO_API_KEY` | `True` | Disable WAHA API-key auth for localhost-only dev; set `False` with `WAHA_API_KEY` to protect it |
+| `WAHA_CHAT_ID` | *(empty)* | WhatsApp chat ID for rotation notifications |
+| `WAHA_API_KEY` | *(empty)* | Optional WAHA API key, also sent by the rotator |
+| `WAHA_SESSION` | `default` | WAHA session name used by rotator notifications |
+| `ROTATOR_REPO_ROOT` | current shell `PWD` | Absolute repo path mounted into the rotator container; set explicitly if not running compose from the repo root |
 
 ### Oracle Sink (requires auto-login wallet in `./wallet/`)
 
@@ -306,11 +333,12 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 
 **WireGuard tunnel won't establish**
 - Verify peer config files exist in `config/peer1/` and `config/peer2/`
-- Check that server private key exists: `config/server/privatekey-server`
+- Check that server private key exists locally: `config/server/privatekey-server`
+- Check `wg-udp-frontdoor` health on `http://127.0.0.1:3003/health`
 - Ensure UDP ports 443 and 51820 are reachable from the client
 
 **Admin API returns 401**
-- Set `ADMIN_API_KEY` to a non-empty value
+- Set `ADMIN_API_KEY_FILE` to a readable file or set `ADMIN_API_KEY` to a non-empty value
 - Pass it as `Authorization: Bearer <key>` header
 
 **Oracle sink not delivering events**

@@ -120,6 +120,7 @@ impl ShimSession {
 struct QueuedUpstreamPacket {
     bytes: Vec<u8>,
     queued_at_millis: u64,
+    is_chaff: bool,
 }
 
 struct UpstreamConnection {
@@ -334,6 +335,7 @@ async fn run_shim(context: ShimSessionContext) {
                 let packet = QueuedUpstreamPacket {
                     bytes: lease[..encoded_len].to_vec(),
                     queued_at_millis: send_started_millis,
+                    is_chaff: false,
                 };
                 match session.upstream_tx.try_send(packet) {
                     Ok(()) => {

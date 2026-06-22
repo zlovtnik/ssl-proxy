@@ -77,17 +77,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=coredns /coredns /usr/local/bin/coredns
 COPY --from=builder /app/target/release/ssl-proxy .
+COPY --from=builder /app/target/release/wg-udp-frontdoor /usr/local/bin/wg-udp-frontdoor
 COPY --from=boringtun-builder /opt/boringtun/bin/boringtun-cli /usr/local/bin/boringtun-cli
 COPY --from=builder /app/target/release/wg-obfs-shim /usr/local/bin/wg-obfs-shim
 COPY static ./static
 COPY config/client ./client-config
 COPY config/peer1/peer1-obfuscated.conf.example ./client-config/peer1-obfuscated.conf.example
 COPY docker/entrypoint.sh /usr/local/bin/start-proxy-wg
-RUN ldconfig && chmod +x /usr/local/bin/start-proxy-wg /usr/local/bin/wg-obfs-shim /usr/local/bin/boringtun-cli \
+RUN ldconfig && chmod +x /usr/local/bin/start-proxy-wg /usr/local/bin/wg-obfs-shim /usr/local/bin/wg-udp-frontdoor /usr/local/bin/boringtun-cli \
   && groupadd -r proxyuser && useradd -r -g proxyuser proxyuser \
-  && chown -R proxyuser:proxyuser /app /usr/local/bin/start-proxy-wg /usr/local/bin/wg-obfs-shim /usr/local/bin/boringtun-cli \
+  && chown -R proxyuser:proxyuser /app /usr/local/bin/start-proxy-wg /usr/local/bin/wg-obfs-shim /usr/local/bin/wg-udp-frontdoor /usr/local/bin/boringtun-cli \
   && setcap cap_net_admin+eip /usr/local/bin/coredns \
   && setcap cap_net_admin+eip /app/ssl-proxy \
+  && setcap cap_net_bind_service+eip /usr/local/bin/wg-udp-frontdoor \
   && setcap cap_net_admin+eip /usr/local/bin/boringtun-cli \
   && setcap cap_net_admin+eip /usr/sbin/iw
 USER proxyuser

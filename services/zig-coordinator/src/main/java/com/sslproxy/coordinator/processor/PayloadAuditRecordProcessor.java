@@ -154,9 +154,6 @@ public class PayloadAuditRecordProcessor implements Processor {
                         .addKeyValue("batch_size", batch.size())
                         .addKeyValue("error", sanitize(err.cause().getMessage()))
                         .log("payload audit batch failed");
-                if (failOnError) {
-                    throw new IllegalStateException(err.operation(), err.cause());
-                }
                 int dropped = accumulator.requeueFront(batch);
                 if (dropped > 0) {
                     log.atError()
@@ -167,6 +164,9 @@ public class PayloadAuditRecordProcessor implements Processor {
                             .addKeyValue("pending_count", accumulator.size())
                             .addKeyValue("max_pending", accumulator.capacity())
                             .log("payload audit retry records dropped");
+                }
+                if (failOnError) {
+                    throw new IllegalStateException(err.operation(), err.cause());
                 }
             }
         }

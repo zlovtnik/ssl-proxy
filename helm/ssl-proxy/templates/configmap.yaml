@@ -14,12 +14,12 @@ data:
   SYNC_SCAN_TOPIC: {{ .Values.javaCoordinator.topics.scanTopic | quote }}
   SYNC_LOAD_TOPIC: {{ .Values.javaCoordinator.topics.loadTopic | quote }}
   SYNC_RESULT_TOPIC: {{ .Values.javaCoordinator.topics.resultTopic | quote }}
-  PAYLOAD_AUDIT_REDPANDA_TOPIC: {{ .Values.javaCoordinator.topics.payloadAuditTopic | quote }}
+  SYNC_PAYLOAD_AUDIT_TOPIC: {{ .Values.javaCoordinator.topics.payloadAuditTopic | quote }}
   # Consumer groups
   SYNC_SCAN_CONSUMER: {{ .Values.javaCoordinator.consumers.scanConsumer | quote }}
   SYNC_LOAD_CONSUMER: {{ .Values.javaCoordinator.consumers.loadConsumer | quote }}
   SYNC_RESULT_CONSUMER: {{ .Values.javaCoordinator.consumers.resultConsumer | quote }}
-  PAYLOAD_AUDIT_CONSUMER: {{ .Values.javaCoordinator.consumers.payloadAuditConsumer | quote }}
+  SYNC_PAYLOAD_AUDIT_CONSUMER: {{ .Values.javaCoordinator.consumers.payloadAuditConsumer | quote }}
   # Stream names
   SYNC_STREAM_NAMES: {{ .Values.javaCoordinator.streams.syncStreamNames | quote }}
   SYNC_ORACLE_STREAM_NAMES: {{ .Values.javaCoordinator.streams.oracleStreamNames | quote }}

@@ -132,6 +132,8 @@ pub struct WgPeersSnapshot {
 
 const DASHBOARD_EVENT_QUEUE_CAPACITY: usize = 1024;
 pub(crate) const DASHBOARD_EVENT_MAX_RETRY_ATTEMPTS: u8 = 3;
+pub(crate) const EVENT_DEDUP_WINDOW: Duration = Duration::from_millis(500);
+const EVENT_DEDUP_MAX_KEYS: usize = 4096;
 
 struct DashboardEventRetry {
     raw: String,
@@ -321,6 +323,7 @@ pub struct AppState {
     pub publisher: std::sync::Arc<sync_plane::SyncPublisher>,
     pub forensic: crate::forensic::SharedForensicState,
     pub wg_relay_metrics: Arc<crate::wg_relay::RelayMetrics>,
+    event_dedup: DashMap<String, Instant>,
     pub config: crate::config::Config,
 
     /// Bandwidth rate calculation snapshot

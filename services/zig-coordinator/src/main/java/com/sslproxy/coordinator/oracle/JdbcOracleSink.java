@@ -166,12 +166,14 @@ public class JdbcOracleSink implements OracleSink {
                                    ? IS_ENCRYPTED, ? TRUNCATED, ? PEER_IP, ? NOTES
                             from dual
                         ) src
-                        on (tgt.CORRELATION_ID = src.CORRELATION_ID)
+                        on (
+                            tgt.CORRELATION_ID = src.CORRELATION_ID
+                            and tgt.HOST = src.HOST
+                            and tgt.DIRECTION = src.DIRECTION
+                            and tgt.CAPTURED_AT = src.CAPTURED_AT
+                            and tgt.BYTE_OFFSET = src.BYTE_OFFSET
+                        )
                         when matched then update set
-                            tgt.HOST = src.HOST,
-                            tgt.DIRECTION = src.DIRECTION,
-                            tgt.CAPTURED_AT = src.CAPTURED_AT,
-                            tgt.BYTE_OFFSET = src.BYTE_OFFSET,
                             tgt.PAYLOAD_OBJECT_KEY = src.PAYLOAD_OBJECT_KEY,
                             tgt.CONTENT_TYPE = src.CONTENT_TYPE,
                             tgt.HTTP_METHOD = src.HTTP_METHOD,

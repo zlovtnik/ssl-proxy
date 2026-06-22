@@ -134,6 +134,30 @@ pub(crate) fn emit_serializable<T>(
 ) where
     T: Serialize,
 {
+    if should_dedup_event(event, blocked)
+        && !state.should_emit_deduped_event(
+            event,
+            host,
+            peer_ip.as_deref(),
+            wg_pubkey.as_deref(),
+            device_id.as_deref(),
+        )
+    {
+        debug!(
+            event_name = event,
+            %host,
+            "coalesced duplicate event inside deduplication window"
+        );
+        return;
+    }
+
+    let audit_sanitize = audit_sanitize_hostnames();
+    let event_host = if audit_sanitize {
+        sanitize_hostname(host)
+    } else {
+        host.to_string()
+    };
+
     let mut extra = match serde_json::to_value(extra) {
         Ok(serde_json::Value::Object(map)) => map,
         Ok(other) => {
@@ -186,11 +210,14 @@ pub(crate) fn emit_serializable<T>(
             serde_json::Value::String(value),
         );
     }
+    if audit_sanitize {
+        sanitize_extra_host_fields(&mut extra);
+    }
 
     let observed_at = crate::time::now_rfc3339();
     let raw = match serde_json::to_string(&EventEnvelope {
         event,
-        host,
+        host: &event_host,
         time: observed_at.clone(),
         extra,
     }) {
@@ -202,7 +229,7 @@ pub(crate) fn emit_serializable<T>(
     };
 
     if state.events_tx.send(raw.clone()).is_err() {
-        state.queue_dashboard_event(&raw, event, host);
+        state.queue_dashboard_event(&raw, event, &event_host);
     } else {
         state.flush_dashboard_event_queue();
     }
@@ -214,18 +241,18 @@ pub(crate) fn emit_serializable<T>(
     debug!(
         target: "sync",
         event_name = event,
-        %host,
+        host = %event_host,
         "proxy event qualifies for sync plane — preparing scan request"
     );
 
     let dedupe_key = format!(
         "{:x}",
-        Sha256::digest(format!("{event}:{host}:{observed_at}:{raw}").as_bytes())
+        Sha256::digest(format!("{event}:{event_host}:{observed_at}:{raw}").as_bytes())
     );
     let payload_ref = match state.publisher.payload_ref_for_event(&raw, &observed_at) {
         Ok(payload_ref) => payload_ref,
         Err(error) => {
-            error!(%error, event_name = event, %host, "failed to prepare sync payload reference");
+            error!(%error, event_name = event, host = %event_host, "failed to prepare sync payload reference");
             return;
         }
     };
@@ -240,9 +267,123 @@ pub(crate) fn emit_serializable<T>(
     info!(
         target: "sync",
         event_name = event,
-        %host,
+        host = %event_host,
         "published scan request to sync.scan.request for oracle ingest"
     );
+}
+
+fn should_dedup_event(event: &str, blocked: bool) -> bool {
+    blocked
+        || matches!(
+            event,
+            "http_blocked" | "block" | "session.blocked" | "tunnel_blocked"
+        )
+}
+
+fn audit_sanitize_hostnames() -> bool {
+    std::env::var("AUDIT_SANITIZE_HOSTNAMES")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn sanitize_extra_host_fields(extra: &mut serde_json::Map<String, serde_json::Value>) {
+    for (key, value) in extra.iter_mut() {
+        let key = key.to_ascii_lowercase();
+        if is_hostname_field(&key) {
+            sanitize_json_strings(value);
+        } else {
+            match value {
+                serde_json::Value::Object(map) => sanitize_extra_host_fields(map),
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        if let serde_json::Value::Object(map) = value {
+                            sanitize_extra_host_fields(map);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn is_hostname_field(key: &str) -> bool {
+    key == "host"
+        || key == "hostname"
+        || key == "sni"
+        || key.ends_with("_host")
+        || key.ends_with("_hostname")
+        || key.contains("hostname")
+}
+
+fn sanitize_json_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(raw) => {
+            *raw = sanitize_hostname(raw);
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                sanitize_json_strings(value);
+            }
+        }
+        serde_json::Value::Object(map) => sanitize_extra_host_fields(map),
+        _ => {}
+    }
+}
+
+fn sanitize_hostname(host: &str) -> String {
+    let key = std::env::var("AUDIT_HMAC_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(key) = key else {
+        return "hmac:unconfigured".to_string();
+    };
+    format!("hmac:{}", hmac_sha256_first8_hex(key.as_bytes(), host))
+}
+
+fn hmac_sha256_first8_hex(key: &[u8], message: &str) -> String {
+    const BLOCK_LEN: usize = 64;
+    let mut key_block = [0u8; BLOCK_LEN];
+    if key.len() > BLOCK_LEN {
+        let digest = Sha256::digest(key);
+        key_block[..digest.len()].copy_from_slice(&digest);
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut ipad = [0x36u8; BLOCK_LEN];
+    let mut opad = [0x5cu8; BLOCK_LEN];
+    for index in 0..BLOCK_LEN {
+        ipad[index] ^= key_block[index];
+        opad[index] ^= key_block[index];
+    }
+
+    let mut inner = Sha256::new();
+    inner.update(ipad);
+    inner.update(message.as_bytes());
+    let inner = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(opad);
+    outer.update(inner);
+    let digest = outer.finalize();
+    hex_prefix(&digest[..8])
+}
+
+fn hex_prefix(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 #[cfg(test)]

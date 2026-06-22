@@ -2,6 +2,7 @@ use super::types::ConfigError;
 use crate::wg_packet_obfuscation::{
     parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding,
 };
+use std::path::Path;
 
 /// Returns a secret value taken from an environment variable or, if that is empty/missing,
 /// from a file whose path is specified by a second environment variable.
@@ -39,6 +40,81 @@ pub(crate) fn read_secret(var: &str, file_var: &str) -> Option<String> {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
         })
+}
+
+pub(super) fn read_secret_strict_file(
+    var: &str,
+    file_var: &'static str,
+) -> Result<Option<String>, ConfigError> {
+    if let Some(secret) = std::env::var(var)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(Some(secret));
+    }
+
+    let file = std::env::var(file_var)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(file) = file else {
+        return Ok(None);
+    };
+
+    let path = Path::new(&file);
+    validate_secret_file(path, file_var)?;
+    std::fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .map(|s| (!s.is_empty()).then_some(s))
+        .map_err(|error| ConfigError::InvalidSecretFile {
+            file_var,
+            message: format!("failed to read {:?}: {error}", path.display()),
+        })
+}
+
+#[cfg(unix)]
+fn validate_secret_file(path: &Path, file_var: &'static str) -> Result<(), ConfigError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path).map_err(|error| ConfigError::InvalidSecretFile {
+        file_var,
+        message: format!("failed to inspect {:?}: {error}", path.display()),
+    })?;
+    if !metadata.is_file() {
+        return Err(ConfigError::InvalidSecretFile {
+            file_var,
+            message: format!("{:?} must be a regular file", path.display()),
+        });
+    }
+    let mode = metadata.mode() & 0o777;
+    if mode != 0o400 {
+        return Err(ConfigError::InvalidSecretFile {
+            file_var,
+            message: format!("{:?} must have mode 0400; got {:04o}", path.display(), mode),
+        });
+    }
+
+    // SAFETY: `geteuid` has no preconditions and only returns the current
+    // process effective uid.
+    let uid = unsafe { libc::geteuid() };
+    if metadata.uid() != uid {
+        return Err(ConfigError::InvalidSecretFile {
+            file_var,
+            message: format!(
+                "{:?} must be owned by uid {}; got uid {}",
+                path.display(),
+                uid,
+                metadata.uid()
+            ),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_secret_file(_path: &Path, _file_var: &'static str) -> Result<(), ConfigError> {
+    Ok(())
 }
 
 pub(super) fn read_magic_byte(var: &str) -> Result<Option<u8>, ConfigError> {
@@ -116,8 +192,25 @@ pub(super) fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadd
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .map(PacketPadding::FixedMtu)
+            .or_else(|| {
+                raw.strip_prefix("random-bucket:")
+                    .or_else(|| raw.strip_prefix("random_bucket:"))
+                    .or_else(|| raw.strip_prefix("bucket:"))
+                    .and_then(parse_padding_bucket)
+                    .map(PacketPadding::RandomBucket)
+            })
             .ok_or(ConfigError::InvalidWireGuardObfuscationPadding(raw)),
     }
+}
+
+fn parse_padding_bucket(raw: &str) -> Option<Vec<usize>> {
+    let values = raw
+        .split(',')
+        .map(str::trim)
+        .map(str::parse::<usize>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    (!values.is_empty() && values.iter().all(|value| *value > 0)).then_some(values)
 }
 
 pub(super) fn read_wireguard_obfuscation_magic_position(

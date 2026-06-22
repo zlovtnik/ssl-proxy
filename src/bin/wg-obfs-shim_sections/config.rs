@@ -129,6 +129,20 @@ fn parse_single_shim_process_config(
         "send queue capacity",
     )?
     .unwrap_or(DEFAULT_SEND_QUEUE_CAPACITY);
+    config.send_jitter_max = Duration::from_millis(
+        parse_optional_nonnegative_u64(
+            optional_value(&options.jitter_max_ms, "WG_OBFS_SHIM_JITTER_MAX_MS"),
+            "jitter max milliseconds",
+        )?
+        .unwrap_or(DEFAULT_JITTER_MAX_MS),
+    );
+    config.chaff_pps = validate_chaff_pps(
+        parse_optional_nonnegative_u64(
+            optional_value(&options.chaff_pps, "WG_OBFS_SHIM_CHAFF_PPS"),
+            "chaff packets per second",
+        )?
+        .unwrap_or(DEFAULT_CHAFF_PPS),
+    )?;
     config.health_addr = Some(health_addr);
     config.metrics_addr = optional_value(&options.metrics_addr, "WG_OBFS_SHIM_METRICS_ADDR")
         .map(|raw| parse_socket_addr(raw, "metrics address"))
@@ -137,28 +151,65 @@ fn parse_single_shim_process_config(
     Ok(ProcessConfig {
         shims: vec![config],
         health_addr,
+        health_token: optional_value(&options.health_token, "WG_OBFS_HEALTH_TOKEN"),
         config_path: None,
     })
 }
 
 async fn run_health_server(
     health_addr: SocketAddr,
+    health_token: Option<String>,
     handles: Vec<ShimHealthHandle>,
     shutdown: CancellationToken,
 ) {
     use axum::{
-        extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router,
+        extract::State,
+        http::{header, HeaderMap, StatusCode},
+        response::IntoResponse,
+        routing::get,
+        Json, Router,
     };
     use serde_json::json;
 
+    struct HealthState {
+        handles: Vec<ShimHealthHandle>,
+        token: Option<String>,
+    }
+
+    fn authorized(headers: &HeaderMap, token: Option<&str>) -> bool {
+        let Some(expected) = token else {
+            return true;
+        };
+        let Some(provided) = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().strip_prefix("Bearer "))
+        else {
+            return false;
+        };
+        constant_time_eq(provided.trim(), expected)
+    }
+
     async fn health_handler(
-        State(handles): State<Arc<Vec<ShimHealthHandle>>>,
+        State(state): State<Arc<HealthState>>,
+        headers: HeaderMap,
     ) -> impl IntoResponse {
-        let sessions = handles
+        if !authorized(&headers, state.token.as_deref()) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "status": "unauthorized",
+                })),
+            );
+        }
+
+        let sessions = state
+            .handles
             .iter()
             .map(ShimHealthHandle::active_sessions)
             .sum::<u64>();
-        let replay_detected = handles
+        let replay_detected = state
+            .handles
             .iter()
             .map(ShimHealthHandle::replay_detected)
             .sum::<u64>();
@@ -181,7 +232,10 @@ async fn run_health_server(
     };
     let app = Router::new()
         .route("/health", get(health_handler))
-        .with_state(Arc::new(handles));
+        .with_state(Arc::new(HealthState {
+            handles,
+            token: health_token,
+        }));
 
     if let Err(err) = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown.cancelled_owned())
@@ -332,6 +386,7 @@ fn load_process_config_from_file(path: &Path) -> Result<ProcessConfig, ConfigPar
     Ok(ProcessConfig {
         shims,
         health_addr,
+        health_token: normalize_optional_secret(parsed.health_token),
         config_path: Some(path.to_path_buf()),
     })
 }
@@ -412,10 +467,27 @@ fn build_toml_shim_config(
     config.send_queue_capacity = raw
         .send_queue_capacity
         .unwrap_or(DEFAULT_SEND_QUEUE_CAPACITY);
+    config.send_jitter_max =
+        Duration::from_millis(raw.jitter_max_ms.unwrap_or(DEFAULT_JITTER_MAX_MS));
+    config.chaff_pps = validate_chaff_pps(raw.chaff_pps.unwrap_or(DEFAULT_CHAFF_PPS))?;
     config.health_addr = Some(health_addr);
     config.metrics_addr = raw
         .metrics_addr
         .map(|raw| parse_socket_addr(raw, "metrics address"))
         .transpose()?;
     Ok(config)
+}
+
+fn normalize_optional_secret(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn validate_chaff_pps(value: u64) -> Result<u64, ConfigParseOutcome> {
+    if value > MAX_CHAFF_PPS {
+        return Err(ConfigParseOutcome::Error(format!(
+            "invalid chaff packets per second {value}; expected value <= {MAX_CHAFF_PPS}"
+        )));
+    }
+    Ok(value)
 }

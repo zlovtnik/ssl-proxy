@@ -33,6 +33,13 @@ services/zig-coordinator/.settings/
 .env.*
 !.env.example
 !**/.env.example
+/secrets/
+/config/server/privatekey-server
+/config/server/publickey-server
+/config/peer*/publickey-*
+/config/peer*/presharedkey-*
+/config/peer*/privatekey-*
+/config/peer*/*.conf
 *.conf
 !*.conf.example
 !config/templates/*.conf

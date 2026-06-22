@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, fs, io::Read, path::Path};
 
+const DEFAULT_STARTUP_ENTROPY_MIN_BITS: u64 = 256;
+const EXPECTED_IPV4_DEFAULT_TTL: u64 = 64;
+
 /// Status payload for patch-cadence checks consumed by admin endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchCadenceReport {
@@ -95,7 +98,47 @@ pub fn verify_startup_integrity() -> Result<(), String> {
         }
     }
 
+    enforce_startup_entropy()?;
+    warn_on_unexpected_default_ttl();
+
     Ok(())
+}
+
+fn enforce_startup_entropy() -> Result<(), String> {
+    let min_bits = std::env::var("STARTUP_ENTROPY_MIN_BITS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_STARTUP_ENTROPY_MIN_BITS);
+    if min_bits == 0 {
+        return Ok(());
+    }
+
+    let Some(available) = read_proc_u64("/proc/sys/kernel/random/entropy_avail") else {
+        return Ok(());
+    };
+    if available < min_bits {
+        return Err(format!(
+            "kernel entropy below startup threshold: available {available} bits, required {min_bits} bits"
+        ));
+    }
+    Ok(())
+}
+
+fn warn_on_unexpected_default_ttl() {
+    let Some(ttl) = read_proc_u64("/proc/sys/net/ipv4/ip_default_ttl") else {
+        return;
+    };
+    if ttl != EXPECTED_IPV4_DEFAULT_TTL {
+        eprintln!(
+            "startup hardening warning: /proc/sys/net/ipv4/ip_default_ttl is {ttl}, expected {EXPECTED_IPV4_DEFAULT_TTL} for relay TTL normalization"
+        );
+    }
+}
+
+fn read_proc_u64(path: &str) -> Option<u64> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 fn parse_expected_config_hashes(raw: &str) -> Result<HashMap<String, String>, String> {
@@ -253,6 +296,7 @@ mod tests {
             "INTEGRITY_CONFIG_PATHS",
             format!("{},{}", server.display(), peer.display()),
         );
+        std::env::set_var("STARTUP_ENTROPY_MIN_BITS", "0");
         assert!(super::verify_startup_integrity().is_ok());
 
         std::env::set_var(
@@ -264,6 +308,7 @@ mod tests {
 
         std::env::remove_var("ALLOWED_CONFIG_SHA256");
         std::env::remove_var("INTEGRITY_CONFIG_PATHS");
+        std::env::remove_var("STARTUP_ENTROPY_MIN_BITS");
         let _ = fs::remove_dir_all(dir);
     }
 }
