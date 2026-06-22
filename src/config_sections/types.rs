@@ -158,6 +158,11 @@ pub enum ConfigError {
     MissingProxyUsername,
     #[error("WG_OBFUSCATION_ENABLED=true requires non-empty WG_OBFUSCATION_KEY")]
     MissingWireGuardObfuscationKey,
+    #[error("{file_var} is invalid: {message}")]
+    InvalidSecretFile {
+        file_var: &'static str,
+        message: String,
+    },
     #[error("WG_OBFUSCATION_MAGIC_BYTE must be a single byte in decimal or 0xNN form; got {0:?}")]
     InvalidWireGuardObfuscationMagicByte(String),
     #[error("WG_OBFUSCATION_ENCRYPTION_MODE must be xor or aead; got {0:?}")]
