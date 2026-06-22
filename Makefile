@@ -2,7 +2,7 @@
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
-GO_BIN_DIR := $(shell go env GOPATH)/bin
+GO_BIN_DIR = $(shell go env GOPATH)/bin
 
 # Build project binaries: root proxy, Atheros sensor, and Java coordinator.
 build:
