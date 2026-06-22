@@ -15,9 +15,9 @@ fn encode_legacy_xor_in_place(
     if let Some(magic_byte) = settings.magic_byte {
         buffer.copy_within(0..packet_len, 1);
         buffer[0] = magic_byte;
-        apply_xor_mask(&mut buffer[1..encoded_len], &settings.key);
+        apply_xor_mask(&mut buffer[1..encoded_len], settings.key.as_slice());
     } else {
-        apply_xor_mask(&mut buffer[..packet_len], &settings.key);
+        apply_xor_mask(&mut buffer[..packet_len], settings.key.as_slice());
     }
 
     Ok(encoded_len)
@@ -41,7 +41,7 @@ fn decode_legacy_xor_in_place(
         return Err(PacketDecodeError::EmptyPayload);
     }
 
-    apply_xor_mask(payload, &settings.key);
+    apply_xor_mask(payload, settings.key.as_slice());
     let payload_len = payload.len();
     if settings.magic_byte.is_some() {
         buffer.copy_within(1..packet_len, 0);
@@ -68,7 +68,7 @@ fn encode_framed_in_place(
     let epoch = rekey_epoch(settings, state, counter, now_millis);
     let tag_len = tag_len(settings.encryption_mode);
     let body_base_len = BODY_LEN_FIELD_LEN + packet_len;
-    let body_len = padded_body_len(settings.padding, body_base_len, tag_len)?;
+    let body_len = padded_body_len(&settings.padding, body_base_len, tag_len)?;
     let encoded_len = FRAME_HEADER_LEN + body_len + tag_len;
     if encoded_len > buffer.len() || encoded_len > MAX_UDP_PACKET_SIZE {
         return Err(PacketEncodeError::EncodedPacketTooLarge {
@@ -84,17 +84,19 @@ fn encode_framed_in_place(
         .copy_from_slice(&(packet_len as u16).to_be_bytes());
     buffer[payload_start + packet_len..body_start + body_len].fill(0);
 
-    write_frame_header(buffer, settings, state.session_salt, counter, epoch);
+    write_frame_header(buffer, settings, &state.session_salt, counter, epoch);
 
     match settings.encryption_mode {
         EncryptionMode::Xor => {
             let mask = framed_xor_mask(settings, &state.session_salt, direction, epoch);
-            apply_xor_mask(&mut buffer[body_start..body_start + body_len], &mask);
+            apply_xor_mask(&mut buffer[body_start..body_start + body_len], &*mask);
         }
         EncryptionMode::Aead => {
-            let key = derive_key(settings, &state.session_salt, direction, epoch, b"aead");
-            let cipher = XChaCha20Poly1305::new_from_slice(&key)
-                .map_err(|_| PacketEncodeError::AeadEncrypt)?;
+            let cipher = {
+                let key = derive_key(settings, &state.session_salt, direction, epoch, b"aead");
+                XChaCha20Poly1305::new_from_slice(&*key)
+                    .map_err(|_| PacketEncodeError::AeadEncrypt)?
+            };
             let nonce = frame_nonce(&state.session_salt, counter);
             let (header, body_and_tag) = buffer[..encoded_len].split_at_mut(FRAME_HEADER_LEN);
             let (body, tag_out) = body_and_tag.split_at_mut(body_len);
@@ -138,8 +140,8 @@ fn decode_framed_in_place(
     }
 
     let salt = read_salt(buffer);
-    let counter = read_u64_at(buffer, 19);
     let epoch = read_u32_at(buffer, 27);
+    let counter = read_frame_counter(settings, buffer, &salt, epoch);
     validate_marker(buffer, settings, &salt, counter, flags)?;
 
     let tag_len = tag_len(frame_mode);
@@ -155,12 +157,14 @@ fn decode_framed_in_place(
     match frame_mode {
         EncryptionMode::Xor => {
             let mask = framed_xor_mask(settings, &salt, direction, epoch);
-            apply_xor_mask(&mut buffer[body_start..body_end], &mask);
+            apply_xor_mask(&mut buffer[body_start..body_end], &*mask);
         }
         EncryptionMode::Aead => {
-            let key = derive_key(settings, &salt, direction, epoch, b"aead");
-            let cipher = XChaCha20Poly1305::new_from_slice(&key)
-                .map_err(|_| PacketDecodeError::AuthFailed)?;
+            let cipher = {
+                let key = derive_key(settings, &salt, direction, epoch, b"aead");
+                XChaCha20Poly1305::new_from_slice(&*key)
+                    .map_err(|_| PacketDecodeError::AuthFailed)?
+            };
             let nonce = frame_nonce(&salt, counter);
             let (header, body_and_tag) = buffer[..packet_len].split_at_mut(FRAME_HEADER_LEN);
             let (body, tag_bytes) = body_and_tag.split_at_mut(body_end - body_start);
@@ -183,7 +187,7 @@ fn decode_framed_in_place(
 
     let original_len = u16::from_be_bytes([buffer[body_start], buffer[body_start + 1]]) as usize;
     if original_len == 0 {
-        return Err(PacketDecodeError::EmptyPayload);
+        return Err(PacketDecodeError::ChaffFrame);
     }
 
     let payload_start = body_start + BODY_LEN_FIELD_LEN;
@@ -236,7 +240,8 @@ pub fn validate_framed_header(
     }
 
     let salt = read_salt(buffer);
-    let counter = read_u64_at(buffer, 19);
+    let epoch = read_u32_at(buffer, 27);
+    let counter = read_frame_counter(settings, buffer, &salt, epoch);
     validate_marker(buffer, settings, &salt, counter, flags)?;
 
     let tag_len = tag_len(frame_mode);
@@ -253,21 +258,23 @@ pub fn validate_framed_header(
 fn write_frame_header(
     buffer: &mut [u8],
     settings: &WgPacketObfuscation,
-    salt: [u8; FRAME_SALT_LEN],
+    salt: &[u8; FRAME_SALT_LEN],
     counter: u64,
     epoch: u32,
 ) {
     buffer[0] = FRAME_VERSION;
     buffer[1] = frame_flags(settings);
-    let marker_position = marker_position(settings, &salt, counter, buffer[1]);
-    buffer[2] = (marker_position as u8) ^ marker_mask(settings, &salt, counter);
-    buffer[3..19].copy_from_slice(&salt);
-    buffer[19..27].copy_from_slice(&counter.to_be_bytes());
+    let marker_position = marker_position(settings, salt, counter, buffer[1]);
+    buffer[2] = (marker_position as u8) ^ marker_mask(settings, salt, counter);
+    buffer[3..19].copy_from_slice(salt);
+    buffer[19..27].copy_from_slice(
+        &mask_frame_counter(settings, salt, counter, epoch).to_be_bytes(),
+    );
     buffer[27..31].copy_from_slice(&epoch.to_be_bytes());
     fill_marker_zone(
         &mut buffer[31..39],
         settings,
-        &salt,
+        salt,
         counter,
         marker_position,
     );
@@ -278,7 +285,7 @@ fn frame_flags(settings: &WgPacketObfuscation) -> u8 {
     if matches!(settings.encryption_mode, EncryptionMode::Aead) {
         flags |= FRAME_FLAG_AEAD;
     }
-    if !matches!(settings.padding, PacketPadding::None) {
+    if !matches!(&settings.padding, PacketPadding::None) {
         flags |= FRAME_FLAG_PADDING;
     }
     if settings.xor_rekey.is_some() {
@@ -355,22 +362,48 @@ fn marker_mask(settings: &WgPacketObfuscation, salt: &[u8; FRAME_SALT_LEN], coun
 }
 
 fn padded_body_len(
-    padding: PacketPadding,
+    padding: &PacketPadding,
     body_base_len: usize,
     tag_len: usize,
 ) -> Result<usize, PacketEncodeError> {
     match padding {
         PacketPadding::None => Ok(body_base_len),
         PacketPadding::PowerOfTwo => Ok(body_base_len.next_power_of_two()),
-        PacketPadding::FixedMtu(mtu) => {
+        PacketPadding::FixedMtu(mtu) => fixed_mtu_body_len(*mtu, body_base_len, tag_len),
+        PacketPadding::RandomBucket(mtus) => {
             let required = FRAME_HEADER_LEN + body_base_len + tag_len;
-            if mtu < required {
+            let valid = mtus
+                .iter()
+                .copied()
+                .filter(|mtu| *mtu >= required)
+                .collect::<Vec<_>>();
+            if valid.is_empty() {
+                let mtu = mtus.iter().copied().max().unwrap_or(0);
                 Err(PacketEncodeError::FixedMtuTooSmall { mtu, required })
             } else {
-                Ok(mtu - FRAME_HEADER_LEN - tag_len)
+                let index = random_index(valid.len());
+                fixed_mtu_body_len(valid[index], body_base_len, tag_len)
             }
         }
     }
+}
+
+fn fixed_mtu_body_len(
+    mtu: usize,
+    body_base_len: usize,
+    tag_len: usize,
+) -> Result<usize, PacketEncodeError> {
+    let required = FRAME_HEADER_LEN + body_base_len + tag_len;
+    if mtu < required {
+        Err(PacketEncodeError::FixedMtuTooSmall { mtu, required })
+    } else {
+        Ok(mtu - FRAME_HEADER_LEN - tag_len)
+    }
+}
+
+fn random_index(len: usize) -> usize {
+    debug_assert!(len > 0);
+    (OsRng.next_u64() as usize) % len
 }
 
 fn tag_len(mode: EncryptionMode) -> usize {
@@ -415,8 +448,8 @@ fn framed_xor_mask(
     salt: &[u8; FRAME_SALT_LEN],
     direction: PacketDirection,
     epoch: u32,
-) -> Vec<u8> {
-    derive_key(settings, salt, direction, epoch, b"xor").to_vec()
+) -> Zeroizing<[u8; 32]> {
+    derive_key(settings, salt, direction, epoch, b"xor")
 }
 
 pub(crate) fn cleanup_interval(idle_timeout: Duration) -> Duration {
@@ -434,8 +467,8 @@ fn derive_key(
     direction: PacketDirection,
     epoch: u32,
     purpose: &[u8],
-) -> [u8; 32] {
-    let hk = Hkdf::<Sha256>::new(Some(salt), &settings.key);
+) -> Zeroizing<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(Some(salt), settings.key.as_slice());
     let mut key = [0u8; 32];
     let mut info = Vec::with_capacity(64);
     info.extend_from_slice(b"ssl-proxy/wg-obfs/v1/");
@@ -446,7 +479,42 @@ fn derive_key(
     info.extend_from_slice(&epoch.to_be_bytes());
     hk.expand(&info, &mut key)
         .expect("32-byte HKDF output is valid for SHA-256");
-    key
+    Zeroizing::new(key)
+}
+
+fn mask_frame_counter(
+    settings: &WgPacketObfuscation,
+    salt: &[u8; FRAME_SALT_LEN],
+    counter: u64,
+    epoch: u32,
+) -> u64 {
+    counter ^ frame_counter_mask(settings, salt, epoch)
+}
+
+fn read_frame_counter(
+    settings: &WgPacketObfuscation,
+    buffer: &[u8],
+    salt: &[u8; FRAME_SALT_LEN],
+    epoch: u32,
+) -> u64 {
+    read_u64_at(buffer, 19) ^ frame_counter_mask(settings, salt, epoch)
+}
+
+fn frame_counter_mask(
+    settings: &WgPacketObfuscation,
+    salt: &[u8; FRAME_SALT_LEN],
+    epoch: u32,
+) -> u64 {
+    let key = derive_key(
+        settings,
+        salt,
+        PacketDirection::Bidirectional,
+        epoch,
+        b"counter",
+    );
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&key[..8]);
+    u64::from_be_bytes(bytes)
 }
 
 fn frame_nonce(salt: &[u8; FRAME_SALT_LEN], counter: u64) -> [u8; 24] {

@@ -116,8 +116,25 @@ pub(super) fn read_wireguard_obfuscation_padding(var: &str) -> Result<PacketPadd
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .map(PacketPadding::FixedMtu)
+            .or_else(|| {
+                raw.strip_prefix("random-bucket:")
+                    .or_else(|| raw.strip_prefix("random_bucket:"))
+                    .or_else(|| raw.strip_prefix("bucket:"))
+                    .and_then(parse_padding_bucket)
+                    .map(PacketPadding::RandomBucket)
+            })
             .ok_or(ConfigError::InvalidWireGuardObfuscationPadding(raw)),
     }
+}
+
+fn parse_padding_bucket(raw: &str) -> Option<Vec<usize>> {
+    let values = raw
+        .split(',')
+        .map(str::trim)
+        .map(str::parse::<usize>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    (!values.is_empty() && values.iter().all(|value| *value > 0)).then_some(values)
 }
 
 pub(super) fn read_wireguard_obfuscation_magic_position(

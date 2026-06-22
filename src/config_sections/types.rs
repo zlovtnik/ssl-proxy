@@ -162,7 +162,7 @@ pub enum ConfigError {
     InvalidWireGuardObfuscationMagicByte(String),
     #[error("WG_OBFUSCATION_ENCRYPTION_MODE must be xor or aead; got {0:?}")]
     InvalidWireGuardObfuscationEncryptionMode(String),
-    #[error("WG_OBFUSCATION_PADDING must be none, power-of-two, or fixed-mtu:<bytes>; got {0:?}")]
+    #[error("WG_OBFUSCATION_PADDING must be none, power-of-two, fixed-mtu:<bytes>, or random-bucket:<bytes,...>; got {0:?}")]
     InvalidWireGuardObfuscationPadding(String),
     #[error("WG_OBFUSCATION_MAGIC_POSITION must be fixed or randomized; got {0:?}")]
     InvalidWireGuardObfuscationMagicPosition(String),

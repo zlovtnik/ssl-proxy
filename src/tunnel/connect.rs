@@ -14,6 +14,7 @@ use axum::{
     http::{Request, Response, StatusCode},
 };
 use hyper_util::rt::TokioIo;
+use rand_core::{OsRng, RngCore};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info};
 
@@ -173,6 +174,7 @@ pub async fn handle(
                 });
             }
 
+            sleep_blocked_connect_delay().await;
             return Ok(Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .header("Content-Type", "text/plain; charset=utf-8")
@@ -193,6 +195,7 @@ pub async fn handle(
             }
         });
 
+        sleep_blocked_connect_delay().await;
         return Ok(Response::builder()
             .status(StatusCode::FORBIDDEN)
             .header("Content-Type", "text/plain; charset=utf-8")
@@ -475,6 +478,20 @@ pub(crate) async fn run_tunnel(
             let _ = client.shutdown().await;
         }
     }
+}
+
+async fn sleep_blocked_connect_delay() {
+    let base_ms = std::env::var("TPROXY_BLOCK_MIN_DELAY_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(50);
+    if base_ms == 0 {
+        return;
+    }
+
+    let jitter_percent = 75u64 + u64::from(OsRng.next_u32() % 51);
+    let delay_ms = base_ms.saturating_mul(jitter_percent).saturating_div(100);
+    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
 }
 
 /// Configure TCP keepalive on the given `TcpStream` with a 10-second idle time and a 5-second probe interval.

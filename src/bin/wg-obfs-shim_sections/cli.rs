@@ -9,6 +9,7 @@ use std::{
 
 use serde::Deserialize;
 use ssl_proxy::{
+    constant_time_eq,
     wg_packet_obfuscation::{
         parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding, WgPacketObfuscation,
         XorRekeyPolicy,
@@ -16,7 +17,8 @@ use ssl_proxy::{
     wg_shim::{
         self, RateLimitConfig, ShimHealthHandle, WgObfsShimConfig, WgObfsShimRuntime,
         DEFAULT_BUFFER_POOL_CAPACITY, DEFAULT_DRAIN_TIMEOUT_SECS, DEFAULT_HEALTH_ADDR,
-        DEFAULT_IDLE_TIMEOUT_SECS, DEFAULT_LISTEN_ADDR, DEFAULT_SEND_QUEUE_CAPACITY,
+        DEFAULT_IDLE_TIMEOUT_SECS, DEFAULT_JITTER_MAX_MS, DEFAULT_CHAFF_PPS, DEFAULT_LISTEN_ADDR,
+        DEFAULT_SEND_QUEUE_CAPACITY,
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -35,8 +37,10 @@ Usage:
                [--drain-timeout-secs <seconds>] [--rate-limit-pps <count>]
                [--rate-limit-burst <count>] [--buffer-pool-capacity <count>]
                [--send-queue-capacity <count>] [--health-addr <host:port>]
+               [--health-token <secret>] [--jitter-max-ms <milliseconds>]
+               [--chaff-pps <count>]
                [--metrics-addr <host:port> (requires --features metrics)] [--encryption-mode <xor|aead>]
-               [--padding <none|power-of-two|fixed-mtu:N>]
+               [--padding <none|power-of-two|fixed-mtu:N|random-bucket:N,N>]
                [--magic-position <fixed|randomized>]
 
 Environment fallbacks:
@@ -44,6 +48,7 @@ Environment fallbacks:
   WG_OBFS_SERVER_ADDRS
   WG_OBFS_SHIM_LISTEN_ADDR
   WG_OBFS_HEALTH_ADDR
+  WG_OBFS_HEALTH_TOKEN
   WG_OBFUSCATION_KEY
   WG_OBFUSCATION_KEY_FILE
   WG_OBFUSCATION_MAGIC_BYTE
@@ -55,6 +60,8 @@ Environment fallbacks:
   WG_OBFS_SHIM_RATE_LIMIT_BURST
   WG_OBFS_SHIM_BUFFER_POOL_CAPACITY
   WG_OBFS_SHIM_SEND_QUEUE_CAPACITY
+  WG_OBFS_SHIM_JITTER_MAX_MS
+  WG_OBFS_SHIM_CHAFF_PPS
   WG_OBFS_SHIM_METRICS_ADDR (requires --features metrics)
   WG_OBFUSCATION_ENCRYPTION_MODE
   WG_OBFUSCATION_PADDING
@@ -73,6 +80,7 @@ struct CliOptions {
     listen_addr: Option<String>,
     server_addrs: Vec<String>,
     health_addr: Option<String>,
+    health_token: Option<String>,
     key: Option<String>,
     key_file: Option<String>,
     magic_byte: Option<String>,
@@ -85,6 +93,8 @@ struct CliOptions {
     buffer_pool_capacity: Option<String>,
     send_queue_capacity: Option<String>,
     metrics_addr: Option<String>,
+    jitter_max_ms: Option<String>,
+    chaff_pps: Option<String>,
     encryption_mode: Option<String>,
     padding: Option<String>,
     magic_position: Option<String>,
@@ -97,12 +107,14 @@ struct CliOptions {
 struct ProcessConfig {
     shims: Vec<WgObfsShimConfig>,
     health_addr: SocketAddr,
+    health_token: Option<String>,
     config_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
 struct TomlProcessConfig {
     health_addr: Option<String>,
+    health_token: Option<String>,
     shim: Vec<TomlShimConfig>,
 }
 
@@ -123,6 +135,8 @@ struct TomlShimConfig {
     buffer_pool_capacity: Option<usize>,
     send_queue_capacity: Option<usize>,
     metrics_addr: Option<String>,
+    jitter_max_ms: Option<u64>,
+    chaff_pps: Option<u64>,
     encryption_mode: Option<String>,
     padding: Option<String>,
     magic_position: Option<String>,
@@ -167,6 +181,7 @@ async fn main() -> ExitCode {
         .collect::<Vec<_>>();
     let health_task = tokio::spawn(run_health_server(
         process_config.health_addr,
+        process_config.health_token.clone(),
         health_handles,
         shutdown.clone(),
     ));
@@ -258,6 +273,9 @@ fn parse_config(
                 .server_addrs
                 .push(next_value(&mut args, "--server")?),
             "--health-addr" => options.health_addr = Some(next_value(&mut args, "--health-addr")?),
+            "--health-token" => {
+                options.health_token = Some(next_value(&mut args, "--health-token")?)
+            }
             "--key" => options.key = Some(next_value(&mut args, "--key")?),
             "--key-file" => options.key_file = Some(next_value(&mut args, "--key-file")?),
             "--magic-byte" => options.magic_byte = Some(next_value(&mut args, "--magic-byte")?),
@@ -287,6 +305,10 @@ fn parse_config(
             "--send-queue-capacity" => {
                 options.send_queue_capacity = Some(next_value(&mut args, "--send-queue-capacity")?)
             }
+            "--jitter-max-ms" => {
+                options.jitter_max_ms = Some(next_value(&mut args, "--jitter-max-ms")?)
+            }
+            "--chaff-pps" => options.chaff_pps = Some(next_value(&mut args, "--chaff-pps")?),
             "--metrics-addr" => {
                 options.metrics_addr = Some(next_value(&mut args, "--metrics-addr")?)
             }
@@ -319,6 +341,9 @@ fn parse_config(
         config.config_path = Some(PathBuf::from(path));
         if let Some(raw) = optional_value(&options.health_addr, "WG_OBFS_HEALTH_ADDR") {
             config.health_addr = parse_socket_addr(raw, "health address")?;
+        }
+        if let Some(token) = optional_value(&options.health_token, "WG_OBFS_HEALTH_TOKEN") {
+            config.health_token = Some(token);
         }
         return Ok(config);
     }

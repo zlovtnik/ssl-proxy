@@ -281,6 +281,22 @@
     }
 
     #[test]
+    fn wireguard_random_bucket_padding_is_loaded() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        std::env::set_var("WG_OBFUSCATION_PADDING", "random-bucket:1200,1280,1400");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(
+            result.wireguard.obfuscation_padding,
+            PacketPadding::RandomBucket(vec![1200, 1280, 1400])
+        );
+    }
+
+    #[test]
     fn wireguard_xor_rekey_values_must_be_positive_integers() {
         let _guard = env_lock();
         clear_env();

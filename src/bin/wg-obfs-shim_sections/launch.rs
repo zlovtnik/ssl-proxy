@@ -15,6 +15,20 @@ fn parse_optional_positive_u64(
     .transpose()
 }
 
+fn parse_optional_nonnegative_u64(
+    raw: Option<String>,
+    label: &str,
+) -> Result<Option<u64>, ConfigParseOutcome> {
+    raw.map(|raw| {
+        raw.parse::<u64>().map_err(|_| {
+            ConfigParseOutcome::Error(format!(
+                "invalid {label} {raw:?}; expected non-negative integer"
+            ))
+        })
+    })
+    .transpose()
+}
+
 fn parse_optional_usize(
     raw: Option<String>,
     label: &str,
@@ -81,12 +95,30 @@ fn parse_padding(raw: Option<String>) -> Result<PacketPadding, ConfigParseOutcom
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .map(PacketPadding::FixedMtu)
+            .or_else(|| {
+                normalized
+                    .strip_prefix("random-bucket:")
+                    .or_else(|| normalized.strip_prefix("random_bucket:"))
+                    .or_else(|| normalized.strip_prefix("bucket:"))
+                    .and_then(parse_padding_bucket)
+                    .map(PacketPadding::RandomBucket)
+            })
             .ok_or_else(|| {
                 ConfigParseOutcome::Error(format!(
-                    "invalid padding {raw:?}; expected none, power-of-two, or fixed-mtu:N"
+                    "invalid padding {raw:?}; expected none, power-of-two, fixed-mtu:N, or random-bucket:N,N"
                 ))
             }),
     }
+}
+
+fn parse_padding_bucket(raw: &str) -> Option<Vec<usize>> {
+    let values = raw
+        .split(',')
+        .map(str::trim)
+        .map(str::parse::<usize>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    (!values.is_empty() && values.iter().all(|value| *value > 0)).then_some(values)
 }
 
 fn parse_magic_position(raw: Option<String>) -> Result<MagicPositionMode, ConfigParseOutcome> {
@@ -165,12 +197,53 @@ fn load_key(options: &CliOptions) -> Result<Option<String>, ConfigParseOutcome> 
 }
 
 fn read_key_file(path: &str) -> Result<Option<String>, ConfigParseOutcome> {
+    let path = Path::new(path);
+    validate_key_file_permissions(path)?;
     std::fs::read_to_string(path)
         .map(|contents| contents.trim().to_string())
         .map(|contents| (!contents.is_empty()).then_some(contents))
         .map_err(|err| {
             ConfigParseOutcome::Error(format!(
-                "failed to read obfuscation key file {path:?}: {err}"
+                "failed to read obfuscation key file {:?}: {err}",
+                path.display()
             ))
         })
+}
+
+#[cfg(unix)]
+fn validate_key_file_permissions(path: &Path) -> Result<(), ConfigParseOutcome> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path).map_err(|err| {
+        ConfigParseOutcome::Error(format!(
+            "failed to inspect obfuscation key file {:?}: {err}",
+            path.display()
+        ))
+    })?;
+    let mode = metadata.mode() & 0o777;
+    if mode != 0o400 {
+        return Err(ConfigParseOutcome::Error(format!(
+            "obfuscation key file {:?} must have mode 0400; got {:04o}",
+            path.display(),
+            mode
+        )));
+    }
+
+    // SAFETY: `geteuid` takes no pointers and has no preconditions; it only
+    // returns the effective uid for the current process.
+    let uid = unsafe { libc::geteuid() };
+    if metadata.uid() != uid {
+        return Err(ConfigParseOutcome::Error(format!(
+            "obfuscation key file {:?} must be owned by uid {}; got uid {}",
+            path.display(),
+            uid,
+            metadata.uid()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_key_file_permissions(_path: &Path) -> Result<(), ConfigParseOutcome> {
+    Ok(())
 }

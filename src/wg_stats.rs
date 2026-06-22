@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use chrono::{TimeZone, Utc};
+use rand_core::{OsRng, RngCore};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -161,7 +162,12 @@ pub async fn reverse_ptr_lookup(state: &SharedState, peer_ip: &str) -> Option<St
         }
     }
 
+    if !ptr_lookups_enabled() {
+        return None;
+    }
+
     let parsed_ip = peer_ip.parse().ok()?;
+    sleep_ptr_lookup_jitter().await;
     let hostname = state
         .resolver
         .reverse_lookup(parsed_ip)
@@ -180,6 +186,32 @@ pub async fn reverse_ptr_lookup(state: &SharedState, peer_ip: &str) -> Option<St
     );
 
     hostname
+}
+
+fn ptr_lookups_enabled() -> bool {
+    std::env::var("WG_STATS_PTR_LOOKUPS_ENABLED")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+async fn sleep_ptr_lookup_jitter() {
+    let min_ms = std::env::var("WG_STATS_PTR_LOOKUP_MIN_JITTER_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    if min_ms == 0 {
+        return;
+    }
+    let extra_ms = OsRng.next_u64() % min_ms.saturating_add(1);
+    tokio::time::sleep(tokio::time::Duration::from_millis(
+        min_ms.saturating_add(extra_ms),
+    ))
+    .await;
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 /// Maximum supported UDP datagram size.
 pub const MAX_UDP_PACKET_SIZE: usize = 65_535;
@@ -44,12 +45,13 @@ pub enum EncryptionMode {
 }
 
 /// Optional framed packet padding policy.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PacketPadding {
     #[default]
     None,
     PowerOfTwo,
     FixedMtu(usize),
+    RandomBucket(Vec<usize>),
 }
 
 /// Placement policy for the obfuscation marker in framed packets.
@@ -79,15 +81,29 @@ impl XorRekeyPolicy {
 }
 
 /// Shared packet obfuscation settings for WireGuard UDP transport.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WgPacketObfuscation {
-    pub key: Vec<u8>,
+    pub key: Zeroizing<Vec<u8>>,
     pub magic_byte: Option<u8>,
     pub encryption_mode: EncryptionMode,
     pub padding: PacketPadding,
     pub magic_position: MagicPositionMode,
     pub xor_rekey: Option<XorRekeyPolicy>,
     pub replay_protection: bool,
+}
+
+impl std::fmt::Debug for WgPacketObfuscation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WgPacketObfuscation")
+            .field("key", &"[REDACTED]")
+            .field("magic_byte", &self.magic_byte)
+            .field("encryption_mode", &self.encryption_mode)
+            .field("padding", &self.padding)
+            .field("magic_position", &self.magic_position)
+            .field("xor_rekey", &self.xor_rekey)
+            .field("replay_protection", &self.replay_protection)
+            .finish()
+    }
 }
 
 impl WgPacketObfuscation {
@@ -100,7 +116,7 @@ impl WgPacketObfuscation {
         let key = key.into();
         assert!(!key.is_empty(), "obfuscation key must not be empty");
         Self {
-            key,
+            key: Zeroizing::new(key),
             magic_byte,
             encryption_mode: EncryptionMode::Xor,
             padding: PacketPadding::None,
@@ -140,7 +156,7 @@ impl WgPacketObfuscation {
 
     pub fn uses_framed_encoding(&self) -> bool {
         !matches!(self.encryption_mode, EncryptionMode::Xor)
-            || !matches!(self.padding, PacketPadding::None)
+            || !matches!(&self.padding, PacketPadding::None)
             || !matches!(self.magic_position, MagicPositionMode::Fixed)
             || self.xor_rekey.is_some()
             || self.replay_protection
@@ -172,7 +188,7 @@ impl PacketDirection {
 /// without holding a matching `PacketEncodeState`.
 #[derive(Debug)]
 pub struct PacketEncodeState {
-    session_salt: [u8; FRAME_SALT_LEN],
+    session_salt: Zeroizing<[u8; FRAME_SALT_LEN]>,
     next_counter: AtomicU64,
     started_at_millis: u64,
 }
@@ -182,7 +198,7 @@ impl PacketEncodeState {
         let mut session_salt = [0u8; FRAME_SALT_LEN];
         OsRng.fill_bytes(&mut session_salt);
         Self {
-            session_salt,
+            session_salt: Zeroizing::new(session_salt),
             next_counter: AtomicU64::new(0),
             started_at_millis,
         }
@@ -190,14 +206,14 @@ impl PacketEncodeState {
 
     pub fn with_salt(session_salt: [u8; FRAME_SALT_LEN], started_at_millis: u64) -> Self {
         Self {
-            session_salt,
+            session_salt: Zeroizing::new(session_salt),
             next_counter: AtomicU64::new(0),
             started_at_millis,
         }
     }
 
     pub fn session_salt(&self) -> [u8; FRAME_SALT_LEN] {
-        self.session_salt
+        *self.session_salt
     }
 
     fn next_packet_counter(&self) -> u64 {
@@ -274,6 +290,8 @@ pub enum PacketDecodeError {
     MagicByteMismatch,
     #[error("obfuscation payload is empty")]
     EmptyPayload,
+    #[error("obfuscation chaff frame")]
+    ChaffFrame,
     #[error("encoded packet is too short: got {actual}, need at least {minimum}")]
     PacketTooShort { actual: usize, minimum: usize },
     #[error("encoded packet is too large: got {actual}, maximum {maximum}")]
@@ -295,6 +313,7 @@ impl PacketDecodeError {
         match self {
             Self::MagicByteMismatch => "magic_byte_mismatch",
             Self::EmptyPayload => "empty_payload",
+            Self::ChaffFrame => "chaff_frame",
             Self::PacketTooShort { .. } => "packet_too_short",
             Self::PacketTooLarge { .. } => "packet_too_large",
             Self::AuthFailed => "auth_failed",

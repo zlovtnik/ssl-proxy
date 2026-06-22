@@ -18,6 +18,7 @@ fn clear_env() {
         "WG_OBFS_SERVER_ADDRS",
         "WG_OBFS_SHIM_LISTEN_ADDR",
         "WG_OBFS_HEALTH_ADDR",
+        "WG_OBFS_HEALTH_TOKEN",
         "WG_OBFUSCATION_KEY",
         "WG_OBFUSCATION_KEY_FILE",
         "WG_OBFUSCATION_MAGIC_BYTE",
@@ -29,6 +30,8 @@ fn clear_env() {
         "WG_OBFS_SHIM_RATE_LIMIT_BURST",
         "WG_OBFS_SHIM_BUFFER_POOL_CAPACITY",
         "WG_OBFS_SHIM_SEND_QUEUE_CAPACITY",
+        "WG_OBFS_SHIM_JITTER_MAX_MS",
+        "WG_OBFS_SHIM_CHAFF_PPS",
         "WG_OBFS_SHIM_METRICS_ADDR",
         "WG_OBFUSCATION_ENCRYPTION_MODE",
         "WG_OBFUSCATION_PADDING",
@@ -54,6 +57,8 @@ fn parse_config_supports_cli_overrides() {
         "127.0.0.1:51822".to_string(),
         "--health-addr".to_string(),
         "127.0.0.1:51823".to_string(),
+        "--health-token".to_string(),
+        "health-secret".to_string(),
         "--key".to_string(),
         "super-secret".to_string(),
         "--magic-byte".to_string(),
@@ -74,6 +79,10 @@ fn parse_config_supports_cli_overrides() {
         "16".to_string(),
         "--send-queue-capacity".to_string(),
         "32".to_string(),
+        "--jitter-max-ms".to_string(),
+        "50".to_string(),
+        "--chaff-pps".to_string(),
+        "2".to_string(),
         "--metrics-addr".to_string(),
         "127.0.0.1:9900".to_string(),
         "--encryption-mode".to_string(),
@@ -92,6 +101,10 @@ fn parse_config_supports_cli_overrides() {
         process_config.health_addr,
         "127.0.0.1:51823".parse::<SocketAddr>().unwrap()
     );
+    assert_eq!(
+        process_config.health_token.as_deref(),
+        Some("health-secret")
+    );
 
     assert_eq!(
         config.listen_addr,
@@ -105,7 +118,7 @@ fn parse_config_supports_cli_overrides() {
         ]
     );
     assert_eq!(config.obfuscation.magic_byte, Some(0xAA));
-    assert_eq!(config.obfuscation.key, b"super-secret".to_vec());
+    assert_eq!(config.obfuscation.key.as_slice(), b"super-secret");
     assert_eq!(config.obfuscation.encryption_mode, EncryptionMode::Aead);
     assert_eq!(config.obfuscation.padding, PacketPadding::PowerOfTwo);
     assert_eq!(
@@ -130,6 +143,8 @@ fn parse_config_supports_cli_overrides() {
     );
     assert_eq!(config.buffer_pool_capacity, 16);
     assert_eq!(config.send_queue_capacity, 32);
+    assert_eq!(config.send_jitter_max, Duration::from_millis(50));
+    assert_eq!(config.chaff_pps, 2);
     assert_eq!(
         config.metrics_addr,
         Some("127.0.0.1:9900".parse::<SocketAddr>().unwrap())
@@ -182,6 +197,7 @@ fn parse_config_supports_toml_multi_shim_file() {
         file,
         r#"
 health_addr = "127.0.0.1:51824"
+health_token = "health-secret"
 
 [[shim]]
 listen_addr = "127.0.0.1:51821"
@@ -190,6 +206,8 @@ key = "first-key"
 magic_byte = "0xAA"
 idle_timeout_secs = 45
 send_queue_capacity = 17
+jitter_max_ms = 25
+chaff_pps = 1
 
 [[shim]]
 listen_addr = "127.0.0.1:51822"
@@ -206,6 +224,10 @@ key = "second-key"
         process_config.health_addr,
         "127.0.0.1:51824".parse::<SocketAddr>().unwrap()
     );
+    assert_eq!(
+        process_config.health_token.as_deref(),
+        Some("health-secret")
+    );
     assert_eq!(process_config.shims.len(), 2);
     assert_eq!(
         process_config.shims[0].server_addrs,
@@ -215,6 +237,11 @@ key = "second-key"
         ]
     );
     assert_eq!(process_config.shims[0].send_queue_capacity, 17);
+    assert_eq!(
+        process_config.shims[0].send_jitter_max,
+        Duration::from_millis(25)
+    );
+    assert_eq!(process_config.shims[0].chaff_pps, 1);
     assert_eq!(
         process_config.shims[1].server_addrs,
         vec!["127.0.0.1:445".parse::<SocketAddr>().unwrap()]

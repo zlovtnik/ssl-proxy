@@ -384,8 +384,81 @@ fn framed_xor_without_rekey_uses_salt_derived_mask() {
 
     let mask = framed_xor_mask(&settings, &salt, PacketDirection::Bidirectional, 0);
 
-    assert_ne!(mask, settings.key);
+    assert_ne!(&mask[..], settings.key.as_slice());
     assert_eq!(mask.len(), 32);
+}
+
+#[test]
+fn framed_header_masks_counter_field() {
+    let settings = test_settings(Some(0xAA)).with_replay_protection(true);
+    let state = fixed_state();
+    let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+    encoded[..7].copy_from_slice(b"counter");
+
+    let len = encode_packet_in_place(
+        &mut encoded,
+        7,
+        &settings,
+        &state,
+        PacketDirection::Bidirectional,
+        0,
+    )
+    .unwrap();
+    let first_counter = u64::from_be_bytes(encoded[19..27].try_into().unwrap());
+
+    assert_ne!(first_counter, 0);
+    assert_eq!(
+        decode_packet(&encoded[..len], &settings).unwrap(),
+        b"counter"
+    );
+}
+
+#[test]
+fn random_bucket_padding_uses_configured_mtu() {
+    let settings = test_settings(Some(0xAA))
+        .with_padding(PacketPadding::RandomBucket(vec![64, 96]))
+        .with_replay_protection(true);
+    let state = fixed_state();
+    let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+    encoded[..6].copy_from_slice(b"bucket");
+
+    let len = encode_packet_in_place(
+        &mut encoded,
+        6,
+        &settings,
+        &state,
+        PacketDirection::Bidirectional,
+        0,
+    )
+    .unwrap();
+
+    assert!([64, 96].contains(&len));
+    assert_eq!(
+        decode_packet(&encoded[..len], &settings).unwrap(),
+        b"bucket"
+    );
+}
+
+#[test]
+fn framed_zero_payload_decodes_as_chaff() {
+    let settings = test_settings(Some(0xAA)).with_replay_protection(true);
+    let state = fixed_state();
+    let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+
+    let len = encode_packet_in_place(
+        &mut encoded,
+        0,
+        &settings,
+        &state,
+        PacketDirection::Bidirectional,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        decode_packet(&encoded[..len], &settings),
+        Err(PacketDecodeError::ChaffFrame)
+    );
 }
 
 #[test]

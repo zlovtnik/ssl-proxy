@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -9,6 +9,7 @@ use std::{
 };
 
 use dashmap::DashMap;
+use rand_core::{OsRng, RngCore};
 use tokio::{net::UdpSocket, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -23,6 +24,8 @@ use crate::{
 };
 
 const DROP_LOG_INTERVAL: Duration = Duration::from_secs(30);
+const PROBE_BLOCK_WINDOW: Duration = Duration::from_secs(60);
+const PROBE_BLOCK_DURATION: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RelayMetricsSnapshot {
@@ -32,6 +35,7 @@ pub struct RelayMetricsSnapshot {
     pub decode_errors: u64,
     pub encode_errors: u64,
     pub replay_detected: u64,
+    pub probe_blocked_packets: u64,
     pub sessions_evicted_idle: u64,
     pub sessions_evicted_send_failure: u64,
     pub sessions_closed_shutdown: u64,
@@ -45,6 +49,7 @@ pub struct RelayMetrics {
     decode_errors: AtomicU64,
     encode_errors: AtomicU64,
     replay_detected: AtomicU64,
+    probe_blocked_packets: AtomicU64,
     sessions_evicted_idle: AtomicU64,
     sessions_evicted_send_failure: AtomicU64,
     sessions_closed_shutdown: AtomicU64,
@@ -59,6 +64,7 @@ impl RelayMetrics {
             decode_errors: self.decode_errors.load(Ordering::Relaxed),
             encode_errors: self.encode_errors.load(Ordering::Relaxed),
             replay_detected: self.replay_detected.load(Ordering::Relaxed),
+            probe_blocked_packets: self.probe_blocked_packets.load(Ordering::Relaxed),
             sessions_evicted_idle: self.sessions_evicted_idle.load(Ordering::Relaxed),
             sessions_evicted_send_failure: self
                 .sessions_evicted_send_failure
@@ -72,6 +78,7 @@ impl RelayMetrics {
 struct RelaySettings {
     obfuscation: WgPacketObfuscation,
     idle_timeout: Duration,
+    probe_block: Option<ProbeBlockConfig>,
 }
 
 impl RelaySettings {
@@ -81,7 +88,7 @@ impl RelaySettings {
             config.obfuscation_magic_byte,
         )
         .with_encryption_mode(config.obfuscation_encryption_mode)
-        .with_padding(config.obfuscation_padding)
+        .with_padding(config.obfuscation_padding.clone())
         .with_magic_position(config.obfuscation_magic_position)
         .with_xor_rekey(XorRekeyPolicy::new(
             config.obfuscation_xor_rekey_packets,
@@ -91,8 +98,109 @@ impl RelaySettings {
         Self {
             obfuscation,
             idle_timeout: Duration::from_secs(config.obfuscation_session_idle_secs),
+            probe_block: read_probe_block_config(),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct ProbeBlockConfig {
+    threshold: u64,
+    window: Duration,
+    block_duration: Duration,
+}
+
+#[derive(Clone, Debug)]
+struct ProbeState {
+    window_started: Instant,
+    errors: u64,
+    blocked_until: Option<Instant>,
+}
+
+struct ProbeDetector {
+    config: Option<ProbeBlockConfig>,
+    states: DashMap<IpAddr, ProbeState>,
+}
+
+impl ProbeDetector {
+    fn new(config: Option<ProbeBlockConfig>) -> Self {
+        Self {
+            config,
+            states: DashMap::new(),
+        }
+    }
+
+    fn is_blocked(&self, ip: IpAddr, now: Instant) -> bool {
+        let Some(mut entry) = self.states.get_mut(&ip) else {
+            return false;
+        };
+        if entry
+            .blocked_until
+            .is_some_and(|blocked_until| blocked_until > now)
+        {
+            return true;
+        }
+        if entry.blocked_until.is_some() {
+            entry.blocked_until = None;
+            entry.errors = 0;
+            entry.window_started = now;
+        }
+        false
+    }
+
+    fn record_decode_error(&self, ip: IpAddr, now: Instant) -> bool {
+        let Some(config) = self.config else {
+            return false;
+        };
+
+        let mut entry = self.states.entry(ip).or_insert(ProbeState {
+            window_started: now,
+            errors: 0,
+            blocked_until: None,
+        });
+        let state = entry.value_mut();
+        if state
+            .blocked_until
+            .is_some_and(|blocked_until| blocked_until > now)
+        {
+            return false;
+        }
+        if now.duration_since(state.window_started) >= config.window {
+            state.window_started = now;
+            state.errors = 0;
+            state.blocked_until = None;
+        }
+
+        state.errors = state.errors.saturating_add(1);
+        if state.errors >= config.threshold {
+            state.blocked_until = Some(now + config.block_duration);
+            state.errors = 0;
+            state.window_started = now;
+            return true;
+        }
+        false
+    }
+}
+
+fn read_probe_block_config() -> Option<ProbeBlockConfig> {
+    let threshold = read_env_u64("WG_RELAY_PROBE_BLOCK_THRESHOLD").filter(|value| *value > 0)?;
+    let window = read_env_u64("WG_RELAY_PROBE_BLOCK_WINDOW_SECS")
+        .map(Duration::from_secs)
+        .unwrap_or(PROBE_BLOCK_WINDOW);
+    let block_duration = read_env_u64("WG_RELAY_PROBE_BLOCK_SECS")
+        .map(Duration::from_secs)
+        .unwrap_or(PROBE_BLOCK_DURATION);
+    Some(ProbeBlockConfig {
+        threshold,
+        window,
+        block_duration,
+    })
+}
+
+fn read_env_u64(var: &str) -> Option<u64> {
+    std::env::var(var)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 struct RelaySession {
@@ -103,16 +211,18 @@ struct RelaySession {
     // session salt. The salt is embedded in every frame, so the client shim can
     // derive reply keys from the frame alone without sharing this state object.
     server_to_client_encode: PacketEncodeState,
+    idle_jitter: Duration,
     shutdown: CancellationToken,
 }
 
 impl RelaySession {
-    fn new(upstream_socket: Arc<UdpSocket>, now_millis: u64) -> Self {
+    fn new(upstream_socket: Arc<UdpSocket>, now_millis: u64, idle_timeout: Duration) -> Self {
         Self {
             upstream_socket,
             last_activity_millis: AtomicU64::new(now_millis),
             client_to_server_replay: Mutex::new(ReplayWindow::default()),
             server_to_client_encode: PacketEncodeState::new(now_millis),
+            idle_jitter: random_idle_jitter(idle_timeout),
             shutdown: CancellationToken::new(),
         }
     }
@@ -128,9 +238,28 @@ impl RelaySession {
         )
     }
 
+    fn idle_expired(&self, now_millis: u64, idle_timeout: Duration) -> bool {
+        self.idle_for(now_millis) >= idle_timeout.saturating_add(self.idle_jitter)
+    }
+
     fn close(&self) {
         self.shutdown.cancel();
     }
+}
+
+fn random_idle_jitter(idle_timeout: Duration) -> Duration {
+    let max_millis = (idle_timeout.as_millis() / 10)
+        .saturating_mul(3)
+        .min(u128::from(u64::MAX)) as u64;
+    if max_millis == 0 {
+        return Duration::ZERO;
+    }
+    let millis = if max_millis == u64::MAX {
+        OsRng.next_u64()
+    } else {
+        OsRng.next_u64() % (max_millis + 1)
+    };
+    Duration::from_millis(millis)
 }
 
 #[derive(Clone)]
@@ -269,6 +398,7 @@ pub(crate) async fn spawn_with_addrs_and_metrics(
     let settings = RelaySettings {
         obfuscation,
         idle_timeout,
+        probe_block: read_probe_block_config(),
     };
 
     let task = tokio::spawn(run_relay(
@@ -313,6 +443,7 @@ async fn run_relay(
     let mut magic_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let mut empty_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let mut other_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
+    let probe_detector = ProbeDetector::new(settings.probe_block);
 
     let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
     loop {
@@ -330,20 +461,30 @@ async fn run_relay(
                     }
                 };
 
+                let packet_received_at = Instant::now();
+                if probe_detector.is_blocked(client_addr.ip(), packet_received_at) {
+                    metrics
+                        .probe_blocked_packets
+                        .fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+
                 let (session, decoded_len) = if settings.obfuscation.uses_framed_encoding() {
                     if let Err(err) = validate_framed_header(
                         &buf,
                         len,
                         &settings.obfuscation,
                     ) {
-                        log_decode_error(
+                        handle_decode_error(
                             &mut magic_drop_notice,
                             &mut empty_drop_notice,
                             &mut other_drop_notice,
                             &metrics,
+                            &probe_detector,
                             err,
                             client_addr,
                             len,
+                            packet_received_at,
                         );
                         continue;
                     }
@@ -381,14 +522,16 @@ async fn run_relay(
                         ) {
                             Ok(decoded_len) => decoded_len,
                             Err(err) => {
-                                log_decode_error(
+                                handle_decode_error(
                                     &mut magic_drop_notice,
                                     &mut empty_drop_notice,
                                     &mut other_drop_notice,
                                     &metrics,
+                                    &probe_detector,
                                     err,
                                     client_addr,
                                     len,
+                                    packet_received_at,
                                 );
                                 continue;
                             }
@@ -405,14 +548,16 @@ async fn run_relay(
                     ) {
                         Ok(decoded_len) => decoded_len,
                         Err(err) => {
-                            log_decode_error(
+                            handle_decode_error(
                                 &mut magic_drop_notice,
                                 &mut empty_drop_notice,
                                 &mut other_drop_notice,
                                 &metrics,
+                                &probe_detector,
                                 err,
                                 client_addr,
                                 len,
+                                packet_received_at,
                             );
                             continue;
                         }
@@ -495,18 +640,34 @@ fn log_decode_drop(
     }
 }
 
-fn log_decode_error(
+fn handle_decode_error(
     magic_drop_notice: &mut RateLimitedDropNotice,
     empty_drop_notice: &mut RateLimitedDropNotice,
     other_drop_notice: &mut RateLimitedDropNotice,
     metrics: &RelayMetrics,
+    probe_detector: &ProbeDetector,
     err: PacketDecodeError,
     client_addr: SocketAddr,
     packet_len: usize,
+    now: Instant,
 ) {
+    if matches!(err, PacketDecodeError::ChaffFrame) {
+        return;
+    }
+
     metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
     if matches!(err, PacketDecodeError::ReplayDetected) {
         metrics.replay_detected.fetch_add(1, Ordering::Relaxed);
+    }
+
+    if probe_detector.record_decode_error(client_addr.ip(), now) {
+        warn!(
+            event = "probe_detected",
+            %client_addr,
+            packet_len,
+            reason = err.as_str(),
+            "temporary WireGuard relay probe block installed for source IP"
+        );
     }
 
     match err {
@@ -522,6 +683,7 @@ fn log_decode_error(
             client_addr,
             packet_len,
         ),
+        PacketDecodeError::ChaffFrame => {}
         err => {
             if let Some(suppressed_since_last) = other_drop_notice.record(Instant::now()) {
                 warn!(

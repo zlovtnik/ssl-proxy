@@ -36,6 +36,7 @@ impl AppState {
             publisher: std::sync::Arc::new(sync_plane::SyncPublisher::new(&config.sync)),
             forensic: crate::forensic::ForensicState::new(config.proxy.forensic_sentry_enabled),
             wg_relay_metrics: Arc::new(crate::wg_relay::RelayMetrics::default()),
+            event_dedup: DashMap::new(),
             dashboard_event_queue: Mutex::new(VecDeque::with_capacity(
                 DASHBOARD_EVENT_QUEUE_CAPACITY,
             )),
@@ -49,6 +50,53 @@ impl AppState {
 
     pub fn dashboard_event_queue_len(&self) -> usize {
         self.dashboard_event_queue.lock().unwrap().len()
+    }
+
+    pub fn should_emit_deduped_event(
+        &self,
+        event_name: &str,
+        host: &str,
+        peer_ip: Option<&str>,
+        wg_pubkey: Option<&str>,
+        device_id: Option<&str>,
+    ) -> bool {
+        let now = Instant::now();
+        if self.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS {
+            let expired = self
+                .event_dedup
+                .iter()
+                .filter_map(|entry| {
+                    (now.duration_since(*entry.value()) >= EVENT_DEDUP_WINDOW)
+                        .then(|| entry.key().clone())
+                })
+                .collect::<Vec<_>>();
+            for key in expired {
+                self.event_dedup.remove(&key);
+            }
+        }
+        if self.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS {
+            return false;
+        }
+
+        let key = format!(
+            "{}|{}|{}|{}|{}",
+            event_name,
+            host,
+            peer_ip.unwrap_or(""),
+            wg_pubkey.unwrap_or(""),
+            device_id.unwrap_or("")
+        );
+
+        if let Some(mut seen_at) = self.event_dedup.get_mut(&key) {
+            if now.duration_since(*seen_at) < EVENT_DEDUP_WINDOW {
+                return false;
+            }
+            *seen_at = now;
+            return true;
+        }
+
+        self.event_dedup.insert(key, now);
+        true
     }
 
     pub fn queue_dashboard_event(&self, raw: &str, event_name: &str, host: &str) {
