@@ -427,10 +427,20 @@ fn validate_config(config: &FrontdoorConfig) -> Result<(), FrontdoorError> {
 }
 
 async fn run_listener(listener: ListenerConfig, state: RuntimeState) -> Result<(), FrontdoorError> {
-    let socket = Arc::new(UdpSocket::bind(listener.bind_addr).await?);
+    let socket = UdpSocket::bind(listener.bind_addr).await?;
+    run_listener_with_socket(listener, state, socket).await
+}
+
+async fn run_listener_with_socket(
+    listener: ListenerConfig,
+    state: RuntimeState,
+    socket: UdpSocket,
+) -> Result<(), FrontdoorError> {
+    let bind_addr = socket.local_addr()?;
+    let socket = Arc::new(socket);
     info!(
         listener = %listener.name,
-        bind_addr = %listener.bind_addr,
+        %bind_addr,
         "WireGuard UDP frontdoor listener started"
     );
 
@@ -721,6 +731,12 @@ async fn metrics(State(state): State<RuntimeState>) -> Response {
             "# HELP wg_frontdoor_backend_packets_total Backend packets sent.\n",
             "# TYPE wg_frontdoor_backend_packets_total counter\n",
             "wg_frontdoor_backend_packets_total {backend_packets}\n",
+            "# HELP wg_frontdoor_client_bytes_total Client bytes received.\n",
+            "# TYPE wg_frontdoor_client_bytes_total counter\n",
+            "wg_frontdoor_client_bytes_total {client_bytes}\n",
+            "# HELP wg_frontdoor_backend_bytes_total Backend bytes sent.\n",
+            "# TYPE wg_frontdoor_backend_bytes_total counter\n",
+            "wg_frontdoor_backend_bytes_total {backend_bytes}\n",
             "# HELP wg_frontdoor_dropped_rate_limited_total Client packets dropped by source rate limit.\n",
             "# TYPE wg_frontdoor_dropped_rate_limited_total counter\n",
             "wg_frontdoor_dropped_rate_limited_total {dropped}\n",
@@ -734,6 +750,8 @@ async fn metrics(State(state): State<RuntimeState>) -> Response {
         sessions = sessions,
         client_packets = state.stats.client_packets.load(Ordering::Relaxed),
         backend_packets = state.stats.backend_packets.load(Ordering::Relaxed),
+        client_bytes = state.stats.client_bytes.load(Ordering::Relaxed),
+        backend_bytes = state.stats.backend_bytes.load(Ordering::Relaxed),
         dropped = state.stats.dropped_rate_limited.load(Ordering::Relaxed),
         reload_success = state.stats.reload_successes.load(Ordering::Relaxed),
         reload_failure = state.stats.reload_failures.load(Ordering::Relaxed),
@@ -756,7 +774,7 @@ async fn run_reload_task(config_file: PathBuf, state: RuntimeState) -> Result<()
     {
         let _ = config_file;
         let _ = state;
-        futures::future::pending::<()>().await;
+        std::future::pending().await;
     }
 
     Ok(())
@@ -893,6 +911,35 @@ addr = "127.0.0.1:51820"
     }
 
     #[tokio::test]
+    async fn wg_udp_frontdoor_metrics_include_byte_counters() {
+        let stats = Arc::new(FrontdoorStats::default());
+        stats.client_bytes.store(123, Ordering::Relaxed);
+        stats.backend_bytes.store(456, Ordering::Relaxed);
+
+        let state = RuntimeState {
+            config: Arc::new(RwLock::new(FrontdoorConfig {
+                listeners: Vec::new(),
+                backends: Vec::new(),
+            })),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(Mutex::new(RateLimiter::new(0))),
+            stats,
+            session_idle: Duration::from_secs(5),
+        };
+
+        let response = metrics(State(state)).await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body.contains("# HELP wg_frontdoor_client_bytes_total Client bytes received."));
+        assert!(body.contains("wg_frontdoor_client_bytes_total 123"));
+        assert!(body.contains("# HELP wg_frontdoor_backend_bytes_total Backend bytes sent."));
+        assert!(body.contains("wg_frontdoor_backend_bytes_total 456"));
+    }
+
+    #[tokio::test]
     async fn wg_udp_frontdoor_fans_out_and_routes_replies() {
         let backend_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let backend_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -930,10 +977,9 @@ addr = "127.0.0.1:51820"
 
         let frontdoor = UdpSocket::bind(listener.bind_addr).await.unwrap();
         let frontdoor_addr = frontdoor.local_addr().unwrap();
-        drop(frontdoor);
         let mut listener = listener;
         listener.bind_addr = frontdoor_addr;
-        tokio::spawn(run_listener(listener, state));
+        tokio::spawn(run_listener_with_socket(listener, state, frontdoor));
 
         let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         client.send_to(b"hello", frontdoor_addr).await.unwrap();
