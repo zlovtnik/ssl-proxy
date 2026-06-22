@@ -247,10 +247,10 @@ services:
       context: ./apps/wg-key-rotator
       dockerfile: Dockerfile
     restart: "no"
-    working_dir: ${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+    working_dir: "${ROTATOR_REPO_ROOT:-${PWD}}"
     command: ["status"]
     environment:
-      - ROTATOR_REPO_ROOT=${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+      - ROTATOR_REPO_ROOT=${ROTATOR_REPO_ROOT:-${PWD}}
       - ROTATOR_HEALTH_URL=http://ssl-proxy:3002/health
       - ROTATOR_HEALTH_TIMEOUT_MS=${ROTATOR_HEALTH_TIMEOUT_MS:-5000}
       - ROTATOR_INCLUDE_PUBLIC_KEY=${ROTATOR_INCLUDE_PUBLIC_KEY:-true}
@@ -269,8 +269,8 @@ services:
       # The rotator invokes docker compose through the host Docker socket, so the
       # repo must exist at the same absolute path inside the container and host.
       - type: bind
-        source: ${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
-        target: ${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+        source: "${ROTATOR_REPO_ROOT:-${PWD}}"
+        target: "${ROTATOR_REPO_ROOT:-${PWD}}"
       - /var/run/docker.sock:/var/run/docker.sock
 
   java-coordinator:

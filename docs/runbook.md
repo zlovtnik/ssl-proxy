@@ -51,11 +51,11 @@ docker compose restart ssl-proxy
 
 ### 3. Rotate WireGuard and Runtime Secrets
 
-Use the rotator in `/Users/rcs/git/wiretrap/wg-key-rotator` for stable-port scheduled rotation. It creates a candidate key generation under ignored local state, starts `ssl-proxy-next`, and updates `wg-udp-frontdoor` so old and new WireGuard keysets can both receive packets on the stable public UDP ports.
+Use the rotator in `apps/wg-key-rotator` for stable-port scheduled rotation. It creates a candidate key generation under ignored local state, starts `ssl-proxy-next`, and updates `wg-udp-frontdoor` so old and new WireGuard keysets can both receive packets on the stable public UDP ports.
 
 1. **Stage a candidate generation:**
    ```bash
-   cd /Users/rcs/git/wiretrap/wg-key-rotator
+   cd /path/to/ssl-proxy/apps/wg-key-rotator
    bin/wg_key_rotator stage
    bin/wg_key_rotator start-next
    ```

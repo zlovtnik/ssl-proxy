@@ -161,7 +161,7 @@ wg genpsk > presharedkey-peer1
 
 ### Rotator Profile (optional)
 
-The `rotator` profile runs WAHA and the containerized WireGuard key rotator. WAHA is bound to `http://127.0.0.1:${WAHA_HOST_PORT:-3006}` on the host, while the rotator container calls it at `http://waha:3000`.
+The `rotator` profile runs WAHA and the containerized WireGuard key rotator. WAHA is bound to `http://127.0.0.1:${WAHA_HOST_PORT:-3006}` on the host, while the rotator container calls it at `http://waha:3000`. Run these commands from the repository root, or set `ROTATOR_REPO_ROOT` to the absolute checkout path.
 
 ```bash
 docker compose --profile rotator up -d waha
@@ -237,7 +237,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WAHA_CHAT_ID` | *(empty)* | WhatsApp chat ID for rotation notifications |
 | `WAHA_API_KEY` | *(empty)* | Optional WAHA API key, also sent by the rotator |
 | `WAHA_SESSION` | `default` | WAHA session name used by rotator notifications |
-| `ROTATOR_REPO_ROOT` | `/Users/rcs/git/ssl-proxy` | Absolute repo path mounted into the rotator container |
+| `ROTATOR_REPO_ROOT` | current shell `PWD` | Absolute repo path mounted into the rotator container; set explicitly if not running compose from the repo root |
 
 ### Oracle Sink (requires auto-login wallet in `./wallet/`)
 
