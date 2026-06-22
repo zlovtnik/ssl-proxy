@@ -199,6 +199,8 @@ fn ptr_lookups_enabled() -> bool {
         .unwrap_or(false)
 }
 
+// WG_STATS_PTR_LOOKUP_MIN_JITTER_MS is both the base delay and the size of the
+// additional jitter window, so total sleep is in [min_ms, 2 * min_ms].
 async fn sleep_ptr_lookup_jitter() {
     let min_ms = std::env::var("WG_STATS_PTR_LOOKUP_MIN_JITTER_MS")
         .ok()

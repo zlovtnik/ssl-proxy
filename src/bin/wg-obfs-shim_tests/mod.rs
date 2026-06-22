@@ -197,7 +197,7 @@ fn parse_config_supports_toml_multi_shim_file() {
         file,
         r#"
 health_addr = "127.0.0.1:51824"
-health_token = "health-secret"
+health_token = "  health-secret  "
 
 [[shim]]
 listen_addr = "127.0.0.1:51821"
@@ -245,6 +245,72 @@ key = "second-key"
     assert_eq!(
         process_config.shims[1].server_addrs,
         vec!["127.0.0.1:445".parse::<SocketAddr>().unwrap()]
+    );
+}
+
+#[test]
+fn parse_config_toml_empty_health_token_is_none() {
+    let _guard = env_lock();
+    clear_env();
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        r#"
+health_token = "   "
+
+[[shim]]
+listen_addr = "127.0.0.1:51821"
+server_addr = "127.0.0.1:445"
+key = "first-key"
+"#
+    )
+    .unwrap();
+
+    let process_config =
+        parse_config(["--config".to_string(), file.path().display().to_string()]).unwrap();
+
+    assert_eq!(process_config.health_token, None);
+}
+
+#[test]
+fn parse_config_rejects_excessive_chaff_pps() {
+    let _guard = env_lock();
+    clear_env();
+
+    let result = parse_config([
+        "--server".to_string(),
+        "127.0.0.1:443".to_string(),
+        "--key".to_string(),
+        "super-secret".to_string(),
+        "--chaff-pps".to_string(),
+        (MAX_CHAFF_PPS + 1).to_string(),
+    ]);
+
+    assert!(
+        matches!(result, Err(ConfigParseOutcome::Error(message)) if message.contains("chaff packets per second"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn parse_config_key_file_must_be_regular_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = env_lock();
+    clear_env();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o400)).unwrap();
+
+    let result = parse_config([
+        "--server".to_string(),
+        "127.0.0.1:443".to_string(),
+        "--key-file".to_string(),
+        dir.path().display().to_string(),
+    ]);
+
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        matches!(result, Err(ConfigParseOutcome::Error(message)) if message.contains("regular file"))
     );
 }
 

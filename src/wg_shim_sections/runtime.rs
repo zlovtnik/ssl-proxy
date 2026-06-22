@@ -124,6 +124,7 @@ async fn run_session_receiver(
                     client_addr,
                     &session.config,
                     &context.next_server_index,
+                    &context.shutdown,
                     &context.clock,
                 )
                 .await
@@ -193,6 +194,7 @@ async fn run_session_receiver(
                     client_addr,
                     &session.config,
                     &context.next_server_index,
+                    &context.shutdown,
                     &context.clock,
                 )
                 .await
@@ -353,6 +355,7 @@ async fn send_with_failover(
     client_addr: SocketAddr,
     config: &WgObfsShimConfig,
     next_server_index: &AtomicUsize,
+    shutdown: &CancellationToken,
     clock: &ShimClock,
 ) -> io::Result<()> {
     let mut last_error = None;
@@ -371,11 +374,20 @@ async fn send_with_failover(
                     %client_addr,
                     session_id = session.id,
                     attempt = attempt + 1,
+                    will_retry = attempt + 1 < max_attempts,
                     upstream_addr = %connection.server_addr,
                     upstream_port = connection.local_port,
-                    "WireGuard shim upstream send failed; trying next configured server"
+                    "WireGuard shim upstream send failed"
                 );
-                tokio::time::sleep(retry_backoff_delay(attempt)).await;
+                if attempt + 1 == max_attempts {
+                    break;
+                }
+                if !await_retry_backoff(shutdown, &session.shutdown, attempt).await {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "WireGuard shim session shutdown interrupted upstream retry backoff",
+                    ));
+                }
                 *connection = connect_next_upstream(config, next_server_index).await?;
                 session.set_upstream_port(connection.local_port);
                 if !packet.is_chaff {
@@ -387,6 +399,18 @@ async fn send_with_failover(
 
     Err(last_error
         .unwrap_or_else(|| io::Error::other("failed to send WireGuard shim upstream packet")))
+}
+
+async fn await_retry_backoff(
+    shutdown: &CancellationToken,
+    session_shutdown: &CancellationToken,
+    attempt: usize,
+) -> bool {
+    tokio::select! {
+        _ = shutdown.cancelled() => false,
+        _ = session_shutdown.cancelled() => false,
+        _ = tokio::time::sleep(retry_backoff_delay(attempt)) => true,
+    }
 }
 
 async fn await_send_jitter(context: &ShimSessionContext, session: &ShimSession) -> bool {

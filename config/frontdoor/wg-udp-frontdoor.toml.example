@@ -1,0 +1,32 @@
+# Runtime config for wg-udp-frontdoor.
+# The rotator writes the live file under secrets/wg-rotation/frontdoor/.
+
+[[listeners]]
+name = "wg-public-443"
+bind_addr = "0.0.0.0:443"
+backends = ["active-443"]
+
+[[listeners]]
+name = "wg-public-51820"
+bind_addr = "0.0.0.0:51820"
+backends = ["active-51820"]
+
+[[backends]]
+name = "active-443"
+addr = "ssl-proxy:443"
+enabled = true
+
+[[backends]]
+name = "active-51820"
+addr = "ssl-proxy:51820"
+enabled = true
+
+[[backends]]
+name = "candidate-443"
+addr = "ssl-proxy-next:443"
+enabled = false
+
+[[backends]]
+name = "candidate-51820"
+addr = "ssl-proxy-next:51820"
+enabled = false

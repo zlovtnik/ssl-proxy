@@ -37,7 +37,7 @@ coordinator:
   scan-topic: ${SYNC_SCAN_TOPIC:sync.scan.request}
   load-topic: ${SYNC_LOAD_TOPIC:sync.oracle.load}
   result-topic: ${SYNC_RESULT_TOPIC:sync.oracle.result}
-  payload-audit-topic: ${SYNC_PAYLOAD_AUDIT_TOPIC:proxy.payload_audit}
+  payload-audit-topic: ${SYNC_PAYLOAD_AUDIT_TOPIC:${PAYLOAD_AUDIT_REDPANDA_TOPIC:proxy.payload_audit}}
   database-url: ${DATABASE_URL:}
   sync-redpanda-url: ${SYNC_REDPANDA_BOOTSTRAP_SERVERS:}
   redpanda-topic-manifest-file: ${SYNC_REDPANDA_TOPIC_MANIFEST:/app/docker/redpanda/topics.manifest}

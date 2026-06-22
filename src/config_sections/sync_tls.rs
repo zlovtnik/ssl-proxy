@@ -217,9 +217,12 @@ impl WireGuardConfig {
     /// ```
     pub(super) fn from_env() -> Result<Self, ConfigError> {
         let obfuscation_enabled = read_bool("WG_OBFUSCATION_ENABLED", true);
-        let obfuscation_key =
+        let obfuscation_key = if obfuscation_enabled {
             read_secret_strict_file("WG_OBFUSCATION_KEY", "WG_OBFUSCATION_KEY_FILE")?
-                .unwrap_or_default();
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         if obfuscation_enabled && obfuscation_key.is_empty() {
             return Err(ConfigError::MissingWireGuardObfuscationKey);
         }

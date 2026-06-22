@@ -26,6 +26,7 @@ use crate::{
 const DROP_LOG_INTERVAL: Duration = Duration::from_secs(30);
 const PROBE_BLOCK_WINDOW: Duration = Duration::from_secs(60);
 const PROBE_BLOCK_DURATION: Duration = Duration::from_secs(300);
+const PROBE_STATE_MAX_ENTRIES: usize = 16_384;
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RelayMetricsSnapshot {
@@ -120,6 +121,7 @@ struct ProbeState {
 struct ProbeDetector {
     config: Option<ProbeBlockConfig>,
     states: DashMap<IpAddr, ProbeState>,
+    max_states: usize,
 }
 
 impl ProbeDetector {
@@ -127,6 +129,16 @@ impl ProbeDetector {
         Self {
             config,
             states: DashMap::new(),
+            max_states: PROBE_STATE_MAX_ENTRIES,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_max_states(config: Option<ProbeBlockConfig>, max_states: usize) -> Self {
+        Self {
+            config,
+            states: DashMap::new(),
+            max_states,
         }
     }
 
@@ -152,6 +164,13 @@ impl ProbeDetector {
         let Some(config) = self.config else {
             return false;
         };
+
+        if !self.states.contains_key(&ip) && self.states.len() >= self.max_states {
+            self.prune_expired(now, config);
+            if self.states.len() >= self.max_states {
+                return false;
+            }
+        }
 
         let mut entry = self.states.entry(ip).or_insert(ProbeState {
             window_started: now,
@@ -180,21 +199,50 @@ impl ProbeDetector {
         }
         false
     }
+
+    fn prune_expired(&self, now: Instant, config: ProbeBlockConfig) {
+        let expired = self
+            .states
+            .iter()
+            .filter_map(|entry| {
+                let state = entry.value();
+                let window_expired =
+                    now.saturating_duration_since(state.window_started) >= config.window;
+                let block_expired = state
+                    .blocked_until
+                    .map_or(true, |blocked_until| blocked_until <= now);
+                (window_expired && block_expired).then_some(*entry.key())
+            })
+            .collect::<Vec<_>>();
+
+        for ip in expired {
+            self.states.remove(&ip);
+        }
+    }
 }
 
 fn read_probe_block_config() -> Option<ProbeBlockConfig> {
     let threshold = read_env_u64("WG_RELAY_PROBE_BLOCK_THRESHOLD").filter(|value| *value > 0)?;
-    let window = read_env_u64("WG_RELAY_PROBE_BLOCK_WINDOW_SECS")
-        .map(Duration::from_secs)
-        .unwrap_or(PROBE_BLOCK_WINDOW);
-    let block_duration = read_env_u64("WG_RELAY_PROBE_BLOCK_SECS")
-        .map(Duration::from_secs)
-        .unwrap_or(PROBE_BLOCK_DURATION);
+    let window = positive_duration_or_default(
+        read_env_u64("WG_RELAY_PROBE_BLOCK_WINDOW_SECS"),
+        PROBE_BLOCK_WINDOW,
+    )?;
+    let block_duration = positive_duration_or_default(
+        read_env_u64("WG_RELAY_PROBE_BLOCK_SECS"),
+        PROBE_BLOCK_DURATION,
+    )?;
     Some(ProbeBlockConfig {
         threshold,
         window,
         block_duration,
     })
+}
+
+fn positive_duration_or_default(raw: Option<u64>, default: Duration) -> Option<Duration> {
+    match raw {
+        Some(value) => Some(Duration::from_secs(Some(value).filter(|value| *value > 0)?)),
+        None => Some(default),
+    }
 }
 
 fn read_env_u64(var: &str) -> Option<u64> {

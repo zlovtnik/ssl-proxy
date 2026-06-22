@@ -49,24 +49,34 @@ docker compose restart ssl-proxy
 
 ---
 
-### 3. Rotate WireGuard Key Pair
+### 3. Rotate WireGuard and Runtime Secrets
 
-1. **Generate new server keys:**
+Use the rotator in `/Users/rcs/git/wiretrap/wg-key-rotator` for stable-port scheduled rotation. It creates a candidate key generation under ignored local state, starts `ssl-proxy-next`, and updates `wg-udp-frontdoor` so old and new WireGuard keysets can both receive packets on the stable public UDP ports.
+
+1. **Stage a candidate generation:**
    ```bash
-   wg genkey | tee config/server/privatekey-server | wg pubkey > config/server/publickey-server
+   cd /Users/rcs/git/wiretrap/wg-key-rotator
+   bin/wg_key_rotator stage
+   bin/wg_key_rotator start-next
    ```
 
-2. **Update server configuration:**
-   - Keep the private key in `config/server/privatekey-server`
-   - The container will render `/run/wireguard/wg0.conf` from `config/templates/server.conf`
-   - Distribute the updated public key to all peers
+2. **Distribute generated client bundles:**
+   - Bundles are written under `secrets/wg-rotation/generations/<generation>/client-bundles/`
+   - Private keys, PSKs, admin keys, and obfuscation keys stay in ignored local files
+   - Clients keep the same public UDP endpoint; the frontdoor fans packets to active and candidate backends
 
-3. **Restart service:**
+3. **Promote after every configured peer handshakes with the candidate:**
    ```bash
-   docker compose restart ssl-proxy
+   bin/wg_key_rotator status
+   bin/wg_key_rotator promote
    ```
 
-> **Important:** All connected clients will require updated configuration with the new server public key.
+4. **Rollback if migration does not complete:**
+   ```bash
+   bin/wg_key_rotator rollback
+   ```
+
+> **Important:** Do not hand-edit tracked example configs with live keys. Live WireGuard keys, peer configs, admin API keys, and obfuscation keys are generated under ignored local paths.
 
 ---
 

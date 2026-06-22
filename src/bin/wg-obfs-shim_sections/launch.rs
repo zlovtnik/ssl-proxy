@@ -220,6 +220,12 @@ fn validate_key_file_permissions(path: &Path) -> Result<(), ConfigParseOutcome> 
             path.display()
         ))
     })?;
+    if !metadata.is_file() {
+        return Err(ConfigParseOutcome::Error(format!(
+            "obfuscation key file {:?} must be a regular file",
+            path.display()
+        )));
+    }
     let mode = metadata.mode() & 0o777;
     if mode != 0o400 {
         return Err(ConfigParseOutcome::Error(format!(

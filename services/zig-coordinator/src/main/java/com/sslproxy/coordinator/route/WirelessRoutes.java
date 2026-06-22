@@ -250,7 +250,13 @@ public class WirelessRoutes extends RouteBuilder {
                 || topic.equals(props.wirelessBacklogListReplyTopic())
                 || topic.equals(props.wirelessBacklogPruneReplyTopic())
                 || topic.equals(props.wirelessMacLookupReplyTopic())
-                || topic.equals(props.wirelessNetworksAuthorizedReplyTopic());
+                || topic.equals(props.wirelessNetworksAuthorizedReplyTopic())
+                || isSensorInboxReplyTopic(topic);
+    }
+
+    private boolean isSensorInboxReplyTopic(String topic) {
+        String prefix = "_INBOX.atheros_sensor.";
+        return topic.startsWith(prefix) && topic.length() > prefix.length();
     }
 
     private String sanitize(String message) {

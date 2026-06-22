@@ -187,3 +187,27 @@ async fn record_resolved_preserves_all_cached_ips() {
     assert_eq!(host.resolved_ip.as_deref(), Some("203.0.113.10"));
     assert_eq!(host.asn_org.as_deref(), Some("Example ASN"));
 }
+
+#[tokio::test]
+async fn event_dedup_allows_existing_key_when_map_is_full() {
+    let state = create_test_state().await;
+    let event_name = "http_blocked";
+    let host = "blocked.example";
+    let peer_ip = Some("10.13.13.2");
+
+    assert!(state.should_emit_deduped_event(event_name, host, peer_ip, None, None));
+    let key = format!("{event_name}|{host}|{}||", peer_ip.unwrap());
+    {
+        let mut seen_at = state.event_dedup.get_mut(&key).unwrap();
+        *seen_at = Instant::now() - EVENT_DEDUP_WINDOW - Duration::from_millis(1);
+    }
+
+    for index in 0..EVENT_DEDUP_MAX_KEYS {
+        state
+            .event_dedup
+            .insert(format!("filler-{index}"), Instant::now());
+    }
+
+    assert!(state.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS);
+    assert!(state.should_emit_deduped_event(event_name, host, peer_ip, None, None));
+}

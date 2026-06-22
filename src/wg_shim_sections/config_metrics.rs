@@ -30,6 +30,7 @@ pub const DEFAULT_SEND_QUEUE_CAPACITY: usize = 128;
 pub const DEFAULT_HEALTH_ADDR: &str = "127.0.0.1:51822";
 pub const DEFAULT_JITTER_MAX_MS: u64 = 0;
 pub const DEFAULT_CHAFF_PPS: u64 = 0;
+pub const MAX_CHAFF_PPS: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RateLimitConfig {
@@ -138,7 +139,10 @@ impl WgObfsShimConfig {
     }
 
     fn chaff_interval(&self) -> Option<Duration> {
-        if self.chaff_pps == 0 || !self.obfuscation.uses_framed_encoding() {
+        if self.chaff_pps == 0
+            || self.chaff_pps > MAX_CHAFF_PPS
+            || !self.obfuscation.uses_framed_encoding()
+        {
             return None;
         }
         let nanos_per_packet = 1_000_000_000u64 / self.chaff_pps.max(1);

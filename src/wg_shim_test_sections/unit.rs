@@ -181,6 +181,21 @@
         assert_eq!(config.cleanup_interval(), Duration::from_secs(17));
     }
 
+    #[test]
+    fn chaff_interval_rejects_excessive_packet_rate() {
+        let config = WgObfsShimConfig {
+            chaff_pps: MAX_CHAFF_PPS + 1,
+            ..WgObfsShimConfig::new(
+                SocketAddr::from(([127, 0, 0, 1], 0)),
+                SocketAddr::from(([127, 0, 0, 1], 1)),
+                test_obfuscation(Some(0xAA)),
+                Duration::from_secs(300),
+            )
+        };
+
+        assert_eq!(config.chaff_interval(), None);
+    }
+
     #[tokio::test]
     async fn shim_obfuscates_plaintext_and_decodes_replies() {
         let shutdown = CancellationToken::new();

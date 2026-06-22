@@ -81,6 +81,12 @@ fn validate_secret_file(path: &Path, file_var: &'static str) -> Result<(), Confi
         file_var,
         message: format!("failed to inspect {:?}: {error}", path.display()),
     })?;
+    if !metadata.is_file() {
+        return Err(ConfigError::InvalidSecretFile {
+            file_var,
+            message: format!("{:?} must be a regular file", path.display()),
+        });
+    }
     let mode = metadata.mode() & 0o777;
     if mode != 0o400 {
         return Err(ConfigError::InvalidSecretFile {

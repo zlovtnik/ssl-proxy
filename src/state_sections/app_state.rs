@@ -61,23 +61,6 @@ impl AppState {
         device_id: Option<&str>,
     ) -> bool {
         let now = Instant::now();
-        if self.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS {
-            let expired = self
-                .event_dedup
-                .iter()
-                .filter_map(|entry| {
-                    (now.duration_since(*entry.value()) >= EVENT_DEDUP_WINDOW)
-                        .then(|| entry.key().clone())
-                })
-                .collect::<Vec<_>>();
-            for key in expired {
-                self.event_dedup.remove(&key);
-            }
-        }
-        if self.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS {
-            return false;
-        }
-
         let key = format!(
             "{}|{}|{}|{}|{}",
             event_name,
@@ -93,6 +76,23 @@ impl AppState {
             }
             *seen_at = now;
             return true;
+        }
+
+        if self.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS {
+            let expired = self
+                .event_dedup
+                .iter()
+                .filter_map(|entry| {
+                    (now.duration_since(*entry.value()) >= EVENT_DEDUP_WINDOW)
+                        .then(|| entry.key().clone())
+                })
+                .collect::<Vec<_>>();
+            for key in expired {
+                self.event_dedup.remove(&key);
+            }
+        }
+        if self.event_dedup.len() >= EVENT_DEDUP_MAX_KEYS {
+            return false;
         }
 
         self.event_dedup.insert(key, now);

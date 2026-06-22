@@ -141,8 +141,7 @@ fn decode_framed_in_place(
 
     let salt = read_salt(buffer);
     let epoch = read_u32_at(buffer, 27);
-    let counter = read_frame_counter(settings, buffer, &salt, epoch);
-    validate_marker(buffer, settings, &salt, counter, flags)?;
+    let counter = read_frame_counter(settings, buffer, &salt, epoch, flags)?;
 
     let tag_len = tag_len(frame_mode);
     if packet_len < FRAME_HEADER_LEN + tag_len + BODY_LEN_FIELD_LEN {
@@ -241,8 +240,7 @@ pub fn validate_framed_header(
 
     let salt = read_salt(buffer);
     let epoch = read_u32_at(buffer, 27);
-    let counter = read_frame_counter(settings, buffer, &salt, epoch);
-    validate_marker(buffer, settings, &salt, counter, flags)?;
+    read_frame_counter(settings, buffer, &salt, epoch, flags)?;
 
     let tag_len = tag_len(frame_mode);
     if packet_len < FRAME_HEADER_LEN + tag_len + BODY_LEN_FIELD_LEN {
@@ -496,8 +494,21 @@ fn read_frame_counter(
     buffer: &[u8],
     salt: &[u8; FRAME_SALT_LEN],
     epoch: u32,
-) -> u64 {
-    read_u64_at(buffer, 19) ^ frame_counter_mask(settings, salt, epoch)
+    flags: u8,
+) -> Result<u64, PacketDecodeError> {
+    let encoded_counter = read_u64_at(buffer, 19);
+    let masked_counter = encoded_counter ^ frame_counter_mask(settings, salt, epoch);
+    match validate_marker(buffer, settings, salt, masked_counter, flags) {
+        Ok(()) => Ok(masked_counter),
+        Err(masked_error) => {
+            if encoded_counter != masked_counter
+                && validate_marker(buffer, settings, salt, encoded_counter, flags).is_ok()
+            {
+                return Ok(encoded_counter);
+            }
+            Err(masked_error)
+        }
+    }
 }
 
 fn frame_counter_mask(

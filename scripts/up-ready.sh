@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 SERVICE_NAME="${UP_READY_SERVICE_NAME:-ssl-proxy}"
-STACK_HEALTH_SERVICES="${UP_READY_STACK_HEALTH_SERVICES:-redpanda postgres java-coordinator ssl-proxy}"
+FRONTDOOR_SERVICE_NAME="${UP_READY_FRONTDOOR_SERVICE_NAME:-wg-udp-frontdoor}"
+STACK_HEALTH_SERVICES="${UP_READY_STACK_HEALTH_SERVICES:-redpanda postgres java-coordinator ssl-proxy wg-udp-frontdoor}"
 MEMORY_FILE="${UP_READY_MEMORY_FILE:-$ROOT_DIR/ops-memory.md}"
 PROFILE_MODE="${PROFILE_MODE:-}"
 SERVER_IP="${SERVER_IP:-192.168.1.221}"
@@ -113,6 +114,43 @@ require_command() {
     command -v "$cmd" >/dev/null 2>&1 || fail "Missing required command: $cmd"
 }
 
+ensure_secret_file() {
+    local path="$1"
+    local label="$2"
+
+    if [ -s "$path" ]; then
+        chmod 400 "$path" 2>/dev/null || true
+        return 0
+    fi
+
+    require_command openssl
+    mkdir -p "$(dirname "$path")"
+    umask 077
+    openssl rand -base64 32 >"$path"
+    chmod 400 "$path"
+    step S00 "generated local $label secret at $path"
+}
+
+ensure_admin_api_key_file() {
+    if [ -n "${ADMIN_API_KEY:-}" ]; then
+        return 0
+    fi
+
+    ADMIN_API_KEY_FILE="${ADMIN_API_KEY_FILE:-$ROOT_DIR/secrets/admin_api_key}"
+    ensure_secret_file "$ADMIN_API_KEY_FILE" "admin API key"
+    export ADMIN_API_KEY_FILE
+}
+
+ensure_obfuscation_key_file() {
+    if [ -n "${WG_OBFUSCATION_KEY:-}" ]; then
+        return 0
+    fi
+
+    WG_OBFUSCATION_KEY_FILE="${WG_OBFUSCATION_KEY_FILE:-$ROOT_DIR/secrets/wg_obfuscation_key}"
+    ensure_secret_file "$WG_OBFUSCATION_KEY_FILE" "WireGuard obfuscation key"
+    export WG_OBFUSCATION_KEY_FILE
+}
+
 require_profile_mode() {
     case "$PROFILE_MODE" in
         iphone|linux-shim|linux-direct|mac) ;;
@@ -128,6 +166,8 @@ EOF_MODE
 }
 
 apply_profile_runtime_env() {
+    ensure_admin_api_key_file
+
     case "$PROFILE_MODE" in
         iphone|linux-direct)
             export WG_OBFUSCATION_ENABLED=false
@@ -138,13 +178,13 @@ apply_profile_runtime_env() {
             export WG_OBFUSCATION_ENABLED=true
             export WG_PORT=443
             export WG_INTERNAL_PORT=51820
-            export WG_OBFUSCATION_KEY="${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}"
+            ensure_obfuscation_key_file
             ;;
         mac)
             export WG_OBFUSCATION_ENABLED=true
             export WG_PORT=51820
             export WG_INTERNAL_PORT=443
-            export WG_OBFUSCATION_KEY="${WG_OBFUSCATION_KEY:-boringtun-obfuscation-key-change-me}"
+            ensure_obfuscation_key_file
             ;;
     esac
 }
@@ -340,6 +380,11 @@ check_udp_listener() {
     compose exec -T "$SERVICE_NAME" sh -lc "ss -H -lun '( sport = :${port} )' | grep -q ."
 }
 
+check_frontdoor_udp_listener() {
+    local port="$1"
+    compose exec -T "$FRONTDOOR_SERVICE_NAME" sh -lc "ss -H -lun '( sport = :${port} )' | grep -q ."
+}
+
 check_tcp_listener() {
     local port="$1"
     compose exec -T "$SERVICE_NAME" sh -lc "ss -H -ltn '( sport = :${port} )' | grep -q ."
@@ -358,6 +403,9 @@ network_checks() {
     if [ "$obfs_enabled" = "true" ]; then
         run_check_with_retry "udp_51820" check_udp_listener 51820 || return 1
     fi
+
+    run_check_with_retry "frontdoor_udp_443" check_frontdoor_udp_listener 443 || return 1
+    run_check_with_retry "frontdoor_udp_51820" check_frontdoor_udp_listener 51820 || return 1
     return 0
 }
 
@@ -415,8 +463,16 @@ discover_peer_configs() {
 
         obfuscated_cfg="$(find "$peer_dir" -maxdepth 1 -type f -name '*obfuscated*.conf*' | sort | head -n 1)"
         fallback_cfg="$(find "$peer_dir" -maxdepth 1 -type f -name '*.conf' ! -name '*obfuscated*' | sort | head -n 1)"
-        selected_cfg="$obfuscated_cfg"
-        [ -n "$selected_cfg" ] || selected_cfg="$fallback_cfg"
+        case "$PROFILE_MODE" in
+            iphone|linux-direct)
+                selected_cfg="$fallback_cfg"
+                [ -n "$selected_cfg" ] || selected_cfg="$obfuscated_cfg"
+                ;;
+            mac|linux-shim)
+                selected_cfg="$obfuscated_cfg"
+                [ -n "$selected_cfg" ] || selected_cfg="$fallback_cfg"
+                ;;
+        esac
         [ -n "$selected_cfg" ] && register_peer_config "$key" "$selected_cfg"
     done
 }

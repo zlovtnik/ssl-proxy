@@ -136,11 +136,13 @@ fn parse_single_shim_process_config(
         )?
         .unwrap_or(DEFAULT_JITTER_MAX_MS),
     );
-    config.chaff_pps = parse_optional_nonnegative_u64(
-        optional_value(&options.chaff_pps, "WG_OBFS_SHIM_CHAFF_PPS"),
-        "chaff packets per second",
-    )?
-    .unwrap_or(DEFAULT_CHAFF_PPS);
+    config.chaff_pps = validate_chaff_pps(
+        parse_optional_nonnegative_u64(
+            optional_value(&options.chaff_pps, "WG_OBFS_SHIM_CHAFF_PPS"),
+            "chaff packets per second",
+        )?
+        .unwrap_or(DEFAULT_CHAFF_PPS),
+    )?;
     config.health_addr = Some(health_addr);
     config.metrics_addr = optional_value(&options.metrics_addr, "WG_OBFS_SHIM_METRICS_ADDR")
         .map(|raw| parse_socket_addr(raw, "metrics address"))
@@ -384,7 +386,7 @@ fn load_process_config_from_file(path: &Path) -> Result<ProcessConfig, ConfigPar
     Ok(ProcessConfig {
         shims,
         health_addr,
-        health_token: parsed.health_token,
+        health_token: normalize_optional_secret(parsed.health_token),
         config_path: Some(path.to_path_buf()),
     })
 }
@@ -465,12 +467,27 @@ fn build_toml_shim_config(
     config.send_queue_capacity = raw
         .send_queue_capacity
         .unwrap_or(DEFAULT_SEND_QUEUE_CAPACITY);
-    config.send_jitter_max = Duration::from_millis(raw.jitter_max_ms.unwrap_or(DEFAULT_JITTER_MAX_MS));
-    config.chaff_pps = raw.chaff_pps.unwrap_or(DEFAULT_CHAFF_PPS);
+    config.send_jitter_max =
+        Duration::from_millis(raw.jitter_max_ms.unwrap_or(DEFAULT_JITTER_MAX_MS));
+    config.chaff_pps = validate_chaff_pps(raw.chaff_pps.unwrap_or(DEFAULT_CHAFF_PPS))?;
     config.health_addr = Some(health_addr);
     config.metrics_addr = raw
         .metrics_addr
         .map(|raw| parse_socket_addr(raw, "metrics address"))
         .transpose()?;
     Ok(config)
+}
+
+fn normalize_optional_secret(raw: Option<String>) -> Option<String> {
+    raw.map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn validate_chaff_pps(value: u64) -> Result<u64, ConfigParseOutcome> {
+    if value > MAX_CHAFF_PPS {
+        return Err(ConfigParseOutcome::Error(format!(
+            "invalid chaff packets per second {value}; expected value <= {MAX_CHAFF_PPS}"
+        )));
+    }
+    Ok(value)
 }

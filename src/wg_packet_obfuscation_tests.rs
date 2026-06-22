@@ -1,3 +1,4 @@
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
 use proptest::prelude::*;
 
 use super::*;
@@ -414,6 +415,65 @@ fn framed_header_masks_counter_field() {
 }
 
 #[test]
+fn framed_decoder_accepts_legacy_clear_counter_header() {
+    let settings = test_settings(Some(0xAA)).with_replay_protection(true);
+    let state = fixed_state();
+    let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+    encoded[..6].copy_from_slice(b"legacy");
+
+    let len = encode_legacy_clear_counter_frame_in_place(
+        &mut encoded,
+        6,
+        &settings,
+        &state,
+        PacketDirection::Bidirectional,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(u64::from_be_bytes(encoded[19..27].try_into().unwrap()), 0);
+    validate_framed_header(&encoded[..len], len, &settings).unwrap();
+    assert_eq!(
+        decode_packet(&encoded[..len], &settings).unwrap(),
+        b"legacy"
+    );
+}
+
+#[test]
+fn aead_decoder_accepts_legacy_clear_counter_header() {
+    let settings = test_settings(Some(0xAA))
+        .with_encryption_mode(EncryptionMode::Aead)
+        .with_magic_position(MagicPositionMode::Randomized)
+        .with_replay_protection(true);
+    let state = fixed_state();
+    let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
+    encoded[..11].copy_from_slice(b"legacy-aead");
+
+    let len = encode_legacy_clear_counter_frame_in_place(
+        &mut encoded,
+        11,
+        &settings,
+        &state,
+        PacketDirection::ClientToServer,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(u64::from_be_bytes(encoded[19..27].try_into().unwrap()), 0);
+    let mut replay = ReplayWindow::default();
+    let decoded_len = decode_packet_in_place(
+        &mut encoded,
+        len,
+        &settings,
+        Some(&mut replay),
+        PacketDirection::ClientToServer,
+    )
+    .unwrap();
+
+    assert_eq!(&encoded[..decoded_len], b"legacy-aead");
+}
+
+#[test]
 fn random_bucket_padding_uses_configured_mtu() {
     let settings = test_settings(Some(0xAA))
         .with_padding(PacketPadding::RandomBucket(vec![64, 96]))
@@ -533,4 +593,88 @@ fn parse_magic_byte_accepts_hex_and_decimal() {
 fn parse_magic_byte_rejects_invalid_input() {
     assert_eq!(parse_magic_byte("0xGG"), None);
     assert_eq!(parse_magic_byte(""), None);
+}
+
+fn encode_legacy_clear_counter_frame_in_place(
+    buffer: &mut [u8],
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+    state: &PacketEncodeState,
+    direction: PacketDirection,
+    now_millis: u64,
+) -> Result<usize, PacketEncodeError> {
+    if packet_len > u16::MAX as usize {
+        return Err(PacketEncodeError::PacketTooLarge {
+            packet_len,
+            buffer_len: u16::MAX as usize,
+        });
+    }
+
+    let counter = state.next_packet_counter();
+    let epoch = rekey_epoch(settings, state, counter, now_millis);
+    let tag_len = tag_len(settings.encryption_mode);
+    let body_base_len = BODY_LEN_FIELD_LEN + packet_len;
+    let body_len = padded_body_len(&settings.padding, body_base_len, tag_len)?;
+    let encoded_len = FRAME_HEADER_LEN + body_len + tag_len;
+    if encoded_len > buffer.len() || encoded_len > MAX_UDP_PACKET_SIZE {
+        return Err(PacketEncodeError::EncodedPacketTooLarge {
+            encoded_len,
+            buffer_len: buffer.len().min(MAX_UDP_PACKET_SIZE),
+        });
+    }
+
+    let body_start = FRAME_HEADER_LEN;
+    let payload_start = body_start + BODY_LEN_FIELD_LEN;
+    buffer.copy_within(0..packet_len, payload_start);
+    buffer[body_start..body_start + BODY_LEN_FIELD_LEN]
+        .copy_from_slice(&(packet_len as u16).to_be_bytes());
+    buffer[payload_start + packet_len..body_start + body_len].fill(0);
+
+    write_legacy_clear_counter_frame_header(buffer, settings, &state.session_salt, counter, epoch);
+
+    match settings.encryption_mode {
+        EncryptionMode::Xor => {
+            let mask = framed_xor_mask(settings, &state.session_salt, direction, epoch);
+            apply_xor_mask(&mut buffer[body_start..body_start + body_len], &*mask);
+        }
+        EncryptionMode::Aead => {
+            let cipher = {
+                let key = derive_key(settings, &state.session_salt, direction, epoch, b"aead");
+                XChaCha20Poly1305::new_from_slice(&*key)
+                    .map_err(|_| PacketEncodeError::AeadEncrypt)?
+            };
+            let nonce = frame_nonce(&state.session_salt, counter);
+            let (header, body_and_tag) = buffer[..encoded_len].split_at_mut(FRAME_HEADER_LEN);
+            let (body, tag_out) = body_and_tag.split_at_mut(body_len);
+            let tag = cipher
+                .encrypt_in_place_detached(XNonce::from_slice(&nonce), header, body)
+                .map_err(|_| PacketEncodeError::AeadEncrypt)?;
+            tag_out[..AEAD_TAG_LEN].copy_from_slice(&tag);
+        }
+    }
+
+    Ok(encoded_len)
+}
+
+fn write_legacy_clear_counter_frame_header(
+    buffer: &mut [u8],
+    settings: &WgPacketObfuscation,
+    salt: &[u8; FRAME_SALT_LEN],
+    counter: u64,
+    epoch: u32,
+) {
+    buffer[0] = FRAME_VERSION;
+    buffer[1] = frame_flags(settings);
+    let marker_position = marker_position(settings, salt, counter, buffer[1]);
+    buffer[2] = (marker_position as u8) ^ marker_mask(settings, salt, counter);
+    buffer[3..19].copy_from_slice(salt);
+    buffer[19..27].copy_from_slice(&counter.to_be_bytes());
+    buffer[27..31].copy_from_slice(&epoch.to_be_bytes());
+    fill_marker_zone(
+        &mut buffer[31..39],
+        settings,
+        salt,
+        counter,
+        marker_position,
+    );
 }

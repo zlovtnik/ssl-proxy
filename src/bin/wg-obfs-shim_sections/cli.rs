@@ -18,7 +18,7 @@ use ssl_proxy::{
         self, RateLimitConfig, ShimHealthHandle, WgObfsShimConfig, WgObfsShimRuntime,
         DEFAULT_BUFFER_POOL_CAPACITY, DEFAULT_DRAIN_TIMEOUT_SECS, DEFAULT_HEALTH_ADDR,
         DEFAULT_IDLE_TIMEOUT_SECS, DEFAULT_JITTER_MAX_MS, DEFAULT_CHAFF_PPS, DEFAULT_LISTEN_ADDR,
-        DEFAULT_SEND_QUEUE_CAPACITY,
+        DEFAULT_SEND_QUEUE_CAPACITY, MAX_CHAFF_PPS,
     },
 };
 use tokio_util::sync::CancellationToken;

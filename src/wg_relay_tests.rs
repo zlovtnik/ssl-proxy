@@ -20,6 +20,62 @@ fn drop_notice_is_rate_limited() {
     assert_eq!(notice.record(now + Duration::from_secs(31)), Some(1));
 }
 
+#[test]
+fn probe_detector_prunes_expired_states_before_inserting_new_ip() {
+    let config = ProbeBlockConfig {
+        threshold: 10,
+        window: Duration::from_secs(1),
+        block_duration: Duration::from_secs(1),
+    };
+    let detector = ProbeDetector::with_max_states(Some(config), 1);
+    let first_ip = IpAddr::from([192, 0, 2, 1]);
+    let second_ip = IpAddr::from([192, 0, 2, 2]);
+    let now = Instant::now();
+
+    assert!(!detector.record_decode_error(first_ip, now));
+    assert_eq!(detector.states.len(), 1);
+
+    assert!(!detector.record_decode_error(second_ip, now + Duration::from_secs(2)));
+
+    assert!(!detector.states.contains_key(&first_ip));
+    assert!(detector.states.contains_key(&second_ip));
+}
+
+#[test]
+fn probe_detector_does_not_evict_active_state_at_budget() {
+    let config = ProbeBlockConfig {
+        threshold: 10,
+        window: Duration::from_secs(10),
+        block_duration: Duration::from_secs(10),
+    };
+    let detector = ProbeDetector::with_max_states(Some(config), 1);
+    let first_ip = IpAddr::from([192, 0, 2, 1]);
+    let second_ip = IpAddr::from([192, 0, 2, 2]);
+    let now = Instant::now();
+
+    assert!(!detector.record_decode_error(first_ip, now));
+    assert!(!detector.record_decode_error(second_ip, now + Duration::from_secs(1)));
+
+    assert!(detector.states.contains_key(&first_ip));
+    assert!(!detector.states.contains_key(&second_ip));
+}
+
+#[test]
+fn probe_block_duration_config_rejects_zero_values() {
+    assert_eq!(
+        positive_duration_or_default(None, Duration::from_secs(7)),
+        Some(Duration::from_secs(7))
+    );
+    assert_eq!(
+        positive_duration_or_default(Some(5), Duration::from_secs(7)),
+        Some(Duration::from_secs(5))
+    );
+    assert_eq!(
+        positive_duration_or_default(Some(0), Duration::from_secs(7)),
+        None
+    );
+}
+
 #[tokio::test]
 async fn relay_forwards_plaintext_to_internal_listener_and_replies() {
     let shutdown = CancellationToken::new();
