@@ -218,6 +218,61 @@ services:
       - net.ipv4.conf.all.rp_filter=0
       - net.ipv4.conf.default.rp_filter=0
 
+  waha:
+    profiles: ["rotator"]
+    image: ${WAHA_IMAGE:-devlikeapro/waha}
+    platform: ${WAHA_PLATFORM:-linux/amd64}
+    restart: unless-stopped
+    environment:
+      - WAHA_NO_API_KEY=${WAHA_NO_API_KEY:-True}
+      - WAHA_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-True}
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-}
+      - WHATSAPP_SWAGGER_NO_PASSWORD=${WHATSAPP_SWAGGER_NO_PASSWORD:-True}
+      - WHATSAPP_SWAGGER_USERNAME=${WHATSAPP_SWAGGER_USERNAME:-admin}
+      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD:-}
+    volumes:
+      - waha-sessions:/app/.sessions
+      - waha-media:/app/.media
+    ports:
+      - "127.0.0.1:${WAHA_HOST_PORT:-3006}:3000/tcp"
+
+  wg-key-rotator:
+    profiles: ["rotator"]
+    depends_on:
+      waha:
+        condition: service_started
+    build:
+      context: ./apps/wg-key-rotator
+      dockerfile: Dockerfile
+    restart: "no"
+    working_dir: ${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+    command: ["status"]
+    environment:
+      - ROTATOR_REPO_ROOT=${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+      - ROTATOR_HEALTH_URL=http://ssl-proxy:3002/health
+      - ROTATOR_HEALTH_TIMEOUT_MS=${ROTATOR_HEALTH_TIMEOUT_MS:-5000}
+      - ROTATOR_INCLUDE_PUBLIC_KEY=${ROTATOR_INCLUDE_PUBLIC_KEY:-true}
+      - ROTATOR_STATE_DIR=${ROTATOR_STATE_DIR:-secrets/wg-rotation}
+      - ROTATOR_PEERS=${ROTATOR_PEERS:-peer1,peer2}
+      - ROTATOR_MIGRATION_TIMEOUT_SECS=${ROTATOR_MIGRATION_TIMEOUT_SECS:-86400}
+      - ROTATOR_HANDSHAKE_GRACE_SECS=${ROTATOR_HANDSHAKE_GRACE_SECS:-600}
+      - ROTATOR_FRONTDOOR_CONFIG_PATH=${ROTATOR_FRONTDOOR_CONFIG_PATH:-secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml}
+      - ROTATOR_NEXT_ADMIN_PORT=${ROTATOR_NEXT_ADMIN_PORT:-3012}
+      - WAHA_BASE_URL=http://waha:3000
+      - WAHA_SESSION=${WAHA_SESSION:-default}
+      - WAHA_CHAT_ID=${WAHA_CHAT_ID:-}
+      - WAHA_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_API_KEY_FILE=${WAHA_API_KEY_FILE:-}
+    volumes:
+      # The rotator invokes docker compose through the host Docker socket, so the
+      # repo must exist at the same absolute path inside the container and host.
+      - type: bind
+        source: ${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+        target: ${ROTATOR_REPO_ROOT:-/Users/rcs/git/ssl-proxy}
+      - /var/run/docker.sock:/var/run/docker.sock
+
   java-coordinator:
     depends_on:
       redpanda:
@@ -354,7 +409,7 @@ services:
       - OTEL_SERVICE_NAME=integration-console-web
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-web
     ports:
-      - "3003:3000"
+      - "3005:3000"
 
   integration-console-worker:
     depends_on:
@@ -904,6 +959,8 @@ volumes:
   sync-outbox:
   minio-data:
   ollama-data:
+  waha-sessions:
+  waha-media:
   prometheus-data:
   loki-data:
   grafana-data:

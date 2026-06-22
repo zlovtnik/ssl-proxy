@@ -32,6 +32,7 @@ const DEFAULT_CONFIG_FILE: &str = "/run/wg-rotation/frontdoor/wg-udp-frontdoor.t
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:3003";
 const DEFAULT_SESSION_IDLE_SECS: u64 = 300;
 const MAX_DATAGRAM_BYTES: usize = 65_535;
+const RATE_LIMITER_STALE_SOURCE_SECS: u64 = 0;
 
 #[derive(Clone, Debug, Deserialize)]
 struct FrontdoorConfig {
@@ -133,6 +134,7 @@ struct FrontdoorStats {
 struct RateLimiter {
     limit_pps: u64,
     sources: HashMap<SocketAddr, RateWindow>,
+    last_cleanup_second: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -389,11 +391,21 @@ fn validate_config(config: &FrontdoorConfig) -> Result<(), FrontdoorError> {
         }
     }
 
+    let mut listener_names = HashMap::new();
     for listener in &config.listeners {
         if listener.name.trim().is_empty() {
             return Err(FrontdoorError::Config(
                 "listener name must not be empty".to_string(),
             ));
+        }
+        if listener_names
+            .insert(listener.name.as_str(), true)
+            .is_some()
+        {
+            return Err(FrontdoorError::Config(format!(
+                "duplicate listener name {}",
+                listener.name
+            )));
         }
         if listener.backends.is_empty() {
             return Err(FrontdoorError::Config(format!(
@@ -610,6 +622,7 @@ impl RateLimiter {
         Self {
             limit_pps,
             sources: HashMap::new(),
+            last_cleanup_second: 0,
         }
     }
 
@@ -621,6 +634,8 @@ impl RateLimiter {
         if self.limit_pps == 0 {
             return true;
         }
+
+        self.evict_stale_sources(second);
 
         let window = self
             .sources
@@ -637,6 +652,17 @@ impl RateLimiter {
 
         window.count += 1;
         true
+    }
+
+    fn evict_stale_sources(&mut self, second: u64) {
+        if second <= self.last_cleanup_second {
+            return;
+        }
+
+        self.sources.retain(|_, window| {
+            second.saturating_sub(window.second) <= RATE_LIMITER_STALE_SOURCE_SECS
+        });
+        self.last_cleanup_second = second;
     }
 }
 
@@ -814,6 +840,31 @@ addr = "127.0.0.1:51820"
     }
 
     #[test]
+    fn wg_udp_frontdoor_rejects_duplicate_listener_name() {
+        let error = parse_config(
+            r#"
+[[listeners]]
+name = "wg-public"
+bind_addr = "127.0.0.1:0"
+backends = ["active"]
+
+[[listeners]]
+name = "wg-public"
+bind_addr = "127.0.0.1:1"
+backends = ["active"]
+
+[[backends]]
+name = "active"
+addr = "127.0.0.1:51820"
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("duplicate listener name wg-public"));
+    }
+
+    #[test]
     fn wg_udp_frontdoor_rate_limiter_resets_each_second() {
         let source: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let mut limiter = RateLimiter::new(2);
@@ -822,6 +873,23 @@ addr = "127.0.0.1:51820"
         assert!(limiter.allow_at(source, 10));
         assert!(!limiter.allow_at(source, 10));
         assert!(limiter.allow_at(source, 11));
+    }
+
+    #[test]
+    fn wg_udp_frontdoor_rate_limiter_evicts_stale_sources() {
+        let mut limiter = RateLimiter::new(2);
+
+        for port in 50000..50010 {
+            let source: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+            assert!(limiter.allow_at(source, 10));
+        }
+        assert_eq!(limiter.sources.len(), 10);
+
+        let current_source: SocketAddr = "127.0.0.1:50020".parse().unwrap();
+        assert!(limiter.allow_at(current_source, 11));
+
+        assert_eq!(limiter.sources.len(), 1);
+        assert!(limiter.sources.contains_key(&current_source));
     }
 
     #[tokio::test]

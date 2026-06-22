@@ -99,9 +99,10 @@ wg genpsk > presharedkey-peer1
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
 | Frontdoor Health | 3003 | TCP | Host-local health and metrics for `wg-udp-frontdoor` |
+| WAHA | 3006 | TCP | Host-local WhatsApp HTTP API for rotator notifications (`rotator` profile) |
 | Explicit Proxy | 3000 | TCP | Legacy opt-in listener, disabled by default |
 | Coordinator Actuator | 8081 | TCP | Health/actuator (internal) |
-| Integration Console | 3003 | TCP | Rails dashboard (device inventory, heatmaps) |
+| Integration Console | 3005 | TCP | Rails dashboard (device inventory, heatmaps) |
 | Redis | 6379 | TCP | Caching and job queues (internal) |
 | MinIO API | 9000 | TCP | S3-compatible object storage (internal) |
 | MinIO Console | 9001 | TCP | MinIO admin UI (internal) |
@@ -157,6 +158,16 @@ wg genpsk > presharedkey-peer1
 | **vec-worker** | PostgreSQL-only embedding worker (Ollama/llama.cpp) | [services/vec-worker/README.md](services/vec-worker/README.md) |
 | **atheros-search** | Go gRPC search service for wireless audit embeddings | [services/atheros-search/](services/atheros-search/) |
 | **ollama** | Local embedding model server | - |
+
+### Rotator Profile (optional)
+
+The `rotator` profile runs WAHA and the containerized WireGuard key rotator. WAHA is bound to `http://127.0.0.1:${WAHA_HOST_PORT:-3006}` on the host, while the rotator container calls it at `http://waha:3000`.
+
+```bash
+docker compose --profile rotator up -d waha
+docker compose --profile rotator run --rm wg-key-rotator status
+docker compose --profile rotator run --rm wg-key-rotator rotate --scheduled
+```
 
 ### Wireless Sensor (host-mode, optional)
 
@@ -214,6 +225,19 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
 | `DATABASE_URL` | `postgres://sync:sync@postgres:5432/sync` | Primary Postgres connection |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
+
+### Rotator Profile
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WAHA_HOST_PORT` | `3006` | Host-local port for WAHA dashboard/API |
+| `WAHA_IMAGE` | `devlikeapro/waha` | WAHA Core image; use `devlikeapro/waha:arm` for native ARM |
+| `WAHA_PLATFORM` | `linux/amd64` | Default platform for the Core image; use `linux/arm64` with the ARM image |
+| `WAHA_NO_API_KEY` | `True` | Disable WAHA API-key auth for localhost-only dev; set `False` with `WAHA_API_KEY` to protect it |
+| `WAHA_CHAT_ID` | *(empty)* | WhatsApp chat ID for rotation notifications |
+| `WAHA_API_KEY` | *(empty)* | Optional WAHA API key, also sent by the rotator |
+| `WAHA_SESSION` | `default` | WAHA session name used by rotator notifications |
+| `ROTATOR_REPO_ROOT` | `/Users/rcs/git/ssl-proxy` | Absolute repo path mounted into the rotator container |
 
 ### Oracle Sink (requires auto-login wallet in `./wallet/`)
 
