@@ -47,7 +47,7 @@ Run the generation wrapper **once per environment** on the target server:
 
 ```bash
 scripts/gen-secrets generate
-scripts/gen-secrets env
+SERVER_IP=<server-local-ip> scripts/gen-secrets env
 ```
 
 The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
@@ -102,11 +102,13 @@ The generator also copies `admin_api_key` and `wg_obfuscation_key` into
 Create `.env` at the repository root (also git-ignored) from the generated secret files:
 
 ```bash
-scripts/gen-secrets env
+SERVER_IP=<server-local-ip> scripts/gen-secrets env
 ```
 
 The `.env` file is automatically loaded by `docker compose`. It contains literal values copied
-from `secrets/`; it does not contain shell substitutions such as `$(cat ...)`.
+from `secrets/`; it does not contain shell substitutions such as `$(cat ...)`. Set either
+`REGISTRY=<registry-host>:5000` or `SERVER_IP=<server-local-ip>` when materializing `.env`; the
+generator refuses to write an unresolved registry placeholder.
 
 ### 3.2 Direct env var vs `_FILE` variant
 

@@ -139,6 +139,15 @@
 
     #[cfg(unix)]
     #[test]
+    fn root_runtime_accepts_host_owned_secret_file() {
+        assert!(super::parsing::secret_file_owner_allowed(1000, 0));
+        assert!(super::parsing::secret_file_owner_allowed(0, 0));
+        assert!(super::parsing::secret_file_owner_allowed(1000, 1000));
+        assert!(!super::parsing::secret_file_owner_allowed(1000, 1001));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn wireguard_obfuscation_key_file_must_be_regular_file() {
         use std::os::unix::fs::PermissionsExt;
 
