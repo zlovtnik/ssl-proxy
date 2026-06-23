@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONTAINER=${1:-ssl-proxy-java-coordinator-1}
+TARGET=${1:-java-coordinator}
 PORT=${2:-8081}
+
+resolve_container() {
+    local target=$1
+    local container_id
+
+    if docker inspect "${target}" >/dev/null 2>&1; then
+        printf '%s\n' "${target}"
+        return
+    fi
+
+    container_id=$(docker compose ps -q "${target}" 2>/dev/null || true)
+    if [ -n "${container_id}" ]; then
+        printf '%s\n' "${container_id}"
+        return
+    fi
+
+    printf '%s\n' "${target}"
+}
+
+CONTAINER=$(resolve_container "${TARGET}")
 
 echo "=== Actuator Health ==="
 curl -sf "http://localhost:${PORT}/actuator/health" | python3 -m json.tool
