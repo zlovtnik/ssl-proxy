@@ -37,6 +37,7 @@ EOF_MODE
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
+docker_registry_plain_http_untrusted::server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client::Docker daemon is treating the plain-HTTP local registry as HTTPS::Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry::manual
 docker_registry_dns_timeout::lookup registry-1\\.docker\\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
 docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual

@@ -55,6 +55,7 @@ signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
 compose_unresolved_placeholder::<server-local-ip>|invalid reference format::Compose image reference still contains an unresolved placeholder::Materialize .env with concrete REGISTRY/SERVER_IP before pulling images::manual
+docker_registry_plain_http_untrusted::server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client::Docker daemon is treating the plain-HTTP local registry as HTTPS::Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry::manual
 docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
 docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
@@ -185,6 +186,81 @@ require_concrete_endpoint_values() {
 
 default_registry_value() {
     printf '%s:5000' "$SERVER_IP"
+}
+
+registry_host_value() {
+    local registry="$1"
+    registry="${registry#http://}"
+    registry="${registry#https://}"
+    printf '%s' "${registry%%/*}"
+}
+
+registry_plain_http_enabled() {
+    local registry_host="$1"
+    local plain_http="${REGISTRY_PLAIN_HTTP:-auto}"
+
+    case "$plain_http" in
+        auto)
+            case "$registry_host" in
+                localhost:*|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        1|true|yes) return 0 ;;
+        0|false|no) return 1 ;;
+        *)
+            fail "REGISTRY_PLAIN_HTTP must be auto, 1, or 0"
+            ;;
+    esac
+}
+
+docker_daemon_lists_insecure_registry() {
+    local registry_host="$1"
+    local info
+
+    case "$registry_host" in
+        localhost:*|127.*) return 0 ;;
+    esac
+
+    info="$(docker info 2>/dev/null || true)"
+    [ -n "$info" ] || return 1
+    printf '%s\n' "$info" | grep -Fq "$registry_host"
+}
+
+print_insecure_registry_fix() {
+    local registry_host="$1"
+
+    cat >&2 <<EOF_REGISTRY_FIX
+[up-ready][ERROR] Docker daemon is not configured for plain-HTTP registry ${registry_host}.
+
+Docker Desktop: Settings -> Docker Engine, add:
+{ "insecure-registries": ["${registry_host}"] }
+
+Linux Docker Engine: add the same JSON key to /etc/docker/daemon.json.
+Restart Docker, then rerun:
+make up-ready PROFILE_MODE=${PROFILE_MODE} SERVER_IP=${SERVER_IP} CLIENT_IP=${CLIENT_IP}
+EOF_REGISTRY_FIX
+}
+
+verify_registry_transport() {
+    local registry_host
+
+    registry_host="$(registry_host_value "$REGISTRY")"
+    [ -n "$registry_host" ] || return 0
+    registry_plain_http_enabled "$registry_host" || return 0
+
+    if ! curl -fsS --max-time 2 "http://${registry_host}/v2/" >/dev/null 2>&1; then
+        warn "plain-HTTP registry ${registry_host} is not reachable at /v2/ yet"
+        return 0
+    fi
+
+    if docker_daemon_lists_insecure_registry "$registry_host"; then
+        return 0
+    fi
+
+    set_failure_from_text "http: server gave HTTP response to HTTPS client"
+    print_insecure_registry_fix "$registry_host"
+    return 1
 }
 
 ensure_compose_env_defaults() {
@@ -935,7 +1011,9 @@ diagnostics() {
     local text
     text="$(compose logs --tail "$LOG_TAIL_LINES" 2>&1 || true)"
     [ -n "$LAST_FAILED_CHECK" ] && text+=$'\n'"LAST_FAILED_CHECK=$LAST_FAILED_CHECK"
-    set_failure_from_text "$text"
+    if [ -z "$LAST_FAILURE_CLASS" ] || [ "$LAST_FAILURE_CLASS" = "unknown" ]; then
+        set_failure_from_text "$text"
+    fi
 
     echo "--- classified failure ---"
     echo "class=${LAST_FAILURE_CLASS}"
@@ -1017,6 +1095,7 @@ preflight() {
     require_profile_mode
     require_concrete_endpoint_values
     ensure_secret_bootstrap
+    verify_registry_transport
     ensure_memory_schema
 }
 

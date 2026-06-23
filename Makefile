@@ -150,7 +150,7 @@ registry-build-postgres: registry-buildx require-registry
 
 registry-build-atheros-search-ui: registry-buildx require-registry
 	docker buildx build --platform $(PLATFORM) \
-		--file Dockerfile \
+		--file apps/integration-console/atheros-search-ui/Dockerfile \
 		--build-arg VITE_API_BASE="$(ATHEROS_SEARCH_UI_API_BASE)" \
 		--build-arg VITE_APP_TITLE="$(ATHEROS_SEARCH_UI_TITLE)" \
 		--tag $(REGISTRY)/atheros-search-ui:$(TAG) \

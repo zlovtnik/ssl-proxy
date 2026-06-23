@@ -25,7 +25,12 @@ developer machine and the server:
 { "insecure-registries": ["<server-local-ip>:5000"] }
 ```
 
-Restart Docker after editing `/etc/docker/daemon.json`.
+On Docker Desktop, edit Settings -> Docker Engine and apply/restart Docker. On
+Linux Docker Engine, edit `/etc/docker/daemon.json` and restart Docker.
+
+This host daemon setting is separate from the Buildx builder setting below. If
+it is missing, `docker compose pull` fails with `http: server gave HTTP response
+to HTTPS client` even when `make registry-build-all` can push images.
 
 The Makefile also configures the container-based buildx builder for plain HTTP.
 `REGISTRY_PLAIN_HTTP=auto` is the default and treats `localhost`, `127.*`,
