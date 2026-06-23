@@ -98,6 +98,11 @@ The generator also copies `admin_api_key` and `wg_obfuscation_key` into
 - `scripts/gen-secrets repair` fixes managed permissions and rewrites candidate copies from
   the active root secrets, or from the pending generation when
   `secrets/wg-rotation/state/pending_generation` exists.
+- `oracle_password.txt` is generated so the coordinator mount contract is complete. For a real
+  Oracle ADB sink, replace it with the actual `ORACLE_USER` password before enabling loads.
+- `scripts/up-ready.sh` writes a local `secrets/up-ready-credentials.txt` handoff file on
+  success. It is mode `0600` and contains the two peer configs, Postgres password, Grafana
+  password, admin API key, WireGuard shim pass, and magic byte.
 - The wrapper does not create the `wg-rotation/frontdoor/wg-udp-frontdoor.toml` file. That is
   maintained by the WireGuard key rotator (`apps/wg-key-rotator/bin/wg_key_rotator`).
 

@@ -56,14 +56,11 @@ scripts/gen-secrets env
 
 # Save secrets/ONE_TIME_TOKENS outside the repo, then delete it.
 
-# 2. Place Oracle password
-echo "your-oracle-password" > secrets/oracle_password.txt
-
-# 3. Start all services with local developer builds
+# 2. Start all services with local developer builds
 REGISTRY=local IMAGE_TAG=dev \
   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 
-# 4. Verify health
+# 3. Verify health
 curl -i http://127.0.0.1:3002/health
 ```
 
@@ -261,7 +258,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `TNS_ADMIN` | Wallet directory (`/app/wallet`) |
 | `ORACLE_SINK_ENABLED` | Enable coordinator-owned Oracle loads (`true` by default) |
 
-The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORACLE_CONN` alias, and a non-empty password file before opening the Oracle pool.
+The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORACLE_CONN` alias, and a non-empty password file before opening the Oracle pool. `scripts/gen-secrets` creates `secrets/oracle_password.txt`; for a real Oracle ADB user, replace that file with the actual `ORACLE_USER` password before enabling the sink.
 
 ### Vector Worker
 
@@ -335,7 +332,7 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/up-ready.sh` | Bring up stack and verify all services |
+| `scripts/up-ready.sh` | Bring up stack, verify all services, print QR codes, and write `secrets/up-ready-credentials.txt` |
 | `scripts/diagnose.sh` | Non-mutating diagnosis of proxy and tunnel state |
 | `scripts/smoke_test.sh` | End-to-end smoke test |
 | `scripts/sync-status.sh` | Pipeline health check (sync plane) |

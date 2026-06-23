@@ -16,6 +16,7 @@ CHECK_RETRY_SECS="${UP_READY_CHECK_RETRY_SECS:-15}"
 LOG_TAIL_LINES="${UP_READY_LOG_TAIL_LINES:-200}"
 QR_TYPE="${UP_READY_QR_TYPE:-ansiutf8}"
 QR_MARGIN="${UP_READY_QR_MARGIN:-0}"
+CREDENTIAL_HANDOFF_FILE="${UP_READY_CREDENTIAL_HANDOFF_FILE:-$ROOT_DIR/secrets/up-ready-credentials.txt}"
 
 RUN_TS="$(TZ="${TZ:-America/New_York}" date +%Y-%m-%dT%H:%M:%S%z)"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
@@ -1040,6 +1041,129 @@ qr_render() {
     return 0
 }
 
+append_file_section() {
+    local output="$1"
+    local title="$2"
+    local path="$3"
+
+    if [ -s "$path" ]; then
+        {
+            printf '\n## %s\n' "$title"
+            printf 'path=%s\n\n' "$path"
+            cat "$path"
+            printf '\n'
+        } >>"$output"
+    else
+        {
+            printf '\n## %s\n' "$title"
+            printf 'missing=%s\n' "$path"
+        } >>"$output"
+    fi
+}
+
+read_handoff_secret() {
+    local path="$1"
+
+    [ -s "$path" ] || return 0
+    trim_key_value <"$path"
+}
+
+write_credential_handoff() {
+    step S09 "credential_handoff"
+
+    local output tmp postgres_password grafana_password admin_api_key wg_obfuscation_key grafana_user
+    local wg_magic_byte wg_session_idle_secs wg_public_port shim_server_addr
+    local peer_id peer_dir direct_cfg obfuscated_cfg selected_cfg
+    local old_umask
+
+    output="$CREDENTIAL_HANDOFF_FILE"
+    mkdir -p "$(dirname "$output")" || return 1
+    tmp="$(mktemp "${output}.XXXXXX")" || return 1
+
+    postgres_password="$(read_handoff_secret "$ROOT_DIR/secrets/postgres.key" || true)"
+    grafana_password="$(read_handoff_secret "$ROOT_DIR/secrets/grafana_admin_password.key" || true)"
+    admin_api_key="$(read_handoff_secret "$ROOT_DIR/secrets/admin_api_key" || true)"
+    wg_obfuscation_key="$(read_handoff_secret "$ROOT_DIR/secrets/wg_obfuscation_key" || true)"
+    grafana_user="${GRAFANA_ADMIN_USER:-admin}"
+    wg_magic_byte="${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}"
+    wg_session_idle_secs="${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}"
+    wg_public_port="${WG_PORT:-443}"
+    shim_server_addr="${SERVER_IP}:${wg_public_port}"
+
+    old_umask="$(umask)"
+    umask 077
+    {
+        printf '# ssl-proxy credential handoff\n'
+        printf 'generated_at=%s\n' "$RUN_TS"
+        printf 'profile_mode=%s\n' "$PROFILE_MODE"
+        printf 'server_ip=%s\n' "$SERVER_IP"
+        printf 'client_ip=%s\n' "$CLIENT_IP"
+        printf '\n## Proxy admin API\n'
+        printf 'url=http://127.0.0.1:3002\n'
+        printf 'admin_api_key=%s\n' "$admin_api_key"
+        printf '\n## WireGuard shim\n'
+        printf 'enabled=%s\n' "$(desired_obfuscation_value)"
+        printf 'shim_pass=%s\n' "$wg_obfuscation_key"
+        printf 'magic_byte=%s\n' "$wg_magic_byte"
+        printf 'WG_OBFS_SERVER_ADDR=%s\n' "$shim_server_addr"
+        printf 'WG_OBFS_SHIM_LISTEN_ADDR=127.0.0.1:51821\n'
+        printf 'WG_OBFUSCATION_KEY=%s\n' "$wg_obfuscation_key"
+        printf 'WG_OBFUSCATION_MAGIC_BYTE=%s\n' "$wg_magic_byte"
+        printf 'WG_OBFUSCATION_SESSION_IDLE_SECS=%s\n' "$wg_session_idle_secs"
+        printf '\n## Postgres\n'
+        printf 'host=127.0.0.1\n'
+        printf 'port=5432\n'
+        printf 'database=sync\n'
+        printf 'username=sync\n'
+        printf 'password=%s\n' "$postgres_password"
+        printf 'url=postgres://sync:%s@127.0.0.1:5432/sync\n' "$postgres_password"
+        printf '\n## Grafana\n'
+        printf 'url=http://127.0.0.1:3004\n'
+        printf 'username=%s\n' "$grafana_user"
+        printf 'password=%s\n' "$grafana_password"
+    } >"$tmp" || {
+        umask "$old_umask"
+        rm -f "$tmp"
+        return 1
+    }
+    umask "$old_umask"
+
+    for peer_id in peer1 peer2; do
+        peer_dir="$ROOT_DIR/config/$peer_id"
+        direct_cfg="$peer_dir/$peer_id.conf"
+        obfuscated_cfg="$peer_dir/$peer_id-obfuscated.conf"
+        case "$PROFILE_MODE" in
+            iphone|linux-direct) selected_cfg="$direct_cfg" ;;
+            mac|linux-shim) selected_cfg="$obfuscated_cfg" ;;
+        esac
+
+        append_file_section "$tmp" "WireGuard ${peer_id} selected config" "$selected_cfg" || {
+            rm -f "$tmp"
+            return 1
+        }
+        append_file_section "$tmp" "WireGuard ${peer_id} direct config" "$direct_cfg" || {
+            rm -f "$tmp"
+            return 1
+        }
+        append_file_section "$tmp" "WireGuard ${peer_id} obfuscated config" "$obfuscated_cfg" || {
+            rm -f "$tmp"
+            return 1
+        }
+    done
+
+    chmod 600 "$tmp" || {
+        rm -f "$tmp"
+        return 1
+    }
+    mv "$tmp" "$output" || {
+        rm -f "$tmp"
+        return 1
+    }
+    chmod 600 "$output" || return 1
+
+    step S09 "credential_handoff: wrote $output (0600)"
+}
+
 diagnostics() {
     step S08 "diagnostics"
     echo "--- docker compose ps ---"
@@ -1197,6 +1321,11 @@ main() {
         diagnostics
         memo_write "fail" "${LAST_FAILURE_CLASS:-qr_permission_denied}" "${LAST_FAILURE_FIX:-fix config file permissions}"
         fail "qr_render failed"
+    fi
+
+    if ! write_credential_handoff; then
+        memo_write "fail" "credential_handoff" "write credential handoff"
+        fail "credential_handoff failed"
     fi
 
     memo_write "pass" "none" "up-ready completed"
