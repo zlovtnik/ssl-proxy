@@ -1,0 +1,17 @@
+logging:
+  level:
+    com.sslproxy.coordinator: DEBUG
+    com.zaxxer.hikari: DEBUG
+    com.zaxxer.hikari.HikariConfig: DEBUG
+    com.zaxxer.hikari.pool.HikariPool: DEBUG
+    oracle.jdbc: DEBUG
+    oracle.jdbc.driver: DEBUG
+    oracle.ucp: DEBUG
+    oracle.ucp.jdbc: DEBUG
+    org.apache.camel.component.jdbc: DEBUG
+    org.apache.camel.component.sql: DEBUG
+    org.postgresql: DEBUG
+    org.springframework.jdbc.core: TRACE
+    org.springframework.jdbc.datasource: DEBUG
+    org.springframework.jdbc.datasource.init: DEBUG
+    org.springframework.orm.jpa: DEBUG

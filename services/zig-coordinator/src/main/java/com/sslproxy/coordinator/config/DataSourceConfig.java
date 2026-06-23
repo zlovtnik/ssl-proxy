@@ -8,8 +8,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 import javax.sql.DataSource;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 
 @Configuration(proxyBeanMethods = false)
@@ -93,7 +93,51 @@ public class DataSourceConfig {
     }
 
     private static String decode(String value) {
-        return URLDecoder.decode(value, StandardCharsets.UTF_8);
+        StringBuilder decoded = new StringBuilder(value.length());
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        for (int index = 0; index < value.length(); ) {
+            char character = value.charAt(index);
+            if (character == '%') {
+                if (index + 2 >= value.length()) {
+                    throw new IllegalArgumentException("Malformed percent-encoded credential");
+                }
+                int high = hexDigit(value.charAt(index + 1));
+                int low = hexDigit(value.charAt(index + 2));
+                if (high < 0 || low < 0) {
+                    throw new IllegalArgumentException("Malformed percent-encoded credential");
+                }
+                bytes.write((high << 4) + low);
+                index += 3;
+                continue;
+            }
+
+            flushDecodedBytes(bytes, decoded);
+            decoded.append(character);
+            index++;
+        }
+        flushDecodedBytes(bytes, decoded);
+        return decoded.toString();
+    }
+
+    private static void flushDecodedBytes(ByteArrayOutputStream bytes, StringBuilder decoded) {
+        if (bytes.size() == 0) {
+            return;
+        }
+        decoded.append(bytes.toString(StandardCharsets.UTF_8));
+        bytes.reset();
+    }
+
+    private static int hexDigit(char character) {
+        if (character >= '0' && character <= '9') {
+            return character - '0';
+        }
+        if (character >= 'a' && character <= 'f') {
+            return character - 'a' + 10;
+        }
+        if (character >= 'A' && character <= 'F') {
+            return character - 'A' + 10;
+        }
+        return -1;
     }
 
     record DatabaseUrl(String jdbcUrl, String username, String password) {

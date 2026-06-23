@@ -35,6 +35,22 @@ class DataSourceConfigTest {
     }
 
     @Test
+    void preservesLiteralPlusInCredentials() {
+        DataSourceConfig.DatabaseUrl databaseUrl =
+                DataSourceConfig.normalizeDatabaseUrl("postgres://sync:abc+def@postgres:5432/sync");
+
+        assertEquals("abc+def", databaseUrl.password());
+    }
+
+    @Test
+    void decodesPercentEncodedCredentialsWithoutFormDecoding() {
+        DataSourceConfig.DatabaseUrl databaseUrl =
+                DataSourceConfig.normalizeDatabaseUrl("postgres://sync:p%40ss%2Bword@postgres:5432/sync");
+
+        assertEquals("p@ss+word", databaseUrl.password());
+    }
+
+    @Test
     void databaseUrlCredentialsOverrideSeparatePostgresCredentials() {
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("DATABASE_URL", "postgres://url_user:url_secret@postgres:5432/sync")

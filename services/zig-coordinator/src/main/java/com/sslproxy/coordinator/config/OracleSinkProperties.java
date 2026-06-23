@@ -20,8 +20,11 @@ public record OracleSinkProperties(
         @Min(1) int maximumPoolSize,
         @Min(0) int minimumIdle,
         @Min(1) long connectionTimeoutMs,
+        @Min(1) long validationTimeoutMs,
         @Min(1) long idleTimeoutMs,
         @Min(1) long maxLifetimeMs,
+        @Min(0) long leakDetectionThresholdMs,
+        String connectionInitSql,
         @Min(1) int statementTimeoutSecs,
         @Min(1) int loadMaxRetries
 ) {
@@ -71,6 +74,13 @@ public record OracleSinkProperties(
 
     public String requiredTnsAdmin() {
         return requiredText(tnsAdmin, "TNS_ADMIN");
+    }
+
+    public String effectiveConnectionInitSql() {
+        if (connectionInitSql == null || connectionInitSql.isBlank()) {
+            return "SELECT 1 FROM DUAL";
+        }
+        return connectionInitSql.trim();
     }
 
     private static String requiredText(String value, String name) {

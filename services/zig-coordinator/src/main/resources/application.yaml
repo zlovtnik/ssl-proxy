@@ -17,11 +17,16 @@ spring:
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
+      pool-name: coordinator-pg
+      register-mbeans: true
       maximum-pool-size: ${COORDINATOR_DB_POOL:35}
       minimum-idle: ${COORDINATOR_DB_POOL_MIN_IDLE:10}
-      connection-timeout: 30000
+      connection-timeout: ${COORDINATOR_DB_CONNECTION_TIMEOUT_MS:10000}
+      validation-timeout: ${COORDINATOR_DB_VALIDATION_TIMEOUT_MS:3000}
       idle-timeout: 600000
       max-lifetime: 1800000
+      leak-detection-threshold: ${COORDINATOR_DB_LEAK_DETECTION_THRESHOLD_MS:30000}
+      connection-init-sql: SELECT 1
   jackson:
     serialization:
       WRITE_DATES_AS_TIMESTAMPS: false
@@ -117,8 +122,11 @@ oracle-sink:
   maximum-pool-size: ${ORACLE_COORDINATOR_POOL:8}
   minimum-idle: ${ORACLE_COORDINATOR_POOL_MIN_IDLE:1}
   connection-timeout-ms: ${ORACLE_COORDINATOR_CONNECTION_TIMEOUT_MS:30000}
+  validation-timeout-ms: ${ORACLE_COORDINATOR_VALIDATION_TIMEOUT_MS:3000}
   idle-timeout-ms: ${ORACLE_COORDINATOR_IDLE_TIMEOUT_MS:600000}
   max-lifetime-ms: ${ORACLE_COORDINATOR_MAX_LIFETIME_MS:1800000}
+  leak-detection-threshold-ms: ${ORACLE_COORDINATOR_LEAK_DETECTION_THRESHOLD_MS:30000}
+  connection-init-sql: ${ORACLE_COORDINATOR_CONNECTION_INIT_SQL:SELECT 1 FROM DUAL}
   statement-timeout-secs: ${ORACLE_STATEMENT_TIMEOUT_SECS:30}
   load-max-retries: ${ORACLE_LOAD_MAX_RETRIES:3}
 
@@ -153,7 +161,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,metrics,prometheus,info
+        include: health,info,metrics,hikaricp,prometheus
   endpoint:
     health:
       show-details: always

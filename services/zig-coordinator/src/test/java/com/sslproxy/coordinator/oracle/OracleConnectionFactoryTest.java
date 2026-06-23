@@ -203,6 +203,9 @@ class OracleConnectionFactoryTest {
                 1_000,
                 1_000,
                 1_000,
+                1_000,
+                30_000,
+                "SELECT 1 FROM DUAL",
                 5,
                 3
         );
