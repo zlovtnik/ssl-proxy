@@ -55,7 +55,7 @@ signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
 compose_unresolved_placeholder::<server-local-ip>|invalid reference format::Compose image reference still contains an unresolved placeholder::Materialize .env with concrete REGISTRY/SERVER_IP before pulling images::manual
-secret_file_owner_mismatch::WG_OBFUSCATION_KEY_FILE is invalid: .*must be owned by uid::File-backed WireGuard obfuscation secret owner does not match the container runtime uid::Use an image with root-runtime host-owned secret support or regenerate/chown the mounted secret files for the runtime uid::manual
+secret_file_owner_mismatch::WG_OBFUSCATION_KEY_FILE is invalid: .*must be owned by uid::Stale ssl-proxy image rejects host-owned file-backed WireGuard obfuscation secret::Use the direct obfuscation key env fallback for this run, then rebuild/push ssl-proxy with root-runtime host-owned secret support::auto
 docker_registry_plain_http_untrusted::server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client::Docker daemon is treating the plain-HTTP local registry as HTTPS::Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry::manual
 docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
 docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
@@ -145,6 +145,18 @@ ensure_obfuscation_key_file() {
     fi
 
     ensure_secret_file "$ROOT_DIR/secrets/wg_obfuscation_key" "WireGuard obfuscation key"
+}
+
+activate_obfuscation_key_env_fallback() {
+    local value
+
+    ensure_secret_file "$ROOT_DIR/secrets/wg_obfuscation_key" "WireGuard obfuscation key"
+    value="$(trim_key_value <"$ROOT_DIR/secrets/wg_obfuscation_key" || true)"
+    if is_placeholder_value "$value"; then
+        fail "WireGuard obfuscation key is empty or unresolved"
+    fi
+
+    export WG_OBFUSCATION_KEY="$value"
 }
 
 read_dotenv_value() {
@@ -1087,6 +1099,14 @@ auto_fix() {
             apply_profile_runtime_env
             step S09 "auto_fix[$class]: recreate with WG_OBFUSCATION_ENABLED=$desired"
             if compose up -d --force-recreate; then
+                mark_auto_fixed "$class"
+                return 0
+            fi
+            ;;
+        secret_file_owner_mismatch)
+            step S09 "auto_fix[$class]: use direct WG_OBFUSCATION_KEY env fallback and recreate"
+            activate_obfuscation_key_env_fallback
+            if compose up -d --force-recreate "$SERVICE_NAME" "$FRONTDOOR_SERVICE_NAME"; then
                 mark_auto_fixed "$class"
                 return 0
             fi
