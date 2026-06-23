@@ -1,14 +1,6 @@
 # Local build override. The default compose file consumes prebuilt registry
 # images; include this file explicitly when building on a developer machine.
 services:
-  registry:
-    image: registry:2
-    container_name: lan-registry
-    restart: always
-    ports:
-      - "5001:5001"
-    volumes:
-      - ./data:/var/lib/registry
   ssl-proxy:
     build:
       context: .

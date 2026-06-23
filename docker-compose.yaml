@@ -3,6 +3,15 @@ x-ath-sensor-env: &ath_sensor_env
   DATABASE_URL: postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync
 
 services:
+  registry:
+    image: registry:2
+    container_name: lan-registry
+    restart: always
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./data:/var/lib/registry
+
   ssl-proxy:
     depends_on:
       redpanda:
