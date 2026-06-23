@@ -44,6 +44,12 @@ services/zig-coordinator/.settings/
 !*.conf.example
 !config/templates/*.conf
 
+# Secrets
+*.key
+*.pem
+*.secret
+!secrets/.gitkeep
+
 # Rust
 **/debug/
 **/target/
