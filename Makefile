@@ -4,6 +4,8 @@ ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
 GO_BIN_DIR = $(shell go env GOPATH)/bin
 REGISTRY ?=
+REGISTRY_BUILDER ?= cross
+REGISTRY_PLAIN_HTTP ?= auto
 TAG ?= $(shell git rev-parse --short HEAD)
 IMAGE_TAG ?= latest
 PLATFORM ?= linux/amd64
@@ -51,10 +53,37 @@ require-deploy-vars:
 	@test -n "$(DEPLOY_PATH)" || (echo "DEPLOY_PATH is required, for example DEPLOY_PATH=/path/to/ssl-proxy" >&2; exit 2)
 
 registry-buildx:
-	@if docker buildx inspect cross >/dev/null 2>&1; then \
-		docker buildx use cross; \
+	@registry_host="$(REGISTRY)"; \
+	registry_host="$${registry_host%%/*}"; \
+	plain_http="$(REGISTRY_PLAIN_HTTP)"; \
+	case "$$plain_http" in \
+		auto) \
+			case "$$registry_host" in \
+				localhost:*|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) plain_http=1 ;; \
+				*) plain_http=0 ;; \
+			esac ;; \
+		1|true|yes) plain_http=1 ;; \
+		0|false|no) plain_http=0 ;; \
+		*) echo "REGISTRY_PLAIN_HTTP must be auto, 1, or 0" >&2; exit 2 ;; \
+	esac; \
+	if [ "$$plain_http" = 1 ]; then \
+		if [ -z "$$registry_host" ]; then \
+			echo "REGISTRY is required when REGISTRY_PLAIN_HTTP=1" >&2; \
+			exit 2; \
+		fi; \
+		builder_host="$$(printf '%s' "$$registry_host" | sed 's/[^[:alnum:]-]/-/g')"; \
+		builder="$(REGISTRY_BUILDER)-http-$$builder_host"; \
+		config="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$$builder.toml"; \
+		printf '[registry."%s"]\n  http = true\n' "$$registry_host" > "$$config"; \
+		if docker buildx inspect "$$builder" >/dev/null 2>&1; then \
+			docker buildx use "$$builder"; \
+		else \
+			docker buildx create --use --name "$$builder" --driver docker-container --buildkitd-config "$$config"; \
+		fi; \
+	elif docker buildx inspect "$(REGISTRY_BUILDER)" >/dev/null 2>&1; then \
+		docker buildx use "$(REGISTRY_BUILDER)"; \
 	else \
-		docker buildx create --use --name cross; \
+		docker buildx create --use --name "$(REGISTRY_BUILDER)"; \
 	fi
 
 registry-build-all: $(REGISTRY_BUILD_TARGETS)

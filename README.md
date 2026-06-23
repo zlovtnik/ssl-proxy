@@ -235,6 +235,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `DATABASE_URL` | Built from generated `POSTGRES_PASSWORD` in Compose | Primary Postgres connection |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
+| `REGISTRY_PLAIN_HTTP` | `auto` | Buildx plain-HTTP registry mode; auto-detects localhost and private IPv4 registries |
 | `IMAGE_TAG` | `latest` | Image tag consumed by Compose |
 
 ### Rotator Profile
@@ -308,7 +309,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `bench` | Run local benchmark baselines (`wg_packet_obfuscation`) |
 | `lint` | Run `cargo clippy -- -D warnings` |
 | `docker` | Build selected local Docker images through `docker-compose.build.yaml` |
-| `registry-buildx` | Create or use the `cross` buildx builder |
+| `registry-buildx` | Create or use the registry-aware buildx builder |
 | `registry-build-all` | Build and push linux/amd64 registry images |
 | `registry-build-vec-worker` | Build vec-worker when its Dockerfile exists; otherwise fail clearly |
 | `deploy` | SSH to `DEPLOY_HOST`, pull images in `DEPLOY_PATH`, and run Compose |

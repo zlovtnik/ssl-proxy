@@ -27,6 +27,12 @@ developer machine and the server:
 
 Restart Docker after editing `/etc/docker/daemon.json`.
 
+The Makefile also configures the container-based buildx builder for plain HTTP.
+`REGISTRY_PLAIN_HTTP=auto` is the default and treats `localhost`, `127.*`,
+`10.*`, `172.16.*`-`172.31.*`, and `192.168.*` registries as HTTP. For a
+plain-HTTP registry outside those ranges, set `REGISTRY_PLAIN_HTTP=1`. For a
+private-IP registry that really does use HTTPS, set `REGISTRY_PLAIN_HTTP=0`.
+
 Keep port 5000 off the public interface:
 
 ```bash
@@ -80,6 +86,12 @@ Build from the development machine for the server architecture:
 ```bash
 make registry-buildx
 make registry-build-all REGISTRY=<server-local-ip>:5000
+```
+
+For non-private plain-HTTP registries:
+
+```bash
+make registry-build-all REGISTRY=<registry-host>:5000 REGISTRY_PLAIN_HTTP=1
 ```
 
 `TAG` defaults to `git rev-parse --short HEAD`, and every image is also tagged
