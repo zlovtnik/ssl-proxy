@@ -29,14 +29,14 @@ public class DataSourceConfig {
         HikariDataSource dataSource = new HikariDataSource();
         dataSource.setJdbcUrl(databaseUrl.jdbcUrl());
         dataSource.setUsername(firstNonBlank(
-                env.getProperty("POSTGRES_USER"),
                 databaseUrl.username(),
+                env.getProperty("POSTGRES_USER"),
                 env.getProperty("spring.datasource.username"),
                 "sync"
         ));
         dataSource.setPassword(firstNonBlank(
-                env.getProperty("POSTGRES_PASSWORD"),
                 databaseUrl.password(),
+                env.getProperty("POSTGRES_PASSWORD"),
                 env.getProperty("spring.datasource.password"),
                 ""
         ));
