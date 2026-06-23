@@ -11,12 +11,7 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy:${IMAGE_TAG:-latest}
     # Compatibility mode: host-mounted peer config files are often 0600 on the host.
     # Run as root so startup key sync/read logic can access /config/peer1/*.conf.
     user: "0:0"
@@ -107,12 +102,7 @@ services:
     depends_on:
       ssl-proxy:
         condition: service_healthy
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy:${IMAGE_TAG:-latest}
     command: ["/usr/local/bin/wg-udp-frontdoor"]
     restart: unless-stopped
     healthcheck:
@@ -143,12 +133,7 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy:${IMAGE_TAG:-latest}
     user: "0:0"
     command: ["/usr/local/bin/start-proxy-wg"]
     restart: unless-stopped
@@ -224,14 +209,14 @@ services:
     platform: ${WAHA_PLATFORM:-linux/amd64}
     restart: unless-stopped
     environment:
-      - WAHA_NO_API_KEY=${WAHA_NO_API_KEY:-True}
-      - WAHA_API_KEY=${WAHA_API_KEY:-}
-      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-True}
+      - WAHA_NO_API_KEY=${WAHA_NO_API_KEY:-False}
+      - WAHA_API_KEY=${WAHA_API_KEY:?WAHA_API_KEY is required}
+      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-False}
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
-      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-}
-      - WHATSAPP_SWAGGER_NO_PASSWORD=${WHATSAPP_SWAGGER_NO_PASSWORD:-True}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:?WAHA_DASHBOARD_PASSWORD is required}
+      - WHATSAPP_SWAGGER_NO_PASSWORD=${WHATSAPP_SWAGGER_NO_PASSWORD:-False}
       - WHATSAPP_SWAGGER_USERNAME=${WHATSAPP_SWAGGER_USERNAME:-admin}
-      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD:-}
+      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD:?WHATSAPP_SWAGGER_PASSWORD is required}
     volumes:
       - waha-sessions:/app/.sessions
       - waha-media:/app/.media
@@ -243,9 +228,7 @@ services:
     depends_on:
       waha:
         condition: service_started
-    build:
-      context: ./apps/wg-key-rotator
-      dockerfile: Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/wg-key-rotator:${IMAGE_TAG:-latest}
     restart: "no"
     working_dir: "${ROTATOR_REPO_ROOT:-${PWD}}"
     command: ["status"]
@@ -264,7 +247,7 @@ services:
       - WAHA_BASE_URL=http://waha:3000
       - WAHA_SESSION=${WAHA_SESSION:-default}
       - WAHA_CHAT_ID=${WAHA_CHAT_ID:-}
-      - WAHA_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_API_KEY=${WAHA_API_KEY:?WAHA_API_KEY is required}
       - WAHA_API_KEY_FILE=${WAHA_API_KEY_FILE:-}
     volumes:
       # The rotator invokes docker compose through the host Docker socket, so the
@@ -284,13 +267,11 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: services/zig-coordinator/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/java-coordinator:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75}
       - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
       - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
@@ -385,9 +366,7 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "server", "-b", "0.0.0.0"]
     environment:
@@ -424,9 +403,7 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "runner", "Observability::WorkerRunner.run_forever"]
     environment:
@@ -455,9 +432,7 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: "no"
     command: ["sh", "bin/observability-db-setup.sh"]
     environment:
@@ -482,9 +457,7 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
     environment:
@@ -511,9 +484,7 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
     environment:
@@ -539,10 +510,7 @@ services:
         condition: service_healthy
       java-coordinator:
         condition: service_healthy
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: atheros-sensor
+    image: ${REGISTRY:?REGISTRY is required}/atheros-sensor:${IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     cap_add:
@@ -605,9 +573,7 @@ services:
   atheros-search:
     profiles:
       - vector
-    build:
-      context: .
-      dockerfile: services/atheros-search/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/atheros-search:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
@@ -762,9 +728,7 @@ services:
     command: ["/config/bootstrap.sh"]
 
   postgres:
-    build:
-      context: .
-      dockerfile: docker/postgres/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy-postgres:${IMAGE_TAG:-latest}
     command:
       - postgres
       - -c

@@ -23,10 +23,12 @@
    cargo test obfuscation::tests
    ```
 
-4. **Rebuild container:**
+4. **Publish and redeploy the image:**
    ```bash
-   docker compose build ssl-proxy
-   docker compose up -d
+   make registry-build-ssl-proxy REGISTRY=<server-local-ip>:5000
+   export REGISTRY=<server-local-ip>:5000
+   docker compose pull ssl-proxy wg-udp-frontdoor
+   docker compose up -d ssl-proxy wg-udp-frontdoor
    ```
 
 ---
@@ -90,21 +92,33 @@ Use the rotator in `apps/wg-key-rotator` for stable-port scheduled rotation. It 
 
 ### 4. Verify Container Provenance for WireGuard Startup
 
-1. **Force a fresh build with explicit metadata:**
+First-party service images are built off-host and pulled from the local
+registry. See [local-registry-workflow.md](local-registry-workflow.md) for the
+registry setup, access control, and buildx workflow.
+
+1. **Publish a fresh image with explicit metadata:**
    ```bash
    export VCS_REF="$(git rev-parse --short HEAD)"
    export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-   docker compose down --remove-orphans
-   docker compose up -d --build
+   make registry-build-ssl-proxy REGISTRY=<server-local-ip>:5000 TAG="$VCS_REF"
    ```
 
-2. **Compare the built image and compose input:**
+2. **Pull and recreate the runtime container on the server:**
    ```bash
-   docker images boringtun-ssl-proxy
+   export REGISTRY=<server-local-ip>:5000
+   export IMAGE_TAG="$VCS_REF"
+   docker compose down --remove-orphans
+   docker compose pull ssl-proxy wg-udp-frontdoor
+   docker compose up -d
+   ```
+
+3. **Compare the pulled image and compose input:**
+   ```bash
+   docker images "$REGISTRY/ssl-proxy"
    docker compose config | sed -n '20,55p'
    ```
 
-3. **Verify the runtime fingerprint and rendered config:**
+4. **Verify the runtime fingerprint and rendered config:**
    ```bash
    docker compose logs ssl-proxy | grep '\[startup-fingerprint\]'
    docker compose exec -T ssl-proxy sed -n '1,12p' /run/wireguard/wg0.conf
@@ -112,9 +126,9 @@ Use the rotator in `apps/wg-key-rotator` for stable-port scheduled rotation. It 
 
    If a mounted template drifted and duplicated `Address = ...` lines, startup now canonicalizes them back to one line before bringing the BoringTun-backed `wg0` interface up.
 
-4. **If logs contradict the repo:**
+5. **If logs contradict the repo:**
    - Remove the old container with `docker compose down --remove-orphans`
-   - Rebuild with `docker compose up -d --build`
+   - Re-push the image, then run `docker compose pull && docker compose up -d`
    - Re-check the `[startup-fingerprint]` lines before debugging WireGuard behavior
 
 ---

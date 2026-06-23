@@ -54,8 +54,8 @@ fail() {
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
-docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
-docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Prune stale BuildKit cache after context shrink, then rerun compose build::manual
+docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
+docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Treat in-container health as authoritative::auto
 coordinator_unhealthy::java-coordinator unhealthy::Coordinator failed health, Redpanda, Postgres, or Oracle checks::Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings::manual
@@ -122,16 +122,10 @@ ensure_secret_file() {
     local label="$2"
 
     if [ -s "$path" ]; then
-        chmod 400 "$path" 2>/dev/null || true
         return 0
     fi
 
-    require_command openssl
-    mkdir -p "$(dirname "$path")"
-    umask 077
-    openssl rand -base64 32 >"$path"
-    chmod 400 "$path"
-    step S00 "generated local $label secret at $path"
+    fail "Missing $label secret at $path; run scripts/gen-secrets generate"
 }
 
 ensure_admin_api_key_file() {
@@ -139,9 +133,7 @@ ensure_admin_api_key_file() {
         return 0
     fi
 
-    ADMIN_API_KEY_FILE="${ADMIN_API_KEY_FILE:-$ROOT_DIR/secrets/admin_api_key}"
-    ensure_secret_file "$ADMIN_API_KEY_FILE" "admin API key"
-    export ADMIN_API_KEY_FILE
+    ensure_secret_file "$ROOT_DIR/secrets/admin_api_key" "admin API key"
 }
 
 ensure_obfuscation_key_file() {
@@ -149,9 +141,33 @@ ensure_obfuscation_key_file() {
         return 0
     fi
 
-    WG_OBFUSCATION_KEY_FILE="${WG_OBFUSCATION_KEY_FILE:-$ROOT_DIR/secrets/wg_obfuscation_key}"
-    ensure_secret_file "$WG_OBFUSCATION_KEY_FILE" "WireGuard obfuscation key"
-    export WG_OBFUSCATION_KEY_FILE
+    ensure_secret_file "$ROOT_DIR/secrets/wg_obfuscation_key" "WireGuard obfuscation key"
+}
+
+ensure_secret_bootstrap() {
+    step S00 "secret_bootstrap: checking generated secrets"
+    if "$ROOT_DIR/scripts/gen-secrets" check >/dev/null 2>&1; then
+        "$ROOT_DIR/scripts/gen-secrets" env >/dev/null
+        step S00 "secret_bootstrap: .env materialized"
+        return 0
+    fi
+
+    if [ -f "$ROOT_DIR/secrets/ONE_TIME_TOKENS" ]; then
+        "$ROOT_DIR/scripts/gen-secrets" env >/dev/null 2>&1 || true
+        "$ROOT_DIR/scripts/gen-secrets" check || true
+        fail "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
+    fi
+
+    step S00 "secret_bootstrap: generating missing secrets"
+    if ! "$ROOT_DIR/scripts/gen-secrets" generate; then
+        "$ROOT_DIR/scripts/gen-secrets" check || true
+        fail "secret generation failed"
+    fi
+
+    "$ROOT_DIR/scripts/gen-secrets" env >/dev/null
+    if ! "$ROOT_DIR/scripts/gen-secrets" check; then
+        fail "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
+    fi
 }
 
 read_ini_value() {
@@ -232,8 +248,8 @@ ensure_peer_key_helper() {
         return 0
     fi
 
-    step S00 "peer_bootstrap: docker compose build ssl-proxy"
-    compose build ssl-proxy || return 1
+    step S00 "peer_bootstrap: docker compose pull ssl-proxy"
+    compose pull ssl-proxy || return 1
     PEER_KEY_HELPER_READY=1
 }
 
@@ -497,9 +513,21 @@ desired_obfuscation_value() {
 }
 
 compose_up() {
-    step S03 "compose_up: docker compose up -d --build"
+    step S03 "compose_pull: docker compose pull"
     local output
-    if output="$(compose up -d --build 2>&1)"; then
+    if output="$(compose pull 2>&1)"; then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        set_failure_from_text "$output"
+        if auto_fix "$LAST_FAILURE_CLASS" "$output"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    step S03 "compose_up: docker compose up -d"
+    if output="$(compose up -d 2>&1)"; then
         printf '%s\n' "$output"
         return 0
     fi
@@ -791,8 +819,8 @@ auto_fix() {
 
     case "$class" in
         docker_registry_dns_timeout)
-            step S09 "auto_fix[$class]: fallback to --no-build"
-            if compose up -d --no-build --force-recreate; then
+            step S09 "auto_fix[$class]: recreate with locally available images"
+            if compose up -d --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -802,7 +830,7 @@ auto_fix() {
             desired="$(desired_obfuscation_value)"
             apply_profile_runtime_env
             step S09 "auto_fix[$class]: recreate with WG_OBFUSCATION_ENABLED=$desired"
-            if compose up -d --no-build --force-recreate; then
+            if compose up -d --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -815,7 +843,7 @@ auto_fix() {
         wg_peer_material_missing)
             step S09 "auto_fix[$class]: bootstrap peer material and recreate"
             ensure_local_peer_material || return 1
-            if compose up -d --build --force-recreate; then
+            if compose up -d --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -850,6 +878,7 @@ preflight() {
     require_command curl
     require_command qrencode
     require_profile_mode
+    ensure_secret_bootstrap
     ensure_memory_schema
 }
 

@@ -37,8 +37,8 @@ EOF_MODE
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
-docker_registry_dns_timeout::lookup registry-1\\.docker\\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; rerun with --no-build if local image exists::auto
-docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Prune stale BuildKit cache after context shrink, then rerun compose build::manual
+docker_registry_dns_timeout::lookup registry-1\\.docker\\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
+docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Use in-container health probe for truth::auto
 coordinator_unhealthy::java-coordinator unhealthy::Coordinator failed health, Redpanda, Postgres, or Oracle checks::Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings::manual

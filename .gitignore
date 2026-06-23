@@ -33,6 +33,7 @@ services/zig-coordinator/.settings/
 .env.*
 !.env.example
 !**/.env.example
+/secrets/ONE_TIME_TOKENS
 /secrets/
 /config/server/privatekey-server
 /config/server/publickey-server
