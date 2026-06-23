@@ -216,7 +216,7 @@ registry_plain_http_enabled() {
 
 docker_daemon_lists_insecure_registry() {
     local registry_host="$1"
-    local info
+    local info host_ip
 
     case "$registry_host" in
         localhost:*|127.*) return 0 ;;
@@ -224,7 +224,33 @@ docker_daemon_lists_insecure_registry() {
 
     info="$(docker info 2>/dev/null || true)"
     [ -n "$info" ] || return 1
-    printf '%s\n' "$info" | grep -Fq "$registry_host"
+    if printf '%s\n' "$info" | grep -Fq "$registry_host"; then
+        return 0
+    fi
+
+    host_ip="${registry_host%%:*}"
+    case "$host_ip" in
+        10.*)
+            if printf '%s\n' "$info" | grep -Fq "10.0.0.0/8"; then
+                return 0
+            fi
+            ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
+            if printf '%s\n' "$info" | grep -Fq "172.16.0.0/12"; then
+                return 0
+            fi
+            ;;
+        192.168.*)
+            if printf '%s\n' "$info" | grep -Fq "192.168.0.0/16"; then
+                return 0
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    return 1
 }
 
 print_insecure_registry_fix() {
@@ -239,11 +265,18 @@ Docker Desktop: Settings -> Docker Engine, add:
 Linux Docker Engine: add the same JSON key to /etc/docker/daemon.json.
 Restart Docker, then rerun:
 make up-ready PROFILE_MODE=${PROFILE_MODE} SERVER_IP=${SERVER_IP} CLIENT_IP=${CLIENT_IP}
+
+If Docker is configured through an equivalent trusted CIDR that this preflight
+cannot detect, rerun with UP_READY_SKIP_REGISTRY_PREFLIGHT=1.
 EOF_REGISTRY_FIX
 }
 
 verify_registry_transport() {
     local registry_host
+
+    case "${UP_READY_SKIP_REGISTRY_PREFLIGHT:-0}" in
+        1|true|yes) return 0 ;;
+    esac
 
     registry_host="$(registry_host_value "$REGISTRY")"
     [ -n "$registry_host" ] || return 0
