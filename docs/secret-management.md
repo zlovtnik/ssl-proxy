@@ -59,6 +59,7 @@ The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
 | Atomic writes | Writes a temporary file, applies mode, then renames to the final path |
 | Overwrite policy | Refuses to overwrite managed files unless `--force` is passed |
 | Permissions | Applies per-secret file modes and locks generated directories to `0700` |
+| Repair | Fixes managed modes and rewrites candidate secret copies without replacing root secrets |
 | Hash storage | Atheros token stores SHA-256 hex digest; raw token is written once to `secrets/ONE_TIME_TOKENS` |
 
 ### 2.2 What gets generated
@@ -90,6 +91,9 @@ The generator also copies `admin_api_key` and `wg_obfuscation_key` into
   rm secrets/ONE_TIME_TOKENS
   ```
 - `scripts/gen-secrets check` fails while `secrets/ONE_TIME_TOKENS` exists.
+- `scripts/gen-secrets repair` fixes managed permissions and rewrites candidate copies from
+  the active root secrets, or from the pending generation when
+  `secrets/wg-rotation/state/pending_generation` exists.
 - The wrapper does not create the `wg-rotation/frontdoor/wg-udp-frontdoor.toml` file. That is
   maintained by the WireGuard key rotator (`apps/wg-key-rotator/bin/wg_key_rotator`).
 

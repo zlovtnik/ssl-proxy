@@ -405,6 +405,13 @@ ensure_secret_bootstrap() {
         fail "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
     fi
 
+    step S00 "secret_bootstrap: repairing generated secrets"
+    if "$ROOT_DIR/scripts/gen-secrets" repair >/dev/null 2>&1; then
+        materialize_secret_env
+        step S00 "secret_bootstrap: repaired generated secrets"
+        return 0
+    fi
+
     step S00 "secret_bootstrap: generating missing secrets"
     if ! "$ROOT_DIR/scripts/gen-secrets" generate; then
         "$ROOT_DIR/scripts/gen-secrets" check || true
