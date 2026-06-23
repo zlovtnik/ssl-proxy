@@ -14,7 +14,7 @@ spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/sync}
     username: ${POSTGRES_USER:sync}
-    password: ${POSTGRES_PASSWORD:sync}
+    password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: ${COORDINATOR_DB_POOL:35}

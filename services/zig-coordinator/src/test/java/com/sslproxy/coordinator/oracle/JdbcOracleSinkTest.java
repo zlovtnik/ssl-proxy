@@ -8,10 +8,15 @@ import org.junit.jupiter.api.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.OffsetDateTime;
+import java.time.Month;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -72,6 +77,44 @@ class JdbcOracleSinkTest {
         sink.validateSchemaObjects(query.connection());
 
         verify(query.statement()).setQueryTimeout(5);
+    }
+
+    @Test
+    void rawUuidBytesPacksCanonicalUuid() throws Exception {
+        byte[] raw = JdbcOracleSink.rawUuidBytes("00112233-4455-6677-8899-aabbccddeeff");
+
+        assertArrayEquals(new byte[] {
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                (byte) 0x88, (byte) 0x99, (byte) 0xaa, (byte) 0xbb,
+                (byte) 0xcc, (byte) 0xdd, (byte) 0xee, (byte) 0xff
+        }, raw);
+    }
+
+    @Test
+    void rawUuidBytesAcceptsCompactHexUuid() throws Exception {
+        byte[] raw = JdbcOracleSink.rawUuidBytes("00112233445566778899aabbccddeeff");
+
+        assertArrayEquals(JdbcOracleSink.rawUuidBytes("00112233-4455-6677-8899-aabbccddeeff"), raw);
+    }
+
+    @Test
+    void rawUuidBytesRejectsInvalidUuid() {
+        assertThrows(SQLException.class, () -> JdbcOracleSink.rawUuidBytes("batch-1"));
+    }
+
+    @Test
+    void eventTimestampUtcNormalizesAndTruncatesToMillis() {
+        OffsetDateTime eventTime = OffsetDateTime.parse("2026-06-01T08:00:00.123456-04:00");
+
+        var utc = JdbcOracleSink.eventTimestampUtc(eventTime);
+
+        assertEquals(2026, utc.getYear());
+        assertEquals(Month.JUNE, utc.getMonth());
+        assertEquals(1, utc.getDayOfMonth());
+        assertEquals(12, utc.getHour());
+        assertEquals(0, utc.getMinute());
+        assertEquals(0, utc.getSecond());
+        assertEquals(123_000_000, utc.getNano());
     }
 
     private JdbcOracleSink sink() {
