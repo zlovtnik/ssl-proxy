@@ -18,6 +18,7 @@ secrets/
 ├── admin_api_key                         # ssl-proxy ADMIN_API_KEY (no .key suffix)
 ├── wg_obfuscation_key                    # WG obfuscation key
 ├── grafana_admin_password.key            # GF_SECURITY_ADMIN_PASSWORD
+├── oracle_password.txt                   # ORACLE_PASS_FILE for java-coordinator
 ├── atheros_api_token_sha256.key          # ATHSEARCH_API_TOKEN_SHA256 (hex hash)
 ├── ONE_TIME_TOKENS                       # raw bootstrap tokens to consume and delete
 ├── wg-rotation/
@@ -34,8 +35,10 @@ secrets/
 ```
 
 File permissions: `0400` for file-backed runtime keys (`admin_api_key`,
-`wg_obfuscation_key`, and rotation candidate copies), `0600` for other generated secret files,
-and `0700` for directories in the tree. `ONE_TIME_TOKENS` is always `0600`.
+`wg_obfuscation_key`, and rotation candidate copies), `0444` for `oracle_password.txt`
+because the non-root coordinator reads it through a read-only bind mount, `0600` for other
+generated secret files, `0711` for the top-level `secrets/` directory, and `0700` for nested
+secret directories. `ONE_TIME_TOKENS` is always `0600`.
 
 ---
 
@@ -72,6 +75,7 @@ The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
 | `wg_obfuscation_key` | 32 | ~43 chars | ssl-proxy, wg-obfs-shim clients |
 | `admin_api_key` | 48 | ~64 chars | ssl-proxy admin API |
 | `grafana_admin_password.key` | 32 | ~43 chars | Grafana |
+| `oracle_password.txt` | 32 | ~43 chars | java-coordinator Oracle sink |
 | `atheros_api_token_sha256.key` | 48 | hex(64) | atheros-search |
 | `waha/api_key.key` | 32 | ~43 chars | Waha WhatsApp bridge |
 | `waha/dashboard_password.key` | 32 | ~43 chars | Waha dashboard |

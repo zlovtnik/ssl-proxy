@@ -699,13 +699,13 @@ apply_profile_runtime_env() {
             export WG_OBFUSCATION_ENABLED=true
             export WG_PORT=443
             export WG_INTERNAL_PORT=51820
-            ensure_obfuscation_key_file
+            activate_obfuscation_key_env_fallback
             ;;
         mac)
             export WG_OBFUSCATION_ENABLED=true
             export WG_PORT=51820
             export WG_INTERNAL_PORT=443
-            ensure_obfuscation_key_file
+            activate_obfuscation_key_env_fallback
             ;;
     esac
 }

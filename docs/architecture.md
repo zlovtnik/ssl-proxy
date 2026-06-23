@@ -205,8 +205,8 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 
 1. **Setup secrets:**
    ```bash
-   mkdir -p secrets
-   echo "your-oracle-password" > secrets/oracle_password.txt
+   scripts/gen-secrets generate
+   SERVER_IP=<server-local-ip> scripts/gen-secrets env
    ```
 
 2. **Start stack:**
