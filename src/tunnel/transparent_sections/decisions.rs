@@ -222,16 +222,17 @@ async fn bypass_transparent_flow(
     .await
     {
         Ok(Ok(mut upstream)) => {
-            set_keepalive(&upstream);
+            super::socket_tuning::configure_tunnel_tcp(&upstream);
             let context = TunnelAuditContext::bypass("transparent", flow.category, flow.reason)
                 .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
                 .with_tls(tls);
             state.record_tunnel_open_for_peer(identity.wg_pubkey.as_deref());
             context.emit_open(&state, &flow.authority, &identity);
 
-            let (bytes_up, bytes_down) = tokio::io::copy_bidirectional(&mut stream, &mut upstream)
-                .await
-                .unwrap_or((0, 0));
+            let (bytes_up, bytes_down) =
+                super::socket_tuning::copy_bidirectional(&mut stream, &mut upstream)
+                    .await
+                    .unwrap_or((0, 0));
             state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), bytes_up, bytes_down);
             context.emit_close(
                 &state,

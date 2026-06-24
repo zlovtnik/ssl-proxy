@@ -161,7 +161,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,hikaricp,prometheus
+        include: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:health,info,metrics,hikaricp,prometheus}
   endpoint:
     health:
       show-details: always

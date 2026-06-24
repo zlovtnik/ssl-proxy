@@ -512,6 +512,20 @@ escape_sed_replacement() {
     printf '%s' "$value"
 }
 
+uri_encode() {
+    local value="$1"
+    local length="${#value}"
+    local index char
+
+    for ((index = 0; index < length; index++)); do
+        char="${value:index:1}"
+        case "$char" in
+            [a-zA-Z0-9.~_-]) printf '%s' "$char" ;;
+            *) printf '%%%02X' "'$char" ;;
+        esac
+    done
+}
+
 ensure_peer_key_helper() {
     if [ "$PEER_KEY_HELPER_READY" -eq 1 ]; then
         return 0
@@ -1122,7 +1136,7 @@ read_handoff_secret() {
 write_credential_handoff() {
     step S09 "credential_handoff"
 
-    local output tmp postgres_password grafana_password admin_api_key wg_obfuscation_key grafana_user
+    local output tmp postgres_password postgres_password_url grafana_password admin_api_key wg_obfuscation_key grafana_user
     local wg_magic_byte wg_session_idle_secs wg_public_port shim_server_addr
     local peer_id peer_dir direct_cfg obfuscated_cfg selected_cfg
     local old_umask
@@ -1132,6 +1146,7 @@ write_credential_handoff() {
     tmp="$(mktemp "${output}.XXXXXX")" || return 1
 
     postgres_password="$(read_handoff_secret "$ROOT_DIR/secrets/postgres.key" || true)"
+    postgres_password_url="$(uri_encode "$postgres_password")"
     grafana_password="$(read_handoff_secret "$ROOT_DIR/secrets/grafana_admin_password.key" || true)"
     admin_api_key="$(read_handoff_secret "$ROOT_DIR/secrets/admin_api_key" || true)"
     wg_obfuscation_key="$(read_handoff_secret "$ROOT_DIR/secrets/wg_obfuscation_key" || true)"
@@ -1167,7 +1182,7 @@ write_credential_handoff() {
         printf 'database=sync\n'
         printf 'username=sync\n'
         printf 'password=%s\n' "$postgres_password"
-        printf 'url=postgres://sync:%s@127.0.0.1:5432/sync\n' "$postgres_password"
+        printf 'url=postgres://sync:%s@127.0.0.1:5432/sync\n' "$postgres_password_url"
         printf '\n## Grafana\n'
         printf 'url=http://127.0.0.1:3004\n'
         printf 'username=%s\n' "$grafana_user"

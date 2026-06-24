@@ -3,9 +3,16 @@ set -eu
 
 SCAN_TOPIC="${SYNC_SCAN_TOPIC:-sync.scan.request}"
 SCAN_CONSUMER="${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}"
+
+uri_encode() {
+    python3 -c 'import sys
+from urllib.parse import quote
+print(quote(sys.stdin.read(), safe=""), end="")'
+}
+
 if [ -z "${DATABASE_URL:-}" ]; then
     : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required when DATABASE_URL is unset}"
-    DATABASE_URL="postgres://sync:${POSTGRES_PASSWORD}@postgres:5432/sync"
+    DATABASE_URL="postgres://sync:$(printf '%s' "${POSTGRES_PASSWORD}" | uri_encode)@postgres:5432/sync"
 fi
 REDPANDA_BROKERS="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-ssl-proxy}"

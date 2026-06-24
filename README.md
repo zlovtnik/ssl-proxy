@@ -229,11 +229,19 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
 | `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
-| `DATABASE_URL` | Built from generated `POSTGRES_PASSWORD` in Compose | Primary Postgres connection |
+| `DATABASE_URL` | Compose default: `jdbc:postgresql://postgres:5432/sync` | Primary Postgres connection. PostgreSQL credentials are supplied separately as `POSTGRES_USER=sync` and the generated `POSTGRES_PASSWORD`; URL-style values must follow `postgres://sync:${POSTGRES_PASSWORD}@postgres:5432/sync` when credentials are embedded. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
 | `REGISTRY_PLAIN_HTTP` | `auto` | Buildx plain-HTTP registry mode; auto-detects localhost and private IPv4 registries |
 | `IMAGE_TAG` | `latest` | Image tag consumed by Compose |
+
+The coordinator resolves the database URL in `DataSourceConfig.java` by
+preferring `JDBC_DATABASE_URL`, then `DATABASE_URL`, then
+`spring.datasource.url`, and finally `jdbc:postgresql://localhost:5432/sync`.
+If the selected URL does not embed credentials, it falls back to
+`POSTGRES_USER=sync` and `POSTGRES_PASSWORD`. In the Compose network the
+expected components are host `postgres`, port `5432`, database `sync`, and user
+`sync`.
 
 ### Rotator Profile
 

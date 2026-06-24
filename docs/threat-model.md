@@ -106,6 +106,10 @@ Priority is based on impact to enforcement integrity + audit integrity.
 
 - Admin/control-plane services are intended to remain host-local and not internet-exposed.
 - WireGuard is the primary ingress path; explicit proxy remains exceptional/debug-only.
+- Root container processes may read host-mounted secret files owned by an
+  unprivileged host uid; strict secret-file checks intentionally allow this when
+  the effective uid is `0` to support containerized deployments while still
+  requiring regular files and restrictive permissions.
 - Oracle-backed persistence is required for compliance-grade evidence in regulated deployments.
 - Fail-closed behavior for ambiguous TLS metadata (e.g., no SNI) is expected in strict environments.
 - Compliance reviewers will resolve unknown ownership and role-model questions before production sign-off.

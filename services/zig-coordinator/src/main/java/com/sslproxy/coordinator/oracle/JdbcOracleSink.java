@@ -173,6 +173,7 @@ public class JdbcOracleSink implements OracleSink {
                         )
                         """;
                 try (PreparedStatement statement = prepare(connection, sql)) {
+                    long insertedRows = 0L;
                     for (ProxyPayloadAuditInsert row : rows) {
                         bindAll(statement, rawUuidBytes(row.correlationId()), row.host(), row.direction(), row.capturedAt(),
                                 row.byteOffset(), row.payloadObjectKey(), row.contentType(), row.httpMethod(),
@@ -180,14 +181,15 @@ public class JdbcOracleSink implements OracleSink {
                                 row.peerIp(), row.notes());
                         try {
                             statement.executeUpdate();
+                            insertedRows++;
                         } catch (SQLException e) {
                             if (!isProxyPayloadAuditDuplicate(e.getMessage())) {
                                 throw e;
                             }
                         }
                     }
+                    return insertedRows;
                 }
-                return (long) rows.size();
             }));
             log.info("event=oracle_insert status=ok target=proxy_payload_audit batch_id={} rows={}",
                     batchId, inserted);
@@ -508,7 +510,7 @@ public class JdbcOracleSink implements OracleSink {
             }
         }
         upsertBlockedEvents(connection, blockedRows, inserted);
-        return rows.size();
+        return inserted.size();
     }
 
     private void upsertBlockedEvents(Connection connection,
@@ -749,7 +751,7 @@ public class JdbcOracleSink implements OracleSink {
             buffer.putLong(uuid.getLeastSignificantBits());
             return buffer.array();
         } catch (IllegalArgumentException e) {
-            throw new SQLException("invalid UUID value for RAW(16): " + value, e);
+            throw new SQLException("invalid UUID value for RAW(16)", e);
         }
     }
 

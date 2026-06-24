@@ -99,7 +99,9 @@ class JdbcOracleSinkTest {
 
     @Test
     void rawUuidBytesRejectsInvalidUuid() {
-        assertThrows(SQLException.class, () -> JdbcOracleSink.rawUuidBytes("batch-1"));
+        SQLException error = assertThrows(SQLException.class, () -> JdbcOracleSink.rawUuidBytes("batch-1"));
+
+        assertEquals("invalid UUID value for RAW(16)", error.getMessage());
     }
 
     @Test

@@ -74,6 +74,14 @@ class OracleSchemaContractTest {
     }
 
     private String readOracleSql() throws Exception {
-        return Files.readString(Path.of(System.getProperty("user.dir")).resolve("../../sql/oracle.sql").normalize());
+        Path current = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+        while (current != null) {
+            Path candidate = current.resolve("sql/oracle.sql");
+            if (Files.isRegularFile(candidate)) {
+                return Files.readString(candidate);
+            }
+            current = current.getParent();
+        }
+        throw new IllegalStateException("Unable to locate sql/oracle.sql from " + System.getProperty("user.dir"));
     }
 }

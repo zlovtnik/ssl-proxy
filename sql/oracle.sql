@@ -891,7 +891,6 @@ BEGIN
     add_append_only_policy('PROXY_BLOCKLIST_AUDIT');
     add_append_only_policy('PROXY_DB_QUERY_LOG');
     add_append_only_policy('WIRELESS_AUDIT_FRAMES');
-    add_append_only_policy('WIRELESS_ALERTS');
     add_append_only_policy('WIRELESS_ALERTS_LEDGER');
 END;
 /
@@ -905,7 +904,7 @@ SELECT
     EVENT_TYPE,
     HOST,
     obj_wireguard_identity(WG_PUBKEY, DEVICE_ID, NULL, IDENTITY_SOURCE) AS client_identity,
-    obj_network_endpoint(PEER_IP, NULL, PEER_HOSTNAME) AS destination,
+    obj_network_endpoint(NULL, NULL, HOST) AS destination,
     obj_traffic_metrics(BYTES_UP, BYTES_DOWN, DURATION_MS) AS traffic,
     STATUS_CODE,
     BLOCKED,

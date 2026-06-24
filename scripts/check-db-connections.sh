@@ -38,11 +38,11 @@ print_postgres_password_fingerprints() {
 
     echo "coordinator=${coordinator_fp:-unavailable}"
     echo "postgres=${postgres_fp:-unavailable}"
-    if [ -n "${coordinator_fp}" ] && [ -n "${postgres_fp}" ] && [ "${coordinator_fp}" != "${postgres_fp}" ]; then
+    if [ -n "${coordinator_fp}" ] && [ -n "${postgres_fp}" ] && [ "${coordinator_fp}" = "${postgres_fp}" ]; then
+        echo "password_env_match=true"
+    else
         echo "password_env_match=false"
         FAILED=1
-    else
-        echo "password_env_match=true"
     fi
 }
 

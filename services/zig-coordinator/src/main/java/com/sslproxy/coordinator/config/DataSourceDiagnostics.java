@@ -38,10 +38,9 @@ public class DataSourceDiagnostics implements ApplicationRunner {
 
     private void logDataSource(String name, DataSource ds) {
         if (ds instanceof HikariDataSource hikari) {
-            log.info("[datasource:{}] url={} user={} pool={}",
+            log.info("[datasource:{}] url={} pool={}",
                     name,
                     sanitizeJdbcUrl(hikari.getJdbcUrl()),
-                    sanitizeValue(hikari.getUsername()),
                     sanitizeValue(hikari.getPoolName()));
         } else {
             log.info("[datasource:{}] type={}", name, ds.getClass().getName());
@@ -66,14 +65,13 @@ public class DataSourceDiagnostics implements ApplicationRunner {
         }
 
         try {
-            log.info("[datasource:oracle] url={} user={} pool={}",
+            log.info("[datasource:oracle] url={} pool={}",
                     sanitizeJdbcUrl(oracleSinkProperties.effectiveJdbcUrl()),
-                    sanitizeValue(oracleSinkProperties.requiredUser()),
                     "coordinator-oracle");
             oracleConnectionFactory.checkConnectivity();
             log.info("[datasource:oracle] connected ok");
         } catch (Exception e) {
-            log.error("[datasource:oracle] connection FAILED error={}", sanitizeJdbcUrl(e.getMessage()));
+            log.error("[datasource:oracle] connection FAILED error_class={}", e.getClass().getSimpleName());
         }
     }
 

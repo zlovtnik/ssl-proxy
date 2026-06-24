@@ -4,10 +4,10 @@ logging:
     com.zaxxer.hikari: DEBUG
     com.zaxxer.hikari.HikariConfig: DEBUG
     com.zaxxer.hikari.pool.HikariPool: DEBUG
-    oracle.jdbc: DEBUG
-    oracle.jdbc.driver: DEBUG
-    oracle.ucp: DEBUG
-    oracle.ucp.jdbc: DEBUG
+    oracle.jdbc: INFO
+    oracle.jdbc.driver: INFO
+    oracle.ucp: INFO
+    oracle.ucp.jdbc: INFO
     org.apache.camel.component.jdbc: DEBUG
     org.apache.camel.component.sql: DEBUG
     org.postgresql: DEBUG

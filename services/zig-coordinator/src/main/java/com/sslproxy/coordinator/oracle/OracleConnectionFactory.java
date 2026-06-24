@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 public class OracleConnectionFactory {
 
     private static final Logger log = LoggerFactory.getLogger(OracleConnectionFactory.class);
+    private static final String CONNECTION_TEST_QUERY = "SELECT 1 FROM DUAL";
 
     private final OracleSinkProperties props;
     private final MeterRegistry meterRegistry;
@@ -103,7 +104,7 @@ public class OracleConnectionFactory {
         config.setMaxLifetime(props.maxLifetimeMs());
         config.setLeakDetectionThreshold(props.leakDetectionThresholdMs());
         config.setAutoCommit(false);
-        config.setConnectionTestQuery(props.effectiveConnectionInitSql());
+        config.setConnectionTestQuery(CONNECTION_TEST_QUERY);
         config.setKeepaliveTime(60_000);
         config.setConnectionInitSql(props.effectiveConnectionInitSql());
         config.setMetricRegistry(meterRegistry);

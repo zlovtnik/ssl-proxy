@@ -228,7 +228,6 @@ pub async fn handle(
 
             match dial_upstream_with_resolver(&state, &host).await {
                 Ok((mut upstream, resolved_ips, selected_ip)) => {
-                    set_keepalive(&upstream);
                     let prefix = consume_tls_prefix(&mut client_io).await.unwrap_or_default();
                     let context =
                         TunnelAuditContext::bypass("bypass", category, "certificate_pinning")
@@ -272,7 +271,7 @@ pub async fn handle(
                     }
 
                     let (bytes_up, bytes_down) =
-                        tokio::io::copy_bidirectional(&mut client_io, &mut upstream)
+                        super::socket_tuning::copy_bidirectional(&mut client_io, &mut upstream)
                             .await
                             .unwrap_or((0, 0));
                     let bytes_up = bytes_up + prefix_up;
@@ -385,7 +384,6 @@ pub(crate) async fn run_tunnel(
     let mut client = TokioIo::new(upgraded);
     match dial_upstream_with_resolver(&state, &host).await {
         Ok((mut upstream, resolved_ips, selected_ip)) => {
-            set_keepalive(&upstream);
             let start = Instant::now();
             let prefix = consume_tls_prefix(&mut client).await.unwrap_or_default();
             let context = TunnelAuditContext::new("connect", category, None, profile)
@@ -436,7 +434,7 @@ pub(crate) async fn run_tunnel(
                 }
             }
 
-            match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
+            match super::socket_tuning::copy_bidirectional(&mut client, &mut upstream).await {
                 Ok((up, down)) => {
                     let up = up + prefix_up;
                     state.record_tunnel_close_for_peer(identity.wg_pubkey.as_deref(), up, down);
@@ -492,14 +490,4 @@ async fn sleep_blocked_connect_delay() {
     let jitter_percent = 75u64 + u64::from(OsRng.next_u32() % 51);
     let delay_ms = base_ms.saturating_mul(jitter_percent).saturating_div(100);
     tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
-}
-
-/// Configure TCP keepalive on the given `TcpStream` with a 10-second idle time and a 5-second probe interval.
-fn set_keepalive(stream: &tokio::net::TcpStream) {
-    use std::time::Duration;
-
-    let ka = socket2::TcpKeepalive::new()
-        .with_time(Duration::from_secs(10))
-        .with_interval(Duration::from_secs(5));
-    let _ = socket2::SockRef::from(stream).set_tcp_keepalive(&ka);
 }

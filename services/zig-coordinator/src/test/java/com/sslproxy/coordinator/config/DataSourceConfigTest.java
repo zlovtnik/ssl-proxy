@@ -57,11 +57,11 @@ class DataSourceConfigTest {
                 .withProperty("POSTGRES_USER", "sync")
                 .withProperty("POSTGRES_PASSWORD", "stale_secret");
 
-        HikariDataSource dataSource = new DataSourceConfig().dataSource(environment);
-
-        assertEquals("jdbc:postgresql://postgres:5432/sync", dataSource.getJdbcUrl());
-        assertEquals("url_user", dataSource.getUsername());
-        assertEquals("url_secret", dataSource.getPassword());
+        try (HikariDataSource dataSource = new DataSourceConfig().dataSource(environment)) {
+            assertEquals("jdbc:postgresql://postgres:5432/sync", dataSource.getJdbcUrl());
+            assertEquals("url_user", dataSource.getUsername());
+            assertEquals("url_secret", dataSource.getPassword());
+        }
     }
 
     @Test
@@ -71,10 +71,10 @@ class DataSourceConfigTest {
                 .withProperty("POSTGRES_USER", "sync")
                 .withProperty("POSTGRES_PASSWORD", "postgres_secret");
 
-        HikariDataSource dataSource = new DataSourceConfig().dataSource(environment);
-
-        assertEquals("jdbc:postgresql://postgres:5432/sync", dataSource.getJdbcUrl());
-        assertEquals("sync", dataSource.getUsername());
-        assertEquals("postgres_secret", dataSource.getPassword());
+        try (HikariDataSource dataSource = new DataSourceConfig().dataSource(environment)) {
+            assertEquals("jdbc:postgresql://postgres:5432/sync", dataSource.getJdbcUrl());
+            assertEquals("sync", dataSource.getUsername());
+            assertEquals("postgres_secret", dataSource.getPassword());
+        }
     }
 }

@@ -36,7 +36,7 @@ pub(crate) async fn run_transparent(
     identity: crate::identity::ResolvedIdentity,
     profile: crate::obfuscation::Profile,
 ) {
-    set_keepalive(&client);
+    super::socket_tuning::configure_tunnel_tcp(&client);
 
     match tokio::time::timeout(
         tokio::time::Duration::from_secs(10),
@@ -45,6 +45,7 @@ pub(crate) async fn run_transparent(
     .await
     {
         Ok(Ok(upstream)) => {
+            super::socket_tuning::configure_tunnel_tcp(&upstream);
             let start = Instant::now();
             let context = TunnelAuditContext::new("transparent", category, Some(reason), profile)
                 .with_resolution(vec![orig_dst.ip().to_string()], orig_dst.ip().to_string())
@@ -101,7 +102,7 @@ pub(crate) async fn run_transparent(
             let down_counter = Arc::clone(&bytes_down_counter);
 
             let up_task = async {
-                let mut buf = [0u8; 8192];
+                let mut buf = vec![0u8; super::socket_tuning::TUNNEL_COPY_BUFFER_SIZE];
                 let mut total = 0u64;
                 loop {
                     let n = client_read.read(&mut buf).await?;
@@ -145,7 +146,7 @@ pub(crate) async fn run_transparent(
             };
 
             let down_task = async {
-                let mut buf = [0u8; 8192];
+                let mut buf = vec![0u8; super::socket_tuning::TUNNEL_COPY_BUFFER_SIZE];
                 let mut total = 0u64;
                 loop {
                     let n = upstream_read.read(&mut buf).await?;
@@ -254,27 +255,4 @@ pub(crate) async fn run_transparent(
         Ok(Err(e)) => error!(%host, %e, "transparent tunnel connect failed"),
         Err(_) => error!(%host, "transparent tunnel connect timed out"),
     }
-}
-
-/// Enable TCP keepalive on the given stream with a 10 second idle time and 5 second probe interval.
-///
-/// This sets the socket's keepalive `time` to 10s and `interval` to 5s. Any error produced while
-/// applying these settings is ignored.
-///
-/// # Examples
-///
-/// ```no_run
-/// # async fn run() -> std::io::Result<()> {
-/// let stream = tokio::net::TcpStream::connect("127.0.0.1:80").await?;
-/// // `set_keepalive` is a private helper used internally to configure TCP keepalive.
-/// let _ = stream;
-/// # Ok(()) }
-/// ```
-fn set_keepalive(stream: &tokio::net::TcpStream) {
-    use std::time::Duration;
-
-    let ka = socket2::TcpKeepalive::new()
-        .with_time(Duration::from_secs(10))
-        .with_interval(Duration::from_secs(5));
-    let _ = socket2::SockRef::from(stream).set_tcp_keepalive(&ka);
 }
