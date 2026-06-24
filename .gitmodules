@@ -1,3 +1,6 @@
 [submodule "apps/integration-console"]
 	path = apps/integration-console
 	url = https://github.com/zlovtnik/integration-console
+[submodule "apps/wg-key-rotator"]
+	path = apps/wg-key-rotator
+	url = https://github.com/zlovtnik/wg-key-rotator.git

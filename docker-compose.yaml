@@ -1,8 +1,17 @@
 x-ath-sensor-env: &ath_sensor_env
   SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda://127.0.0.1:19092
-  DATABASE_URL: postgres://sync:sync@127.0.0.1:5432/sync
+  DATABASE_URL: postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync
 
 services:
+  registry:
+    image: registry:2
+    container_name: lan-registry
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/var/lib/registry
+
   ssl-proxy:
     depends_on:
       redpanda:
@@ -11,12 +20,7 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy:${IMAGE_TAG:-latest}
     # Compatibility mode: host-mounted peer config files are often 0600 on the host.
     # Run as root so startup key sync/read logic can access /config/peer1/*.conf.
     user: "0:0"
@@ -107,12 +111,7 @@ services:
     depends_on:
       ssl-proxy:
         condition: service_healthy
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy:${IMAGE_TAG:-latest}
     command: ["/usr/local/bin/wg-udp-frontdoor"]
     restart: unless-stopped
     healthcheck:
@@ -143,12 +142,7 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VCS_REF: ${VCS_REF:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy:${IMAGE_TAG:-latest}
     user: "0:0"
     command: ["/usr/local/bin/start-proxy-wg"]
     restart: unless-stopped
@@ -224,14 +218,14 @@ services:
     platform: ${WAHA_PLATFORM:-linux/amd64}
     restart: unless-stopped
     environment:
-      - WAHA_NO_API_KEY=${WAHA_NO_API_KEY:-True}
-      - WAHA_API_KEY=${WAHA_API_KEY:-}
-      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-True}
+      - WAHA_NO_API_KEY=${WAHA_NO_API_KEY:-False}
+      - WAHA_API_KEY=${WAHA_API_KEY:?WAHA_API_KEY is required}
+      - WAHA_DASHBOARD_NO_PASSWORD=${WAHA_DASHBOARD_NO_PASSWORD:-False}
       - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
-      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-}
-      - WHATSAPP_SWAGGER_NO_PASSWORD=${WHATSAPP_SWAGGER_NO_PASSWORD:-True}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:?WAHA_DASHBOARD_PASSWORD is required}
+      - WHATSAPP_SWAGGER_NO_PASSWORD=${WHATSAPP_SWAGGER_NO_PASSWORD:-False}
       - WHATSAPP_SWAGGER_USERNAME=${WHATSAPP_SWAGGER_USERNAME:-admin}
-      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD:-}
+      - WHATSAPP_SWAGGER_PASSWORD=${WHATSAPP_SWAGGER_PASSWORD:?WHATSAPP_SWAGGER_PASSWORD is required}
     volumes:
       - waha-sessions:/app/.sessions
       - waha-media:/app/.media
@@ -243,9 +237,7 @@ services:
     depends_on:
       waha:
         condition: service_started
-    build:
-      context: ./apps/wg-key-rotator
-      dockerfile: Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/wg-key-rotator:${IMAGE_TAG:-latest}
     restart: "no"
     working_dir: "${ROTATOR_REPO_ROOT:-${PWD}}"
     command: ["status"]
@@ -264,7 +256,7 @@ services:
       - WAHA_BASE_URL=http://waha:3000
       - WAHA_SESSION=${WAHA_SESSION:-default}
       - WAHA_CHAT_ID=${WAHA_CHAT_ID:-}
-      - WAHA_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_API_KEY=${WAHA_API_KEY:?WAHA_API_KEY is required}
       - WAHA_API_KEY_FILE=${WAHA_API_KEY_FILE:-}
     volumes:
       # The rotator invokes docker compose through the host Docker socket, so the
@@ -284,13 +276,12 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: services/zig-coordinator/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/java-coordinator:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sync}
+      - DATABASE_URL=${DATABASE_URL:-jdbc:postgresql://postgres:5432/sync}
+      - POSTGRES_USER=${POSTGRES_USER:-sync}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75}
       - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
       - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
@@ -319,8 +310,8 @@ services:
       - WIRELESS_RAW_ARCHIVE_INTERVAL_MS=${WIRELESS_RAW_ARCHIVE_INTERVAL_MS:-300000}
       - RETENTION_MAINTENANCE_INTERVAL_MS=${RETENTION_MAINTENANCE_INTERVAL_MS:-3600000}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
-      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:?MINIO_ACCESS_KEY_ID is required}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:?MINIO_SECRET_ACCESS_KEY is required}
       - SYNC_OUTBOX_DIR=/sync-outbox
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
@@ -385,15 +376,13 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "server", "-b", "0.0.0.0"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
@@ -401,8 +390,8 @@ services:
       - INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT=${INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT:-10}
       - INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD=${INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD:-15}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
-      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:?MINIO_ACCESS_KEY_ID is required}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:?MINIO_SECRET_ACCESS_KEY is required}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
@@ -424,15 +413,13 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "runner", "Observability::WorkerRunner.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
@@ -455,15 +442,13 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: "no"
     command: ["sh", "bin/observability-db-setup.sh"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
-      - SYNC_DATABASE_URL=postgres://sync:sync@192.168.1.221:5432/sync
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
@@ -482,15 +467,13 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
@@ -511,15 +494,13 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:sync@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
@@ -539,10 +520,7 @@ services:
         condition: service_healthy
       java-coordinator:
         condition: service_healthy
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: atheros-sensor
+    image: ${REGISTRY:?REGISTRY is required}/atheros-sensor:${IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     cap_add:
@@ -558,7 +536,7 @@ services:
       # The sensor runs in host networking for capture, so Docker service DNS
       # names such as redpanda are not reachable from this container.
       SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://127.0.0.1:19092}
-      DATABASE_URL: ${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}
+      DATABASE_URL: ${DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync}
       ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
       ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
@@ -605,12 +583,10 @@ services:
   atheros-search:
     profiles:
       - vector
-    build:
-      context: .
-      dockerfile: services/atheros-search/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/atheros-search:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:sync@192.168.1.221:5432/sync}
+      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
       - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8083}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
@@ -703,8 +679,8 @@ services:
       - net.core.somaxconn=1024
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:-administrador}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY_ID:?MINIO_ACCESS_KEY_ID is required}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:?MINIO_SECRET_ACCESS_KEY is required}
       - MINIO_PROMETHEUS_AUTH_TYPE=public
     ports:
       - "127.0.0.1:9000:9000"
@@ -739,8 +715,8 @@ services:
     volumes:
       - ./docker/minio:/config:ro
     environment:
-      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:-administrador}
-      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-senhamaster123}
+      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:?MINIO_ACCESS_KEY_ID is required}
+      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:?MINIO_SECRET_ACCESS_KEY is required}
       - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
       - MINIO_EXTRA_BUCKETS=${MINIO_EXTRA_BUCKETS:-ssl-proxy-wireless-raw-archive}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
@@ -762,9 +738,7 @@ services:
     command: ["/config/bootstrap.sh"]
 
   postgres:
-    build:
-      context: .
-      dockerfile: docker/postgres/Dockerfile
+    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy-postgres:${IMAGE_TAG:-latest}
     command:
       - postgres
       - -c
@@ -790,7 +764,7 @@ services:
     environment:
       POSTGRES_DB: sync
       POSTGRES_USER: sync
-      POSTGRES_PASSWORD: sync
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
       - "5432:5432"
     healthcheck:
@@ -878,7 +852,7 @@ services:
     restart: unless-stopped
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
       - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
     volumes:
       - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -895,7 +869,7 @@ services:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.19.1
     restart: unless-stopped
     environment:
-      - DATA_SOURCE_NAME=postgresql://sync:sync@postgres:5432/sync?sslmode=disable
+      - DATA_SOURCE_NAME=postgresql://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync?sslmode=disable
       - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres-exporter/queries.yml
     volumes:
       - ./docker/observability/postgres-exporter-queries.yml:/etc/postgres-exporter/queries.yml:ro

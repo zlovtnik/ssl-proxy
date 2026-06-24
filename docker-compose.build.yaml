@@ -1,0 +1,77 @@
+# Local build override. The default compose file consumes prebuilt registry
+# images; include this file explicitly when building on a developer machine.
+services:
+  ssl-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+
+  wg-udp-frontdoor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+
+  ssl-proxy-next:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VCS_REF: ${VCS_REF:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+
+  wg-key-rotator:
+    build:
+      context: ./apps/wg-key-rotator
+      dockerfile: Dockerfile
+
+  java-coordinator:
+    build:
+      context: .
+      dockerfile: services/zig-coordinator/Dockerfile
+
+  integration-console-web:
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+
+  integration-console-worker:
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+
+  integration-console-db-setup:
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+
+  integration-console-heatmap-refresh:
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+
+  integration-console-heartbeat:
+    build:
+      context: .
+      dockerfile: apps/integration-console/Dockerfile
+
+  atheros-sensor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: atheros-sensor
+
+  atheros-search:
+    build:
+      context: .
+      dockerfile: services/atheros-search/Dockerfile
+
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile

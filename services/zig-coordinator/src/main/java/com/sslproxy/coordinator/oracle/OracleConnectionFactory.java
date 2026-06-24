@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 public class OracleConnectionFactory {
 
     private static final Logger log = LoggerFactory.getLogger(OracleConnectionFactory.class);
+    private static final String CONNECTION_TEST_QUERY = "SELECT 1 FROM DUAL";
 
     private final OracleSinkProperties props;
     private final MeterRegistry meterRegistry;
@@ -90,7 +91,7 @@ public class OracleConnectionFactory {
         System.setProperty("oracle.net.ssl_server_dn_match", "true");
 
         HikariConfig config = new HikariConfig();
-        config.setPoolName("oracle-sink");
+        config.setPoolName("coordinator-oracle");
         config.setDriverClassName("oracle.jdbc.OracleDriver");
         config.setJdbcUrl(props.effectiveJdbcUrl());
         config.setUsername(props.requiredUser());
@@ -98,12 +99,14 @@ public class OracleConnectionFactory {
         config.setMaximumPoolSize(props.maximumPoolSize());
         config.setMinimumIdle(props.minimumIdle());
         config.setConnectionTimeout(props.connectionTimeoutMs());
+        config.setValidationTimeout(props.validationTimeoutMs());
         config.setIdleTimeout(props.idleTimeoutMs());
         config.setMaxLifetime(props.maxLifetimeMs());
+        config.setLeakDetectionThreshold(props.leakDetectionThresholdMs());
         config.setAutoCommit(false);
-        config.setConnectionTestQuery("SELECT 1 FROM DUAL");
+        config.setConnectionTestQuery(CONNECTION_TEST_QUERY);
         config.setKeepaliveTime(60_000);
-        config.setConnectionInitSql("SELECT 1 FROM DUAL");
+        config.setConnectionInitSql(props.effectiveConnectionInitSql());
         config.setMetricRegistry(meterRegistry);
         config.addDataSourceProperty("oracle.net.tns_admin", tnsAdmin.toString());
         config.addDataSourceProperty("oracle.net.wallet_location", walletLocation);

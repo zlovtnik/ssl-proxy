@@ -216,7 +216,10 @@ pub(crate) async fn dial_upstream_with_resolver(
         let mut last_err = io::Error::new(io::ErrorKind::NotFound, "No connect candidates");
         for ip in &ips {
             match tokio::net::TcpStream::connect((*ip, port)).await {
-                Ok(stream) => return Ok(stream),
+                Ok(stream) => {
+                    super::socket_tuning::configure_tunnel_tcp(&stream);
+                    return Ok(stream);
+                }
                 Err(e) => {
                     debug!(%ip, port, %e, "upstream connect attempt failed");
                     last_err = e;

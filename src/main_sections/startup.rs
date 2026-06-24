@@ -263,10 +263,23 @@ fn build_resolver() -> TokioAsyncResolver {
 fn build_state(config: &config::Config) -> state::SharedState {
     let (stats_tx, _) = broadcast::channel(64);
     let (events_tx, _) = broadcast::channel(256);
-    let client = Client::builder(TokioExecutor::new()).build(HttpConnector::new());
+    let client = build_proxy_http_client();
     let resolver = build_resolver();
 
     state::AppState::new(client, resolver, stats_tx, events_tx, config.clone())
+}
+
+fn build_proxy_http_client() -> proxy::ProxyClient {
+    let mut connector = HttpConnector::new();
+    connector.set_connect_timeout(Some(Duration::from_secs(10)));
+    connector.set_keepalive(Some(Duration::from_secs(60)));
+    connector.set_nodelay(true);
+
+    let mut builder = Client::builder(TokioExecutor::new());
+    builder.pool_max_idle_per_host(10);
+    builder.pool_idle_timeout(Duration::from_secs(90));
+    builder.http2_adaptive_window(true);
+    builder.build(connector)
 }
 
 fn spawn_dashboard_event_retry_task(state: state::SharedState, shutdown: CancellationToken) {

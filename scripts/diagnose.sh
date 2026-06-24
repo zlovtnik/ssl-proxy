@@ -37,8 +37,10 @@ EOF_MODE
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
-docker_registry_dns_timeout::lookup registry-1\\.docker\\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; rerun with --no-build if local image exists::auto
-docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Prune stale BuildKit cache after context shrink, then rerun compose build::manual
+secret_file_owner_mismatch::WG_OBFUSCATION_KEY_FILE is invalid: .*must be owned by uid::Stale ssl-proxy image rejects host-owned file-backed WireGuard obfuscation secret::Use the direct obfuscation key env fallback for this run, then rebuild/push ssl-proxy with root-runtime host-owned secret support::auto
+docker_registry_plain_http_untrusted::server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client::Docker daemon is treating the plain-HTTP local registry as HTTPS::Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry::manual
+docker_registry_dns_timeout::lookup registry-1\\.docker\\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
+docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Use in-container health probe for truth::auto
 coordinator_unhealthy::java-coordinator unhealthy::Coordinator failed health, Redpanda, Postgres, or Oracle checks::Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings::manual
@@ -49,6 +51,8 @@ rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the fo
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
+compose_dependency_unhealthy::dependency failed to start|container .* is unhealthy::Compose dependency failed to become healthy::Inspect the named service logs and healthcheck output::manual
+compose_image_unavailable::manifest unknown|pull access denied|repository does not exist|not found: manifest unknown::Required image is missing from the configured registry::Build and push the missing image tag to REGISTRY, then rerun up-ready::manual
 SIGEOF
 }
 

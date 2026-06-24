@@ -292,7 +292,8 @@ Optional feature flags:
 From the repository root, run the vector profile:
 
 ```bash
-docker compose --profile vector up --build atheros-search
+REGISTRY=local IMAGE_TAG=dev \
+  docker compose -f docker-compose.yaml -f docker-compose.build.yaml --profile vector up --build atheros-search
 ```
 
 The compose service publishes:
@@ -307,7 +308,8 @@ For a direct local process, provide at least a Postgres DSN:
 
 ```bash
 cd services/atheros-search
-ATHSEARCH_POSTGRES_DSN='postgres://sync:sync@127.0.0.1:5432/sync' \
+POSTGRES_PASSWORD="$(cat ../../secrets/postgres.key)"
+ATHSEARCH_POSTGRES_DSN="postgres://sync:${POSTGRES_PASSWORD}@127.0.0.1:5432/sync" \
 ATHSEARCH_EMBEDDING_BACKEND='http://127.0.0.1:8083' \
 go run ./cmd/server
 ```

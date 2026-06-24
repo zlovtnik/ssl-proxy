@@ -98,7 +98,7 @@ fn validate_secret_file(path: &Path, file_var: &'static str) -> Result<(), Confi
     // SAFETY: `geteuid` has no preconditions and only returns the current
     // process effective uid.
     let uid = unsafe { libc::geteuid() };
-    if metadata.uid() != uid {
+    if !secret_file_owner_allowed(metadata.uid(), uid) {
         return Err(ConfigError::InvalidSecretFile {
             file_var,
             message: format!(
@@ -110,6 +110,11 @@ fn validate_secret_file(path: &Path, file_var: &'static str) -> Result<(), Confi
         });
     }
     Ok(())
+}
+
+#[cfg(unix)]
+pub(super) fn secret_file_owner_allowed(file_uid: u32, effective_uid: u32) -> bool {
+    effective_uid == 0 || file_uid == effective_uid
 }
 
 #[cfg(not(unix))]

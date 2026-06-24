@@ -12,12 +12,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.BeanInitializationException;
 import org.springframework.stereotype.Component;
 
+import java.nio.ByteBuffer;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 @Component
 public class JdbcOracleSink implements OracleSink {
@@ -43,6 +48,7 @@ public class JdbcOracleSink implements OracleSink {
             OracleObjectRequirement.table("WIRELESS_AUDIT_FRAMES"),
             OracleObjectRequirement.table("WIRELESS_BANDWIDTH_WINDOWS"),
             OracleObjectRequirement.table("WIRELESS_ALERTS"),
+            OracleObjectRequirement.table("WIRELESS_ALERTS_LEDGER"),
             OracleObjectRequirement.table("WIRELESS_CLIENT_INVENTORY"),
             OracleObjectRequirement.table("WIRELESS_PROBE_REQUESTS"),
             OracleObjectRequirement.procedure("WIRELESS_UPSERT_SENSOR"),
@@ -158,52 +164,32 @@ public class JdbcOracleSink implements OracleSink {
         return observeOracle("oracle.insert_proxy_payload_audit", () -> {
             long inserted = withRetry("insert_proxy_payload_audit", 2, () -> withTransaction(connection -> {
                 String sql = """
-                        merge into PROXY_PAYLOAD_AUDIT tgt
-                        using (
-                            select ? CORRELATION_ID, ? HOST, ? DIRECTION, ? CAPTURED_AT,
-                                   ? BYTE_OFFSET, ? PAYLOAD_OBJECT_KEY, ? CONTENT_TYPE,
-                                   ? HTTP_METHOD, ? HTTP_STATUS, ? HTTP_PATH,
-                                   ? IS_ENCRYPTED, ? TRUNCATED, ? PEER_IP, ? NOTES
-                            from dual
-                        ) src
-                        on (
-                            tgt.CORRELATION_ID = src.CORRELATION_ID
-                            and tgt.HOST = src.HOST
-                            and tgt.DIRECTION = src.DIRECTION
-                            and tgt.CAPTURED_AT = src.CAPTURED_AT
-                            and tgt.BYTE_OFFSET = src.BYTE_OFFSET
-                        )
-                        when matched then update set
-                            tgt.PAYLOAD_OBJECT_KEY = src.PAYLOAD_OBJECT_KEY,
-                            tgt.CONTENT_TYPE = src.CONTENT_TYPE,
-                            tgt.HTTP_METHOD = src.HTTP_METHOD,
-                            tgt.HTTP_STATUS = src.HTTP_STATUS,
-                            tgt.HTTP_PATH = src.HTTP_PATH,
-                            tgt.IS_ENCRYPTED = src.IS_ENCRYPTED,
-                            tgt.TRUNCATED = src.TRUNCATED,
-                            tgt.PEER_IP = src.PEER_IP,
-                            tgt.NOTES = src.NOTES
-                        when not matched then insert (
+                        insert into PROXY_PAYLOAD_AUDIT (
                             CORRELATION_ID, HOST, DIRECTION, CAPTURED_AT, BYTE_OFFSET,
                             PAYLOAD_OBJECT_KEY, CONTENT_TYPE, HTTP_METHOD, HTTP_STATUS,
                             HTTP_PATH, IS_ENCRYPTED, TRUNCATED, PEER_IP, NOTES
                         ) values (
-                            src.CORRELATION_ID, src.HOST, src.DIRECTION, src.CAPTURED_AT,
-                            src.BYTE_OFFSET, src.PAYLOAD_OBJECT_KEY, src.CONTENT_TYPE,
-                            src.HTTP_METHOD, src.HTTP_STATUS, src.HTTP_PATH,
-                            src.IS_ENCRYPTED, src.TRUNCATED, src.PEER_IP, src.NOTES
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         )
                         """;
                 try (PreparedStatement statement = prepare(connection, sql)) {
+                    long insertedRows = 0L;
                     for (ProxyPayloadAuditInsert row : rows) {
-                        bindAll(statement, row.correlationId(), row.host(), row.direction(), row.capturedAt(),
+                        bindAll(statement, rawUuidBytes(row.correlationId()), row.host(), row.direction(), row.capturedAt(),
                                 row.byteOffset(), row.payloadObjectKey(), row.contentType(), row.httpMethod(),
                                 row.httpStatus(), row.httpPath(), row.isEncrypted(), row.truncated(),
                                 row.peerIp(), row.notes());
-                        statement.executeUpdate();
+                        try {
+                            statement.executeUpdate();
+                            insertedRows++;
+                        } catch (SQLException e) {
+                            if (!isProxyPayloadAuditDuplicate(e.getMessage())) {
+                                throw e;
+                            }
+                        }
                     }
+                    return insertedRows;
                 }
-                return (long) rows.size();
             }));
             log.info("event=oracle_insert status=ok target=proxy_payload_audit batch_id={} rows={}",
                     batchId, inserted);
@@ -493,37 +479,43 @@ public class JdbcOracleSink implements OracleSink {
                                               String batchId,
                                               List<ProxyEventInsert> rows,
                                               List<BlockedEventInsert> blockedRows) throws SQLException {
-        Set<Long> existing = existingProxyRowSequences(connection, batchId);
+        Set<Long> inserted = new HashSet<>();
         String sql = """
                 insert into proxy_events (
-                    batch_id, row_sequence, event_time, event_type, host, peer_ip, wg_pubkey,
+                    batch_id, row_sequence, event_time, event_timestamp_utc, event_type, host, peer_ip, wg_pubkey,
                     device_id, identity_source, peer_hostname, client_ua, bytes_up, bytes_down,
                     status_code, blocked, obfuscation_profile, correlation_id, parent_event_id,
                     event_sequence, duration_ms, reason, raw_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         try (PreparedStatement statement = prepare(connection, sql)) {
             for (int index = 0; index < rows.size(); index++) {
                 long rowSequence = index + 1L;
-                if (existing.contains(rowSequence)) {
-                    continue;
-                }
                 ProxyEventInsert row = rows.get(index);
-                bindAll(statement, batchId, rowSequence, row.eventTime(), row.eventType(), row.host(),
-                        row.peerIp(), row.wgPubkey(), row.deviceId(), normalizedIdentitySource(row.identitySource()),
+                bindAll(statement, batchId, rowSequence, row.eventTime(), eventTimestampUtc(row.eventTime()),
+                        row.eventType(), row.host(), row.peerIp(), row.wgPubkey(),
+                        rawUuidBytes(row.deviceId()), normalizedIdentitySource(row.identitySource()),
                         row.peerHostname(), row.clientUa(), row.bytesUp(), row.bytesDown(), row.statusCode(),
-                        row.blocked(), row.obfuscationProfile(), row.correlationId(), row.parentEventId(),
-                        row.eventSequence(), row.durationMs(), row.reason(), row.rawJson());
-                statement.executeUpdate();
+                        row.blocked(), row.obfuscationProfile(), rawUuidBytes(row.correlationId()),
+                        rawUuidBytes(row.parentEventId()), row.eventSequence(), row.durationMs(), row.reason(),
+                        row.rawJson());
+                try {
+                    statement.executeUpdate();
+                    inserted.add(rowSequence);
+                } catch (SQLException e) {
+                    if (!isProxyEventsBatchRowDuplicate(e.getMessage())) {
+                        throw e;
+                    }
+                }
             }
         }
-        upsertBlockedEvents(connection, blockedRows, existing);
-        return rows.size();
+        upsertBlockedEvents(connection, blockedRows, inserted);
+        return inserted.size();
     }
 
     private void upsertBlockedEvents(Connection connection,
                                      List<BlockedEventInsert> rows,
-                                     Set<Long> existingProxyRowSequences) throws SQLException {
+                                     Set<Long> insertedProxyRowSequences) throws SQLException {
         if (rows.isEmpty()) {
             return;
         }
@@ -569,7 +561,7 @@ public class JdbcOracleSink implements OracleSink {
                 """;
         try (PreparedStatement statement = prepare(connection, sql)) {
             for (BlockedEventInsert row : rows) {
-                if (existingProxyRowSequences.contains(row.rowSequence())) {
+                if (!insertedProxyRowSequences.contains(row.rowSequence())) {
                     continue;
                 }
                 bindAll(statement, row.host(), row.blockedBytes(), row.frequencyHz(), row.riskScore(),
@@ -631,20 +623,6 @@ public class JdbcOracleSink implements OracleSink {
             }
             return (long) rows.size();
         });
-    }
-
-    private Set<Long> existingProxyRowSequences(Connection connection, String batchId) throws SQLException {
-        Set<Long> existing = new HashSet<>();
-        try (PreparedStatement statement = prepare(connection,
-                "select row_sequence from proxy_events where batch_id = ?")) {
-            bindAll(statement, batchId);
-            try (ResultSet resultSet = statement.executeQuery()) {
-                while (resultSet.next()) {
-                    existing.add(resultSet.getLong(1));
-                }
-            }
-        }
-        return existing;
     }
 
     private <T> T withTransaction(SqlWork<T> work) throws Exception {
@@ -718,6 +696,8 @@ public class JdbcOracleSink implements OracleSink {
                 statement.setNull(index + 1, Types.NULL);
             } else if (value instanceof OffsetDateTime offsetDateTime) {
                 statement.setObject(index + 1, offsetDateTime);
+            } else if (value instanceof byte[] bytes) {
+                statement.setBytes(index + 1, bytes);
             } else {
                 statement.setObject(index + 1, value);
             }
@@ -735,6 +715,44 @@ public class JdbcOracleSink implements OracleSink {
     private boolean isProxyEventsBatchRowDuplicate(String message) {
         String normalized = message == null ? "" : message.toUpperCase();
         return normalized.contains("ORA-00001") && normalized.contains("PROXY_EVENTS_BATCH_ROW_IDX");
+    }
+
+    private boolean isProxyPayloadAuditDuplicate(String message) {
+        String normalized = message == null ? "" : message.toUpperCase();
+        return normalized.contains("ORA-00001") && normalized.contains("PROXY_PAYLOAD_AUDIT_UQ");
+    }
+
+    static LocalDateTime eventTimestampUtc(OffsetDateTime value) {
+        return value.withOffsetSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime()
+                .truncatedTo(ChronoUnit.MILLIS);
+    }
+
+    static byte[] rawUuidBytes(String value) throws SQLException {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.matches("[0-9a-fA-F]{32}")) {
+            normalized = normalized.substring(0, 8)
+                    + "-"
+                    + normalized.substring(8, 12)
+                    + "-"
+                    + normalized.substring(12, 16)
+                    + "-"
+                    + normalized.substring(16, 20)
+                    + "-"
+                    + normalized.substring(20);
+        }
+        try {
+            UUID uuid = UUID.fromString(normalized);
+            ByteBuffer buffer = ByteBuffer.allocate(16);
+            buffer.putLong(uuid.getMostSignificantBits());
+            buffer.putLong(uuid.getLeastSignificantBits());
+            return buffer.array();
+        } catch (IllegalArgumentException e) {
+            throw new SQLException("invalid UUID value for RAW(16)", e);
+        }
     }
 
     private String sanitize(String message) {

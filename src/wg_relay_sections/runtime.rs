@@ -27,6 +27,7 @@ const DROP_LOG_INTERVAL: Duration = Duration::from_secs(30);
 const PROBE_BLOCK_WINDOW: Duration = Duration::from_secs(60);
 const PROBE_BLOCK_DURATION: Duration = Duration::from_secs(300);
 const PROBE_STATE_MAX_ENTRIES: usize = 16_384;
+const PUBLIC_UDP_SOCKET_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RelayMetricsSnapshot {
@@ -439,7 +440,7 @@ pub(crate) async fn spawn_with_addrs_and_metrics(
     shutdown: CancellationToken,
     metrics: Arc<RelayMetrics>,
 ) -> io::Result<(SocketAddr, JoinHandle<()>)> {
-    let public_socket = Arc::new(UdpSocket::bind(public_bind_addr).await?);
+    let public_socket = Arc::new(bind_tuned_public_udp_socket(public_bind_addr)?);
     let local_addr = public_socket.local_addr()?;
     let sessions = Arc::new(DashMap::new());
     let clock = Arc::new(RelayClock::new());
@@ -460,6 +461,40 @@ pub(crate) async fn spawn_with_addrs_and_metrics(
     ));
 
     Ok((local_addr, task))
+}
+
+fn bind_tuned_public_udp_socket(bind_addr: SocketAddr) -> io::Result<UdpSocket> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(bind_addr),
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
+    tune_udp_socket_buffers(&socket, "public", PUBLIC_UDP_SOCKET_BUFFER_SIZE);
+    let sock_addr = socket2::SockAddr::from(bind_addr);
+    socket.bind(&sock_addr)?;
+
+    let std_socket: std::net::UdpSocket = socket.into();
+    std_socket.set_nonblocking(true)?;
+    UdpSocket::from_std(std_socket)
+}
+
+fn tune_udp_socket_buffers(socket: &socket2::Socket, label: &'static str, size: usize) {
+    if let Err(err) = socket.set_recv_buffer_size(size) {
+        warn!(
+            socket = label,
+            requested_bytes = size,
+            %err,
+            "failed to set WireGuard relay UDP receive buffer"
+        );
+    }
+    if let Err(err) = socket.set_send_buffer_size(size) {
+        warn!(
+            socket = label,
+            requested_bytes = size,
+            %err,
+            "failed to set WireGuard relay UDP send buffer"
+        );
+    }
 }
 
 async fn run_relay(

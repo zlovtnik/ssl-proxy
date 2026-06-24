@@ -16,6 +16,7 @@ CHECK_RETRY_SECS="${UP_READY_CHECK_RETRY_SECS:-15}"
 LOG_TAIL_LINES="${UP_READY_LOG_TAIL_LINES:-200}"
 QR_TYPE="${UP_READY_QR_TYPE:-ansiutf8}"
 QR_MARGIN="${UP_READY_QR_MARGIN:-0}"
+CREDENTIAL_HANDOFF_FILE="${UP_READY_CREDENTIAL_HANDOFF_FILE:-$ROOT_DIR/secrets/up-ready-credentials.txt}"
 
 RUN_TS="$(TZ="${TZ:-America/New_York}" date +%Y-%m-%dT%H:%M:%S%z)"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
@@ -54,8 +55,11 @@ fail() {
 signature_table() {
     cat <<'SIGEOF'
 profile_obfuscation_mismatch::magic_byte_mismatch::Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint::Set runtime obfuscation to match PROFILE_MODE and recreate container::auto
-docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; fallback to --no-build if local image exists::auto
-docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Prune stale BuildKit cache after context shrink, then rerun compose build::manual
+compose_unresolved_placeholder::<server-local-ip>|invalid reference format::Compose image reference still contains an unresolved placeholder::Materialize .env with concrete REGISTRY/SERVER_IP before pulling images::manual
+secret_file_owner_mismatch::WG_OBFUSCATION_KEY_FILE is invalid: .*must be owned by uid::Stale ssl-proxy image rejects host-owned file-backed WireGuard obfuscation secret::Use the direct obfuscation key env fallback for this run, then rebuild/push ssl-proxy with root-runtime host-owned secret support::auto
+docker_registry_plain_http_untrusted::server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client::Docker daemon is treating the plain-HTTP local registry as HTTPS::Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry::manual
+docker_registry_dns_timeout::lookup registry-1\.docker\.io .* i/o timeout::Host resolver cannot resolve Docker registry::Recover host DNS; retry after required images are present locally::auto
+docker_buildkit_snapshot_missing::failed to stat active key during commit|snapshot .* does not exist::Docker BuildKit cache snapshot is missing or stale::Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed::manual
 dns_upstream_timeout::plugin/errors: .* i/o timeout::CoreDNS upstream reachability failure::Adjust upstream DNS or host egress firewall::manual
 admin_loopback_false_negative::host-local 127\\.0\\.0\\.1:3002 check failed, but in-container admin health is OK::Admin bind is container-local loopback::Treat in-container health as authoritative::auto
 coordinator_unhealthy::java-coordinator unhealthy::Coordinator failed health, Redpanda, Postgres, or Oracle checks::Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings::manual
@@ -68,6 +72,8 @@ wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 def
 peer_config_permission_denied::awk: cannot open /config/.*\.conf \(Permission denied\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
 wg_peer_material_missing::missing peer public key|missing peer preshared key|invalid config: peer [0-9]+ is missing PublicKey::WireGuard peer material is missing::Bootstrap local peer configs or provide config/peer*/ key files::auto
+compose_dependency_unhealthy::dependency failed to start|container .* is unhealthy::Compose dependency failed to become healthy::Inspect the named service logs and healthcheck output::manual
+compose_image_unavailable::manifest unknown|pull access denied|repository does not exist|not found: manifest unknown::Required image is missing from the configured registry::Build and push the missing image tag to REGISTRY, then rerun up-ready::manual
 SIGEOF
 }
 
@@ -122,16 +128,10 @@ ensure_secret_file() {
     local label="$2"
 
     if [ -s "$path" ]; then
-        chmod 400 "$path" 2>/dev/null || true
         return 0
     fi
 
-    require_command openssl
-    mkdir -p "$(dirname "$path")"
-    umask 077
-    openssl rand -base64 32 >"$path"
-    chmod 400 "$path"
-    step S00 "generated local $label secret at $path"
+    fail "Missing $label secret at $path; run scripts/gen-secrets generate"
 }
 
 ensure_admin_api_key_file() {
@@ -139,9 +139,7 @@ ensure_admin_api_key_file() {
         return 0
     fi
 
-    ADMIN_API_KEY_FILE="${ADMIN_API_KEY_FILE:-$ROOT_DIR/secrets/admin_api_key}"
-    ensure_secret_file "$ADMIN_API_KEY_FILE" "admin API key"
-    export ADMIN_API_KEY_FILE
+    ensure_secret_file "$ROOT_DIR/secrets/admin_api_key" "admin API key"
 }
 
 ensure_obfuscation_key_file() {
@@ -149,9 +147,296 @@ ensure_obfuscation_key_file() {
         return 0
     fi
 
-    WG_OBFUSCATION_KEY_FILE="${WG_OBFUSCATION_KEY_FILE:-$ROOT_DIR/secrets/wg_obfuscation_key}"
-    ensure_secret_file "$WG_OBFUSCATION_KEY_FILE" "WireGuard obfuscation key"
-    export WG_OBFUSCATION_KEY_FILE
+    ensure_secret_file "$ROOT_DIR/secrets/wg_obfuscation_key" "WireGuard obfuscation key"
+}
+
+activate_obfuscation_key_env_fallback() {
+    local value
+
+    ensure_secret_file "$ROOT_DIR/secrets/wg_obfuscation_key" "WireGuard obfuscation key"
+    value="$(trim_key_value <"$ROOT_DIR/secrets/wg_obfuscation_key" || true)"
+    if is_placeholder_value "$value"; then
+        fail "WireGuard obfuscation key is empty or unresolved"
+    fi
+
+    export WG_OBFUSCATION_KEY="$value"
+}
+
+read_dotenv_value() {
+    local key="$1"
+    local line value
+
+    [ -f "$ROOT_DIR/.env" ] || return 1
+    line="$(grep -E "^${key}=" "$ROOT_DIR/.env" | tail -n 1 || true)"
+    [ -n "$line" ] || return 1
+
+    value="${line#*=}"
+    value="${value%$'\r'}"
+    case "$value" in
+        \"*\")
+            value="${value#\"}"
+            value="${value%\"}"
+            ;;
+    esac
+    printf '%s' "$value"
+}
+
+contains_unresolved_placeholder() {
+    local value="$1"
+
+    case "$value" in
+        *"<"*|*">"*|*"generated by scripts/gen-secrets env"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+require_concrete_endpoint_values() {
+    case "$SERVER_IP" in
+        ""|*"<"*|*">"*) fail "SERVER_IP must be concrete, for example SERVER_IP=192.168.1.221" ;;
+    esac
+
+    case "$CLIENT_IP" in
+        ""|*"<"*|*">"*) fail "CLIENT_IP must be concrete, for example CLIENT_IP=192.168.1.53" ;;
+    esac
+}
+
+default_registry_value() {
+    printf '%s:5000' "$SERVER_IP"
+}
+
+registry_host_value() {
+    local registry="$1"
+    registry="${registry#http://}"
+    registry="${registry#https://}"
+    printf '%s' "${registry%%/*}"
+}
+
+registry_plain_http_enabled() {
+    local registry_host="$1"
+    local plain_http="${REGISTRY_PLAIN_HTTP:-auto}"
+
+    case "$plain_http" in
+        auto)
+            case "$registry_host" in
+                localhost:*|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+        1|true|yes) return 0 ;;
+        0|false|no) return 1 ;;
+        *)
+            fail "REGISTRY_PLAIN_HTTP must be auto, 1, or 0"
+            ;;
+    esac
+}
+
+docker_daemon_lists_insecure_registry() {
+    local registry_host="$1"
+    local info host_ip
+
+    case "$registry_host" in
+        localhost:*|127.*) return 0 ;;
+    esac
+
+    info="$(docker info 2>/dev/null || true)"
+    [ -n "$info" ] || return 1
+    if printf '%s\n' "$info" | grep -Fq "$registry_host"; then
+        return 0
+    fi
+
+    host_ip="${registry_host%%:*}"
+    case "$host_ip" in
+        10.*)
+            if printf '%s\n' "$info" | grep -Fq "10.0.0.0/8"; then
+                return 0
+            fi
+            ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
+            if printf '%s\n' "$info" | grep -Fq "172.16.0.0/12"; then
+                return 0
+            fi
+            ;;
+        192.168.*)
+            if printf '%s\n' "$info" | grep -Fq "192.168.0.0/16"; then
+                return 0
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    return 1
+}
+
+print_insecure_registry_fix() {
+    local registry_host="$1"
+
+    cat >&2 <<EOF_REGISTRY_FIX
+[up-ready][ERROR] Docker daemon is not configured for plain-HTTP registry ${registry_host}.
+
+Docker Desktop: Settings -> Docker Engine, add:
+{ "insecure-registries": ["${registry_host}"] }
+
+Linux Docker Engine: add the same JSON key to /etc/docker/daemon.json.
+Restart Docker, then rerun:
+make up-ready PROFILE_MODE=${PROFILE_MODE} SERVER_IP=${SERVER_IP} CLIENT_IP=${CLIENT_IP}
+
+If Docker is configured through an equivalent trusted CIDR that this preflight
+cannot detect, rerun with UP_READY_SKIP_REGISTRY_PREFLIGHT=1.
+EOF_REGISTRY_FIX
+}
+
+verify_registry_transport() {
+    local registry_host
+
+    case "${UP_READY_SKIP_REGISTRY_PREFLIGHT:-0}" in
+        1|true|yes) return 0 ;;
+    esac
+
+    registry_host="$(registry_host_value "$REGISTRY")"
+    [ -n "$registry_host" ] || return 0
+    registry_plain_http_enabled "$registry_host" || return 0
+
+    if ! curl -fsS --max-time 2 "http://${registry_host}/v2/" >/dev/null 2>&1; then
+        warn "plain-HTTP registry ${registry_host} is not reachable at /v2/ yet"
+        return 0
+    fi
+
+    if docker_daemon_lists_insecure_registry "$registry_host"; then
+        return 0
+    fi
+
+    set_failure_from_text "http: server gave HTTP response to HTTPS client"
+    print_insecure_registry_fix "$registry_host"
+    return 1
+}
+
+ensure_compose_env_defaults() {
+    local existing_registry existing_image_tag registry image_tag
+
+    existing_registry=""
+    if [ -z "${REGISTRY:-}" ]; then
+        existing_registry="$(read_dotenv_value REGISTRY || true)"
+    fi
+
+    if [ -n "${REGISTRY:-}" ]; then
+        registry="$REGISTRY"
+    elif [ -n "$existing_registry" ] && ! contains_unresolved_placeholder "$existing_registry"; then
+        registry="$existing_registry"
+    else
+        registry="$(default_registry_value)"
+    fi
+
+    if contains_unresolved_placeholder "$registry"; then
+        fail "REGISTRY resolved to a placeholder; set REGISTRY or SERVER_IP before running up-ready"
+    fi
+
+    existing_image_tag=""
+    if [ -z "${IMAGE_TAG:-}" ]; then
+        existing_image_tag="$(read_dotenv_value IMAGE_TAG || true)"
+    fi
+
+    if [ -n "${IMAGE_TAG:-}" ]; then
+        image_tag="$IMAGE_TAG"
+    elif [ -n "$existing_image_tag" ] && ! contains_unresolved_placeholder "$existing_image_tag"; then
+        image_tag="$existing_image_tag"
+    else
+        image_tag="latest"
+    fi
+
+    if contains_unresolved_placeholder "$image_tag"; then
+        fail "IMAGE_TAG resolved to a placeholder; set IMAGE_TAG before running up-ready"
+    fi
+
+    export REGISTRY="$registry"
+    export IMAGE_TAG="$image_tag"
+}
+
+require_dotenv_value_resolved() {
+    local key="$1"
+    local value
+
+    value="$(read_dotenv_value "$key" || true)"
+    if [ -z "$value" ]; then
+        fail "$key is missing or empty in .env after scripts/gen-secrets env"
+    fi
+
+    if contains_unresolved_placeholder "$value"; then
+        fail "$key still contains an unresolved placeholder in .env after scripts/gen-secrets env"
+    fi
+}
+
+validate_materialized_env() {
+    local key dotenv_registry dotenv_image_tag
+
+    [ -f "$ROOT_DIR/.env" ] || fail ".env missing after scripts/gen-secrets env"
+
+    for key in \
+        REGISTRY \
+        IMAGE_TAG \
+        POSTGRES_PASSWORD \
+        MINIO_ACCESS_KEY_ID \
+        MINIO_SECRET_ACCESS_KEY \
+        GRAFANA_ADMIN_PASSWORD \
+        ATHSEARCH_API_TOKEN_SHA256 \
+        ADMIN_API_KEY_FILE \
+        WG_OBFUSCATION_KEY_FILE \
+        WAHA_API_KEY \
+        WAHA_DASHBOARD_PASSWORD \
+        WHATSAPP_SWAGGER_PASSWORD
+    do
+        require_dotenv_value_resolved "$key"
+    done
+
+    dotenv_registry="$(read_dotenv_value REGISTRY || true)"
+    if [ "$dotenv_registry" != "$REGISTRY" ]; then
+        fail ".env REGISTRY=$dotenv_registry does not match runtime REGISTRY=$REGISTRY"
+    fi
+
+    dotenv_image_tag="$(read_dotenv_value IMAGE_TAG || true)"
+    if [ "$dotenv_image_tag" != "$IMAGE_TAG" ]; then
+        fail ".env IMAGE_TAG=$dotenv_image_tag does not match runtime IMAGE_TAG=$IMAGE_TAG"
+    fi
+}
+
+materialize_secret_env() {
+    ensure_compose_env_defaults
+    "$ROOT_DIR/scripts/gen-secrets" env >/dev/null
+    validate_materialized_env
+}
+
+ensure_secret_bootstrap() {
+    step S00 "secret_bootstrap: checking generated secrets"
+    if "$ROOT_DIR/scripts/gen-secrets" check >/dev/null 2>&1; then
+        materialize_secret_env
+        step S00 "secret_bootstrap: .env materialized (REGISTRY=${REGISTRY} IMAGE_TAG=${IMAGE_TAG})"
+        return 0
+    fi
+
+    if [ -f "$ROOT_DIR/secrets/ONE_TIME_TOKENS" ]; then
+        materialize_secret_env 2>/dev/null || true
+        "$ROOT_DIR/scripts/gen-secrets" check || true
+        fail "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
+    fi
+
+    step S00 "secret_bootstrap: repairing generated secrets"
+    if "$ROOT_DIR/scripts/gen-secrets" repair >/dev/null 2>&1; then
+        materialize_secret_env
+        step S00 "secret_bootstrap: repaired generated secrets"
+        return 0
+    fi
+
+    step S00 "secret_bootstrap: generating missing secrets"
+    if ! "$ROOT_DIR/scripts/gen-secrets" generate; then
+        "$ROOT_DIR/scripts/gen-secrets" check || true
+        fail "secret generation failed"
+    fi
+
+    materialize_secret_env
+    if ! "$ROOT_DIR/scripts/gen-secrets" check; then
+        fail "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
+    fi
 }
 
 read_ini_value() {
@@ -227,13 +512,27 @@ escape_sed_replacement() {
     printf '%s' "$value"
 }
 
+uri_encode() {
+    local value="$1"
+    local length="${#value}"
+    local index char
+
+    for ((index = 0; index < length; index++)); do
+        char="${value:index:1}"
+        case "$char" in
+            [a-zA-Z0-9.~_-]) printf '%s' "$char" ;;
+            *) printf '%%%02X' "'$char" ;;
+        esac
+    done
+}
+
 ensure_peer_key_helper() {
     if [ "$PEER_KEY_HELPER_READY" -eq 1 ]; then
         return 0
     fi
 
-    step S00 "peer_bootstrap: docker compose build ssl-proxy"
-    compose build ssl-proxy || return 1
+    step S00 "peer_bootstrap: docker compose pull ssl-proxy"
+    compose pull ssl-proxy || return 1
     PEER_KEY_HELPER_READY=1
 }
 
@@ -417,13 +716,13 @@ apply_profile_runtime_env() {
             export WG_OBFUSCATION_ENABLED=true
             export WG_PORT=443
             export WG_INTERNAL_PORT=51820
-            ensure_obfuscation_key_file
+            activate_obfuscation_key_env_fallback
             ;;
         mac)
             export WG_OBFUSCATION_ENABLED=true
             export WG_PORT=51820
             export WG_INTERNAL_PORT=443
-            ensure_obfuscation_key_file
+            activate_obfuscation_key_env_fallback
             ;;
     esac
 }
@@ -497,9 +796,24 @@ desired_obfuscation_value() {
 }
 
 compose_up() {
-    step S03 "compose_up: docker compose up -d --build"
+    step S03 "compose_pull: docker compose pull"
     local output
-    if output="$(compose up -d --build 2>&1)"; then
+    if output="$(compose pull 2>&1)"; then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        set_failure_from_text "$output"
+        if auto_fix "$LAST_FAILURE_CLASS" "$output"; then
+            return 0
+        fi
+        if recover_required_compose_stack "compose pull" "$output"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    step S03 "compose_up: docker compose up -d"
+    if output="$(compose up -d 2>&1)"; then
         printf '%s\n' "$output"
         return 0
     fi
@@ -509,6 +823,52 @@ compose_up() {
     if auto_fix "$LAST_FAILURE_CLASS" "$output"; then
         return 0
     fi
+    if recover_required_compose_stack "compose up -d" "$output"; then
+        return 0
+    fi
+    return 1
+}
+
+required_stack_healthy() {
+    local service
+    for service in $STACK_HEALTH_SERVICES; do
+        wait_for_container_healthy "$service" || return 1
+    done
+}
+
+recover_required_compose_stack() {
+    local phase="$1"
+    local failure_output="$2"
+    local output
+    local pull_output=""
+
+    warn "${phase} failed; retrying readiness-critical services only: ${STACK_HEALTH_SERVICES}"
+
+    step S03 "compose_pull_required: docker compose pull --include-deps ${STACK_HEALTH_SERVICES}"
+    if output="$(compose pull --include-deps $STACK_HEALTH_SERVICES 2>&1)"; then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        pull_output="$output"
+        warn "compose_pull_required failed; attempting compose_up_required with locally available images"
+    fi
+
+    step S03 "compose_up_required: docker compose up -d ${STACK_HEALTH_SERVICES}"
+    if output="$(compose up -d $STACK_HEALTH_SERVICES 2>&1)"; then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        set_failure_from_text "${failure_output}"$'\n'"${pull_output}"$'\n'"${output}"
+        return 1
+    fi
+
+    if required_stack_healthy; then
+        warn "Full compose operation failed, but readiness-critical services are healthy; continuing"
+        set_failure_from_text "${failure_output}"$'\n'"${pull_output}"
+        return 0
+    fi
+
+    set_failure_from_text "${failure_output}"$'\n'"${pull_output}"
     return 1
 }
 
@@ -746,6 +1106,130 @@ qr_render() {
     return 0
 }
 
+append_file_section() {
+    local output="$1"
+    local title="$2"
+    local path="$3"
+
+    if [ -s "$path" ]; then
+        {
+            printf '\n## %s\n' "$title"
+            printf 'path=%s\n\n' "$path"
+            cat "$path"
+            printf '\n'
+        } >>"$output"
+    else
+        {
+            printf '\n## %s\n' "$title"
+            printf 'missing=%s\n' "$path"
+        } >>"$output"
+    fi
+}
+
+read_handoff_secret() {
+    local path="$1"
+
+    [ -s "$path" ] || return 0
+    trim_key_value <"$path"
+}
+
+write_credential_handoff() {
+    step S09 "credential_handoff"
+
+    local output tmp postgres_password postgres_password_url grafana_password admin_api_key wg_obfuscation_key grafana_user
+    local wg_magic_byte wg_session_idle_secs wg_public_port shim_server_addr
+    local peer_id peer_dir direct_cfg obfuscated_cfg selected_cfg
+    local old_umask
+
+    output="$CREDENTIAL_HANDOFF_FILE"
+    mkdir -p "$(dirname "$output")" || return 1
+    tmp="$(mktemp "${output}.XXXXXX")" || return 1
+
+    postgres_password="$(read_handoff_secret "$ROOT_DIR/secrets/postgres.key" || true)"
+    postgres_password_url="$(uri_encode "$postgres_password")"
+    grafana_password="$(read_handoff_secret "$ROOT_DIR/secrets/grafana_admin_password.key" || true)"
+    admin_api_key="$(read_handoff_secret "$ROOT_DIR/secrets/admin_api_key" || true)"
+    wg_obfuscation_key="$(read_handoff_secret "$ROOT_DIR/secrets/wg_obfuscation_key" || true)"
+    grafana_user="${GRAFANA_ADMIN_USER:-admin}"
+    wg_magic_byte="${WG_OBFUSCATION_MAGIC_BYTE:-0xAA}"
+    wg_session_idle_secs="${WG_OBFUSCATION_SESSION_IDLE_SECS:-300}"
+    wg_public_port="${WG_PORT:-443}"
+    shim_server_addr="${SERVER_IP}:${wg_public_port}"
+
+    old_umask="$(umask)"
+    umask 077
+    {
+        printf '# ssl-proxy credential handoff\n'
+        printf 'generated_at=%s\n' "$RUN_TS"
+        printf 'profile_mode=%s\n' "$PROFILE_MODE"
+        printf 'server_ip=%s\n' "$SERVER_IP"
+        printf 'client_ip=%s\n' "$CLIENT_IP"
+        printf '\n## Proxy admin API\n'
+        printf 'url=http://127.0.0.1:3002\n'
+        printf 'admin_api_key=%s\n' "$admin_api_key"
+        printf '\n## WireGuard shim\n'
+        printf 'enabled=%s\n' "$(desired_obfuscation_value)"
+        printf 'shim_pass=%s\n' "$wg_obfuscation_key"
+        printf 'magic_byte=%s\n' "$wg_magic_byte"
+        printf 'WG_OBFS_SERVER_ADDR=%s\n' "$shim_server_addr"
+        printf 'WG_OBFS_SHIM_LISTEN_ADDR=127.0.0.1:51821\n'
+        printf 'WG_OBFUSCATION_KEY=%s\n' "$wg_obfuscation_key"
+        printf 'WG_OBFUSCATION_MAGIC_BYTE=%s\n' "$wg_magic_byte"
+        printf 'WG_OBFUSCATION_SESSION_IDLE_SECS=%s\n' "$wg_session_idle_secs"
+        printf '\n## Postgres\n'
+        printf 'host=127.0.0.1\n'
+        printf 'port=5432\n'
+        printf 'database=sync\n'
+        printf 'username=sync\n'
+        printf 'password=%s\n' "$postgres_password"
+        printf 'url=postgres://sync:%s@127.0.0.1:5432/sync\n' "$postgres_password_url"
+        printf '\n## Grafana\n'
+        printf 'url=http://127.0.0.1:3004\n'
+        printf 'username=%s\n' "$grafana_user"
+        printf 'password=%s\n' "$grafana_password"
+    } >"$tmp" || {
+        umask "$old_umask"
+        rm -f "$tmp"
+        return 1
+    }
+    umask "$old_umask"
+
+    for peer_id in peer1 peer2; do
+        peer_dir="$ROOT_DIR/config/$peer_id"
+        direct_cfg="$peer_dir/$peer_id.conf"
+        obfuscated_cfg="$peer_dir/$peer_id-obfuscated.conf"
+        case "$PROFILE_MODE" in
+            iphone|linux-direct) selected_cfg="$direct_cfg" ;;
+            mac|linux-shim) selected_cfg="$obfuscated_cfg" ;;
+        esac
+
+        append_file_section "$tmp" "WireGuard ${peer_id} selected config" "$selected_cfg" || {
+            rm -f "$tmp"
+            return 1
+        }
+        append_file_section "$tmp" "WireGuard ${peer_id} direct config" "$direct_cfg" || {
+            rm -f "$tmp"
+            return 1
+        }
+        append_file_section "$tmp" "WireGuard ${peer_id} obfuscated config" "$obfuscated_cfg" || {
+            rm -f "$tmp"
+            return 1
+        }
+    done
+
+    chmod 600 "$tmp" || {
+        rm -f "$tmp"
+        return 1
+    }
+    mv "$tmp" "$output" || {
+        rm -f "$tmp"
+        return 1
+    }
+    chmod 600 "$output" || return 1
+
+    step S09 "credential_handoff: wrote $output (0600)"
+}
+
 diagnostics() {
     step S08 "diagnostics"
     echo "--- docker compose ps ---"
@@ -770,7 +1254,9 @@ diagnostics() {
     local text
     text="$(compose logs --tail "$LOG_TAIL_LINES" 2>&1 || true)"
     [ -n "$LAST_FAILED_CHECK" ] && text+=$'\n'"LAST_FAILED_CHECK=$LAST_FAILED_CHECK"
-    set_failure_from_text "$text"
+    if [ -z "$LAST_FAILURE_CLASS" ] || [ "$LAST_FAILURE_CLASS" = "unknown" ]; then
+        set_failure_from_text "$text"
+    fi
 
     echo "--- classified failure ---"
     echo "class=${LAST_FAILURE_CLASS}"
@@ -791,8 +1277,8 @@ auto_fix() {
 
     case "$class" in
         docker_registry_dns_timeout)
-            step S09 "auto_fix[$class]: fallback to --no-build"
-            if compose up -d --no-build --force-recreate; then
+            step S09 "auto_fix[$class]: recreate with locally available images"
+            if compose up -d --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -802,7 +1288,15 @@ auto_fix() {
             desired="$(desired_obfuscation_value)"
             apply_profile_runtime_env
             step S09 "auto_fix[$class]: recreate with WG_OBFUSCATION_ENABLED=$desired"
-            if compose up -d --no-build --force-recreate; then
+            if compose up -d --force-recreate; then
+                mark_auto_fixed "$class"
+                return 0
+            fi
+            ;;
+        secret_file_owner_mismatch)
+            step S09 "auto_fix[$class]: use direct WG_OBFUSCATION_KEY env fallback and recreate"
+            activate_obfuscation_key_env_fallback
+            if compose up -d --force-recreate "$SERVICE_NAME" "$FRONTDOOR_SERVICE_NAME"; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -815,7 +1309,7 @@ auto_fix() {
         wg_peer_material_missing)
             step S09 "auto_fix[$class]: bootstrap peer material and recreate"
             ensure_local_peer_material || return 1
-            if compose up -d --build --force-recreate; then
+            if compose up -d --force-recreate; then
                 mark_auto_fixed "$class"
                 return 0
             fi
@@ -850,6 +1344,9 @@ preflight() {
     require_command curl
     require_command qrencode
     require_profile_mode
+    require_concrete_endpoint_values
+    ensure_secret_bootstrap
+    verify_registry_transport
     ensure_memory_schema
 }
 
@@ -890,6 +1387,11 @@ main() {
         diagnostics
         memo_write "fail" "${LAST_FAILURE_CLASS:-qr_permission_denied}" "${LAST_FAILURE_FIX:-fix config file permissions}"
         fail "qr_render failed"
+    fi
+
+    if ! write_credential_handoff; then
+        memo_write "fail" "credential_handoff" "write credential handoff"
+        fail "credential_handoff failed"
     fi
 
     memo_write "pass" "none" "up-ready completed"

@@ -25,6 +25,7 @@ async fn spawn_transparent_listener(
                 result = tproxy_listener.accept() => {
                     match result {
                         Ok((stream, _peer)) => {
+                            let _ = stream.set_nodelay(true);
                             let permit = match tproxy_connection_semaphore.clone().try_acquire_owned() {
                                 Ok(p) => p,
                                 Err(_) => {
@@ -174,6 +175,7 @@ async fn run_explicit_proxy_listener(
                         continue;
                     }
                 };
+                let _ = stream.set_nodelay(true);
 
                 let permit = match connection_semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
