@@ -23,19 +23,44 @@ resolve_container() {
 }
 
 CONTAINER=$(resolve_container "${TARGET}")
+FAILED=0
 
-echo "=== Actuator Health ==="
-curl -sf "http://localhost:${PORT}/actuator/health" | python3 -m json.tool
+print_json_endpoint() {
+    local label=$1
+    local path=$2
+    local body
+    local status
+
+    body=$(mktemp "${TMPDIR:-/tmp}/check-db-connections.XXXXXX")
+    status=$(curl -sS -o "${body}" -w "%{http_code}" "http://localhost:${PORT}${path}" || true)
+
+    echo "=== ${label} ==="
+    if [ "${status}" -ge 200 ] && [ "${status}" -lt 300 ] && python3 -m json.tool < "${body}"; then
+        rm -f "${body}"
+        return 0
+    fi
+
+    echo "request_failed http_status=${status}"
+    if [ -s "${body}" ]; then
+        sed -n '1,80p' "${body}"
+    else
+        echo "<empty body>"
+    fi
+    rm -f "${body}"
+    return 1
+}
+
+print_json_endpoint "Actuator Health" "/actuator/health" || FAILED=1
 
 echo ""
-echo "=== HikariCP Active Connections ==="
-curl -sf "http://localhost:${PORT}/actuator/metrics/hikaricp.connections.active" | python3 -m json.tool
+print_json_endpoint "HikariCP Active Connections" "/actuator/metrics/hikaricp.connections.active" || FAILED=1
 
 echo ""
-echo "=== HikariCP Pending ==="
-curl -sf "http://localhost:${PORT}/actuator/metrics/hikaricp.connections.pending" | python3 -m json.tool
+print_json_endpoint "HikariCP Pending" "/actuator/metrics/hikaricp.connections.pending" || FAILED=1
 
 echo ""
 echo "=== Recent connection errors in logs ==="
 docker inspect "${CONTAINER}" >/dev/null
 docker logs "${CONTAINER}" 2>&1 | grep -E 'FATAL|CannotGetJdbc|PSQLException|ORA-|HikariPool' | tail -20 || true
+
+exit "${FAILED}"
