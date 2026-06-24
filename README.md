@@ -45,7 +45,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed diagrams and [docs
 
 - Docker + Docker Compose
 - Oracle wallet (for Oracle sink) in `./wallet/`
-- WireGuard peer configs in `config/peer1/`, `config/peer2/`
+- WireGuard peer configs for `WG_PEERS` under `config/<peer>/` (`peer1,peer2` by default)
 
 ### Start the stack
 
@@ -88,7 +88,7 @@ For pull-only server deployments from the local registry, see
 
 ```bash
 wg genkey | tee privatekey-peer | wg pubkey > publickey-peer
-# Place private key in config/peer1/ and config/peer2/ respectively
+# Place private key in config/<peer>/privatekey-<peer>.
 ```
 
 For pre-shared keys (recommended for obfuscated peers):
@@ -221,8 +221,10 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WG_INTERFACE_NAME` | `wg0` | WireGuard interface name |
+| `WG_PEERS` | `peer1,peer2` | Comma-separated peer list shared by the active proxy, rotation candidate, `up-ready`, and key rotator |
 | `WG_PORT` | `443` | Plain WireGuard UDP port |
 | `WG_INTERNAL_PORT` | `51820` | Obfuscated WireGuard UDP port |
+| `WG_MTU` | `1420` | WireGuard interface MTU for the plain/direct path; set `1280` for conservative obfuscated or hostile-path deployments |
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
 | `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config |
@@ -353,7 +355,7 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 ### Common Issues
 
 **WireGuard tunnel won't establish**
-- Verify peer config files exist in `config/peer1/` and `config/peer2/`
+- Verify peer config files exist for every name in `WG_PEERS` under `config/<peer>/`
 - Check that server private key exists locally: `config/server/privatekey-server`
 - Check `wg-udp-frontdoor` health on `http://127.0.0.1:3003/health`
 - Ensure UDP ports 443 and 51820 are reachable from the client

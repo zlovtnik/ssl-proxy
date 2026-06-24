@@ -11,12 +11,14 @@ MEMORY_FILE="${UP_READY_MEMORY_FILE:-$ROOT_DIR/ops-memory.md}"
 PROFILE_MODE="${PROFILE_MODE:-}"
 SERVER_IP="${SERVER_IP:-192.168.1.221}"
 CLIENT_IP="${CLIENT_IP:-192.168.1.68}"
+WG_PEERS="${WG_PEERS:-${ROTATOR_PEERS:-peer1,peer2}}"
 HEALTH_TIMEOUT_SECS="${UP_READY_HEALTH_TIMEOUT_SECS:-120}"
 CHECK_RETRY_SECS="${UP_READY_CHECK_RETRY_SECS:-15}"
 LOG_TAIL_LINES="${UP_READY_LOG_TAIL_LINES:-200}"
 QR_TYPE="${UP_READY_QR_TYPE:-ansiutf8}"
 QR_MARGIN="${UP_READY_QR_MARGIN:-0}"
 CREDENTIAL_HANDOFF_FILE="${UP_READY_CREDENTIAL_HANDOFF_FILE:-$ROOT_DIR/secrets/up-ready-credentials.txt}"
+export WG_PEERS
 
 RUN_TS="$(TZ="${TZ:-America/New_York}" date +%Y-%m-%dT%H:%M:%S%z)"
 HOST_ARCH="$(uname -m 2>/dev/null || echo unknown)"
@@ -50,6 +52,34 @@ warn() {
 fail() {
     printf '[up-ready][ERROR] %s\n' "$*" >&2
     exit 1
+}
+
+trim_spaces() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+validate_peer_name() {
+    local peer_id="$1"
+
+    case "$peer_id" in
+        ""|*[!A-Za-z0-9_-]*)
+            fail "Invalid peer id in WG_PEERS: $peer_id"
+            ;;
+    esac
+}
+
+peer_names() {
+    local raw_peer peer_id
+
+    printf '%s' "$WG_PEERS" | tr ',' '\n' | while IFS= read -r raw_peer; do
+        peer_id="$(trim_spaces "$raw_peer")"
+        [ -n "$peer_id" ] || continue
+        validate_peer_name "$peer_id"
+        printf '%s\n' "$peer_id"
+    done
 }
 
 signature_table() {
@@ -496,9 +526,26 @@ read_peer_config_value() {
 }
 
 peer_tunnel_address() {
+    local peer_id="$1"
+    local peer_number
+    local peer_octet
+
     case "$1" in
         peer1) printf '10.13.13.2/32' ;;
         peer2) printf '10.13.13.3/32' ;;
+        peer[0-9]*)
+            peer_number="${peer_id#peer}"
+            case "$peer_number" in
+                ""|*[!0-9]*)
+                    fail "Unsupported peer id: $peer_id"
+                    ;;
+            esac
+            peer_octet="$((10#$peer_number + 1))"
+            if [ "$peer_octet" -lt 2 ] || [ "$peer_octet" -gt 254 ]; then
+                fail "Unsupported peer id: $peer_id"
+            fi
+            printf '10.13.13.%d/32' "$peer_octet"
+            ;;
         *)
             fail "Unsupported peer id: $1"
             ;;
@@ -584,7 +631,7 @@ render_direct_peer_config() {
 Address = $address
 PrivateKey = $private_key
 ListenPort = 51820
-MTU = 1280
+MTU = 1420
 DNS = 10.13.13.1
 
 [Peer]
@@ -605,15 +652,33 @@ render_obfuscated_peer_config() {
     local peer_dir="$ROOT_DIR/config/$peer_id"
     local example="$peer_dir/$peer_id-obfuscated.conf.example"
     local output="$peer_dir/$peer_id-obfuscated.conf"
-    local escaped_private escaped_psk
+    local escaped_private escaped_psk address
 
-    [ -f "$example" ] || fail "Missing peer config template: $example"
-    escaped_private="$(escape_sed_replacement "$private_key")"
-    escaped_psk="$(escape_sed_replacement "$preshared_key")"
-    sed \
-        -e "s|<${peer_id}-private-key>|$escaped_private|g" \
-        -e "s|<${peer_id}-preshared-key>|$escaped_psk|g" \
-        "$example" >"$output" || return 1
+    if [ -f "$example" ]; then
+        escaped_private="$(escape_sed_replacement "$private_key")"
+        escaped_psk="$(escape_sed_replacement "$preshared_key")"
+        sed \
+            -e "s|<${peer_id}-private-key>|$escaped_private|g" \
+            -e "s|<${peer_id}-preshared-key>|$escaped_psk|g" \
+            "$example" >"$output" || return 1
+    else
+        address="$(peer_tunnel_address "$peer_id")"
+        cat >"$output" <<EOF_PEER_OBFUSCATED || return 1
+# Supported client path when UDP obfuscation is enabled on the server.
+[Interface]
+Address = $address
+PrivateKey = $private_key
+ListenPort = 443
+MTU = 1279
+DNS = 10.13.13.1
+
+[Peer]
+PublicKey = <server-public-key>
+PresharedKey = $preshared_key
+Endpoint = 127.0.0.1:51821
+AllowedIPs = 0.0.0.0/0, ::/0
+EOF_PEER_OBFUSCATED
+    fi
     chmod 600 "$output" || return 1
     step S00 "peer_bootstrap: wrote $output"
 }
@@ -675,18 +740,18 @@ ensure_local_peer_material() {
     local needs_bootstrap=0
     local peer_id
 
-    for peer_id in peer1 peer2; do
+    while IFS= read -r peer_id; do
         if ! peer_material_complete "$peer_id"; then
             needs_bootstrap=1
         fi
-    done
+    done < <(peer_names)
 
     [ "$needs_bootstrap" -eq 1 ] || return 0
     ensure_peer_key_helper || return 1
 
-    for peer_id in peer1 peer2; do
+    while IFS= read -r peer_id; do
         ensure_one_peer_material "$peer_id" || return 1
-    done
+    done < <(peer_names)
 }
 
 require_profile_mode() {
@@ -1194,7 +1259,7 @@ write_credential_handoff() {
     }
     umask "$old_umask"
 
-    for peer_id in peer1 peer2; do
+    while IFS= read -r peer_id; do
         peer_dir="$ROOT_DIR/config/$peer_id"
         direct_cfg="$peer_dir/$peer_id.conf"
         obfuscated_cfg="$peer_dir/$peer_id-obfuscated.conf"
@@ -1215,7 +1280,7 @@ write_credential_handoff() {
             rm -f "$tmp"
             return 1
         }
-    done
+    done < <(peer_names)
 
     chmod 600 "$tmp" || {
         rm -f "$tmp"

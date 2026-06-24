@@ -84,8 +84,8 @@ Use the rotator in `apps/wg-key-rotator` for stable-port scheduled rotation. It 
 
 ### 3.1 Compose Runtime Compatibility Mode for Peer Config Mounts
 
-- `ssl-proxy` is intentionally pinned to `user: "0:0"` in `docker-compose.yaml` for compatibility with host bind-mounted peer config files such as `config/peer1/peer1.conf` that are commonly `0600`.
-- This preserves legacy startup behavior where entrypoint key sync reads/writes `PublicKey` and `PresharedKey` data from `/config/peer1/*.conf`.
+- `ssl-proxy` is intentionally pinned to `user: "0:0"` in `docker-compose.yaml` for compatibility with host bind-mounted peer config files such as `config/<peer>/<peer>.conf` that are commonly `0600`.
+- This preserves legacy startup behavior where entrypoint key sync reads/writes `PublicKey` and `PresharedKey` data from configured `/config/<peer>/*.conf` files.
 - Security tradeoff: root-in-container plus `NET_ADMIN` increases impact if the container is compromised. Keep `--privileged` disabled and avoid broad writable host mounts.
 
 ---
