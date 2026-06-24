@@ -25,6 +25,27 @@ resolve_container() {
 CONTAINER=$(resolve_container "${TARGET}")
 FAILED=0
 
+print_postgres_password_fingerprints() {
+    local postgres_container
+    local coordinator_fp
+    local postgres_fp
+
+    postgres_container=$(resolve_container postgres)
+
+    echo "=== POSTGRES_PASSWORD Fingerprints ==="
+    coordinator_fp=$(docker exec "${CONTAINER}" sh -lc 'printf "%s" "${POSTGRES_PASSWORD:-}" | sha256sum | awk "{print \$1}"' 2>/dev/null || true)
+    postgres_fp=$(docker exec "${postgres_container}" sh -lc 'printf "%s" "${POSTGRES_PASSWORD:-}" | sha256sum | awk "{print \$1}"' 2>/dev/null || true)
+
+    echo "coordinator=${coordinator_fp:-unavailable}"
+    echo "postgres=${postgres_fp:-unavailable}"
+    if [ -n "${coordinator_fp}" ] && [ -n "${postgres_fp}" ] && [ "${coordinator_fp}" != "${postgres_fp}" ]; then
+        echo "password_env_match=false"
+        FAILED=1
+    else
+        echo "password_env_match=true"
+    fi
+}
+
 print_json_endpoint() {
     local label=$1
     local path=$2
@@ -57,6 +78,9 @@ print_json_endpoint "HikariCP Active Connections" "/actuator/metrics/hikaricp.co
 
 echo ""
 print_json_endpoint "HikariCP Pending" "/actuator/metrics/hikaricp.connections.pending" || FAILED=1
+
+echo ""
+print_postgres_password_fingerprints
 
 echo ""
 echo "=== Recent connection errors in logs ==="

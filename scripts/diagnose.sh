@@ -51,6 +51,8 @@ rust_toolchain_mismatch::rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the fo
 wg_client_listenport_conflict::RTNETLINK answers: Address already in use::Client ListenPort conflict::Remove/adjust ListenPort in client config::manual
 wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 default route setup failed::Temporarily remove the IPv6 default route from AllowedIPs on that client::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
+compose_dependency_unhealthy::dependency failed to start|container .* is unhealthy::Compose dependency failed to become healthy::Inspect the named service logs and healthcheck output::manual
+compose_image_unavailable::manifest unknown|pull access denied|repository does not exist|not found: manifest unknown::Required image is missing from the configured registry::Build and push the missing image tag to REGISTRY, then rerun up-ready::manual
 SIGEOF
 }
 

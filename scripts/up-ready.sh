@@ -72,6 +72,8 @@ wg_client_ipv6_route_failure::RTNETLINK answers: No such device::Client IPv6 def
 peer_config_permission_denied::awk: cannot open /config/.*\.conf \(Permission denied\)::Peer config file denied inside container startup path::Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions::manual
 qr_permission_denied::Permission denied::Peer config unreadable on host filesystem::Read profile from /config bind mount inside container::auto
 wg_peer_material_missing::missing peer public key|missing peer preshared key|invalid config: peer [0-9]+ is missing PublicKey::WireGuard peer material is missing::Bootstrap local peer configs or provide config/peer*/ key files::auto
+compose_dependency_unhealthy::dependency failed to start|container .* is unhealthy::Compose dependency failed to become healthy::Inspect the named service logs and healthcheck output::manual
+compose_image_unavailable::manifest unknown|pull access denied|repository does not exist|not found: manifest unknown::Required image is missing from the configured registry::Build and push the missing image tag to REGISTRY, then rerun up-ready::manual
 SIGEOF
 }
 
@@ -790,6 +792,9 @@ compose_up() {
         if auto_fix "$LAST_FAILURE_CLASS" "$output"; then
             return 0
         fi
+        if recover_required_compose_stack "compose pull" "$output"; then
+            return 0
+        fi
         return 1
     fi
 
@@ -804,6 +809,52 @@ compose_up() {
     if auto_fix "$LAST_FAILURE_CLASS" "$output"; then
         return 0
     fi
+    if recover_required_compose_stack "compose up -d" "$output"; then
+        return 0
+    fi
+    return 1
+}
+
+required_stack_healthy() {
+    local service
+    for service in $STACK_HEALTH_SERVICES; do
+        wait_for_container_healthy "$service" || return 1
+    done
+}
+
+recover_required_compose_stack() {
+    local phase="$1"
+    local failure_output="$2"
+    local output
+    local pull_output=""
+
+    warn "${phase} failed; retrying readiness-critical services only: ${STACK_HEALTH_SERVICES}"
+
+    step S03 "compose_pull_required: docker compose pull --include-deps ${STACK_HEALTH_SERVICES}"
+    if output="$(compose pull --include-deps $STACK_HEALTH_SERVICES 2>&1)"; then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        pull_output="$output"
+        warn "compose_pull_required failed; attempting compose_up_required with locally available images"
+    fi
+
+    step S03 "compose_up_required: docker compose up -d ${STACK_HEALTH_SERVICES}"
+    if output="$(compose up -d $STACK_HEALTH_SERVICES 2>&1)"; then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        set_failure_from_text "${failure_output}"$'\n'"${pull_output}"$'\n'"${output}"
+        return 1
+    fi
+
+    if required_stack_healthy; then
+        warn "Full compose operation failed, but readiness-critical services are healthy; continuing"
+        set_failure_from_text "${failure_output}"$'\n'"${pull_output}"
+        return 0
+    fi
+
+    set_failure_from_text "${failure_output}"$'\n'"${pull_output}"
     return 1
 }
 
