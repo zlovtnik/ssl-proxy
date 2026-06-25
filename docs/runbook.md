@@ -196,11 +196,11 @@ All views are optimized for ADB columnar storage.
 
 - `java-coordinator` is the sync control-plane service. The source still lives under `services/zig-coordinator/` for historical reasons, but the runtime service is Java/Spring/Camel; inspect it with `docker compose logs java-coordinator`.
 - `sql/postgres.sql` is a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Maintain split schema files directly and keep `sql/postgres.source.sql` in sync as the aggregate reference when split objects change.
-- `services/db-migrator` is the canonical CLI for schema ordering and validation:
-  - `cargo run -p db-migrator -- list --sql-dir ./sql`
-  - `cargo run -p db-migrator -- validate --sql-dir ./sql`
-  - `cargo run -p db-migrator -- apply --sql-dir ./sql --database-url "$DATABASE_URL"`
-- `db-migrator apply` bootstraps `schema_control.schema_objects`, `schema_control.schema_apply_log`, and the single-row readiness view `schema_control.schema_ready`. Runtime apps should gate startup with:
+- `services/schema-migrator` is the canonical CLI for schema ordering and validation:
+  - `cd services/schema-migrator && sbt "run --sql-dir ../../sql list"`
+  - `cd services/schema-migrator && sbt "run --sql-dir ../../sql validate"`
+  - `export DATABASE_URL=... && cd services/schema-migrator && sbt "run --sql-dir ../../sql apply"`
+- `schema-migrator apply` bootstraps `schema_control.schema_objects`, `schema_control.schema_apply_log`, and the single-row readiness view `schema_control.schema_ready`. Runtime apps should gate startup with:
   ```sql
   select ready, all_applied, pending_count, failed_count, failed_objects
   from schema_control.schema_ready;

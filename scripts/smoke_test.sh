@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cargo build --release -p db-migrator
-./target/release/db-migrator list --sql-dir ./sql
-./target/release/db-migrator validate --sql-dir ./sql
-./target/release/db-migrator apply --sql-dir ./sql --database-url "$DATABASE_URL"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+: "${DATABASE_URL:?DATABASE_URL is required}"
+export DATABASE_URL
+
+cd "${repo_root}/services/schema-migrator"
+sbt "run --sql-dir ../../sql list"
+sbt "run --sql-dir ../../sql validate"
+sbt "run --sql-dir ../../sql apply"

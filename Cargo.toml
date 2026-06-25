@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/sync-plane", "services/atheros-sensor", "services/db-migrator"]
+members = [".", "crates/sync-plane", "services/atheros-sensor"]
 
 [lints.rustdoc]
 html-tags = "allow"

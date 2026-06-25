@@ -46,5 +46,5 @@ This file governs `services/atheros-search` relative to the repository root.
 - Run package-targeted `go test` for changed packages, then `go test ./...`
   when search, API, ingest, worker, or shared types changed.
 - If `search.proto` changes, regenerate protobufs and run `go test ./...`.
-- If SQL assumptions change, run relevant service tests plus db-migrator or
+- If SQL assumptions change, run relevant service tests plus schema-migrator or
   coordinator SQL contract tests as appropriate.

@@ -759,7 +759,7 @@ services:
       retries: 5
     volumes:
       # /docker-entrypoint-initdb.d is intentionally unused; schema changes are
-      # applied by services/db-migrator against the split sql/* tree.
+      # applied by services/schema-migrator against the split sql/* tree.
       - postgres-data:/var/lib/postgresql/data
 
   prometheus:
