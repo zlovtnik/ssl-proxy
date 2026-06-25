@@ -56,10 +56,16 @@ final class PostgresSession(connection: Connection) extends DbSession:
         IO.blocking(executeStatement(connection, prepared.objectDef.rawSql))
           .attempt
           .flatMap {
-             case Right(()) =>
-               (applyLog.recordApplied(prepared.objectDef, prepared.oldSha256, JdbcSupport.durationMs(started)) *>
-                 IO.blocking(connection.commit()))
-                 .handleErrorWith(failure => IO.blocking(connection.rollback()) *> IO.raiseError(failure))
+              case Right(()) =>
+                (applyLog.recordApplied(prepared.objectDef, prepared.oldSha256, JdbcSupport.durationMs(started)) *>
+                  IO.blocking(connection.commit()))
+                  .handleErrorWith(failure =>
+                    IO.blocking(connection.rollback()).attempt.flatMap {
+                      case Right(())                          => IO.raiseError(failure)
+                      case Left(rollbackErr: SQLException)    => failure.addSuppressed(rollbackErr); IO.raiseError(failure)
+                      case Left(rollbackErr)                  => IO.raiseError(new RuntimeException("rollback failed", rollbackErr).initCause(failure))
+                    }
+                  )
              case Left(error: SQLException) =>
                val formatted = JdbcSupport.sqlError(prepared.objectDef.sourceFile, error, "postgres")
                IO.blocking(connection.rollback()) *>
@@ -118,10 +124,16 @@ final class PostgresSession(connection: Connection) extends DbSession:
               IO.blocking(executeStatement(connection, sql))
                 .attempt
                 .flatMap {
-                   case Right(()) =>
-                     (applyLog.recordRolledBack(target, JdbcSupport.durationMs(started)) *>
-                       IO.blocking(connection.commit()))
-                       .handleErrorWith(failure => IO.blocking(connection.rollback()) *> IO.raiseError(failure))
+                    case Right(()) =>
+                      (applyLog.recordRolledBack(target, JdbcSupport.durationMs(started)) *>
+                        IO.blocking(connection.commit()))
+                        .handleErrorWith(failure =>
+                          IO.blocking(connection.rollback()).attempt.flatMap {
+                            case Right(())                        => IO.raiseError(failure)
+                            case Left(rollbackErr: SQLException)  => failure.addSuppressed(rollbackErr); IO.raiseError(failure)
+                            case Left(rollbackErr)                => IO.raiseError(new RuntimeException("rollback failed", rollbackErr).initCause(failure))
+                          }
+                        )
                    case Left(error: SQLException) =>
                      IO.blocking(connection.rollback()) *>
                        IO.raiseError(MigratorError.Apply(JdbcSupport.sqlError(rollbackPath.toString, error, "postgres"), error))
