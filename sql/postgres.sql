@@ -1,6 +1,6 @@
 -- Postgres schema bootstrap shim.
 -- Active schema objects live in the split sql/* folders and are applied by
--- services/db-migrator. Keep sql/postgres.source.sql in sync as the aggregate
+-- services/schema-migrator. Keep sql/postgres.source.sql in sync as the aggregate
 -- reference when split objects change.
 
 -- extensions

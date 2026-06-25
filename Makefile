@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -19,7 +19,7 @@ build:
 	cargo build --release -p sync-plane
 	cargo build --release -p ssl-proxy
 	cargo build --release -p atheros-sensor
-	cargo build --release -p db-migrator
+	cd services/schema-migrator && sbt compile
 	cd services/zig-coordinator && gradle build
 
 # Run tests
@@ -27,7 +27,7 @@ test:
 	cargo test -p sync-plane
 	cargo test -p ssl-proxy
 	cargo test -p atheros-sensor
-	cargo test -p db-migrator
+	$(MAKE) schema-migrator-test
 	$(MAKE) dependency-boundaries
 	cd services/zig-coordinator && gradle test
 
@@ -179,6 +179,9 @@ atheros-search-build:
 
 atheros-search-test:
 	cd services/atheros-search && go test ./...
+
+schema-migrator-test:
+	cd services/schema-migrator && sbt test
 
 # Run clippy lints
 lint:

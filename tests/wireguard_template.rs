@@ -33,6 +33,15 @@ fn wireguard_template_redirects_tcp_and_drops_udp_443_when_enabled() {
     assert!(template.contains(
         "if [ \"__WG_PUBLIC_PORT__\" != \"443\" ]; then iptables -D INPUT -i __WG_WAN_INTERFACE__ -p udp --dport 443 -j ACCEPT; fi"
     ));
-    assert!(template.contains("[Peer]\nPublicKey = __WG_PEER1_PUBLIC_KEY__"));
-    assert!(template.contains("[Peer]\nPublicKey = __WG_PEER2_PUBLIC_KEY__"));
+    assert!(template.contains("__WG_PEERS__"));
+    assert!(!template.contains("__WG_PEER1_PUBLIC_KEY__"));
+    assert!(!template.contains("__WG_PEER2_PUBLIC_KEY__"));
+}
+
+#[test]
+fn direct_peer_template_uses_normal_wireguard_mtu() {
+    let path = format!("{}/config/templates/peer.conf", env!("CARGO_MANIFEST_DIR"));
+    let template = fs::read_to_string(path).expect("peer template should exist");
+
+    assert!(template.contains("MTU = 1420"));
 }

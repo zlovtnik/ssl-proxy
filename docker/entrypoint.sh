@@ -10,22 +10,13 @@ WG_UAPI_SOCKET_DIR="${WG_UAPI_SOCKET_DIR:-/var/run/wireguard}"
 WG_TEMPLATE_PATH="${WG_TEMPLATE_PATH:-/config/templates/server.conf}"
 WG_SERVER_PRIVATE_KEY_FILE="${WG_SERVER_PRIVATE_KEY_FILE:-/config/server/privatekey-server}"
 WG_SERVER_PUBLIC_KEY_FILE="${WG_SERVER_PUBLIC_KEY_FILE:-/config/server/publickey-server}"
-WG_PEER1_CONFIG_PATH="${WG_PEER1_CONFIG_PATH:-${WG_PEER_CONFIG_PATH:-/config/peer1/peer1.conf}}"
-WG_OBFUSCATED_PEER1_CONFIG_PATH="${WG_OBFUSCATED_PEER1_CONFIG_PATH:-${WG_OBFUSCATED_PEER_CONFIG_PATH:-/config/peer1/peer1-obfuscated.conf.example}}"
-WG_PEER1_PUBLIC_KEY_FILE="${WG_PEER1_PUBLIC_KEY_FILE:-${WG_PEER_PUBLIC_KEY_FILE:-/config/peer1/publickey-peer1}}"
-WG_PEER1_PRESHARED_KEY_FILE="${WG_PEER1_PRESHARED_KEY_FILE:-${WG_PEER_PRESHARED_KEY_FILE:-/config/peer1/presharedkey-peer1}}"
-WG_PEER1_ALLOWED_IPS="${WG_PEER1_ALLOWED_IPS:-${WG_PEER_ALLOWED_IPS:-}}"
-WG_PEER2_CONFIG_PATH="${WG_PEER2_CONFIG_PATH:-/config/peer2/peer2.conf}"
-WG_OBFUSCATED_PEER2_CONFIG_PATH="${WG_OBFUSCATED_PEER2_CONFIG_PATH:-/config/peer2/peer2-obfuscated.conf.example}"
-WG_PEER2_PUBLIC_KEY_FILE="${WG_PEER2_PUBLIC_KEY_FILE:-/config/peer2/publickey-peer2}"
-WG_PEER2_PRESHARED_KEY_FILE="${WG_PEER2_PRESHARED_KEY_FILE:-/config/peer2/presharedkey-peer2}"
-WG_PEER2_ALLOWED_IPS="${WG_PEER2_ALLOWED_IPS:-}"
+WG_PEERS="${WG_PEERS:-${ROTATOR_PEERS:-peer1,peer2}}"
+WG_PEER_CONFIG_BASE="${WG_PEER_CONFIG_BASE:-/config}"
 WG_SERVER_ADDRESS="${WG_SERVER_ADDRESS:-10.13.13.1/24}"
 WG_PORT="${WG_PORT:-443}"
 WG_INTERNAL_PORT="${WG_INTERNAL_PORT:-51820}"
 WG_OBFUSCATION_ENABLED="${WG_OBFUSCATION_ENABLED:-true}"
 WG_MTU="${WG_MTU:-1280}"
-WG_PEER_ALLOWED_IPS="${WG_PEER_ALLOWED_IPS:-}"
 WG_WAN_INTERFACE="${WG_WAN_INTERFACE:-auto}"
 WG_SYSCTL_RETRIES="${WG_SYSCTL_RETRIES:-3}"
 WG_SYSCTL_RETRY_DELAY_MS="${WG_SYSCTL_RETRY_DELAY_MS:-200}"
@@ -56,6 +47,110 @@ trim() {
 	value="${value#"${value%%[![:space:]]*}"}"
 	value="${value%"${value##*[![:space:]]}"}"
 	printf '%s' "$value"
+}
+
+validate_peer_name() {
+	local peer="$1"
+
+	case "$peer" in
+	"" | *[!A-Za-z0-9_-]*)
+		echo "invalid WireGuard peer name: $peer" >&2
+		exit 1
+		;;
+	esac
+}
+
+peer_names() {
+	local raw_peer peer
+
+	printf '%s' "$WG_PEERS" | tr ',' '\n' | while IFS= read -r raw_peer; do
+		peer="$(trim "$raw_peer")"
+		[ -n "$peer" ] || continue
+		validate_peer_name "$peer"
+		printf '%s\n' "$peer"
+	done
+}
+
+declare -A _peer_env_claimed
+
+peer_env_suffix() {
+	printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_'
+}
+
+peer_env_value() {
+	local peer="$1"
+	local key="$2"
+	local default="$3"
+	local suffix env_name legacy_name value
+
+	suffix="$(peer_env_suffix "$peer")"
+	env_name="WG_${suffix}_${key}"
+	value="${!env_name-}"
+	if [ -n "$value" ]; then
+		if [ -n "${_peer_env_claimed[$env_name]+x}" ] && [ "${_peer_env_claimed[$env_name]}" != "$peer" ]; then
+			echo "peer env collision: $env_name is already claimed by peer ${_peer_env_claimed[$env_name]}; refusing to share with $peer" >&2
+			return 1
+		fi
+		_peer_env_claimed[$env_name]="$peer"
+		printf '%s' "$value"
+		return 0
+	fi
+
+	if [ "$key" = "OBFUSCATED_CONFIG_PATH" ]; then
+		legacy_name="WG_OBFUSCATED_${suffix}_CONFIG_PATH"
+		value="${!legacy_name-}"
+		if [ -n "$value" ]; then
+			if [ -n "${_peer_env_claimed[$legacy_name]+x}" ] && [ "${_peer_env_claimed[$legacy_name]}" != "$peer" ]; then
+				echo "peer env collision: $legacy_name is already claimed by peer ${_peer_env_claimed[$legacy_name]}; refusing to share with $peer" >&2
+				return 1
+			fi
+			_peer_env_claimed[$legacy_name]="$peer"
+			printf '%s' "$value"
+			return 0
+		fi
+	fi
+
+	if [ "$peer" = "peer1" ]; then
+		case "$key" in
+		CONFIG_PATH) value="${WG_PEER_CONFIG_PATH-}" ;;
+		OBFUSCATED_CONFIG_PATH) value="${WG_OBFUSCATED_PEER_CONFIG_PATH-}" ;;
+		PUBLIC_KEY_FILE) value="${WG_PEER_PUBLIC_KEY_FILE-}" ;;
+		PRESHARED_KEY_FILE) value="${WG_PEER_PRESHARED_KEY_FILE-}" ;;
+		ALLOWED_IPS) value="${WG_PEER_ALLOWED_IPS-}" ;;
+		*) value="" ;;
+		esac
+		if [ -n "$value" ]; then
+			printf '%s' "$value"
+			return 0
+		fi
+	fi
+
+	printf '%s' "$default"
+}
+
+peer_config_path() {
+	local peer="$1"
+	peer_env_value "$peer" "CONFIG_PATH" "$WG_PEER_CONFIG_BASE/$peer/$peer.conf"
+}
+
+peer_obfuscated_config_path() {
+	local peer="$1"
+	peer_env_value "$peer" "OBFUSCATED_CONFIG_PATH" "$WG_PEER_CONFIG_BASE/$peer/$peer-obfuscated.conf"
+}
+
+peer_public_key_file() {
+	local peer="$1"
+	peer_env_value "$peer" "PUBLIC_KEY_FILE" "$WG_PEER_CONFIG_BASE/$peer/publickey-$peer"
+}
+
+peer_preshared_key_file() {
+	local peer="$1"
+	peer_env_value "$peer" "PRESHARED_KEY_FILE" "$WG_PEER_CONFIG_BASE/$peer/presharedkey-$peer"
+}
+
+peer_allowed_ips() {
+	local peer="$1"
+	peer_env_value "$peer" "ALLOWED_IPS" ""
 }
 
 read_trimmed_file() {
@@ -594,6 +689,7 @@ resolve_peer_allowed_ips() {
 choose_peer_config_path() {
 	local primary="$1"
 	local secondary="$2"
+	local secondary_example="${secondary}.example"
 
 	if [ -f "$secondary" ]; then
 		printf '%s' "$secondary"
@@ -601,6 +697,10 @@ choose_peer_config_path() {
 	fi
 	if [ -f "$primary" ]; then
 		printf '%s' "$primary"
+		return 0
+	fi
+	if [ -f "$secondary_example" ]; then
+		printf '%s' "$secondary_example"
 		return 0
 	fi
 
@@ -735,12 +835,14 @@ ensure_wireguard_server_keys() {
 		write_trimmed_file "$WG_SERVER_PUBLIC_KEY_FILE" "$server_public_key" 644
 	fi
 
-	for peer_config in "$WG_PEER1_CONFIG_PATH" "$WG_PEER2_CONFIG_PATH" "$WG_OBFUSCATED_PEER1_CONFIG_PATH" "$WG_OBFUSCATED_PEER2_CONFIG_PATH"; do
-		if [ -f "$peer_config" ]; then
-			echo "[#] Syncing server public key into $peer_config"
-			sync_peer_server_public_key "$server_public_key" "$peer_config" || exit 1
-		fi
-	done
+	while IFS= read -r peer; do
+		for peer_config in "$(peer_config_path "$peer")" "$(peer_obfuscated_config_path "$peer")" "$(peer_obfuscated_config_path "$peer").example"; do
+			if [ -f "$peer_config" ]; then
+				echo "[#] Syncing server public key into $peer_config"
+				sync_peer_server_public_key "$server_public_key" "$peer_config" || exit 1
+			fi
+		done
+	done < <(peer_names)
 }
 
 render_peer_values() {
@@ -762,23 +864,50 @@ render_peer_values() {
 	printf '%s\n%s\n%s' "$peer_public_key" "$peer_preshared_key" "$peer_allowed_ips_value"
 }
 
+render_peer_block() {
+	local peer="$1"
+	local values
+	local peer_public_key
+	local peer_preshared_key
+	local allowed_ips
+
+	if ! values="$(render_peer_values "$(peer_public_key_file "$peer")" "$(peer_preshared_key_file "$peer")" "$(peer_config_path "$peer")" "$(peer_obfuscated_config_path "$peer")" "$(peer_allowed_ips "$peer")")"; then
+		return 1
+	fi
+
+	peer_public_key="$(printf '%s\n' "$values" | sed -n '1p')"
+	peer_preshared_key="$(printf '%s\n' "$values" | sed -n '2p')"
+	allowed_ips="$(printf '%s\n' "$values" | sed -n '3p')"
+
+	printf '[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s\n' "$peer_public_key" "$peer_preshared_key" "$allowed_ips"
+}
+
+render_peer_blocks() {
+	local peer block rendered=""
+
+	while IFS= read -r peer; do
+		if ! block="$(render_peer_block "$peer")"; then
+			return 1
+		fi
+		if [ -n "$rendered" ]; then
+			rendered="${rendered}"$'\n'"${block}"
+		else
+			rendered="$block"
+		fi
+	done < <(peer_names)
+
+	if [ -z "$rendered" ]; then
+		echo "WG_PEERS resolved to no peers" >&2
+		return 1
+	fi
+
+	printf '%s\n' "$rendered"
+}
+
 render_wireguard_config() {
 	local server_private_key
-	local peer1_public_key
-	local peer1_preshared_key
-	local peer1_allowed_ips
-	local peer2_public_key
-	local peer2_preshared_key
-	local peer2_allowed_ips
-	local peer1_values
-	local peer2_values
+	local peer_blocks
 	local escaped_server_private_key
-	local escaped_peer1_public_key
-	local escaped_peer1_preshared_key
-	local escaped_peer1_allowed_ips
-	local escaped_peer2_public_key
-	local escaped_peer2_preshared_key
-	local escaped_peer2_allowed_ips
 	local escaped_server_address
 	local escaped_public_port
 	local escaped_internal_port
@@ -793,28 +922,13 @@ render_wireguard_config() {
 	fi
 
 	server_private_key="$(read_trimmed_file "$WG_SERVER_PRIVATE_KEY_FILE")"
-	if ! peer1_values="$(render_peer_values "$WG_PEER1_PUBLIC_KEY_FILE" "$WG_PEER1_PRESHARED_KEY_FILE" "$WG_PEER1_CONFIG_PATH" "$WG_OBFUSCATED_PEER1_CONFIG_PATH" "$WG_PEER1_ALLOWED_IPS")"; then
+	if ! peer_blocks="$(render_peer_blocks)"; then
 		exit 1
 	fi
-	peer1_public_key="$(printf '%s\n' "$peer1_values" | sed -n '1p')"
-	peer1_preshared_key="$(printf '%s\n' "$peer1_values" | sed -n '2p')"
-	peer1_allowed_ips="$(printf '%s\n' "$peer1_values" | sed -n '3p')"
-	if ! peer2_values="$(render_peer_values "$WG_PEER2_PUBLIC_KEY_FILE" "$WG_PEER2_PRESHARED_KEY_FILE" "$WG_PEER2_CONFIG_PATH" "$WG_OBFUSCATED_PEER2_CONFIG_PATH" "$WG_PEER2_ALLOWED_IPS")"; then
-		exit 1
-	fi
-	peer2_public_key="$(printf '%s\n' "$peer2_values" | sed -n '1p')"
-	peer2_preshared_key="$(printf '%s\n' "$peer2_values" | sed -n '2p')"
-	peer2_allowed_ips="$(printf '%s\n' "$peer2_values" | sed -n '3p')"
 
 	mkdir -p "$(dirname "$WG_CONFIG_PATH")"
 
 	escaped_server_private_key="$(escape_sed_value "$server_private_key")"
-	escaped_peer1_public_key="$(escape_sed_value "$peer1_public_key")"
-	escaped_peer1_preshared_key="$(escape_sed_value "$peer1_preshared_key")"
-	escaped_peer1_allowed_ips="$(escape_sed_value "$peer1_allowed_ips")"
-	escaped_peer2_public_key="$(escape_sed_value "$peer2_public_key")"
-	escaped_peer2_preshared_key="$(escape_sed_value "$peer2_preshared_key")"
-	escaped_peer2_allowed_ips="$(escape_sed_value "$peer2_allowed_ips")"
 	escaped_server_address="$(escape_sed_value "$WG_SERVER_ADDRESS")"
 	escaped_public_port="$(escape_sed_value "$WG_PORT")"
 	escaped_internal_port="$(escape_sed_value "$WG_RUNTIME_LISTEN_PORT")"
@@ -829,16 +943,17 @@ render_wireguard_config() {
 		-e "s|__WG_INTERNAL_PORT__|$escaped_internal_port|g" \
 		-e "s|__WG_MTU__|$escaped_mtu|g" \
 		-e "s|__WG_SERVER_PRIVATE_KEY__|$escaped_server_private_key|g" \
-		-e "s|__WG_PEER1_PUBLIC_KEY__|$escaped_peer1_public_key|g" \
-		-e "s|__WG_PEER1_PRESHARED_KEY__|$escaped_peer1_preshared_key|g" \
-		-e "s|__WG_PEER1_ALLOWED_IPS__|$escaped_peer1_allowed_ips|g" \
-		-e "s|__WG_PEER2_PUBLIC_KEY__|$escaped_peer2_public_key|g" \
-		-e "s|__WG_PEER2_PRESHARED_KEY__|$escaped_peer2_preshared_key|g" \
-		-e "s|__WG_PEER2_ALLOWED_IPS__|$escaped_peer2_allowed_ips|g" \
 		-e "s|__WG_WAN_INTERFACE__|$escaped_wan_interface|g" \
 		-e "s|__WG_SYSCTL_RETRIES__|$escaped_sysctl_retries|g" \
 		-e "s|__WG_SYSCTL_RETRY_DELAY_MS__|$escaped_sysctl_retry_delay_ms|g" \
-		"$WG_TEMPLATE_PATH" >"$WG_CONFIG_PATH"
+		"$WG_TEMPLATE_PATH" |
+		awk -v peer_blocks="$peer_blocks" '
+            $0 == "__WG_PEERS__" {
+                print peer_blocks
+                next
+            }
+            { print }
+        ' >"$WG_CONFIG_PATH"
 
 	chmod 600 "$WG_CONFIG_PATH"
 }

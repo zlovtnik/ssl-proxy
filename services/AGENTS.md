@@ -9,8 +9,8 @@ repository root instructions.
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
 - `atheros-search/` is a Go HTTP/gRPC search, ingest, alert, and embedding
   service backed by Postgres/vector schema.
-- `db-migrator/` is a Rust tool that applies the ordered split Postgres schema
-  under the repository `sql/` tree.
+- `schema-migrator/` is a Scala Cats Effect tool that applies the ordered split
+  Postgres and Oracle schema under the repository `sql/` tree.
 - `zig-coordinator/` is the legacy directory name for the Java 21
   Spring Boot/Camel coordinator and Oracle sink.
 - Keep cross-service contracts explicit: Redpanda topic names, stream names,
@@ -38,9 +38,10 @@ repository root instructions.
   or schema behavior changed.
 - Useful commands from the repository root:
   - `cargo test -p atheros-sensor`
-  - `cargo test -p db-migrator`
+  - `cd services/schema-migrator && sbt test`
   - `make atheros-search-test`
   - `cd services/zig-coordinator && ./gradlew test`
   - `make dependency-boundaries`
 - If a change touches SQL contracts used by services, also consider
-  `cargo test -p db-migrator` and the coordinator SQL contract tests.
+  `cd services/schema-migrator && sbt test` and the coordinator SQL contract
+  tests.
