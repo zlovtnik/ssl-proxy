@@ -30,5 +30,13 @@ object OracleDdlHelper:
     val trimmed = sql.trim
     val lower = trimmed.toLowerCase
     if lower.startsWith("begin") || lower.startsWith("declare") then trimmed
-    else if trimmed.endsWith(";") then trimmed.dropRight(1).trim
+    else if trimmed.endsWith(";") then
+      val withoutSemi = trimmed.dropRight(1).trim
+      val withoutSemiLower = withoutSemi.toLowerCase
+      if withoutSemiLower.startsWith("create or replace") ||
+         withoutSemiLower.startsWith("create") ||
+         withoutSemiLower.startsWith("replace") then
+        trimmed
+      else
+        withoutSemi
     else trimmed

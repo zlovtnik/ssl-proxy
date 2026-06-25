@@ -49,5 +49,7 @@ class DiscoveryServiceSuite extends FunSuite:
 
   private def deleteRecursively(path: Path): Unit =
     if Files.exists(path) then
-      Files.walk(path).iterator().asScala.toList.reverse.foreach(Files.deleteIfExists)
+      scala.util.Using.resource(Files.walk(path)) { stream =>
+        stream.iterator().asScala.toList.reverse.foreach(Files.deleteIfExists)
+      }
 

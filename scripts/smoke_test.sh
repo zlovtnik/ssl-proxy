@@ -6,6 +6,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DATABASE_URL
 
 cd "${repo_root}/services/schema-migrator"
-sbt "run --sql-dir ../../sql list"
-sbt "run --sql-dir ../../sql validate"
-sbt "run --sql-dir ../../sql apply"
+sbt "run --sql-dir ../../sql --db-kind postgres list"
+sbt "run --sql-dir ../../sql --db-kind postgres validate"
+sbt "run --sql-dir ../../sql --db-kind postgres apply"

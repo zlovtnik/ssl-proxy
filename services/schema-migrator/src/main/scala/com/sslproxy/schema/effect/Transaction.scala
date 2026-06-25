@@ -48,5 +48,8 @@ object Transaction:
             connection.setAutoCommit(false)
             current
           }
-          result <- fa.guarantee(F.blocking(connection.setAutoCommit(saved)))
+          result <- fa.guarantee(F.blocking {
+            if !connection.getAutoCommit then connection.rollback()
+            connection.setAutoCommit(saved)
+          })
         yield result

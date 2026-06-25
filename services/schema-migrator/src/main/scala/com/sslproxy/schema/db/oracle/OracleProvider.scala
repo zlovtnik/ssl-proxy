@@ -280,7 +280,7 @@ final class OracleSession(connection: Connection) extends DbSession:
     }
 
   private def fetchRollbackTargetUnsafe(objectName: String): RollbackTarget =
-    val rows = queryPrepared(
+    val allRows = queryPrepared(
       connection,
       """
       select kind, object_name, source_file, content_sha256, rollback_file
@@ -289,20 +289,25 @@ final class OracleSession(connection: Connection) extends DbSession:
        order by kind, object_name
       """
     )(_.setString(1, objectName)) { row =>
-      Option(row.getString("rollback_file")).map { rollbackFile =>
+      val rawRollback = row.getString("rollback_file")
+      val rollback = if rawRollback == null then "" else rawRollback
+      Some(
         RollbackTarget(
           kind = row.getString("kind"),
           objectName = row.getString("object_name"),
           sourceFile = row.getString("source_file"),
           contentSha256 = row.getString("content_sha256"),
-          rollbackFile = rollbackFile
+          rollbackFile = rollback
         )
-      }
+      )
     }.flatten
 
-    rows match
+    allRows match
       case Nil => throw MigratorError.Apply(s"no tracked schema object named $objectName")
-      case target :: Nil => target
+      case target :: Nil =>
+        if target.rollbackFile == null || target.rollbackFile.isEmpty then
+          throw MigratorError.Apply(s"no rollback SQL tracked for $objectName")
+        target
       case many =>
         val matches = many.map(target => s"${target.kind}:$objectName").mkString(", ")
         throw MigratorError.Apply(s"object name $objectName is ambiguous; matches: $matches")

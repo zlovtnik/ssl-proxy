@@ -5,6 +5,7 @@ object HeaderParser:
     val prefix = s"-- ${key.toLowerCase}:"
     sql.linesIterator
       .map(_.trim)
+      .takeWhile(line => line.isEmpty || line.startsWith("--"))
       .find(_.toLowerCase.startsWith(prefix))
       .map(_.drop(prefix.length).trim)
       .filter(_.nonEmpty)

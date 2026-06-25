@@ -13,7 +13,7 @@ object Canonicalizer:
     digest.map(byte => f"$byte%02x").mkString
 
   def requiresNonTransactionalApply(sql: String, dialect: SqlDialect): Boolean =
-    val canonical = canonicalize(sql, dialect).toLowerCase
+    val canonical = canonicalize(sql, dialect).toLowerCase(java.util.Locale.ROOT)
     canonical.contains("create index concurrently") ||
       canonical.contains("drop index concurrently") ||
       (canonical.contains("reindex") && canonical.contains(" concurrently"))
@@ -65,11 +65,12 @@ object Canonicalizer:
       else if current == '$' then
         parseDollarTag(sql, index) match
           case Some(tag) =>
-            val end = sql.indexOf(tag, index + tag.length)
+            val bodyStart = index + tag.length
+            val end = sql.indexOf(tag, bodyStart)
             if end >= 0 then
               pushPendingSpace()
               output.append("$$")
-              output.append(sql, index + tag.length, end - index - tag.length)
+              output.append(sql, bodyStart, end - bodyStart)
               output.append("$$")
               index = end + tag.length
             else

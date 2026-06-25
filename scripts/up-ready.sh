@@ -547,7 +547,9 @@ peer_tunnel_address() {
             printf '10.13.13.%d/32' "$peer_octet"
             ;;
         *)
-            fail "Unsupported peer id: $1"
+            # Derive a deterministic address for arbitrary peer IDs.
+            peer_octet=$(printf '%s' "$peer_id" | cksum | awk '{print ($1 % 252) + 2}')
+            printf '10.13.13.%d/32' "$peer_octet"
             ;;
     esac
 }
@@ -631,7 +633,7 @@ render_direct_peer_config() {
 Address = $address
 PrivateKey = $private_key
 ListenPort = 51820
-MTU = 1420
+MTU = ${WG_MTU:-1420}
 DNS = 10.13.13.1
 
 [Peer]
@@ -663,13 +665,14 @@ render_obfuscated_peer_config() {
             "$example" >"$output" || return 1
     else
         address="$(peer_tunnel_address "$peer_id")"
+        umask 077
         cat >"$output" <<EOF_PEER_OBFUSCATED || return 1
 # Supported client path when UDP obfuscation is enabled on the server.
 [Interface]
 Address = $address
 PrivateKey = $private_key
 ListenPort = 443
-MTU = 1279
+MTU = ${WG_MTU:-1279}
 DNS = 10.13.13.1
 
 [Peer]

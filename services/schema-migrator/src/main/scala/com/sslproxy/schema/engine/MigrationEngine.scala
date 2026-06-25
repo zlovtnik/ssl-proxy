@@ -70,7 +70,8 @@ final class MigrationEngine(provider: DbProvider, discoveryService: DiscoverySer
                 IO.pure(report.copy(appliedFiles = report.appliedFiles + 1))
             case Left(error) =>
               IO.println(s"[$position/$total] failed ${prepared.objectDef.sourceFile}: ${error.getMessage}") *>
-                (if config.continueOnError then IO.pure(report.copy(failedFiles = report.failedFiles + 1))
+                (if config.continueOnError && !error.isInstanceOf[MigratorError.NonRetryableApply]
+                 then IO.pure(report.copy(failedFiles = report.failedFiles + 1))
                  else IO.raiseError(error))
           }
     }

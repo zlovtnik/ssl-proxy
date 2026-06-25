@@ -12,6 +12,7 @@ import com.sslproxy.schema.engine.MigrationEngine
 import com.sslproxy.schema.error.MigratorError
 import com.sslproxy.schema.output.{JsonReporter, ReportPrinter}
 import com.sslproxy.schema.validation.Validator
+import io.circe.Json
 
 object Commands:
   private val success = ExitCode.Success
@@ -22,7 +23,10 @@ object Commands:
   def run(input: (MigratorConfig, CliCommand)): IO[ExitCode] =
     val (config, command) = input
     execute(config, command).handleErrorWith { error =>
-      IO.println(s"error: ${error.getMessage}") *> IO.pure(exitCodeFor(error))
+      if config.json then
+        IO.blocking(System.out.println(Json.obj("error" -> Json.fromString(error.getMessage)).noSpaces)) *> IO.pure(exitCodeFor(error))
+      else
+        IO.println(s"error: ${error.getMessage}") *> IO.pure(exitCodeFor(error))
     }
 
   private def execute(config: MigratorConfig, command: CliCommand): IO[ExitCode] =
@@ -36,7 +40,7 @@ object Commands:
       case CliCommand.Validate =>
         for
           discovery <- DiscoveryService[IO]().discover(config.sqlDir, config.dbKind)
-          _ <- ReportPrinter.warnings(discovery.warnings)
+          _ <- if config.json then IO.unit else ReportPrinter.warnings(discovery.warnings)
           report <- Validator[IO](config.dbKind).validate(discovery.files)
           _ <- if config.json then JsonReporter.validation(report) else ReportPrinter.validation(report)
         yield if report.hasErrors then partialFailure else success
@@ -109,7 +113,7 @@ object Commands:
   private def dryRun(config: MigratorConfig): IO[Unit] =
     for
       discovery <- DiscoveryService[IO]().discover(config.sqlDir, config.dbKind)
-      _ <- ReportPrinter.warnings(discovery.warnings)
+      _ <- if config.json then IO.unit else ReportPrinter.warnings(discovery.warnings)
       previews <- discovery.files.traverse { file =>
         IO.blocking {
           val sql = java.nio.file.Files.readString(file.path)

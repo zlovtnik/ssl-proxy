@@ -13,9 +13,26 @@ final class DiscoveryService[F[_]: Sync]:
 
   private def discoverUnsafe(sqlDir: Path, dbKind: DbKind): DiscoveryResult =
     val ordered = FolderOrder.forDb(dbKind)
+    val allowed = ordered.toSet
     val collected = ordered.map(folder => folder -> collectFolder(sqlDir, folder))
     val warnings = collected.flatMap(_._2._2)
     val filesByFolder = collected.map { case (folder, (files, _)) => folder -> files }.toMap
+
+    val extraFolderWarnings =
+      if Files.isDirectory(sqlDir) then
+        scala.util.Using.resource(Files.list(sqlDir)) { stream =>
+          stream.iterator().asScala.filter(Files.isDirectory(_)).flatMap { dir =>
+            val name = dir.getFileName.toString
+            if !allowed.contains(name) && !Files.list(dir).iterator().asScala.exists(_.getFileName.toString.endsWith(".sql")) then
+              Nil
+            else if !allowed.contains(name) then
+              List(s"unrecognized sql subdirectory '$name' contains .sql files but is not part of $dbKind folder order")
+            else Nil
+          }.toList
+        }
+      else Nil
+
+    val allWarnings = warnings ++ extraFolderWarnings
 
     dbKind match
       case DbKind.Postgres =>
@@ -28,12 +45,12 @@ final class DiscoveryService[F[_]: Sync]:
             preApplyHooks :::
             filesByFolder.getOrElse("materialized_views", Nil) :::
             cronJobs
-        DiscoveryResult(files, warnings)
+        DiscoveryResult(files, allWarnings)
 
       case DbKind.Oracle =>
         val baseline = collectOracleBaseline(sqlDir)
         val files = baseline ::: ordered.flatMap(folder => filesByFolder.getOrElse(folder, Nil))
-        DiscoveryResult(files, warnings)
+        DiscoveryResult(files, allWarnings)
 
   private def collectFolder(sqlDir: Path, folder: String): (List[SqlFile], List[String]) =
     val folderPath = sqlDir.resolve(folder)
@@ -50,7 +67,7 @@ final class DiscoveryService[F[_]: Sync]:
             .filter(path => Files.isRegularFile(path) && path.getFileName.toString.endsWith(".sql"))
             .toList
             .sortBy(_.getFileName.toString)
-            .map(path => SqlFile(folder, path, path.getFileName.toString))
+            .map(path => SqlFile(folder, path, path.getFileName.toString, sqlDir.relativize(path).toString))
         }
       files -> Nil
 

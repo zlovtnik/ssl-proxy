@@ -71,6 +71,8 @@ peer_names() {
 	done
 }
 
+declare -A _peer_env_claimed
+
 peer_env_suffix() {
 	printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_'
 }
@@ -85,6 +87,11 @@ peer_env_value() {
 	env_name="WG_${suffix}_${key}"
 	value="${!env_name-}"
 	if [ -n "$value" ]; then
+		if [ -n "${_peer_env_claimed[$env_name]+x}" ] && [ "${_peer_env_claimed[$env_name]}" != "$peer" ]; then
+			echo "peer env collision: $env_name is already claimed by peer ${_peer_env_claimed[$env_name]}; refusing to share with $peer" >&2
+			return 1
+		fi
+		_peer_env_claimed[$env_name]="$peer"
 		printf '%s' "$value"
 		return 0
 	fi
@@ -93,6 +100,11 @@ peer_env_value() {
 		legacy_name="WG_OBFUSCATED_${suffix}_CONFIG_PATH"
 		value="${!legacy_name-}"
 		if [ -n "$value" ]; then
+			if [ -n "${_peer_env_claimed[$legacy_name]+x}" ] && [ "${_peer_env_claimed[$legacy_name]}" != "$peer" ]; then
+				echo "peer env collision: $legacy_name is already claimed by peer ${_peer_env_claimed[$legacy_name]}; refusing to share with $peer" >&2
+				return 1
+			fi
+			_peer_env_claimed[$legacy_name]="$peer"
 			printf '%s' "$value"
 			return 0
 		fi

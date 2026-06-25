@@ -39,7 +39,6 @@ object RollbackValidator:
     val reference = Path.of(rollback)
     if reference.isAbsolute then List(reference)
     else
-      val base = List(reference)
       val sqlDirCandidates =
         Option(file.path.getParent)
           .flatMap(parent => Option(parent.getParent))
@@ -53,4 +52,4 @@ object RollbackValidator:
             List(sqlDir.resolve(reference)) ::: stripped ::: repoRelative
           }
       val fileRelative = Option(file.path.getParent).toList.map(_.resolve(reference))
-      (base ::: sqlDirCandidates ::: fileRelative).distinct
+      (sqlDirCandidates ::: fileRelative).distinct

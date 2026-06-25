@@ -184,31 +184,39 @@ final class PostgresSession(connection: Connection) extends DbSession:
 
   override def fetchStatus: IO[List[ObjectStatus]] =
     IO.blocking {
-      queryList(
-        connection,
-        """
-        select kind, object_name, source_file, apply_status,
-               content_sha256,
-               to_char(applied_at, 'YYYY-MM-DD HH24:MI:SS') as applied_at,
-               last_error
-          from schema_control.schema_objects
-         order by kind, object_name
-        """
-      )(readObjectStatus)
+      try
+        queryList(
+          connection,
+          """
+          select kind, object_name, source_file, apply_status,
+                 content_sha256,
+                 to_char(applied_at, 'YYYY-MM-DD HH24:MI:SS') as applied_at,
+                 last_error
+            from schema_control.schema_objects
+           order by kind, object_name
+          """
+        )(readObjectStatus)
+      catch
+        case error: java.sql.SQLException =>
+          List.empty
     }
 
   override def fetchReady: IO[SchemaReadyStatus] =
     IO.blocking {
-      queryOne(
-        connection,
-        """
-        select total_count, pending_count, failed_count, applied_count, ready,
-               failed_objects,
-               to_char(last_updated_at, 'YYYY-MM-DD HH24:MI:SS') as last_updated_at,
-               to_char(last_applied_at, 'YYYY-MM-DD HH24:MI:SS') as last_applied_at
-          from schema_control.schema_ready
-        """
-      )(readReadyStatus).getOrElse(SchemaReadyStatus(0, 0, 0, 0, ready = false, Nil, None, None))
+      try
+        queryOne(
+          connection,
+          """
+          select total_count, pending_count, failed_count, applied_count, ready,
+                 failed_objects,
+                 to_char(last_updated_at, 'YYYY-MM-DD HH24:MI:SS') as last_updated_at,
+                 to_char(last_applied_at, 'YYYY-MM-DD HH24:MI:SS') as last_applied_at
+            from schema_control.schema_ready
+          """
+        )(readReadyStatus).getOrElse(SchemaReadyStatus(0, 0, 0, 0, ready = false, Nil, None, None))
+      catch
+        case error: java.sql.SQLException =>
+          SchemaReadyStatus(0, 0, 0, 0, ready = false, Nil, None, None)
     }
 
   override def checkReady: IO[Boolean] =
@@ -281,7 +289,7 @@ final class PostgresSession(connection: Connection) extends DbSession:
     }
 
   private def fetchRollbackTargetUnsafe(objectName: String): RollbackTarget =
-    val rows = queryPrepared(
+    val allRows = queryPrepared(
       connection,
       """
       select kind, object_name, source_file, content_sha256, rollback_file
@@ -290,20 +298,25 @@ final class PostgresSession(connection: Connection) extends DbSession:
        order by kind, object_name
       """
     )(_.setString(1, objectName)) { row =>
-      Option(row.getString("rollback_file")).map { rollbackFile =>
+      val rawRollback = row.getString("rollback_file")
+      val rollback = if rawRollback == null then "" else rawRollback
+      Some(
         RollbackTarget(
           kind = row.getString("kind"),
           objectName = row.getString("object_name"),
           sourceFile = row.getString("source_file"),
           contentSha256 = row.getString("content_sha256"),
-          rollbackFile = rollbackFile
+          rollbackFile = rollback
         )
-      }
+      )
     }.flatten
 
-    rows match
+    allRows match
       case Nil => throw MigratorError.Apply(s"no tracked schema object named $objectName")
-      case target :: Nil => target
+      case target :: Nil =>
+        if target.rollbackFile == null || target.rollbackFile.isEmpty then
+          throw MigratorError.Apply(s"no rollback SQL tracked for $objectName")
+        target
       case many =>
         val matches = many.map(target => s"${target.kind}:$objectName").mkString(", ")
         throw MigratorError.Apply(s"object name $objectName is ambiguous; matches: $matches")
@@ -357,15 +370,18 @@ object PostgresProvider:
 
   private def parsePostgresUri(raw: String): Either[String, JdbcConnectionConfig] =
     Either.catchNonFatal(URI(raw)).leftMap(error => s"invalid Postgres URL: ${error.getMessage}").flatMap { uri =>
-      val path = Option(uri.getRawPath).filter(_.nonEmpty).getOrElse("/")
-      val port = if uri.getPort >= 0 then s":${uri.getPort}" else ""
-      val query = Option(uri.getRawQuery).filter(_.nonEmpty).map(q => s"?$q").getOrElse("")
-      val url = s"jdbc:postgresql://${uri.getHost}$port$path$query"
-      val userInfo = Option(uri.getRawUserInfo).getOrElse("")
-      val parts = userInfo.split(":", 2)
-      val user = parts.headOption.filter(_.nonEmpty).map(decode)
-      val pass = parts.drop(1).headOption.filter(_.nonEmpty).map(decode)
-      Right(JdbcConnectionConfig("org.postgresql.Driver", url, user, pass))
+      if uri.getHost == null then
+        Left("invalid Postgres URL: host is required")
+      else
+        val path = Option(uri.getRawPath).filter(_.nonEmpty).getOrElse("/")
+        val port = if uri.getPort >= 0 then s":${uri.getPort}" else ""
+        val query = Option(uri.getRawQuery).filter(_.nonEmpty).map(q => s"?$q").getOrElse("")
+        val url = s"jdbc:postgresql://${uri.getHost}$port$path$query"
+        val userInfo = Option(uri.getRawUserInfo).getOrElse("")
+        val parts = userInfo.split(":", 2)
+        val user = parts.headOption.filter(_.nonEmpty).map(decode)
+        val pass = parts.drop(1).headOption.filter(_.nonEmpty).map(decode)
+        Right(JdbcConnectionConfig("org.postgresql.Driver", url, user, pass))
     }
 
   private def decode(value: String): String =
