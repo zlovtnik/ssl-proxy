@@ -73,5 +73,5 @@ final class DiscoveryService[F[_]: Sync]:
 
   private def collectOracleBaseline(sqlDir: Path): List[SqlFile] =
     val baseline = sqlDir.resolve("000_baseline.sql")
-    if Files.isRegularFile(baseline) then List(SqlFile("baseline", baseline, "000_baseline.sql"))
+    if Files.isRegularFile(baseline) then List(SqlFile("baseline", baseline, "000_baseline.sql", sqlDir.relativize(baseline).toString))
     else Nil

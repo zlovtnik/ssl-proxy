@@ -5,10 +5,12 @@ import cats.syntax.all.*
 import com.sslproxy.schema.config.MigratorConfig
 import com.sslproxy.schema.db.{DbProvider, DbSession}
 import com.sslproxy.schema.discovery.{DiscoveryResult, DiscoveryService}
+import com.sslproxy.schema.effect.{Lock, Retry, RetryPolicy}
 import com.sslproxy.schema.error.MigratorError
 import com.sslproxy.schema.output.ReportPrinter
 
 import java.nio.file.Files
+import scala.concurrent.duration.*
 
 final class MigrationEngine(provider: DbProvider, discoveryService: DiscoveryService[IO]):
   def discover(config: MigratorConfig): IO[DiscoveryResult] =
@@ -31,10 +33,9 @@ final class MigrationEngine(provider: DbProvider, discoveryService: DiscoverySer
       manifest <- ManifestBuilder[IO](provider.dialect).build(discovery.files)
       sorted <- IO.fromEither(Graph.topologicalSort(manifest))
       report <- provider.session.use { session =>
+        val schemaLock = Lock.fromAcquireRelease(session.acquireLock, session.releaseLock)
         session.bootstrap *>
-          session.acquireLock *>
-          applyWithLock(session, sorted, config)
-            .guarantee(session.releaseLock.handleErrorWith(error => IO.println(s"warning: schema lock release failed: ${error.getMessage}")))
+          schemaLock.withLock(applyWithLock(session, sorted, config))
       }
     yield report
 

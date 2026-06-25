@@ -101,3 +101,6 @@ object JdbcSupport:
   def readPasswordFile(path: Path): IO[String] =
     IO.blocking(Files.readString(path, StandardCharsets.UTF_8).trim)
 
+  def appliedBy(): String =
+    s"${System.getenv().getOrDefault("HOSTNAME", "unknown-host")}:${ProcessHandle.current().pid()}"
+

@@ -6,7 +6,17 @@ object OracleDdlHelper:
   def executeSql(connection: Connection, sql: String): Unit =
     splitExecutableBlocks(sql).foreach { statementSql =>
       val statement = connection.createStatement()
-      try statement.execute(stripTrailingSemicolon(statementSql))
+      try
+        val stripped = stripTrailingSemicolon(statementSql)
+        statement.execute(stripped)
+      catch
+        case e: java.sql.SQLException =>
+          throw new java.sql.SQLException(
+            s"OracleDdlHelper block failed: ${e.getMessage}",
+            e.getSQLState,
+            e.getErrorCode,
+            e
+          )
       finally statement.close()
     }
 

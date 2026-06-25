@@ -16,6 +16,9 @@ object MigratorError:
   final case class LockNotHeld(message: String, cause: Throwable | Null = null)
       extends MigratorError(message, cause)
 
+  final case class Validation(message: String, cause: Throwable | Null = null)
+      extends MigratorError(message, cause)
+
   def isConnectionFailure(error: Throwable): Boolean =
     error match
       case _: Connection => true
@@ -25,4 +28,9 @@ object MigratorError:
     error match
       case _: NonRetryableApply => true
       case _                    => false
+
+  def isValidation(error: Throwable): Boolean =
+    error match
+      case _: Validation => true
+      case _             => false
 

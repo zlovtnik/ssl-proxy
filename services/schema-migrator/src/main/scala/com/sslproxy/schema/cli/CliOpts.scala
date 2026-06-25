@@ -14,7 +14,7 @@ object CliOpts:
   private given Argument[Path] =
     Argument.from("path")(value => Either.catchNonFatal(Paths.get(value)).leftMap(_.getMessage).toValidatedNel)
 
-  private val env = sys.env
+  private def env: Map[String, String] = sys.env
 
   private val dbKindOpt: Opts[DbKind] =
     Opts
@@ -28,7 +28,9 @@ object CliOpts:
     Opts.option[String]("database-url", help = "JDBC or postgres:// database URL").orNone
 
   private val retriesOpt: Opts[Int] =
-    Opts.option[Int]("connect-retries", help = "Connection retry count").withDefault(0)
+    Opts.option[Int]("connect-retries", help = "Connection retry count")
+      .withDefault(0)
+      .validate("connect-retries must be >= 0")(_ >= 0)
 
   private val backoffOpt: Opts[FiniteDuration] =
     Opts

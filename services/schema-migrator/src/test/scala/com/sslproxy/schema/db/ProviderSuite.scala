@@ -1,6 +1,7 @@
 package com.sslproxy.schema.db
 
 import com.sslproxy.schema.db.oracle.OracleDdlHelper
+import com.sslproxy.schema.db.oracle.OracleStatements
 import com.sslproxy.schema.db.postgres.PostgresProvider
 import munit.FunSuite
 
@@ -16,6 +17,20 @@ class ProviderSuite extends FunSuite:
     val config = PostgresProvider.normalize("jdbc:postgresql://postgres:5432/sync").toOption.get
     assertEquals(config.url, "jdbc:postgresql://postgres:5432/sync")
     assertEquals(config.user, None)
+  }
+
+  test("oracle lock stale query uses getOrElse(false) semantics") {
+    import com.sslproxy.schema.db.{LockManager, JdbcConnectionConfig}
+    import com.sslproxy.schema.db.oracle.OracleStatements
+    val sql = OracleStatements.lockQueryStaleSql
+    assert(sql.contains("numtodsinterval(10, 'MINUTE')"))
+    assert(sql.contains("where lock_name = 'schema_migrate'"))
+  }
+
+  test("oracle apply log sql binds CLOB for error_text") {
+    val sql = OracleStatements.applyLogSql
+    assert(sql.contains("error_text"), "applyLogSql must include error_text column")
+    assert(sql.contains("?, ?, ?, ?, ?, ?, ?, ?, ?"), "applyLogSql must have 9 bind parameters")
   }
 
   test("splits oracle slash-terminated PL/SQL blocks") {
