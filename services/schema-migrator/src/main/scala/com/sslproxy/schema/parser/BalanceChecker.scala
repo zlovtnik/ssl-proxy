@@ -8,6 +8,7 @@ object BalanceChecker:
     var inLineComment = false
     var inBlockComment = false
     var dollarTag: Option[String] = None
+    var inEString = false
 
     while index < sql.length do
       val current = sql.charAt(index)
@@ -29,9 +30,12 @@ object BalanceChecker:
           case Some(_) =>
             index += 1
           case None if inSingle =>
-            if current == '\'' && next == '\'' then index += 2
+            if inEString && current == '\\' && next != 0.toChar then index += 2
+            else if current == '\'' && next == '\'' then index += 2
             else
-              if current == '\'' then inSingle = false
+              if current == '\'' then
+                inSingle = false
+                inEString = false
               index += 1
           case None if inDouble =>
             if current == '"' then inDouble = false
@@ -45,6 +49,7 @@ object BalanceChecker:
               index += 2
             else if current == '\'' then
               inSingle = true
+              inEString = index > 0 && Set('e', 'E').contains(sql.charAt(index - 1))
               index += 1
             else if current == '"' then
               inDouble = true
@@ -74,4 +79,3 @@ object BalanceChecker:
         if !current.isLetterOrDigit && current != '_' then return None
         index += 1
       None
-

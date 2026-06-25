@@ -4,7 +4,7 @@ import com.sslproxy.schema.db.syntax.SqlDialect
 import munit.FunSuite
 
 class ParserSuite extends FunSuite:
-  test("canonical hash ignores comments and outer whitespace") {
+  test("canonical hash preserves dollar-quoted body verbatim") {
     val left =
       """
       -- object: sample
@@ -27,7 +27,7 @@ class ParserSuite extends FunSuite:
       $$;
       """
 
-    assertEquals(
+    assertNotEquals(
       Canonicalizer.canonicalize(left, SqlDialect.Postgres),
       Canonicalizer.canonicalize(right, SqlDialect.Postgres)
     )

@@ -43,8 +43,42 @@ final class OracleSession(connection: Connection) extends DbSession:
         )(_.setString(1, appliedBy))
       catch
         case error: SQLException if error.getErrorCode == 1 =>
-          throw MigratorError.Apply("Oracle schema apply lock schema_migrate is already held", error)
+          val stale = queryLockStale()
+          if stale then
+            executePrepared(connection, "delete from schema_control.migration_locks where lock_name = 'schema_migrate'")(_ => ())
+            executePrepared(
+              connection,
+              """
+              insert into schema_control.migration_locks (lock_name, locked_at, locked_by)
+              values ('schema_migrate', systimestamp, ?)
+              """
+            )(_.setString(1, appliedBy))
+          else
+            val info = queryLockInfo().map(info => s" held by ${info._1} since ${info._2}").getOrElse("")
+            throw MigratorError.Apply(s"Oracle schema apply lock schema_migrate is already held$info", error)
     }
+
+  private def queryLockStale(): Boolean =
+    queryOne(
+      connection,
+      """
+      select case when locked_at < systimestamp - numtodsinterval(10, 'MINUTE') then 1 else 0 end as stale
+        from schema_control.migration_locks
+       where lock_name = 'schema_migrate'
+      """
+    ) { row => row.getInt(1) == 1 }.headOption.getOrElse(true)
+
+  private def queryLockInfo(): Option[(String, String)] =
+    queryOne(
+      connection,
+      """
+      select locked_by, to_char(locked_at, 'YYYY-MM-DD HH24:MI:SS TZR') as locked_at_char
+        from schema_control.migration_locks
+       where lock_name = 'schema_migrate'
+      """
+    ) { row =>
+      row.getString("locked_by") -> row.getString("locked_at_char")
+    }.headOption
 
   override def releaseLock: IO[Unit] =
     IO.blocking {

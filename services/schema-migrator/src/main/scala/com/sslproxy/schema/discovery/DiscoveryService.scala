@@ -43,18 +43,18 @@ final class DiscoveryService[F[_]: Sync]:
       Nil -> List(s"path '$folderPath' is not a directory; skipping")
     else
       val files =
-        Files
-          .list(folderPath)
-          .iterator()
-          .asScala
-          .filter(path => Files.isRegularFile(path) && path.getFileName.toString.endsWith(".sql"))
-          .toList
-          .sortBy(_.getFileName.toString)
-          .map(path => SqlFile(folder, path, path.getFileName.toString))
+        scala.util.Using.resource(Files.list(folderPath)) { stream =>
+          stream
+            .iterator()
+            .asScala
+            .filter(path => Files.isRegularFile(path) && path.getFileName.toString.endsWith(".sql"))
+            .toList
+            .sortBy(_.getFileName.toString)
+            .map(path => SqlFile(folder, path, path.getFileName.toString))
+        }
       files -> Nil
 
   private def collectOracleBaseline(sqlDir: Path): List[SqlFile] =
     val baseline = sqlDir.resolve("000_baseline.sql")
     if Files.isRegularFile(baseline) then List(SqlFile("baseline", baseline, "000_baseline.sql"))
     else Nil
-
