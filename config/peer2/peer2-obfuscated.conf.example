@@ -6,7 +6,7 @@
 Address = 10.13.13.3/32
 PrivateKey = <peer2-private-key>
 ListenPort = 443
-MTU = 1279
+MTU = 1419
 DNS = 10.13.13.1
 
 [Peer]
@@ -21,4 +21,4 @@ AllowedIPs = 0.0.0.0/0, ::/0
 # - forward to the real server endpoint configured in config/client/wg-obfs-shim.env.example
 # - apply the same WG_OBFUSCATION_KEY configured on the server
 # - prepend WG_OBFUSCATION_MAGIC_BYTE when the server requires one
-# - keep MTU at 1279 when a 1-byte magic marker is enabled
+# - keep MTU at 1419 when legacy XOR plus a 1-byte magic marker is enabled

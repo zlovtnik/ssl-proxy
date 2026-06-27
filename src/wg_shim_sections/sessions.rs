@@ -118,9 +118,16 @@ impl ShimSession {
 }
 
 struct QueuedUpstreamPacket {
-    bytes: Vec<u8>,
+    lease: UdpBufferLease,
+    len: usize,
     queued_at_millis: u64,
     is_chaff: bool,
+}
+
+impl QueuedUpstreamPacket {
+    fn bytes(&self) -> &[u8] {
+        &self.lease[..self.len]
+    }
 }
 
 struct UpstreamConnection {
@@ -204,13 +211,20 @@ pub async fn spawn_runtime(
         ));
     }
 
-    let listen_socket = Arc::new(UdpSocket::bind(config.listen_addr).await?);
+    let listen_socket = Arc::new(crate::udp_tuning::bind_tuned_udp_socket(
+        config.listen_addr,
+        config.udp_socket_buffer_bytes,
+        "wg-shim-listen",
+    )?);
     let local_addr = listen_socket.local_addr()?;
     let sessions = Arc::new(DashMap::new());
     let clock = Arc::new(ShimClock::new());
     let metrics = Arc::new(ShimMetrics::default());
     let next_session_id = Arc::new(AtomicU64::new(1));
-    let buffer_pool = Arc::new(UdpBufferPool::new(config.buffer_pool_capacity()));
+    let buffer_pool = Arc::new(UdpBufferPool::new(
+        config.buffer_pool_capacity(),
+        config.max_datagram_bytes(),
+    ));
     let next_server_index = Arc::new(AtomicUsize::new(0));
     let config = Arc::new(ArcSwap::from_pointee(config));
     let context = ShimSessionContext {
@@ -246,6 +260,8 @@ async fn run_shim(context: ShimSessionContext) {
         encryption_mode = ?startup_config.obfuscation.encryption_mode,
         idle_timeout_secs = startup_config.idle_timeout.as_secs(),
         cleanup_interval_secs = startup_config.cleanup_interval().as_secs_f64(),
+        max_datagram_bytes = startup_config.max_datagram_bytes(),
+        udp_socket_buffer_bytes = startup_config.udp_socket_buffer_bytes,
         max_sessions = ?startup_config.max_sessions,
         "WireGuard obfuscation shim started"
     );
@@ -333,7 +349,8 @@ async fn run_shim(context: ShimSessionContext) {
 
                 let send_started_millis = context.clock.now_millis();
                 let packet = QueuedUpstreamPacket {
-                    bytes: lease[..encoded_len].to_vec(),
+                    lease,
+                    len: encoded_len,
                     queued_at_millis: send_started_millis,
                     is_chaff: false,
                 };

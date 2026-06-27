@@ -100,17 +100,37 @@
 
     #[test]
     fn buffer_pool_returns_lease_on_drop() {
-        let pool = Arc::new(UdpBufferPool::new(1));
+        let pool = Arc::new(UdpBufferPool::new(1, 256));
         let lease = pool.lease();
         assert!(lease.is_some());
+        assert_eq!(lease.as_ref().unwrap().len(), 256);
         assert!(pool.lease().is_none());
         drop(lease);
         assert!(pool.lease().is_some());
     }
 
     #[test]
+    fn queued_upstream_packet_owns_pooled_buffer() {
+        let pool = Arc::new(UdpBufferPool::new(1, 256));
+        let mut lease = pool.lease().expect("lease is available");
+        lease[..4].copy_from_slice(b"ping");
+        assert_eq!(pool.available(), 0);
+
+        let packet = QueuedUpstreamPacket {
+            lease,
+            len: 4,
+            queued_at_millis: 10,
+            is_chaff: false,
+        };
+        assert_eq!(packet.bytes(), b"ping");
+        drop(packet);
+
+        assert_eq!(pool.available(), 1);
+    }
+
+    #[test]
     fn buffer_pool_wait_counter_records_elapsed_millis_when_pool_empty() {
-        let pool = Arc::new(UdpBufferPool::new(1));
+        let pool = Arc::new(UdpBufferPool::new(1, 256));
         let lease = pool.lease();
         let metrics = ShimMetrics::default();
         let wait_started = Instant::now() - Duration::from_millis(3);

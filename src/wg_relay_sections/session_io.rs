@@ -14,7 +14,11 @@ async fn get_or_create_session(
         return Ok(session);
     }
 
-    let upstream_socket = Arc::new(UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?);
+    let upstream_socket = Arc::new(bind_tuned_udp_socket(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        settings.udp_socket_buffer_bytes,
+        "wg-relay-internal",
+    )?);
     upstream_socket.connect(internal_addr).await?;
 
     let (session, is_new) = {
@@ -62,7 +66,7 @@ async fn run_session_receiver(
     clock: Arc<RelayClock>,
     metrics: Arc<RelayMetrics>,
 ) {
-    let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
+    let mut buf = vec![0u8; settings.max_datagram_bytes];
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,

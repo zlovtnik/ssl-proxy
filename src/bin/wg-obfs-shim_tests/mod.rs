@@ -30,6 +30,8 @@ fn clear_env() {
         "WG_OBFS_SHIM_RATE_LIMIT_BURST",
         "WG_OBFS_SHIM_BUFFER_POOL_CAPACITY",
         "WG_OBFS_SHIM_SEND_QUEUE_CAPACITY",
+        "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+        "WG_UDP_SOCKET_BUFFER_BYTES",
         "WG_OBFS_SHIM_JITTER_MAX_MS",
         "WG_OBFS_SHIM_CHAFF_PPS",
         "WG_OBFS_SHIM_METRICS_ADDR",
@@ -79,6 +81,10 @@ fn parse_config_supports_cli_overrides() {
         "16".to_string(),
         "--send-queue-capacity".to_string(),
         "32".to_string(),
+        "--max-datagram-bytes".to_string(),
+        "1400".to_string(),
+        "--udp-socket-buffer-bytes".to_string(),
+        "1048576".to_string(),
         "--jitter-max-ms".to_string(),
         "50".to_string(),
         "--chaff-pps".to_string(),
@@ -143,6 +149,8 @@ fn parse_config_supports_cli_overrides() {
     );
     assert_eq!(config.buffer_pool_capacity, 16);
     assert_eq!(config.send_queue_capacity, 32);
+    assert_eq!(config.max_datagram_bytes, 1400);
+    assert_eq!(config.udp_socket_buffer_bytes, 1_048_576);
     assert_eq!(config.send_jitter_max, Duration::from_millis(50));
     assert_eq!(config.chaff_pps, 2);
     assert_eq!(
@@ -206,6 +214,8 @@ key = "first-key"
 magic_byte = "0xAA"
 idle_timeout_secs = 45
 send_queue_capacity = 17
+max_datagram_bytes = 1300
+udp_socket_buffer_bytes = 2097152
 jitter_max_ms = 25
 chaff_pps = 1
 
@@ -237,6 +247,8 @@ key = "second-key"
         ]
     );
     assert_eq!(process_config.shims[0].send_queue_capacity, 17);
+    assert_eq!(process_config.shims[0].max_datagram_bytes, 1300);
+    assert_eq!(process_config.shims[0].udp_socket_buffer_bytes, 2_097_152);
     assert_eq!(
         process_config.shims[0].send_jitter_max,
         Duration::from_millis(25)

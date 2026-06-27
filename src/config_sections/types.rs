@@ -5,7 +5,10 @@ use thiserror::Error;
 
 use crate::{
     obfuscation::Profile,
-    wg_packet_obfuscation::{EncryptionMode, MagicPositionMode, PacketPadding},
+    udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
+    wg_packet_obfuscation::{
+        EncryptionMode, MagicPositionMode, PacketPadding, MAX_UDP_PACKET_SIZE,
+    },
 };
 
 pub const MIN_ADMIN_API_KEY_LEN: usize = 32;
@@ -125,6 +128,8 @@ pub struct WireGuardConfig {
     pub obfuscation_replay_protection: bool,
     pub obfuscation_xor_rekey_packets: Option<u64>,
     pub obfuscation_xor_rekey_secs: Option<u64>,
+    pub obfuscation_max_datagram_bytes: usize,
+    pub udp_socket_buffer_bytes: usize,
 }
 
 /// Runtime-only logging and operational settings.
@@ -173,6 +178,13 @@ pub enum ConfigError {
     InvalidWireGuardObfuscationMagicPosition(String),
     #[error("{var} must be a positive integer; got {value:?}")]
     InvalidWireGuardObfuscationXorRekeyValue { var: &'static str, value: String },
+    #[error("{var} must be an integer from {min} to {max}; got {value:?}")]
+    InvalidWireGuardSizeValue {
+        var: &'static str,
+        value: String,
+        min: usize,
+        max: usize,
+    },
     #[error(
         "WG_PORT ({public_port}) and WG_INTERNAL_PORT ({internal_port}) must differ when WG_OBFUSCATION_ENABLED=true"
     )]
@@ -355,6 +367,15 @@ impl std::fmt::Debug for WireGuardConfig {
                 "obfuscation_xor_rekey_secs",
                 &self.obfuscation_xor_rekey_secs,
             )
+            .field(
+                "obfuscation_max_datagram_bytes",
+                &self.obfuscation_max_datagram_bytes,
+            )
+            .field("udp_socket_buffer_bytes", &self.udp_socket_buffer_bytes)
             .finish()
     }
 }
+
+pub const DEFAULT_WIREGUARD_PATH_MTU_BYTES: usize = 1500;
+pub const DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES: usize = DEFAULT_UDP_SOCKET_BUFFER_BYTES;
+pub const MAX_WIREGUARD_DATAGRAM_BYTES: usize = MAX_UDP_PACKET_SIZE;

@@ -24,6 +24,7 @@ pub mod security;
 pub mod state;
 pub mod time;
 pub mod tunnel;
+pub mod udp_tuning;
 pub mod wg_packet_obfuscation;
 pub mod wg_relay;
 pub mod wg_shim;

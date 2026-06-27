@@ -91,6 +91,10 @@ spec:
               value: {{ .Values.proxy.wireguard.internalPort | quote }}
             - name: WG_MTU
               value: {{ .Values.proxy.wireguard.mtu | quote }}
+            - name: WG_OBFUSCATION_MAX_DATAGRAM_BYTES
+              value: {{ .Values.proxy.wireguard.obfuscationMaxDatagramBytes | quote }}
+            - name: WG_UDP_SOCKET_BUFFER_BYTES
+              value: {{ .Values.proxy.wireguard.udpSocketBufferBytes | quote }}
             - name: WG_OBFUSCATION_ENABLED
               value: {{ .Values.proxy.wireguard.obfuscation.enabled | quote }}
             - name: WG_OBFUSCATION_KEY

@@ -129,6 +129,24 @@ fn parse_single_shim_process_config(
         "send queue capacity",
     )?
     .unwrap_or(DEFAULT_SEND_QUEUE_CAPACITY);
+    config.max_datagram_bytes = validate_max_datagram_bytes(
+        parse_optional_usize(
+            optional_value(
+                &options.max_datagram_bytes,
+                "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+            ),
+            "max datagram bytes",
+        )?
+        .unwrap_or(DEFAULT_MAX_DATAGRAM_BYTES),
+    )?;
+    config.udp_socket_buffer_bytes = parse_optional_usize(
+        optional_value(
+            &options.udp_socket_buffer_bytes,
+            "WG_UDP_SOCKET_BUFFER_BYTES",
+        ),
+        "UDP socket buffer bytes",
+    )?
+    .unwrap_or(DEFAULT_UDP_SOCKET_BUFFER_BYTES);
     config.send_jitter_max = Duration::from_millis(
         parse_optional_nonnegative_u64(
             optional_value(&options.jitter_max_ms, "WG_OBFS_SHIM_JITTER_MAX_MS"),
@@ -266,6 +284,22 @@ fn apply_reloaded_config(
     for runtime in runtimes {
         let current_config = runtime.config_snapshot();
         if let Some(config) = by_listen_addr.remove(&current_config.listen_addr) {
+            if config.max_datagram_bytes != current_config.max_datagram_bytes {
+                warn!(
+                    listen_addr = %current_config.listen_addr,
+                    current_max_datagram_bytes = current_config.max_datagram_bytes,
+                    reloaded_max_datagram_bytes = config.max_datagram_bytes,
+                    "SIGHUP max datagram changes require process restart"
+                );
+            }
+            if config.udp_socket_buffer_bytes != current_config.udp_socket_buffer_bytes {
+                warn!(
+                    listen_addr = %current_config.listen_addr,
+                    current_udp_socket_buffer_bytes = current_config.udp_socket_buffer_bytes,
+                    reloaded_udp_socket_buffer_bytes = config.udp_socket_buffer_bytes,
+                    "SIGHUP UDP socket buffer changes require process restart"
+                );
+            }
             runtime.update_config(config);
             info!(
                 listen_addr = %current_config.listen_addr,
@@ -467,6 +501,11 @@ fn build_toml_shim_config(
     config.send_queue_capacity = raw
         .send_queue_capacity
         .unwrap_or(DEFAULT_SEND_QUEUE_CAPACITY);
+    config.max_datagram_bytes =
+        validate_max_datagram_bytes(raw.max_datagram_bytes.unwrap_or(DEFAULT_MAX_DATAGRAM_BYTES))?;
+    config.udp_socket_buffer_bytes = raw
+        .udp_socket_buffer_bytes
+        .unwrap_or(DEFAULT_UDP_SOCKET_BUFFER_BYTES);
     config.send_jitter_max =
         Duration::from_millis(raw.jitter_max_ms.unwrap_or(DEFAULT_JITTER_MAX_MS));
     config.chaff_pps = validate_chaff_pps(raw.chaff_pps.unwrap_or(DEFAULT_CHAFF_PPS))?;
@@ -487,6 +526,15 @@ fn validate_chaff_pps(value: u64) -> Result<u64, ConfigParseOutcome> {
     if value > MAX_CHAFF_PPS {
         return Err(ConfigParseOutcome::Error(format!(
             "invalid chaff packets per second {value}; expected value <= {MAX_CHAFF_PPS}"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_max_datagram_bytes(value: usize) -> Result<usize, ConfigParseOutcome> {
+    if value == 0 || value > MAX_UDP_PACKET_SIZE {
+        return Err(ConfigParseOutcome::Error(format!(
+            "invalid max datagram bytes {value}; expected value from 1 to {MAX_UDP_PACKET_SIZE}"
         )));
     }
     Ok(value)

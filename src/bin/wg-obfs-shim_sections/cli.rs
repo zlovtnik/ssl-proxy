@@ -10,15 +10,16 @@ use std::{
 use serde::Deserialize;
 use ssl_proxy::{
     constant_time_eq,
+    udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
     wg_packet_obfuscation::{
         parse_magic_byte, EncryptionMode, MagicPositionMode, PacketPadding, WgPacketObfuscation,
-        XorRekeyPolicy,
+        XorRekeyPolicy, MAX_UDP_PACKET_SIZE,
     },
     wg_shim::{
         self, RateLimitConfig, ShimHealthHandle, WgObfsShimConfig, WgObfsShimRuntime,
         DEFAULT_BUFFER_POOL_CAPACITY, DEFAULT_DRAIN_TIMEOUT_SECS, DEFAULT_HEALTH_ADDR,
         DEFAULT_IDLE_TIMEOUT_SECS, DEFAULT_JITTER_MAX_MS, DEFAULT_CHAFF_PPS, DEFAULT_LISTEN_ADDR,
-        DEFAULT_SEND_QUEUE_CAPACITY, MAX_CHAFF_PPS,
+        DEFAULT_MAX_DATAGRAM_BYTES, DEFAULT_SEND_QUEUE_CAPACITY, MAX_CHAFF_PPS,
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -36,7 +37,8 @@ Usage:
                [--max-sessions <count>] [--cleanup-interval-secs <seconds>]
                [--drain-timeout-secs <seconds>] [--rate-limit-pps <count>]
                [--rate-limit-burst <count>] [--buffer-pool-capacity <count>]
-               [--send-queue-capacity <count>] [--health-addr <host:port>]
+               [--send-queue-capacity <count>] [--max-datagram-bytes <count>]
+               [--udp-socket-buffer-bytes <count>] [--health-addr <host:port>]
                [--health-token <secret>] [--jitter-max-ms <milliseconds>]
                [--chaff-pps <count>]
                [--metrics-addr <host:port> (requires --features metrics)] [--encryption-mode <xor|aead>]
@@ -60,6 +62,8 @@ Environment fallbacks:
   WG_OBFS_SHIM_RATE_LIMIT_BURST
   WG_OBFS_SHIM_BUFFER_POOL_CAPACITY
   WG_OBFS_SHIM_SEND_QUEUE_CAPACITY
+  WG_OBFUSCATION_MAX_DATAGRAM_BYTES
+  WG_UDP_SOCKET_BUFFER_BYTES
   WG_OBFS_SHIM_JITTER_MAX_MS
   WG_OBFS_SHIM_CHAFF_PPS
   WG_OBFS_SHIM_METRICS_ADDR (requires --features metrics)
@@ -92,6 +96,8 @@ struct CliOptions {
     rate_limit_burst: Option<String>,
     buffer_pool_capacity: Option<String>,
     send_queue_capacity: Option<String>,
+    max_datagram_bytes: Option<String>,
+    udp_socket_buffer_bytes: Option<String>,
     metrics_addr: Option<String>,
     jitter_max_ms: Option<String>,
     chaff_pps: Option<String>,
@@ -134,6 +140,8 @@ struct TomlShimConfig {
     rate_limit_burst: Option<u64>,
     buffer_pool_capacity: Option<usize>,
     send_queue_capacity: Option<usize>,
+    max_datagram_bytes: Option<usize>,
+    udp_socket_buffer_bytes: Option<usize>,
     metrics_addr: Option<String>,
     jitter_max_ms: Option<u64>,
     chaff_pps: Option<u64>,
@@ -304,6 +312,13 @@ fn parse_config(
             }
             "--send-queue-capacity" => {
                 options.send_queue_capacity = Some(next_value(&mut args, "--send-queue-capacity")?)
+            }
+            "--max-datagram-bytes" => {
+                options.max_datagram_bytes = Some(next_value(&mut args, "--max-datagram-bytes")?)
+            }
+            "--udp-socket-buffer-bytes" => {
+                options.udp_socket_buffer_bytes =
+                    Some(next_value(&mut args, "--udp-socket-buffer-bytes")?)
             }
             "--jitter-max-ms" => {
                 options.jitter_max_ms = Some(next_value(&mut args, "--jitter-max-ms")?)

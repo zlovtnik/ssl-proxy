@@ -12,6 +12,109 @@ fn fixed_state() -> PacketEncodeState {
 }
 
 #[test]
+fn encoded_len_bounds_cover_legacy_xor_modes() {
+    let no_magic = test_settings(None);
+    let with_magic = test_settings(Some(0xAA));
+
+    assert_eq!(
+        encoded_packet_len_bounds(100, &no_magic).unwrap(),
+        EncodedPacketLenBounds {
+            plaintext_len: 100,
+            min_encoded_len: 100,
+            max_encoded_len: 100,
+            unpadded_encoded_len: 100,
+        }
+    );
+    assert_eq!(
+        encoded_packet_len_bounds(100, &with_magic).unwrap(),
+        EncodedPacketLenBounds {
+            plaintext_len: 100,
+            min_encoded_len: 101,
+            max_encoded_len: 101,
+            unpadded_encoded_len: 101,
+        }
+    );
+}
+
+#[test]
+fn encoded_len_bounds_cover_framed_xor_and_aead() {
+    let framed_xor = test_settings(Some(0xAA)).with_replay_protection(true);
+    let framed_aead = test_settings(Some(0xAA))
+        .with_encryption_mode(EncryptionMode::Aead)
+        .with_replay_protection(true);
+
+    let xor = encoded_packet_len_bounds(100, &framed_xor).unwrap();
+    assert_eq!(
+        xor.min_encoded_len,
+        FRAMED_HEADER_LEN + FRAMED_BODY_LEN_FIELD_LEN + 100
+    );
+    assert_eq!(
+        xor.max_overhead_len(),
+        FRAMED_HEADER_LEN + FRAMED_BODY_LEN_FIELD_LEN
+    );
+
+    let aead = encoded_packet_len_bounds(100, &framed_aead).unwrap();
+    assert_eq!(
+        aead.min_encoded_len,
+        FRAMED_HEADER_LEN + FRAMED_BODY_LEN_FIELD_LEN + 100 + AEAD_TAG_LEN_BYTES
+    );
+    assert_eq!(
+        aead.max_overhead_len(),
+        FRAMED_HEADER_LEN + FRAMED_BODY_LEN_FIELD_LEN + AEAD_TAG_LEN_BYTES
+    );
+}
+
+#[test]
+fn encoded_len_bounds_cover_padding_modes() {
+    let fixed = test_settings(Some(0xAA))
+        .with_padding(PacketPadding::FixedMtu(1200))
+        .with_replay_protection(true);
+    let random = test_settings(Some(0xAA))
+        .with_padding(PacketPadding::RandomBucket(vec![200, 512, 1400]))
+        .with_replay_protection(true);
+    let power_two = test_settings(Some(0xAA))
+        .with_padding(PacketPadding::PowerOfTwo)
+        .with_replay_protection(true);
+
+    assert_eq!(
+        encoded_packet_len_bounds(100, &fixed)
+            .unwrap()
+            .max_encoded_len,
+        1200
+    );
+    assert_eq!(
+        encoded_packet_len_bounds(100, &random).unwrap(),
+        EncodedPacketLenBounds {
+            plaintext_len: 100,
+            min_encoded_len: 200,
+            max_encoded_len: 1400,
+            unpadded_encoded_len: FRAMED_HEADER_LEN + FRAMED_BODY_LEN_FIELD_LEN + 100,
+        }
+    );
+    assert_eq!(
+        encoded_packet_len_bounds(100, &power_two)
+            .unwrap()
+            .max_encoded_len,
+        FRAMED_HEADER_LEN + (FRAMED_BODY_LEN_FIELD_LEN + 100).next_power_of_two()
+    );
+}
+
+#[test]
+fn encoded_len_bounds_reject_too_small_fixed_mtu() {
+    let settings = test_settings(Some(0xAA))
+        .with_padding(PacketPadding::FixedMtu(64))
+        .with_replay_protection(true);
+
+    assert_eq!(
+        encoded_packet_len_bounds(100, &settings),
+        Err(PacketEncodeError::FixedMtuTooSmall {
+            mtu: 64,
+            required: FRAMED_HEADER_LEN + FRAMED_BODY_LEN_FIELD_LEN + 100,
+        })
+    );
+}
+
+#[test]
 fn xor_round_trips_without_magic_byte() {
     let settings = test_settings(None);
     let packet = b"wireguard-data-packet";

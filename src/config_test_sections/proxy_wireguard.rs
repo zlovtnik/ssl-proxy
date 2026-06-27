@@ -64,6 +64,9 @@
             "WG_OBFUSCATION_REPLAY_PROTECTION",
             "WG_OBFUSCATION_XOR_REKEY_PACKETS",
             "WG_OBFUSCATION_XOR_REKEY_SECS",
+            "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+            "WG_UDP_SOCKET_BUFFER_BYTES",
+            "WG_MTU",
             "SYNC_REDPANDA_BOOTSTRAP_SERVERS",
             "SYNC_REDPANDA_CONNECT_TIMEOUT_MS",
             "SYNC_REDPANDA_PUBLISH_TIMEOUT_MS",
@@ -319,6 +322,14 @@
         assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, None);
         assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, None);
         assert_eq!(
+            result.wireguard.obfuscation_max_datagram_bytes,
+            DEFAULT_WIREGUARD_PATH_MTU_BYTES
+        );
+        assert_eq!(
+            result.wireguard.udp_socket_buffer_bytes,
+            DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES
+        );
+        assert_eq!(
             result.wireguard.obfuscation_key,
             b"test-obfuscation-key".to_vec()
         );
@@ -353,6 +364,7 @@
         assert!(result.wireguard.obfuscation_replay_protection);
         assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, Some(128));
         assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, Some(60));
+        assert_eq!(result.wireguard.obfuscation_max_datagram_bytes, 1200);
     }
 
     #[test]
@@ -369,6 +381,38 @@
             result.wireguard.obfuscation_padding,
             PacketPadding::RandomBucket(vec![1200, 1280, 1400])
         );
+    }
+
+    #[test]
+    fn wireguard_udp_size_knobs_are_loaded() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        std::env::set_var("WG_OBFUSCATION_MAX_DATAGRAM_BYTES", "1400");
+        std::env::set_var("WG_UDP_SOCKET_BUFFER_BYTES", "1048576");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(result.wireguard.obfuscation_max_datagram_bytes, 1400);
+        assert_eq!(result.wireguard.udp_socket_buffer_bytes, 1_048_576);
+    }
+
+    #[test]
+    fn wireguard_max_datagram_rejects_oversized_value() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        std::env::set_var("WG_OBFUSCATION_MAX_DATAGRAM_BYTES", "65536");
+
+        assert!(matches!(
+            Config::from_env(),
+            Err(ConfigError::InvalidWireGuardSizeValue {
+                var: "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+                ..
+            })
+        ));
     }
 
     #[test]

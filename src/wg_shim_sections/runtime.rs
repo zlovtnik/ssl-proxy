@@ -183,7 +183,8 @@ async fn run_session_receiver(
                 }
 
                 let packet = QueuedUpstreamPacket {
-                    bytes: lease[..encoded_len].to_vec(),
+                    lease,
+                    len: encoded_len,
                     queued_at_millis: now,
                     is_chaff: true,
                 };
@@ -331,7 +332,7 @@ async fn connect_next_upstream(
     let start = next_server_index.fetch_add(1, Ordering::Relaxed);
     for offset in 0..server_count {
         let index = (start + offset) % server_count;
-        match connect_upstream(config.server_addrs[index], index).await {
+        match connect_upstream(config, config.server_addrs[index], index).await {
             Ok(connection) => return Ok(connection),
             Err(err) => {
                 warn!(
@@ -361,7 +362,7 @@ async fn send_with_failover(
     let mut last_error = None;
     let max_attempts = config.server_addrs.len().max(1);
     for attempt in 0..max_attempts {
-        match connection.socket.send(&packet.bytes).await {
+        match connection.socket.send(packet.bytes()).await {
             Ok(_) => {
                 if !packet.is_chaff {
                     session.record_upstream_send(packet.queued_at_millis);
@@ -455,11 +456,16 @@ fn retry_backoff_delay(attempt: usize) -> Duration {
 }
 
 async fn connect_upstream(
+    config: &WgObfsShimConfig,
     server_addr: SocketAddr,
     _server_index: usize,
 ) -> io::Result<UpstreamConnection> {
     let bind_addr = upstream_bind_addr(server_addr);
-    let socket = UdpSocket::bind(bind_addr).await?;
+    let socket = crate::udp_tuning::bind_tuned_udp_socket(
+        bind_addr,
+        config.udp_socket_buffer_bytes,
+        "wg-shim-upstream",
+    )?;
     socket.connect(server_addr).await?;
     let local_port = socket.local_addr()?.port();
     Ok(UpstreamConnection {

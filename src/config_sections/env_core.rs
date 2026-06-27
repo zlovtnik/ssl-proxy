@@ -217,6 +217,8 @@ impl Default for Config {
                 obfuscation_replay_protection: false,
                 obfuscation_xor_rekey_packets: None,
                 obfuscation_xor_rekey_secs: None,
+                obfuscation_max_datagram_bytes: DEFAULT_WIREGUARD_PATH_MTU_BYTES,
+                udp_socket_buffer_bytes: DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES,
             },
             runtime: RuntimeConfig {
                 log_format: "human".to_string(),

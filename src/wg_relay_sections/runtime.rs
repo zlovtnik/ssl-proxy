@@ -16,10 +16,11 @@ use tracing::{info, warn};
 
 use crate::{
     config::WireGuardConfig,
+    udp_tuning::bind_tuned_udp_socket,
     wg_packet_obfuscation::{
         cleanup_interval, decode_packet_in_place, encode_packet_in_place, validate_framed_header,
         PacketDecodeError, PacketDirection, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
-        XorRekeyPolicy, MAX_UDP_PACKET_SIZE,
+        MAX_UDP_PACKET_SIZE,
     },
 };
 
@@ -27,7 +28,6 @@ const DROP_LOG_INTERVAL: Duration = Duration::from_secs(30);
 const PROBE_BLOCK_WINDOW: Duration = Duration::from_secs(60);
 const PROBE_BLOCK_DURATION: Duration = Duration::from_secs(300);
 const PROBE_STATE_MAX_ENTRIES: usize = 16_384;
-const PUBLIC_UDP_SOCKET_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RelayMetricsSnapshot {
@@ -80,26 +80,28 @@ impl RelayMetrics {
 struct RelaySettings {
     obfuscation: WgPacketObfuscation,
     idle_timeout: Duration,
+    max_datagram_bytes: usize,
+    udp_socket_buffer_bytes: usize,
     probe_block: Option<ProbeBlockConfig>,
 }
 
 impl RelaySettings {
     fn from_config(config: &WireGuardConfig) -> Self {
-        let obfuscation = WgPacketObfuscation::new(
-            config.obfuscation_key.clone(),
-            config.obfuscation_magic_byte,
-        )
-        .with_encryption_mode(config.obfuscation_encryption_mode)
-        .with_padding(config.obfuscation_padding.clone())
-        .with_magic_position(config.obfuscation_magic_position)
-        .with_xor_rekey(XorRekeyPolicy::new(
-            config.obfuscation_xor_rekey_packets,
-            config.obfuscation_xor_rekey_secs,
-        ))
-        .with_replay_protection(config.obfuscation_replay_protection);
+        Self {
+            obfuscation: config.packet_obfuscation(),
+            idle_timeout: Duration::from_secs(config.obfuscation_session_idle_secs),
+            max_datagram_bytes: config.obfuscation_max_datagram_bytes,
+            udp_socket_buffer_bytes: config.udp_socket_buffer_bytes,
+            probe_block: read_probe_block_config(),
+        }
+    }
+
+    fn test_default(obfuscation: WgPacketObfuscation, idle_timeout: Duration) -> Self {
         Self {
             obfuscation,
-            idle_timeout: Duration::from_secs(config.obfuscation_session_idle_secs),
+            idle_timeout,
+            max_datagram_bytes: MAX_UDP_PACKET_SIZE,
+            udp_socket_buffer_bytes: crate::udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
             probe_block: read_probe_block_config(),
         }
     }
@@ -401,11 +403,10 @@ pub async fn spawn_with_metrics(
     let public_addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let internal_addr = SocketAddr::from(([127, 0, 0, 1], config.internal_port));
 
-    spawn_with_addrs_and_metrics(
+    spawn_with_settings_and_metrics(
         public_addr,
         internal_addr,
-        RelaySettings::from_config(config).obfuscation,
-        Duration::from_secs(config.obfuscation_session_idle_secs),
+        RelaySettings::from_config(config),
         shutdown,
         metrics,
     )
@@ -440,15 +441,32 @@ pub(crate) async fn spawn_with_addrs_and_metrics(
     shutdown: CancellationToken,
     metrics: Arc<RelayMetrics>,
 ) -> io::Result<(SocketAddr, JoinHandle<()>)> {
-    let public_socket = Arc::new(bind_tuned_public_udp_socket(public_bind_addr)?);
+    let settings = RelaySettings::test_default(obfuscation, idle_timeout);
+    spawn_with_settings_and_metrics(
+        public_bind_addr,
+        internal_addr,
+        settings,
+        shutdown,
+        metrics,
+    )
+    .await
+}
+
+async fn spawn_with_settings_and_metrics(
+    public_bind_addr: SocketAddr,
+    internal_addr: SocketAddr,
+    settings: RelaySettings,
+    shutdown: CancellationToken,
+    metrics: Arc<RelayMetrics>,
+) -> io::Result<(SocketAddr, JoinHandle<()>)> {
+    let public_socket = Arc::new(bind_tuned_udp_socket(
+        public_bind_addr,
+        settings.udp_socket_buffer_bytes,
+        "wg-relay-public",
+    )?);
     let local_addr = public_socket.local_addr()?;
     let sessions = Arc::new(DashMap::new());
     let clock = Arc::new(RelayClock::new());
-    let settings = RelaySettings {
-        obfuscation,
-        idle_timeout,
-        probe_block: read_probe_block_config(),
-    };
 
     let task = tokio::spawn(run_relay(
         public_socket,
@@ -461,40 +479,6 @@ pub(crate) async fn spawn_with_addrs_and_metrics(
     ));
 
     Ok((local_addr, task))
-}
-
-fn bind_tuned_public_udp_socket(bind_addr: SocketAddr) -> io::Result<UdpSocket> {
-    let socket = socket2::Socket::new(
-        socket2::Domain::for_address(bind_addr),
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )?;
-    tune_udp_socket_buffers(&socket, "public", PUBLIC_UDP_SOCKET_BUFFER_SIZE);
-    let sock_addr = socket2::SockAddr::from(bind_addr);
-    socket.bind(&sock_addr)?;
-
-    let std_socket: std::net::UdpSocket = socket.into();
-    std_socket.set_nonblocking(true)?;
-    UdpSocket::from_std(std_socket)
-}
-
-fn tune_udp_socket_buffers(socket: &socket2::Socket, label: &'static str, size: usize) {
-    if let Err(err) = socket.set_recv_buffer_size(size) {
-        warn!(
-            socket = label,
-            requested_bytes = size,
-            %err,
-            "failed to set WireGuard relay UDP receive buffer"
-        );
-    }
-    if let Err(err) = socket.set_send_buffer_size(size) {
-        warn!(
-            socket = label,
-            requested_bytes = size,
-            %err,
-            "failed to set WireGuard relay UDP send buffer"
-        );
-    }
 }
 
 async fn run_relay(
@@ -512,6 +496,8 @@ async fn run_relay(
             .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0))),
         internal_addr = %internal_addr,
         magic_byte = ?settings.obfuscation.magic_byte,
+        max_datagram_bytes = settings.max_datagram_bytes,
+        udp_socket_buffer_bytes = settings.udp_socket_buffer_bytes,
         idle_timeout_secs = settings.idle_timeout.as_secs(),
         "WireGuard obfuscation relay started"
     );
@@ -528,7 +514,7 @@ async fn run_relay(
     let mut other_drop_notice = RateLimitedDropNotice::new(DROP_LOG_INTERVAL);
     let probe_detector = ProbeDetector::new(settings.probe_block);
 
-    let mut buf = vec![0u8; MAX_UDP_PACKET_SIZE];
+    let mut buf = vec![0u8; settings.max_datagram_bytes];
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,

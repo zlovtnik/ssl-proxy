@@ -672,7 +672,7 @@ render_obfuscated_peer_config() {
 Address = $address
 PrivateKey = $private_key
 ListenPort = 443
-MTU = ${WG_MTU:-1279}
+MTU = ${WG_MTU:-1419}
 DNS = 10.13.13.1
 
 [Peer]

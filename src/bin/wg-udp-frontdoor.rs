@@ -6,6 +6,10 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use ssl_proxy::{
+    udp_tuning::{bind_tuned_udp_socket, DEFAULT_UDP_SOCKET_BUFFER_BYTES},
+    wg_packet_obfuscation::MAX_UDP_PACKET_SIZE,
+};
 use std::{
     collections::HashMap,
     fmt,
@@ -31,7 +35,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 const DEFAULT_CONFIG_FILE: &str = "/run/wg-rotation/frontdoor/wg-udp-frontdoor.toml";
 const DEFAULT_HEALTH_ADDR: &str = "0.0.0.0:3003";
 const DEFAULT_SESSION_IDLE_SECS: u64 = 300;
-const MAX_DATAGRAM_BYTES: usize = 65_535;
+const DEFAULT_MAX_DATAGRAM_BYTES: usize = 1500;
 const RATE_LIMITER_STALE_SOURCE_SECS: u64 = 0;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -64,6 +68,8 @@ struct RuntimeOptions {
     health_addr: SocketAddr,
     session_idle: Duration,
     rate_limit_pps: u64,
+    max_datagram_bytes: usize,
+    udp_socket_buffer_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -73,6 +79,8 @@ struct RuntimeState {
     rate_limiter: Arc<Mutex<RateLimiter>>,
     stats: Arc<FrontdoorStats>,
     session_idle: Duration,
+    max_datagram_bytes: usize,
+    udp_socket_buffer_bytes: usize,
 }
 
 #[derive(Clone)]
@@ -213,6 +221,8 @@ async fn main() {
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new(options.rate_limit_pps))),
         stats: Arc::new(FrontdoorStats::default()),
         session_idle: options.session_idle,
+        max_datagram_bytes: options.max_datagram_bytes,
+        udp_socket_buffer_bytes: options.udp_socket_buffer_bytes,
     };
 
     let mut tasks = JoinSet::new();
@@ -284,12 +294,26 @@ impl RuntimeOptions {
         let idle_secs =
             read_u64_env("WG_FRONTDOOR_SESSION_IDLE_SECS", DEFAULT_SESSION_IDLE_SECS).max(1);
         let rate_limit_pps = read_u64_env("WG_FRONTDOOR_RATE_LIMIT_PPS", 0);
+        let max_datagram_bytes = read_usize_env(
+            "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+            DEFAULT_MAX_DATAGRAM_BYTES,
+            1,
+            MAX_UDP_PACKET_SIZE,
+        )?;
+        let udp_socket_buffer_bytes = read_usize_env(
+            "WG_UDP_SOCKET_BUFFER_BYTES",
+            DEFAULT_UDP_SOCKET_BUFFER_BYTES,
+            1,
+            usize::MAX,
+        )?;
 
         Ok(Self {
             config_file: PathBuf::from(config_file),
             health_addr,
             session_idle: Duration::from_secs(idle_secs),
             rate_limit_pps,
+            max_datagram_bytes,
+            udp_socket_buffer_bytes,
         })
     }
 }
@@ -299,6 +323,32 @@ fn read_u64_env(var: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or(default)
+}
+
+fn read_usize_env(
+    var: &str,
+    default: usize,
+    min: usize,
+    max: usize,
+) -> Result<usize, FrontdoorError> {
+    let Some(raw) = std::env::var(var)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(default);
+    };
+    let parsed = raw.parse::<usize>().map_err(|_| {
+        FrontdoorError::Config(format!(
+            "{var} must be an integer from {min} to {max}; got {raw:?}"
+        ))
+    })?;
+    if parsed < min || parsed > max {
+        return Err(FrontdoorError::Config(format!(
+            "{var} must be an integer from {min} to {max}; got {raw:?}"
+        )));
+    }
+    Ok(parsed)
 }
 
 fn default_enabled() -> bool {
@@ -427,7 +477,11 @@ fn validate_config(config: &FrontdoorConfig) -> Result<(), FrontdoorError> {
 }
 
 async fn run_listener(listener: ListenerConfig, state: RuntimeState) -> Result<(), FrontdoorError> {
-    let socket = UdpSocket::bind(listener.bind_addr).await?;
+    let socket = bind_tuned_udp_socket(
+        listener.bind_addr,
+        state.udp_socket_buffer_bytes,
+        "wg-frontdoor-listener",
+    )?;
     run_listener_with_socket(listener, state, socket).await
 }
 
@@ -444,7 +498,7 @@ async fn run_listener_with_socket(
         "WireGuard UDP frontdoor listener started"
     );
 
-    let mut buf = vec![0_u8; MAX_DATAGRAM_BYTES];
+    let mut buf = vec![0_u8; state.max_datagram_bytes];
     loop {
         let (len, client_addr) = socket.recv_from(&mut buf).await?;
         if !state.rate_limiter.lock().await.allow(client_addr) {
@@ -555,7 +609,11 @@ async fn get_or_create_session(
     } else {
         "[::]:0"
     };
-    let backend_socket = Arc::new(UdpSocket::bind(bind_addr).await?);
+    let backend_socket = Arc::new(bind_tuned_udp_socket(
+        bind_addr.parse().expect("static UDP bind address is valid"),
+        state.udp_socket_buffer_bytes,
+        "wg-frontdoor-backend",
+    )?);
     backend_socket.connect(backend_addr).await?;
 
     let session = Arc::new(BackendSession {
@@ -597,7 +655,7 @@ async fn run_backend_session(
     listener_socket: Arc<UdpSocket>,
     state: RuntimeState,
 ) {
-    let mut buf = vec![0_u8; MAX_DATAGRAM_BYTES];
+    let mut buf = vec![0_u8; state.max_datagram_bytes];
     loop {
         match timeout(state.session_idle, session.socket.recv(&mut buf)).await {
             Ok(Ok(len)) => {
@@ -925,6 +983,8 @@ addr = "127.0.0.1:51820"
             rate_limiter: Arc::new(Mutex::new(RateLimiter::new(0))),
             stats,
             session_idle: Duration::from_secs(5),
+            max_datagram_bytes: DEFAULT_MAX_DATAGRAM_BYTES,
+            udp_socket_buffer_bytes: DEFAULT_UDP_SOCKET_BUFFER_BYTES,
         };
 
         let response = metrics(State(state)).await;
@@ -973,6 +1033,8 @@ addr = "127.0.0.1:51820"
             rate_limiter: Arc::new(Mutex::new(RateLimiter::new(0))),
             stats: Arc::new(FrontdoorStats::default()),
             session_idle: Duration::from_secs(5),
+            max_datagram_bytes: DEFAULT_MAX_DATAGRAM_BYTES,
+            udp_socket_buffer_bytes: DEFAULT_UDP_SOCKET_BUFFER_BYTES,
         };
 
         let frontdoor = UdpSocket::bind(listener.bind_addr).await.unwrap();

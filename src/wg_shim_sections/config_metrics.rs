@@ -16,10 +16,13 @@ use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, info_span, warn, Span};
 
-use crate::wg_packet_obfuscation::{
-    cleanup_interval, decode_packet_in_place, encode_packet_in_place, PacketDecodeError,
-    PacketDirection, PacketEncodeError, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
-    MAX_UDP_PACKET_SIZE,
+use crate::{
+    udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
+    wg_packet_obfuscation::{
+        cleanup_interval, decode_packet_in_place, encode_packet_in_place, PacketDecodeError,
+        PacketDirection, PacketEncodeError, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
+        MAX_UDP_PACKET_SIZE,
+    },
 };
 
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:51821";
@@ -27,6 +30,7 @@ pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300;
 pub const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 5;
 pub const DEFAULT_BUFFER_POOL_CAPACITY: usize = 256;
 pub const DEFAULT_SEND_QUEUE_CAPACITY: usize = 128;
+pub const DEFAULT_MAX_DATAGRAM_BYTES: usize = 1500;
 pub const DEFAULT_HEALTH_ADDR: &str = "127.0.0.1:51822";
 pub const DEFAULT_JITTER_MAX_MS: u64 = 0;
 pub const DEFAULT_CHAFF_PPS: u64 = 0;
@@ -59,6 +63,8 @@ pub struct WgObfsShimConfig {
     pub rate_limit: Option<RateLimitConfig>,
     pub buffer_pool_capacity: usize,
     pub send_queue_capacity: usize,
+    pub max_datagram_bytes: usize,
+    pub udp_socket_buffer_bytes: usize,
     pub health_addr: Option<SocketAddr>,
     pub metrics_addr: Option<SocketAddr>,
     pub send_jitter_max: Duration,
@@ -83,6 +89,8 @@ impl WgObfsShimConfig {
             rate_limit: None,
             buffer_pool_capacity: DEFAULT_BUFFER_POOL_CAPACITY,
             send_queue_capacity: DEFAULT_SEND_QUEUE_CAPACITY,
+            max_datagram_bytes: DEFAULT_MAX_DATAGRAM_BYTES,
+            udp_socket_buffer_bytes: DEFAULT_UDP_SOCKET_BUFFER_BYTES,
             health_addr: None,
             metrics_addr: None,
             send_jitter_max: Duration::from_millis(DEFAULT_JITTER_MAX_MS),
@@ -114,6 +122,8 @@ impl WgObfsShimConfig {
             rate_limit: None,
             buffer_pool_capacity: DEFAULT_BUFFER_POOL_CAPACITY,
             send_queue_capacity: DEFAULT_SEND_QUEUE_CAPACITY,
+            max_datagram_bytes: DEFAULT_MAX_DATAGRAM_BYTES,
+            udp_socket_buffer_bytes: DEFAULT_UDP_SOCKET_BUFFER_BYTES,
             health_addr: None,
             metrics_addr: None,
             send_jitter_max: Duration::from_millis(DEFAULT_JITTER_MAX_MS),
@@ -136,6 +146,10 @@ impl WgObfsShimConfig {
 
     fn buffer_pool_capacity(&self) -> usize {
         self.buffer_pool_capacity.max(1)
+    }
+
+    fn max_datagram_bytes(&self) -> usize {
+        self.max_datagram_bytes.clamp(1, MAX_UDP_PACKET_SIZE)
     }
 
     fn chaff_interval(&self) -> Option<Duration> {
@@ -301,10 +315,11 @@ struct UdpBufferPool {
 }
 
 impl UdpBufferPool {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, buffer_len: usize) -> Self {
+        let buffer_len = buffer_len.clamp(1, MAX_UDP_PACKET_SIZE);
         let mut buffers = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            buffers.push(vec![0u8; MAX_UDP_PACKET_SIZE].into_boxed_slice());
+            buffers.push(vec![0u8; buffer_len].into_boxed_slice());
         }
         Self {
             buffers: Mutex::new(buffers),
@@ -322,6 +337,15 @@ impl UdpBufferPool {
             pool: self.clone(),
         })
     }
+
+    #[cfg(test)]
+    fn available(&self) -> usize {
+        self.buffers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
+    }
+
 }
 
 struct UdpBufferLease {
