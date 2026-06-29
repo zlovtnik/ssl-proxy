@@ -495,7 +495,7 @@ fn log_runtime_ports(config: &config::Config) {
 
 fn wireguard_obfuscation_sizing_bounds(
     config: &config::Config,
-) -> Result<Option<(usize, wg_packet_obfuscation::EncodedPacketLenBounds)>, String> {
+) -> Result<Option<(usize, usize, wg_packet_obfuscation::EncodedPacketLenBounds)>, String> {
     if !config.wireguard.obfuscation_enabled {
         return Ok(None);
     }
@@ -505,14 +505,21 @@ fn wireguard_obfuscation_sizing_bounds(
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(config::DEFAULT_WIREGUARD_PATH_MTU_BYTES);
+    let wg_transport_packet_bytes = config::max_wireguard_transport_packet_bytes(wg_mtu);
     let settings = config.wireguard.packet_obfuscation();
-    wg_packet_obfuscation::encoded_packet_len_bounds(wg_mtu, &settings)
-        .map(|bounds| Some((wg_mtu, bounds)))
-        .map_err(|err| format!("WG_MTU={wg_mtu} cannot be encoded with current settings: {err}"))
+    wg_packet_obfuscation::encoded_packet_len_bounds(wg_transport_packet_bytes, &settings)
+        .map(|bounds| Some((wg_mtu, wg_transport_packet_bytes, bounds)))
+        .map_err(|err| {
+            format!(
+                "WG_MTU={wg_mtu} produces WireGuard transport packet bytes {wg_transport_packet_bytes}, which cannot be encoded with current settings: {err}"
+            )
+        })
 }
 
 fn validate_wireguard_obfuscation_sizing(config: &config::Config) -> Result<(), String> {
-    let Some((_wg_mtu, bounds)) = wireguard_obfuscation_sizing_bounds(config)? else {
+    let Some((_wg_mtu, _wg_transport_packet_bytes, bounds)) =
+        wireguard_obfuscation_sizing_bounds(config)?
+    else {
         return Ok(());
     };
 
@@ -528,9 +535,10 @@ fn validate_wireguard_obfuscation_sizing(config: &config::Config) -> Result<(), 
 
 fn log_wireguard_obfuscation_sizing(config: &config::Config) {
     match wireguard_obfuscation_sizing_bounds(config) {
-        Ok(Some((wg_mtu, bounds))) => {
+        Ok(Some((wg_mtu, wg_transport_packet_bytes, bounds))) => {
             info!(
                 wg_mtu,
+                wg_transport_packet_bytes,
                 max_obfuscated_datagram_bytes = bounds.max_encoded_len,
                 max_obfuscation_overhead_bytes = bounds.max_overhead_len(),
                 configured_max_datagram_bytes = config.wireguard.obfuscation_max_datagram_bytes,

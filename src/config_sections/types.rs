@@ -379,5 +379,13 @@ impl std::fmt::Debug for WireGuardConfig {
 }
 
 pub const DEFAULT_WIREGUARD_PATH_MTU_BYTES: usize = 1500;
+/// WireGuard transport data packets add 32 bytes around the encrypted inner IP packet.
+pub const WIREGUARD_DATA_PACKET_OVERHEAD_BYTES: usize = 32;
 pub const DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES: usize = DEFAULT_UDP_SOCKET_BUFFER_BYTES;
 pub const MAX_WIREGUARD_DATAGRAM_BYTES: usize = MAX_UDP_PACKET_SIZE;
+
+pub fn max_wireguard_transport_packet_bytes(wg_mtu: usize) -> usize {
+    wg_mtu
+        .saturating_add(WIREGUARD_DATA_PACKET_OVERHEAD_BYTES)
+        .min(MAX_WIREGUARD_DATAGRAM_BYTES)
+}

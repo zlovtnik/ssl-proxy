@@ -323,7 +323,7 @@
         assert_eq!(result.wireguard.obfuscation_xor_rekey_secs, None);
         assert_eq!(
             result.wireguard.obfuscation_max_datagram_bytes,
-            DEFAULT_WIREGUARD_PATH_MTU_BYTES
+            max_wireguard_transport_packet_bytes(DEFAULT_WIREGUARD_PATH_MTU_BYTES)
         );
         assert_eq!(
             result.wireguard.udp_socket_buffer_bytes,
@@ -333,6 +333,20 @@
             result.wireguard.obfuscation_key,
             b"test-obfuscation-key".to_vec()
         );
+    }
+
+    #[test]
+    fn wireguard_legacy_magic_obfuscation_default_datagram_covers_transport_overhead() {
+        let _guard = env_lock();
+        clear_env();
+        set_test_env_defaults();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        std::env::set_var("WG_MTU", "1420");
+        std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xAA");
+
+        let result = Config::from_env().unwrap();
+
+        assert_eq!(result.wireguard.obfuscation_max_datagram_bytes, 1453);
     }
 
     #[test]

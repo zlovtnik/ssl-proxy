@@ -348,10 +348,11 @@ pub(super) fn default_obfuscation_max_datagram_bytes_for_mtu(
     settings: Option<&WgPacketObfuscation>,
 ) -> Result<usize, ConfigError> {
     let Some(settings) = settings else {
-        return Ok(wg_mtu);
+        return Ok(max_wireguard_transport_packet_bytes(wg_mtu));
     };
+    let plaintext_datagram_len = max_wireguard_transport_packet_bytes(wg_mtu);
 
-    let bytes = match encoded_packet_len_bounds(wg_mtu, settings) {
+    let bytes = match encoded_packet_len_bounds(plaintext_datagram_len, settings) {
         Ok(bounds) => bounds.max_encoded_len,
         Err(err) => match &settings.padding {
             PacketPadding::FixedMtu(mtu) => *mtu,
@@ -360,7 +361,7 @@ pub(super) fn default_obfuscation_max_datagram_bytes_for_mtu(
                 return Err(ConfigError::InvalidWireGuardObfuscationSizing {
                     var: "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
                     message: format!(
-                        "cannot derive default for WG_MTU={wg_mtu} and padding {:?}: {err}",
+                        "cannot derive default for WG_MTU={wg_mtu} (WireGuard transport packet bytes {plaintext_datagram_len}) and padding {:?}: {err}",
                         settings.padding
                     ),
                 });

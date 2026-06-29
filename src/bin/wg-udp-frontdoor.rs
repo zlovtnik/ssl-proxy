@@ -669,6 +669,7 @@ fn load_or_default_config(
     }
 }
 
+#[cfg(test)]
 fn parse_config(contents: &str) -> Result<FrontdoorConfig, FrontdoorError> {
     parse_config_with_session_idle(contents, Duration::from_secs(DEFAULT_SESSION_IDLE_SECS))
 }
