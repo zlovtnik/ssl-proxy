@@ -238,12 +238,18 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
 | `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config; multiple enabled backends are probed until one replies for a client |
+| `WG_FRONTDOOR_MAX_SESSIONS` | `65536` | Maximum active frontdoor client/backend UDP sessions before the oldest session is evicted |
+| `WG_FRONTDOOR_DISPATCH_TASK_LIMIT` | `4096` | Maximum in-flight frontdoor packet dispatch tasks per listener before packets are dropped |
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
 | `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
 | `DATABASE_URL` | Compose default: `jdbc:postgresql://postgres:5432/sync` | Primary Postgres connection. PostgreSQL credentials are supplied separately as `POSTGRES_USER=sync` and the generated `POSTGRES_PASSWORD`; URL-style values must follow `postgres://sync:${POSTGRES_PASSWORD}@postgres:5432/sync` when credentials are embedded. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
+
+`wg-udp-frontdoor` listener entries also support `session_idle` and `jitter_ms`
+TOML fields. Keep `jitter_ms` low; `5` ms is intended for coarse timing
+correlation resistance, while values above `50` ms add noticeable variance.
 | `REGISTRY_PLAIN_HTTP` | `auto` | Buildx plain-HTTP registry mode; auto-detects localhost and private IPv4 registries |
 | `IMAGE_TAG` | `latest` | Image tag consumed by Compose |
 

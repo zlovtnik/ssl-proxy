@@ -5,11 +5,18 @@
 name = "wg-public-443"
 bind_addr = "0.0.0.0:443"
 backends = ["active-443"]
+# Optional per-listener idle timeout in seconds; defaults to WG_FRONTDOOR_SESSION_IDLE_SECS.
+# session_idle = 300
+# Optional timing jitter in milliseconds on client-to-backend and backend-to-client forwarding.
+# jitter_ms = 5 defeats coarse timing correlation; values above 50 add noticeable variance.
+# jitter_ms = 0
 
 [[listeners]]
 name = "wg-public-51820"
 bind_addr = "0.0.0.0:51820"
 backends = ["active-51820"]
+# session_idle = 300
+# jitter_ms = 0
 
 [[backends]]
 name = "active-443"
