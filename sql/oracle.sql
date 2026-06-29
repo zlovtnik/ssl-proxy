@@ -1,5 +1,5 @@
 -- =============================================================================
--- ssl-proxy canonical Oracle schema
+-- ssl-proxy canonical Oracle schema (authoritative; split reference files under sql/oracle/)
 -- Fresh baseline. Do not append migration-style ALTER blocks here.
 -- =============================================================================
 
