@@ -8,6 +8,7 @@ impl ShimSession {
         span: Span,
     ) -> Self {
         let rate_limit = config.rate_limit;
+        let send_queue_capacity = config.send_queue_capacity();
         Self {
             id,
             config,
@@ -20,6 +21,11 @@ impl ShimSession {
             server_to_client_replay: Mutex::new(ReplayWindow::default()),
             rate_limiter: rate_limit.map(|config| Mutex::new(TokenBucket::new(config, now_millis))),
             first_send_logged: AtomicBool::new(false),
+            send_queue_depth: AtomicUsize::new(0),
+            send_queue_capacity,
+            send_queue_full_notice: Mutex::new(RateLimitedLogNotice::new(
+                SEND_QUEUE_FULL_LOG_INTERVAL,
+            )),
             last_upstream_send_millis: AtomicU64::new(0),
             last_server_reply_millis: AtomicU64::new(0),
             last_server_rtt_millis: AtomicU64::new(0),
@@ -85,6 +91,80 @@ impl ShimSession {
         }
     }
 
+    fn send_queue_capacity(&self) -> usize {
+        self.send_queue_capacity
+    }
+
+    fn send_queue_depth(&self) -> usize {
+        self.send_queue_depth.load(Ordering::Relaxed)
+    }
+
+    fn reserve_send_queue_slot(&self, metrics: &ShimMetrics) -> SendQueueReservation {
+        let total_depth = metrics.reserve_send_queue_slot();
+        let session_depth = self.send_queue_depth.fetch_add(1, Ordering::Relaxed) + 1;
+        SendQueueReservation {
+            session_depth,
+            total_depth,
+        }
+    }
+
+    fn release_send_queue_slots(&self, metrics: &ShimMetrics, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let released = self
+            .send_queue_depth
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_sub(count))
+            })
+            .map(|previous| previous.min(count))
+            .unwrap_or(0);
+        metrics.release_send_queue_slots(released as u64);
+    }
+
+    fn release_send_queue_slot(&self, metrics: &ShimMetrics) {
+        self.release_send_queue_slots(metrics, 1);
+    }
+
+    fn clear_send_queue(&self, metrics: &ShimMetrics) -> usize {
+        let depth = self.send_queue_depth.swap(0, Ordering::Relaxed);
+        metrics.release_send_queue_slots(depth as u64);
+        depth
+    }
+
+    fn record_send_queue_accepted(
+        &self,
+        metrics: &ShimMetrics,
+        reservation: SendQueueReservation,
+    ) {
+        metrics.record_send_queue_accepted(
+            reservation.session_depth,
+            self.send_queue_capacity,
+            reservation.total_depth,
+        );
+    }
+
+    fn record_send_queue_dequeued(
+        &self,
+        metrics: &ShimMetrics,
+        queued_at_millis: u64,
+        now_millis: u64,
+    ) {
+        self.release_send_queue_slot(metrics);
+        metrics.record_send_queue_dequeued(queued_at_millis, now_millis);
+    }
+
+    fn record_send_queue_full_drop(&self, metrics: &ShimMetrics) {
+        metrics.record_send_queue_full_drop(self.send_queue_capacity);
+    }
+
+    fn queue_full_log_suppressed(&self, now: Instant) -> Option<u64> {
+        self.send_queue_full_notice
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .record(now)
+    }
+
     fn set_upstream_port(&self, upstream_port: u16) {
         self.upstream_port.store(upstream_port, Ordering::Relaxed);
     }
@@ -115,6 +195,12 @@ impl ShimSession {
             .load(Ordering::Acquire)
             .then(|| self.last_server_rtt_millis.load(Ordering::Relaxed))
     }
+}
+
+#[derive(Clone, Copy)]
+struct SendQueueReservation {
+    session_depth: usize,
+    total_depth: u64,
 }
 
 struct QueuedUpstreamPacket {
@@ -239,6 +325,7 @@ pub async fn spawn_runtime(
         next_server_index,
     };
 
+    let runtime_sessions = context.sessions.clone();
     let task = tokio::spawn(run_shim(context));
 
     Ok(WgObfsShimRuntime {
@@ -246,6 +333,7 @@ pub async fn spawn_runtime(
         handle: task,
         config,
         metrics,
+        sessions: runtime_sessions,
     })
 }
 
@@ -354,20 +442,40 @@ async fn run_shim(context: ShimSessionContext) {
                     queued_at_millis: send_started_millis,
                     is_chaff: false,
                 };
+                let queue_reservation = session.reserve_send_queue_slot(&context.metrics);
                 match session.upstream_tx.try_send(packet) {
                     Ok(()) => {
+                        session.record_send_queue_accepted(
+                            &context.metrics,
+                            queue_reservation,
+                        );
                         session.record_upstream_send(send_started_millis);
                         context.metrics.packets_client_to_server.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        context.metrics.send_queue_drops.fetch_add(1, Ordering::Relaxed);
-                        warn!(
-                            %client_addr,
-                            session_id = session.id,
-                            "dropping WireGuard packet because per-session upstream send queue is full"
-                        );
+                    Err(mpsc::error::TrySendError::Full(_packet)) => {
+                        session.release_send_queue_slot(&context.metrics);
+                        session.record_send_queue_full_drop(&context.metrics);
+                        if let Some(suppressed_since_last) =
+                            session.queue_full_log_suppressed(Instant::now())
+                        {
+                            let failure_millis = context.clock.now_millis();
+                            warn!(
+                                %client_addr,
+                                session_id = session.id,
+                                queue_depth = session.send_queue_depth(),
+                                queue_capacity = session.send_queue_capacity(),
+                                total_queue_depth = context.metrics.send_queue_depth(),
+                                total_queue_capacity = context.metrics.send_queue_capacity(),
+                                upstream_port = session.upstream_port.load(Ordering::Relaxed),
+                                last_server_reply_age_ms = ?session.last_server_reply_age_millis(failure_millis),
+                                last_server_rtt_ms = ?session.last_server_rtt_millis(),
+                                suppressed_since_last,
+                                "dropping WireGuard packet because per-session upstream send queue is full"
+                            );
+                        }
                     }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                    Err(mpsc::error::TrySendError::Closed(_packet)) => {
+                        session.release_send_queue_slot(&context.metrics);
                         let failure_millis = context.clock.now_millis();
                         warn!(
                             %client_addr,

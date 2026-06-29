@@ -221,24 +221,144 @@ async fn run_health_server(
             );
         }
 
-        let sessions = state
-            .handles
-            .iter()
-            .map(ShimHealthHandle::active_sessions)
-            .sum::<u64>();
-        let replay_detected = state
-            .handles
-            .iter()
-            .map(ShimHealthHandle::replay_detected)
-            .sum::<u64>();
+        let (_, body) = health_report(&state);
         (
             StatusCode::OK,
-            Json(json!({
-                "status": "ok",
+            Json(body),
+        )
+    }
+
+    async fn ready_handler(
+        State(state): State<Arc<HealthState>>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        if !authorized(&headers, state.token.as_deref()) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "status": "unauthorized",
+                })),
+            );
+        }
+
+        let (queue_degraded, body) = health_report(&state);
+        (
+            if queue_degraded {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::OK
+            },
+            Json(body),
+        )
+    }
+
+    fn health_report(state: &HealthState) -> (bool, serde_json::Value) {
+        let shims = state
+            .handles
+            .iter()
+            .map(ShimHealthHandle::snapshot)
+            .collect::<Vec<_>>();
+        let sessions = shims.iter().map(|shim| shim.sessions).sum::<u64>();
+        let replay_detected = shims
+            .iter()
+            .map(|shim| shim.replay_detected)
+            .sum::<u64>();
+        let (queue_degraded, queue) = aggregate_queue_report(&shims);
+        (
+            queue_degraded,
+            json!({
+                "status": if queue_degraded { "degraded" } else { "ok" },
                 "sessions": sessions,
                 "replay_detected": replay_detected,
-            })),
+                "queue": queue,
+                "shims": shims,
+            }),
         )
+    }
+
+    fn aggregate_queue_report(shims: &[ShimHealthSnapshot]) -> (bool, serde_json::Value) {
+        let mut active_sessions = 0u64;
+        let mut depth = 0u64;
+        let mut capacity = 0u64;
+        let mut max_session_depth = 0u64;
+        let mut max_session_capacity = 0u64;
+        let mut max_session_utilization_percent = 0u64;
+        let mut depth_high_watermark = 0u64;
+        let mut max_session_depth_high_watermark = 0u64;
+        let mut max_session_utilization_high_watermark_percent = 0u64;
+        let mut dequeued_total = 0u64;
+        let mut wait_millis_total = 0u64;
+        let mut drops_total = 0u64;
+        let mut buffer_pool_exhausted_total = 0u64;
+        let mut buffer_pool_wait_millis_total = 0u64;
+        let mut reasons = Vec::new();
+
+        for shim in shims {
+            let queue = &shim.queue;
+            active_sessions = active_sessions.saturating_add(queue.active_sessions);
+            depth = depth.saturating_add(queue.depth);
+            capacity = capacity.saturating_add(queue.capacity);
+            if queue.max_session_depth > max_session_depth {
+                max_session_depth = queue.max_session_depth;
+                max_session_capacity = queue.max_session_capacity;
+            }
+            max_session_utilization_percent =
+                max_session_utilization_percent.max(queue.max_session_utilization_percent);
+            depth_high_watermark =
+                depth_high_watermark.saturating_add(queue.depth_high_watermark);
+            max_session_depth_high_watermark =
+                max_session_depth_high_watermark.max(queue.max_session_depth_high_watermark);
+            max_session_utilization_high_watermark_percent =
+                max_session_utilization_high_watermark_percent
+                    .max(queue.max_session_utilization_high_watermark_percent);
+            dequeued_total = dequeued_total.saturating_add(queue.dequeued_total);
+            wait_millis_total = wait_millis_total.saturating_add(queue.wait_millis_total);
+            drops_total = drops_total.saturating_add(queue.drops_total);
+            buffer_pool_exhausted_total =
+                buffer_pool_exhausted_total.saturating_add(queue.buffer_pool_exhausted_total);
+            buffer_pool_wait_millis_total =
+                buffer_pool_wait_millis_total.saturating_add(queue.buffer_pool_wait_millis_total);
+            for reason in &queue.reasons {
+                push_unique_reason(&mut reasons, *reason);
+            }
+        }
+
+        let queue_degraded = !reasons.is_empty();
+        (
+            queue_degraded,
+            json!({
+                "status": if queue_degraded { "degraded" } else { "ok" },
+                "active_sessions": active_sessions,
+                "depth": depth,
+                "capacity": capacity,
+                "utilization_percent": percent(depth, capacity),
+                "max_session_depth": max_session_depth,
+                "max_session_capacity": max_session_capacity,
+                "max_session_utilization_percent": max_session_utilization_percent,
+                "depth_high_watermark": depth_high_watermark,
+                "max_session_depth_high_watermark": max_session_depth_high_watermark,
+                "max_session_utilization_high_watermark_percent": max_session_utilization_high_watermark_percent,
+                "dequeued_total": dequeued_total,
+                "wait_millis_total": wait_millis_total,
+                "drops_total": drops_total,
+                "buffer_pool_exhausted_total": buffer_pool_exhausted_total,
+                "buffer_pool_wait_millis_total": buffer_pool_wait_millis_total,
+                "reasons": reasons,
+            }),
+        )
+    }
+
+    fn push_unique_reason(reasons: &mut Vec<&'static str>, reason: &'static str) {
+        if !reasons.contains(&reason) {
+            reasons.push(reason);
+        }
+    }
+
+    fn percent(numerator: u64, denominator: u64) -> u64 {
+        if denominator == 0 {
+            return 0;
+        }
+        ((u128::from(numerator) * 100) / u128::from(denominator)).min(100) as u64
     }
 
     let listener = match tokio::net::TcpListener::bind(health_addr).await {
@@ -250,6 +370,7 @@ async fn run_health_server(
     };
     let app = Router::new()
         .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
         .with_state(Arc::new(HealthState {
             handles,
             token: health_token,

@@ -34,7 +34,9 @@ fn close_session_if_current(
         .is_some();
     if removed {
         session.close();
+        let abandoned_queue_depth = session.clear_send_queue(metrics);
         metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);
+        metrics.record_send_queue_capacity_sub(session.send_queue_capacity());
         match reason {
             SessionCloseReason::Idle => {
                 metrics
@@ -62,6 +64,7 @@ fn close_session_if_current(
                 reason = reason.as_str(),
                 session_id = session.id,
                 upstream_port = session.upstream_port.load(Ordering::Relaxed),
+                abandoned_queue_depth,
                 "WireGuard shim session closed"
             );
         });

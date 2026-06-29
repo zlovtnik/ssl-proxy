@@ -40,6 +40,43 @@
         ))
     }
 
+    fn test_shim_config_with_queue_capacity(capacity: usize) -> Arc<WgObfsShimConfig> {
+        let mut config = WgObfsShimConfig::new(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            SocketAddr::from(([127, 0, 0, 1], 1)),
+            test_obfuscation(None),
+            Duration::from_secs(30),
+        );
+        config.send_queue_capacity = capacity;
+        Arc::new(config)
+    }
+
+    fn test_session_with_queue_capacity(capacity: usize) -> Arc<ShimSession> {
+        let (upstream_tx, _upstream_rx) = mpsc::channel(capacity.max(1));
+        Arc::new(ShimSession::new(
+            1,
+            test_shim_config_with_queue_capacity(capacity),
+            upstream_tx,
+            40000,
+            10,
+            info_span!("test_session", client_addr = "127.0.0.1:1"),
+        ))
+    }
+
+    fn test_queued_packet(
+        pool: &Arc<UdpBufferPool>,
+        queued_at_millis: u64,
+    ) -> QueuedUpstreamPacket {
+        let mut lease = pool.lease().expect("lease is available");
+        lease[..4].copy_from_slice(b"ping");
+        QueuedUpstreamPacket {
+            lease,
+            len: 4,
+            queued_at_millis,
+            is_chaff: false,
+        }
+    }
+
     proptest! {
         #[test]
         fn session_table_never_exceeds_max_sessions(
@@ -143,8 +180,129 @@
             metrics
                 .buffer_pool_wait_millis_total
                 .load(Ordering::Relaxed)
-                >= 3
+            >= 3
         );
+    }
+
+    #[test]
+    fn send_queue_accounting_tracks_full_drops_and_wait() {
+        let metrics = ShimMetrics::default();
+        let pool = Arc::new(UdpBufferPool::new(2, 256));
+        let session = test_session_with_queue_capacity(1);
+        let (tx, mut rx) = mpsc::channel(1);
+        metrics.record_send_queue_capacity_add(session.send_queue_capacity());
+
+        let reservation = session.reserve_send_queue_slot(&metrics);
+        tx.try_send(test_queued_packet(&pool, 10)).unwrap();
+        session.record_send_queue_accepted(&metrics, reservation);
+
+        assert_eq!(session.send_queue_depth(), 1);
+        assert_eq!(metrics.send_queue_depth(), 1);
+        assert_eq!(metrics.send_queue_capacity(), 1);
+
+        let _reservation = session.reserve_send_queue_slot(&metrics);
+        match tx.try_send(test_queued_packet(&pool, 11)) {
+            Err(mpsc::error::TrySendError::Full(_packet)) => {
+                session.release_send_queue_slot(&metrics);
+                session.record_send_queue_full_drop(&metrics);
+            }
+            _ => panic!("expected full queue"),
+        }
+
+        assert_eq!(session.send_queue_depth(), 1);
+        assert_eq!(metrics.send_queue_depth(), 1);
+        assert_eq!(metrics.send_queue_drops.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            metrics
+                .send_queue_max_session_utilization_percent
+                .load(Ordering::Relaxed),
+            100
+        );
+
+        let packet = rx.try_recv().expect("packet is queued");
+        session.record_send_queue_dequeued(&metrics, packet.queued_at_millis, 15);
+        drop(packet);
+
+        assert_eq!(session.send_queue_depth(), 0);
+        assert_eq!(metrics.send_queue_depth(), 0);
+        assert_eq!(metrics.send_queue_dequeued.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            metrics
+                .send_queue_wait_millis_total
+                .load(Ordering::Relaxed),
+            5
+        );
+    }
+
+    #[test]
+    fn queue_health_snapshot_reports_degraded_reasons() {
+        let metrics = Arc::new(ShimMetrics::default());
+        let sessions = Arc::new(DashMap::new());
+        let session = test_session_with_queue_capacity(2);
+        let client_addr = SocketAddr::from(([127, 0, 0, 1], 12345));
+        sessions.insert(client_addr, session.clone());
+        metrics.active_sessions.fetch_add(1, Ordering::Relaxed);
+        metrics.record_send_queue_capacity_add(session.send_queue_capacity());
+
+        let reservation = session.reserve_send_queue_slot(&metrics);
+        session.record_send_queue_accepted(&metrics, reservation);
+        session.record_send_queue_full_drop(&metrics);
+        metrics.buffer_pool_exhausted.fetch_add(1, Ordering::Relaxed);
+
+        let handle = ShimHealthHandle {
+            metrics,
+            sessions,
+        };
+        let snapshot = handle.snapshot();
+
+        assert_eq!(snapshot.status, "degraded");
+        assert_eq!(snapshot.queue.depth, 1);
+        assert_eq!(snapshot.queue.capacity, 2);
+        assert_eq!(snapshot.queue.utilization_percent, 50);
+        assert!(snapshot
+            .queue
+            .reasons
+            .contains(&"send_queue_drops_observed"));
+        assert!(snapshot
+            .queue
+            .reasons
+            .contains(&"buffer_pool_exhaustion_observed"));
+    }
+
+    #[test]
+    fn queue_health_snapshot_reports_high_current_utilization() {
+        let metrics = Arc::new(ShimMetrics::default());
+        let sessions = Arc::new(DashMap::new());
+        let session = test_session_with_queue_capacity(2);
+        sessions.insert(SocketAddr::from(([127, 0, 0, 1], 12345)), session.clone());
+        metrics.active_sessions.fetch_add(1, Ordering::Relaxed);
+        metrics.record_send_queue_capacity_add(session.send_queue_capacity());
+
+        for _ in 0..2 {
+            let reservation = session.reserve_send_queue_slot(&metrics);
+            session.record_send_queue_accepted(&metrics, reservation);
+        }
+
+        let handle = ShimHealthHandle { metrics, sessions };
+        let snapshot = handle.queue_health_snapshot();
+
+        assert_eq!(snapshot.status, "degraded");
+        assert_eq!(snapshot.depth, 2);
+        assert_eq!(snapshot.capacity, 2);
+        assert_eq!(snapshot.max_session_utilization_percent, 100);
+        assert!(snapshot
+            .reasons
+            .contains(&"send_queue_utilization_high"));
+    }
+
+    #[test]
+    fn rate_limited_log_notice_suppresses_until_interval() {
+        let mut notice = RateLimitedLogNotice::new(Duration::from_secs(30));
+        let now = Instant::now();
+
+        assert_eq!(notice.record(now), Some(0));
+        assert_eq!(notice.record(now + Duration::from_secs(1)), None);
+        assert_eq!(notice.record(now + Duration::from_secs(31)), Some(1));
     }
 
     #[test]
@@ -176,6 +334,18 @@
         metrics
             .buffer_pool_wait_millis_total
             .store(4, Ordering::Relaxed);
+        metrics.send_queue_depth.store(5, Ordering::Relaxed);
+        metrics.send_queue_capacity.store(8, Ordering::Relaxed);
+        metrics
+            .send_queue_depth_high_watermark
+            .store(6, Ordering::Relaxed);
+        metrics
+            .send_queue_max_session_utilization_percent
+            .store(75, Ordering::Relaxed);
+        metrics.send_queue_dequeued.store(7, Ordering::Relaxed);
+        metrics
+            .send_queue_wait_millis_total
+            .store(9, Ordering::Relaxed);
 
         let rendered = metrics.render_openmetrics();
 
@@ -183,6 +353,14 @@
         assert!(rendered
             .contains("wg_obfs_shim_packets_forwarded_total{direction=\"client_to_server\"} 3"));
         assert!(rendered.contains("wg_obfs_shim_buffer_pool_wait_millis_total 4"));
+        assert!(rendered.contains("wg_obfs_shim_send_queue_depth 5"));
+        assert!(rendered.contains("wg_obfs_shim_send_queue_capacity 8"));
+        assert!(rendered.contains("wg_obfs_shim_send_queue_depth_high_watermark 6"));
+        assert!(rendered.contains(
+            "wg_obfs_shim_send_queue_max_session_utilization_percent 75"
+        ));
+        assert!(rendered.contains("wg_obfs_shim_send_queue_dequeued_total 7"));
+        assert!(rendered.contains("wg_obfs_shim_send_queue_wait_millis_total 9"));
         assert!(rendered.ends_with("# EOF\n"));
     }
 

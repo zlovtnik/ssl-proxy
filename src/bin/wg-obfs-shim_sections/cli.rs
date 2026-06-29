@@ -16,10 +16,11 @@ use ssl_proxy::{
         XorRekeyPolicy, MAX_UDP_PACKET_SIZE,
     },
     wg_shim::{
-        self, RateLimitConfig, ShimHealthHandle, WgObfsShimConfig, WgObfsShimRuntime,
-        DEFAULT_BUFFER_POOL_CAPACITY, DEFAULT_DRAIN_TIMEOUT_SECS, DEFAULT_HEALTH_ADDR,
-        DEFAULT_IDLE_TIMEOUT_SECS, DEFAULT_JITTER_MAX_MS, DEFAULT_CHAFF_PPS, DEFAULT_LISTEN_ADDR,
-        DEFAULT_MAX_DATAGRAM_BYTES, DEFAULT_SEND_QUEUE_CAPACITY, MAX_CHAFF_PPS,
+        self, RateLimitConfig, ShimHealthHandle, ShimHealthSnapshot, WgObfsShimConfig,
+        WgObfsShimRuntime, DEFAULT_BUFFER_POOL_CAPACITY, DEFAULT_DRAIN_TIMEOUT_SECS,
+        DEFAULT_HEALTH_ADDR, DEFAULT_IDLE_TIMEOUT_SECS, DEFAULT_JITTER_MAX_MS,
+        DEFAULT_CHAFF_PPS, DEFAULT_LISTEN_ADDR, DEFAULT_MAX_DATAGRAM_BYTES,
+        DEFAULT_SEND_QUEUE_CAPACITY, MAX_CHAFF_PPS,
     },
 };
 use tokio_util::sync::CancellationToken;

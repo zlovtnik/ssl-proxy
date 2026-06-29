@@ -48,6 +48,9 @@ async fn get_or_create_session(
                 .metrics
                 .active_sessions
                 .fetch_add(1, Ordering::Relaxed);
+            context
+                .metrics
+                .record_send_queue_capacity_add(session.send_queue_capacity());
             session.span.in_scope(|| {
                 info!("WireGuard shim session created");
             });
@@ -114,6 +117,11 @@ async fn run_session_receiver(
                 let Some(packet) = queued else {
                     break;
                 };
+                session.record_send_queue_dequeued(
+                    &context.metrics,
+                    packet.queued_at_millis,
+                    context.clock.now_millis(),
+                );
                 if !await_send_jitter(&context, &session).await {
                     break;
                 }
@@ -302,6 +310,13 @@ async fn run_session_receiver(
         }
     }
 
+    drain_pending_upstream_packets(
+        &session,
+        &context.metrics,
+        &mut upstream_rx,
+        context.clock.now_millis(),
+    );
+
     let close_reason = if context.shutdown.is_cancelled() {
         SessionCloseReason::Shutdown
     } else {
@@ -315,6 +330,18 @@ async fn run_session_receiver(
         close_reason,
     );
     session.close();
+}
+
+fn drain_pending_upstream_packets(
+    session: &ShimSession,
+    metrics: &ShimMetrics,
+    upstream_rx: &mut mpsc::Receiver<QueuedUpstreamPacket>,
+    now_millis: u64,
+) {
+    while let Ok(packet) = upstream_rx.try_recv() {
+        session.record_send_queue_dequeued(metrics, packet.queued_at_millis, now_millis);
+        drop(packet);
+    }
 }
 
 async fn connect_next_upstream(

@@ -35,6 +35,8 @@ pub const DEFAULT_HEALTH_ADDR: &str = "127.0.0.1:51822";
 pub const DEFAULT_JITTER_MAX_MS: u64 = 0;
 pub const DEFAULT_CHAFF_PPS: u64 = 0;
 pub const MAX_CHAFF_PPS: u64 = 1_000_000;
+const SEND_QUEUE_HEALTH_DEGRADED_UTILIZATION_PERCENT: u64 = 80;
+const SEND_QUEUE_FULL_LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RateLimitConfig {
@@ -191,6 +193,13 @@ pub struct ShimMetrics {
     rate_limited_drops: AtomicU64,
     buffer_pool_exhausted: AtomicU64,
     buffer_pool_wait_millis_total: AtomicU64,
+    send_queue_depth: AtomicU64,
+    send_queue_capacity: AtomicU64,
+    send_queue_depth_high_watermark: AtomicU64,
+    send_queue_max_session_depth: AtomicU64,
+    send_queue_max_session_utilization_percent: AtomicU64,
+    send_queue_dequeued: AtomicU64,
+    send_queue_wait_millis_total: AtomicU64,
     send_queue_drops: AtomicU64,
     chaff_packets_sent: AtomicU64,
 }
@@ -198,6 +207,59 @@ pub struct ShimMetrics {
 impl ShimMetrics {
     pub fn active_sessions(&self) -> u64 {
         self.active_sessions.load(Ordering::Relaxed)
+    }
+
+    fn send_queue_depth(&self) -> u64 {
+        self.send_queue_depth.load(Ordering::Relaxed)
+    }
+
+    fn send_queue_capacity(&self) -> u64 {
+        self.send_queue_capacity.load(Ordering::Relaxed)
+    }
+
+    fn record_send_queue_capacity_add(&self, capacity: usize) {
+        self.send_queue_capacity
+            .fetch_add(capacity as u64, Ordering::Relaxed);
+    }
+
+    fn record_send_queue_capacity_sub(&self, capacity: usize) {
+        subtract_saturating(&self.send_queue_capacity, capacity as u64);
+    }
+
+    fn reserve_send_queue_slot(&self) -> u64 {
+        self.send_queue_depth.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn release_send_queue_slots(&self, count: u64) {
+        subtract_saturating(&self.send_queue_depth, count);
+    }
+
+    fn record_send_queue_accepted(
+        &self,
+        session_depth: usize,
+        session_capacity: usize,
+        total_depth: u64,
+    ) {
+        update_atomic_max(&self.send_queue_depth_high_watermark, total_depth);
+        update_atomic_max(&self.send_queue_max_session_depth, session_depth as u64);
+        update_atomic_max(
+            &self.send_queue_max_session_utilization_percent,
+            utilization_percent(session_depth, session_capacity),
+        );
+    }
+
+    fn record_send_queue_dequeued(&self, queued_at_millis: u64, now_millis: u64) {
+        self.send_queue_dequeued.fetch_add(1, Ordering::Relaxed);
+        self.send_queue_wait_millis_total.fetch_add(
+            now_millis.saturating_sub(queued_at_millis),
+            Ordering::Relaxed,
+        );
+    }
+
+    fn record_send_queue_full_drop(&self, session_capacity: usize) {
+        self.send_queue_drops.fetch_add(1, Ordering::Relaxed);
+        update_atomic_max(&self.send_queue_max_session_depth, session_capacity as u64);
+        update_atomic_max(&self.send_queue_max_session_utilization_percent, 100);
     }
 
     #[cfg(feature = "metrics")]
@@ -226,6 +288,20 @@ impl ShimMetrics {
                 "wg_obfs_shim_buffer_pool_exhausted_total {}\n",
                 "# TYPE wg_obfs_shim_buffer_pool_wait_millis_total counter\n",
                 "wg_obfs_shim_buffer_pool_wait_millis_total {}\n",
+                "# TYPE wg_obfs_shim_send_queue_depth gauge\n",
+                "wg_obfs_shim_send_queue_depth {}\n",
+                "# TYPE wg_obfs_shim_send_queue_capacity gauge\n",
+                "wg_obfs_shim_send_queue_capacity {}\n",
+                "# TYPE wg_obfs_shim_send_queue_depth_high_watermark gauge\n",
+                "wg_obfs_shim_send_queue_depth_high_watermark {}\n",
+                "# TYPE wg_obfs_shim_send_queue_max_session_depth gauge\n",
+                "wg_obfs_shim_send_queue_max_session_depth {}\n",
+                "# TYPE wg_obfs_shim_send_queue_max_session_utilization_percent gauge\n",
+                "wg_obfs_shim_send_queue_max_session_utilization_percent {}\n",
+                "# TYPE wg_obfs_shim_send_queue_dequeued_total counter\n",
+                "wg_obfs_shim_send_queue_dequeued_total {}\n",
+                "# TYPE wg_obfs_shim_send_queue_wait_millis_total counter\n",
+                "wg_obfs_shim_send_queue_wait_millis_total {}\n",
                 "# TYPE wg_obfs_shim_send_queue_drops_total counter\n",
                 "wg_obfs_shim_send_queue_drops_total {}\n",
                 "# TYPE wg_obfs_shim_chaff_packets_sent_total counter\n",
@@ -245,24 +321,167 @@ impl ShimMetrics {
             self.rate_limited_drops.load(Ordering::Relaxed),
             self.buffer_pool_exhausted.load(Ordering::Relaxed),
             self.buffer_pool_wait_millis_total.load(Ordering::Relaxed),
+            self.send_queue_depth.load(Ordering::Relaxed),
+            self.send_queue_capacity.load(Ordering::Relaxed),
+            self.send_queue_depth_high_watermark.load(Ordering::Relaxed),
+            self.send_queue_max_session_depth.load(Ordering::Relaxed),
+            self.send_queue_max_session_utilization_percent
+                .load(Ordering::Relaxed),
+            self.send_queue_dequeued.load(Ordering::Relaxed),
+            self.send_queue_wait_millis_total.load(Ordering::Relaxed),
             self.send_queue_drops.load(Ordering::Relaxed),
             self.chaff_packets_sent.load(Ordering::Relaxed),
         )
     }
 }
 
+fn update_atomic_max(target: &AtomicU64, value: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while value > current {
+        match target.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+fn subtract_saturating(target: &AtomicU64, count: u64) {
+    let _ = target.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        Some(current.saturating_sub(count))
+    });
+}
+
+fn utilization_percent(depth: usize, capacity: usize) -> u64 {
+    if capacity == 0 {
+        return 0;
+    }
+    ((depth as u128 * 100) / capacity as u128).min(100) as u64
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ShimHealthSnapshot {
+    pub status: &'static str,
+    pub sessions: u64,
+    pub replay_detected: u64,
+    pub queue: ShimQueueHealthSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ShimQueueHealthSnapshot {
+    pub status: &'static str,
+    pub active_sessions: u64,
+    pub depth: u64,
+    pub capacity: u64,
+    pub utilization_percent: u64,
+    pub max_session_depth: u64,
+    pub max_session_capacity: u64,
+    pub max_session_utilization_percent: u64,
+    pub depth_high_watermark: u64,
+    pub max_session_depth_high_watermark: u64,
+    pub max_session_utilization_high_watermark_percent: u64,
+    pub dequeued_total: u64,
+    pub wait_millis_total: u64,
+    pub drops_total: u64,
+    pub buffer_pool_exhausted_total: u64,
+    pub buffer_pool_wait_millis_total: u64,
+    pub reasons: Vec<&'static str>,
+}
+
 #[derive(Clone)]
 pub struct ShimHealthHandle {
     metrics: Arc<ShimMetrics>,
+    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
 }
 
 impl ShimHealthHandle {
+    pub fn snapshot(&self) -> ShimHealthSnapshot {
+        let queue = self.queue_health_snapshot();
+        let status = if queue.status == "ok" { "ok" } else { "degraded" };
+        ShimHealthSnapshot {
+            status,
+            sessions: self.active_sessions(),
+            replay_detected: self.replay_detected(),
+            queue,
+        }
+    }
+
     pub fn active_sessions(&self) -> u64 {
         self.metrics.active_sessions()
     }
 
     pub fn replay_detected(&self) -> u64 {
         self.metrics.replay_detected.load(Ordering::Relaxed)
+    }
+
+    pub fn queue_health_snapshot(&self) -> ShimQueueHealthSnapshot {
+        let mut depth = 0u64;
+        let mut capacity = 0u64;
+        let mut max_session_depth = 0u64;
+        let mut max_session_capacity = 0u64;
+        let mut max_session_utilization_percent = 0u64;
+
+        for entry in self.sessions.iter() {
+            let session = entry.value();
+            let session_depth = session.send_queue_depth() as u64;
+            let session_capacity = session.send_queue_capacity() as u64;
+            depth = depth.saturating_add(session_depth);
+            capacity = capacity.saturating_add(session_capacity);
+            if session_depth > max_session_depth {
+                max_session_depth = session_depth;
+                max_session_capacity = session_capacity;
+            }
+            max_session_utilization_percent = max_session_utilization_percent
+                .max(utilization_percent(session_depth as usize, session_capacity as usize));
+        }
+
+        let drops_total = self.metrics.send_queue_drops.load(Ordering::Relaxed);
+        let buffer_pool_exhausted_total = self.metrics.buffer_pool_exhausted.load(Ordering::Relaxed);
+        let utilization_percent = utilization_percent(depth as usize, capacity as usize);
+        let mut reasons = Vec::new();
+        if max_session_utilization_percent >= SEND_QUEUE_HEALTH_DEGRADED_UTILIZATION_PERCENT {
+            reasons.push("send_queue_utilization_high");
+        }
+        if drops_total > 0 {
+            reasons.push("send_queue_drops_observed");
+        }
+        if buffer_pool_exhausted_total > 0 {
+            reasons.push("buffer_pool_exhaustion_observed");
+        }
+
+        ShimQueueHealthSnapshot {
+            status: if reasons.is_empty() { "ok" } else { "degraded" },
+            active_sessions: self.active_sessions(),
+            depth,
+            capacity,
+            utilization_percent,
+            max_session_depth,
+            max_session_capacity,
+            max_session_utilization_percent,
+            depth_high_watermark: self
+                .metrics
+                .send_queue_depth_high_watermark
+                .load(Ordering::Relaxed),
+            max_session_depth_high_watermark: self
+                .metrics
+                .send_queue_max_session_depth
+                .load(Ordering::Relaxed),
+            max_session_utilization_high_watermark_percent: self
+                .metrics
+                .send_queue_max_session_utilization_percent
+                .load(Ordering::Relaxed),
+            dequeued_total: self.metrics.send_queue_dequeued.load(Ordering::Relaxed),
+            wait_millis_total: self
+                .metrics
+                .send_queue_wait_millis_total
+                .load(Ordering::Relaxed),
+            drops_total,
+            buffer_pool_exhausted_total,
+            buffer_pool_wait_millis_total: self
+                .metrics
+                .buffer_pool_wait_millis_total
+                .load(Ordering::Relaxed),
+            reasons,
+        }
     }
 }
 
@@ -271,6 +490,7 @@ pub struct WgObfsShimRuntime {
     pub handle: JoinHandle<()>,
     config: Arc<ArcSwap<WgObfsShimConfig>>,
     metrics: Arc<ShimMetrics>,
+    sessions: Arc<DashMap<SocketAddr, Arc<ShimSession>>>,
 }
 
 impl WgObfsShimRuntime {
@@ -285,11 +505,44 @@ impl WgObfsShimRuntime {
     pub fn health_handle(&self) -> ShimHealthHandle {
         ShimHealthHandle {
             metrics: self.metrics.clone(),
+            sessions: self.sessions.clone(),
         }
     }
 
     pub fn active_sessions(&self) -> u64 {
         self.metrics.active_sessions()
+    }
+}
+
+#[derive(Debug)]
+struct RateLimitedLogNotice {
+    interval: Duration,
+    last_log: Option<Instant>,
+    suppressed: u64,
+}
+
+impl RateLimitedLogNotice {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            last_log: None,
+            suppressed: 0,
+        }
+    }
+
+    fn record(&mut self, now: Instant) -> Option<u64> {
+        match self.last_log {
+            Some(last_log) if now.duration_since(last_log) < self.interval => {
+                self.suppressed += 1;
+                None
+            }
+            _ => {
+                let suppressed = self.suppressed;
+                self.suppressed = 0;
+                self.last_log = Some(now);
+                Some(suppressed)
+            }
+        }
     }
 }
 
@@ -425,6 +678,9 @@ struct ShimSession {
     server_to_client_replay: Mutex<ReplayWindow>,
     rate_limiter: Option<Mutex<TokenBucket>>,
     first_send_logged: AtomicBool,
+    send_queue_depth: AtomicUsize,
+    send_queue_capacity: usize,
+    send_queue_full_notice: Mutex<RateLimitedLogNotice>,
     last_upstream_send_millis: AtomicU64,
     last_server_reply_millis: AtomicU64,
     last_server_rtt_millis: AtomicU64,
