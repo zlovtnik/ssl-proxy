@@ -65,7 +65,7 @@ Use the rotator in `apps/wg-key-rotator` for stable-port scheduled rotation. It 
 2. **Distribute generated client bundles:**
    - Bundles are written under `secrets/wg-rotation/generations/<generation>/client-bundles/`
    - Private keys, PSKs, admin keys, and obfuscation keys stay in ignored local files
-   - Clients keep the same public UDP endpoint; the frontdoor fans packets to active and candidate backends
+   - Clients keep the same public UDP endpoint; the frontdoor probes active and candidate backends, then pins each client to the backend that replies first
 
 3. **Promote after every configured peer handshakes with the candidate:**
    ```bash

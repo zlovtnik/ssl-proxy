@@ -108,7 +108,7 @@ wg genpsk > presharedkey-peer1
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| WireGuard Frontdoor | 443 | UDP | Stable public UDP entrypoint, fanned out to active/candidate backends during rotation |
+| WireGuard Frontdoor | 443 | UDP | Stable public UDP entrypoint; probes active/candidate backends during rotation, then pins each client to the backend that replies |
 | WireGuard Frontdoor | 51820 | UDP | Stable alternate public UDP entrypoint for obfuscated Mac/shim profiles |
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
@@ -237,7 +237,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_UDP_SOCKET_BUFFER_BYTES` | `8388608` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
-| `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config |
+| `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config; multiple enabled backends are probed until one replies for a client |
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
 | `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |

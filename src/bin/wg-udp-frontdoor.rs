@@ -76,6 +76,7 @@ struct RuntimeOptions {
 struct RuntimeState {
     config: Arc<RwLock<FrontdoorConfig>>,
     sessions: Arc<Mutex<HashMap<SessionKey, Arc<BackendSession>>>>,
+    routes: Arc<Mutex<HashMap<ClientRouteKey, BackendRoute>>>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
     stats: Arc<FrontdoorStats>,
     session_idle: Duration,
@@ -87,6 +88,18 @@ struct RuntimeState {
 struct BackendSession {
     socket: Arc<UdpSocket>,
     last_activity_epoch: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+struct ClientRouteKey {
+    listener: String,
+    client_addr: SocketAddr,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BackendRoute {
+    backend_name: String,
+    backend_addr: String,
 }
 
 #[derive(Clone, Eq)]
@@ -218,6 +231,7 @@ async fn main() {
     let state = RuntimeState {
         config: Arc::new(RwLock::new(config.clone())),
         sessions: Arc::new(Mutex::new(HashMap::new())),
+        routes: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new(options.rate_limit_pps))),
         stats: Arc::new(FrontdoorStats::default()),
         session_idle: options.session_idle,
@@ -522,7 +536,9 @@ async fn run_listener_with_socket(
             continue;
         }
 
-        for backend in backends {
+        for backend in
+            route_backends_for_client(&state, &listener.name, client_addr, backends).await
+        {
             let packet = &buf[..len];
             match get_or_create_session(
                 &listener.name,
@@ -583,6 +599,32 @@ async fn enabled_backends_for_listener(
         .filter(|backend| backend.enabled)
         .cloned()
         .collect()
+}
+
+async fn route_backends_for_client(
+    state: &RuntimeState,
+    listener_name: &str,
+    client_addr: SocketAddr,
+    enabled_backends: Vec<BackendConfig>,
+) -> Vec<BackendConfig> {
+    let route_key = ClientRouteKey {
+        listener: listener_name.to_string(),
+        client_addr,
+    };
+    let mut routes = state.routes.lock().await;
+    let Some(route) = routes.get(&route_key) else {
+        return enabled_backends;
+    };
+
+    if let Some(backend) = enabled_backends
+        .iter()
+        .find(|backend| backend.name == route.backend_name && backend.addr == route.backend_addr)
+    {
+        return vec![backend.clone()];
+    }
+
+    routes.remove(&route_key);
+    enabled_backends
 }
 
 async fn get_or_create_session(
@@ -662,6 +704,13 @@ async fn run_backend_session(
                 session
                     .last_activity_epoch
                     .store(now_epoch_secs(), Ordering::Relaxed);
+                if !bind_backend_route_for_reply(&state, &key).await {
+                    debug!(
+                        ?key,
+                        "dropping backend reply from non-selected WireGuard route"
+                    );
+                    continue;
+                }
                 if let Err(error) = listener_socket.send_to(&buf[..len], key.client_addr).await {
                     warn!(
                         %error,
@@ -683,6 +732,45 @@ async fn run_backend_session(
     }
 
     state.sessions.lock().await.remove(&key);
+    remove_backend_route_if_current(&state, &key).await;
+}
+
+async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) -> bool {
+    let route_key = ClientRouteKey {
+        listener: key.listener.clone(),
+        client_addr: key.client_addr,
+    };
+    let route = BackendRoute {
+        backend_name: key.backend_name.clone(),
+        backend_addr: key.backend_addr.clone(),
+    };
+    let mut routes = state.routes.lock().await;
+    match routes.get(&route_key) {
+        Some(existing) if existing == &route => true,
+        Some(_) => false,
+        None => {
+            routes.insert(route_key, route);
+            true
+        }
+    }
+}
+
+async fn remove_backend_route_if_current(state: &RuntimeState, key: &SessionKey) {
+    let route_key = ClientRouteKey {
+        listener: key.listener.clone(),
+        client_addr: key.client_addr,
+    };
+    let route = BackendRoute {
+        backend_name: key.backend_name.clone(),
+        backend_addr: key.backend_addr.clone(),
+    };
+    let mut routes = state.routes.lock().await;
+    if routes
+        .get(&route_key)
+        .is_some_and(|existing| existing == &route)
+    {
+        routes.remove(&route_key);
+    }
 }
 
 impl RateLimiter {
@@ -980,6 +1068,7 @@ addr = "127.0.0.1:51820"
                 backends: Vec::new(),
             })),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            routes: Arc::new(Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(Mutex::new(RateLimiter::new(0))),
             stats,
             session_idle: Duration::from_secs(5),
@@ -1030,6 +1119,7 @@ addr = "127.0.0.1:51820"
         let state = RuntimeState {
             config: Arc::new(RwLock::new(config)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            routes: Arc::new(Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(Mutex::new(RateLimiter::new(0))),
             stats: Arc::new(FrontdoorStats::default()),
             session_idle: Duration::from_secs(5),
@@ -1064,5 +1154,18 @@ addr = "127.0.0.1:51820"
             .unwrap()
             .unwrap();
         assert_eq!(&buf[..reply_len], b"ok");
+
+        client.send_to(b"pinned", frontdoor_addr).await.unwrap();
+        let (a_len, _a_peer) = timeout(Duration::from_secs(2), backend_a.recv_from(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buf[..a_len], b"pinned");
+
+        assert!(
+            timeout(Duration::from_millis(100), backend_b.recv_from(&mut buf))
+                .await
+                .is_err()
+        );
     }
 }
