@@ -303,6 +303,49 @@ fn parse_config_rejects_excessive_chaff_pps() {
     );
 }
 
+#[test]
+fn parse_config_rejects_zero_udp_socket_buffer_bytes() {
+    let _guard = env_lock();
+    clear_env();
+
+    let result = parse_config([
+        "--server".to_string(),
+        "127.0.0.1:443".to_string(),
+        "--key".to_string(),
+        "super-secret".to_string(),
+        "--udp-socket-buffer-bytes".to_string(),
+        "0".to_string(),
+    ]);
+
+    assert!(
+        matches!(result, Err(ConfigParseOutcome::Error(message)) if message.contains("UDP socket buffer bytes"))
+    );
+}
+
+#[test]
+fn parse_config_rejects_zero_toml_udp_socket_buffer_bytes() {
+    let _guard = env_lock();
+    clear_env();
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        file,
+        r#"
+[[shim]]
+listen_addr = "127.0.0.1:51821"
+server_addr = "127.0.0.1:445"
+key = "first-key"
+udp_socket_buffer_bytes = 0
+"#
+    )
+    .unwrap();
+
+    let result = parse_config(["--config".to_string(), file.path().display().to_string()]);
+
+    assert!(
+        matches!(result, Err(ConfigParseOutcome::Error(message)) if message.contains("UDP socket buffer bytes"))
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn parse_config_key_file_must_be_regular_file() {

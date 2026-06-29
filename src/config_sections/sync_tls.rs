@@ -221,40 +221,74 @@ impl WireGuardConfig {
     /// ```
     pub(super) fn from_env() -> Result<Self, ConfigError> {
         let obfuscation_enabled = read_bool("WG_OBFUSCATION_ENABLED", true);
-        let obfuscation_key = if obfuscation_enabled {
-            read_secret_strict_file("WG_OBFUSCATION_KEY", "WG_OBFUSCATION_KEY_FILE")?
-                .unwrap_or_default()
+        let (
+            obfuscation_key,
+            obfuscation_encryption_mode,
+            obfuscation_replay_protection,
+            obfuscation_magic_byte,
+            obfuscation_padding,
+            obfuscation_magic_position,
+            obfuscation_xor_rekey_packets,
+            obfuscation_xor_rekey_secs,
+            sizing_settings,
+        ) = if obfuscation_enabled {
+            let obfuscation_key =
+                read_secret_strict_file("WG_OBFUSCATION_KEY", "WG_OBFUSCATION_KEY_FILE")?
+                    .unwrap_or_default();
+            if obfuscation_key.is_empty() {
+                return Err(ConfigError::MissingWireGuardObfuscationKey);
+            }
+            let obfuscation_encryption_mode =
+                read_wireguard_obfuscation_encryption_mode("WG_OBFUSCATION_ENCRYPTION_MODE")?;
+            let obfuscation_replay_protection = read_bool(
+                "WG_OBFUSCATION_REPLAY_PROTECTION",
+                matches!(obfuscation_encryption_mode, EncryptionMode::Aead),
+            );
+            let obfuscation_magic_byte = read_magic_byte("WG_OBFUSCATION_MAGIC_BYTE")?;
+            let obfuscation_padding = read_wireguard_obfuscation_padding("WG_OBFUSCATION_PADDING")?;
+            let obfuscation_magic_position =
+                read_wireguard_obfuscation_magic_position("WG_OBFUSCATION_MAGIC_POSITION")?;
+            let obfuscation_xor_rekey_packets =
+                read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS")?;
+            let obfuscation_xor_rekey_secs = read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS")?;
+            let sizing_settings = WgPacketObfuscation::new(
+                obfuscation_key.clone().into_bytes(),
+                obfuscation_magic_byte,
+            )
+            .with_encryption_mode(obfuscation_encryption_mode)
+            .with_padding(obfuscation_padding.clone())
+            .with_magic_position(obfuscation_magic_position)
+            .with_xor_rekey(XorRekeyPolicy::new(
+                obfuscation_xor_rekey_packets,
+                obfuscation_xor_rekey_secs,
+            ))
+            .with_replay_protection(obfuscation_replay_protection);
+            (
+                obfuscation_key,
+                obfuscation_encryption_mode,
+                obfuscation_replay_protection,
+                obfuscation_magic_byte,
+                obfuscation_padding,
+                obfuscation_magic_position,
+                obfuscation_xor_rekey_packets,
+                obfuscation_xor_rekey_secs,
+                Some(sizing_settings),
+            )
         } else {
-            String::new()
+            (
+                String::new(),
+                EncryptionMode::Xor,
+                false,
+                None,
+                PacketPadding::None,
+                crate::wg_packet_obfuscation::MagicPositionMode::Fixed,
+                None,
+                None,
+                None,
+            )
         };
-        if obfuscation_enabled && obfuscation_key.is_empty() {
-            return Err(ConfigError::MissingWireGuardObfuscationKey);
-        }
-        let obfuscation_encryption_mode =
-            read_wireguard_obfuscation_encryption_mode("WG_OBFUSCATION_ENCRYPTION_MODE")?;
-        let obfuscation_replay_protection = read_bool(
-            "WG_OBFUSCATION_REPLAY_PROTECTION",
-            matches!(obfuscation_encryption_mode, EncryptionMode::Aead),
-        );
-        let obfuscation_magic_byte = read_magic_byte("WG_OBFUSCATION_MAGIC_BYTE")?;
-        let obfuscation_padding = read_wireguard_obfuscation_padding("WG_OBFUSCATION_PADDING")?;
-        let obfuscation_magic_position =
-            read_wireguard_obfuscation_magic_position("WG_OBFUSCATION_MAGIC_POSITION")?;
-        let obfuscation_xor_rekey_packets = read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS")?;
-        let obfuscation_xor_rekey_secs = read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS")?;
-        let sizing_settings = obfuscation_enabled.then(|| {
-            WgPacketObfuscation::new(obfuscation_key.clone().into_bytes(), obfuscation_magic_byte)
-                .with_encryption_mode(obfuscation_encryption_mode)
-                .with_padding(obfuscation_padding.clone())
-                .with_magic_position(obfuscation_magic_position)
-                .with_xor_rekey(XorRekeyPolicy::new(
-                    obfuscation_xor_rekey_packets,
-                    obfuscation_xor_rekey_secs,
-                ))
-                .with_replay_protection(obfuscation_replay_protection)
-        });
         let default_max_datagram_bytes =
-            default_obfuscation_max_datagram_bytes(sizing_settings.as_ref());
+            default_obfuscation_max_datagram_bytes(sizing_settings.as_ref())?;
         let obfuscation_max_datagram_bytes = read_optional_bounded_usize(
             "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
             1,
@@ -300,22 +334,40 @@ impl WireGuardConfig {
     }
 }
 
-fn default_obfuscation_max_datagram_bytes(settings: Option<&WgPacketObfuscation>) -> usize {
+pub(super) fn default_obfuscation_max_datagram_bytes(
+    settings: Option<&WgPacketObfuscation>,
+) -> Result<usize, ConfigError> {
     let wg_mtu = read_optional_usize("WG_MTU")
         .unwrap_or(DEFAULT_WIREGUARD_PATH_MTU_BYTES)
         .clamp(1, MAX_WIREGUARD_DATAGRAM_BYTES);
+    default_obfuscation_max_datagram_bytes_for_mtu(wg_mtu, settings)
+}
+
+pub(super) fn default_obfuscation_max_datagram_bytes_for_mtu(
+    wg_mtu: usize,
+    settings: Option<&WgPacketObfuscation>,
+) -> Result<usize, ConfigError> {
     let Some(settings) = settings else {
-        return wg_mtu;
+        return Ok(wg_mtu);
     };
 
-    encoded_packet_len_bounds(wg_mtu, settings)
-        .map(|bounds| bounds.max_encoded_len)
-        .unwrap_or_else(|_| match &settings.padding {
+    let bytes = match encoded_packet_len_bounds(wg_mtu, settings) {
+        Ok(bounds) => bounds.max_encoded_len,
+        Err(err) => match &settings.padding {
             PacketPadding::FixedMtu(mtu) => *mtu,
             PacketPadding::RandomBucket(mtus) => mtus.iter().copied().max().unwrap_or(wg_mtu),
-            PacketPadding::None | PacketPadding::PowerOfTwo => wg_mtu,
-        })
-        .clamp(1, MAX_WIREGUARD_DATAGRAM_BYTES)
+            PacketPadding::None | PacketPadding::PowerOfTwo => {
+                return Err(ConfigError::InvalidWireGuardObfuscationSizing {
+                    var: "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+                    message: format!(
+                        "cannot derive default for WG_MTU={wg_mtu} and padding {:?}: {err}",
+                        settings.padding
+                    ),
+                });
+            }
+        },
+    };
+    Ok(bytes.clamp(1, MAX_WIREGUARD_DATAGRAM_BYTES))
 }
 
 impl RuntimeConfig {

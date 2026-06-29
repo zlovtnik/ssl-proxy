@@ -55,6 +55,7 @@ run_iperf_case() {
     local label="$1"
     local target="$2"
     shift 2
+    local result=0
 
     if [ -z "$target" ]; then
         echo "skip $label: target not set"
@@ -77,8 +78,10 @@ run_iperf_case() {
 
     if iperf3 -c "$target" "$@" -J >"$OUT_DIR/${label}.iperf.json"; then
         echo "pass $label"
+        result=0
     else
         echo "fail $label" >&2
+        result=1
     fi
 
     if [ -n "$perf_job" ]; then
@@ -86,6 +89,7 @@ run_iperf_case() {
     fi
     snapshot_ss "$OUT_DIR/${label}.ss.after.txt"
     snapshot_fragments "$OUT_DIR/${label}.fragments.after.txt"
+    return "$result"
 }
 
 main() {
@@ -97,14 +101,16 @@ main() {
     require_tool iperf3
     mkdir -p "$OUT_DIR"
 
-    run_iperf_case bypass-tcp "$BYPASS_TARGET" -t "$DURATION" -P "$PARALLEL"
-    run_iperf_case bypass-udp "$BYPASS_TARGET" -u -b "$UDP_BW" -t "$DURATION"
-    run_iperf_case plain-tcp "$PLAIN_TARGET" -t "$DURATION" -P "$PARALLEL"
-    run_iperf_case plain-udp "$PLAIN_TARGET" -u -b "$UDP_BW" -t "$DURATION"
-    run_iperf_case obfs-tcp "$OBFS_TARGET" -t "$DURATION" -P "$PARALLEL"
-    run_iperf_case obfs-udp "$OBFS_TARGET" -u -b "$UDP_BW" -t "$DURATION"
+    local failed=0
+    run_iperf_case bypass-tcp "$BYPASS_TARGET" -t "$DURATION" -P "$PARALLEL" || failed=1
+    run_iperf_case bypass-udp "$BYPASS_TARGET" -u -b "$UDP_BW" -t "$DURATION" || failed=1
+    run_iperf_case plain-tcp "$PLAIN_TARGET" -t "$DURATION" -P "$PARALLEL" || failed=1
+    run_iperf_case plain-udp "$PLAIN_TARGET" -u -b "$UDP_BW" -t "$DURATION" || failed=1
+    run_iperf_case obfs-tcp "$OBFS_TARGET" -t "$DURATION" -P "$PARALLEL" || failed=1
+    run_iperf_case obfs-udp "$OBFS_TARGET" -u -b "$UDP_BW" -t "$DURATION" || failed=1
 
     echo "results: $OUT_DIR"
+    return "$failed"
 }
 
 main "$@"

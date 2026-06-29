@@ -493,9 +493,11 @@ fn log_runtime_ports(config: &config::Config) {
     log_wireguard_obfuscation_sizing(config);
 }
 
-fn log_wireguard_obfuscation_sizing(config: &config::Config) {
+fn wireguard_obfuscation_sizing_bounds(
+    config: &config::Config,
+) -> Result<Option<(usize, wg_packet_obfuscation::EncodedPacketLenBounds)>, String> {
     if !config.wireguard.obfuscation_enabled {
-        return;
+        return Ok(None);
     }
 
     let wg_mtu = std::env::var("WG_MTU")
@@ -504,8 +506,29 @@ fn log_wireguard_obfuscation_sizing(config: &config::Config) {
         .filter(|value| *value > 0)
         .unwrap_or(config::DEFAULT_WIREGUARD_PATH_MTU_BYTES);
     let settings = config.wireguard.packet_obfuscation();
-    match wg_packet_obfuscation::encoded_packet_len_bounds(wg_mtu, &settings) {
-        Ok(bounds) => {
+    wg_packet_obfuscation::encoded_packet_len_bounds(wg_mtu, &settings)
+        .map(|bounds| Some((wg_mtu, bounds)))
+        .map_err(|err| format!("WG_MTU={wg_mtu} cannot be encoded with current settings: {err}"))
+}
+
+fn validate_wireguard_obfuscation_sizing(config: &config::Config) -> Result<(), String> {
+    let Some((_wg_mtu, bounds)) = wireguard_obfuscation_sizing_bounds(config)? else {
+        return Ok(());
+    };
+
+    if bounds.max_encoded_len > config.wireguard.obfuscation_max_datagram_bytes {
+        return Err(format!(
+            "max encoded datagram size {} exceeds WG_OBFUSCATION_MAX_DATAGRAM_BYTES {}",
+            bounds.max_encoded_len, config.wireguard.obfuscation_max_datagram_bytes
+        ));
+    }
+
+    Ok(())
+}
+
+fn log_wireguard_obfuscation_sizing(config: &config::Config) {
+    match wireguard_obfuscation_sizing_bounds(config) {
+        Ok(Some((wg_mtu, bounds))) => {
             info!(
                 wg_mtu,
                 max_obfuscated_datagram_bytes = bounds.max_encoded_len,
@@ -522,17 +545,10 @@ fn log_wireguard_obfuscation_sizing(config: &config::Config) {
                     "WireGuard obfuscation can exceed a 1500-byte path MTU; reduce WG_MTU or use fixed MTU padding"
                 );
             }
-            if bounds.max_encoded_len > config.wireguard.obfuscation_max_datagram_bytes {
-                warn!(
-                    max_obfuscated_datagram_bytes = bounds.max_encoded_len,
-                    configured_max_datagram_bytes = config.wireguard.obfuscation_max_datagram_bytes,
-                    "WG_OBFUSCATION_MAX_DATAGRAM_BYTES is smaller than the expected encoded datagram size"
-                );
-            }
         }
+        Ok(None) => {}
         Err(err) => {
             warn!(
-                wg_mtu,
                 %err,
                 "WireGuard obfuscation sizing could not fit the configured MTU"
             );

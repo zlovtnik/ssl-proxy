@@ -185,6 +185,8 @@ pub enum ConfigError {
         min: usize,
         max: usize,
     },
+    #[error("{var} is invalid: {message}")]
+    InvalidWireGuardObfuscationSizing { var: &'static str, message: String },
     #[error(
         "WG_PORT ({public_port}) and WG_INTERNAL_PORT ({internal_port}) must differ when WG_OBFUSCATION_ENABLED=true"
     )]

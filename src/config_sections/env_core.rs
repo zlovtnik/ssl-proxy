@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use super::{parsing::*, sync_tls::*, types::*};
-use crate::wg_packet_obfuscation::{EncryptionMode, MagicPositionMode, PacketPadding};
+use crate::wg_packet_obfuscation::{
+    EncryptionMode, MagicPositionMode, PacketPadding, WgPacketObfuscation,
+};
 use sync_plane::SyncConfig;
 
 impl Config {
@@ -148,6 +150,15 @@ impl Default for Config {
     /// assert!(!cfg.obfuscation.domain_map.is_empty());
     /// ```
     fn default() -> Self {
+        let default_wireguard_obfuscation =
+            WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), Some(0xAA));
+        let default_obfuscation_max_datagram_bytes =
+            default_obfuscation_max_datagram_bytes_for_mtu(
+                DEFAULT_WIREGUARD_PATH_MTU_BYTES,
+                Some(&default_wireguard_obfuscation),
+            )
+            .expect("default WireGuard obfuscation sizing must be valid");
+
         let mut config = Self {
             proxy: ProxyConfig {
                 port: 3000,
@@ -217,7 +228,7 @@ impl Default for Config {
                 obfuscation_replay_protection: false,
                 obfuscation_xor_rekey_packets: None,
                 obfuscation_xor_rekey_secs: None,
-                obfuscation_max_datagram_bytes: DEFAULT_WIREGUARD_PATH_MTU_BYTES,
+                obfuscation_max_datagram_bytes: default_obfuscation_max_datagram_bytes,
                 udp_socket_buffer_bytes: DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES,
             },
             runtime: RuntimeConfig {

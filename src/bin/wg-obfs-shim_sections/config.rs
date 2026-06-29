@@ -139,14 +139,16 @@ fn parse_single_shim_process_config(
         )?
         .unwrap_or(DEFAULT_MAX_DATAGRAM_BYTES),
     )?;
-    config.udp_socket_buffer_bytes = parse_optional_usize(
-        optional_value(
-            &options.udp_socket_buffer_bytes,
-            "WG_UDP_SOCKET_BUFFER_BYTES",
-        ),
-        "UDP socket buffer bytes",
-    )?
-    .unwrap_or(DEFAULT_UDP_SOCKET_BUFFER_BYTES);
+    config.udp_socket_buffer_bytes = validate_udp_socket_buffer_bytes(
+        parse_optional_usize(
+            optional_value(
+                &options.udp_socket_buffer_bytes,
+                "WG_UDP_SOCKET_BUFFER_BYTES",
+            ),
+            "UDP socket buffer bytes",
+        )?
+        .unwrap_or(DEFAULT_UDP_SOCKET_BUFFER_BYTES),
+    )?;
     config.send_jitter_max = Duration::from_millis(
         parse_optional_nonnegative_u64(
             optional_value(&options.jitter_max_ms, "WG_OBFS_SHIM_JITTER_MAX_MS"),
@@ -624,9 +626,10 @@ fn build_toml_shim_config(
         .unwrap_or(DEFAULT_SEND_QUEUE_CAPACITY);
     config.max_datagram_bytes =
         validate_max_datagram_bytes(raw.max_datagram_bytes.unwrap_or(DEFAULT_MAX_DATAGRAM_BYTES))?;
-    config.udp_socket_buffer_bytes = raw
-        .udp_socket_buffer_bytes
-        .unwrap_or(DEFAULT_UDP_SOCKET_BUFFER_BYTES);
+    config.udp_socket_buffer_bytes = validate_udp_socket_buffer_bytes(
+        raw.udp_socket_buffer_bytes
+            .unwrap_or(DEFAULT_UDP_SOCKET_BUFFER_BYTES),
+    )?;
     config.send_jitter_max =
         Duration::from_millis(raw.jitter_max_ms.unwrap_or(DEFAULT_JITTER_MAX_MS));
     config.chaff_pps = validate_chaff_pps(raw.chaff_pps.unwrap_or(DEFAULT_CHAFF_PPS))?;
@@ -657,6 +660,15 @@ fn validate_max_datagram_bytes(value: usize) -> Result<usize, ConfigParseOutcome
         return Err(ConfigParseOutcome::Error(format!(
             "invalid max datagram bytes {value}; expected value from 1 to {MAX_UDP_PACKET_SIZE}"
         )));
+    }
+    Ok(value)
+}
+
+fn validate_udp_socket_buffer_bytes(value: usize) -> Result<usize, ConfigParseOutcome> {
+    if value == 0 {
+        return Err(ConfigParseOutcome::Error(
+            "invalid UDP socket buffer bytes 0; expected positive value".to_string(),
+        ));
     }
     Ok(value)
 }

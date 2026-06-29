@@ -235,7 +235,7 @@
     }
 
     #[test]
-    fn queue_health_snapshot_reports_degraded_reasons() {
+    fn queue_health_snapshot_keeps_lifetime_counters_informational() {
         let metrics = Arc::new(ShimMetrics::default());
         let sessions = Arc::new(DashMap::new());
         let session = test_session_with_queue_capacity(2);
@@ -255,18 +255,13 @@
         };
         let snapshot = handle.snapshot();
 
-        assert_eq!(snapshot.status, "degraded");
+        assert_eq!(snapshot.status, "ok");
         assert_eq!(snapshot.queue.depth, 1);
         assert_eq!(snapshot.queue.capacity, 2);
         assert_eq!(snapshot.queue.utilization_percent, 50);
-        assert!(snapshot
-            .queue
-            .reasons
-            .contains(&"send_queue_drops_observed"));
-        assert!(snapshot
-            .queue
-            .reasons
-            .contains(&"buffer_pool_exhaustion_observed"));
+        assert_eq!(snapshot.queue.drops_total, 1);
+        assert_eq!(snapshot.queue.buffer_pool_exhausted_total, 1);
+        assert!(snapshot.queue.reasons.is_empty());
     }
 
     #[test]

@@ -17,6 +17,7 @@ BEGIN
     WHEN MATCHED THEN UPDATE SET
         tgt.LOCATION_ID = p_location_id,
         tgt.INTERFACE = p_interface,
+        tgt.REG_DOMAIN = p_reg_domain,
         tgt.LAST_SEEN_AT = p_observed_at
     WHEN NOT MATCHED THEN INSERT (
         SENSOR_ID, LOCATION_ID, INTERFACE, REG_DOMAIN, FIRST_SEEN_AT, LAST_SEEN_AT

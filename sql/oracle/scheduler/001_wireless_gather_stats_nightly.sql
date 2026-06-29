@@ -7,7 +7,7 @@ BEGIN
     DBMS_SCHEDULER.CREATE_JOB (
         job_name => 'WIRELESS_GATHER_STATS_NIGHTLY',
         job_type => 'PLSQL_BLOCK',
-        job_action => 'BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, ''WIRELESS_AUDIT_FRAMES'', granularity=>''AUTO'', degree=>4); DBMS_STATS.GATHER_TABLE_STATS(USER, ''WIRELESS_BANDWIDTH_WINDOWS'', granularity=>''AUTO'', degree=>4); DBMS_STATS.GATHER_TABLE_STATS(USER, ''WIRELESS_CLIENT_INVENTORY'', granularity=>''AUTO'', degree=>2); END;',
+        job_action => 'BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, ''WIRELESS_AUDIT_FRAMES'', granularity=>''AUTO'', options=>''GATHER AUTO'', degree=>4); DBMS_STATS.GATHER_TABLE_STATS(USER, ''WIRELESS_BANDWIDTH_WINDOWS'', granularity=>''AUTO'', options=>''GATHER AUTO'', degree=>4); DBMS_STATS.GATHER_TABLE_STATS(USER, ''WIRELESS_CLIENT_INVENTORY'', granularity=>''AUTO'', options=>''GATHER AUTO'', degree=>2); END;',
         start_date => SYSTIMESTAMP,
         repeat_interval => 'FREQ=DAILY;BYHOUR=3;BYMINUTE=0',
         enabled => TRUE,

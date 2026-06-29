@@ -487,6 +487,24 @@
     }
 
     #[test]
+    fn wireguard_obfuscation_disabled_ignores_stale_obfuscation_options() {
+        let _guard = env_lock();
+        clear_env();
+        std::env::set_var("WG_OBFUSCATION_ENABLED", "false");
+        std::env::set_var("WG_OBFUSCATION_MAGIC_BYTE", "0xGG");
+        std::env::set_var("WG_OBFUSCATION_PADDING", "not-padding");
+        std::env::set_var("WG_OBFUSCATION_XOR_REKEY_PACKETS", "0");
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+
+        let result = Config::from_env().unwrap();
+
+        assert!(!result.wireguard.obfuscation_enabled);
+        assert_eq!(result.wireguard.obfuscation_magic_byte, None);
+        assert_eq!(result.wireguard.obfuscation_padding, PacketPadding::None);
+        assert_eq!(result.wireguard.obfuscation_xor_rekey_packets, None);
+    }
+
+    #[test]
     fn wireguard_magic_byte_accepts_hex_and_decimal() {
         let _guard = env_lock();
         clear_env();

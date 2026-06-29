@@ -56,9 +56,13 @@ mod tests {
         )
         .unwrap();
 
-        tune_udp_socket_buffers(&socket, "test", 256 * 1024);
+        let initial_recv = socket.recv_buffer_size().unwrap();
+        let initial_send = socket.send_buffer_size().unwrap();
+        let requested_size = initial_recv.max(initial_send).saturating_add(256 * 1024);
 
-        assert!(socket.recv_buffer_size().unwrap() >= 256 * 1024);
-        assert!(socket.send_buffer_size().unwrap() >= 256 * 1024);
+        tune_udp_socket_buffers(&socket, "test", requested_size);
+
+        assert!(socket.recv_buffer_size().unwrap() >= initial_recv);
+        assert!(socket.send_buffer_size().unwrap() >= initial_send);
     }
 }

@@ -441,12 +441,6 @@ impl ShimHealthHandle {
         if max_session_utilization_percent >= SEND_QUEUE_HEALTH_DEGRADED_UTILIZATION_PERCENT {
             reasons.push("send_queue_utilization_high");
         }
-        if drops_total > 0 {
-            reasons.push("send_queue_drops_observed");
-        }
-        if buffer_pool_exhausted_total > 0 {
-            reasons.push("buffer_pool_exhaustion_observed");
-        }
 
         ShimQueueHealthSnapshot {
             status: if reasons.is_empty() { "ok" } else { "degraded" },

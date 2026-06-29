@@ -217,7 +217,7 @@ public class JdbcOracleSink implements OracleSink {
                         using (
                             select ? BATCH_ID, ? ROW_SEQUENCE, ? EVENT_TYPE, ? OBSERVED_AT,
                                    ? SENSOR_ID, ? LOCATION_ID, ? INTERFACE, ? CHANNEL,
-                                   ? FRAME_TYPE, ? FRAME_SUBTYPE, ? BSSID, ? SOURCE_MAC,
+                                   ? BAND, ? FRAME_TYPE, ? FRAME_SUBTYPE, ? BSSID, ? SOURCE_MAC,
                                    ? DESTINATION_MAC, ? TRANSMITTER_MAC, ? RECEIVER_MAC,
                                    ? DESTINATION_BSSID, ? SSID, ? SIGNAL_DBM,
                                    ? SEQUENCE_NUMBER, ? RAW_LEN, ? IS_RETRY,
@@ -231,7 +231,7 @@ public class JdbcOracleSink implements OracleSink {
                         on (tgt.BATCH_ID = src.BATCH_ID and tgt.ROW_SEQUENCE = src.ROW_SEQUENCE)
                         when not matched then insert (
                             BATCH_ID, ROW_SEQUENCE, EVENT_TYPE, OBSERVED_AT, SENSOR_ID, LOCATION_ID,
-                            INTERFACE, CHANNEL, FRAME_TYPE, FRAME_SUBTYPE, BSSID, SOURCE_MAC,
+                            INTERFACE, CHANNEL, BAND, FRAME_TYPE, FRAME_SUBTYPE, BSSID, SOURCE_MAC,
                             DESTINATION_MAC, TRANSMITTER_MAC, RECEIVER_MAC, DESTINATION_BSSID, SSID,
                             SIGNAL_DBM, SEQUENCE_NUMBER, RAW_LEN, IS_RETRY, IS_MORE_DATA,
                             IS_POWER_SAVE, IS_PROTECTED, IS_TO_DS, IS_FROM_DS, IS_HANDSHAKE,
@@ -239,7 +239,7 @@ public class JdbcOracleSink implements OracleSink {
                             ANOMALY_REASONS, RAW_JSON
                         ) values (
                             src.BATCH_ID, src.ROW_SEQUENCE, src.EVENT_TYPE, src.OBSERVED_AT,
-                            src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL,
+                            src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL, src.BAND,
                             src.FRAME_TYPE, src.FRAME_SUBTYPE, src.BSSID, src.SOURCE_MAC,
                             src.DESTINATION_MAC, src.TRANSMITTER_MAC, src.RECEIVER_MAC,
                             src.DESTINATION_BSSID, src.SSID, src.SIGNAL_DBM, src.SEQUENCE_NUMBER,
@@ -252,8 +252,9 @@ public class JdbcOracleSink implements OracleSink {
                 try (PreparedStatement statement = prepare(connection, sql)) {
                     for (WirelessAuditFrameInsert row : rows) {
                         bindAll(statement, batchId, row.rowSequence(), row.eventType(), row.observedAt(),
-                                row.sensorId(), row.locationId(), row.iface(), row.channel(), row.frameType(),
-                                row.frameSubtype(), row.bssid(), row.sourceMac(), row.destinationMac(),
+                                row.sensorId(), row.locationId(), row.iface(), row.channel(),
+                                wirelessBandForChannel(row.channel()), row.frameType(), row.frameSubtype(),
+                                row.bssid(), row.sourceMac(), row.destinationMac(),
                                 row.transmitterMac(), row.receiverMac(), row.destinationBssid(), row.ssid(),
                                 row.signalDbm(), row.sequenceNumber(), row.rawLen(), row.isRetry(),
                                 row.isMoreData(), row.isPowerSave(), row.isProtected(), row.isToDs(),
@@ -279,7 +280,7 @@ public class JdbcOracleSink implements OracleSink {
                         using (
                             select ? BATCH_ID, ? ROW_SEQUENCE, ? SCHEMA_VERSION, ? WINDOW_START,
                                    ? WINDOW_END, ? SENSOR_ID, ? LOCATION_ID, ? INTERFACE,
-                                   ? CHANNEL, ? SOURCE_MAC, ? DESTINATION_BSSID, ? SSID,
+                                   ? CHANNEL, ? BAND, ? SOURCE_MAC, ? DESTINATION_BSSID, ? SSID,
                                    ? BYTES, ? FRAME_COUNT, ? RETRY_COUNT, ? MORE_DATA_COUNT,
                                    ? POWER_SAVE_COUNT, ? STRONGEST_SIGNAL_DBM, ? HIST_UNDER_100,
                                    ? HIST_100_500, ? HIST_500_1000, ? HIST_1000_1500,
@@ -290,14 +291,14 @@ public class JdbcOracleSink implements OracleSink {
                         on (tgt.BATCH_ID = src.BATCH_ID and tgt.ROW_SEQUENCE = src.ROW_SEQUENCE)
                         when not matched then insert (
                             BATCH_ID, ROW_SEQUENCE, SCHEMA_VERSION, WINDOW_START, WINDOW_END,
-                            SENSOR_ID, LOCATION_ID, INTERFACE, CHANNEL, SOURCE_MAC, DESTINATION_BSSID,
+                            SENSOR_ID, LOCATION_ID, INTERFACE, CHANNEL, BAND, SOURCE_MAC, DESTINATION_BSSID,
                             SSID, BYTES, FRAME_COUNT, RETRY_COUNT, MORE_DATA_COUNT, POWER_SAVE_COUNT,
                             STRONGEST_SIGNAL_DBM, HIST_UNDER_100, HIST_100_500, HIST_500_1000,
                             HIST_1000_1500, INTER_ARRIVAL_P50_MS, EXTERNAL_BSSID, THRESHOLD_EXCEEDED,
                             WALL_CLOCK_DELTA_MS, WINDOW_IS_PARTIAL, PUBLISHED_AT
                         ) values (
                             src.BATCH_ID, src.ROW_SEQUENCE, src.SCHEMA_VERSION, src.WINDOW_START,
-                            src.WINDOW_END, src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL,
+                            src.WINDOW_END, src.SENSOR_ID, src.LOCATION_ID, src.INTERFACE, src.CHANNEL, src.BAND,
                             src.SOURCE_MAC, src.DESTINATION_BSSID, src.SSID, src.BYTES, src.FRAME_COUNT,
                             src.RETRY_COUNT, src.MORE_DATA_COUNT, src.POWER_SAVE_COUNT,
                             src.STRONGEST_SIGNAL_DBM, src.HIST_UNDER_100, src.HIST_100_500,
@@ -310,7 +311,8 @@ public class JdbcOracleSink implements OracleSink {
                     for (WirelessBandwidthInsert row : rows) {
                         bindAll(statement, batchId, row.rowSequence(), row.schemaVersion(), row.windowStart(),
                                 row.windowEnd(), row.sensorId(), row.locationId(), row.iface(), row.channel(),
-                                row.sourceMac(), row.destinationBssid(), row.ssid(), row.bytes(), row.frameCount(),
+                                wirelessBandForChannel(row.channel()), row.sourceMac(), row.destinationBssid(),
+                                row.ssid(), row.bytes(), row.frameCount(),
                                 row.retryCount(), row.moreDataCount(), row.powerSaveCount(), row.strongestSignalDbm(),
                                 row.histUnder100(), row.hist100500(), row.hist5001000(), row.hist10001500(),
                                 row.interArrivalP50Ms(), row.externalBssid(), row.thresholdExceeded(),
@@ -726,6 +728,10 @@ public class JdbcOracleSink implements OracleSink {
         return value.withOffsetSameInstant(ZoneOffset.UTC)
                 .toLocalDateTime()
                 .truncatedTo(ChronoUnit.MILLIS);
+    }
+
+    static String wirelessBandForChannel(long channel) {
+        return channel >= 1 && channel <= 14 ? "2.4GHz" : "5GHz";
     }
 
     static byte[] rawUuidBytes(String value) throws SQLException {
