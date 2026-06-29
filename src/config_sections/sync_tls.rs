@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use super::{parsing::*, types::*};
 use crate::{
     obfuscation::{Profile, FOX_DOMAINS},
-    wg_packet_obfuscation::EncryptionMode,
+    wg_packet_obfuscation::{
+        encoded_packet_len_bounds, EncryptionMode, PacketPadding, WgPacketObfuscation,
+        XorRekeyPolicy,
+    },
 };
 use sync_plane::SyncConfig;
 
@@ -187,9 +190,10 @@ impl WireGuardConfig {
     /// `WG_DROP_UDP_443` (defaults to `true`), `WG_OBFUSCATION_ENABLED`
     /// (defaults to `true`), `WG_OBFUSCATION_KEY` (required when obfuscation
     /// is enabled), `WG_OBFUSCATION_MAGIC_BYTE` (optional decimal or `0xNN` form),
-    /// `WG_OBFUSCATION_SESSION_IDLE_SECS` (defaults to `300`), and optional
+    /// `WG_OBFUSCATION_SESSION_IDLE_SECS` (defaults to `300`), optional
     /// framed-mode controls for encryption, padding, marker position, replay
-    /// protection, and XOR re-keying.
+    /// protection, and XOR re-keying, plus `WG_OBFUSCATION_MAX_DATAGRAM_BYTES`
+    /// and `WG_UDP_SOCKET_BUFFER_BYTES` for UDP hot-path sizing.
     ///
     /// # Examples
     ///
@@ -217,21 +221,80 @@ impl WireGuardConfig {
     /// ```
     pub(super) fn from_env() -> Result<Self, ConfigError> {
         let obfuscation_enabled = read_bool("WG_OBFUSCATION_ENABLED", true);
-        let obfuscation_key = if obfuscation_enabled {
-            read_secret_strict_file("WG_OBFUSCATION_KEY", "WG_OBFUSCATION_KEY_FILE")?
-                .unwrap_or_default()
+        let (
+            obfuscation_key,
+            obfuscation_encryption_mode,
+            obfuscation_replay_protection,
+            obfuscation_magic_byte,
+            obfuscation_padding,
+            obfuscation_magic_position,
+            obfuscation_xor_rekey_packets,
+            obfuscation_xor_rekey_secs,
+            sizing_settings,
+        ) = if obfuscation_enabled {
+            let obfuscation_key =
+                read_secret_strict_file("WG_OBFUSCATION_KEY", "WG_OBFUSCATION_KEY_FILE")?
+                    .unwrap_or_default();
+            if obfuscation_key.is_empty() {
+                return Err(ConfigError::MissingWireGuardObfuscationKey);
+            }
+            let obfuscation_encryption_mode =
+                read_wireguard_obfuscation_encryption_mode("WG_OBFUSCATION_ENCRYPTION_MODE")?;
+            let obfuscation_replay_protection = read_bool(
+                "WG_OBFUSCATION_REPLAY_PROTECTION",
+                matches!(obfuscation_encryption_mode, EncryptionMode::Aead),
+            );
+            let obfuscation_magic_byte = read_magic_byte("WG_OBFUSCATION_MAGIC_BYTE")?;
+            let obfuscation_padding = read_wireguard_obfuscation_padding("WG_OBFUSCATION_PADDING")?;
+            let obfuscation_magic_position =
+                read_wireguard_obfuscation_magic_position("WG_OBFUSCATION_MAGIC_POSITION")?;
+            let obfuscation_xor_rekey_packets =
+                read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS")?;
+            let obfuscation_xor_rekey_secs = read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS")?;
+            let sizing_settings = WgPacketObfuscation::new(
+                obfuscation_key.clone().into_bytes(),
+                obfuscation_magic_byte,
+            )
+            .with_encryption_mode(obfuscation_encryption_mode)
+            .with_padding(obfuscation_padding.clone())
+            .with_magic_position(obfuscation_magic_position)
+            .with_xor_rekey(XorRekeyPolicy::new(
+                obfuscation_xor_rekey_packets,
+                obfuscation_xor_rekey_secs,
+            ))
+            .with_replay_protection(obfuscation_replay_protection);
+            (
+                obfuscation_key,
+                obfuscation_encryption_mode,
+                obfuscation_replay_protection,
+                obfuscation_magic_byte,
+                obfuscation_padding,
+                obfuscation_magic_position,
+                obfuscation_xor_rekey_packets,
+                obfuscation_xor_rekey_secs,
+                Some(sizing_settings),
+            )
         } else {
-            String::new()
+            (
+                String::new(),
+                EncryptionMode::Xor,
+                false,
+                None,
+                PacketPadding::None,
+                crate::wg_packet_obfuscation::MagicPositionMode::Fixed,
+                None,
+                None,
+                None,
+            )
         };
-        if obfuscation_enabled && obfuscation_key.is_empty() {
-            return Err(ConfigError::MissingWireGuardObfuscationKey);
-        }
-        let obfuscation_encryption_mode =
-            read_wireguard_obfuscation_encryption_mode("WG_OBFUSCATION_ENCRYPTION_MODE")?;
-        let obfuscation_replay_protection = read_bool(
-            "WG_OBFUSCATION_REPLAY_PROTECTION",
-            matches!(obfuscation_encryption_mode, EncryptionMode::Aead),
-        );
+        let default_max_datagram_bytes =
+            default_obfuscation_max_datagram_bytes(sizing_settings.as_ref())?;
+        let obfuscation_max_datagram_bytes = read_optional_bounded_usize(
+            "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+            1,
+            MAX_WIREGUARD_DATAGRAM_BYTES,
+        )?
+        .unwrap_or(default_max_datagram_bytes);
 
         Ok(Self {
             port: read_port("WG_PORT", 443),
@@ -240,18 +303,72 @@ impl WireGuardConfig {
             drop_udp_443: read_bool("WG_DROP_UDP_443", true),
             obfuscation_enabled,
             obfuscation_key: obfuscation_key.into_bytes(),
-            obfuscation_magic_byte: read_magic_byte("WG_OBFUSCATION_MAGIC_BYTE")?,
+            obfuscation_magic_byte,
             obfuscation_session_idle_secs: read_u64("WG_OBFUSCATION_SESSION_IDLE_SECS", 300).max(1),
             obfuscation_encryption_mode,
-            obfuscation_padding: read_wireguard_obfuscation_padding("WG_OBFUSCATION_PADDING")?,
-            obfuscation_magic_position: read_wireguard_obfuscation_magic_position(
-                "WG_OBFUSCATION_MAGIC_POSITION",
-            )?,
+            obfuscation_padding,
+            obfuscation_magic_position,
             obfuscation_replay_protection,
-            obfuscation_xor_rekey_packets: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_PACKETS")?,
-            obfuscation_xor_rekey_secs: read_optional_u64("WG_OBFUSCATION_XOR_REKEY_SECS")?,
+            obfuscation_xor_rekey_packets,
+            obfuscation_xor_rekey_secs,
+            obfuscation_max_datagram_bytes,
+            udp_socket_buffer_bytes: read_bounded_usize(
+                "WG_UDP_SOCKET_BUFFER_BYTES",
+                DEFAULT_WIREGUARD_UDP_SOCKET_BUFFER_BYTES,
+                1,
+                usize::MAX,
+            )?,
         })
     }
+
+    pub fn packet_obfuscation(&self) -> WgPacketObfuscation {
+        WgPacketObfuscation::new(self.obfuscation_key.clone(), self.obfuscation_magic_byte)
+            .with_encryption_mode(self.obfuscation_encryption_mode)
+            .with_padding(self.obfuscation_padding.clone())
+            .with_magic_position(self.obfuscation_magic_position)
+            .with_xor_rekey(XorRekeyPolicy::new(
+                self.obfuscation_xor_rekey_packets,
+                self.obfuscation_xor_rekey_secs,
+            ))
+            .with_replay_protection(self.obfuscation_replay_protection)
+    }
+}
+
+pub(super) fn default_obfuscation_max_datagram_bytes(
+    settings: Option<&WgPacketObfuscation>,
+) -> Result<usize, ConfigError> {
+    let wg_mtu = read_optional_usize("WG_MTU")
+        .unwrap_or(DEFAULT_WIREGUARD_PATH_MTU_BYTES)
+        .clamp(1, MAX_WIREGUARD_DATAGRAM_BYTES);
+    default_obfuscation_max_datagram_bytes_for_mtu(wg_mtu, settings)
+}
+
+pub(super) fn default_obfuscation_max_datagram_bytes_for_mtu(
+    wg_mtu: usize,
+    settings: Option<&WgPacketObfuscation>,
+) -> Result<usize, ConfigError> {
+    let Some(settings) = settings else {
+        return Ok(max_wireguard_transport_packet_bytes(wg_mtu));
+    };
+    let plaintext_datagram_len = max_wireguard_transport_packet_bytes(wg_mtu);
+
+    let bytes = match encoded_packet_len_bounds(plaintext_datagram_len, settings) {
+        Ok(bounds) => bounds.max_encoded_len,
+        Err(err) => match &settings.padding {
+            PacketPadding::FixedMtu(mtu) => *mtu,
+            PacketPadding::RandomBucket(mtus) => mtus.iter().copied().max().unwrap_or(wg_mtu),
+            PacketPadding::None | PacketPadding::PowerOfTwo => {
+                return Err(ConfigError::InvalidWireGuardObfuscationSizing {
+                    var: "WG_OBFUSCATION_MAX_DATAGRAM_BYTES",
+                    message: format!(
+                        "cannot derive default for WG_MTU={wg_mtu} (WireGuard transport packet bytes {plaintext_datagram_len}) and padding {:?}: {err}",
+                        settings.padding
+                    ),
+                });
+            }
+        },
+    };
+    Ok(bytes.clamp(1, MAX_WIREGUARD_DATAGRAM_BYTES))
 }
 
 impl RuntimeConfig {

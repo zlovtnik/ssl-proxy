@@ -48,6 +48,9 @@ async fn get_or_create_session(
                 .metrics
                 .active_sessions
                 .fetch_add(1, Ordering::Relaxed);
+            context
+                .metrics
+                .record_send_queue_capacity_add(session.send_queue_capacity());
             session.span.in_scope(|| {
                 info!("WireGuard shim session created");
             });
@@ -114,6 +117,11 @@ async fn run_session_receiver(
                 let Some(packet) = queued else {
                     break;
                 };
+                session.record_send_queue_dequeued(
+                    &context.metrics,
+                    packet.queued_at_millis,
+                    context.clock.now_millis(),
+                );
                 if !await_send_jitter(&context, &session).await {
                     break;
                 }
@@ -183,7 +191,8 @@ async fn run_session_receiver(
                 }
 
                 let packet = QueuedUpstreamPacket {
-                    bytes: lease[..encoded_len].to_vec(),
+                    lease,
+                    len: encoded_len,
                     queued_at_millis: now,
                     is_chaff: true,
                 };
@@ -301,6 +310,13 @@ async fn run_session_receiver(
         }
     }
 
+    drain_pending_upstream_packets(
+        &session,
+        &context.metrics,
+        &mut upstream_rx,
+        context.clock.now_millis(),
+    );
+
     let close_reason = if context.shutdown.is_cancelled() {
         SessionCloseReason::Shutdown
     } else {
@@ -314,6 +330,18 @@ async fn run_session_receiver(
         close_reason,
     );
     session.close();
+}
+
+fn drain_pending_upstream_packets(
+    session: &ShimSession,
+    metrics: &ShimMetrics,
+    upstream_rx: &mut mpsc::Receiver<QueuedUpstreamPacket>,
+    now_millis: u64,
+) {
+    while let Ok(packet) = upstream_rx.try_recv() {
+        session.record_send_queue_dequeued(metrics, packet.queued_at_millis, now_millis);
+        drop(packet);
+    }
 }
 
 async fn connect_next_upstream(
@@ -331,7 +359,7 @@ async fn connect_next_upstream(
     let start = next_server_index.fetch_add(1, Ordering::Relaxed);
     for offset in 0..server_count {
         let index = (start + offset) % server_count;
-        match connect_upstream(config.server_addrs[index], index).await {
+        match connect_upstream(config, config.server_addrs[index], index).await {
             Ok(connection) => return Ok(connection),
             Err(err) => {
                 warn!(
@@ -361,7 +389,7 @@ async fn send_with_failover(
     let mut last_error = None;
     let max_attempts = config.server_addrs.len().max(1);
     for attempt in 0..max_attempts {
-        match connection.socket.send(&packet.bytes).await {
+        match connection.socket.send(packet.bytes()).await {
             Ok(_) => {
                 if !packet.is_chaff {
                     session.record_upstream_send(packet.queued_at_millis);
@@ -455,11 +483,16 @@ fn retry_backoff_delay(attempt: usize) -> Duration {
 }
 
 async fn connect_upstream(
+    config: &WgObfsShimConfig,
     server_addr: SocketAddr,
     _server_index: usize,
 ) -> io::Result<UpstreamConnection> {
     let bind_addr = upstream_bind_addr(server_addr);
-    let socket = UdpSocket::bind(bind_addr).await?;
+    let socket = crate::udp_tuning::bind_tuned_udp_socket(
+        bind_addr,
+        config.udp_socket_buffer_bytes,
+        "wg-shim-upstream",
+    )?;
     socket.connect(server_addr).await?;
     let local_port = socket.local_addr()?.port();
     Ok(UpstreamConnection {

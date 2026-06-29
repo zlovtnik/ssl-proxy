@@ -338,6 +338,12 @@ async fn main() {
     }
 
     let otel_provider = init_tracing(&config);
+    if let Err(err) = validate_wireguard_obfuscation_sizing(&config) {
+        error!(%err, "invalid WireGuard obfuscation sizing");
+        eprintln!("WireGuard obfuscation sizing validation failed; refusing to start: {err}");
+        observability::shutdown_tracer_provider(otel_provider);
+        std::process::exit(1);
+    }
     let shutdown = CancellationToken::new();
     let state = build_state(&config);
     spawn_background_tasks(&config, state.clone(), shutdown.clone());

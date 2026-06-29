@@ -84,6 +84,14 @@ For pull-only server deployments from the local registry, see
 
 **Do not** combine this with a manual HTTP proxy on the client - WireGuard is the primary ingress path.
 
+For obfuscated profiles, subtract obfuscation overhead from the plain WireGuard
+MTU budget. The legacy XOR+magic path adds 1 byte, so the example profiles use
+`1419` instead of `1420`. Framed XOR adds 41 bytes (`39` frame header + `2`
+body length), and framed AEAD adds 57 bytes (`41` + `16` tag). If
+`WG_OBFUSCATION_PADDING=fixed-mtu:N` or `random-bucket:...` is used, every
+bucket must be large enough for the encoded frame and small enough for the path
+MTU.
+
 ### Generating Peer Keys
 
 ```bash
@@ -100,7 +108,7 @@ wg genpsk > presharedkey-peer1
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| WireGuard Frontdoor | 443 | UDP | Stable public UDP entrypoint, fanned out to active/candidate backends during rotation |
+| WireGuard Frontdoor | 443 | UDP | Stable public UDP entrypoint; probes active/candidate backends during rotation, then pins each client to the backend that replies |
 | WireGuard Frontdoor | 51820 | UDP | Stable alternate public UDP entrypoint for obfuscated Mac/shim profiles |
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
@@ -224,16 +232,24 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_PEERS` | `peer1,peer2` | Comma-separated peer list shared by the active proxy, rotation candidate, `up-ready`, and key rotator |
 | `WG_PORT` | `443` | Plain WireGuard UDP port |
 | `WG_INTERNAL_PORT` | `51820` | Obfuscated WireGuard UDP port |
-| `WG_MTU` | `1420` | WireGuard interface MTU for the plain/direct path; set `1280` for conservative obfuscated or hostile-path deployments |
+| `WG_MTU` | `1420` | WireGuard interface MTU for the plain/direct path. Obfuscated legacy XOR+magic profiles use `1419`; framed AEAD profiles need lower values based on frame overhead. |
+| `WG_OBFUSCATION_MAX_DATAGRAM_BYTES` | `1500` | Maximum UDP datagram buffer used by the relay, shim, and frontdoor. Raise only when the path MTU supports larger datagrams. |
+| `WG_UDP_SOCKET_BUFFER_BYTES` | `8388608` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
-| `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config |
+| `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config; multiple enabled backends are probed until one replies for a client |
+| `WG_FRONTDOOR_MAX_SESSIONS` | `65536` | Maximum active frontdoor client/backend UDP sessions before the oldest session is evicted |
+| `WG_FRONTDOOR_DISPATCH_TASK_LIMIT` | `4096` | Maximum in-flight frontdoor packet dispatch tasks per listener before packets are dropped |
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
 | `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
 | `DATABASE_URL` | Compose default: `jdbc:postgresql://postgres:5432/sync` | Primary Postgres connection. PostgreSQL credentials are supplied separately as `POSTGRES_USER=sync` and the generated `POSTGRES_PASSWORD`; URL-style values must follow `postgres://sync:${POSTGRES_PASSWORD}@postgres:5432/sync` when credentials are embedded. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
+
+`wg-udp-frontdoor` listener entries also support `session_idle` and `jitter_ms`
+TOML fields. Keep `jitter_ms` low; `5` ms is intended for coarse timing
+correlation resistance, while values above `50` ms add noticeable variance.
 | `REGISTRY_PLAIN_HTTP` | `auto` | Buildx plain-HTTP registry mode; auto-detects localhost and private IPv4 registries |
 | `IMAGE_TAG` | `latest` | Image tag consumed by Compose |
 

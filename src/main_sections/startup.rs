@@ -21,7 +21,7 @@ use hyper_util::{
 use ssl_proxy::quic;
 use ssl_proxy::{
     blocklist, boringtun_control, check_proxy_auth, config, constant_time_eq, dashboard, forensic,
-    observability, proxy, security, state, tunnel, wg_relay, wg_stats,
+    observability, proxy, security, state, tunnel, wg_packet_obfuscation, wg_relay, wg_stats,
 };
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -490,6 +490,78 @@ fn log_runtime_ports(config: &config::Config) {
         drop_udp_443 = config.wireguard.drop_udp_443,
         "transparent enforcement policy"
     );
+    log_wireguard_obfuscation_sizing(config);
+}
+
+fn wireguard_obfuscation_sizing_bounds(
+    config: &config::Config,
+) -> Result<Option<(usize, usize, wg_packet_obfuscation::EncodedPacketLenBounds)>, String> {
+    if !config.wireguard.obfuscation_enabled {
+        return Ok(None);
+    }
+
+    let wg_mtu = std::env::var("WG_MTU")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(config::DEFAULT_WIREGUARD_PATH_MTU_BYTES);
+    let wg_transport_packet_bytes = config::max_wireguard_transport_packet_bytes(wg_mtu);
+    let settings = config.wireguard.packet_obfuscation();
+    wg_packet_obfuscation::encoded_packet_len_bounds(wg_transport_packet_bytes, &settings)
+        .map(|bounds| Some((wg_mtu, wg_transport_packet_bytes, bounds)))
+        .map_err(|err| {
+            format!(
+                "WG_MTU={wg_mtu} produces WireGuard transport packet bytes {wg_transport_packet_bytes}, which cannot be encoded with current settings: {err}"
+            )
+        })
+}
+
+fn validate_wireguard_obfuscation_sizing(config: &config::Config) -> Result<(), String> {
+    let Some((_wg_mtu, _wg_transport_packet_bytes, bounds)) =
+        wireguard_obfuscation_sizing_bounds(config)?
+    else {
+        return Ok(());
+    };
+
+    if bounds.max_encoded_len > config.wireguard.obfuscation_max_datagram_bytes {
+        return Err(format!(
+            "max encoded datagram size {} exceeds WG_OBFUSCATION_MAX_DATAGRAM_BYTES {}",
+            bounds.max_encoded_len, config.wireguard.obfuscation_max_datagram_bytes
+        ));
+    }
+
+    Ok(())
+}
+
+fn log_wireguard_obfuscation_sizing(config: &config::Config) {
+    match wireguard_obfuscation_sizing_bounds(config) {
+        Ok(Some((wg_mtu, wg_transport_packet_bytes, bounds))) => {
+            info!(
+                wg_mtu,
+                wg_transport_packet_bytes,
+                max_obfuscated_datagram_bytes = bounds.max_encoded_len,
+                max_obfuscation_overhead_bytes = bounds.max_overhead_len(),
+                configured_max_datagram_bytes = config.wireguard.obfuscation_max_datagram_bytes,
+                udp_socket_buffer_bytes = config.wireguard.udp_socket_buffer_bytes,
+                "WireGuard obfuscation datagram sizing"
+            );
+            if bounds.max_encoded_len > config::DEFAULT_WIREGUARD_PATH_MTU_BYTES {
+                warn!(
+                    wg_mtu,
+                    max_obfuscated_datagram_bytes = bounds.max_encoded_len,
+                    ethernet_path_mtu_bytes = config::DEFAULT_WIREGUARD_PATH_MTU_BYTES,
+                    "WireGuard obfuscation can exceed a 1500-byte path MTU; reduce WG_MTU or use fixed MTU padding"
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            warn!(
+                %err,
+                "WireGuard obfuscation sizing could not fit the configured MTU"
+            );
+        }
+    }
 }
 
 async fn spawn_wireguard_relay(

@@ -160,6 +160,54 @@ pub(super) fn read_optional_u64(var: &'static str) -> Result<Option<u64>, Config
     Ok(Some(parsed))
 }
 
+pub(super) fn read_bounded_usize(
+    var: &'static str,
+    default: usize,
+    min: usize,
+    max: usize,
+) -> Result<usize, ConfigError> {
+    read_optional_bounded_usize(var, min, max).map(|value| value.unwrap_or(default))
+}
+
+pub(super) fn read_optional_bounded_usize(
+    var: &'static str,
+    min: usize,
+    max: usize,
+) -> Result<Option<usize>, ConfigError> {
+    let Some(raw) = std::env::var(var).ok() else {
+        return Ok(None);
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let Ok(parsed) = value.parse::<usize>() else {
+        return Err(ConfigError::InvalidWireGuardSizeValue {
+            var,
+            value: raw,
+            min,
+            max,
+        });
+    };
+    if parsed < min || parsed > max {
+        return Err(ConfigError::InvalidWireGuardSizeValue {
+            var,
+            value: raw,
+            min,
+            max,
+        });
+    }
+    Ok(Some(parsed))
+}
+
+pub(super) fn read_optional_usize(var: &str) -> Option<usize> {
+    std::env::var(var)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+}
+
 pub(super) fn read_wireguard_obfuscation_encryption_mode(
     var: &str,
 ) -> Result<EncryptionMode, ConfigError> {

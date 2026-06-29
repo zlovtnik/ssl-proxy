@@ -30,6 +30,10 @@ const FRAME_HEADER_LEN: usize =
 const AEAD_TAG_LEN: usize = 16;
 const BODY_LEN_FIELD_LEN: usize = 2;
 
+pub const FRAMED_HEADER_LEN: usize = FRAME_HEADER_LEN;
+pub const FRAMED_BODY_LEN_FIELD_LEN: usize = BODY_LEN_FIELD_LEN;
+pub const AEAD_TAG_LEN_BYTES: usize = AEAD_TAG_LEN;
+
 /// Packet confidentiality/integrity mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EncryptionMode {
@@ -52,6 +56,25 @@ pub enum PacketPadding {
     PowerOfTwo,
     FixedMtu(usize),
     RandomBucket(Vec<usize>),
+}
+
+/// Encoded datagram length bounds for a plaintext WireGuard UDP payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EncodedPacketLenBounds {
+    pub plaintext_len: usize,
+    pub min_encoded_len: usize,
+    pub max_encoded_len: usize,
+    pub unpadded_encoded_len: usize,
+}
+
+impl EncodedPacketLenBounds {
+    pub fn min_overhead_len(&self) -> usize {
+        self.min_encoded_len.saturating_sub(self.plaintext_len)
+    }
+
+    pub fn max_overhead_len(&self) -> usize {
+        self.max_encoded_len.saturating_sub(self.plaintext_len)
+    }
 }
 
 /// Placement policy for the obfuscation marker in framed packets.
@@ -160,6 +183,13 @@ impl WgPacketObfuscation {
             || !matches!(self.magic_position, MagicPositionMode::Fixed)
             || self.xor_rekey.is_some()
             || self.replay_protection
+    }
+
+    pub fn encoded_len_bounds(
+        &self,
+        packet_len: usize,
+    ) -> Result<EncodedPacketLenBounds, PacketEncodeError> {
+        encoded_packet_len_bounds(packet_len, self)
     }
 }
 
@@ -281,6 +311,99 @@ pub enum PacketEncodeError {
     FixedMtuTooSmall { mtu: usize, required: usize },
     #[error("AEAD encryption failed")]
     AeadEncrypt,
+}
+
+pub fn encoded_packet_len_bounds(
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+) -> Result<EncodedPacketLenBounds, PacketEncodeError> {
+    if !settings.uses_framed_encoding() {
+        let marker_len = usize::from(settings.magic_byte.is_some());
+        let encoded_len =
+            packet_len
+                .checked_add(marker_len)
+                .ok_or(PacketEncodeError::EncodedPacketTooLarge {
+                    encoded_len: usize::MAX,
+                    buffer_len: MAX_UDP_PACKET_SIZE,
+                })?;
+        if encoded_len > MAX_UDP_PACKET_SIZE {
+            return Err(PacketEncodeError::EncodedPacketTooLarge {
+                encoded_len,
+                buffer_len: MAX_UDP_PACKET_SIZE,
+            });
+        }
+        return Ok(EncodedPacketLenBounds {
+            plaintext_len: packet_len,
+            min_encoded_len: encoded_len,
+            max_encoded_len: encoded_len,
+            unpadded_encoded_len: encoded_len,
+        });
+    }
+
+    if packet_len > u16::MAX as usize {
+        return Err(PacketEncodeError::PacketTooLarge {
+            packet_len,
+            buffer_len: u16::MAX as usize,
+        });
+    }
+
+    let tag_len = match settings.encryption_mode {
+        EncryptionMode::Xor => 0,
+        EncryptionMode::Aead => AEAD_TAG_LEN,
+    };
+    let body_base_len = BODY_LEN_FIELD_LEN + packet_len;
+    let unpadded_encoded_len = FRAME_HEADER_LEN + body_base_len + tag_len;
+    let (min_encoded_len, max_encoded_len) =
+        encoded_len_range_for_padding(&settings.padding, body_base_len, tag_len)?;
+    if max_encoded_len > MAX_UDP_PACKET_SIZE {
+        return Err(PacketEncodeError::EncodedPacketTooLarge {
+            encoded_len: max_encoded_len,
+            buffer_len: MAX_UDP_PACKET_SIZE,
+        });
+    }
+
+    Ok(EncodedPacketLenBounds {
+        plaintext_len: packet_len,
+        min_encoded_len,
+        max_encoded_len,
+        unpadded_encoded_len,
+    })
+}
+
+fn encoded_len_range_for_padding(
+    padding: &PacketPadding,
+    body_base_len: usize,
+    tag_len: usize,
+) -> Result<(usize, usize), PacketEncodeError> {
+    let required = FRAME_HEADER_LEN + body_base_len + tag_len;
+    match padding {
+        PacketPadding::None => Ok((required, required)),
+        PacketPadding::PowerOfTwo => {
+            let encoded_len = FRAME_HEADER_LEN + body_base_len.next_power_of_two() + tag_len;
+            Ok((encoded_len, encoded_len))
+        }
+        PacketPadding::FixedMtu(mtu) => {
+            if *mtu < required {
+                Err(PacketEncodeError::FixedMtuTooSmall {
+                    mtu: *mtu,
+                    required,
+                })
+            } else {
+                Ok((*mtu, *mtu))
+            }
+        }
+        PacketPadding::RandomBucket(mtus) => {
+            let mut valid = mtus.iter().copied().filter(|mtu| *mtu >= required);
+            let Some(first) = valid.next() else {
+                let mtu = mtus.iter().copied().max().unwrap_or(0);
+                return Err(PacketEncodeError::FixedMtuTooSmall { mtu, required });
+            };
+            let (min, max) = valid.fold((first, first), |(min, max), mtu| {
+                (min.min(mtu), max.max(mtu))
+            });
+            Ok((min, max))
+        }
+    }
 }
 
 /// Failure modes when decoding an obfuscated WireGuard packet.

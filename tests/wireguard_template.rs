@@ -43,5 +43,19 @@ fn direct_peer_template_uses_normal_wireguard_mtu() {
     let path = format!("{}/config/templates/peer.conf", env!("CARGO_MANIFEST_DIR"));
     let template = fs::read_to_string(path).expect("peer template should exist");
 
-    assert!(template.contains("MTU = 1420"));
+    assert!(template.contains("MTU = ${WG_MTU:-1420}"));
+}
+
+#[test]
+fn obfuscated_peer_examples_use_legacy_magic_mtu() {
+    for peer in ["peer1", "peer2"] {
+        let path = format!(
+            "{}/config/{peer}/{peer}-obfuscated.conf.example",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let template = fs::read_to_string(path).expect("obfuscated peer template should exist");
+
+        assert!(template.contains("MTU = 1419"));
+        assert!(template.contains("legacy XOR plus a 1-byte magic marker"));
+    }
 }

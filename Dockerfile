@@ -23,7 +23,7 @@ COPY Cargo.toml Cargo.lock ./
 RUN cargo build --release --workspace && cargo build --release --manifest-path services/atheros-sensor/Cargo.toml
 
 FROM rust:1.95.0-slim-bookworm AS boringtun-builder
-RUN cargo install --locked boringtun-cli --version 0.5.2 --root /opt/boringtun
+RUN cargo install --locked boringtun-cli --version 0.7.1 --root /opt/boringtun
 
 FROM debian:bookworm-slim AS atheros-sensor
 ENV TZ=America/New_York
