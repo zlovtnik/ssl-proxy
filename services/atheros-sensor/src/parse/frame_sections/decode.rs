@@ -236,7 +236,6 @@ pub fn decode_frame(packet: &RawPacket) -> Result<WifiFrame, ParseError> {
         raw_frame: Some(STANDARD.encode(frame_bytes)),
         band: band.to_string(),
         tags: tags.clone(),
-        risk_score: recompute_risk_score(&tags),
         security_flags: ie_metadata.security_flags,
         rsn_capabilities: ie_metadata.rsn_capabilities,
         weak_cipher_advertised: ie_metadata.weak_cipher_advertised,

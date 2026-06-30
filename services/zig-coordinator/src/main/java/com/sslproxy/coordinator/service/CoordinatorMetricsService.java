@@ -47,11 +47,11 @@ public class CoordinatorMetricsService {
     public CoordinatorMetricsService(MeterRegistry registry, CoordinatorProperties props) {
         this.props = props;
 
-        Gauge.builder("coordinator.pending.ledger.count", pendingLedgerGauge, AtomicLong::get)
+        Gauge.builder("coordinator.pending.ledger.count", pendingLedgerGauge, value -> value.get())
                 .description("Number of pending ledger entries")
                 .register(registry);
 
-        Gauge.builder("coordinator.backpressure.active", backpressureActiveGauge, AtomicLong::get)
+        Gauge.builder("coordinator.backpressure.active", backpressureActiveGauge, value -> value.get())
                 .description("1 if backpressure is throttling, 0 otherwise")
                 .register(registry);
 
@@ -64,7 +64,7 @@ public class CoordinatorMetricsService {
                 .register(registry);
 
         Gauge.builder("coordinator.ingest.ledger.last.success.timestamp.seconds",
-                        ingestLedgerLastSuccessTimestampSeconds, AtomicLong::get)
+                        ingestLedgerLastSuccessTimestampSeconds, value -> value.get())
                 .description("Unix timestamp in seconds for the last successful process_ingest_ledger invocation")
                 .baseUnit("seconds")
                 .register(registry);
@@ -148,13 +148,13 @@ public class CoordinatorMetricsService {
         RouteStateMeters meters = new RouteStateMeters(new AtomicLong(0), new AtomicLong(0));
         routeStateMeters.put(routeStateKey(role, routeId), meters);
 
-        Gauge.builder("coordinator.route.running", meters.running(), AtomicLong::get)
+        Gauge.builder("coordinator.route.running", meters.running(), value -> value.get())
                 .description("1 if the coordinator route is running, 0 otherwise")
                 .tag("role", role)
                 .tag("route", routeId)
                 .register(registry);
 
-        Gauge.builder("coordinator.route.suspended", meters.suspended(), AtomicLong::get)
+        Gauge.builder("coordinator.route.suspended", meters.suspended(), value -> value.get())
                 .description("1 if the coordinator route is suspended, 0 otherwise")
                 .tag("role", role)
                 .tag("route", routeId)

@@ -286,7 +286,6 @@ pub struct WifiFrame {
     pub raw_frame: Option<String>,
     pub band: String,
     pub tags: Vec<String>,
-    pub risk_score: Option<f32>,
     pub security_flags: u32,
     pub rsn_capabilities: Option<u16>,
     pub weak_cipher_advertised: Option<bool>,

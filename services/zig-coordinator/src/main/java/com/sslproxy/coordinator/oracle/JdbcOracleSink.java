@@ -206,7 +206,7 @@ public class JdbcOracleSink implements OracleSink {
                     return 0L;
                 }
                 WirelessAuditFrameInsert first = rows.stream()
-                        .min(java.util.Comparator.comparing(WirelessAuditFrameInsert::observedAt))
+                        .min(java.util.Comparator.comparing(row -> row.observedAt()))
                         .orElseThrow();
                 try (PreparedStatement statement = prepare(connection,
                         "BEGIN WIRELESS_UPSERT_SENSOR(?, ?, ?, ?, ?); END;")) {
@@ -682,7 +682,10 @@ public class JdbcOracleSink implements OracleSink {
                 }
             }
         }
-        throw last;
+        if (last != null) {
+            throw last;
+        }
+        throw new IllegalStateException("retry loop ended without executing " + operation);
     }
 
     private PreparedStatement prepare(Connection connection, String sql) throws SQLException {
