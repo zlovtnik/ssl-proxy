@@ -35,7 +35,15 @@ class SignaturesTest(unittest.TestCase):
         self.assertFalse(result.matched)
         self.assertEqual(result.name, "unknown")
 
+    def test_empty_signatures_does_not_load_defaults(self):
+        result = classify_text(
+            "lookup registry-1.docker.io on 1.1.1.1:53: i/o timeout",
+            signatures=[],
+        )
+
+        self.assertFalse(result.matched)
+        self.assertEqual(result.name, "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()
-

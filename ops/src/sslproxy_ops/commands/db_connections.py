@@ -60,6 +60,15 @@ def print_json_endpoint(label: str, url: str) -> bool:
         typer.echo(json.dumps(parsed, indent=4))
         return True
 
+    if 200 <= response.status_code < 300:
+        typer.echo(f"response_parse_failed http_status={response.status_code}")
+        body = response.text
+        if body:
+            typer.echo("\n".join(body.splitlines()[:80]))
+        else:
+            typer.echo("<empty body>")
+        return False
+
     typer.echo(f"request_failed http_status={response.status_code}")
     body = response.text
     if body:
@@ -82,6 +91,22 @@ def print_password_fingerprints(container: str) -> bool:
     return matched
 
 
+def redact_connection_log(line: str) -> str:
+    redacted = re.sub(
+        r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key)(\s*[=:]\s*)([^\s,;]+)",
+        r"\1\2[REDACTED]",
+        line,
+    )
+    redacted = re.sub(
+        r"(?i)\b(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+(@)[^\s/]+",
+        r"\1[REDACTED]\2[REDACTED]",
+        redacted,
+    )
+    redacted = re.sub(r"(?i)\b(jdbc:postgresql://)[^\s/?]+", r"\1[REDACTED]", redacted)
+    redacted = re.sub(r"(?i)\b(host|hostname|server)(\s*[=:]\s*)([^\s,;]+)", r"\1\2[REDACTED]", redacted)
+    return redacted
+
+
 def print_recent_connection_errors(container: str) -> None:
     typer.echo("=== Recent connection errors in logs ===")
     shell.run(["docker", "inspect", container], check=True, capture=True)
@@ -90,7 +115,7 @@ def print_recent_connection_errors(container: str) -> None:
     pattern = re.compile(r"FATAL|CannotGetJdbc|PSQLException|ORA-|HikariPool")
     matches = [line for line in text.splitlines() if pattern.search(line)]
     for line in matches[-20:]:
-        typer.echo(line)
+        typer.echo(redact_connection_log(line))
 
 
 @app.command("check-connections")
@@ -128,4 +153,3 @@ def check_connections(
         raise typer.Exit(exc.returncode) from exc
 
     raise typer.Exit(1 if failed else 0)
-

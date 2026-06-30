@@ -127,6 +127,10 @@ def run_iperf_case(case: IperfCase, out_dir: Path, duration: int, perf_pid: str 
     return IperfResult(case.label, case.target, ok, parse_iperf_summary(json_path))
 
 
+def normalized_target(value: str | None) -> str:
+    return (value or "").strip()
+
+
 @app.command("wg-path")
 def wg_path(
     duration: Annotated[int, typer.Option("--duration", envvar="DURATION")] = 20,
@@ -160,9 +164,16 @@ def wg_path(
 
     out_dir = out_dir or repo_root() / "bench-results" / f"wg-path-{datetime.now():%Y%m%d-%H%M%S}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    bypass_target = bypass_target or iperf_server or ""
-    plain_target = plain_target or iperf_server or ""
-    obfs_target = obfs_target or iperf_server or ""
+    iperf_server = normalized_target(iperf_server)
+    bypass_target = normalized_target(bypass_target)
+    plain_target = normalized_target(plain_target)
+    obfs_target = normalized_target(obfs_target)
+    if not any([iperf_server, bypass_target, plain_target, obfs_target]):
+        typer.echo("missing benchmark target: set --iperf-server or at least one explicit path target", err=True)
+        raise typer.Exit(2)
+    bypass_target = bypass_target or iperf_server
+    plain_target = plain_target or iperf_server
+    obfs_target = obfs_target or iperf_server
 
     cases = [
         IperfCase("bypass-tcp", bypass_target, ["-t", str(duration), "-P", str(parallel)]),
@@ -184,4 +195,3 @@ def wg_path(
     console.print(table)
     typer.echo(f"results: {out_dir}")
     raise typer.Exit(0 if all(result.ok for result in results) else 1)
-

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Annotated
+from urllib.parse import unquote, urlparse
 
 import typer
 
@@ -17,6 +18,15 @@ app = typer.Typer(help="Sync pipeline operations.")
 class SqlSection:
     title: str
     sql: str
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresConnection:
+    host: str
+    port: str
+    database: str
+    user: str
+    password: str
 
 
 SQL_SECTIONS = [
@@ -150,6 +160,54 @@ def database_url(settings: Settings) -> str:
     return f"postgres://sync:{uri_encode(settings.postgres_password)}@postgres:5432/sync"
 
 
+def parse_database_url(value: str) -> PostgresConnection:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise typer.BadParameter("DATABASE_URL must use postgres:// or postgresql://")
+    return PostgresConnection(
+        host=parsed.hostname or "postgres",
+        port=str(parsed.port or 5432),
+        database=unquote(parsed.path.lstrip("/") or "sync"),
+        user=unquote(parsed.username or "sync"),
+        password=unquote(parsed.password or ""),
+    )
+
+
+def postgres_env(connection: PostgresConnection) -> dict[str, str]:
+    return {
+        "PGHOST": connection.host,
+        "PGPORT": connection.port,
+        "PGDATABASE": connection.database,
+        "PGUSER": connection.user,
+        "PGPASSWORD": connection.password,
+    }
+
+
+def psql_command(sql: str) -> list[str]:
+    return [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "-e",
+        "PGHOST",
+        "-e",
+        "PGPORT",
+        "-e",
+        "PGDATABASE",
+        "-e",
+        "PGUSER",
+        "-e",
+        "PGPASSWORD",
+        "postgres",
+        "psql",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        sql,
+    ]
+
+
 def section(title: str) -> None:
     typer.echo("")
     typer.echo(f"== {title} ==")
@@ -173,7 +231,7 @@ def status(
     settings = Settings()
     scan_topic = scan_topic or settings.sync_scan_topic
     scan_consumer = scan_consumer or settings.sync_scan_consumer
-    db_url = database_url(settings)
+    db = parse_database_url(database_url(settings))
     brokers = settings.sync_redpanda_bootstrap_servers
     compose_project = settings.compose_project_name
     redpanda_image = settings.redpanda_image
@@ -213,24 +271,11 @@ def status(
     section("redpanda scan consumer group")
     run_allow_fail([*rpk_base, "group", "describe", scan_consumer, "--brokers", brokers])
 
-    env = {**os.environ, "DATABASE_URL": db_url}
+    env = {**os.environ, **postgres_env(db)}
     for sql_section in SQL_SECTIONS:
         section(sql_section.title)
         shell.run(
-            [
-                "docker",
-                "compose",
-                "exec",
-                "-T",
-                "postgres",
-                "psql",
-                db_url,
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-c",
-                sql_section.sql,
-            ],
+            psql_command(sql_section.sql),
             check=False,
             env=env,
         )
-

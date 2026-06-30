@@ -51,7 +51,18 @@ class MemoTest(unittest.TestCase):
 
         self.assertIn("result=fail | mode=mac | signature=sig", entry)
 
+    def test_build_entry_rejects_multiline_fields(self):
+        with self.assertRaises(ValueError):
+            build_entry(
+                event="event\n- injected",
+                context="context",
+                result=MemoResult.failed,
+                profile_mode="mac",
+                signature="sig",
+                action="act",
+                timestamp="2026-01-02T030405-0500",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
-

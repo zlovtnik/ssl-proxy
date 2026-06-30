@@ -36,7 +36,8 @@ def setup_ubuntu() -> None:
         if shutil.which("curl") is None:
             shell.run(["apt-get", "update"])
             shell.run(["apt-get", "install", "-y", "curl"])
-        shell.run(["sh", "-c", "curl -fsSL https://get.docker.com | sh"])
+        installer = shell.run(["curl", "-fsSL", "https://get.docker.com"], capture=True)
+        shell.run(["sh"], input_text=installer.stdout or "")
         sudo_user = os.getenv("SUDO_USER")
         if sudo_user:
             shell.run(["usermod", "-aG", "docker", sudo_user])

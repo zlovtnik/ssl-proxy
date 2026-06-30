@@ -55,10 +55,21 @@ def build_entry(
     timestamp: str | None = None,
 ) -> str:
     ts = timestamp or format_timestamp()
+    event = single_line_field("event", event)
+    context = single_line_field("context", context)
+    profile_mode = single_line_field("profile_mode", profile_mode)
+    signature = single_line_field("signature", signature)
+    action = single_line_field("action", action)
     return (
         f"- {ts} | result={result.value} | mode={profile_mode} | signature={signature} "
         f"| action={action} | context={context} | event={event}"
     )
+
+
+def single_line_field(name: str, value: str) -> str:
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"{name} must be a single line")
+    return value
 
 
 def insert_incident(memory_text: str, entry: str) -> str:
@@ -184,4 +195,3 @@ def log(
         typer.echo(f"[memo-log][ERROR] {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo("[memo-log] inserted incident entry")
-

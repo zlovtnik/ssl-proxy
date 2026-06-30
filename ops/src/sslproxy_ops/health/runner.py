@@ -14,7 +14,13 @@ async def _call_check(check: HealthCheck) -> HealthResult:
 
     for attempt in range(1, attempts + 1):
         try:
-            value = check.fn()
+            if inspect.iscoroutinefunction(check.fn):
+                value = check.fn()
+            elif check.timeout is None:
+                value = await asyncio.to_thread(check.fn)
+            else:
+                value = await asyncio.wait_for(asyncio.to_thread(check.fn), timeout=check.timeout)
+
             if inspect.isawaitable(value):
                 if check.timeout is None:
                     value = await value
@@ -51,4 +57,3 @@ async def _call_check(check: HealthCheck) -> HealthResult:
 
 async def run_checks(checks: list[HealthCheck]) -> list[HealthResult]:
     return list(await asyncio.gather(*(_call_check(check) for check in checks)))
-

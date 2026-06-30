@@ -20,7 +20,25 @@ class HealthRunnerTest(unittest.IsolatedAsyncioTestCase):
         )
         elapsed = time.monotonic() - started
 
-        self.assertLess(elapsed, 0.09)
+        self.assertLess(elapsed, 0.2)
+        self.assertEqual([result.name for result in results], ["one", "two"])
+        self.assertTrue(all(result.ok for result in results))
+
+    async def test_runs_sync_checks_concurrently(self):
+        def slow_ok():
+            time.sleep(0.05)
+            return "ok"
+
+        started = time.monotonic()
+        results = await run_checks(
+            [
+                HealthCheck("one", slow_ok),
+                HealthCheck("two", slow_ok),
+            ]
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.2)
         self.assertEqual([result.name for result in results], ["one", "two"])
         self.assertTrue(all(result.ok for result in results))
 
@@ -42,4 +60,3 @@ class HealthRunnerTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

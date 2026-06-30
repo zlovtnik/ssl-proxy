@@ -14,6 +14,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static com.sslproxy.coordinator.testsupport.MockitoCaptors.scanRequestRecordListCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -99,8 +100,4 @@ class ScanRecordProcessorTest {
         return exchange;
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static ArgumentCaptor<List<DatabaseService.ScanRequestRecord>> scanRequestRecordListCaptor() {
-        return ArgumentCaptor.forClass((Class) List.class);
-    }
 }

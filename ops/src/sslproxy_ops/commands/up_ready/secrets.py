@@ -101,7 +101,8 @@ def verify_registry_transport(ctx: UpReadyContext) -> None:
         return
     try:
         response = httpx.get(f"http://{registry_host}/v2/", timeout=2.0)
-        reachable = response.status_code < 500
+        api_version = response.headers.get("Docker-Distribution-API-Version", "")
+        reachable = response.status_code in {200, 401} and api_version.lower().startswith("registry/")
     except httpx.HTTPError:
         reachable = False
     if not reachable:

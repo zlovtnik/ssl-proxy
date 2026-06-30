@@ -16,8 +16,7 @@ class DbResultTest {
             throw new RuntimeException("boom");
         }, "test.op");
 
-        assertTrue(result instanceof DbResult.Err<?>);
-        DbResult.Err<?> err = (DbResult.Err<?>) result;
+        DbResult.Err<?> err = assertInstanceOf(DbResult.Err.class, result);
         assertEquals("test.op", err.operation());
     }
 

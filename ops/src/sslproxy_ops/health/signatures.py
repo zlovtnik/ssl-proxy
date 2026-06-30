@@ -57,7 +57,7 @@ def classify_text(
     default_fix: str = "Inspect diagnostics bundle",
     default_retry: str = "manual",
 ) -> FailureClassification:
-    for signature in signatures or load_signatures():
+    for signature in (signatures if signatures is not None else load_signatures()):
         if re.search(signature.pattern, text, flags=re.IGNORECASE | re.MULTILINE):
             return FailureClassification(
                 name=signature.name,
@@ -73,4 +73,3 @@ def classify_text(
         retry=default_retry,
         matched=False,
     )
-

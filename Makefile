@@ -204,11 +204,8 @@ atheros-search-test:
 schema-migrator-test:
 	cd services/schema-migrator && sbt test
 
-$(OPS_VENV)/.installed: ops/pyproject.toml ops/uv.lock
-	python3 -m venv $(OPS_VENV)
-	$(OPS_VENV)/bin/python -m pip install --upgrade pip
-	$(OPS_VENV)/bin/python -m pip install -e ./ops
-	@touch $@
+$(OPS_VENV)/.installed: ops/pyproject.toml ops/uv.lock scripts/lib/ops-python.sh
+	@bash -lc 'source scripts/lib/ops-python.sh; sslproxy_ensure_ops_venv "$$PWD"'
 
 # Run clippy lints
 lint:

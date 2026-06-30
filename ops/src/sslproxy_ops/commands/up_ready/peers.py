@@ -152,17 +152,43 @@ AllowedIPs = 0.0.0.0/0, ::/0
     step("S00", f"peer_bootstrap: wrote {output}")
 
 
+def peer_config_keys_resolved(path: Path) -> bool:
+    return not (
+        is_placeholder_value(read_ini_value(path, "Interface", "PrivateKey"))
+        or is_placeholder_value(read_ini_value(path, "Peer", "PresharedKey"))
+    )
+
+
 def peer_material_complete(peer_id: str) -> bool:
     peer_dir = repo_root() / "config" / peer_id
-    return all(
+    files_present = all(
         path.is_file() and path.stat().st_size > 0
         for path in [
+            peer_dir / f"privatekey-{peer_id}",
             peer_dir / f"publickey-{peer_id}",
             peer_dir / f"presharedkey-{peer_id}",
             peer_dir / f"{peer_id}.conf",
             peer_dir / f"{peer_id}-obfuscated.conf",
         ]
     )
+    if not files_present:
+        return False
+    return all(
+        peer_config_keys_resolved(path)
+        for path in [
+            peer_dir / f"{peer_id}.conf",
+            peer_dir / f"{peer_id}-obfuscated.conf",
+        ]
+    )
+
+
+def ensure_unique_peer_tunnel_addresses(peers: list[str]) -> None:
+    seen: dict[str, str] = {}
+    for peer_id in peers:
+        address = peer_tunnel_address(peer_id)
+        if address in seen:
+            raise UpReadyError(f"Duplicate peer tunnel address {address}: {seen[address]} and {peer_id}")
+        seen[address] = peer_id
 
 
 def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
@@ -172,7 +198,8 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
     public_key_file = peer_dir / f"publickey-{peer_id}"
     preshared_key_file = peer_dir / f"presharedkey-{peer_id}"
 
-    private_key = trim_key_value(private_key_file.read_text()) if private_key_file.is_file() else ""
+    private_key_file_value = trim_key_value(private_key_file.read_text()) if private_key_file.is_file() else ""
+    private_key = private_key_file_value
     if is_placeholder_value(private_key):
         private_key = read_peer_config_value(peer_id, "Interface", "PrivateKey") or ""
     if is_placeholder_value(private_key):
@@ -180,7 +207,7 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
         step("S00", f"peer_bootstrap: generated private key for {peer_id}")
     if not private_key:
         raise UpReadyError(f"Unable to resolve private key for {peer_id}")
-    if not private_key_file.is_file() or private_key_file.stat().st_size == 0:
+    if private_key_file_value != private_key:
         write_secret_text(private_key_file, private_key, 0o600)
 
     public_key = trim_key_value(public_key_file.read_text()) if public_key_file.is_file() else ""
@@ -189,7 +216,8 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
         write_secret_text(public_key_file, public_key, 0o644)
         step("S00", f"peer_bootstrap: wrote public key for {peer_id}")
 
-    preshared_key = trim_key_value(preshared_key_file.read_text()) if preshared_key_file.is_file() else ""
+    preshared_key_file_value = trim_key_value(preshared_key_file.read_text()) if preshared_key_file.is_file() else ""
+    preshared_key = preshared_key_file_value
     if is_placeholder_value(preshared_key):
         preshared_key = read_peer_config_value(peer_id, "Peer", "PresharedKey") or ""
     if is_placeholder_value(preshared_key):
@@ -197,20 +225,20 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
         step("S00", f"peer_bootstrap: generated preshared key for {peer_id}")
     if not preshared_key:
         raise UpReadyError(f"Unable to resolve preshared key for {peer_id}")
-    if not preshared_key_file.is_file() or preshared_key_file.stat().st_size == 0:
+    if preshared_key_file_value != preshared_key:
         write_secret_text(preshared_key_file, preshared_key, 0o600)
 
-    if not (peer_dir / f"{peer_id}.conf").is_file():
+    if not peer_config_keys_resolved(peer_dir / f"{peer_id}.conf"):
         render_direct_peer_config(peer_id, private_key, preshared_key, ctx.settings.server_ip)
-    if not (peer_dir / f"{peer_id}-obfuscated.conf").is_file():
+    if not peer_config_keys_resolved(peer_dir / f"{peer_id}-obfuscated.conf"):
         render_obfuscated_peer_config(peer_id, private_key, preshared_key)
 
 
 def ensure_local_peer_material(ctx: UpReadyContext) -> None:
     peers = peer_names(os.getenv("WG_PEERS", ctx.settings.wg_peers))
+    ensure_unique_peer_tunnel_addresses(peers)
     if all(peer_material_complete(peer_id) for peer_id in peers):
         return
     ensure_peer_key_helper(ctx)
     for peer_id in peers:
         ensure_one_peer_material(ctx, peer_id)
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import tempfile
 import time
@@ -102,6 +103,32 @@ def expected_ready_status() -> str:
     return "200" if found_alias and sqlnet.is_file() and cwallet.is_file() else "503"
 
 
+def container_ready_response() -> tuple[str, str]:
+    body_path = f"/tmp/smoke-ready-body-{os.getpid()}-{time.monotonic_ns()}.txt"
+    quoted_body_path = shlex.quote(body_path)
+    completed = shell.compose(
+        "exec",
+        "-T",
+        "ssl-proxy",
+        "sh",
+        "-lc",
+        (
+            f'body={quoted_body_path}; '
+            'code="$(curl -s -o "$body" -w "%{http_code}" http://127.0.0.1:3002/ready 2>/dev/null)"; '
+            'rc="$?"; '
+            'if [ "$rc" -ne 0 ] || [ -z "$code" ]; then code=000; fi; '
+            'printf "%s\\n" "$code"; '
+            'cat "$body" 2>/dev/null || true; '
+            'rm -f "$body"'
+        ),
+        check=False,
+        capture=True,
+    )
+    output = completed.stdout or ""
+    code, _, body = output.partition("\n")
+    return code.strip(), body
+
+
 def assert_ready_status(expected: str) -> None:
     body = ""
     code = "000"
@@ -112,34 +139,7 @@ def assert_ready_status(expected: str) -> None:
     except httpx.HTTPError:
         pass
     if code in {"000", "52"}:
-        completed = shell.compose(
-            "exec",
-            "-T",
-            "ssl-proxy",
-            "curl",
-            "-s",
-            "-o",
-            "/tmp/smoke-ready-body.txt",
-            "-w",
-            "%{http_code}",
-            "http://127.0.0.1:3002/ready",
-            check=False,
-            capture=True,
-        )
-        code = (completed.stdout or "").strip()
-        body = (
-            shell.compose(
-                "exec",
-                "-T",
-                "ssl-proxy",
-                "sh",
-                "-lc",
-                "cat /tmp/smoke-ready-body.txt",
-                check=False,
-                capture=True,
-            ).stdout
-            or ""
-        )
+        code, body = container_ready_response()
     if code != expected:
         typer.echo(f"[smoke][ERROR] unexpected /ready status: expected {expected} got {code}")
         typer.echo("Body:")
@@ -333,4 +333,3 @@ def smoke(
     typer.echo("")
     typer.echo("[smoke] skipping explicit proxy request test because default compose uses transparent-only mode.")
     typer.echo("[smoke] all smoke tests passed successfully")
-

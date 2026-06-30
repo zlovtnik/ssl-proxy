@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sslproxy_ops import shell
+from sslproxy_ops.paths import repo_root
 
 
 class ShellTest(unittest.TestCase):
@@ -28,9 +29,8 @@ class ShellTest(unittest.TestCase):
 
         args, kwargs = mocked.call_args
         self.assertEqual(args[0], ("docker", "compose", "ps"))
-        self.assertTrue(str(kwargs["cwd"]).endswith("ssl-proxy"))
+        self.assertEqual(kwargs["cwd"], repo_root())
 
 
 if __name__ == "__main__":
     unittest.main()
-

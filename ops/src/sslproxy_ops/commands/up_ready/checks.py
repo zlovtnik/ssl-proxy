@@ -153,8 +153,9 @@ def health_checks(ctx: UpReadyContext) -> bool:
     return True
 
 
-def runtime_obfuscation_value(ctx: UpReadyContext) -> str:
-    logs = shell.compose("logs", "--tail", "200", ctx.settings.service_name, check=False, capture=True)
+def runtime_obfuscation_value(ctx_or_service: UpReadyContext | str) -> str:
+    service_name = ctx_or_service if isinstance(ctx_or_service, str) else ctx_or_service.settings.service_name
+    logs = shell.compose("logs", "--tail", "200", service_name, check=False, capture=True)
     matches = re.findall(r"wg_obfuscation_enabled=(true|false)", logs.stdout or "")
     return matches[-1] if matches else ""
 
@@ -522,4 +523,3 @@ def memo_write(ctx: UpReadyContext, result: str, signature: str, action: str) ->
     )
     memory = ctx.settings.memory_file
     memory.write_text(insert_incident(memory.read_text(), line))
-

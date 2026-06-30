@@ -206,7 +206,10 @@ def run_up_ready(ctx: UpReadyContext) -> None:
 
     if not mode_guardrails(ctx):
         if auto_fix(ctx, "profile_obfuscation_mismatch", ctx.last_failure_text):
-            pass
+            if not mode_guardrails(ctx):
+                diagnostics(ctx)
+                memo_write(ctx, "fail", ctx.last_failure.name or "mode_guardrails", ctx.last_failure.fix)
+                raise UpReadyError("mode_guardrails failed after bounded auto-fix")
         else:
             diagnostics(ctx)
             memo_write(ctx, "fail", ctx.last_failure.name or "mode_guardrails", ctx.last_failure.fix)
