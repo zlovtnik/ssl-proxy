@@ -234,7 +234,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_INTERNAL_PORT` | `51820` | Obfuscated WireGuard UDP port |
 | `WG_MTU` | `1420` | WireGuard interface MTU for the plain/direct path. Obfuscated legacy XOR+magic profiles use `1419`; framed AEAD profiles need lower values based on frame overhead. |
 | `WG_OBFUSCATION_MAX_DATAGRAM_BYTES` | `1500` | Maximum UDP datagram buffer used by the relay, shim, and frontdoor. Raise only when the path MTU supports larger datagrams. |
-| `WG_UDP_SOCKET_BUFFER_BYTES` | `8388608` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
+| `WG_UDP_SOCKET_BUFFER_BYTES` | `16777216` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
 | `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config; multiple enabled backends are probed until one replies for a client |
