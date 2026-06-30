@@ -2,13 +2,15 @@
 
 Typed Python operator CLI for the host-side `ssl-proxy` scripts.
 
-Run from the repository root without installation:
+Run from the repository root through the Makefile or script wrappers. They use
+`uv` when available and otherwise bootstrap `ops/.venv`:
 
 ```sh
-PYTHONPATH=ops/src python3 -m sslproxy_ops --help
+make ops-test
+./scripts/diagnose.sh --help
 ```
 
-When `uv` is available:
+For direct module execution, install the ops package first or use `uv`:
 
 ```sh
 cd ops

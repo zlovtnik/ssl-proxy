@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
-ROOT_DIR="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[1])' "$SCRIPT_PATH")"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 
-exec env PYTHONPATH="$ROOT_DIR/ops/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m sslproxy_ops pipeline status "$@"
+source "$ROOT_DIR/scripts/lib/ops-python.sh"
+sslproxy_exec_ops "$ROOT_DIR" pipeline status "$@"
