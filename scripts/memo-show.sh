@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MEMORY_FILE="${UP_READY_MEMORY_FILE:-$ROOT_DIR/ops-memory.md}"
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+ROOT_DIR="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[1])' "$SCRIPT_PATH")"
 
-if [ ! -f "$MEMORY_FILE" ]; then
-    echo "[memo-show][ERROR] missing memory file: $MEMORY_FILE" >&2
-    exit 1
-fi
-
-cat "$MEMORY_FILE"
+exec env PYTHONPATH="$ROOT_DIR/ops/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m sslproxy_ops memo show "$@"

@@ -1,8 +1,10 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
 GO_BIN_DIR = $(shell go env GOPATH)/bin
+OPS_PYTHON ?= python3
+OPS = PYTHONPATH=ops/src $(OPS_PYTHON) -m sslproxy_ops
 REGISTRY ?=
 REGISTRY_BUILDER ?= cross
 REGISTRY_PLAIN_HTTP ?= auto
@@ -195,24 +197,63 @@ clean:
 # Bring up compose stack, verify services, and print peer QR codes.
 # Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
 up-ready:
-	./scripts/up-ready.sh
+	$(OPS) up-ready
 
 # Non-mutating diagnosis and signature classification.
 # Example: make diagnose PROFILE_MODE=linux-shim SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
 diagnose:
-	./scripts/diagnose.sh
+	$(OPS) diagnose
 
 # Show operational memory ledger.
 memo-show:
-	./scripts/memo-show.sh
+	$(OPS) memo show
 
 # Append one operational incident line.
 # Example: make memo-log EVENT="iphone browse ok" CONTEXT="server 192.168.1.221 amd64; client 192.168.1.68 iPhone" RESULT=pass PROFILE_MODE=iphone
 memo-log:
-	./scripts/memo-log.sh
+	$(OPS) memo log
+
+db-check-connections:
+	$(OPS) db check-connections
 
 pipeline-health:
-	./scripts/sync-status.sh
+	$(OPS) pipeline status
+
+smoke:
+	$(OPS) smoke
+
+bench-wg-path:
+	$(OPS) bench wg-path
+
+schema-migrator-smoke:
+	$(OPS) schema-migrator smoke
+
+prep-ath:
+	$(OPS) host prep-ath
+
+setup-ubuntu:
+	$(OPS) host setup-ubuntu
+
+shellcheck-tier-b:
+	$(OPS) host shellcheck-tier-b
+
+ops-test:
+	PYTHONPATH=ops/src $(OPS_PYTHON) -m unittest discover -s ops/tests -v
+
+legacy-up-ready:
+	./scripts/up-ready.sh
+
+legacy-diagnose:
+	./scripts/diagnose.sh
+
+legacy-memo-show:
+	./scripts/memo-show.sh
+
+legacy-memo-log:
+	./scripts/memo-log.sh
+
+legacy-db-check-connections:
+	./scripts/check-db-connections.sh
 
 audit-threats:
 	docker compose exec -T postgres psql "$${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}" \

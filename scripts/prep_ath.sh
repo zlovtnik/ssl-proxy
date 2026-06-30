@@ -1,23 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -gt 1 ]]; then
-  echo "usage: $0 [interface]" >&2
-  exit 2
-fi
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+ROOT_DIR="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parents[1])' "$SCRIPT_PATH")"
 
-IFACE="${1:-${ATH_SENSOR_DEVICE:-wlan0}}"
-REG_DOMAIN="${ATH_SENSOR_REG_DOMAIN:-US}"
-CHANNEL="${ATH_SENSOR_CHANNEL:-6}"
-
-set_channel() {
-  local iface="$1"
-  local channel="$2"
-  iw dev "${iface}" set channel "${channel}"
-}
-
-iw reg set "${REG_DOMAIN}"
-ip link set "${IFACE}" down
-iw "${IFACE}" set monitor control
-ip link set "${IFACE}" up
-set_channel "${IFACE}" "${CHANNEL}"
+exec env PYTHONPATH="$ROOT_DIR/ops/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m sslproxy_ops host prep-ath "$@"

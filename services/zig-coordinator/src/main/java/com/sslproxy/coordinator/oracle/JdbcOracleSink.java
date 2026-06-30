@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sslproxy.coordinator.config.OracleSinkProperties;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
-import io.vavr.control.Try;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -149,13 +148,15 @@ public class JdbcOracleSink implements OracleSink {
     public long insertProxyEvents(String batchId, List<ProxyEventInsert> rows, List<BlockedEventInsert> blockedRows)
             throws Exception {
         return observeOracle("oracle.insert_proxy_events", () -> {
-            Try<Long> firstAttempt = Try.of(() -> withTransaction(connection ->
-                    insertProxyEventsTransaction(connection, batchId, rows, blockedRows)));
-            if (firstAttempt.isFailure() && isProxyEventsBatchRowDuplicate(firstAttempt.getCause().getMessage())) {
-                return observeOracle("oracle.insert_proxy_events_retry",
-                        () -> withTransaction(connection -> insertProxyEventsTransaction(connection, batchId, rows, blockedRows)));
+            try {
+                return withTransaction(connection -> insertProxyEventsTransaction(connection, batchId, rows, blockedRows));
+            } catch (Exception e) {
+                if (isProxyEventsBatchRowDuplicate(e.getMessage())) {
+                    return observeOracle("oracle.insert_proxy_events_retry",
+                            () -> withTransaction(connection -> insertProxyEventsTransaction(connection, batchId, rows, blockedRows)));
+                }
+                throw e;
             }
-            return firstAttempt.get();
         });
     }
 

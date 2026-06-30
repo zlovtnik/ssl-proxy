@@ -1,23 +1,7 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: This script must be run as root (e.g., sudo $0)" >&2
-    exit 1
-fi
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+ROOT_DIR="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().parent)' "$SCRIPT_PATH")"
 
-# 1. Install Docker
-if ! command -v docker &>/dev/null; then
-    if ! command -v curl &>/dev/null; then
-        apt-get update && apt-get install -y curl
-    fi
-    curl -fsSL https://get.docker.com | sh
-    if [ -n "${SUDO_USER:-}" ]; then
-        usermod -aG docker "$SUDO_USER"
-        echo "Note: '$SUDO_USER' added to docker group. Run 'newgrp docker' or log out and back in to apply."
-    fi
-fi
-
-# 2. Start the stack
-cd "$(dirname "$0")"
-docker compose up -d --build
+exec env PYTHONPATH="$ROOT_DIR/ops/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m sslproxy_ops host setup-ubuntu "$@"

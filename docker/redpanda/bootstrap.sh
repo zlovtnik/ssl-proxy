@@ -2,7 +2,7 @@
 set -eu
 
 SERVICE_NAME="redpanda-init"
-INSTANCE_NAME="${HOSTNAME:-unknown}"
+INSTANCE_NAME="${INSTANCE_NAME:-$(hostname 2>/dev/null || printf unknown)}"
 BOOTSTRAP_SERVERS="${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}"
 TOPIC_MANIFEST="${SYNC_REDPANDA_TOPIC_MANIFEST:-/config/topics.manifest}"
 PARTITIONS="${SYNC_REDPANDA_TOPIC_PARTITIONS:-3}"
