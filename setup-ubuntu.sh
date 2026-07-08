@@ -1,23 +1,8 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: This script must be run as root (e.g., sudo $0)" >&2
-    exit 1
-fi
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd -P)"
 
-# 1. Install Docker
-if ! command -v docker &>/dev/null; then
-    if ! command -v curl &>/dev/null; then
-        apt-get update && apt-get install -y curl
-    fi
-    curl -fsSL https://get.docker.com | sh
-    if [ -n "${SUDO_USER:-}" ]; then
-        usermod -aG docker "$SUDO_USER"
-        echo "Note: '$SUDO_USER' added to docker group. Run 'newgrp docker' or log out and back in to apply."
-    fi
-fi
-
-# 2. Start the stack
-cd "$(dirname "$0")"
-docker compose up -d --build
+source "$ROOT_DIR/scripts/lib/ops-python.sh"
+sslproxy_exec_ops "$ROOT_DIR" host setup-ubuntu "$@"

@@ -166,7 +166,8 @@ class DatabaseServiceTest {
 
         var result = service.recordScanRequests(records);
 
-        DbResult.Err<Integer> err = assertInstanceOf(DbResult.Err.class, result);
+        assertTrue(result instanceof DbResult.Err<?>);
+        DbResult.Err<?> err = (DbResult.Err<?>) result;
         assertEquals("coordinator.record_scan_request_batch", err.operation());
         assertTrue(err.cause().getMessage().contains("failed for 1 chunk"));
     }

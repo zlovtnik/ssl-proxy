@@ -1,13 +1,10 @@
 package com.sslproxy.coordinator.route;
 
-import com.sslproxy.coordinator.config.CoordinatorProperties;
 import com.sslproxy.coordinator.processor.BatchDispatchProcessor;
 import com.sslproxy.coordinator.processor.CoordinatorProcessors;
 import com.sslproxy.coordinator.service.AdaptivePullController;
 import com.sslproxy.coordinator.service.BackpressureService;
 import com.sslproxy.coordinator.service.CoordinatorMetricsService;
-import com.sslproxy.coordinator.service.CursorService;
-import com.sslproxy.coordinator.service.HealthCheckService;
 import org.apache.camel.CamelContext;
 import org.apache.camel.LoggingLevel;
 import org.apache.camel.Processor;
@@ -36,9 +33,6 @@ public class CoordinatorRoute extends RouteBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(CoordinatorRoute.class);
 
-    private final CoordinatorProperties props;
-    private final HealthCheckService healthCheckService;
-    private final CursorService cursorService;
     private final CoordinatorProcessors coordinatorProcessors;
     private final BatchDispatchProcessor batchDispatchProcessor;
 
@@ -47,18 +41,12 @@ public class CoordinatorRoute extends RouteBuilder {
     private final CoordinatorMetricsService metricsService;
     private final CamelContext camelContext;
 
-    public CoordinatorRoute(CoordinatorProperties props,
-                            HealthCheckService healthCheckService,
-                            CursorService cursorService,
-                            CoordinatorProcessors coordinatorProcessors,
+    public CoordinatorRoute(CoordinatorProcessors coordinatorProcessors,
                             BatchDispatchProcessor batchDispatchProcessor,
                             BackpressureService backpressureService,
                             AdaptivePullController adaptivePullController,
                             CoordinatorMetricsService metricsService,
                             CamelContext camelContext) {
-        this.props = props;
-        this.healthCheckService = healthCheckService;
-        this.cursorService = cursorService;
         this.coordinatorProcessors = coordinatorProcessors;
         this.batchDispatchProcessor = batchDispatchProcessor;
         this.backpressureService = backpressureService;

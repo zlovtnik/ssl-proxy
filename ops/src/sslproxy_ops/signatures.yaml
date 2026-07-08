@@ -1,0 +1,101 @@
+- name: profile_obfuscation_mismatch
+  pattern: 'magic_byte_mismatch'
+  cause: 'Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint'
+  fix: 'Set runtime obfuscation to match PROFILE_MODE and recreate container'
+  retry: auto
+- name: compose_unresolved_placeholder
+  pattern: '<server-local-ip>|invalid reference format'
+  cause: 'Compose image reference still contains an unresolved placeholder'
+  fix: 'Materialize .env with concrete REGISTRY/SERVER_IP before pulling images'
+  retry: manual
+- name: secret_file_owner_mismatch
+  pattern: 'WG_OBFUSCATION_KEY_FILE is invalid: .*must be owned by uid'
+  cause: 'Stale ssl-proxy image rejects host-owned file-backed WireGuard obfuscation secret'
+  fix: 'Use the direct obfuscation key env fallback for this run, then rebuild/push ssl-proxy with root-runtime host-owned secret support'
+  retry: auto
+- name: docker_registry_plain_http_untrusted
+  pattern: 'server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client'
+  cause: 'Docker daemon is treating the plain-HTTP local registry as HTTPS'
+  fix: 'Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry'
+  retry: manual
+- name: docker_registry_dns_timeout
+  pattern: 'lookup registry-1\.docker\.io .* i/o timeout'
+  cause: 'Host resolver cannot resolve Docker registry'
+  fix: 'Recover host DNS; retry after required images are present locally'
+  retry: auto
+- name: docker_buildkit_snapshot_missing
+  pattern: 'failed to stat active key during commit|snapshot .* does not exist'
+  cause: 'Docker BuildKit cache snapshot is missing or stale'
+  fix: 'Use docker-compose.build.yaml for local rebuilds and prune stale BuildKit cache if needed'
+  retry: manual
+- name: dns_upstream_timeout
+  pattern: 'plugin/errors: .* i/o timeout'
+  cause: 'CoreDNS upstream reachability failure'
+  fix: 'Adjust upstream DNS or host egress firewall'
+  retry: manual
+- name: admin_loopback_false_negative
+  pattern: 'host-local 127\.0\.0\.1:3002 check failed, but in-container admin health is OK'
+  cause: 'Admin bind is container-local loopback'
+  fix: 'Treat in-container health as authoritative'
+  retry: auto
+- name: coordinator_unhealthy
+  pattern: 'java-coordinator unhealthy'
+  cause: 'Coordinator failed health, Redpanda, Postgres, or Oracle checks'
+  fix: 'Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings'
+  retry: manual
+- name: postgres_unavailable
+  pattern: 'postgres unhealthy|Postgres unavailable'
+  cause: 'Postgres dependency unavailable'
+  fix: 'Ensure postgres is healthy and DATABASE_URL points to postgres:5432'
+  retry: manual
+- name: redpanda_unavailable
+  pattern: 'redpanda unhealthy|Redpanda unavailable'
+  cause: 'Redpanda dependency unavailable'
+  fix: 'Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:9092'
+  retry: manual
+- name: coordinator_wallet_missing
+  pattern: 'missing Oracle wallet artifact|wallet directory missing|missing Oracle password file'
+  cause: 'Coordinator Oracle assets are missing'
+  fix: 'Mount wallet and secrets into java-coordinator'
+  retry: manual
+- name: rust_toolchain_mismatch
+  pattern: 'rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages'
+  cause: 'Builder Rust toolchain too old for locked dependencies'
+  fix: 'Bump the builder Rust image (or pin compatible crate versions) and rebuild'
+  retry: manual
+- name: wg_client_listenport_conflict
+  pattern: 'RTNETLINK answers: Address already in use'
+  cause: 'Client ListenPort conflict (often 443 in local tests)'
+  fix: 'Remove/adjust ListenPort in client config'
+  retry: manual
+- name: wg_client_ipv6_route_failure
+  pattern: 'RTNETLINK answers: No such device'
+  cause: 'Client IPv6 default route setup failed'
+  fix: 'Temporarily remove the IPv6 default route from AllowedIPs on that client'
+  retry: manual
+- name: peer_config_permission_denied
+  pattern: 'awk: cannot open /config/.*\.conf \(Permission denied\)'
+  cause: 'Peer config file denied inside container startup path'
+  fix: 'Run ssl-proxy in compose compatibility mode (root) or relax host file ownership/permissions'
+  retry: manual
+- name: qr_permission_denied
+  pattern: 'Permission denied'
+  cause: 'Peer config unreadable on host filesystem'
+  fix: 'Read profile from /config bind mount inside container'
+  retry: auto
+- name: wg_peer_material_missing
+  pattern: 'missing peer public key|missing peer preshared key|invalid config: peer [0-9]+ is missing PublicKey'
+  cause: 'WireGuard peer material is missing'
+  fix: 'Bootstrap local peer configs or provide config/peer*/ key files'
+  retry: auto
+- name: compose_dependency_unhealthy
+  pattern: 'dependency failed to start|container .* is unhealthy'
+  cause: 'Compose dependency failed to become healthy'
+  fix: 'Inspect the named service logs and healthcheck output'
+  retry: manual
+- name: compose_image_unavailable
+  pattern: 'manifest unknown|pull access denied|repository does not exist|not found: manifest unknown'
+  cause: 'Required image is missing from the configured registry'
+  fix: 'Build and push the missing image tag to REGISTRY, then rerun up-ready'
+  retry: manual
+

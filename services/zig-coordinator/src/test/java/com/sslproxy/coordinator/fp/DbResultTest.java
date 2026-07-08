@@ -16,7 +16,7 @@ class DbResultTest {
             throw new RuntimeException("boom");
         }, "test.op");
 
-        DbResult.Err<String> err = assertInstanceOf(DbResult.Err.class, result);
+        DbResult.Err<?> err = assertInstanceOf(DbResult.Err.class, result);
         assertEquals("test.op", err.operation());
     }
 

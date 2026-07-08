@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 
 echo "[deploy-ready][WARN] scripts/deploy-and-verify.sh is deprecated. Use scripts/up-ready.sh instead."
-exec ./scripts/up-ready.sh "$@"
+source "$ROOT_DIR/scripts/lib/ops-python.sh"
+sslproxy_exec_ops "$ROOT_DIR" up-ready "$@"

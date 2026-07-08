@@ -1,8 +1,29 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log pipeline-health audit-threats atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
 GO_BIN_DIR = $(shell go env GOPATH)/bin
+OPS_BOOTSTRAP :=
+OPS_VENV ?= ops/.venv
+UV := $(shell command -v uv 2>/dev/null)
+
+ifeq ($(origin OPS), undefined)
+ifneq ($(origin OPS_PYTHON), undefined)
+OPS = PYTHONPATH=ops/src $(OPS_PYTHON) -m sslproxy_ops
+OPS_TEST = PYTHONPATH=ops/src $(OPS_PYTHON) -m unittest discover -s ops/tests -v
+else
+ifneq ($(UV),)
+OPS = uv run --project ops python -m sslproxy_ops
+OPS_TEST = uv run --project ops python -m unittest discover -s ops/tests -v
+else
+OPS_PYTHON = $(OPS_VENV)/bin/python
+OPS_BOOTSTRAP = $(OPS_VENV)/.installed
+OPS = $(OPS_PYTHON) -m sslproxy_ops
+OPS_TEST = $(OPS_PYTHON) -m unittest discover -s ops/tests -v
+endif
+endif
+endif
+OPS_TEST ?= PYTHONPATH=ops/src python3 -m unittest discover -s ops/tests -v
 REGISTRY ?=
 REGISTRY_BUILDER ?= cross
 REGISTRY_PLAIN_HTTP ?= auto
@@ -183,6 +204,9 @@ atheros-search-test:
 schema-migrator-test:
 	cd services/schema-migrator && sbt test
 
+$(OPS_VENV)/.installed: ops/pyproject.toml ops/uv.lock scripts/lib/ops-python.sh
+	@bash -lc 'source scripts/lib/ops-python.sh; sslproxy_ensure_ops_venv "$$PWD"'
+
 # Run clippy lints
 lint:
 	cargo clippy -- -D warnings
@@ -194,25 +218,64 @@ clean:
 
 # Bring up compose stack, verify services, and print peer QR codes.
 # Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
-up-ready:
-	./scripts/up-ready.sh
+up-ready: $(OPS_BOOTSTRAP)
+	$(OPS) up-ready
 
 # Non-mutating diagnosis and signature classification.
 # Example: make diagnose PROFILE_MODE=linux-shim SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
-diagnose:
-	./scripts/diagnose.sh
+diagnose: $(OPS_BOOTSTRAP)
+	$(OPS) diagnose
 
 # Show operational memory ledger.
-memo-show:
-	./scripts/memo-show.sh
+memo-show: $(OPS_BOOTSTRAP)
+	$(OPS) memo show
 
 # Append one operational incident line.
 # Example: make memo-log EVENT="iphone browse ok" CONTEXT="server 192.168.1.221 amd64; client 192.168.1.68 iPhone" RESULT=pass PROFILE_MODE=iphone
-memo-log:
+memo-log: $(OPS_BOOTSTRAP)
+	$(OPS) memo log
+
+db-check-connections: $(OPS_BOOTSTRAP)
+	$(OPS) db check-connections
+
+pipeline-health: $(OPS_BOOTSTRAP)
+	$(OPS) pipeline status
+
+smoke: $(OPS_BOOTSTRAP)
+	$(OPS) smoke
+
+bench-wg-path: $(OPS_BOOTSTRAP)
+	$(OPS) bench wg-path
+
+schema-migrator-smoke: $(OPS_BOOTSTRAP)
+	$(OPS) schema-migrator smoke
+
+prep-ath: $(OPS_BOOTSTRAP)
+	$(OPS) host prep-ath
+
+setup-ubuntu: $(OPS_BOOTSTRAP)
+	$(OPS) host setup-ubuntu
+
+shellcheck-tier-b: $(OPS_BOOTSTRAP)
+	$(OPS) host shellcheck-tier-b
+
+ops-test: $(OPS_BOOTSTRAP)
+	$(OPS_TEST)
+
+legacy-up-ready:
+	./scripts/up-ready.sh
+
+legacy-diagnose:
+	./scripts/diagnose.sh
+
+legacy-memo-show:
+	./scripts/memo-show.sh
+
+legacy-memo-log:
 	./scripts/memo-log.sh
 
-pipeline-health:
-	./scripts/sync-status.sh
+legacy-db-check-connections:
+	./scripts/check-db-connections.sh
 
 audit-threats:
 	docker compose exec -T postgres psql "$${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}" \

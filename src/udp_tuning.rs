@@ -3,7 +3,7 @@ use std::{io, net::SocketAddr};
 use tokio::net::UdpSocket;
 use tracing::warn;
 
-pub const DEFAULT_UDP_SOCKET_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_UDP_SOCKET_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn bind_tuned_udp_socket(
     bind_addr: SocketAddr,

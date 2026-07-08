@@ -45,7 +45,7 @@ push_result_metrics() {
   if [ "$host" = "$port" ]; then
     port="80"
   fi
-  base_path="/${raw#${host_port}}"
+  base_path="/${raw#"${host_port}"}"
   if [ "$base_path" = "/${raw}" ]; then
     base_path="/"
   fi

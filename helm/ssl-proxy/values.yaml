@@ -106,7 +106,7 @@ proxy:
     internalPort: 51820
     mtu: 1420
     obfuscationMaxDatagramBytes: null
-    udpSocketBufferBytes: 8388608
+    udpSocketBufferBytes: 16777216
     obfuscation:
       enabled: false
       key: ""

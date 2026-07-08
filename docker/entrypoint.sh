@@ -1068,7 +1068,7 @@ while true; do
 			echo "ssl-proxy exited ${PROXY_RESTART_COUNT} consecutive times; restart limit ${PROXY_RESTART_LIMIT} exceeded" >&2
 			exit 1
 		fi
-		echo "ssl-proxy exited, restarting after ${PROXY_RESTART_BACKOFF}s (attempt ${PROXY_RESTART_COUNT}/${PROXY_RESTART_LIMIT})..."
+	echo "ssl-proxy exited with status ${exit_code}, restarting after ${PROXY_RESTART_BACKOFF}s (attempt ${PROXY_RESTART_COUNT}/${PROXY_RESTART_LIMIT})..."
 		sleep "$PROXY_RESTART_BACKOFF"
 		PROXY_RESTART_BACKOFF=$((PROXY_RESTART_BACKOFF * 2))
 		"$PROXY_BIN" &

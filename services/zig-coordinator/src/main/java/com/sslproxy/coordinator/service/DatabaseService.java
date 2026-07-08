@@ -157,9 +157,9 @@ public class DatabaseService {
         List<String> streamNames = props.streamNames();
         return Try.of(() -> {
             Integer recorded = observeDb("coordinator.record_scan_request_batch", () -> jdbc.execute((Connection connection) ->
-                    SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::requestJson), requestArray ->
-                            SqlArrays.withJsonbArray(connection, extract(chunk, ScanRequestRecord::payloadJson), payloadArray ->
-                                    SqlArrays.withTextArray(connection, extract(chunk, ScanRequestRecord::payloadSha256), shaArray ->
+                    SqlArrays.withJsonbArray(connection, extract(chunk, record -> record.requestJson()), requestArray ->
+                            SqlArrays.withJsonbArray(connection, extract(chunk, record -> record.payloadJson()), payloadArray ->
+                                    SqlArrays.withTextArray(connection, extract(chunk, record -> record.payloadSha256()), shaArray ->
                                             SqlArrays.withTextArray(connection, streamNames, streamNameArray ->
                                                     queryForInt(
                                                             connection,

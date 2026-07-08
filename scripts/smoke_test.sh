@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-: "${DATABASE_URL:?DATABASE_URL is required}"
-export DATABASE_URL
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 
-cd "${repo_root}/services/schema-migrator"
-sbt "run --sql-dir ../../sql --db-kind postgres list"
-sbt "run --sql-dir ../../sql --db-kind postgres validate"
-sbt "run --sql-dir ../../sql --db-kind postgres apply"
+source "$ROOT_DIR/scripts/lib/ops-python.sh"
+sslproxy_exec_ops "$ROOT_DIR" schema-migrator smoke "$@"

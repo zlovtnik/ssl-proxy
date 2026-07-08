@@ -14,6 +14,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.sslproxy.coordinator.testsupport.MockitoCaptors.scanRequestRecordListCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -48,7 +49,7 @@ class PayloadAuditRecordProcessorTest {
 
         processor.process(exchangeWithBody(payload));
 
-        ArgumentCaptor<List<DatabaseService.ScanRequestRecord>> records = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DatabaseService.ScanRequestRecord>> records = scanRequestRecordListCaptor();
         verify(databaseService).recordScanRequests(records.capture());
         DatabaseService.ScanRequestRecord record = records.getValue().getFirst();
         var request = objectMapper.readTree(record.requestJson());
@@ -98,7 +99,7 @@ class PayloadAuditRecordProcessorTest {
         assertThrows(IllegalStateException.class, () -> processor.process(exchangeWithBody(payload)));
         processor.flushPending();
 
-        ArgumentCaptor<List<DatabaseService.ScanRequestRecord>> records = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DatabaseService.ScanRequestRecord>> records = scanRequestRecordListCaptor();
         verify(databaseService, times(2)).recordScanRequests(records.capture());
         assertEquals(1, records.getAllValues().get(1).size());
         assertEquals(payload, records.getAllValues().get(1).getFirst().payloadJson());
@@ -111,4 +112,5 @@ class PayloadAuditRecordProcessorTest {
         when(message.getBody(String.class)).thenReturn(body);
         return exchange;
     }
+
 }

@@ -234,7 +234,7 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_INTERNAL_PORT` | `51820` | Obfuscated WireGuard UDP port |
 | `WG_MTU` | `1420` | WireGuard interface MTU for the plain/direct path. Obfuscated legacy XOR+magic profiles use `1419`; framed AEAD profiles need lower values based on frame overhead. |
 | `WG_OBFUSCATION_MAX_DATAGRAM_BYTES` | `1500` | Maximum UDP datagram buffer used by the relay, shim, and frontdoor. Raise only when the path MTU supports larger datagrams. |
-| `WG_UDP_SOCKET_BUFFER_BYTES` | `8388608` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
+| `WG_UDP_SOCKET_BUFFER_BYTES` | `16777216` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
 | `WG_OBFUSCATION_ENABLED` | `false` | Enable XOR + magic byte obfuscation |
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
 | `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config; multiple enabled backends are probed until one replies for a client |
@@ -342,6 +342,14 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `pipeline-health` | Check sync-plane pipeline health |
 | `memo-show` | Show operational memory ledger |
 | `memo-log` | Append one operational incident line |
+| `db-check-connections` | Check coordinator actuator/HikariCP health and Postgres password fingerprints |
+| `smoke` | Run the Docker Compose smoke scenarios |
+| `bench-wg-path` | Run WireGuard path iperf benchmark cases |
+| `schema-migrator-smoke` | Run schema migrator list/validate/apply smoke flow |
+| `prep-ath` | Prepare the Atheros capture interface |
+| `setup-ubuntu` | Bootstrap Docker and start the stack on Ubuntu |
+| `shellcheck-tier-b` | Validate retained container/init shell scripts |
+| `ops-test` | Run the Python operator CLI unit tests |
 | `audit-threats` | Query wireless threat alerts view |
 
 ## Kubernetes Deployment
@@ -358,13 +366,14 @@ helm upgrade --install ssl-proxy ./helm/ssl-proxy \
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/up-ready.sh` | Bring up stack, verify all services, print QR codes, and write `secrets/up-ready-credentials.txt` |
-| `scripts/diagnose.sh` | Non-mutating diagnosis of proxy and tunnel state |
-| `scripts/smoke_test.sh` | End-to-end smoke test |
-| `scripts/sync-status.sh` | Pipeline health check (sync plane) |
-| `scripts/deploy-and-verify.sh` | Full deploy + verification workflow |
-| `scripts/prep_ath.sh` | Atheros sensor interface preparation |
-| `scripts/memo-show.sh` / `scripts/memo-log.sh` | Operational memory ledger |
+| `ops/` (`python3 -m sslproxy_ops`) | Typed host-side operator CLI for host/operator workflows |
+| `scripts/up-ready.sh` | Compatibility shim to `ops up-ready` |
+| `scripts/diagnose.sh` | Compatibility shim to `ops diagnose` |
+| `scripts/smoke_test.sh` | Compatibility shim to `ops schema-migrator smoke` |
+| `scripts/sync-status.sh` | Compatibility shim to `ops pipeline status` |
+| `scripts/deploy-and-verify.sh` | Deprecated compatibility shim to `ops up-ready` |
+| `scripts/prep_ath.sh` | Compatibility shim to `ops host prep-ath` |
+| `scripts/memo-show.sh` / `scripts/memo-log.sh` | Compatibility shims to `ops memo show` / `ops memo log` |
 
 ## Troubleshooting
 

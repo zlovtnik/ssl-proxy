@@ -99,7 +99,8 @@ public class RedpandaLagMetricsService {
         long lagTotal = 0;
 
         for (TopicPartition partition : partitions.stream()
-                .sorted(Comparator.comparing(TopicPartition::topic).thenComparingInt(TopicPartition::partition))
+                .sorted(Comparator.comparing((TopicPartition partition) -> partition.topic())
+                        .thenComparingInt(partition -> partition.partition()))
                 .toList()) {
             long end = Math.max(0, endOffsets.getOrDefault(partition, 0L));
             long committed = Math.max(0, committedOffsets.getOrDefault(partition, 0L));
@@ -117,7 +118,7 @@ public class RedpandaLagMetricsService {
         }
 
         String normalized = List.of(rawServers.split(",")).stream()
-                .map(String::trim)
+                .map(value -> value.trim())
                 .filter(value -> !value.isEmpty())
                 .map(RedpandaLagMetricsService::normalizeBootstrapServer)
                 .collect(Collectors.joining(","));
@@ -188,7 +189,7 @@ public class RedpandaLagMetricsService {
                 .all()
                 .get(timeoutMs, TimeUnit.MILLISECONDS);
         Map<TopicPartition, Long> endOffsets = latestOffsets.entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().offset()));
+                .collect(Collectors.toMap(entry -> entry.getKey(), entry -> entry.getValue().offset()));
 
         Map<TopicPartition, OffsetAndMetadata> committedMetadata = client
                 .listConsumerGroupOffsets(target.consumerGroup())
@@ -197,7 +198,7 @@ public class RedpandaLagMetricsService {
         Map<TopicPartition, Long> committedOffsets = committedMetadata.entrySet().stream()
                 .filter(entry -> target.topic().equals(entry.getKey().topic()))
                 .filter(entry -> entry.getValue() != null)
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().offset()));
+                .collect(Collectors.toMap(entry -> entry.getKey(), entry -> entry.getValue().offset()));
 
         return calculateLag(partitions, endOffsets, committedOffsets);
     }
@@ -233,28 +234,28 @@ public class RedpandaLagMetricsService {
                             .register(registry)
             );
 
-            Gauge.builder("coordinator.redpanda.consumer.lag.records", targetMeters.lagRecords(), AtomicLong::get)
+            Gauge.builder("coordinator.redpanda.consumer.lag.records", targetMeters.lagRecords(), value -> value.get())
                     .description("Aggregated Redpanda consumer lag in records")
                     .tag("role", target.role())
                     .tag("consumer_group", target.consumerGroup())
                     .tag("topic", target.topic())
                     .register(registry);
 
-            Gauge.builder("coordinator.redpanda.topic.end.offset.records", targetMeters.endOffsetRecords(), AtomicLong::get)
+            Gauge.builder("coordinator.redpanda.topic.end.offset.records", targetMeters.endOffsetRecords(), value -> value.get())
                     .description("Aggregated Redpanda topic end offset in records")
                     .tag("role", target.role())
                     .tag("consumer_group", target.consumerGroup())
                     .tag("topic", target.topic())
                     .register(registry);
 
-            Gauge.builder("coordinator.redpanda.consumer.committed.offset.records", targetMeters.committedOffsetRecords(), AtomicLong::get)
+            Gauge.builder("coordinator.redpanda.consumer.committed.offset.records", targetMeters.committedOffsetRecords(), value -> value.get())
                     .description("Aggregated Redpanda consumer committed offset in records")
                     .tag("role", target.role())
                     .tag("consumer_group", target.consumerGroup())
                     .tag("topic", target.topic())
                     .register(registry);
 
-            Gauge.builder("coordinator.redpanda.lag.stale.seconds", targetMeters, TargetMeters::staleSeconds)
+            Gauge.builder("coordinator.redpanda.lag.stale.seconds", targetMeters, metersForTarget -> metersForTarget.staleSeconds())
                     .description("Seconds since the last successful Redpanda lag metric refresh")
                     .tag("role", target.role())
                     .tag("consumer_group", target.consumerGroup())

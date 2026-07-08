@@ -1,7 +1,5 @@
 package com.sslproxy.coordinator.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -10,8 +8,6 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class CursorService {
-
-    private static final Logger log = LoggerFactory.getLogger(CursorService.class);
 
     private final DatabaseService db;
 
