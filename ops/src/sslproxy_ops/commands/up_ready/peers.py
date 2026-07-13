@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 
 from sslproxy_ops import shell
-from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step
+from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step, warn
 from sslproxy_ops.paths import repo_root
 from sslproxy_ops.util.ini import is_placeholder_value, peer_names, read_ini_value, trim_key_value
 
@@ -91,6 +91,22 @@ def write_secret_text(path: Path, value: str, mode: int = 0o600) -> None:
             pass
 
 
+def ensure_private_config_mode(path: Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except PermissionError as exc:
+        current_mode = stat.S_IMODE(path.stat().st_mode)
+        if current_mode & 0o077:
+            raise UpReadyError(
+                f"Unable to secure peer config {path}: mode is {current_mode:04o}; "
+                "fix its ownership or run chmod 600 before retrying"
+            ) from exc
+        warn(
+            f"peer_bootstrap: {path} is already private (mode {current_mode:04o}); "
+            "leaving its owner-managed permissions unchanged"
+        )
+
+
 def render_direct_peer_config(peer_id: str, private_key: str, preshared_key: str, server_ip: str) -> None:
     output = repo_root() / "config" / peer_id / f"{peer_id}.conf"
     address = peer_tunnel_address(peer_id)
@@ -122,7 +138,7 @@ Endpoint = {server_ip}:{endpoint_port}
 AllowedIPs = 0.0.0.0/0, ::/0
 """
     )
-    os.chmod(output, 0o600)
+    ensure_private_config_mode(output)
     step("S00", f"peer_bootstrap: wrote {output}")
 
 
@@ -154,7 +170,7 @@ Endpoint = 127.0.0.1:51821
 AllowedIPs = 0.0.0.0/0, ::/0
 """
         )
-    os.chmod(output, 0o600)
+    ensure_private_config_mode(output)
     step("S00", f"peer_bootstrap: wrote {output}")
 
 
@@ -234,9 +250,13 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
     if preshared_key_file_value != preshared_key:
         write_secret_text(preshared_key_file, preshared_key, 0o600)
 
+    direct_config = peer_dir / f"{peer_id}.conf"
+    direct_profile_selected = ctx.settings.profile_mode in {"iphone", "linux-direct"}
     # Direct clients use a different endpoint port when obfuscation is active,
-    # so this generated profile must follow the selected runtime mode.
-    render_direct_peer_config(peer_id, private_key, preshared_key, ctx.settings.server_ip)
+    # so their generated profile must follow the selected runtime mode. Shim
+    # modes must not rewrite an already-resolved, potentially owner-managed file.
+    if direct_profile_selected or not peer_config_keys_resolved(direct_config):
+        render_direct_peer_config(peer_id, private_key, preshared_key, ctx.settings.server_ip)
     if not peer_config_keys_resolved(peer_dir / f"{peer_id}-obfuscated.conf"):
         render_obfuscated_peer_config(peer_id, private_key, preshared_key)
 
@@ -245,6 +265,8 @@ def ensure_local_peer_material(ctx: UpReadyContext) -> None:
     peers = peer_names(os.getenv("WG_PEERS", ctx.settings.wg_peers))
     ensure_unique_peer_tunnel_addresses(peers)
     if all(peer_material_complete(peer_id) for peer_id in peers):
+        if ctx.settings.profile_mode not in {"iphone", "linux-direct"}:
+            return
         for peer_id in peers:
             peer_dir = repo_root() / "config" / peer_id
             render_direct_peer_config(

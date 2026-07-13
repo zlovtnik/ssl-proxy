@@ -91,7 +91,7 @@ struct RuntimeState {
     config: Arc<RwLock<FrontdoorConfig>>,
     resolved_backends: Arc<RwLock<HashMap<String, SocketAddr>>>,
     sessions: Arc<DashMap<SessionKey, Arc<BackendSession>>>,
-    routes: Arc<DashMap<ClientRouteKey, BackendRoute>>,
+    routes: Arc<DashMap<ClientRouteKey, PinnedRoute>>,
     session_admission: Arc<Mutex<()>>,
     rate_limiter: Arc<ShardedRateLimiter>,
     stats: Arc<FrontdoorStats>,
@@ -196,7 +196,7 @@ struct BackendSession {
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 struct ClientRouteKey {
-    listener: String,
+    listener: Arc<str>,
     client_addr: SocketAddr,
 }
 
@@ -206,9 +206,15 @@ struct BackendRoute {
     backend_addr: String,
 }
 
+#[derive(Clone)]
+struct PinnedRoute {
+    route: BackendRoute,
+    session: Arc<BackendSession>,
+}
+
 #[derive(Clone, Eq)]
 struct SessionKey {
-    listener: String,
+    listener: Arc<str>,
     client_addr: SocketAddr,
     backend_name: String,
     backend_addr: String,
@@ -967,7 +973,7 @@ async fn run_listener_with_socket(
     );
 
     let mut buf = vec![0_u8; state.max_datagram_bytes];
-    let listener_name = listener.name.clone();
+    let listener_name: Arc<str> = Arc::from(listener.name.clone());
     let worker_count = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(1)
@@ -1054,7 +1060,7 @@ fn dispatch_worker_index(client_addr: SocketAddr, worker_count: usize) -> usize 
 }
 
 async fn run_dispatch_worker(
-    listener_name: String,
+    listener_name: Arc<str>,
     listener_socket: Arc<UdpSocket>,
     state: RuntimeState,
     mut packets: mpsc::Receiver<DispatchPacket>,
@@ -1074,15 +1080,36 @@ async fn run_dispatch_worker(
 }
 
 async fn dispatch_client_packet(
-    listener_name: &str,
+    listener_name: &Arc<str>,
     client_addr: SocketAddr,
     packet: &DispatchPacket,
     received_at: Instant,
     listener_socket: Arc<UdpSocket>,
     state: RuntimeState,
 ) {
+    let route_key = ClientRouteKey {
+        listener: listener_name.clone(),
+        client_addr,
+    };
+    if let Some(session) = state
+        .routes
+        .get(&route_key)
+        .map(|pinned| pinned.session.clone())
+    {
+        forward_packet_to_session(
+            &session,
+            packet,
+            received_at,
+            client_addr,
+            "pinned",
+            &state.stats,
+        )
+        .await;
+        return;
+    }
+
     let Some((listener_session_idle, jitter_ms, backends)) =
-        dispatch_config_for_listener(&state, listener_name).await
+        dispatch_config_for_listener(&state, listener_name.as_ref()).await
     else {
         warn!(listener = %listener_name, "dropping client packet; listener no longer exists");
         return;
@@ -1092,9 +1119,11 @@ async fn dispatch_client_packet(
         return;
     }
 
-    for backend in route_backends_for_client(&state, listener_name, client_addr, backends).await {
+    for backend in
+        route_backends_for_client(&state, listener_name.clone(), client_addr, backends).await
+    {
         match get_or_create_session(
-            listener_name,
+            listener_name.clone(),
             listener_session_idle,
             jitter_ms,
             client_addr,
@@ -1105,21 +1134,15 @@ async fn dispatch_client_packet(
         .await
         {
             Ok(session) => {
-                session
-                    .last_activity_epoch
-                    .store(now_epoch_secs(), Ordering::Relaxed);
-                apply_jitter(jitter_ms).await;
-                if let Err(error) = session.socket.send(packet.bytes()).await {
-                    warn!(
-                        %error,
-                        %client_addr,
-                        backend = %backend.name,
-                        "failed to send packet to backend"
-                    );
-                } else {
-                    state.stats.record_backend_packet(packet.len);
-                    state.stats.observe_forward_latency(received_at.elapsed());
-                }
+                forward_packet_to_session(
+                    &session,
+                    packet,
+                    received_at,
+                    client_addr,
+                    &backend.name,
+                    &state.stats,
+                )
+                .await;
             }
             Err(error) => warn!(
                 %error,
@@ -1128,6 +1151,31 @@ async fn dispatch_client_packet(
                 "failed to create backend session"
             ),
         }
+    }
+}
+
+async fn forward_packet_to_session(
+    session: &BackendSession,
+    packet: &DispatchPacket,
+    received_at: Instant,
+    client_addr: SocketAddr,
+    backend_name: &str,
+    stats: &FrontdoorStats,
+) {
+    session
+        .last_activity_epoch
+        .store(now_epoch_secs(), Ordering::Relaxed);
+    apply_jitter(session.jitter_ms).await;
+    if let Err(error) = session.socket.send(packet.bytes()).await {
+        warn!(
+            %error,
+            %client_addr,
+            backend = %backend_name,
+            "failed to send packet to backend"
+        );
+    } else {
+        stats.record_backend_packet(packet.len);
+        stats.observe_forward_latency(received_at.elapsed());
     }
 }
 
@@ -1154,22 +1202,21 @@ async fn dispatch_config_for_listener(
 
 async fn route_backends_for_client(
     state: &RuntimeState,
-    listener_name: &str,
+    listener_name: Arc<str>,
     client_addr: SocketAddr,
     enabled_backends: Vec<BackendConfig>,
 ) -> Vec<BackendConfig> {
     let route_key = ClientRouteKey {
-        listener: listener_name.to_string(),
+        listener: listener_name.clone(),
         client_addr,
     };
     let Some(route) = state.routes.get(&route_key).map(|route| route.clone()) else {
         return enabled_backends;
     };
 
-    if let Some(backend) = enabled_backends
-        .iter()
-        .find(|backend| backend.name == route.backend_name && backend.addr == route.backend_addr)
-    {
+    if let Some(backend) = enabled_backends.iter().find(|backend| {
+        backend.name == route.route.backend_name && backend.addr == route.route.backend_addr
+    }) {
         return vec![backend.clone()];
     }
 
@@ -1178,7 +1225,7 @@ async fn route_backends_for_client(
 }
 
 async fn get_or_create_session(
-    listener_name: &str,
+    listener_name: Arc<str>,
     listener_session_idle: Duration,
     jitter_ms: u64,
     client_addr: SocketAddr,
@@ -1188,7 +1235,7 @@ async fn get_or_create_session(
 ) -> Result<Arc<BackendSession>, FrontdoorError> {
     let resolved_backend_addr = cached_backend_addr(&state, &backend.addr).await?;
     let key = SessionKey {
-        listener: listener_name.to_string(),
+        listener: listener_name,
         client_addr,
         backend_name: backend.name.clone(),
         backend_addr: backend.addr.clone(),
@@ -1314,7 +1361,7 @@ fn evict_oldest_session_if_full(state: &RuntimeState) {
 
     if let Some((evicted_key, session)) = state.sessions.remove(&key) {
         session.cancellation.cancel();
-        remove_backend_route_if_current(state, &evicted_key);
+        remove_backend_route_if_current(state, &evicted_key, &session);
         state.stats.record_session_eviction();
         debug!(?evicted_key, "evicted oldest frontdoor backend session");
     }
@@ -1341,7 +1388,7 @@ async fn run_backend_session(
                 session
                     .last_activity_epoch
                     .store(now_epoch_secs(), Ordering::Relaxed);
-                if !bind_backend_route_for_reply(&state, &key).await {
+                if !bind_backend_route_for_reply(&state, &key, &session).await {
                     debug!(
                         ?key,
                         "dropping backend reply from non-selected WireGuard route"
@@ -1370,7 +1417,7 @@ async fn run_backend_session(
     }
 
     state.sessions.remove(&key);
-    remove_backend_route_if_current(&state, &key);
+    remove_backend_route_if_current(&state, &key, &session);
 }
 
 async fn apply_jitter(jitter_ms: u64) {
@@ -1384,7 +1431,11 @@ async fn apply_jitter(jitter_ms: u64) {
     }
 }
 
-async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) -> bool {
+async fn bind_backend_route_for_reply(
+    state: &RuntimeState,
+    key: &SessionKey,
+    session: &Arc<BackendSession>,
+) -> bool {
     let route_key = ClientRouteKey {
         listener: key.listener.clone(),
         client_addr: key.client_addr,
@@ -1395,7 +1446,7 @@ async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) ->
     };
 
     if let Some(existing) = state.routes.get(&route_key) {
-        return existing.value() == &route;
+        return existing.route == route;
     }
 
     let config = state.config.read().await;
@@ -1405,9 +1456,12 @@ async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) ->
     drop(config);
 
     match state.routes.entry(route_key) {
-        Entry::Occupied(existing) => existing.get() == &route,
+        Entry::Occupied(existing) => existing.get().route == route,
         Entry::Vacant(vacant) => {
-            vacant.insert(route);
+            vacant.insert(PinnedRoute {
+                route,
+                session: session.clone(),
+            });
             true
         }
     }
@@ -1421,7 +1475,7 @@ fn backend_route_is_active(
     let Some(listener) = config
         .listeners
         .iter()
-        .find(|listener| listener.name == route_key.listener)
+        .find(|listener| listener.name.as_str() == route_key.listener.as_ref())
     else {
         return false;
     };
@@ -1440,7 +1494,11 @@ fn backend_route_is_active(
     })
 }
 
-fn remove_backend_route_if_current(state: &RuntimeState, key: &SessionKey) {
+fn remove_backend_route_if_current(
+    state: &RuntimeState,
+    key: &SessionKey,
+    session: &Arc<BackendSession>,
+) {
     let route_key = ClientRouteKey {
         listener: key.listener.clone(),
         client_addr: key.client_addr,
@@ -1452,21 +1510,10 @@ fn remove_backend_route_if_current(state: &RuntimeState, key: &SessionKey) {
     let route_matches = state
         .routes
         .get(&route_key)
-        .is_some_and(|existing| existing.value() == &route);
-    if route_matches && !has_other_session_for_route(state, key) {
+        .is_some_and(|existing| existing.route == route && Arc::ptr_eq(&existing.session, session));
+    if route_matches {
         state.routes.remove(&route_key);
     }
-}
-
-fn has_other_session_for_route(state: &RuntimeState, key: &SessionKey) -> bool {
-    state.sessions.iter().any(|entry| {
-        let other = entry.key();
-        other != key
-            && other.listener == key.listener
-            && other.client_addr == key.client_addr
-            && other.backend_name == key.backend_name
-            && other.backend_addr == key.backend_addr
-    })
 }
 
 impl ShardedRateLimiter {
@@ -1644,6 +1691,7 @@ async fn reload_config(config_file: &Path, state: &RuntimeState) {
                 .count();
             *state.config.write().await = config;
             *state.resolved_backends.write().await = resolved_backends;
+            state.routes.clear();
             state.stats.record_reload_success();
             info!(
                 listener_count,
@@ -1890,30 +1938,40 @@ addr = "127.0.0.1:51820"
             }],
         });
         let key = SessionKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
             backend_name: "a".to_string(),
             backend_addr: backend_addr.clone(),
             resolved_backend_addr: backend_addr.parse().unwrap(),
         };
         let route_key = ClientRouteKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
         };
         let expected_route = BackendRoute {
             backend_name: "a".to_string(),
             backend_addr,
         };
+        let session = Arc::new(BackendSession {
+            socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            last_activity_epoch: Arc::new(AtomicU64::new(10)),
+            session_idle: Duration::from_secs(5),
+            jitter_ms: 0,
+            cancellation: CancellationToken::new(),
+        });
 
-        assert!(bind_backend_route_for_reply(&state, &key).await);
+        assert!(bind_backend_route_for_reply(&state, &key, &session).await);
         assert_eq!(
-            state.routes.get(&route_key).map(|route| route.clone()),
+            state
+                .routes
+                .get(&route_key)
+                .map(|route| route.route.clone()),
             Some(expected_route.clone())
         );
 
         state.routes.clear();
         state.config.write().await.backends[0].enabled = false;
-        assert!(!bind_backend_route_for_reply(&state, &key).await);
+        assert!(!bind_backend_route_for_reply(&state, &key, &session).await);
         assert!(state.routes.is_empty());
 
         {
@@ -1921,7 +1979,7 @@ addr = "127.0.0.1:51820"
             config.backends[0].enabled = true;
             config.listeners[0].backends.clear();
         }
-        assert!(!bind_backend_route_for_reply(&state, &key).await);
+        assert!(!bind_backend_route_for_reply(&state, &key, &session).await);
         assert!(state.routes.is_empty());
     }
 
@@ -1934,14 +1992,14 @@ addr = "127.0.0.1:51820"
         state.max_sessions = 2;
         let client_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let old_key = SessionKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
             backend_name: "a".to_string(),
             backend_addr: "127.0.0.1:51820".to_string(),
             resolved_backend_addr: "127.0.0.1:51820".parse().unwrap(),
         };
         let new_key = SessionKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
             backend_name: "b".to_string(),
             backend_addr: "127.0.0.1:51821".to_string(),
@@ -1968,9 +2026,12 @@ addr = "127.0.0.1:51820"
                 listener: old_key.listener.clone(),
                 client_addr,
             },
-            BackendRoute {
-                backend_name: old_key.backend_name.clone(),
-                backend_addr: old_key.backend_addr.clone(),
+            PinnedRoute {
+                route: BackendRoute {
+                    backend_name: old_key.backend_name.clone(),
+                    backend_addr: old_key.backend_addr.clone(),
+                },
+                session: old_session.clone(),
             },
         );
 

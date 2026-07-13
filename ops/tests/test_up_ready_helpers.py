@@ -17,6 +17,9 @@ from sslproxy_ops.commands.up_ready.model import (
     desired_obfuscation_value,
 )
 from sslproxy_ops.commands.up_ready.peers import (
+    ensure_local_peer_material,
+    ensure_one_peer_material,
+    ensure_private_config_mode,
     ensure_unique_peer_tunnel_addresses,
     generate_peer_preshared_key,
     peer_material_complete,
@@ -77,6 +80,92 @@ class UpReadyHelpersTest(unittest.TestCase):
             write_secret_text(path, "value", 0o600)
             self.assertEqual(path.read_text(), "value\n")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_owner_managed_private_config_accepts_chmod_permission_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "peer.conf"
+            path.write_text("secret\n")
+            path.chmod(0o600)
+
+            with unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.peers.os.chmod",
+                side_effect=PermissionError("owner-managed"),
+            ):
+                ensure_private_config_mode(path)
+
+    def test_owner_managed_permissive_config_rejects_chmod_permission_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "peer.conf"
+            path.write_text("secret\n")
+            path.chmod(0o644)
+
+            with (
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.os.chmod",
+                    side_effect=PermissionError("owner-managed"),
+                ),
+                self.assertRaisesRegex(UpReadyError, "chmod 600"),
+            ):
+                ensure_private_config_mode(path)
+
+    def test_complete_mac_material_does_not_rewrite_direct_profile(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            peer_dir = root / "config" / "peer1"
+            peer_dir.mkdir(parents=True)
+            (peer_dir / "privatekey-peer1").write_text("private\n")
+            (peer_dir / "publickey-peer1").write_text("public\n")
+            (peer_dir / "presharedkey-peer1").write_text("preshared\n")
+            resolved = "[Interface]\nPrivateKey = private\n[Peer]\nPresharedKey = preshared\n"
+            (peer_dir / "peer1.conf").write_text(resolved)
+            (peer_dir / "peer1-obfuscated.conf").write_text(resolved)
+            settings = Settings()
+            settings.profile_mode = "mac"
+            ctx = UpReadyContext(settings=settings)
+
+            with (
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.repo_root", return_value=root
+                ),
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.render_direct_peer_config"
+                ) as render_direct,
+                unittest.mock.patch.dict(os.environ, {"WG_PEERS": "peer1"}, clear=False),
+            ):
+                ensure_local_peer_material(ctx)
+
+            render_direct.assert_not_called()
+
+    def test_mac_material_repair_preserves_resolved_direct_profile(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            peer_dir = root / "config" / "peer1"
+            peer_dir.mkdir(parents=True)
+            (peer_dir / "privatekey-peer1").write_text("private\n")
+            (peer_dir / "publickey-peer1").write_text("public\n")
+            (peer_dir / "presharedkey-peer1").write_text("preshared\n")
+            (peer_dir / "peer1.conf").write_text(
+                "[Interface]\nPrivateKey = private\n[Peer]\nPresharedKey = preshared\n"
+            )
+            settings = Settings()
+            settings.profile_mode = "mac"
+            ctx = UpReadyContext(settings=settings)
+
+            with (
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.repo_root", return_value=root
+                ),
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.render_direct_peer_config"
+                ) as render_direct,
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.render_obfuscated_peer_config"
+                ) as render_obfuscated,
+            ):
+                ensure_one_peer_material(ctx, "peer1")
+
+            render_direct.assert_not_called()
+            render_obfuscated.assert_called_once_with("peer1", "private", "preshared")
 
     def test_registry_helpers(self):
         self.assertEqual(registry_host_value("http://192.168.1.2:5000/foo"), "192.168.1.2:5000")
