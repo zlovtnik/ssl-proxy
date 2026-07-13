@@ -31,7 +31,7 @@ class DiagnoseReport:
 
 
 def desired_obfuscation_value(profile_mode: str) -> str:
-    return "true" if profile_mode in {"linux-shim", "mac"} else "false"
+    return "true" if profile_mode in {"iphone", "linux-shim", "mac"} else "false"
 
 
 def runtime_obfuscation_value(service_name: str) -> str:
@@ -220,4 +220,3 @@ def diagnose(
         typer.echo(json.dumps(asdict(report), indent=2))
     else:
         print_report(report, settings)
-

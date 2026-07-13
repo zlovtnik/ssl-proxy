@@ -205,6 +205,7 @@ struct SendQueueReservation {
 
 struct QueuedUpstreamPacket {
     lease: UdpBufferLease,
+    start: usize,
     len: usize,
     queued_at_millis: u64,
     is_chaff: bool,
@@ -212,7 +213,7 @@ struct QueuedUpstreamPacket {
 
 impl QueuedUpstreamPacket {
     fn bytes(&self) -> &[u8] {
-        &self.lease[..self.len]
+        &self.lease[self.start..self.start + self.len]
     }
 }
 
@@ -376,10 +377,12 @@ async fn run_shim(context: ShimSessionContext) {
         let Some(mut lease) = lease_buffer_or_wait(&context, None).await else {
             break;
         };
+        let config = context.config_store.load_full();
+        let packet_start = packet_encode_headroom(&config.obfuscation);
 
         tokio::select! {
             _ = context.shutdown.cancelled() => break,
-            recv = context.listen_socket.recv_from(&mut lease) => {
+            recv = context.listen_socket.recv_from(&mut lease[packet_start..]) => {
                 let (len, client_addr) = match recv {
                     Ok(result) => result,
                     Err(err) => {
@@ -391,7 +394,6 @@ async fn run_shim(context: ShimSessionContext) {
                     }
                 };
 
-                let config = context.config_store.load_full();
                 let session = match get_or_create_session(
                     client_addr,
                     config.clone(),
@@ -419,15 +421,16 @@ async fn run_shim(context: ShimSessionContext) {
                 }
 
                 session.record_first_send();
-                let encoded_len = match encode_packet_in_place(
+                let encoded_range = match encode_packet_in_place_with_headroom(
                     &mut lease,
+                    packet_start,
                     len,
                     &session.config.obfuscation,
                     &session.client_to_server_encode,
                     PacketDirection::ClientToServer,
                     now,
                 ) {
-                    Ok(encoded_len) => encoded_len,
+                    Ok(encoded_range) => encoded_range,
                     Err(err) => {
                         context.metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(%client_addr, session_id = session.id, %err, "failed to encode WireGuard packet for upstream send");
@@ -438,7 +441,8 @@ async fn run_shim(context: ShimSessionContext) {
                 let send_started_millis = context.clock.now_millis();
                 let packet = QueuedUpstreamPacket {
                     lease,
-                    len: encoded_len,
+                    start: encoded_range.start,
+                    len: encoded_range.len(),
                     queued_at_millis: send_started_millis,
                     is_chaff: false,
                 };

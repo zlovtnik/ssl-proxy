@@ -67,11 +67,12 @@ async fn run_session_receiver(
     metrics: Arc<RelayMetrics>,
 ) {
     let mut buf = vec![0u8; settings.max_datagram_bytes];
+    let packet_start = packet_encode_headroom(&settings.obfuscation);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = session.shutdown.cancelled() => break,
-            recv = session.upstream_socket.recv(&mut buf) => {
+            recv = session.upstream_socket.recv(&mut buf[packet_start..]) => {
                 let len = match recv {
                     Ok(len) => len,
                     Err(err) => {
@@ -82,22 +83,23 @@ async fn run_session_receiver(
 
                 let now = clock.now_millis();
                 session.touch(now);
-                let encoded_len = match encode_packet_in_place(
+                let encoded_range = match encode_packet_in_place_with_headroom(
                     &mut buf,
+                    packet_start,
                     len,
                     &settings.obfuscation,
                     &session.server_to_client_encode,
                     PacketDirection::ServerToClient,
                     now,
                 ) {
-                    Ok(encoded_len) => encoded_len,
+                    Ok(encoded_range) => encoded_range,
                     Err(err) => {
                         metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(%client_addr, %err, "failed to encode WireGuard relay reply");
                         break;
                     }
                 };
-                if let Err(err) = public_socket.send_to(&buf[..encoded_len], client_addr).await {
+                if let Err(err) = public_socket.send_to(&buf[encoded_range], client_addr).await {
                     warn!(%client_addr, %err, "failed to send obfuscated WireGuard packet to client");
                     break;
                 } else {

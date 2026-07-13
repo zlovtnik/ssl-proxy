@@ -5,19 +5,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from sslproxy_ops.commands.up_ready import apply_profile_runtime_env
+from sslproxy_ops.commands.up_ready.checks import (
+    discover_peer_configs,
+    runtime_obfuscation_value,
+    write_credential_handoff,
+)
+from sslproxy_ops.commands.up_ready.model import (
+    UpReadyContext,
+    UpReadyError,
+    desired_obfuscation_value,
+)
 from sslproxy_ops.commands.up_ready.peers import (
     ensure_unique_peer_tunnel_addresses,
     generate_peer_preshared_key,
     peer_material_complete,
     peer_tunnel_address,
+    render_direct_peer_config,
     write_secret_text,
 )
-from sslproxy_ops.commands.up_ready.checks import runtime_obfuscation_value
-from sslproxy_ops.commands.up_ready.model import UpReadyError
 from sslproxy_ops.commands.up_ready.secrets import (
     registry_host_value,
     registry_plain_http_enabled,
 )
+from sslproxy_ops.config import Settings
 
 
 class UpReadyHelpersTest(unittest.TestCase):
@@ -71,6 +82,114 @@ class UpReadyHelpersTest(unittest.TestCase):
         self.assertEqual(registry_host_value("http://192.168.1.2:5000/foo"), "192.168.1.2:5000")
         self.assertTrue(registry_plain_http_enabled("192.168.1.2:5000", "auto"))
         self.assertFalse(registry_plain_http_enabled("registry.example.com", "auto"))
+
+    def test_iphone_mode_keeps_server_obfuscation_enabled(self):
+        self.assertEqual(desired_obfuscation_value("iphone"), "true")
+
+        settings = Settings()
+        settings.profile_mode = "iphone"
+        ctx = UpReadyContext(settings=settings)
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.ensure_admin_api_key_file"
+            ),
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.activate_obfuscation_key_env_fallback"
+            ) as activate_key,
+            unittest.mock.patch.dict(os.environ, {}, clear=False),
+        ):
+            apply_profile_runtime_env(ctx)
+            self.assertEqual(os.environ["WG_OBFUSCATION_ENABLED"], "true")
+            self.assertEqual(os.environ["WG_PORT"], "443")
+            self.assertEqual(os.environ["WG_INTERNAL_PORT"], "51820")
+            activate_key.assert_called_once_with()
+
+    def test_direct_profile_uses_plain_internal_port_without_listen_port(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            with (
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.peers.repo_root", return_value=root
+                ),
+                unittest.mock.patch.dict(
+                    os.environ,
+                    {
+                        "WG_OBFUSCATION_ENABLED": "true",
+                        "WG_PORT": "443",
+                        "WG_INTERNAL_PORT": "51820",
+                    },
+                    clear=False,
+                ),
+            ):
+                render_direct_peer_config("peer1", "private", "preshared", "192.0.2.10")
+
+            profile = (root / "config" / "peer1" / "peer1.conf").read_text()
+            self.assertIn("Endpoint = 192.0.2.10:51820", profile)
+            self.assertNotIn("Endpoint = 127.0.0.1", profile)
+            self.assertNotIn("ListenPort =", profile)
+
+    def test_iphone_config_discovery_refuses_obfuscated_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            peer_dir = root / "config" / "peer1"
+            peer_dir.mkdir(parents=True)
+            (peer_dir / "publickey-peer1").write_text("public\n")
+            (peer_dir / "peer1-obfuscated.conf").write_text("[Interface]\n")
+            settings = Settings()
+            settings.profile_mode = "iphone"
+            settings.server_ip = "192.0.2.10"
+            settings.client_ip = "192.0.2.20"
+            ctx = UpReadyContext(settings=settings)
+
+            with unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.repo_root", return_value=root
+            ):
+                with self.assertRaises(UpReadyError):
+                    discover_peer_configs(ctx)
+
+    def test_iphone_handoff_contains_direct_profile_only(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            peer_dir = root / "config" / "peer1"
+            secret_dir = root / "secrets"
+            peer_dir.mkdir(parents=True)
+            secret_dir.mkdir()
+            for name in [
+                "postgres.key",
+                "grafana_admin_password.key",
+                "admin_api_key",
+                "wg_obfuscation_key",
+            ]:
+                (secret_dir / name).write_text(f"{name}-value\n")
+            (peer_dir / "peer1.conf").write_text(
+                "[Interface]\nPrivateKey = private\n"
+                "[Peer]\nEndpoint = 192.0.2.10:51820\n"
+            )
+            (peer_dir / "peer1-obfuscated.conf").write_text(
+                "[Peer]\nEndpoint = 127.0.0.1:51821\n"
+            )
+            output = secret_dir / "handoff.txt"
+            settings = Settings()
+            settings.profile_mode = "iphone"
+            settings.server_ip = "192.0.2.10"
+            settings.client_ip = "192.0.2.20"
+            settings.credential_handoff_file = output
+            ctx = UpReadyContext(settings=settings)
+
+            with (
+                unittest.mock.patch(
+                    "sslproxy_ops.commands.up_ready.checks.repo_root", return_value=root
+                ),
+                unittest.mock.patch.dict(os.environ, {"WG_PEERS": "peer1"}, clear=False),
+            ):
+                write_credential_handoff(ctx)
+
+            handoff = output.read_text()
+            self.assertIn("Endpoint = 192.0.2.10:51820", handoff)
+            self.assertNotIn("## WireGuard shim", handoff)
+            self.assertNotIn("WG_OBFS_", handoff)
+            self.assertNotIn("obfuscated config", handoff)
+            self.assertNotIn("127.0.0.1:51821", handoff)
 
 
 if __name__ == "__main__":

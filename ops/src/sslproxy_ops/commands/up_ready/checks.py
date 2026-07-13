@@ -304,7 +304,11 @@ def discover_peer_configs(ctx: UpReadyContext) -> None:
         fallback = [path for path in sorted(peer_dir.glob("*.conf")) if "obfuscated" not in path.name]
         selected: Path | None = None
         if ctx.settings.profile_mode in {"iphone", "linux-direct"}:
-            selected = fallback[0] if fallback else (obfuscated[0] if obfuscated else None)
+            if not fallback and obfuscated:
+                raise UpReadyError(
+                    f"Direct client mode requires a non-obfuscated WireGuard profile in {peer_dir}"
+                )
+            selected = fallback[0] if fallback else None
         else:
             selected = obfuscated[0] if obfuscated else (fallback[0] if fallback else None)
         if selected:
@@ -417,7 +421,6 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
     grafana_password = read_handoff_secret(repo_root() / "secrets" / "grafana_admin_password.key")
     admin_api_key = read_handoff_secret(repo_root() / "secrets" / "admin_api_key")
     wg_obfuscation_key = read_handoff_secret(repo_root() / "secrets" / "wg_obfuscation_key")
-    wg_public_port = os.getenv("WG_PORT", "443")
     with tmp.open("w") as handle:
         handle.write("# ssl-proxy credential handoff\n")
         handle.write(f"generated_at={ctx.run_ts}\n")
@@ -427,15 +430,22 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
         handle.write("\n## Proxy admin API\n")
         handle.write("url=http://127.0.0.1:3002\n")
         handle.write(f"admin_api_key={admin_api_key}\n")
-        handle.write("\n## WireGuard shim\n")
-        handle.write(f"enabled={desired_obfuscation_value(str(ctx.settings.profile_mode))}\n")
-        handle.write(f"shim_pass={wg_obfuscation_key}\n")
-        handle.write(f"magic_byte={os.getenv('WG_OBFUSCATION_MAGIC_BYTE', '0xAA')}\n")
-        handle.write(f"WG_OBFS_SERVER_ADDR={ctx.settings.server_ip}:{wg_public_port}\n")
-        handle.write("WG_OBFS_SHIM_LISTEN_ADDR=127.0.0.1:51821\n")
-        handle.write(f"WG_OBFUSCATION_KEY={wg_obfuscation_key}\n")
-        handle.write(f"WG_OBFUSCATION_MAGIC_BYTE={os.getenv('WG_OBFUSCATION_MAGIC_BYTE', '0xAA')}\n")
-        handle.write(f"WG_OBFUSCATION_SESSION_IDLE_SECS={os.getenv('WG_OBFUSCATION_SESSION_IDLE_SECS', '300')}\n")
+        if ctx.settings.profile_mode in {"linux-shim", "mac"}:
+            wg_public_port = os.getenv("WG_PORT", "443")
+            handle.write("\n## WireGuard shim\n")
+            handle.write("enabled=true\n")
+            handle.write(f"shim_pass={wg_obfuscation_key}\n")
+            handle.write(f"magic_byte={os.getenv('WG_OBFUSCATION_MAGIC_BYTE', '0xAA')}\n")
+            handle.write(f"WG_OBFS_SERVER_ADDR={ctx.settings.server_ip}:{wg_public_port}\n")
+            handle.write("WG_OBFS_SHIM_LISTEN_ADDR=127.0.0.1:51821\n")
+            handle.write(f"WG_OBFUSCATION_KEY={wg_obfuscation_key}\n")
+            handle.write(
+                f"WG_OBFUSCATION_MAGIC_BYTE={os.getenv('WG_OBFUSCATION_MAGIC_BYTE', '0xAA')}\n"
+            )
+            handle.write(
+                "WG_OBFUSCATION_SESSION_IDLE_SECS="
+                f"{os.getenv('WG_OBFUSCATION_SESSION_IDLE_SECS', '300')}\n"
+            )
         handle.write("\n## Postgres\n")
         handle.write("host=127.0.0.1\nport=5432\ndatabase=sync\nusername=sync\n")
         handle.write(f"password={postgres_password}\n")
@@ -451,8 +461,9 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
         obfuscated_cfg = peer_dir / f"{peer_id}-obfuscated.conf"
         selected = direct_cfg if ctx.settings.profile_mode in {"iphone", "linux-direct"} else obfuscated_cfg
         append_file_section(tmp, f"WireGuard {peer_id} selected config", selected)
-        append_file_section(tmp, f"WireGuard {peer_id} direct config", direct_cfg)
-        append_file_section(tmp, f"WireGuard {peer_id} obfuscated config", obfuscated_cfg)
+        if ctx.settings.profile_mode not in {"iphone", "linux-direct"}:
+            append_file_section(tmp, f"WireGuard {peer_id} direct config", direct_cfg)
+            append_file_section(tmp, f"WireGuard {peer_id} obfuscated config", obfuscated_cfg)
     os.chmod(tmp, 0o600)
     os.replace(tmp, output)
     os.chmod(output, 0o600)

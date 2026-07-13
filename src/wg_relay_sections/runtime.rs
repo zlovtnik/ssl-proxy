@@ -18,9 +18,9 @@ use crate::{
     config::WireGuardConfig,
     udp_tuning::bind_tuned_udp_socket,
     wg_packet_obfuscation::{
-        cleanup_interval, decode_packet_in_place, encode_packet_in_place, validate_framed_header,
-        PacketDecodeError, PacketDirection, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
-        MAX_UDP_PACKET_SIZE,
+        cleanup_interval, decode_packet_in_place_view, encode_packet_in_place_with_headroom,
+        packet_encode_headroom, validate_framed_header, PacketDecodeError, PacketDirection,
+        PacketEncodeState, ReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
     },
 };
 
@@ -538,7 +538,7 @@ async fn run_relay(
                     continue;
                 }
 
-                let (session, decoded_len) = if settings.obfuscation.uses_framed_encoding() {
+                let (session, decoded_range) = if settings.obfuscation.uses_framed_encoding() {
                     if let Err(err) = validate_framed_header(
                         &buf,
                         len,
@@ -577,19 +577,19 @@ async fn run_relay(
                         }
                     };
 
-                    let decoded_len = {
+                    let decoded_range = {
                         let mut replay = session
                             .client_to_server_replay
                             .lock()
                             .unwrap_or_else(|error| error.into_inner());
-                        match decode_packet_in_place(
+                        match decode_packet_in_place_view(
                             &mut buf,
                             len,
                             &settings.obfuscation,
                             Some(&mut replay),
                             PacketDirection::ClientToServer,
                         ) {
-                            Ok(decoded_len) => decoded_len,
+                            Ok(decoded_range) => decoded_range,
                             Err(err) => {
                                 handle_decode_error(
                                     &mut magic_drop_notice,
@@ -606,16 +606,16 @@ async fn run_relay(
                             }
                         }
                     };
-                    (session, decoded_len)
+                    (session, decoded_range)
                 } else {
-                    let decoded_len = match decode_packet_in_place(
+                    let decoded_range = match decode_packet_in_place_view(
                         &mut buf,
                         len,
                         &settings.obfuscation,
                         None,
                         PacketDirection::ClientToServer,
                     ) {
-                        Ok(decoded_len) => decoded_len,
+                        Ok(decoded_range) => decoded_range,
                         Err(err) => {
                             handle_decode_error(
                                 &mut magic_drop_notice,
@@ -649,11 +649,11 @@ async fn run_relay(
                             continue;
                         }
                     };
-                    (session, decoded_len)
+                    (session, decoded_range)
                 };
 
                 session.touch(clock.now_millis());
-                if let Err(err) = session.upstream_socket.send(&buf[..decoded_len]).await {
+                if let Err(err) = session.upstream_socket.send(&buf[decoded_range]).await {
                     warn!(%client_addr, %err, "failed to forward WireGuard packet to kernel listener");
                     if remove_session_if_current(&sessions, client_addr, &session) {
                         metrics.active_sessions.fetch_sub(1, Ordering::Relaxed);

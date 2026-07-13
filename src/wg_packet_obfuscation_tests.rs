@@ -781,3 +781,69 @@ fn write_legacy_clear_counter_frame_header(
         marker_position,
     );
 }
+
+#[test]
+fn legacy_hot_path_preserves_payload_offset_without_copying() {
+    let settings = WgPacketObfuscation::new(b"offset-key".to_vec(), Some(0xAA));
+    let packet = b"wireguard-payload";
+    let packet_start = packet_encode_headroom(&settings);
+    let mut buffer = vec![0_u8; 128];
+    buffer[packet_start..packet_start + packet.len()].copy_from_slice(packet);
+
+    let encoded = encode_packet_in_place_with_headroom(
+        &mut buffer,
+        packet_start,
+        packet.len(),
+        &settings,
+        &PacketEncodeState::new(0),
+        PacketDirection::ClientToServer,
+        0,
+    )
+    .unwrap();
+    assert_eq!(encoded.start, 0);
+
+    let decoded = decode_packet_in_place_view(
+        &mut buffer,
+        encoded.len(),
+        &settings,
+        None,
+        PacketDirection::ClientToServer,
+    )
+    .unwrap();
+    assert_eq!(decoded.start, packet_start);
+    assert_eq!(&buffer[decoded], packet);
+}
+
+#[test]
+fn framed_aead_hot_path_preserves_payload_offset_without_copying() {
+    let settings = WgPacketObfuscation::new(b"offset-aead-key".to_vec(), Some(0xAA))
+        .with_encryption_mode(EncryptionMode::Aead)
+        .with_replay_protection(true);
+    let packet = b"framed-wireguard-payload";
+    let packet_start = packet_encode_headroom(&settings);
+    let mut buffer = vec![0_u8; 256];
+    buffer[packet_start..packet_start + packet.len()].copy_from_slice(packet);
+
+    let encoded = encode_packet_in_place_with_headroom(
+        &mut buffer,
+        packet_start,
+        packet.len(),
+        &settings,
+        &PacketEncodeState::new(0),
+        PacketDirection::ClientToServer,
+        0,
+    )
+    .unwrap();
+    let mut replay = ReplayWindow::default();
+    let decoded = decode_packet_in_place_view(
+        &mut buffer,
+        encoded.len(),
+        &settings,
+        Some(&mut replay),
+        PacketDirection::ClientToServer,
+    )
+    .unwrap();
+
+    assert_eq!(decoded.start, packet_start);
+    assert_eq!(&buffer[decoded], packet);
+}

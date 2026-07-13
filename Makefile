@@ -203,7 +203,6 @@ atheros-search-test:
 
 schema-migrator-test:
 	cd services/schema-migrator && sbt test
-
 $(OPS_VENV)/.installed: ops/pyproject.toml ops/uv.lock scripts/lib/ops-python.sh
 	@bash -lc 'source scripts/lib/ops-python.sh; sslproxy_ensure_ops_venv "$$PWD"'
 

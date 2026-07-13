@@ -170,15 +170,17 @@ async fn run_session_receiver(
                     continue;
                 }
 
-                let encoded_len = match encode_packet_in_place(
+                let packet_start = packet_encode_headroom(&session.config.obfuscation);
+                let encoded_range = match encode_packet_in_place_with_headroom(
                     &mut lease,
+                    packet_start,
                     0,
                     &session.config.obfuscation,
                     &session.client_to_server_encode,
                     PacketDirection::ClientToServer,
                     now,
                 ) {
-                    Ok(encoded_len) => encoded_len,
+                    Ok(encoded_range) => encoded_range,
                     Err(err) => {
                         context.metrics.encode_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(%client_addr, session_id = session.id, %err, "failed to encode WireGuard shim chaff packet");
@@ -192,7 +194,8 @@ async fn run_session_receiver(
 
                 let packet = QueuedUpstreamPacket {
                     lease,
-                    len: encoded_len,
+                    start: encoded_range.start,
+                    len: encoded_range.len(),
                     queued_at_millis: now,
                     is_chaff: true,
                 };
@@ -249,19 +252,19 @@ async fn run_session_receiver(
                 session.touch(now);
                 // Server replies carry the relay encoder's salt in-band, so
                 // the shim decodes without holding the relay's encode state.
-                let decoded_len = {
+                let decoded_range = {
                     let mut replay = session
                         .server_to_client_replay
                         .lock()
                         .unwrap_or_else(|error| error.into_inner());
-                    match decode_packet_in_place(
+                    match decode_packet_in_place_view(
                         &mut lease,
                         len,
                         &session.config.obfuscation,
                         Some(&mut replay),
                         PacketDirection::ServerToClient,
                     ) {
-                        Ok(decoded_len) => decoded_len,
+                        Ok(decoded_range) => decoded_range,
                         Err(PacketDecodeError::MagicByteMismatch) => {
                             context.metrics.decode_errors.fetch_add(1, Ordering::Relaxed);
                             warn!(%client_addr, session_id = session.id, packet_len = len, "dropping server reply with missing or invalid obfuscation marker");
@@ -294,7 +297,7 @@ async fn run_session_receiver(
                 };
                 session.record_server_reply(now);
 
-                if let Err(err) = context.listen_socket.send_to(&lease[..decoded_len], client_addr).await {
+                if let Err(err) = context.listen_socket.send_to(&lease[decoded_range], client_addr).await {
                     warn!(%client_addr, session_id = session.id, %err, "failed to deliver plaintext WireGuard packet back to local client");
                     close_session_if_current(
                         &context.sessions,

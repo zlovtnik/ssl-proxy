@@ -133,6 +133,28 @@ registry setup, access control, and buildx workflow.
 
 ---
 
+### 4.1 WireGuard Throughput Acceptance
+
+Use the same client, server, network, and `iperf3` target for all paths. Disable
+background traffic and confirm the frontdoor metrics are reachable at
+`http://127.0.0.1:3003/metrics`.
+
+1. Warm each path for five seconds, then run five trials with
+   `iperf3 -c <target> -t 30 -P 4 -J` and retain each JSON result.
+2. Measure in this order: tunnel disabled (bypass), iPhone/direct profile on the
+   plain frontdoor port, then the shim profile on the obfuscated frontdoor port.
+3. Compute the median `end.sum_received.bits_per_second` for each path.
+4. Accept the build only when `direct / bypass >= 0.90` and
+   `shim / direct >= 0.90`.
+5. Reject any trial set where either
+   `wg_frontdoor_dropped_rate_limited_total` or
+   `wg_frontdoor_dropped_dispatch_saturated_total` increases. Record
+   `wg_frontdoor_dispatch_queue_high_watermark` with the results.
+
+The packet limiter is opt-in. Leave `WG_FRONTDOOR_RATE_LIMIT_PPS=0` for this
+test so the measurement covers forwarding capacity rather than an intentional
+traffic cap.
+
 ### 5. Oracle ADB Connection & Views
 
 1. **Place auto-login Oracle wallet files in `./wallet/` directory**

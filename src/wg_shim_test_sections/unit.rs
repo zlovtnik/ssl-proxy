@@ -71,6 +71,7 @@
         lease[..4].copy_from_slice(b"ping");
         QueuedUpstreamPacket {
             lease,
+            start: 0,
             len: 4,
             queued_at_millis,
             is_chaff: false,
@@ -155,6 +156,7 @@
 
         let packet = QueuedUpstreamPacket {
             lease,
+            start: 0,
             len: 4,
             queued_at_millis: 10,
             is_chaff: false,

@@ -9,7 +9,7 @@
 ## Known Failure Signatures
 - `magic_byte_mismatch`
 Cause: Raw client traffic sent to obfuscation-enabled ingress.
-Fix: For iPhone/direct mode, run with `WG_OBFUSCATION_ENABLED=false`.
+Fix: Point iPhone/direct profiles at the separate plain WireGuard frontdoor port; reserve the obfuscated port for shim clients.
 Retry policy: auto-fix allowed once (runtime recreate).
 
 - `RTNETLINK answers: Address already in use` during `wg-quick up`
@@ -46,8 +46,9 @@ Operational note: recurrence means the mount change was not made durable. The re
 ## Last Known Good
 - iPhone direct mode prerequisites:
   - `PROFILE_MODE=iphone`
-  - Runtime obfuscation disabled (`wg_obfuscation_enabled=false`)
-  - iPhone profile endpoint points to server LAN/public IP (`192.168.1.221:443`), not `127.0.0.1:51821`.
+  - Runtime obfuscation remains enabled (`wg_obfuscation_enabled=true`) for concurrent shim clients.
+  - iPhone profile endpoint points directly to the server plain port (`192.168.1.221:51820`), not `127.0.0.1:51821`.
+  - The iPhone credential handoff contains only the selected direct WireGuard profile and no shim secret material.
   - Confirm handshake on server: peer endpoint populated + recent handshake timestamp.
 
 - Linux shim mode prerequisites:

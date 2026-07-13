@@ -94,17 +94,23 @@ def write_secret_text(path: Path, value: str, mode: int = 0o600) -> None:
 def render_direct_peer_config(peer_id: str, private_key: str, preshared_key: str, server_ip: str) -> None:
     output = repo_root() / "config" / peer_id / f"{peer_id}.conf"
     address = peer_tunnel_address(peer_id)
-    endpoint_port = os.getenv("WG_PORT", "443")
+    obfuscation_enabled = os.getenv("WG_OBFUSCATION_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    port_var = "WG_INTERNAL_PORT" if obfuscation_enabled else "WG_PORT"
+    endpoint_port = os.getenv(port_var, "51820" if obfuscation_enabled else "443")
     mtu = os.getenv("WG_MTU", "1420")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
-        f"""# Raw direct WireGuard reference profile only.
-# This profile is not usable against an obfuscation-only public server port.
-# When WG_OBFUSCATION_ENABLED=true on the server, use {peer_id}-obfuscated.conf plus a local UDP shim instead.
+        f"""# Direct WireGuard client profile. No local UDP shim is required.
+# When server obfuscation is enabled, this profile uses the separate plain
+# WireGuard frontdoor port while shim clients continue using the obfuscated port.
 [Interface]
 Address = {address}
 PrivateKey = {private_key}
-ListenPort = 51820
 MTU = {mtu}
 DNS = 10.13.13.1
 
@@ -228,8 +234,9 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
     if preshared_key_file_value != preshared_key:
         write_secret_text(preshared_key_file, preshared_key, 0o600)
 
-    if not peer_config_keys_resolved(peer_dir / f"{peer_id}.conf"):
-        render_direct_peer_config(peer_id, private_key, preshared_key, ctx.settings.server_ip)
+    # Direct clients use a different endpoint port when obfuscation is active,
+    # so this generated profile must follow the selected runtime mode.
+    render_direct_peer_config(peer_id, private_key, preshared_key, ctx.settings.server_ip)
     if not peer_config_keys_resolved(peer_dir / f"{peer_id}-obfuscated.conf"):
         render_obfuscated_peer_config(peer_id, private_key, preshared_key)
 
@@ -238,6 +245,14 @@ def ensure_local_peer_material(ctx: UpReadyContext) -> None:
     peers = peer_names(os.getenv("WG_PEERS", ctx.settings.wg_peers))
     ensure_unique_peer_tunnel_addresses(peers)
     if all(peer_material_complete(peer_id) for peer_id in peers):
+        for peer_id in peers:
+            peer_dir = repo_root() / "config" / peer_id
+            render_direct_peer_config(
+                peer_id,
+                trim_key_value((peer_dir / f"privatekey-{peer_id}").read_text()),
+                trim_key_value((peer_dir / f"presharedkey-{peer_id}").read_text()),
+                ctx.settings.server_ip,
+            )
         return
     ensure_peer_key_helper(ctx)
     for peer_id in peers:
