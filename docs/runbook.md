@@ -166,6 +166,19 @@ traffic cap.
    sqlplus USCIS_APP@mainerc_high
    ```
 
+   Before applying `sql/oracle.sql`, connect as the Oracle security
+   administrator and grant the schema owner direct access to the packages used
+   to install fine-grained audit and VPD policies:
+
+   ```sql
+   GRANT EXECUTE ON SYS.DBMS_FGA TO USCIS_APP;
+   GRANT EXECUTE ON SYS.DBMS_RLS TO USCIS_APP;
+   ```
+
+   Keep these as direct grants. The baseline deliberately fails instead of
+   silently omitting its audit and append-only policies when the grants are
+   absent.
+
 3. **Available Audit Views:**
    ```sql
    -- Session traffic summary

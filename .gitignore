@@ -6,7 +6,7 @@ Thumbs.db
 *~
 .idea/
 .vscode/
-
+.metals/
 # Local agent/workspace state
 .omx/
 /wallet/
