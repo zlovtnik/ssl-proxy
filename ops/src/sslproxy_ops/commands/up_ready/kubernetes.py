@@ -5,13 +5,38 @@ import subprocess
 from pathlib import Path
 
 from sslproxy_ops import shell
-from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step
+from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step, warn
 from sslproxy_ops.paths import repo_root
 from sslproxy_ops.util.ini import peer_names
 
 
 def proxy_workload(ctx: UpReadyContext) -> str:
     return f"deployment/{ctx.settings.helm_release}-proxy"
+
+
+def resolve_kube_context(ctx: UpReadyContext) -> None:
+    completed = shell.run(
+        ["kubectl", "config", "get-contexts", "-o", "name"],
+        check=False,
+        capture=True,
+    )
+    contexts = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+    configured = ctx.settings.kube_context
+    if configured in contexts:
+        return
+
+    microk8s_contexts = [name for name in contexts if "microk8s" in name.lower()]
+    if len(microk8s_contexts) == 1:
+        selected = microk8s_contexts[0]
+        warn(f"Kubernetes context {configured!r} was not found; using {selected!r}")
+        ctx.settings.kube_context = selected
+        return
+
+    available = ", ".join(contexts) if contexts else "none"
+    raise UpReadyError(
+        f"Kubernetes context {configured!r} does not exist; available contexts: {available}. "
+        "Set UP_READY_KUBE_CONTEXT to the MicroK8s context name."
+    )
 
 
 def kubernetes_exec(

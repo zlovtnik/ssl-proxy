@@ -1,4 +1,5 @@
 import os
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -6,6 +7,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     dashboard_set_file_args,
     helm_upgrade,
     publish_registry_images,
+    resolve_kube_context,
 )
 from sslproxy_ops.commands.up_ready.model import UpReadyContext
 from sslproxy_ops.config import Settings
@@ -23,6 +25,21 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertTrue(any("stackHealthOverview=" in arg for arg in args))
         self.assertTrue(any("prometheus.alertRules=" in arg for arg in args))
         self.assertTrue(any("postgresExporter.queries=" in arg for arg in args))
+
+    def test_missing_default_context_uses_the_only_microk8s_context(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        completed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="docker-desktop\nmicrok8s\n",
+            stderr="",
+        )
+
+        with patch("sslproxy_ops.commands.up_ready.kubernetes.shell.run", return_value=completed):
+            resolve_kube_context(ctx)
+
+        self.assertEqual(ctx.settings.kube_context, "microk8s")
 
     def test_helm_upgrade_uses_registry_rollout_revision_and_waits_for_jobs(self):
         settings = Settings()

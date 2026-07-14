@@ -345,7 +345,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `registry-build-vec-worker` | Build vec-worker when its Dockerfile exists; otherwise fail clearly |
 | `deploy` | SSH to `DEPLOY_HOST`, pull images in `DEPLOY_PATH`, and run Compose |
 | `clean` | Clean build artifacts |
-| `up-ready` | Bring up compose stack, verify services, print peer QR codes |
+| `up-ready` | Publish local-registry images, upgrade MicroK8s with Helm, verify services, and print peer QR codes |
 | `diagnose` | Non-mutating diagnosis and signature classification |
 | `pipeline-health` | Check sync-plane pipeline health |
 | `memo-show` | Show operational memory ledger |
@@ -362,22 +362,25 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 
 ## Kubernetes Deployment
 
-A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/). The server's
-MicroK8s profile deploys the proxy, coordinator, Postgres, Redpanda, MinIO, and
-Redis while reusing the retained Compose data volumes. Kubernetes Secrets named
-`postgres-credentials`, `minio-credentials`, `proxy-admin-key`,
-`oracle-credentials`, `oracle-wallet`, and `wireguard-config` must exist in the
-`ssl-proxy` namespace before installation.
+A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/). `make up-ready`
+defaults to the Kubernetes target: it builds first-party images, mirrors pinned
+third-party images into `REGISTRY`, synchronizes the protected local files as
+Kubernetes Secrets, and upgrades the complete MicroK8s release. The release
+includes the proxy, coordinator, console processes, wireless sensor, data
+services, Prometheus, Loki/Promtail, Jaeger, OpenTelemetry Collector, Grafana,
+exporters, cAdvisor, and Pushgateway while reusing the retained Compose data
+volumes.
 
 ```bash
-helm upgrade --install ssl-proxy ./helm/ssl-proxy \
-  --kube-context microk8s-ssl-proxy \
-  --namespace ssl-proxy \
-  --create-namespace \
-  --values ./helm/ssl-proxy/values-microk8s.yaml \
-  --rollback-on-failure \
-  --wait
+make up-ready PROFILE_MODE=mac \
+  SERVER_IP=192.168.1.221 \
+  CLIENT_IP=192.168.1.53
 ```
+
+The operator uses `microk8s-ssl-proxy` when present, or the only kubeconfig
+context whose name contains `microk8s`. Override it with
+`UP_READY_KUBE_CONTEXT=<name>`. Use
+`UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose workflow.
 
 ## Operational Scripts
 

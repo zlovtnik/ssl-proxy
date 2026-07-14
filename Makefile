@@ -228,7 +228,8 @@ clean:
 	cargo clean
 
 
-# Bring up compose stack, verify services, and print peer QR codes.
+# Build/mirror registry images, upgrade the MicroK8s Helm release, verify it,
+# and print peer QR codes. Set UP_READY_DEPLOYMENT_TARGET=compose for Compose.
 # Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
 up-ready: $(OPS_BOOTSTRAP)
 	$(OPS) up-ready

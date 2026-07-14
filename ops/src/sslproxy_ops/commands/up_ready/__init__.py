@@ -23,6 +23,7 @@ from sslproxy_ops.commands.up_ready.checks import (
 from sslproxy_ops.commands.up_ready.kubernetes import (
     helm_upgrade,
     kubernetes_up,
+    resolve_kube_context,
     sync_kubernetes_secrets,
 )
 from sslproxy_ops.commands.up_ready.model import (
@@ -242,6 +243,8 @@ def preflight(ctx: UpReadyContext) -> None:
     for command in commands:
         if shutil.which(command) is None:
             raise UpReadyError(f"Missing required command: {command}")
+    if ctx.settings.deployment_target == "kubernetes":
+        resolve_kube_context(ctx)
     if needs_docker:
         docker_info = shell.run(["docker", "info"], check=False, capture=True)
         if docker_info.returncode != 0:
@@ -274,7 +277,7 @@ def run_up_ready(ctx: UpReadyContext) -> None:
     if not deployed:
         diagnostics(ctx)
         memo_write(ctx, "fail", ctx.last_failure.name, ctx.last_failure.fix)
-        failure_detail = ctx.last_failure.cause or ctx.last_failure_text
+        failure_detail = ctx.last_failure_text or ctx.last_failure.cause
         raise UpReadyError(f"{ctx.settings.deployment_target}_up failed: {failure_detail}")
 
     if not mode_guardrails(ctx):
