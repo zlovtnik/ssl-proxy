@@ -1,0 +1,7 @@
+apiVersion: v2
+name: atheros-search
+description: Placeholder for the planned Atheros search deployment
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+

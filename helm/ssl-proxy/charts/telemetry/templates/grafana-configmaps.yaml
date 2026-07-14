@@ -1,0 +1,85 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-provisioning
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ include "ssl-proxy.telemetry.fullname" . }}-prometheus:9090
+        isDefault: true
+        jsonData:
+          httpMethod: POST
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://{{ include "ssl-proxy.telemetry.fullname" . }}-loki:3100
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - name: trace_id
+              matcherRegex: '"trace_id":"([^\"]+)"'
+              url: http://{{ include "ssl-proxy.telemetry.fullname" . }}-jaeger:16686/trace/$${__value.raw}
+      - name: Jaeger
+        uid: jaeger
+        type: jaeger
+        access: proxy
+        url: http://{{ include "ssl-proxy.telemetry.fullname" . }}-jaeger:16686
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: Observability
+        orgId: 1
+        folder: Observability
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-dashboards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  {{- with .Values.grafana.dashboards.dbCalls }}
+  db-calls.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.grafana.dashboards.infraSaturation }}
+  infra-saturation.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.grafana.dashboards.integrationConsoleHealth }}
+  integration-console-health.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.grafana.dashboards.serviceRedMetrics }}
+  service-red-metrics.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.grafana.dashboards.stackHealthOverview }}
+  stack-health-overview.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.grafana.dashboards.syncPipelineLatency }}
+  sync-pipeline-latency.json: |
+    {{- . | nindent 4 }}
+  {{- end }}
+{{- end }}
+

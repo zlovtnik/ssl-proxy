@@ -1,0 +1,45 @@
+{{- if .Values.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.integrationConsole.fullname" . }}-integration-console-db-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.integrationConsole.labels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-db-setup
+  {{- if .Release.IsUpgrade }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.integrationConsole.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: integration-console-db-setup
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-setup
+          image: {{ include "ssl-proxy.integrationConsole.image" (dict "root" . "image" .Values.dbSetup.image) }}
+          imagePullPolicy: {{ .Values.dbSetup.image.pullPolicy | default .Values.web.image.pullPolicy }}
+          command: ["sh", "bin/observability-db-setup.sh"]
+          env:
+            {{- include "ssl-proxy.integrationConsole.integrationConsoleEnv" . | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ .Values.web.syncDbPool | quote }}
+            - name: PUSHGATEWAY_URL
+              value: "http://{{ include "ssl-proxy.integrationConsole.fullname" . }}-pushgateway:9091"
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-db-setup"
+{{- end }}
+

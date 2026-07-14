@@ -1,0 +1,104 @@
+{{- if .Values.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+spec:
+  selector:
+    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+  ports:
+    - name: http
+      port: 9080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+spec:
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: promtail
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: promtail
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+      containers:
+        - name: promtail
+          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.promtail.image) }}
+          imagePullPolicy: {{ .Values.promtail.image.pullPolicy }}
+          args: ["-config.file=/etc/promtail/config.yml"]
+          ports:
+            - name: http
+              containerPort: 9080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail
+              readOnly: true
+            - name: positions
+              mountPath: /promtail
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail-config
+        - name: positions
+          hostPath:
+            path: {{ .Values.promtail.positionsHostPath | quote }}
+            type: DirectoryOrCreate
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+{{- end }}
+

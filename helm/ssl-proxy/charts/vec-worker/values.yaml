@@ -1,0 +1,61 @@
+# Values local to the vec-worker subchart.
+# TODO: no Kubernetes workload template exists yet; this chart intentionally renders nothing.
+enabled: true
+replicas: 1
+image:
+  repository: vec-worker
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  port: 9092
+  type: ClusterIP
+# Resource limits
+resources:
+  limits:
+    cpu: "2"
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+# Embedding configuration
+embedding:
+  enabled: true
+  provider: "llamacpp"  # ollama or llamacpp
+  url: "http://host.docker.internal:8080"
+  model: "nomic-embed-text-v2-moe"
+  dimensions: 768
+  maxInputTokens: 512
+  maxConcurrentEmbedRequests: 4
+  batchSize: 256
+  requestBatchSize: 64
+  requestBatchMax: 128
+  leaseSeconds: 1800
+  maxConcurrentCompletes: 16
+# Worker pool configuration
+workerName: "worker-1"
+pollIntervalSeconds: 1
+# Database pool
+databasePoolMaxConnections: 6
+# Health check
+healthcheck:
+  livenessProbe:
+    exec:
+      command:
+        - /usr/local/bin/vec-worker
+        - healthcheck
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+# Metrics endpoint
+metrics:
+  enabled: true
+  port: 9092
+
+# Integration Console (Rails + Svelte dashboard)
+
+
+# Planned embedding-provider connection; unused until a workload template is added.
+ollama:
+  external: true
+  url: "http://ollama.ollama.svc.cluster.local:11434"

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: integration-console
+description: Rails integration management console
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+

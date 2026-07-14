@@ -1,0 +1,39 @@
+# Values local to the redis subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: []
+
+external: true
+url: "redis://redis.redis.svc.cluster.local:6379/1"
+# -- Secret reference for Redis password
+passwordSecret:
+  name: "redis-credentials"
+  key: "password"
+image:
+  repository: redis
+  tag: 7-alpine
+  pullPolicy: IfNotPresent
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# MinIO connection settings (used by integration-console)

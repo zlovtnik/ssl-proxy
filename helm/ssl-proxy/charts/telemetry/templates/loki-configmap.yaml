@@ -1,0 +1,39 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+data:
+  config.yml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+    common:
+      path_prefix: /loki
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: loki_index_
+            period: 24h
+    analytics:
+      reporting_enabled: false
+{{- end }}
+

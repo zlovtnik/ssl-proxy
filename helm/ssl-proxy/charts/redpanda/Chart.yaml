@@ -1,0 +1,7 @@
+apiVersion: v2
+name: redpanda
+description: Redpanda event infrastructure
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+

@@ -1,0 +1,45 @@
+{{- if not .Values.external }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.minio.fullname" . }}-minio-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.minio.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.minio.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: minio-init
+          image: {{ include "ssl-proxy.minio.image" (dict "root" . "image" .Values.clientImage) }}
+          imagePullPolicy: {{ .Values.clientImage.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              until mc alias set local http://{{ include "ssl-proxy.minio.fullname" . }}-minio:9000 "$MINIO_ACCESS_KEY_ID" "$MINIO_SECRET_ACCESS_KEY"; do sleep 2; done
+              for bucket in {{ .Values.bucket }} {{ join " " .Values.extraBuckets }}; do
+                mc mb --ignore-existing "local/$bucket"
+              done
+          env:
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.accessKeySecret.name }}
+                  key: {{ .Values.accessKeySecret.key }}
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretKeySecret.name }}
+                  key: {{ .Values.secretKeySecret.key }}
+{{- end }}

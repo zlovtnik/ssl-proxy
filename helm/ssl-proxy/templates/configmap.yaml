@@ -11,46 +11,46 @@ data:
   # Redpanda
   SYNC_REDPANDA_BOOTSTRAP_SERVERS: {{ include "ssl-proxy.redpandaBootstrapServers" . | quote }}
   # Sync topics
-  SYNC_SCAN_TOPIC: {{ .Values.javaCoordinator.topics.scanTopic | quote }}
-  SYNC_LOAD_TOPIC: {{ .Values.javaCoordinator.topics.loadTopic | quote }}
-  SYNC_RESULT_TOPIC: {{ .Values.javaCoordinator.topics.resultTopic | quote }}
-  SYNC_PAYLOAD_AUDIT_TOPIC: {{ .Values.javaCoordinator.topics.payloadAuditTopic | quote }}
+  SYNC_SCAN_TOPIC: {{ .Values.global.shared.javaCoordinator.topics.scanTopic | quote }}
+  SYNC_LOAD_TOPIC: {{ .Values.global.shared.javaCoordinator.topics.loadTopic | quote }}
+  SYNC_RESULT_TOPIC: {{ .Values.global.shared.javaCoordinator.topics.resultTopic | quote }}
+  SYNC_PAYLOAD_AUDIT_TOPIC: {{ .Values.global.shared.javaCoordinator.topics.payloadAuditTopic | quote }}
   # Consumer groups
-  SYNC_SCAN_CONSUMER: {{ .Values.javaCoordinator.consumers.scanConsumer | quote }}
-  SYNC_LOAD_CONSUMER: {{ .Values.javaCoordinator.consumers.loadConsumer | quote }}
-  SYNC_RESULT_CONSUMER: {{ .Values.javaCoordinator.consumers.resultConsumer | quote }}
-  SYNC_PAYLOAD_AUDIT_CONSUMER: {{ .Values.javaCoordinator.consumers.payloadAuditConsumer | quote }}
+  SYNC_SCAN_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.scanConsumer | quote }}
+  SYNC_LOAD_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.loadConsumer | quote }}
+  SYNC_RESULT_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.resultConsumer | quote }}
+  SYNC_PAYLOAD_AUDIT_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.payloadAuditConsumer | quote }}
   # Stream names
-  SYNC_STREAM_NAMES: {{ .Values.javaCoordinator.streams.syncStreamNames | quote }}
-  SYNC_ORACLE_STREAM_NAMES: {{ .Values.javaCoordinator.streams.oracleStreamNames | quote }}
-  AUDIT_STREAM_NAME: {{ .Values.javaCoordinator.streams.auditStreamName | quote }}
-  SYNC_RESULT_STREAM_NAME: {{ .Values.javaCoordinator.streams.resultStreamName | quote }}
+  SYNC_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.syncStreamNames | quote }}
+  SYNC_ORACLE_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.oracleStreamNames | quote }}
+  AUDIT_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.auditStreamName | quote }}
+  SYNC_RESULT_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.resultStreamName | quote }}
   # Wireless stream names (Java coordinator)
-  WIRELESS_BACKLOG_STREAM_NAME: {{ .Values.javaCoordinator.streams.wirelessBacklogStreamName | quote }}
-  WIRELESS_MAC_STREAM_NAME: {{ .Values.javaCoordinator.streams.wirelessMacStreamName | quote }}
-  WIRELESS_NETWORKS_STREAM_NAME: {{ .Values.javaCoordinator.streams.wirelessNetworksStreamName | quote }}
-  WIRELESS_PROBE_STREAM_NAME: {{ .Values.javaCoordinator.streams.wirelessProbeStreamName | quote }}
+  WIRELESS_BACKLOG_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.wirelessBacklogStreamName | quote }}
+  WIRELESS_MAC_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.wirelessMacStreamName | quote }}
+  WIRELESS_NETWORKS_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.wirelessNetworksStreamName | quote }}
+  WIRELESS_PROBE_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.wirelessProbeStreamName | quote }}
   # Wireless operation topics (Java coordinator)
-  WIRELESS_BACKLOG_SAVE_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.backlogSaveTopic | quote }}
-  WIRELESS_BACKLOG_LIST_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.backlogListTopic | quote }}
-  WIRELESS_BACKLOG_SYNCED_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.backlogSyncedTopic | quote }}
-  WIRELESS_BACKLOG_PRUNE_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.backlogPruneTopic | quote }}
-  WIRELESS_MAC_LOOKUP_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.macLookupTopic | quote }}
-  WIRELESS_NETWORKS_AUTHORIZED_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.networksAuthorizedTopic | quote }}
-  WIRELESS_PROBE_FLUSH_TOPIC: {{ .Values.javaCoordinator.wirelessTopics.probeFlushTopic | quote }}
+  WIRELESS_BACKLOG_SAVE_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.backlogSaveTopic | quote }}
+  WIRELESS_BACKLOG_LIST_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.backlogListTopic | quote }}
+  WIRELESS_BACKLOG_SYNCED_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.backlogSyncedTopic | quote }}
+  WIRELESS_BACKLOG_PRUNE_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.backlogPruneTopic | quote }}
+  WIRELESS_MAC_LOOKUP_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.macLookupTopic | quote }}
+  WIRELESS_NETWORKS_AUTHORIZED_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.networksAuthorizedTopic | quote }}
+  WIRELESS_PROBE_FLUSH_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessTopics.probeFlushTopic | quote }}
   # Wireless consumer groups (Java coordinator)
-  WIRELESS_BACKLOG_SAVE_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.backlogSaveConsumer | quote }}
-  WIRELESS_BACKLOG_LIST_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.backlogListConsumer | quote }}
-  WIRELESS_BACKLOG_SYNCED_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.backlogSyncedConsumer | quote }}
-  WIRELESS_BACKLOG_PRUNE_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.backlogPruneConsumer | quote }}
-  WIRELESS_MAC_LOOKUP_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.macLookupConsumer | quote }}
-  WIRELESS_NETWORKS_AUTHORIZED_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.networksAuthorizedConsumer | quote }}
-  WIRELESS_PROBE_FLUSH_CONSUMER: {{ .Values.javaCoordinator.wirelessConsumers.probeFlushConsumer | quote }}
+  WIRELESS_BACKLOG_SAVE_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.backlogSaveConsumer | quote }}
+  WIRELESS_BACKLOG_LIST_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.backlogListConsumer | quote }}
+  WIRELESS_BACKLOG_SYNCED_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.backlogSyncedConsumer | quote }}
+  WIRELESS_BACKLOG_PRUNE_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.backlogPruneConsumer | quote }}
+  WIRELESS_MAC_LOOKUP_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.macLookupConsumer | quote }}
+  WIRELESS_NETWORKS_AUTHORIZED_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.networksAuthorizedConsumer | quote }}
+  WIRELESS_PROBE_FLUSH_CONSUMER: {{ .Values.global.shared.javaCoordinator.wirelessConsumers.probeFlushConsumer | quote }}
   # Wireless reply topics (Java coordinator)
-  WIRELESS_BACKLOG_LIST_REPLY_TOPIC: {{ .Values.javaCoordinator.wirelessReplyTopics.backlogListReplyTopic | quote }}
-  WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC: {{ .Values.javaCoordinator.wirelessReplyTopics.backlogPruneReplyTopic | quote }}
-  WIRELESS_MAC_LOOKUP_REPLY_TOPIC: {{ .Values.javaCoordinator.wirelessReplyTopics.macLookupReplyTopic | quote }}
-  WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC: {{ .Values.javaCoordinator.wirelessReplyTopics.networksAuthorizedReplyTopic | quote }}
+  WIRELESS_BACKLOG_LIST_REPLY_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessReplyTopics.backlogListReplyTopic | quote }}
+  WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessReplyTopics.backlogPruneReplyTopic | quote }}
+  WIRELESS_MAC_LOOKUP_REPLY_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessReplyTopics.macLookupReplyTopic | quote }}
+  WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessReplyTopics.networksAuthorizedReplyTopic | quote }}
 
 ---
 # Redpanda topic manifest ConfigMap (mounted by zig-coordinator for topic validation)
@@ -61,17 +61,17 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.labels" . | nindent 4 }}
-{{ $replicas := .Values.redpanda.topicReplicationFactor }}
+{{ $replicas := .Values.global.shared.redpanda.topicReplicationFactor }}
 data:
   topics.manifest: |
     # topic|partitions|replicas|retention.ms|retention.bytes
-    # NOTE: Partition count set to {{ .Values.javaCoordinator.topicPartitions }} to support up to 5 replicas
-    sync.scan.request|{{ .Values.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
-    sync.scan.request.dlq|{{ .Values.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
-    sync.oracle.load|{{ .Values.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
-    sync.oracle.load.dlq|{{ .Values.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
-    sync.oracle.result|{{ .Values.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
-    sync.oracle.result.dlq|{{ .Values.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
+    # NOTE: Partition count set to {{ .Values.global.shared.javaCoordinator.topicPartitions }} to support up to 5 replicas
+    sync.scan.request|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
+    sync.scan.request.dlq|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
+    sync.oracle.load|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
+    sync.oracle.load.dlq|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
+    sync.oracle.result|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
+    sync.oracle.result.dlq|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
     proxy.payload_audit|3|{{ $replicas }}|2592000000|-1
     proxy.payload_audit.dlq|3|{{ $replicas }}|2592000000|-1
     wireless.audit|3|{{ $replicas }}|2592000000|-1

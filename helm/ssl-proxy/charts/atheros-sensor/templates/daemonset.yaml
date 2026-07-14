@@ -1,74 +1,56 @@
-{{- if .Values.atherosSensor.enabled }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "ssl-proxy.fullname" . }}-atheros-sensor
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "ssl-proxy.labels" . | nindent 4 }}
-    app.kubernetes.io/component: atheros-sensor
-spec:
-  clusterIP: None
-  selector:
-    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: atheros-sensor
-  ports:
-    - name: metrics
-      port: {{ .Values.atherosSensor.metricsPort }}
-      targetPort: metrics
+{{- if .Values.enabled }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "ssl-proxy.fullname" . }}-atheros-sensor
+  name: {{ include "ssl-proxy.atherosSensor.fullname" . }}-atheros-sensor
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    {{- include "ssl-proxy.atherosSensor.labels" . | nindent 4 }}
     app.kubernetes.io/component: atheros-sensor
 spec:
   selector:
     matchLabels:
-      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: atheros-sensor
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: atheros-sensor
       {{- with .Values.global.rolloutRevision }}
       annotations:
         ssl-proxy.io/rollout-revision: {{ . | quote }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy.atherosSensor.serviceAccountName" . }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: atheros-sensor
-          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.atherosSensor.image) }}
-          imagePullPolicy: {{ .Values.atherosSensor.image.pullPolicy }}
+          image: {{ include "ssl-proxy.atherosSensor.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
-              value: "redpanda://{{ .Values.redpanda.bootstrapServers }}"
+              value: "redpanda://{{ .Values.global.shared.redpanda.bootstrapServers }}"
             - name: ATH_SENSOR_REQUIRE_HOST_ENDPOINTS
               value: "false"
             - name: ATH_SENSOR_DEVICE
-              value: {{ .Values.atherosSensor.device | quote }}
+              value: {{ .Values.device | quote }}
             - name: ATH_SENSOR_LOCATION_ID
-              value: {{ .Values.atherosSensor.locationId | quote }}
+              value: {{ .Values.locationId | quote }}
             - name: ATH_SENSOR_CHANNEL
-              value: {{ .Values.atherosSensor.channel | quote }}
+              value: {{ .Values.channel | quote }}
             - name: ATH_SENSOR_CHANNEL_HOP_ENABLED
-              value: {{ .Values.atherosSensor.channelHopEnabled | quote }}
+              value: {{ .Values.channelHopEnabled | quote }}
             - name: ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS
-              value: {{ .Values.atherosSensor.channelHopIntervalMs | quote }}
+              value: {{ .Values.channelHopIntervalMs | quote }}
             - name: ATH_SENSOR_REG_DOMAIN
-              value: {{ .Values.atherosSensor.regDomain | quote }}
+              value: {{ .Values.regDomain | quote }}
             - name: ATH_SENSOR_AUDIT_LAYER_STREAM
-              value: {{ .Values.atherosSensor.auditLayerStream | quote }}
+              value: {{ .Values.auditLayerStream | quote }}
             - name: ATH_SENSOR_METRICS_PORT
-              value: {{ .Values.atherosSensor.metricsPort | quote }}
+              value: {{ .Values.metricsPort | quote }}
             - name: ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED
               value: "true"
             - name: ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS
@@ -100,14 +82,14 @@ spec:
             - name: RUST_LOG
               value: "warn,atheros_sensor=info"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.atherosSensor.otlpEndpoint | quote }}
+              value: {{ .Values.otlpEndpoint | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: "grpc"
             - name: OTEL_SERVICE_NAME
               value: "atheros-sensor"
           ports:
             - name: metrics
-              containerPort: {{ .Values.atherosSensor.metricsPort }}
+              containerPort: {{ .Values.metricsPort }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -128,7 +110,7 @@ spec:
             timeoutSeconds: 10
             failureThreshold: 5
           resources:
-            {{- toYaml .Values.atherosSensor.resources | nindent 12 }}
+            {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: sys-class-net
               mountPath: /sys/class/net
@@ -149,3 +131,4 @@ spec:
         - name: sync-outbox
           emptyDir: {}
 {{- end }}
+

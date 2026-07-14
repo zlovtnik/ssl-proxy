@@ -1,0 +1,18 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-postgres-exporter-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+data:
+  queries.yml: |
+    {{- if .Values.postgresExporter.queries }}
+    {{- .Values.postgresExporter.queries | nindent 4 }}
+    {{- else }}
+    {}
+    {{- end }}
+{{- end }}

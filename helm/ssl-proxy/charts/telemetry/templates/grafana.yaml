@@ -1,0 +1,122 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  {{- with .Values.grafana.service.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+  ports:
+    - name: http
+      port: {{ .Values.grafana.service.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  serviceName: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: grafana
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.grafana.image) }}
+          imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: {{ .Values.grafana.adminUser | quote }}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.grafana.adminPasswordSecret.name }}
+                  key: {{ .Values.grafana.adminPasswordSecret.key }}
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          ports:
+            - name: http
+              containerPort: {{ .Values.grafana.service.targetPort }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasources.yml
+              subPath: datasources.yml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+              subPath: dashboards.yml
+              readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+      volumes:
+        - name: provisioning
+          configMap:
+            name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-provisioning
+        - name: dashboards
+          configMap:
+            name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-dashboards
+        - name: data
+          {{- if .Values.grafana.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.grafana.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else if .Values.grafana.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.grafana.persistence.enabled (not .Values.grafana.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.grafana.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.grafana.persistence.size }}
+{{- end }}
+{{- end }}
+

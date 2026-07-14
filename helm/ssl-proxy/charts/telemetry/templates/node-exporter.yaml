@@ -1,0 +1,64 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-node-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+  ports:
+    - {name: metrics, port: 9100, targetPort: metrics}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-node-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: node-exporter
+          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.nodeExporter.image) }}
+          imagePullPolicy: {{ .Values.nodeExporter.image.pullPolicy }}
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+          ports:
+            - name: metrics
+              containerPort: 9100
+          volumeMounts:
+            - {name: proc, mountPath: /host/proc, readOnly: true}
+            - {name: sys, mountPath: /host/sys, readOnly: true}
+            - {name: root, mountPath: /host/root, readOnly: true}
+      volumes:
+        - name: proc
+          hostPath: {path: /proc, type: Directory}
+        - name: sys
+          hostPath: {path: /sys, type: Directory}
+        - name: root
+          hostPath: {path: /, type: Directory}
+---
+{{- end }}
+

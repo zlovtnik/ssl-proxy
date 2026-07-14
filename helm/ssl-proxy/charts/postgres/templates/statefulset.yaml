@@ -1,0 +1,89 @@
+{{- if not .Values.external }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.postgres.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.postgres.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "ssl-proxy.postgres.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.postgres.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.postgres.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: {{ include "ssl-proxy.postgres.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - postgres
+            - -c
+            - config_file=/etc/postgresql/postgresql.conf
+            - -c
+            - shared_preload_libraries=pg_cron,pg_stat_statements
+            - -c
+            - cron.database_name={{ .Values.database }}
+            - -c
+            - listen_addresses=*
+            - -c
+            - track_io_timing=on
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.passwordSecret.name }}
+                  key: {{ .Values.passwordSecret.key }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.port }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.user | quote }}, "-d", {{ .Values.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.user | quote }}, "-d", {{ .Values.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          {{- if .Values.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.persistence.hostPath | quote }}
+            type: Directory
+          {{- else if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.postgres.fullname" . }}-postgres-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

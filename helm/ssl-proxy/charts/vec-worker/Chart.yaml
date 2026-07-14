@@ -1,0 +1,7 @@
+apiVersion: v2
+name: vec-worker
+description: Placeholder for the planned vector worker
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+

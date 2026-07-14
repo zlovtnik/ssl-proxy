@@ -5,6 +5,25 @@ global:
   image:
     # Set dynamically by `ops up-ready`.
     registry: ""
+  shared:
+    redpanda:
+      bootstrapServers: "ssl-proxy-redpanda:9092"
+      topicReplicationFactor: 1
+    postgres:
+      host: "ssl-proxy-postgres"
+    redis:
+      url: "redis://ssl-proxy-redis:6379/1"
+    minio:
+      endpoint: "http://ssl-proxy-minio:9000"
+    integrationConsole:
+      enabled: true
+      web:
+        service:
+          port: 3005
+    atherosSensor:
+      enabled: true
+    monitoring:
+      enabled: true
 
 redpanda:
   external: false
@@ -110,14 +129,14 @@ atherosSearch:
     repository: atheros-search
     tag: latest
     pullPolicy: Always
-keda:
-  enabled: false
-monitoring:
-  enabled: true
-grafana:
-  enabled: true
 observability:
   enabled: true
+  keda:
+    enabled: false
+  monitoring:
+    enabled: true
+  dashboardDiscovery:
+    enabled: true
   prometheus:
     service:
       externalIPs:

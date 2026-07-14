@@ -1,0 +1,72 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-jaeger
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  {{- with .Values.jaeger.service.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+  ports:
+    - name: query
+      port: {{ .Values.jaeger.service.port }}
+      targetPort: query
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: metrics
+      port: 14269
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-jaeger
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: jaeger
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.jaeger.image) }}
+          imagePullPolicy: {{ .Values.jaeger.image.pullPolicy }}
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+          ports:
+            - name: query
+              containerPort: 16686
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: metrics
+              containerPort: 14269
+          readinessProbe:
+            httpGet:
+              path: /
+              port: query
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+{{- end }}
+

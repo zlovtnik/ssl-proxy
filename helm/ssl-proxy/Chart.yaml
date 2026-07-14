@@ -1,6 +1,6 @@
 apiVersion: v2
 name: ssl-proxy
-description: SSL Proxy with Kubernetes auto-scaling for coordinator and vec-worker
+description: Umbrella chart for the SSL Proxy platform
 type: application
 version: 0.2.0
 appVersion: "1.0.0"
@@ -13,3 +13,50 @@ keywords:
   - auto-scaling
 maintainers:
   - name: ssl-proxy-team
+dependencies:
+  - name: proxy
+    version: 0.1.0
+    repository: "file://charts/proxy"
+    condition: proxy.enabled
+  - name: java-coordinator
+    version: 0.1.0
+    repository: "file://charts/java-coordinator"
+    alias: javaCoordinator
+    condition: javaCoordinator.enabled
+  - name: integration-console
+    version: 0.1.0
+    repository: "file://charts/integration-console"
+    alias: integrationConsole
+    condition: integrationConsole.enabled
+  - name: atheros-sensor
+    version: 0.1.0
+    repository: "file://charts/atheros-sensor"
+    alias: atherosSensor
+    condition: atherosSensor.enabled
+  - name: postgres
+    version: 0.1.0
+    repository: "file://charts/postgres"
+  - name: redpanda
+    version: 0.1.0
+    repository: "file://charts/redpanda"
+  - name: minio
+    version: 0.1.0
+    repository: "file://charts/minio"
+  - name: redis
+    version: 0.1.0
+    repository: "file://charts/redis"
+  - name: telemetry
+    version: 0.1.0
+    repository: "file://charts/telemetry"
+    alias: observability
+    condition: observability.enabled
+  - name: vec-worker
+    version: 0.1.0
+    repository: "file://charts/vec-worker"
+    alias: vecWorker
+    condition: vecWorker.enabled
+  - name: atheros-search
+    version: 0.1.0
+    repository: "file://charts/atheros-search"
+    alias: atherosSearch
+    condition: atherosSearch.enabled

@@ -1,0 +1,49 @@
+# Values local to the postgres subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: []
+
+# -- Set to true if Postgres is managed externally (not deployed by this chart)
+external: true
+# -- Postgres connection URL (without password, password goes in secret)
+host: "postgres-primary.postgres.svc.cluster.local"
+port: 5432
+database: "sync"
+user: "sync"
+# -- Secret reference for Postgres password
+passwordSecret:
+  name: "postgres-credentials"
+  key: "password"
+image:
+  repository: ssl-proxy-postgres
+  tag: latest
+  pullPolicy: IfNotPresent
+persistence:
+  enabled: true
+  hostPath: ""
+  size: 100Gi
+  storageClassName: ""
+resources:
+  limits:
+    cpu: "4"
+    memory: 8Gi
+  requests:
+    cpu: "1"
+    memory: 2Gi
+
+# Redis connection settings (used by integration-console)

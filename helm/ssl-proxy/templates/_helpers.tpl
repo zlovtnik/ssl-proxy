@@ -74,9 +74,9 @@ Usage: include "ssl-proxy.image" (dict "root" . "image" .Values.proxy.image)
 Service account name
 */}}
 {{- define "ssl-proxy.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "ssl-proxy.fullname" .) .Values.serviceAccount.name }}
+{{- if .Values.global.serviceAccount.create }}
+{{- default (include "ssl-proxy.fullname" .) .Values.global.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- default "default" .Values.global.serviceAccount.name }}
 {{- end }}
 {{- end }}
