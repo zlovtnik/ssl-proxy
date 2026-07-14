@@ -362,12 +362,21 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 
 ## Kubernetes Deployment
 
-A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/):
+A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/). The server's
+MicroK8s profile deploys the proxy, coordinator, Postgres, Redpanda, MinIO, and
+Redis while reusing the retained Compose data volumes. Kubernetes Secrets named
+`postgres-credentials`, `minio-credentials`, `proxy-admin-key`,
+`oracle-credentials`, `oracle-wallet`, and `wireguard-config` must exist in the
+`ssl-proxy` namespace before installation.
 
 ```bash
 helm upgrade --install ssl-proxy ./helm/ssl-proxy \
-  --set proxy.adminApiKey=your-key \
-  --set postgres.password=sync
+  --kube-context microk8s-ssl-proxy \
+  --namespace ssl-proxy \
+  --create-namespace \
+  --values ./helm/ssl-proxy/values-microk8s.yaml \
+  --rollback-on-failure \
+  --wait
 ```
 
 ## Operational Scripts

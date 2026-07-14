@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -34,6 +34,7 @@ BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 ATHEROS_SEARCH_UI_API_BASE ?= http://localhost:8080
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
 REGISTRY_BUILD_TARGETS := registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui
+REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest redis:7-alpine minio/minio:latest minio/mc:latest prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 oliver006/redis_exporter:v1.61.0 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0
 
 # Build project binaries: root proxy, Atheros sensor, and Java coordinator.
 build:
@@ -113,6 +114,18 @@ registry-build-all: $(REGISTRY_BUILD_TARGETS)
 	else \
 		echo "[registry-build-all] skipping vec-worker: services/vec-worker/Dockerfile not found"; \
 	fi
+
+registry-mirror-all: require-registry
+	@set -e; \
+	for image in $(REGISTRY_MIRROR_IMAGES); do \
+		destination="$(REGISTRY)/$$image"; \
+		echo "[registry-mirror] $$image -> $$destination"; \
+		docker pull --platform "$(PLATFORM)" "$$image"; \
+		docker tag "$$image" "$$destination"; \
+		docker push "$$destination"; \
+	done
+
+registry-build-stack: registry-build-all registry-mirror-all
 
 registry-build-ssl-proxy: registry-buildx require-registry
 	docker buildx build --platform $(PLATFORM) \

@@ -1,0 +1,139 @@
+# Single-node MicroK8s deployment for the ssl-proxy server.
+# Secrets are created out-of-band from the existing protected server files.
+
+global:
+  image:
+    # Set dynamically by `ops up-ready`.
+    registry: ""
+
+redpanda:
+  external: false
+  bootstrapServers: "ssl-proxy-redpanda:9092"
+  topicReplicationFactor: 1
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_redpanda-data/_data"
+
+postgres:
+  external: false
+  host: "ssl-proxy-postgres"
+  image:
+    repository: "ssl-proxy-postgres"
+    tag: latest
+    pullPolicy: Always
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_postgres-data/_data"
+
+redis:
+  external: false
+  url: "redis://ssl-proxy-redis:6379/1"
+
+minio:
+  external: false
+  endpoint: "http://ssl-proxy-minio:9000"
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_minio-data/_data"
+
+proxy:
+  image:
+    repository: "ssl-proxy"
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    externalIPs:
+      - "192.168.1.221"
+  adminService:
+    externalIPs:
+      - "192.168.1.221"
+  wireguard:
+    obfuscationMaxDatagramBytes: 1500
+  healthcheck:
+    livenessProbe:
+      httpGet: null
+      exec:
+        command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]
+      initialDelaySeconds: 40
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      httpGet: null
+      exec:
+        command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+javaCoordinator:
+  image:
+    repository: "java-coordinator"
+    tag: latest
+    pullPolicy: Always
+  resources:
+    limits:
+      cpu: "2"
+      memory: 3Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+vecWorker:
+  enabled: false
+integrationConsole:
+  enabled: true
+  web:
+    image:
+      repository: integration-console
+      tag: latest
+      pullPolicy: Always
+    service:
+      port: 3005
+      targetPort: 3000
+      type: ClusterIP
+      externalIPs:
+        - "192.168.1.221"
+  dbSetup:
+    image:
+      repository: integration-console
+      tag: latest
+      pullPolicy: Always
+atherosSensor:
+  enabled: true
+  image:
+    repository: atheros-sensor
+    tag: latest
+    pullPolicy: Always
+atherosSearch:
+  enabled: false
+  image:
+    repository: atheros-search
+    tag: latest
+    pullPolicy: Always
+keda:
+  enabled: false
+monitoring:
+  enabled: true
+grafana:
+  enabled: true
+observability:
+  enabled: true
+  prometheus:
+    service:
+      externalIPs:
+        - "192.168.1.221"
+    persistence:
+      hostPath: "/var/lib/docker/volumes/ssl-proxy_prometheus-data/_data"
+  loki:
+    persistence:
+      hostPath: "/var/lib/docker/volumes/ssl-proxy_loki-data/_data"
+  jaeger:
+    service:
+      externalIPs:
+        - "192.168.1.221"
+  grafana:
+    service:
+      externalIPs:
+        - "192.168.1.221"
+    persistence:
+      hostPath: "/var/lib/docker/volumes/ssl-proxy_grafana-data/_data"

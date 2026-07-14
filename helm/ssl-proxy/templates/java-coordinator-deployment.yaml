@@ -46,7 +46,7 @@ spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
       containers:
         - name: java-coordinator
-          image: {{ .Values.javaCoordinator.image.repository }}:{{ .Values.javaCoordinator.image.tag }}
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.javaCoordinator.image) }}
           imagePullPolicy: {{ .Values.javaCoordinator.image.pullPolicy }}
           env:
             # Postgres
@@ -57,6 +57,8 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.passwordSecret.name }}
                   key: {{ .Values.postgres.passwordSecret.key }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .Values.javaCoordinator.jvmOptions | quote }}
             - name: COORDINATOR_DB_POOL
@@ -312,10 +314,20 @@ spec:
               value: "/app/wallet"
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.javaCoordinator.tracing.samplingProbability | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.javaCoordinator.tracing.otlpEndpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_SERVICE_NAME
+              value: "java-coordinator"
           ports:
             - containerPort: 8081
               protocol: TCP
               name: http
+          {{- with .Values.javaCoordinator.healthcheck.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.javaCoordinator.healthcheck.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

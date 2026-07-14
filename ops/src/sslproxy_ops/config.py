@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sslproxy_ops.paths import repo_root
 
 ProfileMode = Literal["iphone", "linux-shim", "linux-direct", "mac"]
+DeploymentTarget = Literal["compose", "kubernetes"]
 
 
 class Settings(BaseSettings):
@@ -42,6 +43,21 @@ class Settings(BaseSettings):
     skip_registry_preflight: bool = Field(
         default=False, validation_alias="UP_READY_SKIP_REGISTRY_PREFLIGHT"
     )
+    deployment_target: DeploymentTarget = Field(
+        default="kubernetes", validation_alias="UP_READY_DEPLOYMENT_TARGET"
+    )
+    build_registry_images: bool = Field(
+        default=True, validation_alias="UP_READY_BUILD_REGISTRY_IMAGES"
+    )
+    mirror_registry_images: bool = Field(
+        default=True, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
+    )
+    kube_context: str = Field(
+        default="microk8s-ssl-proxy", validation_alias="UP_READY_KUBE_CONTEXT"
+    )
+    kube_namespace: str = Field(default="ssl-proxy", validation_alias="UP_READY_KUBE_NAMESPACE")
+    helm_release: str = Field(default="ssl-proxy", validation_alias="UP_READY_HELM_RELEASE")
+    helm_timeout: str = Field(default="15m", validation_alias="UP_READY_HELM_TIMEOUT")
 
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")
@@ -79,4 +95,3 @@ class Settings(BaseSettings):
     @property
     def stack_health_service_names(self) -> list[str]:
         return self.stack_health_services.split()
-

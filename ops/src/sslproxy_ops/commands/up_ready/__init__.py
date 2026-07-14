@@ -20,6 +20,12 @@ from sslproxy_ops.commands.up_ready.checks import (
     wait_for_container_healthy,
     write_credential_handoff,
 )
+from sslproxy_ops.commands.up_ready.kubernetes import (
+    helm_upgrade,
+    kubernetes_diagnostics,
+    kubernetes_up,
+    sync_kubernetes_secrets,
+)
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, desired_obfuscation_value, step, warn
 from sslproxy_ops.commands.up_ready.peers import ensure_local_peer_material
 from sslproxy_ops.commands.up_ready.secrets import (
@@ -28,9 +34,9 @@ from sslproxy_ops.commands.up_ready.secrets import (
     ensure_secret_bootstrap,
     verify_registry_transport,
 )
-from sslproxy_ops.config import ProfileMode, Settings
+from sslproxy_ops.config import DeploymentTarget, ProfileMode, Settings
 
-app = typer.Typer(help="Bring up compose stack, verify services, and print peer QR codes.")
+app = typer.Typer(help="Build and deploy the stack, verify services, and print peer QR codes.")
 
 
 def require_concrete_endpoint_values(settings: Settings) -> None:
@@ -111,6 +117,24 @@ def auto_fix(ctx: UpReadyContext, failure_class: str, text: str = "") -> bool:
             warn(f"auto_fix skipped (already attempted): {failure_class}")
         return False
 
+    if ctx.settings.deployment_target == "kubernetes":
+        match failure_class:
+            case "profile_obfuscation_mismatch":
+                apply_profile_runtime_env(ctx)
+                helm_upgrade(ctx)
+                ctx.auto_fixed_classes.add(failure_class)
+                return True
+            case "wg_peer_material_missing":
+                ensure_local_peer_material(ctx)
+                sync_kubernetes_secrets(ctx)
+                helm_upgrade(ctx)
+                ctx.auto_fixed_classes.add(failure_class)
+                return True
+            case "admin_loopback_false_negative" | "qr_permission_denied":
+                ctx.auto_fixed_classes.add(failure_class)
+                return True
+        return False
+
     match failure_class:
         case "docker_registry_dns_timeout":
             step("S09", f"auto_fix[{failure_class}]: recreate with locally available images")
@@ -185,7 +209,10 @@ def compose_up(ctx: UpReadyContext) -> bool:
 
 def preflight(ctx: UpReadyContext) -> None:
     step("S01", "preflight")
-    for command in ["docker", "curl", "qrencode"]:
+    commands = ["docker", "curl", "qrencode"]
+    if ctx.settings.deployment_target == "kubernetes":
+        commands.extend(["helm", "kubectl", "make"])
+    for command in commands:
         if shutil.which(command) is None:
             raise UpReadyError(f"Missing required command: {command}")
     if ctx.settings.profile_mode is None:
@@ -206,10 +233,13 @@ def run_up_ready(ctx: UpReadyContext) -> None:
     apply_profile_runtime_env(ctx)
     ensure_local_peer_material(ctx)
 
-    if not compose_up(ctx):
+    deployed = kubernetes_up(ctx) if ctx.settings.deployment_target == "kubernetes" else compose_up(ctx)
+    if not deployed:
         diagnostics(ctx)
         memo_write(ctx, "fail", ctx.last_failure.name, ctx.last_failure.fix)
-        raise UpReadyError(f"compose_up failed: {ctx.last_failure.cause}")
+        raise UpReadyError(
+            f"{ctx.settings.deployment_target}_up failed: {ctx.last_failure.cause or ctx.last_failure_text}"
+        )
 
     if not mode_guardrails(ctx):
         if auto_fix(ctx, "profile_obfuscation_mismatch", ctx.last_failure_text):
@@ -251,6 +281,10 @@ def up_ready(
     profile_mode: Annotated[ProfileMode | None, typer.Option("--profile-mode", envvar="PROFILE_MODE")] = None,
     server_ip: Annotated[str | None, typer.Option("--server-ip", envvar="SERVER_IP")] = None,
     client_ip: Annotated[str | None, typer.Option("--client-ip", envvar="CLIENT_IP")] = None,
+    deployment_target: Annotated[
+        DeploymentTarget | None,
+        typer.Option("--deployment-target", envvar="UP_READY_DEPLOYMENT_TARGET"),
+    ] = None,
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -261,6 +295,8 @@ def up_ready(
         settings.server_ip = server_ip
     if client_ip is not None:
         settings.client_ip = client_ip
+    if deployment_target is not None:
+        settings.deployment_target = deployment_target
     up_ctx = UpReadyContext(settings=settings)
     try:
         run_up_ready(up_ctx)

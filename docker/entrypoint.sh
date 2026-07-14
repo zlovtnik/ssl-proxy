@@ -63,7 +63,7 @@ validate_peer_name() {
 peer_names() {
 	local raw_peer peer
 
-	printf '%s' "$WG_PEERS" | tr ',' '\n' | while IFS= read -r raw_peer; do
+	printf '%s\n' "$WG_PEERS" | tr ',' '\n' | while IFS= read -r raw_peer; do
 		peer="$(trim "$raw_peer")"
 		[ -n "$peer" ] || continue
 		validate_peer_name "$peer"

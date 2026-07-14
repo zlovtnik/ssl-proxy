@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -10,10 +11,79 @@ import httpx
 
 from sslproxy_ops import shell
 from sslproxy_ops.commands.memo import insert_incident
+from sslproxy_ops.commands.up_ready.kubernetes import (
+    kubernetes_diagnostics,
+    kubernetes_exec,
+    kubernetes_logs,
+)
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, desired_obfuscation_value, step, warn
 from sslproxy_ops.paths import repo_root
 from sslproxy_ops.util.ini import peer_names, trim_key_value, uri_encode
 from sslproxy_ops.util.qr import render_qr_file, render_qr_text
+
+
+def proxy_exec(
+    ctx: UpReadyContext,
+    *args: str,
+    check: bool = True,
+    capture: bool = False,
+):
+    if ctx.settings.deployment_target == "kubernetes":
+        return kubernetes_exec(ctx, *args, check=check, capture=capture)
+    return shell.compose(
+        "exec",
+        "-T",
+        ctx.settings.service_name,
+        *args,
+        check=check,
+        capture=capture,
+    )
+
+
+def proxy_logs(
+    ctx: UpReadyContext,
+    *args: str,
+    check: bool = True,
+    capture: bool = False,
+):
+    if ctx.settings.deployment_target == "kubernetes":
+        return kubernetes_logs(ctx, *args, check=check, capture=capture)
+    return shell.compose(
+        "logs",
+        *args,
+        ctx.settings.service_name,
+        check=check,
+        capture=capture,
+    )
+
+
+def wait_for_kubernetes_stack(ctx: UpReadyContext) -> bool:
+    deadline = time.monotonic() + ctx.settings.health_timeout_secs
+    while time.monotonic() < deadline:
+        completed = shell.kubectl(
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "get",
+            "pods",
+            "--selector",
+            f"app.kubernetes.io/instance={ctx.settings.helm_release}",
+            "-o",
+            "json",
+            context=ctx.settings.kube_context,
+            check=False,
+            capture=True,
+        )
+        if completed.returncode == 0:
+            pods = json.loads(completed.stdout or "{}").get("items", [])
+            active = [pod for pod in pods if pod.get("status", {}).get("phase") != "Succeeded"]
+            if active and all(
+                pod.get("status", {}).get("phase") == "Running"
+                and all(status.get("ready") for status in pod.get("status", {}).get("containerStatuses", []))
+                for pod in active
+            ):
+                return True
+        time.sleep(1)
+    return False
 
 
 def wait_for_container_healthy(ctx: UpReadyContext, service: str) -> bool:
@@ -78,10 +148,8 @@ def check_admin_health(ctx: UpReadyContext) -> bool:
     except httpx.HTTPError:
         pass
     if (
-        shell.compose(
-            "exec",
-            "-T",
-            ctx.settings.service_name,
+        proxy_exec(
+            ctx,
             "curl",
             "-fsS",
             "--max-time",
@@ -100,11 +168,17 @@ def check_admin_health(ctx: UpReadyContext) -> bool:
 def health_checks(ctx: UpReadyContext) -> bool:
     step("S04", "health_checks: stack + admin + ready")
     ctx.last_failed_check = ""
-    for service in ctx.settings.stack_health_service_names:
-        if not wait_for_container_healthy(ctx, service):
-            ctx.last_failed_check = f"{service}_health"
-            classify_service_failure(ctx, service)
+    if ctx.settings.deployment_target == "kubernetes":
+        if not wait_for_kubernetes_stack(ctx):
+            ctx.last_failed_check = "kubernetes_stack_health"
+            ctx.classify("Kubernetes stack did not become Ready before the health timeout")
             return False
+    else:
+        for service in ctx.settings.stack_health_service_names:
+            if not wait_for_container_healthy(ctx, service):
+                ctx.last_failed_check = f"{service}_health"
+                classify_service_failure(ctx, service)
+                return False
     if not run_check_with_retry(ctx, "admin_health", lambda: check_admin_health(ctx)):
         return False
     body = ""
@@ -116,10 +190,8 @@ def health_checks(ctx: UpReadyContext) -> bool:
     except httpx.HTTPError:
         pass
     if code == "000":
-        completed = shell.compose(
-            "exec",
-            "-T",
-            ctx.settings.service_name,
+        completed = proxy_exec(
+            ctx,
             "curl",
             "-sS",
             "-o",
@@ -134,10 +206,8 @@ def health_checks(ctx: UpReadyContext) -> bool:
         )
         code = (completed.stdout or "").strip()
         body = (
-            shell.compose(
-                "exec",
-                "-T",
-                ctx.settings.service_name,
+            proxy_exec(
+                ctx,
                 "sh",
                 "-lc",
                 "cat /tmp/up-ready-ready-body.txt",
@@ -154,18 +224,18 @@ def health_checks(ctx: UpReadyContext) -> bool:
 
 
 def runtime_obfuscation_value(ctx_or_service: UpReadyContext | str) -> str:
-    service_name = ctx_or_service if isinstance(ctx_or_service, str) else ctx_or_service.settings.service_name
-    logs = shell.compose("logs", "--tail", "200", service_name, check=False, capture=True)
+    if isinstance(ctx_or_service, str):
+        logs = shell.compose("logs", "--tail", "200", ctx_or_service, check=False, capture=True)
+    else:
+        logs = proxy_logs(ctx_or_service, "--tail", "200", check=False, capture=True)
     matches = re.findall(r"wg_obfuscation_enabled=(true|false)", logs.stdout or "")
     return matches[-1] if matches else ""
 
 
 def check_udp_listener(ctx: UpReadyContext, port: int) -> bool:
     return (
-        shell.compose(
-            "exec",
-            "-T",
-            ctx.settings.service_name,
+        proxy_exec(
+            ctx,
             "sh",
             "-lc",
             f"ss -H -lun '( sport = :{port} )' | grep -q .",
@@ -194,10 +264,8 @@ def check_frontdoor_udp_listener(ctx: UpReadyContext, port: int) -> bool:
 
 def check_tcp_listener(ctx: UpReadyContext, port: int) -> bool:
     return (
-        shell.compose(
-            "exec",
-            "-T",
-            ctx.settings.service_name,
+        proxy_exec(
+            ctx,
             "sh",
             "-lc",
             f"ss -H -ltn '( sport = :{port} )' | grep -q .",
@@ -210,10 +278,8 @@ def check_tcp_listener(ctx: UpReadyContext, port: int) -> bool:
 
 def network_checks(ctx: UpReadyContext) -> bool:
     step("S05", "network_checks: wg/listeners")
-    boringtun = lambda: shell.compose(
-        "exec",
-        "-T",
-        ctx.settings.service_name,
+    boringtun = lambda: proxy_exec(
+        ctx,
         "/app/ssl-proxy",
         "boringtun",
         "show",
@@ -234,9 +300,12 @@ def network_checks(ctx: UpReadyContext) -> bool:
     if runtime_obfuscation_value(ctx) == "true":
         if not run_check_with_retry(ctx, "udp_51820", lambda: check_udp_listener(ctx, 51820)):
             return False
-    for label, port in [("frontdoor_udp_443", 443), ("frontdoor_udp_51820", 51820)]:
-        if not run_check_with_retry(ctx, label, lambda port=port: check_frontdoor_udp_listener(ctx, port)):
-            return False
+    if ctx.settings.deployment_target == "compose":
+        for label, port in [("frontdoor_udp_443", 443), ("frontdoor_udp_51820", 51820)]:
+            if not run_check_with_retry(
+                ctx, label, lambda port=port: check_frontdoor_udp_listener(ctx, port)
+            ):
+                return False
     return True
 
 
@@ -262,10 +331,8 @@ def mode_guardrails(ctx: UpReadyContext) -> bool:
 
 def peer_checks(ctx: UpReadyContext) -> bool:
     step("S06", "peer_checks: snapshot")
-    completed = shell.compose(
-        "exec",
-        "-T",
-        ctx.settings.service_name,
+    completed = proxy_exec(
+        ctx,
         "/app/ssl-proxy",
         "boringtun",
         "dump",
@@ -329,10 +396,8 @@ def print_qr_for_config(ctx: UpReadyContext, cfg: Path) -> None:
         return
     container_cfg = to_container_config_path(cfg)
     if container_cfg:
-        test = shell.compose(
-            "exec",
-            "-T",
-            ctx.settings.service_name,
+        test = proxy_exec(
+            ctx,
             "test",
             "-r",
             container_cfg,
@@ -340,10 +405,8 @@ def print_qr_for_config(ctx: UpReadyContext, cfg: Path) -> None:
             capture=True,
         )
         if test.returncode == 0:
-            text = shell.compose(
-                "exec",
-                "-T",
-                ctx.settings.service_name,
+            text = proxy_exec(
+                ctx,
                 "cat",
                 container_cfg,
                 capture=True,
@@ -355,10 +418,8 @@ def print_qr_for_config(ctx: UpReadyContext, cfg: Path) -> None:
 
 def qr_render(ctx: UpReadyContext) -> bool:
     step("S07", "qr_render: real peers")
-    completed = shell.compose(
-        "exec",
-        "-T",
-        ctx.settings.service_name,
+    completed = proxy_exec(
+        ctx,
         "/app/ssl-proxy",
         "boringtun",
         "dump",
@@ -472,6 +533,9 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
 
 def diagnostics(ctx: UpReadyContext) -> None:
     step("S08", "diagnostics")
+    if ctx.settings.deployment_target == "kubernetes":
+        kubernetes_diagnostics(ctx)
+        return
     print("--- docker compose ps ---")
     shell.compose("ps", check=False)
     print("--- service health ---")

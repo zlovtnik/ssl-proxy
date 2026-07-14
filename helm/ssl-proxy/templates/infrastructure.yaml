@@ -1,0 +1,509 @@
+{{- if not .Values.postgres.external }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.port }}
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "ssl-proxy.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.postgres.image) }}
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          args:
+            - postgres
+            - -c
+            - config_file=/etc/postgresql/postgresql.conf
+            - -c
+            - shared_preload_libraries=pg_cron,pg_stat_statements
+            - -c
+            - cron.database_name={{ .Values.postgres.database }}
+            - -c
+            - listen_addresses=*
+            - -c
+            - track_io_timing=on
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.passwordSecret.name }}
+                  key: {{ .Values.postgres.passwordSecret.key }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.postgres.port }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          {{- if .Values.postgres.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.postgres.persistence.hostPath | quote }}
+            type: Directory
+          {{- else if .Values.postgres.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.fullname" . }}-postgres-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.postgres.persistence.enabled (not .Values.postgres.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-postgres-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.postgres.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.persistence.size }}
+{{- end }}
+{{- end }}
+
+{{- if not .Values.redpanda.external }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redpanda
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+    - name: admin
+      port: {{ .Values.redpanda.adminPort }}
+      targetPort: admin
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redpanda
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda
+spec:
+  serviceName: {{ include "ssl-proxy.fullname" . }}-redpanda
+  replicas: {{ .Values.redpanda.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redpanda
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redpanda
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: redpanda
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.redpanda.image) }}
+          imagePullPolicy: {{ .Values.redpanda.image.pullPolicy }}
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp
+            - "1"
+            - --memory
+            - 1G
+            - --reserve-memory
+            - 0M
+            - --node-id
+            - "0"
+            - --check=false
+            - --kafka-addr
+            - INTERNAL://0.0.0.0:9092
+            - --advertise-kafka-addr
+            - INTERNAL://{{ include "ssl-proxy.fullname" . }}-redpanda:9092
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: admin
+              containerPort: {{ .Values.redpanda.adminPort }}
+          readinessProbe:
+            exec:
+              command: ["rpk", "cluster", "info", "--brokers", "127.0.0.1:9092"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /v1/status/ready
+              port: admin
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.redpanda.resources | nindent 12 }}
+          volumeMounts:
+            - name: redpanda-data
+              mountPath: /data
+      volumes:
+        - name: redpanda-data
+          {{- if .Values.redpanda.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.redpanda.persistence.hostPath | quote }}
+            type: Directory
+          {{- else if .Values.redpanda.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.fullname" . }}-redpanda-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.redpanda.persistence.enabled (not .Values.redpanda.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redpanda-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.redpanda.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redpanda.persistence.size }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redpanda-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redpanda-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: redpanda-init
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.redpanda.image) }}
+          imagePullPolicy: {{ .Values.redpanda.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              brokers={{ include "ssl-proxy.fullname" . }}-redpanda:9092
+              until rpk cluster info --brokers "$brokers" >/dev/null 2>&1; do sleep 2; done
+              while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
+                case "$topic" in ''|'#'*) continue ;; esac
+                if ! rpk topic describe "$topic" --brokers "$brokers" >/dev/null 2>&1; then
+                  rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas"
+                fi
+                rpk topic alter-config "$topic" --brokers "$brokers" --set "retention.ms=$retention_ms" --set "retention.bytes=$retention_bytes" >/dev/null
+              done < /config/topics.manifest
+          volumeMounts:
+            - name: topics-manifest
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: topics-manifest
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
+{{- end }}
+
+{{- if not .Values.minio.external }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9001
+      targetPort: console
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  serviceName: {{ include "ssl-proxy.fullname" . }}-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: minio
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.minio.image) }}
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.accessKeySecret.name }}
+                  key: {{ .Values.minio.accessKeySecret.key }}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.secretKeySecret.name }}
+                  key: {{ .Values.minio.secretKeySecret.key }}
+            - name: MINIO_PROMETHEUS_AUTH_TYPE
+              value: public
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+      volumes:
+        - name: minio-data
+          {{- if .Values.minio.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.minio.persistence.hostPath | quote }}
+            type: Directory
+          {{- else if .Values.minio.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.fullname" . }}-minio-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.minio.persistence.enabled (not .Values.minio.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-minio-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.minio.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.minio.persistence.size }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-minio-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: minio-init
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.minio.clientImage) }}
+          imagePullPolicy: {{ .Values.minio.clientImage.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              until mc alias set local http://{{ include "ssl-proxy.fullname" . }}-minio:9000 "$MINIO_ACCESS_KEY_ID" "$MINIO_SECRET_ACCESS_KEY"; do sleep 2; done
+              for bucket in {{ .Values.minio.bucket }} {{ join " " .Values.minio.extraBuckets }}; do
+                mc mb --ignore-existing "local/$bucket"
+              done
+          env:
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.accessKeySecret.name }}
+                  key: {{ .Values.minio.accessKeySecret.key }}
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.secretKeySecret.name }}
+                  key: {{ .Values.minio.secretKeySecret.key }}
+{{- end }}
+
+{{- if not .Values.redis.external }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      containers:
+        - name: redis
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.redis.image) }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+{{- end }}

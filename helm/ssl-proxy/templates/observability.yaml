@@ -1,0 +1,858 @@
+{{- if .Values.observability.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-promtail
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-promtail
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ssl-proxy.fullname" . }}-promtail
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ssl-proxy.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-loki
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+  ports:
+    - name: http
+      port: {{ .Values.observability.loki.service.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-loki
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  serviceName: {{ include "ssl-proxy.fullname" . }}-loki
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: loki
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: loki
+    spec:
+      containers:
+        - name: loki
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.loki.image) }}
+          imagePullPolicy: {{ .Values.observability.loki.image.pullPolicy }}
+          args: ["-config.file=/etc/loki/config.yml"]
+          ports:
+            - name: http
+              containerPort: 3100
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+              readOnly: true
+            - name: data
+              mountPath: /loki
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-loki-config
+        - name: data
+          {{- if .Values.observability.loki.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.observability.loki.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else if .Values.observability.loki.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.fullname" . }}-loki-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.observability.loki.persistence.enabled (not .Values.observability.loki.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-loki-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.observability.loki.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.loki.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-promtail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+  ports:
+    - name: http
+      port: 9080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-promtail
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: promtail
+spec:
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: promtail
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: promtail
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
+      containers:
+        - name: promtail
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.promtail.image) }}
+          imagePullPolicy: {{ .Values.observability.promtail.image.pullPolicy }}
+          args: ["-config.file=/etc/promtail/config.yml"]
+          ports:
+            - name: http
+              containerPort: 9080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail
+              readOnly: true
+            - name: positions
+              mountPath: /promtail
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-promtail-config
+        - name: positions
+          hostPath:
+            path: {{ .Values.observability.promtail.positionsHostPath | quote }}
+            type: DirectoryOrCreate
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-jaeger
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  {{- with .Values.observability.jaeger.service.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+  ports:
+    - name: query
+      port: {{ .Values.observability.jaeger.service.port }}
+      targetPort: query
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: metrics
+      port: 14269
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-jaeger
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: jaeger
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.jaeger.image) }}
+          imagePullPolicy: {{ .Values.observability.jaeger.image.pullPolicy }}
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+          ports:
+            - name: query
+              containerPort: 16686
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: metrics
+              containerPort: 14269
+          readinessProbe:
+            httpGet:
+              path: /
+              port: query
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+    - {name: metrics, port: 8888, targetPort: metrics}
+    - {name: spanmetrics, port: 9464, targetPort: spanmetrics}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.otelCollector.image) }}
+          imagePullPolicy: {{ .Values.observability.otelCollector.image.pullPolicy }}
+          args: ["--config=/etc/otelcol/config.yml"]
+          ports:
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+            - {name: metrics, containerPort: 8888}
+            - {name: spanmetrics, containerPort: 9464}
+          readinessProbe:
+            tcpSocket:
+              port: otlp-grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-otel-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-pushgateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pushgateway
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: pushgateway
+  ports:
+    - name: http
+      port: 9091
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-pushgateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pushgateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pushgateway
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pushgateway
+    spec:
+      containers:
+        - name: pushgateway
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.pushgateway.image) }}
+          imagePullPolicy: {{ .Values.observability.pushgateway.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 9091
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  {{- with .Values.observability.prometheus.service.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  ports:
+    - name: http
+      port: {{ .Values.observability.prometheus.service.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  serviceName: {{ include "ssl-proxy.fullname" . }}-prometheus
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.prometheus.image) }}
+          imagePullPolicy: {{ .Values.observability.prometheus.image.pullPolicy }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --web.enable-lifecycle
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+              readOnly: true
+            - name: config
+              mountPath: /etc/prometheus/alerts/alerts.yml
+              subPath: alerts.yml
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-prometheus-config
+        - name: data
+          {{- if .Values.observability.prometheus.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.observability.prometheus.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else if .Values.observability.prometheus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.fullname" . }}-prometheus-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.observability.prometheus.persistence.enabled (not .Values.observability.prometheus.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-prometheus-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.observability.prometheus.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.prometheus.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  {{- with .Values.observability.grafana.service.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+  ports:
+    - name: http
+      port: {{ .Values.observability.grafana.service.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  serviceName: {{ include "ssl-proxy.fullname" . }}-grafana
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: grafana
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.grafana.image) }}
+          imagePullPolicy: {{ .Values.observability.grafana.image.pullPolicy }}
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: {{ .Values.observability.grafana.adminUser | quote }}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.observability.grafana.adminPasswordSecret.name }}
+                  key: {{ .Values.observability.grafana.adminPasswordSecret.key }}
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          ports:
+            - name: http
+              containerPort: {{ .Values.observability.grafana.service.targetPort }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasources.yml
+              subPath: datasources.yml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+              subPath: dashboards.yml
+              readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+      volumes:
+        - name: provisioning
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-grafana-provisioning
+        - name: dashboards
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-grafana-dashboards
+        - name: data
+          {{- if .Values.observability.grafana.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.observability.grafana.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else if .Values.observability.grafana.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.fullname" . }}-grafana-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if and .Values.observability.grafana.persistence.enabled (not .Values.observability.grafana.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-grafana-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.observability.grafana.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.grafana.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-postgres-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+  ports:
+    - {name: metrics, port: 9187, targetPort: metrics}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-postgres-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.postgresExporter.image) }}
+          imagePullPolicy: {{ .Values.observability.postgresExporter.image.pullPolicy }}
+          args: ["--extend.query-path=/etc/postgres-exporter/queries.yml"]
+          env:
+            - name: DATA_SOURCE_URI
+              value: {{ printf "%s:%v/%s?sslmode=disable" .Values.postgres.host .Values.postgres.port .Values.postgres.database | quote }}
+            - name: DATA_SOURCE_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.passwordSecret.name }}
+                  key: {{ .Values.postgres.passwordSecret.key }}
+          ports:
+            - name: metrics
+              containerPort: 9187
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: queries
+              mountPath: /etc/postgres-exporter
+              readOnly: true
+      volumes:
+        - name: queries
+          configMap:
+            name: {{ include "ssl-proxy.fullname" . }}-postgres-exporter-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redis-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-exporter
+spec:
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-exporter
+  ports:
+    - {name: metrics, port: 9121, targetPort: metrics}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-redis-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis-exporter
+    spec:
+      containers:
+        - name: redis-exporter
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.redisExporter.image) }}
+          imagePullPolicy: {{ .Values.observability.redisExporter.image.pullPolicy }}
+          env:
+            - name: REDIS_ADDR
+              value: {{ .Values.redis.url | quote }}
+          ports:
+            - name: metrics
+              containerPort: 9121
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-node-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+  ports:
+    - {name: metrics, port: 9100, targetPort: metrics}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-node-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: node-exporter
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.nodeExporter.image) }}
+          imagePullPolicy: {{ .Values.observability.nodeExporter.image.pullPolicy }}
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+          ports:
+            - name: metrics
+              containerPort: 9100
+          volumeMounts:
+            - {name: proc, mountPath: /host/proc, readOnly: true}
+            - {name: sys, mountPath: /host/sys, readOnly: true}
+            - {name: root, mountPath: /host/root, readOnly: true}
+      volumes:
+        - name: proc
+          hostPath: {path: /proc, type: Directory}
+        - name: sys
+          hostPath: {path: /sys, type: Directory}
+        - name: root
+          hostPath: {path: /, type: Directory}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-cadvisor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cadvisor
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: cadvisor
+  ports:
+    - {name: metrics, port: 8080, targetPort: metrics}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-cadvisor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cadvisor
+spec:
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: cadvisor
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cadvisor
+    spec:
+      hostNetwork: true
+      containers:
+        - name: cadvisor
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.observability.cadvisor.image) }}
+          imagePullPolicy: {{ .Values.observability.cadvisor.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          args: ["--docker_only=false", "--housekeeping_interval=10s"]
+          ports:
+            - name: metrics
+              containerPort: 8080
+          volumeMounts:
+            - {name: root, mountPath: /rootfs, readOnly: true}
+            - {name: run, mountPath: /var/run, readOnly: true}
+            - {name: sys, mountPath: /sys, readOnly: true}
+            - {name: containerd, mountPath: /var/lib/containerd, readOnly: true}
+            - {name: disk, mountPath: /dev/disk, readOnly: true}
+      volumes:
+        - name: root
+          hostPath: {path: /, type: Directory}
+        - name: run
+          hostPath: {path: /var/run, type: Directory}
+        - name: sys
+          hostPath: {path: /sys, type: Directory}
+        - name: containerd
+          hostPath: {path: /var/lib/containerd, type: DirectoryOrCreate}
+        - name: disk
+          hostPath: {path: /dev/disk, type: DirectoryOrCreate}
+{{- end }}

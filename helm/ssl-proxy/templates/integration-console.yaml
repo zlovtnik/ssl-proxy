@@ -1,0 +1,260 @@
+{{- define "ssl-proxy.integrationConsoleEnv" -}}
+- name: RAILS_ENV
+  value: {{ .Values.integrationConsole.railsEnv | quote }}
+- name: POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.postgres.passwordSecret.name }}
+      key: {{ .Values.postgres.passwordSecret.key }}
+- name: PGPASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.postgres.passwordSecret.name }}
+      key: {{ .Values.postgres.passwordSecret.key }}
+- name: DATABASE_URL
+  value: "postgres://{{ .Values.postgres.user }}@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}"
+- name: SYNC_DATABASE_URL
+  value: "postgres://{{ .Values.postgres.user }}@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}"
+- name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+  value: {{ .Values.redpanda.bootstrapServers | quote }}
+- name: INTEGRATION_CONSOLE_REDIS_URL
+  value: {{ .Values.redis.url | quote }}
+- name: MINIO_ENDPOINT
+  value: {{ .Values.minio.endpoint | quote }}
+- name: MINIO_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.minio.accessKeySecret.name }}
+      key: {{ .Values.minio.accessKeySecret.key }}
+- name: MINIO_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.minio.secretKeySecret.name }}
+      key: {{ .Values.minio.secretKeySecret.key }}
+- name: MINIO_BUCKET
+  value: {{ .Values.minio.bucket | quote }}
+- name: LOG_FORMAT
+  value: {{ .Values.integrationConsole.logFormat | quote }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .Values.integrationConsole.otlpEndpoint | quote }}
+- name: OTEL_EXPORTER_OTLP_PROTOCOL
+  value: "grpc"
+{{- end }}
+
+{{- if .Values.integrationConsole.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-integration-console
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-web
+spec:
+  type: {{ .Values.integrationConsole.web.service.type }}
+  {{- with .Values.integrationConsole.web.service.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "ssl-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-web
+  ports:
+    - name: http
+      port: {{ .Values.integrationConsole.web.service.port }}
+      targetPort: {{ .Values.integrationConsole.web.service.targetPort }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-integration-console-db-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-db-setup
+  {{- if .Release.IsUpgrade }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: integration-console-db-setup
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-setup
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.integrationConsole.dbSetup.image) }}
+          imagePullPolicy: {{ .Values.integrationConsole.dbSetup.image.pullPolicy | default .Values.integrationConsole.web.image.pullPolicy }}
+          command: ["sh", "bin/observability-db-setup.sh"]
+          env:
+            {{- include "ssl-proxy.integrationConsoleEnv" . | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ .Values.integrationConsole.web.syncDbPool | quote }}
+            - name: PUSHGATEWAY_URL
+              value: "http://{{ include "ssl-proxy.fullname" . }}-pushgateway:9091"
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-db-setup"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-integration-console-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-web
+spec:
+  replicas: {{ .Values.integrationConsole.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: integration-console-web
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: integration-console-web
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
+      containers:
+        - name: web
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.integrationConsole.web.image) }}
+          imagePullPolicy: {{ .Values.integrationConsole.web.image.pullPolicy }}
+          command: ["bin/rails", "server", "-b", "0.0.0.0"]
+          env:
+            {{- include "ssl-proxy.integrationConsoleEnv" . | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ .Values.integrationConsole.web.syncDbPool | quote }}
+            - name: INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY
+              value: {{ .Values.integrationConsole.web.cache.ttlInventory | quote }}
+            - name: INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT
+              value: {{ .Values.integrationConsole.web.cache.ttlAuditRecent | quote }}
+            - name: INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD
+              value: {{ .Values.integrationConsole.web.cache.ttlDashboard | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-web"
+          ports:
+            - name: http
+              containerPort: {{ .Values.integrationConsole.web.service.targetPort }}
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.integrationConsole.web.resources | nindent 12 }}
+{{- if .Values.integrationConsole.worker.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" . }}-integration-console-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-worker
+spec:
+  replicas: {{ .Values.integrationConsole.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: integration-console-worker
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: integration-console-worker
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
+      containers:
+        - name: worker
+          image: {{ include "ssl-proxy.image" (dict "root" . "image" .Values.integrationConsole.web.image) }}
+          imagePullPolicy: {{ .Values.integrationConsole.web.image.pullPolicy }}
+          command: ["bin/rails", "runner", "Observability::WorkerRunner.run_forever"]
+          env:
+            {{- include "ssl-proxy.integrationConsoleEnv" . | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ .Values.integrationConsole.worker.syncDbPool | quote }}
+            - name: PUSHGATEWAY_URL
+              value: "http://{{ include "ssl-proxy.fullname" . }}-pushgateway:9091"
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-worker"
+          livenessProbe:
+            exec:
+              command: ["sh", "-ec", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          resources:
+            {{- toYaml .Values.integrationConsole.worker.resources | nindent 12 }}
+{{- end }}
+{{- range $name, $role := dict "heatmap-refresh" .Values.integrationConsole.heatmapRefresh "heartbeat" .Values.integrationConsole.heartbeat }}
+{{- if $role.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.fullname" $ }}-integration-console-{{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: integration-console-{{ $name }}
+spec:
+  replicas: {{ $role.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: integration-console-{{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: integration-console-{{ $name }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.serviceAccountName" $ }}
+      containers:
+        - name: {{ $name }}
+          image: {{ include "ssl-proxy.image" (dict "root" $ "image" $.Values.integrationConsole.web.image) }}
+          imagePullPolicy: {{ $.Values.integrationConsole.web.image.pullPolicy }}
+          {{- if eq $name "heatmap-refresh" }}
+          command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
+          {{- else }}
+          command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
+          {{- end }}
+          env:
+            {{- include "ssl-proxy.integrationConsoleEnv" $ | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ $.Values.integrationConsole.web.syncDbPool | quote }}
+            - name: PUSHGATEWAY_URL
+              value: "http://{{ include "ssl-proxy.fullname" $ }}-pushgateway:9091"
+            {{- if eq $name "heatmap-refresh" }}
+            - name: HEATMAP_REFRESH_INTERVAL_SECONDS
+              value: {{ $role.intervalSeconds | quote }}
+            {{- else }}
+            - name: SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS
+              value: {{ $role.intervalSeconds | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-{{ $name }}"
+          resources:
+            {{- toYaml $role.resources | nindent 12 }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -55,7 +55,19 @@ Redpanda bootstrap servers connection string
 Postgres connection URL
 */}}
 {{- define "ssl-proxy.postgresUrl" -}}
-postgres://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}
+jdbc:postgresql://{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}
+{{- end }}
+
+{{/*
+Build an image reference, optionally prefixed by the global registry.
+Usage: include "ssl-proxy.image" (dict "root" . "image" .Values.proxy.image)
+*/}}
+{{- define "ssl-proxy.image" -}}
+{{- $repository := .image.repository -}}
+{{- with .root.Values.global.image.registry -}}
+{{- $repository = printf "%s/%s" (trimSuffix "/" .) $repository -}}
+{{- end -}}
+{{- printf "%s:%s" $repository .image.tag -}}
 {{- end }}
 
 {{/*

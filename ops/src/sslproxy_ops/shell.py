@@ -71,3 +71,41 @@ def compose(
         env=env,
         input_text=input_text,
     )
+
+
+def kubectl(
+    *args: str,
+    context: str,
+    cwd: Path | None = None,
+    check: bool = True,
+    capture: bool = False,
+    env: Mapping[str, str] | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        ["kubectl", "--context", context, *args],
+        cwd=cwd,
+        check=check,
+        capture=capture,
+        env=env,
+        input_text=input_text,
+    )
+
+
+def helm(
+    *args: str,
+    context: str,
+    cwd: Path | None = None,
+    check: bool = True,
+    capture: bool = False,
+    env: Mapping[str, str] | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        ["helm", "--kube-context", context, *args],
+        cwd=cwd,
+        check=check,
+        capture=capture,
+        env=env,
+        input_text=input_text,
+    )
