@@ -16,44 +16,46 @@ def proxy_workload(ctx: UpReadyContext) -> str:
 
 
 def resolve_kube_context(ctx: UpReadyContext) -> None:
-    configured = ctx.settings.kube_context
-    contexts: list[str] = []
-    if shutil.which("kubectl"):
-        completed = shell.run(
-            ["kubectl", "config", "get-contexts", "-o", "name"],
-            check=False,
-            capture=True,
-        )
-        contexts = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
-    if configured in contexts:
-        return
+    for command in ("kubectl", "helm"):
+        if shutil.which(command) is None:
+            raise UpReadyError(f"Missing required command: {command}")
 
-    microk8s_contexts = [name for name in contexts if "microk8s" in name.lower()]
-    if len(microk8s_contexts) == 1:
-        selected = microk8s_contexts[0]
-        warn(f"Kubernetes context {configured!r} was not found; using {selected!r}")
+    configured = ctx.settings.kube_context.strip()
+    completed = shell.run(
+        ["kubectl", "config", "get-contexts", "-o", "name"],
+        check=False,
+        capture=True,
+    )
+    contexts = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+    if configured:
+        if configured in contexts:
+            return
+        available = ", ".join(contexts) if contexts else "none"
+        raise UpReadyError(
+            f"Kubernetes context {configured!r} does not exist; available contexts: {available}. "
+            "Set UP_READY_KUBE_CONTEXT to a configured context name."
+        )
+
+    current = shell.run(
+        ["kubectl", "config", "current-context"],
+        check=False,
+        capture=True,
+    )
+    selected = (current.stdout or "").strip()
+    if current.returncode == 0 and selected:
         ctx.settings.kube_context = selected
         return
 
-    if shutil.which("microk8s"):
-        status = shell.run(["microk8s", "status"], check=False, capture=True)
-        if status.returncode == 0:
-            warn(
-                f"Kubernetes context {configured!r} was not found; "
-                "using the server-local MicroK8s installation"
-            )
-            # Empty context selects `microk8s kubectl` and `microk8s helm3`
-            # in the shared shell wrappers.
-            ctx.settings.kube_context = ""
-            return
-        detail = (status.stderr or status.stdout or "microk8s status failed").strip()
-        raise UpReadyError(f"Server-local MicroK8s is installed but unavailable: {detail}")
+    if len(contexts) == 1:
+        selected = contexts[0]
+        warn(f"No current Kubernetes context was selected; using {selected!r}")
+        ctx.settings.kube_context = selected
+        return
 
     available = ", ".join(contexts) if contexts else "none"
     raise UpReadyError(
-        f"Kubernetes context {configured!r} does not exist; available contexts: {available}. "
-        "Run this command on the MicroK8s server, or set UP_READY_KUBE_CONTEXT "
-        "to a configured remote context name."
+        f"No current Kubernetes context is configured; available contexts: {available}. "
+        "Set UP_READY_KUBE_CONTEXT explicitly."
     )
 
 
@@ -251,7 +253,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     release = ctx.settings.helm_release
     namespace = ctx.settings.kube_namespace
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
-    values = root / "helm" / "ssl-proxy" / "values-microk8s.yaml"
+    values = root / "helm" / "ssl-proxy" / "values-k8s.yaml"
     chart = root / "helm" / "ssl-proxy"
     set_values = {
         "global.image.registry": registry,
@@ -297,7 +299,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
             ctx.settings.helm_timeout,
         ]
     )
-    target = ctx.settings.kube_context or "server-local-microk8s"
+    target = ctx.settings.kube_context or "current-context"
     step("S03", f"helm_upgrade: release={release} context={target}")
     shell.helm(*args, context=ctx.settings.kube_context)
 

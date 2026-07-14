@@ -9,7 +9,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     publish_registry_images,
     resolve_kube_context,
 )
-from sslproxy_ops.commands.up_ready.model import UpReadyContext
+from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError
 from sslproxy_ops.config import Settings
 
 
@@ -26,48 +26,52 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertTrue(any("prometheus.alertRules=" in arg for arg in args))
         self.assertTrue(any("postgresExporter.queries=" in arg for arg in args))
 
-    def test_missing_default_context_uses_the_only_microk8s_context(self):
+    def test_empty_default_context_uses_current_kubernetes_context(self):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
-        completed = subprocess.CompletedProcess(
-            args=["kubectl"],
-            returncode=0,
-            stdout="docker-desktop\nmicrok8s\n",
-            stderr="",
+        contexts = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="docker-desktop\nserver-k8s\n", stderr=""
+        )
+        current = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="server-k8s\n", stderr=""
         )
 
-        with patch("sslproxy_ops.commands.up_ready.kubernetes.shell.run", return_value=completed):
+        with (
+            patch("sslproxy_ops.commands.up_ready.kubernetes.shutil.which", return_value="/bin/tool"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.run",
+                side_effect=[contexts, current],
+            ),
+        ):
             resolve_kube_context(ctx)
 
-        self.assertEqual(ctx.settings.kube_context, "microk8s")
+        self.assertEqual(ctx.settings.kube_context, "server-k8s")
 
-    def test_server_install_uses_local_microk8s_without_a_context(self):
+    def test_missing_configured_context_is_rejected(self):
         settings = Settings()
+        settings.kube_context = "missing"
         ctx = UpReadyContext(settings=settings)
-        no_contexts = subprocess.CompletedProcess(
-            args=["kubectl"], returncode=0, stdout="", stderr=""
-        )
-        ready = subprocess.CompletedProcess(
-            args=["microk8s"], returncode=0, stdout="microk8s is running", stderr=""
+        contexts = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="server-k8s\n", stderr=""
         )
 
         with (
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shutil.which",
-                return_value="/snap/bin/tool",
+                return_value="/bin/tool",
             ),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.run",
-                side_effect=[no_contexts, ready],
+                return_value=contexts,
             ),
+            self.assertRaises(UpReadyError),
         ):
             resolve_kube_context(ctx)
-
-        self.assertEqual(ctx.settings.kube_context, "")
 
     def test_helm_upgrade_uses_registry_rollout_revision_and_waits_for_jobs(self):
         settings = Settings()
         settings.server_ip = "192.168.1.221"
+        settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings, run_ts="2026-07-14T12:00:00-0400")
         environment = {
             "REGISTRY": "192.168.1.221:32000/",
@@ -90,7 +94,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("proxy.adminService.externalIPs[0]=192.168.1.221", args)
         self.assertIn("observability.prometheus.service.externalIPs[0]=192.168.1.221", args)
         self.assertIn("--wait-for-jobs", args)
-        self.assertEqual(mocked_helm.call_args.kwargs["context"], "microk8s-ssl-proxy")
+        self.assertEqual(mocked_helm.call_args.kwargs["context"], "server-k8s")
 
     def test_registry_publish_builds_and_mirrors(self):
         settings = Settings()

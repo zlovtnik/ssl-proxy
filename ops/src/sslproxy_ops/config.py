@@ -54,9 +54,7 @@ class Settings(BaseSettings):
     mirror_registry_images: bool = Field(
         default=True, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
     )
-    kube_context: str = Field(
-        default="microk8s-ssl-proxy", validation_alias="UP_READY_KUBE_CONTEXT"
-    )
+    kube_context: str = Field(default="", validation_alias="UP_READY_KUBE_CONTEXT")
     kube_namespace: str = Field(default="ssl-proxy", validation_alias="UP_READY_KUBE_NAMESPACE")
     helm_release: str = Field(default="ssl-proxy", validation_alias="UP_READY_HELM_RELEASE")
     helm_timeout: str = Field(default="15m", validation_alias="UP_READY_HELM_TIMEOUT")

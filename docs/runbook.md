@@ -155,6 +155,50 @@ The packet limiter is opt-in. Leave `WG_FRONTDOOR_RATE_LIMIT_PPS=0` for this
 test so the measurement covers forwarding capacity rather than an intentional
 traffic cap.
 
+### 4.2 MicroK8s Umbrella Chart Rollout
+
+The chart at `helm/ssl-proxy` is an umbrella over the service,
+infrastructure, and telemetry charts in `helm/ssl-proxy/charts`. Perform the
+production rollout on the MicroK8s server so the operator can use
+`microk8s kubectl` and `microk8s helm3` directly.
+
+1. Connect to the server and update the committed `dev` branch:
+
+   ```bash
+   ssh 192.168.1.221
+   cd ~/git/ssl-proxy
+   git pull --ff-only origin dev
+   ```
+
+2. Validate dependencies and the server-specific render:
+
+   ```bash
+   helm dependency build helm/ssl-proxy
+   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-microk8s.yaml
+   helm template ssl-proxy helm/ssl-proxy \
+     -f helm/ssl-proxy/values-microk8s.yaml >/tmp/ssl-proxy-rendered.yaml
+   ```
+
+3. Start or upgrade the stack from the server repository. Supply the real
+   client profile values used by the deployment:
+
+   ```bash
+   make up-ready PROFILE_MODE=<profile> \
+     SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip>
+   ```
+
+4. Verify the release and every namespace-scoped workload:
+
+   ```bash
+   microk8s helm3 status ssl-proxy -n ssl-proxy
+   microk8s kubectl get pods,jobs,services -n ssl-proxy -o wide
+   microk8s kubectl get daemonsets,statefulsets,deployments -n ssl-proxy
+   ```
+
+The `vecWorker` and `atherosSearch` charts are explicit placeholders and
+render no workloads yet. The telemetry values also call out the existing KEDA,
+ServiceMonitor, and dashboard-discovery template gaps.
+
 ### 5. Oracle ADB Connection & Views
 
 1. **Place auto-login Oracle wallet files in `./wallet/` directory**

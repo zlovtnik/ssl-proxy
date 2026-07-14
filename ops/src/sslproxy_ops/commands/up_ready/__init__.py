@@ -239,26 +239,12 @@ def preflight(ctx: UpReadyContext) -> None:
     if needs_docker:
         commands.append("docker")
     if ctx.settings.deployment_target == "kubernetes":
-        commands.append("make")
+        commands.extend(["make", "kubectl", "helm"])
     for command in commands:
         if shutil.which(command) is None:
             raise UpReadyError(f"Missing required command: {command}")
     if ctx.settings.deployment_target == "kubernetes":
         resolve_kube_context(ctx)
-        kubernetes_commands = ["kubectl", "helm"] if ctx.settings.kube_context else ["microk8s"]
-        for command in kubernetes_commands:
-            if shutil.which(command) is None:
-                raise UpReadyError(f"Missing required command: {command}")
-        if not ctx.settings.kube_context:
-            helm_check = shell.run(
-                ["microk8s", "helm3", "version", "--short"],
-                check=False,
-                capture=True,
-            )
-            if helm_check.returncode != 0:
-                raise UpReadyError(
-                    "MicroK8s Helm is unavailable; enable it with `microk8s enable helm3`"
-                )
     if needs_docker:
         docker_info = shell.run(["docker", "info"], check=False, capture=True)
         if docker_info.returncode != 0:

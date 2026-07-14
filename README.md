@@ -362,14 +362,20 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 
 ## Kubernetes Deployment
 
-A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/). `make up-ready`
-defaults to the Kubernetes target: it builds first-party images, mirrors pinned
-third-party images into `REGISTRY`, synchronizes the protected local files as
-Kubernetes Secrets, and upgrades the complete MicroK8s release. The release
-includes the proxy, coordinator, console processes, wireless sensor, data
-services, Prometheus, Loki/Promtail, Jaeger, OpenTelemetry Collector, Grafana,
-exporters, cAdvisor, and Pushgateway while reusing the retained Compose data
-volumes.
+The umbrella Helm chart is at [helm/ssl-proxy/](helm/ssl-proxy/), with
+service and infrastructure charts under `helm/ssl-proxy/charts/`. Shared
+connection values used across chart boundaries are explicit under
+`global.shared`; workload and image overrides retain paths such as
+`proxy.image.tag`, `javaCoordinator.image.tag`, and
+`observability.grafana.image.tag`.
+
+`make up-ready` defaults to the Kubernetes target: it builds first-party
+images, mirrors pinned third-party images into `REGISTRY`, synchronizes the
+protected local files as Kubernetes Secrets, and upgrades the complete
+MicroK8s release. The release includes the proxy, coordinator, console
+processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
+OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
+reusing the retained Compose data volumes.
 
 ```bash
 make up-ready PROFILE_MODE=mac \
@@ -383,6 +389,13 @@ context. From another machine it uses `microk8s-ssl-proxy` when present, or the
 only kubeconfig context whose name contains `microk8s`. Override a remote target
 with `UP_READY_KUBE_CONTEXT=<name>`. Use
 `UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose workflow.
+
+The legacy Make targets are opt-in so they do not remain interleaved with the
+current operator workflow:
+
+```bash
+make ENABLE_LEGACY_TARGETS=1 legacy-diagnose
+```
 
 ## Operational Scripts
 

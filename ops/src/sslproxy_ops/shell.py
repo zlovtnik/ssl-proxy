@@ -82,9 +82,7 @@ def kubectl(
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    command = (
-        ["kubectl", "--context", context, *args] if context else ["microk8s", "kubectl", *args]
-    )
+    command = ["kubectl", "--context", context, *args] if context else ["kubectl", *args]
     return run(
         command,
         cwd=cwd,
@@ -104,9 +102,7 @@ def helm(
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    command = (
-        ["helm", "--kube-context", context, *args] if context else ["microk8s", "helm3", *args]
-    )
+    command = ["helm", "--kube-context", context, *args] if context else ["helm", *args]
     return run(
         command,
         cwd=cwd,
