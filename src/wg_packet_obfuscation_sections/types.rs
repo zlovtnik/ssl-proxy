@@ -1,4 +1,5 @@
 use std::{
+    ops::Range,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
@@ -540,6 +541,37 @@ pub fn decode_packet_in_place(
     }
 
     decode_framed_in_place(buffer, packet_len, settings, replay_window, direction)
+}
+
+/// Decode a packet in place without moving its plaintext payload.
+///
+/// The returned range identifies the plaintext bytes within `buffer` and is
+/// intended for UDP hot paths that can forward the slice directly.
+pub(crate) fn decode_packet_in_place_view(
+    buffer: &mut [u8],
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+    replay_window: Option<&mut ReplayWindow>,
+    direction: PacketDirection,
+) -> Result<Range<usize>, PacketDecodeError> {
+    if packet_len == 0 {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: 0,
+            minimum: 1,
+        });
+    }
+    if packet_len > buffer.len() {
+        return Err(PacketDecodeError::PacketTooShort {
+            actual: buffer.len(),
+            minimum: packet_len,
+        });
+    }
+
+    if !settings.uses_framed_encoding() {
+        return decode_legacy_xor_in_place_view(buffer, packet_len, settings);
+    }
+
+    decode_framed_in_place_view(buffer, packet_len, settings, replay_window, direction)
 }
 
 /// Parse a magic byte from decimal or `0xNN` input.

@@ -44,6 +44,7 @@ fn direct_peer_template_uses_normal_wireguard_mtu() {
     let template = fs::read_to_string(path).expect("peer template should exist");
 
     assert!(template.contains("MTU = ${WG_MTU:-1420}"));
+    assert!(!template.contains("ListenPort ="));
 }
 
 #[test]

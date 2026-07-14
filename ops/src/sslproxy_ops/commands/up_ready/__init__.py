@@ -43,7 +43,14 @@ def require_concrete_endpoint_values(settings: Settings) -> None:
 def apply_profile_runtime_env(ctx: UpReadyContext) -> None:
     ensure_admin_api_key_file()
     match ctx.settings.profile_mode:
-        case "iphone" | "linux-direct":
+        case "iphone":
+            # Preserve the established shim endpoint while exposing the
+            # boringtun listener on the separate direct-client port.
+            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
+            os.environ["WG_PORT"] = "443"
+            os.environ["WG_INTERNAL_PORT"] = "51820"
+            activate_obfuscation_key_env_fallback()
+        case "linux-direct":
             os.environ["WG_OBFUSCATION_ENABLED"] = "false"
             os.environ["WG_PORT"] = "443"
             os.environ["WG_INTERNAL_PORT"] = "51820"

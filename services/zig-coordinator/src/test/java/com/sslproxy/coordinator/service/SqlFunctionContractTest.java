@@ -12,7 +12,7 @@ class SqlFunctionContractTest {
 
     @Test
     void recordScanRequestBatchSkipsTombstonedWirelessFrameUpserts() throws Exception {
-        assertRecordScanRequestBatchTombstoneGuard(readSql("../../sql/functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql"));
+        assertRecordScanRequestBatchTombstoneGuard(readSql("../../sql/functions/054_coordinator_record_scan_request_batch_deduplicate.sql"));
         assertRecordScanRequestBatchTombstoneGuard(readSql("../../sql/postgres.source.sql"));
     }
 
@@ -20,7 +20,14 @@ class SqlFunctionContractTest {
     void recordScanRequestBatchSafelyFiltersInvalidObservedAt() throws Exception {
         assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/functions/022_coordinator_record_scan_request_batch.sql"));
         assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql"));
+        assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/functions/054_coordinator_record_scan_request_batch_deduplicate.sql"));
         assertRecordScanRequestBatchSafeObservedAt(readSql("../../sql/postgres.source.sql"));
+    }
+
+    @Test
+    void recordScanRequestBatchDeduplicatesConflictingRowsBeforeUpsert() throws Exception {
+        assertRecordScanRequestBatchDeduplicates(readSql("../../sql/functions/054_coordinator_record_scan_request_batch_deduplicate.sql"));
+        assertRecordScanRequestBatchDeduplicates(readSql("../../sql/postgres.source.sql"));
     }
 
     @Test
@@ -65,10 +72,11 @@ class SqlFunctionContractTest {
     }
 
     @Test
-    void postgresBootstrapIncludesTombstoneFrameReplacementMigration() throws Exception {
+    void postgresBootstrapIncludesBatchIngestReplacementMigrations() throws Exception {
         String sql = readSql("../../sql/postgres.sql");
 
         assertTrue(sql.contains("\\ir functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql"));
+        assertTrue(sql.contains("\\ir functions/054_coordinator_record_scan_request_batch_deduplicate.sql"));
     }
 
     @Test
@@ -132,6 +140,29 @@ class SqlFunctionContractTest {
         assertTrue(insertSelect > validGuard, "insert must use the parsed timestamp");
         assertTrue(frameGuard > frameUpsert, "wireless frame upsert must skip invalid observed_at rows");
         assertFalse(unsafeCast > functionStart, "batch ingest must not cast observed_at_text directly");
+    }
+
+    private void assertRecordScanRequestBatchDeduplicates(String sql) {
+        int functionStart = sql.lastIndexOf("create or replace function coordinator.record_scan_request_batch");
+        int ordinality = sql.indexOf("with ordinality as raw(request, payload, payload_sha256, input_ordinality)", functionStart);
+        int valid = sql.indexOf("valid as", ordinality);
+        int deduplicated = sql.indexOf("deduplicated as", valid);
+        int distinctKey = sql.indexOf("select distinct on (valid.dedupe_key) valid.*", deduplicated);
+        int lastInputWins = sql.indexOf("order by valid.dedupe_key, valid.input_ordinality desc", distinctKey);
+        int insertSource = sql.indexOf("from deduplicated", lastInputWins);
+        int frameUpsert = sql.indexOf("perform coordinator.upsert_wireless_frame_from_payload", insertSource);
+        int frameDistinctKey = sql.indexOf("select distinct on (raw.dedupe_key)", frameUpsert);
+        int frameLastInputWins = sql.indexOf("order by raw.dedupe_key, raw.input_ordinality desc", frameDistinctKey);
+
+        assertTrue(functionStart >= 0, "expected batch ingest function");
+        assertTrue(ordinality > functionStart, "batch ingest must retain input order");
+        assertTrue(valid > ordinality, "batch ingest must validate rows before deduplication");
+        assertTrue(deduplicated > valid, "batch ingest must deduplicate valid rows");
+        assertTrue(distinctKey > deduplicated, "batch ingest must emit one row per dedupe key");
+        assertTrue(lastInputWins > distinctKey, "the last valid input must win duplicate conflicts");
+        assertTrue(insertSource > lastInputWins, "sync_events upsert must consume deduplicated rows");
+        assertTrue(frameDistinctKey > frameUpsert, "wireless frame upserts must also be deduplicated");
+        assertTrue(frameLastInputWins > frameDistinctKey, "wireless frame deduplication must match batch ordering");
     }
 
     private void assertExpiredLeaseReleaseCapsAttempts(String sql) {

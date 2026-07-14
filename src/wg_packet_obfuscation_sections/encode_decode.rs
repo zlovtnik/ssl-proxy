@@ -23,33 +23,119 @@ fn encode_legacy_xor_in_place(
     Ok(encoded_len)
 }
 
+pub(crate) fn packet_encode_headroom(settings: &WgPacketObfuscation) -> usize {
+    if settings.uses_framed_encoding() {
+        FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN
+    } else {
+        usize::from(settings.magic_byte.is_some())
+    }
+}
+
+/// Encode a plaintext packet that was received after reserved header space.
+///
+/// The returned range identifies the encoded datagram without moving the
+/// plaintext payload. Callers must reserve `packet_encode_headroom(settings)`
+/// bytes before `packet_start`.
+pub(crate) fn encode_packet_in_place_with_headroom(
+    buffer: &mut [u8],
+    packet_start: usize,
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+    state: &PacketEncodeState,
+    direction: PacketDirection,
+    now_millis: u64,
+) -> Result<Range<usize>, PacketEncodeError> {
+    let headroom = packet_encode_headroom(settings);
+    if packet_start < headroom || packet_start.saturating_add(packet_len) > buffer.len() {
+        return Err(PacketEncodeError::PacketTooLarge {
+            packet_len,
+            buffer_len: buffer.len().saturating_sub(packet_start),
+        });
+    }
+    let encoded_start = packet_start - headroom;
+
+    if !settings.uses_framed_encoding() {
+        let payload_end = packet_start + packet_len;
+        if let Some(magic_byte) = settings.magic_byte {
+            buffer[encoded_start] = magic_byte;
+        }
+        apply_xor_mask(&mut buffer[packet_start..payload_end], settings.key.as_slice());
+        return Ok(encoded_start..payload_end);
+    }
+
+    let encoded_len = encode_framed_prepositioned(
+        &mut buffer[encoded_start..],
+        packet_len,
+        settings,
+        state,
+        direction,
+        now_millis,
+    )?;
+    Ok(encoded_start..encoded_start + encoded_len)
+}
+
 fn decode_legacy_xor_in_place(
     buffer: &mut [u8],
     packet_len: usize,
     settings: &WgPacketObfuscation,
 ) -> Result<usize, PacketDecodeError> {
-    let payload = if let Some(magic_byte) = settings.magic_byte {
-        match buffer.first().copied() {
-            Some(actual) if actual == magic_byte => &mut buffer[1..packet_len],
-            _ => return Err(PacketDecodeError::MagicByteMismatch),
-        }
-    } else {
-        &mut buffer[..packet_len]
-    };
-
-    if payload.is_empty() {
-        return Err(PacketDecodeError::EmptyPayload);
-    }
-
-    apply_xor_mask(payload, settings.key.as_slice());
-    let payload_len = payload.len();
-    if settings.magic_byte.is_some() {
-        buffer.copy_within(1..packet_len, 0);
+    let payload_range = decode_legacy_xor_in_place_view(buffer, packet_len, settings)?;
+    let payload_len = payload_range.len();
+    if payload_range.start != 0 {
+        buffer.copy_within(payload_range, 0);
     }
     Ok(payload_len)
 }
 
+fn decode_legacy_xor_in_place_view(
+    buffer: &mut [u8],
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+) -> Result<Range<usize>, PacketDecodeError> {
+    let payload_range = if let Some(magic_byte) = settings.magic_byte {
+        match buffer.first().copied() {
+            Some(actual) if actual == magic_byte => 1..packet_len,
+            _ => return Err(PacketDecodeError::MagicByteMismatch),
+        }
+    } else {
+        0..packet_len
+    };
+
+    if payload_range.is_empty() {
+        return Err(PacketDecodeError::EmptyPayload);
+    }
+
+    apply_xor_mask(&mut buffer[payload_range.clone()], settings.key.as_slice());
+    Ok(payload_range)
+}
+
 fn encode_framed_in_place(
+    buffer: &mut [u8],
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+    state: &PacketEncodeState,
+    direction: PacketDirection,
+    now_millis: u64,
+) -> Result<usize, PacketEncodeError> {
+    let payload_start = FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN;
+    if payload_start.saturating_add(packet_len) > buffer.len() {
+        return Err(PacketEncodeError::EncodedPacketTooLarge {
+            encoded_len: payload_start.saturating_add(packet_len),
+            buffer_len: buffer.len(),
+        });
+    }
+    buffer.copy_within(0..packet_len, payload_start);
+    encode_framed_prepositioned(
+        buffer,
+        packet_len,
+        settings,
+        state,
+        direction,
+        now_millis,
+    )
+}
+
+fn encode_framed_prepositioned(
     buffer: &mut [u8],
     packet_len: usize,
     settings: &WgPacketObfuscation,
@@ -79,7 +165,6 @@ fn encode_framed_in_place(
 
     let body_start = FRAME_HEADER_LEN;
     let payload_start = body_start + BODY_LEN_FIELD_LEN;
-    buffer.copy_within(0..packet_len, payload_start);
     buffer[body_start..body_start + BODY_LEN_FIELD_LEN]
         .copy_from_slice(&(packet_len as u16).to_be_bytes());
     buffer[payload_start + packet_len..body_start + body_len].fill(0);
@@ -117,6 +202,22 @@ fn decode_framed_in_place(
     replay_window: Option<&mut ReplayWindow>,
     direction: PacketDirection,
 ) -> Result<usize, PacketDecodeError> {
+    let payload_range =
+        decode_framed_in_place_view(buffer, packet_len, settings, replay_window, direction)?;
+    let payload_len = payload_range.len();
+    if payload_range.start != 0 {
+        buffer.copy_within(payload_range, 0);
+    }
+    Ok(payload_len)
+}
+
+fn decode_framed_in_place_view(
+    buffer: &mut [u8],
+    packet_len: usize,
+    settings: &WgPacketObfuscation,
+    replay_window: Option<&mut ReplayWindow>,
+    direction: PacketDirection,
+) -> Result<Range<usize>, PacketDecodeError> {
     if packet_len < FRAME_HEADER_LEN + BODY_LEN_FIELD_LEN {
         return Err(PacketDecodeError::PacketTooShort {
             actual: packet_len,
@@ -200,8 +301,7 @@ fn decode_framed_in_place(
         return Err(PacketDecodeError::InvalidPadding);
     }
 
-    buffer.copy_within(payload_start..payload_start + original_len, 0);
-    Ok(original_len)
+    Ok(payload_start..payload_start + original_len)
 }
 
 /// Validate a framed packet's cleartext header fields without decrypting or mutating the body.

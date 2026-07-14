@@ -23,19 +23,24 @@ class OracleSchemaContractTest {
 
         assertBlockchainTableHasNoTimezoneColumns(sql, "PROXY_PAYLOAD_AUDIT");
         assertBlockchainTableHasNoTimezoneColumns(sql, "PROXY_BLOCKLIST_AUDIT");
+        assertBlockchainTableHasNoTimezoneColumns(sql, "WIRELESS_ALERTS_LEDGER");
     }
 
     @Test
-    void wirelessAlertsLedgerPreservesAlertInstantsWithTimezone() throws Exception {
+    void wirelessAlertsLedgerStoresDetectedAtAsUtcTimestamp() throws Exception {
         String sql = readOracleSql();
-        String block = blockchainTableBlock(sql, "WIRELESS_ALERTS_LEDGER");
 
-        assertTrue(block.contains("DETECTED_AT    TIMESTAMP WITH TIME ZONE NOT NULL"),
-                "ledger must preserve source alert timestamp timezone");
-        assertTrue(block.contains("CAPTURED_AT    TIMESTAMP WITH TIME ZONE"),
-                "ledger capture timestamp must preserve the insert instant timezone");
-        assertFalse(sql.contains("CAST(SYS_EXTRACT_UTC(:NEW.DETECTED_AT) AS TIMESTAMP)"),
-                "ledger trigger must not downgrade source TIMESTAMP WITH TIME ZONE values");
+        assertTrue(sql.contains("CAST(SYS_EXTRACT_UTC(:NEW.DETECTED_AT) AS TIMESTAMP)"),
+                "blockchain ledger must convert source TIMESTAMP WITH TIME ZONE values to UTC TIMESTAMP");
+    }
+
+    @Test
+    void wirelessChannelPrimaryKeySupportsRelyForeignKeys() throws Exception {
+        String sql = readOracleSql();
+
+        assertTrue(sql.contains(
+                        "CONSTRAINT WIRELESS_CHANNELS_PK PRIMARY KEY (CHANNEL, BAND) RELY"),
+                "RELY wireless foreign keys require the referenced primary key to be RELY");
     }
 
     @Test

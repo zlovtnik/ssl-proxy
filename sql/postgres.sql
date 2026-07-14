@@ -119,6 +119,7 @@
 \ir functions/051_vec_device_graph_retention.sql
 \ir functions/052_coordinator_flush_probe_batch_bigint.sql
 \ir functions/053_coordinator_record_scan_request_batch_tombstone_frames.sql
+\ir functions/054_coordinator_record_scan_request_batch_deduplicate.sql
 
 -- views
 \ir views/001_sync_events_expanded.sql

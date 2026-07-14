@@ -21,14 +21,14 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex as StdMutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     net::{lookup_host, UdpSocket},
     signal,
-    sync::{Mutex, RwLock, Semaphore},
+    sync::{mpsc, Mutex, RwLock},
     task::JoinSet,
     time::{sleep, timeout},
 };
@@ -42,6 +42,7 @@ const DEFAULT_SESSION_IDLE_SECS: u64 = 300;
 const DEFAULT_MAX_SESSIONS: usize = 65_536;
 const DEFAULT_MAX_DATAGRAM_BYTES: usize = 1500;
 const DEFAULT_DISPATCH_TASK_LIMIT: usize = 4096;
+const MAX_DISPATCH_WORKERS: usize = 32;
 const RATE_LIMITER_SHARDS: usize = 64;
 const RATE_LIMITER_STALE_SOURCE_SECS: u64 = 0;
 
@@ -90,7 +91,7 @@ struct RuntimeState {
     config: Arc<RwLock<FrontdoorConfig>>,
     resolved_backends: Arc<RwLock<HashMap<String, SocketAddr>>>,
     sessions: Arc<DashMap<SessionKey, Arc<BackendSession>>>,
-    routes: Arc<DashMap<ClientRouteKey, BackendRoute>>,
+    routes: Arc<DashMap<ClientRouteKey, PinnedRoute>>,
     session_admission: Arc<Mutex<()>>,
     rate_limiter: Arc<ShardedRateLimiter>,
     stats: Arc<FrontdoorStats>,
@@ -100,6 +101,88 @@ struct RuntimeState {
     max_datagram_bytes: usize,
     dispatch_task_limit: usize,
     udp_socket_buffer_bytes: usize,
+}
+
+struct DispatchPacket {
+    buffer: FrontdoorBufferLease,
+    len: usize,
+    client_addr: SocketAddr,
+    received_at: Instant,
+}
+
+impl DispatchPacket {
+    fn bytes(&self) -> &[u8] {
+        &self.buffer[..self.len]
+    }
+}
+
+struct FrontdoorBufferPool {
+    buffers: StdMutex<Vec<Box<[u8]>>>,
+}
+
+impl FrontdoorBufferPool {
+    fn new(capacity: usize, buffer_len: usize) -> Arc<Self> {
+        let mut buffers = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
+            buffers.push(vec![0_u8; buffer_len].into_boxed_slice());
+        }
+        Arc::new(Self {
+            buffers: StdMutex::new(buffers),
+        })
+    }
+
+    fn lease(self: &Arc<Self>) -> Option<FrontdoorBufferLease> {
+        let buffer = self
+            .buffers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pop()?;
+        Some(FrontdoorBufferLease {
+            buffer: Some(buffer),
+            pool: self.clone(),
+        })
+    }
+
+    #[cfg(test)]
+    fn available(&self) -> usize {
+        self.buffers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .len()
+    }
+}
+
+struct FrontdoorBufferLease {
+    buffer: Option<Box<[u8]>>,
+    pool: Arc<FrontdoorBufferPool>,
+}
+
+impl std::ops::Deref for FrontdoorBufferLease {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.buffer.as_deref().expect("frontdoor buffer is leased")
+    }
+}
+
+impl std::ops::DerefMut for FrontdoorBufferLease {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buffer
+            .as_deref_mut()
+            .expect("frontdoor buffer is leased")
+    }
+}
+
+impl Drop for FrontdoorBufferLease {
+    fn drop(&mut self) {
+        if let Some(buffer) = self.buffer.take() {
+            self.pool
+                .buffers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(buffer);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -113,7 +196,7 @@ struct BackendSession {
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 struct ClientRouteKey {
-    listener: String,
+    listener: Arc<str>,
     client_addr: SocketAddr,
 }
 
@@ -123,9 +206,15 @@ struct BackendRoute {
     backend_addr: String,
 }
 
+#[derive(Clone)]
+struct PinnedRoute {
+    route: BackendRoute,
+    session: Arc<BackendSession>,
+}
+
 #[derive(Clone, Eq)]
 struct SessionKey {
-    listener: String,
+    listener: Arc<str>,
     client_addr: SocketAddr,
     backend_name: String,
     backend_addr: String,
@@ -171,6 +260,8 @@ struct FrontdoorStats {
     backend_bytes: AtomicU64,
     dropped_rate_limited: AtomicU64,
     dropped_dispatch_saturated: AtomicU64,
+    dispatch_queue_depth: AtomicU64,
+    dispatch_queue_high_watermark: AtomicU64,
     session_creations: AtomicU64,
     sessions_evicted: AtomicU64,
     reload_successes: AtomicU64,
@@ -182,6 +273,8 @@ struct FrontdoorStats {
     backend_bytes_counter: IntCounter,
     dropped_rate_limited_counter: IntCounter,
     dropped_dispatch_saturated_counter: IntCounter,
+    dispatch_queue_depth_gauge: IntGauge,
+    dispatch_queue_high_watermark_gauge: IntGauge,
     session_creations_counter: IntCounter,
     sessions_evicted_counter: IntCounter,
     reload_successes_counter: IntCounter,
@@ -192,6 +285,7 @@ struct FrontdoorStats {
 }
 
 struct ShardedRateLimiter {
+    limit_pps: u64,
     shards: [Mutex<RateLimiter>; RATE_LIMITER_SHARDS],
 }
 
@@ -217,6 +311,8 @@ impl FrontdoorStats {
             backend_bytes: AtomicU64::new(0),
             dropped_rate_limited: AtomicU64::new(0),
             dropped_dispatch_saturated: AtomicU64::new(0),
+            dispatch_queue_depth: AtomicU64::new(0),
+            dispatch_queue_high_watermark: AtomicU64::new(0),
             session_creations: AtomicU64::new(0),
             sessions_evicted: AtomicU64::new(0),
             reload_successes: AtomicU64::new(0),
@@ -254,7 +350,17 @@ impl FrontdoorStats {
             dropped_dispatch_saturated_counter: register_int_counter(
                 registry,
                 "wg_frontdoor_dropped_dispatch_saturated_total",
-                "Client packets dropped because dispatch workers were saturated.",
+                "Client packets dropped because dispatch queues were saturated.",
+            )?,
+            dispatch_queue_depth_gauge: register_int_gauge(
+                registry,
+                "wg_frontdoor_dispatch_queue_depth",
+                "Datagrams currently waiting in frontdoor dispatch queues.",
+            )?,
+            dispatch_queue_high_watermark_gauge: register_int_gauge(
+                registry,
+                "wg_frontdoor_dispatch_queue_high_watermark",
+                "Highest observed frontdoor dispatch queue depth.",
             )?,
             session_creations_counter: register_int_counter(
                 registry,
@@ -325,6 +431,37 @@ impl FrontdoorStats {
         self.dropped_dispatch_saturated
             .fetch_add(1, Ordering::Relaxed);
         self.dropped_dispatch_saturated_counter.inc();
+    }
+
+    fn record_dispatch_queued(&self) {
+        let depth = self.dispatch_queue_depth.fetch_add(1, Ordering::Relaxed) + 1;
+        self.dispatch_queue_depth_gauge.set(depth as i64);
+        let mut current = self.dispatch_queue_high_watermark.load(Ordering::Relaxed);
+        while depth > current {
+            match self.dispatch_queue_high_watermark.compare_exchange_weak(
+                current,
+                depth,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.dispatch_queue_high_watermark_gauge.set(depth as i64);
+                    break;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn record_dispatch_dequeued(&self) {
+        let previous = self
+            .dispatch_queue_depth
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |depth| {
+                Some(depth.saturating_sub(1))
+            })
+            .unwrap_or(0);
+        self.dispatch_queue_depth_gauge
+            .set(previous.saturating_sub(1) as i64);
     }
 
     fn record_session_creation(&self) {
@@ -836,55 +973,143 @@ async fn run_listener_with_socket(
     );
 
     let mut buf = vec![0_u8; state.max_datagram_bytes];
-    let dispatch_semaphore = Arc::new(Semaphore::new(state.dispatch_task_limit));
-    let listener_name = listener.name.clone();
+    let listener_name: Arc<str> = Arc::from(listener.name.clone());
+    let worker_count = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .clamp(1, MAX_DISPATCH_WORKERS)
+        .min(state.dispatch_task_limit);
+    let worker_queue_capacity = state.dispatch_task_limit.div_ceil(worker_count);
+    let buffer_pool = FrontdoorBufferPool::new(state.dispatch_task_limit, state.max_datagram_bytes);
+    let mut dispatch_senders = Vec::with_capacity(worker_count);
+    let base_capacity = state.dispatch_task_limit / worker_count;
+    let remainder = state.dispatch_task_limit % worker_count;
+    for worker_index in 0..worker_count {
+        let capacity = base_capacity + usize::from(worker_index < remainder);
+        let (tx, rx) = mpsc::channel(capacity);
+        dispatch_senders.push(tx);
+        tokio::spawn(run_dispatch_worker(
+            listener_name.clone(),
+            socket.clone(),
+            state.clone(),
+            rx,
+        ));
+    }
+    info!(
+        listener = %listener_name,
+        worker_count,
+        worker_queue_capacity,
+        total_queue_capacity = state.dispatch_task_limit,
+        "WireGuard UDP frontdoor dispatch workers started"
+    );
+
     loop {
         let (len, client_addr) = socket.recv_from(&mut buf).await?;
-        let permit = match dispatch_semaphore.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
+        if !state.rate_limiter.allow(client_addr).await {
+            state.stats.record_rate_limited_drop();
+            debug!(%client_addr, listener = %listener_name, "dropping rate-limited packet");
+            continue;
+        }
+        state.stats.record_client_packet(len);
+
+        let Some(mut buffer) = buffer_pool.lease() else {
+            state.stats.record_dispatch_saturated_drop();
+            debug!(
+                %client_addr,
+                listener = %listener_name,
+                "dropping client packet; dispatch buffer pool exhausted"
+            );
+            continue;
+        };
+        buffer[..len].copy_from_slice(&buf[..len]);
+        let received_at = Instant::now();
+        let worker_index = dispatch_worker_index(client_addr, worker_count);
+        let packet = DispatchPacket {
+            buffer,
+            len,
+            client_addr,
+            received_at,
+        };
+        state.stats.record_dispatch_queued();
+        match dispatch_senders[worker_index].try_send(packet) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                state.stats.record_dispatch_dequeued();
                 state.stats.record_dispatch_saturated_drop();
                 debug!(
                     %client_addr,
                     listener = %listener_name,
-                    "dropping client packet; dispatch task limit reached"
+                    worker_index,
+                    "dropping client packet; dispatch queue is full"
                 );
-                continue;
             }
-        };
-        let packet: Arc<[u8]> = Arc::from(buf[..len].to_vec());
-        let received_at = Instant::now();
-        tokio::spawn(dispatch_client_packet(
-            listener_name.clone(),
-            client_addr,
-            packet,
-            received_at,
-            socket.clone(),
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                state.stats.record_dispatch_dequeued();
+                return Err(FrontdoorError::Config(format!(
+                    "listener {listener_name} dispatch worker {worker_index} stopped"
+                )));
+            }
+        }
+    }
+}
+
+fn dispatch_worker_index(client_addr: SocketAddr, worker_count: usize) -> usize {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    client_addr.hash(&mut hasher);
+    hasher.finish() as usize % worker_count.max(1)
+}
+
+async fn run_dispatch_worker(
+    listener_name: Arc<str>,
+    listener_socket: Arc<UdpSocket>,
+    state: RuntimeState,
+    mut packets: mpsc::Receiver<DispatchPacket>,
+) {
+    while let Some(packet) = packets.recv().await {
+        state.stats.record_dispatch_dequeued();
+        dispatch_client_packet(
+            &listener_name,
+            packet.client_addr,
+            &packet,
+            packet.received_at,
+            listener_socket.clone(),
             state.clone(),
-            permit,
-        ));
+        )
+        .await;
     }
 }
 
 async fn dispatch_client_packet(
-    listener_name: String,
+    listener_name: &Arc<str>,
     client_addr: SocketAddr,
-    packet: Arc<[u8]>,
+    packet: &DispatchPacket,
     received_at: Instant,
     listener_socket: Arc<UdpSocket>,
     state: RuntimeState,
-    _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
-    if !state.rate_limiter.allow(client_addr).await {
-        state.stats.record_rate_limited_drop();
-        debug!(%client_addr, listener = %listener_name, "dropping rate-limited packet");
+    let route_key = ClientRouteKey {
+        listener: listener_name.clone(),
+        client_addr,
+    };
+    if let Some(session) = state
+        .routes
+        .get(&route_key)
+        .map(|pinned| pinned.session.clone())
+    {
+        forward_packet_to_session(
+            &session,
+            packet,
+            received_at,
+            client_addr,
+            "pinned",
+            &state.stats,
+        )
+        .await;
         return;
     }
 
-    state.stats.record_client_packet(packet.len());
-
     let Some((listener_session_idle, jitter_ms, backends)) =
-        dispatch_config_for_listener(&state, &listener_name).await
+        dispatch_config_for_listener(&state, listener_name.as_ref()).await
     else {
         warn!(listener = %listener_name, "dropping client packet; listener no longer exists");
         return;
@@ -894,9 +1119,11 @@ async fn dispatch_client_packet(
         return;
     }
 
-    for backend in route_backends_for_client(&state, &listener_name, client_addr, backends).await {
+    for backend in
+        route_backends_for_client(&state, listener_name.clone(), client_addr, backends).await
+    {
         match get_or_create_session(
-            &listener_name,
+            listener_name.clone(),
             listener_session_idle,
             jitter_ms,
             client_addr,
@@ -907,21 +1134,15 @@ async fn dispatch_client_packet(
         .await
         {
             Ok(session) => {
-                session
-                    .last_activity_epoch
-                    .store(now_epoch_secs(), Ordering::Relaxed);
-                apply_jitter(jitter_ms).await;
-                if let Err(error) = session.socket.send(packet.as_ref()).await {
-                    warn!(
-                        %error,
-                        %client_addr,
-                        backend = %backend.name,
-                        "failed to send packet to backend"
-                    );
-                } else {
-                    state.stats.record_backend_packet(packet.len());
-                    state.stats.observe_forward_latency(received_at.elapsed());
-                }
+                forward_packet_to_session(
+                    &session,
+                    packet,
+                    received_at,
+                    client_addr,
+                    &backend.name,
+                    &state.stats,
+                )
+                .await;
             }
             Err(error) => warn!(
                 %error,
@@ -930,6 +1151,31 @@ async fn dispatch_client_packet(
                 "failed to create backend session"
             ),
         }
+    }
+}
+
+async fn forward_packet_to_session(
+    session: &BackendSession,
+    packet: &DispatchPacket,
+    received_at: Instant,
+    client_addr: SocketAddr,
+    backend_name: &str,
+    stats: &FrontdoorStats,
+) {
+    session
+        .last_activity_epoch
+        .store(now_epoch_secs(), Ordering::Relaxed);
+    apply_jitter(session.jitter_ms).await;
+    if let Err(error) = session.socket.send(packet.bytes()).await {
+        warn!(
+            %error,
+            %client_addr,
+            backend = %backend_name,
+            "failed to send packet to backend"
+        );
+    } else {
+        stats.record_backend_packet(packet.len);
+        stats.observe_forward_latency(received_at.elapsed());
     }
 }
 
@@ -956,22 +1202,21 @@ async fn dispatch_config_for_listener(
 
 async fn route_backends_for_client(
     state: &RuntimeState,
-    listener_name: &str,
+    listener_name: Arc<str>,
     client_addr: SocketAddr,
     enabled_backends: Vec<BackendConfig>,
 ) -> Vec<BackendConfig> {
     let route_key = ClientRouteKey {
-        listener: listener_name.to_string(),
+        listener: listener_name.clone(),
         client_addr,
     };
     let Some(route) = state.routes.get(&route_key).map(|route| route.clone()) else {
         return enabled_backends;
     };
 
-    if let Some(backend) = enabled_backends
-        .iter()
-        .find(|backend| backend.name == route.backend_name && backend.addr == route.backend_addr)
-    {
+    if let Some(backend) = enabled_backends.iter().find(|backend| {
+        backend.name == route.route.backend_name && backend.addr == route.route.backend_addr
+    }) {
         return vec![backend.clone()];
     }
 
@@ -980,7 +1225,7 @@ async fn route_backends_for_client(
 }
 
 async fn get_or_create_session(
-    listener_name: &str,
+    listener_name: Arc<str>,
     listener_session_idle: Duration,
     jitter_ms: u64,
     client_addr: SocketAddr,
@@ -990,7 +1235,7 @@ async fn get_or_create_session(
 ) -> Result<Arc<BackendSession>, FrontdoorError> {
     let resolved_backend_addr = cached_backend_addr(&state, &backend.addr).await?;
     let key = SessionKey {
-        listener: listener_name.to_string(),
+        listener: listener_name,
         client_addr,
         backend_name: backend.name.clone(),
         backend_addr: backend.addr.clone(),
@@ -1116,7 +1361,7 @@ fn evict_oldest_session_if_full(state: &RuntimeState) {
 
     if let Some((evicted_key, session)) = state.sessions.remove(&key) {
         session.cancellation.cancel();
-        remove_backend_route_if_current(state, &evicted_key);
+        remove_backend_route_if_current(state, &evicted_key, &session);
         state.stats.record_session_eviction();
         debug!(?evicted_key, "evicted oldest frontdoor backend session");
     }
@@ -1143,7 +1388,7 @@ async fn run_backend_session(
                 session
                     .last_activity_epoch
                     .store(now_epoch_secs(), Ordering::Relaxed);
-                if !bind_backend_route_for_reply(&state, &key).await {
+                if !bind_backend_route_for_reply(&state, &key, &session).await {
                     debug!(
                         ?key,
                         "dropping backend reply from non-selected WireGuard route"
@@ -1172,7 +1417,7 @@ async fn run_backend_session(
     }
 
     state.sessions.remove(&key);
-    remove_backend_route_if_current(&state, &key);
+    remove_backend_route_if_current(&state, &key, &session);
 }
 
 async fn apply_jitter(jitter_ms: u64) {
@@ -1186,7 +1431,11 @@ async fn apply_jitter(jitter_ms: u64) {
     }
 }
 
-async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) -> bool {
+async fn bind_backend_route_for_reply(
+    state: &RuntimeState,
+    key: &SessionKey,
+    session: &Arc<BackendSession>,
+) -> bool {
     let route_key = ClientRouteKey {
         listener: key.listener.clone(),
         client_addr: key.client_addr,
@@ -1197,7 +1446,7 @@ async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) ->
     };
 
     if let Some(existing) = state.routes.get(&route_key) {
-        return existing.value() == &route;
+        return existing.route == route;
     }
 
     let config = state.config.read().await;
@@ -1207,9 +1456,12 @@ async fn bind_backend_route_for_reply(state: &RuntimeState, key: &SessionKey) ->
     drop(config);
 
     match state.routes.entry(route_key) {
-        Entry::Occupied(existing) => existing.get() == &route,
+        Entry::Occupied(existing) => existing.get().route == route,
         Entry::Vacant(vacant) => {
-            vacant.insert(route);
+            vacant.insert(PinnedRoute {
+                route,
+                session: session.clone(),
+            });
             true
         }
     }
@@ -1223,7 +1475,7 @@ fn backend_route_is_active(
     let Some(listener) = config
         .listeners
         .iter()
-        .find(|listener| listener.name == route_key.listener)
+        .find(|listener| listener.name.as_str() == route_key.listener.as_ref())
     else {
         return false;
     };
@@ -1242,7 +1494,11 @@ fn backend_route_is_active(
     })
 }
 
-fn remove_backend_route_if_current(state: &RuntimeState, key: &SessionKey) {
+fn remove_backend_route_if_current(
+    state: &RuntimeState,
+    key: &SessionKey,
+    session: &Arc<BackendSession>,
+) {
     let route_key = ClientRouteKey {
         listener: key.listener.clone(),
         client_addr: key.client_addr,
@@ -1254,31 +1510,24 @@ fn remove_backend_route_if_current(state: &RuntimeState, key: &SessionKey) {
     let route_matches = state
         .routes
         .get(&route_key)
-        .is_some_and(|existing| existing.value() == &route);
-    if route_matches && !has_other_session_for_route(state, key) {
+        .is_some_and(|existing| existing.route == route && Arc::ptr_eq(&existing.session, session));
+    if route_matches {
         state.routes.remove(&route_key);
     }
-}
-
-fn has_other_session_for_route(state: &RuntimeState, key: &SessionKey) -> bool {
-    state.sessions.iter().any(|entry| {
-        let other = entry.key();
-        other != key
-            && other.listener == key.listener
-            && other.client_addr == key.client_addr
-            && other.backend_name == key.backend_name
-            && other.backend_addr == key.backend_addr
-    })
 }
 
 impl ShardedRateLimiter {
     fn new(limit_pps: u64) -> Self {
         Self {
+            limit_pps,
             shards: std::array::from_fn(|_| Mutex::new(RateLimiter::new(limit_pps))),
         }
     }
 
     async fn allow(&self, source: SocketAddr) -> bool {
+        if self.limit_pps == 0 {
+            return true;
+        }
         let source_ip = source.ip();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source_ip.hash(&mut hasher);
@@ -1442,6 +1691,7 @@ async fn reload_config(config_file: &Path, state: &RuntimeState) {
                 .count();
             *state.config.write().await = config;
             *state.resolved_backends.write().await = resolved_backends;
+            state.routes.clear();
             state.stats.record_reload_success();
             info!(
                 listener_count,
@@ -1588,6 +1838,40 @@ addr = "127.0.0.1:51820"
         assert!(limiter.allow_at(source, 11));
     }
 
+    #[tokio::test]
+    async fn wg_udp_frontdoor_disabled_rate_limiter_allows_unbounded_packets() {
+        let limiter = ShardedRateLimiter::new(0);
+        let source: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+
+        for _ in 0..10_000 {
+            assert!(limiter.allow(source).await);
+        }
+    }
+
+    #[test]
+    fn wg_udp_frontdoor_buffer_pool_reuses_datagram_storage() {
+        let pool = FrontdoorBufferPool::new(1, 128);
+        let mut lease = pool.lease().expect("buffer available");
+        lease[..4].copy_from_slice(b"ping");
+        assert_eq!(pool.available(), 0);
+        drop(lease);
+        assert_eq!(pool.available(), 1);
+        assert!(pool.lease().is_some());
+    }
+
+    #[test]
+    fn wg_udp_frontdoor_dispatch_sharding_is_stable_per_client() {
+        let first: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        let second: SocketAddr = "127.0.0.1:50001".parse().unwrap();
+
+        assert_eq!(
+            dispatch_worker_index(first, 8),
+            dispatch_worker_index(first, 8)
+        );
+        assert!(dispatch_worker_index(first, 8) < 8);
+        assert!(dispatch_worker_index(second, 8) < 8);
+    }
+
     #[test]
     fn wg_udp_frontdoor_rate_limiter_evicts_stale_sources() {
         let mut limiter = RateLimiter::new(2);
@@ -1631,6 +1915,8 @@ addr = "127.0.0.1:51820"
         assert!(body.contains("wg_frontdoor_backend_bytes_total 456"));
         assert!(body.contains("# HELP wg_frontdoor_forward_latency_us"));
         assert!(body.contains("# TYPE wg_frontdoor_forward_latency_us histogram"));
+        assert!(body.contains("wg_frontdoor_dispatch_queue_depth"));
+        assert!(body.contains("wg_frontdoor_dispatch_queue_high_watermark"));
     }
 
     #[tokio::test]
@@ -1652,30 +1938,40 @@ addr = "127.0.0.1:51820"
             }],
         });
         let key = SessionKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
             backend_name: "a".to_string(),
             backend_addr: backend_addr.clone(),
             resolved_backend_addr: backend_addr.parse().unwrap(),
         };
         let route_key = ClientRouteKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
         };
         let expected_route = BackendRoute {
             backend_name: "a".to_string(),
             backend_addr,
         };
+        let session = Arc::new(BackendSession {
+            socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            last_activity_epoch: Arc::new(AtomicU64::new(10)),
+            session_idle: Duration::from_secs(5),
+            jitter_ms: 0,
+            cancellation: CancellationToken::new(),
+        });
 
-        assert!(bind_backend_route_for_reply(&state, &key).await);
+        assert!(bind_backend_route_for_reply(&state, &key, &session).await);
         assert_eq!(
-            state.routes.get(&route_key).map(|route| route.clone()),
+            state
+                .routes
+                .get(&route_key)
+                .map(|route| route.route.clone()),
             Some(expected_route.clone())
         );
 
         state.routes.clear();
         state.config.write().await.backends[0].enabled = false;
-        assert!(!bind_backend_route_for_reply(&state, &key).await);
+        assert!(!bind_backend_route_for_reply(&state, &key, &session).await);
         assert!(state.routes.is_empty());
 
         {
@@ -1683,7 +1979,7 @@ addr = "127.0.0.1:51820"
             config.backends[0].enabled = true;
             config.listeners[0].backends.clear();
         }
-        assert!(!bind_backend_route_for_reply(&state, &key).await);
+        assert!(!bind_backend_route_for_reply(&state, &key, &session).await);
         assert!(state.routes.is_empty());
     }
 
@@ -1696,14 +1992,14 @@ addr = "127.0.0.1:51820"
         state.max_sessions = 2;
         let client_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let old_key = SessionKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
             backend_name: "a".to_string(),
             backend_addr: "127.0.0.1:51820".to_string(),
             resolved_backend_addr: "127.0.0.1:51820".parse().unwrap(),
         };
         let new_key = SessionKey {
-            listener: "test".to_string(),
+            listener: Arc::from("test"),
             client_addr,
             backend_name: "b".to_string(),
             backend_addr: "127.0.0.1:51821".to_string(),
@@ -1730,9 +2026,12 @@ addr = "127.0.0.1:51820"
                 listener: old_key.listener.clone(),
                 client_addr,
             },
-            BackendRoute {
-                backend_name: old_key.backend_name.clone(),
-                backend_addr: old_key.backend_addr.clone(),
+            PinnedRoute {
+                route: BackendRoute {
+                    backend_name: old_key.backend_name.clone(),
+                    backend_addr: old_key.backend_addr.clone(),
+                },
+                session: old_session.clone(),
             },
         );
 

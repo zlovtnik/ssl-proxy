@@ -19,9 +19,9 @@ use tracing::{info, info_span, warn, Span};
 use crate::{
     udp_tuning::DEFAULT_UDP_SOCKET_BUFFER_BYTES,
     wg_packet_obfuscation::{
-        cleanup_interval, decode_packet_in_place, encode_packet_in_place, PacketDecodeError,
-        PacketDirection, PacketEncodeError, PacketEncodeState, ReplayWindow, WgPacketObfuscation,
-        MAX_UDP_PACKET_SIZE,
+        cleanup_interval, decode_packet_in_place_view, encode_packet_in_place_with_headroom,
+        packet_encode_headroom, PacketDecodeError, PacketDirection, PacketEncodeError,
+        PacketEncodeState, ReplayWindow, WgPacketObfuscation, MAX_UDP_PACKET_SIZE,
     },
 };
 

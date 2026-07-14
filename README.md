@@ -69,7 +69,14 @@ For pull-only server deployments from the local registry, see
 
 ### WireGuard Client Setup
 
-1. Build the obfuscation shim (Linux/macOS):
+For iPhone, run `make up-ready PROFILE_MODE=iphone ...` and import the selected
+direct profile or QR code. The profile points at the server's plain WireGuard
+frontdoor port and contains no loopback shim endpoint. Server-side obfuscation
+stays enabled so an existing shim client can remain connected concurrently.
+
+For a Linux/macOS shim client:
+
+1. Build the obfuscation shim:
    ```bash
    cargo build --release -p wg-obfs-shim
    ```
@@ -108,8 +115,8 @@ wg genpsk > presharedkey-peer1
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| WireGuard Frontdoor | 443 | UDP | Stable public UDP entrypoint; probes active/candidate backends during rotation, then pins each client to the backend that replies |
-| WireGuard Frontdoor | 51820 | UDP | Stable alternate public UDP entrypoint for obfuscated Mac/shim profiles |
+| WireGuard Frontdoor | 443 | UDP | Default obfuscated shim entrypoint; probes active/candidate backends during rotation, then pins each client to the backend that replies |
+| WireGuard Frontdoor | 51820 | UDP | Plain/direct WireGuard entrypoint used concurrently by iPhone profiles in the default shim deployment |
 | Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
 | Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
 | Frontdoor Health | 3003 | TCP | Host-local health and metrics for `wg-udp-frontdoor` |
@@ -230,8 +237,8 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 |----------|---------|-------------|
 | `WG_INTERFACE_NAME` | `wg0` | WireGuard interface name |
 | `WG_PEERS` | `peer1,peer2` | Comma-separated peer list shared by the active proxy, rotation candidate, `up-ready`, and key rotator |
-| `WG_PORT` | `443` | Plain WireGuard UDP port |
-| `WG_INTERNAL_PORT` | `51820` | Obfuscated WireGuard UDP port |
+| `WG_PORT` | `443` | Public obfuscation-relay port when obfuscation is enabled; direct WireGuard port otherwise |
+| `WG_INTERNAL_PORT` | `51820` | Plain boringtun listener exposed through the frontdoor for concurrent direct clients when obfuscation is enabled |
 | `WG_MTU` | `1420` | WireGuard interface MTU for the plain/direct path. Obfuscated legacy XOR+magic profiles use `1419`; framed AEAD profiles need lower values based on frame overhead. |
 | `WG_OBFUSCATION_MAX_DATAGRAM_BYTES` | `1500` | Maximum UDP datagram buffer used by the relay, shim, and frontdoor. Raise only when the path MTU supports larger datagrams. |
 | `WG_UDP_SOCKET_BUFFER_BYTES` | `16777216` | Requested UDP send/receive socket buffer size for WireGuard relay, shim, and frontdoor sockets. |
@@ -239,7 +246,8 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `WG_OBFUSCATION_KEY_FILE` | `secrets/wg_obfuscation_key` via Compose mount | File-backed obfuscation key for rotated deployments |
 | `WG_FRONTDOOR_CONFIG_FILE` | `secrets/wg-rotation/frontdoor/wg-udp-frontdoor.toml` via Compose mount | UDP frontdoor backend config; multiple enabled backends are probed until one replies for a client |
 | `WG_FRONTDOOR_MAX_SESSIONS` | `65536` | Maximum active frontdoor client/backend UDP sessions before the oldest session is evicted |
-| `WG_FRONTDOOR_DISPATCH_TASK_LIMIT` | `4096` | Maximum in-flight frontdoor packet dispatch tasks per listener before packets are dropped |
+| `WG_FRONTDOOR_RATE_LIMIT_PPS` | `0` | Optional per-source packet rate limit; `0` disables it to avoid capping normal tunnel throughput |
+| `WG_FRONTDOOR_DISPATCH_TASK_LIMIT` | `4096` | Aggregate bounded dispatch queue capacity per listener before packets are dropped |
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
 | `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
