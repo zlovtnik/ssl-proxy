@@ -1,0 +1,18 @@
+# Opt-in wrappers for the pre-Python operational scripts.
+# Enable with: make ENABLE_LEGACY_TARGETS=1 legacy-up-ready
+.PHONY: legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections
+
+legacy-up-ready:
+	./scripts/up-ready.sh
+
+legacy-diagnose:
+	./scripts/diagnose.sh
+
+legacy-memo-show:
+	./scripts/memo-show.sh
+
+legacy-memo-log:
+	./scripts/memo-log.sh
+
+legacy-db-check-connections:
+	./scripts/check-db-connections.sh

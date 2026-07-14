@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -33,8 +33,13 @@ PLATFORM ?= linux/amd64
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 ATHEROS_SEARCH_UI_API_BASE ?= http://localhost:8080
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
-REGISTRY_BUILD_TARGETS := registry-build-ssl-proxy registry-build-java-coordinator registry-build-integration-console registry-build-atheros-sensor registry-build-atheros-search registry-build-wg-key-rotator registry-build-postgres registry-build-atheros-search-ui
+REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator integration-console atheros-sensor atheros-search wg-key-rotator postgres atheros-search-ui
+REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
 REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest redis:7-alpine minio/minio:latest minio/mc:latest prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 oliver006/redis_exporter:v1.61.0 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0
+
+ifeq ($(ENABLE_LEGACY_TARGETS),1)
+include Makefile.legacy
+endif
 
 # Build project binaries: root proxy, Atheros sensor, and Java coordinator.
 build:
@@ -127,69 +132,24 @@ registry-mirror-all: require-registry
 
 registry-build-stack: registry-build-all registry-mirror-all
 
-registry-build-ssl-proxy: registry-buildx require-registry
+define registry_build_target
+.PHONY: registry-build-$(1)
+registry-build-$(1): registry-buildx require-registry
 	docker buildx build --platform $(PLATFORM) \
-		--file Dockerfile \
-		--target ssl-proxy \
-		--build-arg VCS_REF=$(TAG) \
-		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		--tag $(REGISTRY)/ssl-proxy:$(TAG) \
-		--tag $(REGISTRY)/ssl-proxy:latest \
-		--push .
+		--file $(2) $(3) \
+		--tag $(REGISTRY)/$(4):$(TAG) \
+		--tag $(REGISTRY)/$(4):latest \
+		--push $(5)
+endef
 
-registry-build-java-coordinator: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file services/zig-coordinator/Dockerfile \
-		--tag $(REGISTRY)/java-coordinator:$(TAG) \
-		--tag $(REGISTRY)/java-coordinator:latest \
-		--push .
-
-registry-build-integration-console: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file apps/integration-console/Dockerfile \
-		--tag $(REGISTRY)/integration-console:$(TAG) \
-		--tag $(REGISTRY)/integration-console:latest \
-		--push .
-
-registry-build-atheros-sensor: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file Dockerfile \
-		--target atheros-sensor \
-		--build-arg VCS_REF=$(TAG) \
-		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		--tag $(REGISTRY)/atheros-sensor:$(TAG) \
-		--tag $(REGISTRY)/atheros-sensor:latest \
-		--push .
-
-registry-build-atheros-search: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file services/atheros-search/Dockerfile \
-		--tag $(REGISTRY)/atheros-search:$(TAG) \
-		--tag $(REGISTRY)/atheros-search:latest \
-		--push .
-
-registry-build-wg-key-rotator: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file apps/wg-key-rotator/Dockerfile \
-		--tag $(REGISTRY)/wg-key-rotator:$(TAG) \
-		--tag $(REGISTRY)/wg-key-rotator:latest \
-		--push ./apps/wg-key-rotator
-
-registry-build-postgres: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file docker/postgres/Dockerfile \
-		--tag $(REGISTRY)/ssl-proxy-postgres:$(TAG) \
-		--tag $(REGISTRY)/ssl-proxy-postgres:latest \
-		--push .
-
-registry-build-atheros-search-ui: registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file apps/integration-console/atheros-search-ui/Dockerfile \
-		--build-arg VITE_API_BASE="$(ATHEROS_SEARCH_UI_API_BASE)" \
-		--build-arg VITE_APP_TITLE="$(ATHEROS_SEARCH_UI_TITLE)" \
-		--tag $(REGISTRY)/atheros-search-ui:$(TAG) \
-		--tag $(REGISTRY)/atheros-search-ui:latest \
-		--push ./apps/integration-console/atheros-search-ui
+$(eval $(call registry_build_target,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
+$(eval $(call registry_build_target,java-coordinator,services/zig-coordinator/Dockerfile,,java-coordinator,.))
+$(eval $(call registry_build_target,integration-console,apps/integration-console/Dockerfile,,integration-console,.))
+$(eval $(call registry_build_target,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
+$(eval $(call registry_build_target,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
+$(eval $(call registry_build_target,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,./apps/wg-key-rotator))
+$(eval $(call registry_build_target,postgres,docker/postgres/Dockerfile,,ssl-proxy-postgres,.))
+$(eval $(call registry_build_target,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg VITE_API_BASE="$(ATHEROS_SEARCH_UI_API_BASE)" --build-arg VITE_APP_TITLE="$(ATHEROS_SEARCH_UI_TITLE)",atheros-search-ui,./apps/integration-console/atheros-search-ui))
 
 registry-build-vec-worker: registry-buildx require-registry
 	@if [ ! -f services/vec-worker/Dockerfile ]; then \
@@ -274,21 +234,6 @@ shellcheck-tier-b: $(OPS_BOOTSTRAP)
 
 ops-test: $(OPS_BOOTSTRAP)
 	$(OPS_TEST)
-
-legacy-up-ready:
-	./scripts/up-ready.sh
-
-legacy-diagnose:
-	./scripts/diagnose.sh
-
-legacy-memo-show:
-	./scripts/memo-show.sh
-
-legacy-memo-log:
-	./scripts/memo-log.sh
-
-legacy-db-check-connections:
-	./scripts/check-db-connections.sh
 
 audit-threats:
 	docker compose exec -T postgres psql "$${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}" \
