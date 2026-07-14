@@ -852,7 +852,9 @@ spec:
         - name: sys
           hostPath: {path: /sys, type: Directory}
         - name: containerd
-          hostPath: {path: /var/lib/containerd, type: DirectoryOrCreate}
+          hostPath:
+            path: {{ .Values.observability.cadvisor.containerdHostPath | quote }}
+            type: Directory
         - name: disk
           hostPath: {path: /dev/disk, type: DirectoryOrCreate}
 {{- end }}

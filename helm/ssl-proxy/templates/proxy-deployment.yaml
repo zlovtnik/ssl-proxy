@@ -60,7 +60,7 @@ spec:
 {{- if and .Values.monitoring.enabled .Values.proxy.service.metricsPort }}
     - name: metrics
       port: {{ .Values.proxy.service.metricsPort }}
-      targetPort: {{ .Values.proxy.service.metricsPort }}
+      targetPort: admin
       protocol: TCP
 {{- end }}
 ---
@@ -83,9 +83,14 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: proxy
-      {{- with .Values.podAnnotations }}
+      {{- if or .Values.global.rolloutRevision .Values.podAnnotations }}
       annotations:
+        {{- with .Values.global.rolloutRevision }}
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
@@ -231,16 +236,14 @@ spec:
                     - {key: Corefile, path: coredns/Corefile}
                     - {key: privatekey-server, path: server/privatekey-server}
                     - {key: publickey-server, path: server/publickey-server}
-                    - {key: peer1.conf, path: peer1/peer1.conf}
-                    - {key: peer1-obfuscated.conf, path: peer1/peer1-obfuscated.conf}
-                    - {key: presharedkey-peer1, path: peer1/presharedkey-peer1}
-                    - {key: privatekey-peer1, path: peer1/privatekey-peer1}
-                    - {key: publickey-peer1, path: peer1/publickey-peer1}
-                    - {key: peer2.conf, path: peer2/peer2.conf}
-                    - {key: peer2-obfuscated.conf, path: peer2/peer2-obfuscated.conf}
-                    - {key: presharedkey-peer2, path: peer2/presharedkey-peer2}
-                    - {key: privatekey-peer2, path: peer2/privatekey-peer2}
-                    - {key: publickey-peer2, path: peer2/publickey-peer2}
+                    {{- range $peer := splitList "," .Values.proxy.wireguard.peerNames }}
+                    {{- $peer = trim $peer }}
+                    - {key: {{ $peer }}.conf, path: {{ $peer }}/{{ $peer }}.conf}
+                    - {key: {{ $peer }}-obfuscated.conf, path: {{ $peer }}/{{ $peer }}-obfuscated.conf}
+                    - {key: presharedkey-{{ $peer }}, path: {{ $peer }}/presharedkey-{{ $peer }}}
+                    - {key: privatekey-{{ $peer }}, path: {{ $peer }}/privatekey-{{ $peer }}}
+                    - {key: publickey-{{ $peer }}, path: {{ $peer }}/publickey-{{ $peer }}}
+                    {{- end }}
               - configMap:
                   name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
                   items:

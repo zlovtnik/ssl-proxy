@@ -7,6 +7,8 @@ global:
   image:
     registry: ""
     pullPolicy: IfNotPresent
+  # Changed by `ops up-ready` so mutable local-registry tags are actually pulled.
+  rolloutRevision: ""
   # Common labels added to all resources
   labels: {}
   # Common annotations added to all resources
@@ -615,6 +617,7 @@ observability:
       repository: gcr.io/cadvisor/cadvisor
       tag: v0.49.1
       pullPolicy: IfNotPresent
+    containerdHostPath: "/var/lib/containerd"
   pushgateway:
     image:
       repository: prom/pushgateway

@@ -37,6 +37,10 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 60
       containers:

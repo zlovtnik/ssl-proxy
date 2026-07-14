@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     profile_mode: ProfileMode | None = Field(default=None, validation_alias="PROFILE_MODE")
     server_ip: str = Field(default="192.168.1.221", validation_alias="SERVER_IP")
     client_ip: str = Field(default="192.168.1.68", validation_alias="CLIENT_IP")
-    wg_peers: str = Field(default="peer1,peer2", validation_alias=AliasChoices("WG_PEERS", "ROTATOR_PEERS"))
+    wg_peers: str = Field(
+        default="peer1,peer2", validation_alias=AliasChoices("WG_PEERS", "ROTATOR_PEERS")
+    )
     health_timeout_secs: int = Field(default=120, validation_alias="UP_READY_HEALTH_TIMEOUT_SECS")
     check_retry_secs: int = Field(default=15, validation_alias="UP_READY_CHECK_RETRY_SECS")
     log_tail_lines: int = Field(default=200, validation_alias="UP_READY_LOG_TAIL_LINES")

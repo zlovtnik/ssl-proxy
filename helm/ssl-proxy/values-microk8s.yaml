@@ -137,3 +137,5 @@ observability:
         - "192.168.1.221"
     persistence:
       hostPath: "/var/lib/docker/volumes/ssl-proxy_grafana-data/_data"
+  cadvisor:
+    containerdHostPath: "/var/snap/microk8s/common/var/lib/containerd"

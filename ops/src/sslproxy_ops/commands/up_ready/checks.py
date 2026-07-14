@@ -16,7 +16,13 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_exec,
     kubernetes_logs,
 )
-from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, desired_obfuscation_value, step, warn
+from sslproxy_ops.commands.up_ready.model import (
+    UpReadyContext,
+    UpReadyError,
+    desired_obfuscation_value,
+    step,
+    warn,
+)
 from sslproxy_ops.paths import repo_root
 from sslproxy_ops.util.ini import peer_names, trim_key_value, uri_encode
 from sslproxy_ops.util.qr import render_qr_file, render_qr_text
@@ -78,7 +84,10 @@ def wait_for_kubernetes_stack(ctx: UpReadyContext) -> bool:
             active = [pod for pod in pods if pod.get("status", {}).get("phase") != "Succeeded"]
             if active and all(
                 pod.get("status", {}).get("phase") == "Running"
-                and all(status.get("ready") for status in pod.get("status", {}).get("containerStatuses", []))
+                and all(
+                    status.get("ready")
+                    for status in pod.get("status", {}).get("containerStatuses", [])
+                )
                 for pod in active
             ):
                 return True
@@ -120,7 +129,9 @@ def wait_for_container_healthy(ctx: UpReadyContext, service: str) -> bool:
 
 
 def classify_service_failure(ctx: UpReadyContext, service: str) -> None:
-    logs = shell.compose("logs", "--tail", str(ctx.settings.log_tail_lines), service, check=False, capture=True)
+    logs = shell.compose(
+        "logs", "--tail", str(ctx.settings.log_tail_lines), service, check=False, capture=True
+    )
     suffix = {
         "java-coordinator": "java-coordinator unhealthy",
         "postgres": "postgres unhealthy",
@@ -278,15 +289,21 @@ def check_tcp_listener(ctx: UpReadyContext, port: int) -> bool:
 
 def network_checks(ctx: UpReadyContext) -> bool:
     step("S05", "network_checks: wg/listeners")
-    boringtun = lambda: proxy_exec(
-        ctx,
-        "/app/ssl-proxy",
-        "boringtun",
-        "show",
-        "wg0",
-        check=False,
-        capture=True,
-    ).returncode == 0
+
+    def boringtun() -> bool:
+        return (
+            proxy_exec(
+                ctx,
+                "/app/ssl-proxy",
+                "boringtun",
+                "show",
+                "wg0",
+                check=False,
+                capture=True,
+            ).returncode
+            == 0
+        )
+
     if not run_check_with_retry(ctx, "wg_interface", boringtun):
         return False
     for label, fn in [
@@ -297,22 +314,26 @@ def network_checks(ctx: UpReadyContext) -> bool:
     ]:
         if not run_check_with_retry(ctx, label, fn):
             return False
-    if runtime_obfuscation_value(ctx) == "true":
-        if not run_check_with_retry(ctx, "udp_51820", lambda: check_udp_listener(ctx, 51820)):
-            return False
+    if runtime_obfuscation_value(ctx) == "true" and not run_check_with_retry(
+        ctx, "udp_51820", lambda: check_udp_listener(ctx, 51820)
+    ):
+        return False
     if ctx.settings.deployment_target == "compose":
         for label, port in [("frontdoor_udp_443", 443), ("frontdoor_udp_51820", 51820)]:
             if not run_check_with_retry(
-                ctx, label, lambda port=port: check_frontdoor_udp_listener(ctx, port)
+                ctx,
+                label,
+                lambda port=port: check_frontdoor_udp_listener(ctx, port),
             ):
                 return False
     return True
 
 
 def mode_guardrails(ctx: UpReadyContext) -> bool:
+    profile = ctx.settings.profile_mode
     step(
         "S02",
-        f"mode_guardrails: PROFILE_MODE={ctx.settings.profile_mode} SERVER_IP={ctx.settings.server_ip} "
+        f"mode_guardrails: PROFILE_MODE={profile} SERVER_IP={ctx.settings.server_ip} "
         f"CLIENT_IP={ctx.settings.client_ip} arch={ctx.host_arch}",
     )
     expected = desired_obfuscation_value(str(ctx.settings.profile_mode))
@@ -322,7 +343,10 @@ def mode_guardrails(ctx: UpReadyContext) -> bool:
         return True
     if actual != expected:
         ctx.last_failed_check = "mode_guardrails"
-        ctx.classify(f"profile mismatch: expected obfuscation={expected} actual={actual} wg_obfuscation_enabled={actual}")
+        ctx.classify(
+            f"profile mismatch: expected obfuscation={expected} actual={actual} "
+            f"wg_obfuscation_enabled={actual}"
+        )
         return False
     if ctx.settings.profile_mode == "iphone":
         warn("iPhone mode: do not use local shim endpoint 127.0.0.1:51821 in iPhone profile")
@@ -368,7 +392,9 @@ def discover_peer_configs(ctx: UpReadyContext) -> None:
         if not key:
             continue
         obfuscated = sorted(peer_dir.glob("*obfuscated*.conf*"))
-        fallback = [path for path in sorted(peer_dir.glob("*.conf")) if "obfuscated" not in path.name]
+        fallback = [
+            path for path in sorted(peer_dir.glob("*.conf")) if "obfuscated" not in path.name
+        ]
         selected: Path | None = None
         if ctx.settings.profile_mode in {"iphone", "linux-direct"}:
             if not fallback and obfuscated:
@@ -405,12 +431,15 @@ def print_qr_for_config(ctx: UpReadyContext, cfg: Path) -> None:
             capture=True,
         )
         if test.returncode == 0:
-            text = proxy_exec(
-                ctx,
-                "cat",
-                container_cfg,
-                capture=True,
-            ).stdout or ""
+            text = (
+                proxy_exec(
+                    ctx,
+                    "cat",
+                    container_cfg,
+                    capture=True,
+                ).stdout
+                or ""
+            )
             render_qr_text(text, qr_type=ctx.settings.qr_type, margin=ctx.settings.qr_margin)
             return
     raise UpReadyError(f"QR render failed for config: {cfg}")
@@ -520,7 +549,11 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
         peer_dir = repo_root() / "config" / peer_id
         direct_cfg = peer_dir / f"{peer_id}.conf"
         obfuscated_cfg = peer_dir / f"{peer_id}-obfuscated.conf"
-        selected = direct_cfg if ctx.settings.profile_mode in {"iphone", "linux-direct"} else obfuscated_cfg
+        selected = (
+            direct_cfg
+            if ctx.settings.profile_mode in {"iphone", "linux-direct"}
+            else obfuscated_cfg
+        )
         append_file_section(tmp, f"WireGuard {peer_id} selected config", selected)
         if ctx.settings.profile_mode not in {"iphone", "linux-direct"}:
             append_file_section(tmp, f"WireGuard {peer_id} direct config", direct_cfg)
@@ -542,12 +575,20 @@ def diagnostics(ctx: UpReadyContext) -> None:
     for service in ctx.settings.stack_health_service_names:
         cid = (shell.compose("ps", "-q", service, check=False, capture=True).stdout or "").strip()
         status = (
-            shell.run(["docker", "inspect", "-f", "{{.State.Status}}", cid], check=False, capture=True).stdout
+            shell.run(
+                ["docker", "inspect", "-f", "{{.State.Status}}", cid], check=False, capture=True
+            ).stdout
             or "unknown"
         ).strip()
         health = (
             shell.run(
-                ["docker", "inspect", "-f", "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", cid],
+                [
+                    "docker",
+                    "inspect",
+                    "-f",
+                    "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+                    cid,
+                ],
                 check=False,
                 capture=True,
             ).stdout
@@ -558,10 +599,21 @@ def diagnostics(ctx: UpReadyContext) -> None:
         print(f"--- docker compose logs --tail {ctx.settings.log_tail_lines} {service} ---")
         shell.compose("logs", "--tail", str(ctx.settings.log_tail_lines), service, check=False)
     print("--- boringtun show wg0 ---")
-    shell.compose("exec", "-T", ctx.settings.service_name, "/app/ssl-proxy", "boringtun", "show", "wg0", check=False)
+    shell.compose(
+        "exec",
+        "-T",
+        ctx.settings.service_name,
+        "/app/ssl-proxy",
+        "boringtun",
+        "show",
+        "wg0",
+        check=False,
+    )
     print("--- listener dump (ss -lunt) ---")
     shell.compose("exec", "-T", ctx.settings.service_name, "sh", "-lc", "ss -lunt", check=False)
-    logs = shell.compose("logs", "--tail", str(ctx.settings.log_tail_lines), check=False, capture=True)
+    logs = shell.compose(
+        "logs", "--tail", str(ctx.settings.log_tail_lines), check=False, capture=True
+    )
     text = f"{logs.stdout}\n{logs.stderr}"
     if ctx.last_failed_check:
         text = f"{text}\nLAST_FAILED_CHECK={ctx.last_failed_check}"
@@ -591,9 +643,10 @@ def ensure_memory_schema(ctx: UpReadyContext) -> None:
 
 
 def memo_write(ctx: UpReadyContext, result: str, signature: str, action: str) -> None:
+    client_and_arch = f"client={ctx.settings.client_ip} | arch={ctx.host_arch}"
     line = (
         f"- {ctx.run_ts} | result={result} | mode={ctx.settings.profile_mode} | "
-        f"server={ctx.settings.server_ip} | client={ctx.settings.client_ip} | arch={ctx.host_arch} | "
+        f"server={ctx.settings.server_ip} | {client_and_arch} | "
         f"signature={signature} | action={action}"
     )
     memory = ctx.settings.memory_file

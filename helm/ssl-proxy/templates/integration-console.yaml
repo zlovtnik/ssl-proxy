@@ -87,6 +87,10 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: integration-console-db-setup
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
     spec:
       restartPolicy: OnFailure
       containers:
@@ -122,6 +126,10 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: integration-console-web
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
       containers:
@@ -181,6 +189,10 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: integration-console-worker
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
       containers:
@@ -227,6 +239,10 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: integration-console-{{ $name }}
+      {{- with $.Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" $ }}
       containers:

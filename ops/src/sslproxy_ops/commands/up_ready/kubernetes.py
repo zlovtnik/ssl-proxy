@@ -56,6 +56,7 @@ def _apply_rendered_resource(ctx: UpReadyContext, rendered: str) -> None:
         "apply",
         "--server-side",
         "--field-manager=sslproxy-ops",
+        "--force-conflicts",
         "-f",
         "-",
         context=ctx.settings.kube_context,
@@ -211,6 +212,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     chart = root / "helm" / "ssl-proxy"
     set_values = {
         "global.image.registry": registry,
+        "global.rolloutRevision": ctx.run_ts,
         "proxy.image.tag": image_tag,
         "javaCoordinator.image.tag": image_tag,
         "integrationConsole.web.image.tag": image_tag,
@@ -223,7 +225,9 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         "proxy.wireguard.internalPort": os.environ["WG_INTERNAL_PORT"],
         "proxy.wireguard.obfuscation.enabled": os.environ["WG_OBFUSCATION_ENABLED"],
         "proxy.service.externalIPs[0]": ctx.settings.server_ip,
+        "proxy.adminService.externalIPs[0]": ctx.settings.server_ip,
         "integrationConsole.web.service.externalIPs[0]": ctx.settings.server_ip,
+        "observability.prometheus.service.externalIPs[0]": ctx.settings.server_ip,
         "observability.grafana.service.externalIPs[0]": ctx.settings.server_ip,
         "observability.jaeger.service.externalIPs[0]": ctx.settings.server_ip,
     }
@@ -241,7 +245,15 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     for key, value in set_values.items():
         args.extend(["--set-string", f"{key}={value}"])
     args.extend(dashboard_set_file_args())
-    args.extend(["--rollback-on-failure", "--wait", "--timeout", ctx.settings.helm_timeout])
+    args.extend(
+        [
+            "--rollback-on-failure",
+            "--wait",
+            "--wait-for-jobs",
+            "--timeout",
+            ctx.settings.helm_timeout,
+        ]
+    )
     step("S03", f"helm_upgrade: release={release} context={ctx.settings.kube_context}")
     shell.helm(*args, context=ctx.settings.kube_context)
 
@@ -260,7 +272,9 @@ def kubernetes_up(ctx: UpReadyContext) -> bool:
 def kubernetes_diagnostics(ctx: UpReadyContext) -> None:
     namespace = ctx.settings.kube_namespace
     context = ctx.settings.kube_context
-    shell.kubectl("--namespace", namespace, "get", "pods", "-o", "wide", context=context, check=False)
+    shell.kubectl(
+        "--namespace", namespace, "get", "pods", "-o", "wide", context=context, check=False
+    )
     shell.kubectl(
         "--namespace",
         namespace,

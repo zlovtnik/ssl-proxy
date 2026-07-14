@@ -36,6 +36,10 @@ spec:
       labels:
         {{- include "ssl-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: atheros-sensor
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.serviceAccountName" . }}
       hostNetwork: true
