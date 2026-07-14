@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -15,13 +16,15 @@ def proxy_workload(ctx: UpReadyContext) -> str:
 
 
 def resolve_kube_context(ctx: UpReadyContext) -> None:
-    completed = shell.run(
-        ["kubectl", "config", "get-contexts", "-o", "name"],
-        check=False,
-        capture=True,
-    )
-    contexts = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
     configured = ctx.settings.kube_context
+    contexts: list[str] = []
+    if shutil.which("kubectl"):
+        completed = shell.run(
+            ["kubectl", "config", "get-contexts", "-o", "name"],
+            check=False,
+            capture=True,
+        )
+        contexts = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
     if configured in contexts:
         return
 
@@ -32,10 +35,25 @@ def resolve_kube_context(ctx: UpReadyContext) -> None:
         ctx.settings.kube_context = selected
         return
 
+    if shutil.which("microk8s"):
+        status = shell.run(["microk8s", "status"], check=False, capture=True)
+        if status.returncode == 0:
+            warn(
+                f"Kubernetes context {configured!r} was not found; "
+                "using the server-local MicroK8s installation"
+            )
+            # Empty context selects `microk8s kubectl` and `microk8s helm3`
+            # in the shared shell wrappers.
+            ctx.settings.kube_context = ""
+            return
+        detail = (status.stderr or status.stdout or "microk8s status failed").strip()
+        raise UpReadyError(f"Server-local MicroK8s is installed but unavailable: {detail}")
+
     available = ", ".join(contexts) if contexts else "none"
     raise UpReadyError(
         f"Kubernetes context {configured!r} does not exist; available contexts: {available}. "
-        "Set UP_READY_KUBE_CONTEXT to the MicroK8s context name."
+        "Run this command on the MicroK8s server, or set UP_READY_KUBE_CONTEXT "
+        "to a configured remote context name."
     )
 
 
@@ -279,7 +297,8 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
             ctx.settings.helm_timeout,
         ]
     )
-    step("S03", f"helm_upgrade: release={release} context={ctx.settings.kube_context}")
+    target = ctx.settings.kube_context or "server-local-microk8s"
+    step("S03", f"helm_upgrade: release={release} context={target}")
     shell.helm(*args, context=ctx.settings.kube_context)
 
 

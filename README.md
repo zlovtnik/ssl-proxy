@@ -377,9 +377,11 @@ make up-ready PROFILE_MODE=mac \
   CLIENT_IP=192.168.1.53
 ```
 
-The operator uses `microk8s-ssl-proxy` when present, or the only kubeconfig
-context whose name contains `microk8s`. Override it with
-`UP_READY_KUBE_CONTEXT=<name>`. Use
+When run on the server, the operator detects the local installation and uses
+`microk8s kubectl` and `microk8s helm3` directly, without requiring a kubeconfig
+context. From another machine it uses `microk8s-ssl-proxy` when present, or the
+only kubeconfig context whose name contains `microk8s`. Override a remote target
+with `UP_READY_KUBE_CONTEXT=<name>`. Use
 `UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose workflow.
 
 ## Operational Scripts

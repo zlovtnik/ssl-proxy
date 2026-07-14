@@ -10,8 +10,9 @@ make ops-test
 ./scripts/diagnose.sh --help
 ```
 
-`make up-ready` defaults to the registry-backed MicroK8s/Helm deployment. Set
-`UP_READY_KUBE_CONTEXT` when the MicroK8s context cannot be discovered, or set
+`make up-ready` defaults to the registry-backed MicroK8s/Helm deployment. On the
+server it uses `microk8s kubectl` and `microk8s helm3` without a kubeconfig
+context. For remote deployment, set `UP_READY_KUBE_CONTEXT`, or set
 `UP_READY_DEPLOYMENT_TARGET=compose` for the compatibility Compose path.
 
 For direct module execution, install the ops package first or use `uv`:

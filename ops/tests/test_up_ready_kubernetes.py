@@ -41,6 +41,30 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
         self.assertEqual(ctx.settings.kube_context, "microk8s")
 
+    def test_server_install_uses_local_microk8s_without_a_context(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        no_contexts = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="", stderr=""
+        )
+        ready = subprocess.CompletedProcess(
+            args=["microk8s"], returncode=0, stdout="microk8s is running", stderr=""
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shutil.which",
+                return_value="/snap/bin/tool",
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.run",
+                side_effect=[no_contexts, ready],
+            ),
+        ):
+            resolve_kube_context(ctx)
+
+        self.assertEqual(ctx.settings.kube_context, "")
+
     def test_helm_upgrade_uses_registry_rollout_revision_and_waits_for_jobs(self):
         settings = Settings()
         settings.server_ip = "192.168.1.221"
