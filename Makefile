@@ -188,7 +188,7 @@ clean:
 	cargo clean
 
 
-# Build/mirror registry images, upgrade the MicroK8s Helm release, verify it,
+# Build/mirror registry images, upgrade the Kubernetes Helm release, verify it,
 # and print peer QR codes. Set UP_READY_DEPLOYMENT_TARGET=compose for Compose.
 # Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
 up-ready: $(OPS_BOOTSTRAP)

@@ -1,4 +1,4 @@
-# Single-node MicroK8s deployment for the ssl-proxy server.
+# Single-node Kubernetes deployment for the ssl-proxy server.
 # Secrets are created out-of-band from the existing protected server files.
 
 global:
@@ -156,5 +156,3 @@ observability:
         - "192.168.1.221"
     persistence:
       hostPath: "/var/lib/docker/volumes/ssl-proxy_grafana-data/_data"
-  cadvisor:
-    containerdHostPath: "/var/snap/microk8s/common/var/lib/containerd"

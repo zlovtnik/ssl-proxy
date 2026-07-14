@@ -345,7 +345,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `registry-build-vec-worker` | Build vec-worker when its Dockerfile exists; otherwise fail clearly |
 | `deploy` | SSH to `DEPLOY_HOST`, pull images in `DEPLOY_PATH`, and run Compose |
 | `clean` | Clean build artifacts |
-| `up-ready` | Publish local-registry images, upgrade MicroK8s with Helm, verify services, and print peer QR codes |
+| `up-ready` | Publish local-registry images, upgrade Kubernetes with Helm, verify services, and print peer QR codes |
 | `diagnose` | Non-mutating diagnosis and signature classification |
 | `pipeline-health` | Check sync-plane pipeline health |
 | `memo-show` | Show operational memory ledger |
@@ -372,7 +372,7 @@ connection values used across chart boundaries are explicit under
 `make up-ready` defaults to the Kubernetes target: it builds first-party
 images, mirrors pinned third-party images into `REGISTRY`, synchronizes the
 protected local files as Kubernetes Secrets, and upgrades the complete
-MicroK8s release. The release includes the proxy, coordinator, console
+Kubernetes release. The release includes the proxy, coordinator, console
 processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
 OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
 reusing the retained Compose data volumes.
@@ -383,12 +383,11 @@ make up-ready PROFILE_MODE=mac \
   CLIENT_IP=192.168.1.53
 ```
 
-When run on the server, the operator detects the local installation and uses
-`microk8s kubectl` and `microk8s helm3` directly, without requiring a kubeconfig
-context. From another machine it uses `microk8s-ssl-proxy` when present, or the
-only kubeconfig context whose name contains `microk8s`. Override a remote target
-with `UP_READY_KUBE_CONTEXT=<name>`. Use
-`UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose workflow.
+The operator uses standard `kubectl` and `helm`. It selects
+`UP_READY_KUBE_CONTEXT` when set and otherwise uses the current kubeconfig
+context. Run it on the Kubernetes server or provide a working remote context.
+Use `UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose
+workflow.
 
 The legacy Make targets are opt-in so they do not remain interleaved with the
 current operator workflow:

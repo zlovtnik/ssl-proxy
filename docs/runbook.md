@@ -155,12 +155,11 @@ The packet limiter is opt-in. Leave `WG_FRONTDOOR_RATE_LIMIT_PPS=0` for this
 test so the measurement covers forwarding capacity rather than an intentional
 traffic cap.
 
-### 4.2 MicroK8s Umbrella Chart Rollout
+### 4.2 Kubernetes Umbrella Chart Rollout
 
 The chart at `helm/ssl-proxy` is an umbrella over the service,
 infrastructure, and telemetry charts in `helm/ssl-proxy/charts`. Perform the
-production rollout on the MicroK8s server so the operator can use
-`microk8s kubectl` and `microk8s helm3` directly.
+production rollout on the Kubernetes server with its working kubeconfig.
 
 1. Connect to the server and update the committed `dev` branch:
 
@@ -174,9 +173,9 @@ production rollout on the MicroK8s server so the operator can use
 
    ```bash
    helm dependency build helm/ssl-proxy
-   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-microk8s.yaml
+   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml
    helm template ssl-proxy helm/ssl-proxy \
-     -f helm/ssl-proxy/values-microk8s.yaml >/tmp/ssl-proxy-rendered.yaml
+     -f helm/ssl-proxy/values-k8s.yaml >/tmp/ssl-proxy-rendered.yaml
    ```
 
 3. Start or upgrade the stack from the server repository. Supply the real
@@ -190,9 +189,9 @@ production rollout on the MicroK8s server so the operator can use
 4. Verify the release and every namespace-scoped workload:
 
    ```bash
-   microk8s helm3 status ssl-proxy -n ssl-proxy
-   microk8s kubectl get pods,jobs,services -n ssl-proxy -o wide
-   microk8s kubectl get daemonsets,statefulsets,deployments -n ssl-proxy
+   helm status ssl-proxy -n ssl-proxy
+   kubectl get pods,jobs,services -n ssl-proxy -o wide
+   kubectl get daemonsets,statefulsets,deployments -n ssl-proxy
    ```
 
 The `vecWorker` and `atherosSearch` charts are explicit placeholders and
