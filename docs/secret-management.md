@@ -95,9 +95,9 @@ The generator also copies `admin_api_key` and `wg_obfuscation_key` into
   rm secrets/ONE_TIME_TOKENS
   ```
 - `scripts/gen-secrets check` fails while `secrets/ONE_TIME_TOKENS` exists.
-- `scripts/gen-secrets repair` fixes managed permissions and rewrites candidate copies from
-  the active root secrets, or from the pending generation when
-  `secrets/wg-rotation/state/pending_generation` exists.
+- `scripts/gen-secrets repair` fixes managed permissions, rewrites candidate copies from
+  the active root secrets (or the pending generation), and syncs an existing
+  `config/server/publickey-server` into generated `config/<peer>/*.conf` profiles.
 - `oracle_password.txt` is generated so the coordinator mount contract is complete. For a real
   Oracle ADB sink, replace it with the actual `ORACLE_USER` password before enabling loads.
 - `scripts/up-ready.sh` writes a local `secrets/up-ready-credentials.txt` handoff file on

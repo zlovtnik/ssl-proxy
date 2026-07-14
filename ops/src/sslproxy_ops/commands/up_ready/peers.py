@@ -107,7 +107,38 @@ def ensure_private_config_mode(path: Path) -> None:
         )
 
 
-def render_direct_peer_config(peer_id: str, private_key: str, preshared_key: str, server_ip: str) -> None:
+def ensure_server_key_material(ctx: UpReadyContext) -> str:
+    server_dir = repo_root() / "config" / "server"
+    private_key_file = server_dir / "privatekey-server"
+    public_key_file = server_dir / "publickey-server"
+    private_key = trim_key_value(private_key_file.read_text()) if private_key_file.is_file() else ""
+    public_key = trim_key_value(public_key_file.read_text()) if public_key_file.is_file() else ""
+
+    if not is_placeholder_value(private_key) and not is_placeholder_value(public_key):
+        return public_key
+
+    ensure_peer_key_helper(ctx)
+    if is_placeholder_value(private_key):
+        private_key = generate_peer_private_key()
+        write_secret_text(private_key_file, private_key, 0o600)
+        step("S00", "peer_bootstrap: generated WireGuard server private key")
+
+    derived_public_key = derive_peer_public_key(private_key)
+    if is_placeholder_value(derived_public_key):
+        raise UpReadyError("Unable to derive WireGuard server public key")
+    if public_key != derived_public_key:
+        write_secret_text(public_key_file, derived_public_key, 0o644)
+        step("S00", "peer_bootstrap: wrote WireGuard server public key")
+    return derived_public_key
+
+
+def render_direct_peer_config(
+    peer_id: str,
+    private_key: str,
+    preshared_key: str,
+    server_ip: str,
+    server_public_key: str,
+) -> None:
     output = repo_root() / "config" / peer_id / f"{peer_id}.conf"
     address = peer_tunnel_address(peer_id)
     obfuscation_enabled = os.getenv("WG_OBFUSCATION_ENABLED", "false").lower() in {
@@ -131,7 +162,7 @@ MTU = {mtu}
 DNS = 10.13.13.1
 
 [Peer]
-PublicKey = <server-public-key>
+PublicKey = {server_public_key}
 PresharedKey = {preshared_key}
 # Endpoint must be the Docker host's LAN/public IP, not a container bridge IP.
 Endpoint = {server_ip}:{endpoint_port}
@@ -142,7 +173,9 @@ AllowedIPs = 0.0.0.0/0, ::/0
     step("S00", f"peer_bootstrap: wrote {output}")
 
 
-def render_obfuscated_peer_config(peer_id: str, private_key: str, preshared_key: str) -> None:
+def render_obfuscated_peer_config(
+    peer_id: str, private_key: str, preshared_key: str, server_public_key: str
+) -> None:
     peer_dir = repo_root() / "config" / peer_id
     example = peer_dir / f"{peer_id}-obfuscated.conf.example"
     output = peer_dir / f"{peer_id}-obfuscated.conf"
@@ -150,6 +183,7 @@ def render_obfuscated_peer_config(peer_id: str, private_key: str, preshared_key:
         text = example.read_text()
         text = text.replace(f"<{peer_id}-private-key>", private_key)
         text = text.replace(f"<{peer_id}-preshared-key>", preshared_key)
+        text = text.replace("<server-public-key>", server_public_key)
         output.write_text(text)
     else:
         address = peer_tunnel_address(peer_id)
@@ -164,7 +198,7 @@ MTU = {mtu}
 DNS = 10.13.13.1
 
 [Peer]
-PublicKey = <server-public-key>
+PublicKey = {server_public_key}
 PresharedKey = {preshared_key}
 Endpoint = 127.0.0.1:51821
 AllowedIPs = 0.0.0.0/0, ::/0
@@ -174,14 +208,20 @@ AllowedIPs = 0.0.0.0/0, ::/0
     step("S00", f"peer_bootstrap: wrote {output}")
 
 
-def peer_config_keys_resolved(path: Path) -> bool:
+def peer_config_keys_resolved(path: Path, server_public_key: str | None = None) -> bool:
+    configured_server_public_key = read_ini_value(path, "Peer", "PublicKey")
     return not (
         is_placeholder_value(read_ini_value(path, "Interface", "PrivateKey"))
+        or is_placeholder_value(configured_server_public_key)
         or is_placeholder_value(read_ini_value(path, "Peer", "PresharedKey"))
+        or (
+            server_public_key is not None
+            and trim_key_value(configured_server_public_key or "") != server_public_key
+        )
     )
 
 
-def peer_material_complete(peer_id: str) -> bool:
+def peer_material_complete(peer_id: str, server_public_key: str | None = None) -> bool:
     peer_dir = repo_root() / "config" / peer_id
     files_present = all(
         path.is_file() and path.stat().st_size > 0
@@ -196,7 +236,7 @@ def peer_material_complete(peer_id: str) -> bool:
     if not files_present:
         return False
     return all(
-        peer_config_keys_resolved(path)
+        peer_config_keys_resolved(path, server_public_key)
         for path in [
             peer_dir / f"{peer_id}.conf",
             peer_dir / f"{peer_id}-obfuscated.conf",
@@ -213,7 +253,11 @@ def ensure_unique_peer_tunnel_addresses(peers: list[str]) -> None:
         seen[address] = peer_id
 
 
-def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
+def ensure_one_peer_material(
+    ctx: UpReadyContext, peer_id: str, server_public_key: str | None = None
+) -> None:
+    if server_public_key is None:
+        server_public_key = ensure_server_key_material(ctx)
     peer_dir = repo_root() / "config" / peer_id
     peer_dir.mkdir(parents=True, exist_ok=True)
     private_key_file = peer_dir / f"privatekey-{peer_id}"
@@ -255,16 +299,21 @@ def ensure_one_peer_material(ctx: UpReadyContext, peer_id: str) -> None:
     # Direct clients use a different endpoint port when obfuscation is active,
     # so their generated profile must follow the selected runtime mode. Shim
     # modes must not rewrite an already-resolved, potentially owner-managed file.
-    if direct_profile_selected or not peer_config_keys_resolved(direct_config):
-        render_direct_peer_config(peer_id, private_key, preshared_key, ctx.settings.server_ip)
-    if not peer_config_keys_resolved(peer_dir / f"{peer_id}-obfuscated.conf"):
-        render_obfuscated_peer_config(peer_id, private_key, preshared_key)
+    if direct_profile_selected or not peer_config_keys_resolved(direct_config, server_public_key):
+        render_direct_peer_config(
+            peer_id, private_key, preshared_key, ctx.settings.server_ip, server_public_key
+        )
+    if not peer_config_keys_resolved(
+        peer_dir / f"{peer_id}-obfuscated.conf", server_public_key
+    ):
+        render_obfuscated_peer_config(peer_id, private_key, preshared_key, server_public_key)
 
 
 def ensure_local_peer_material(ctx: UpReadyContext) -> None:
     peers = peer_names(os.getenv("WG_PEERS", ctx.settings.wg_peers))
     ensure_unique_peer_tunnel_addresses(peers)
-    if all(peer_material_complete(peer_id) for peer_id in peers):
+    server_public_key = ensure_server_key_material(ctx)
+    if all(peer_material_complete(peer_id, server_public_key) for peer_id in peers):
         if ctx.settings.profile_mode not in {"iphone", "linux-direct"}:
             return
         for peer_id in peers:
@@ -274,8 +323,9 @@ def ensure_local_peer_material(ctx: UpReadyContext) -> None:
                 trim_key_value((peer_dir / f"privatekey-{peer_id}").read_text()),
                 trim_key_value((peer_dir / f"presharedkey-{peer_id}").read_text()),
                 ctx.settings.server_ip,
+                server_public_key,
             )
         return
     ensure_peer_key_helper(ctx)
     for peer_id in peers:
-        ensure_one_peer_material(ctx, peer_id)
+        ensure_one_peer_material(ctx, peer_id, server_public_key)

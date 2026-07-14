@@ -53,13 +53,28 @@ class UpReadyHelpersTest(unittest.TestCase):
                 (peer_dir / name).write_text("value\n")
             direct = peer_dir / "peer1.conf"
             obfuscated = peer_dir / "peer1-obfuscated.conf"
-            direct.write_text("[Interface]\nPrivateKey = <peer1-private-key>\n[Peer]\nPresharedKey = value\n")
-            obfuscated.write_text("[Interface]\nPrivateKey = value\n[Peer]\nPresharedKey = value\n")
+            direct.write_text(
+                "[Interface]\nPrivateKey = <peer1-private-key>\n"
+                "[Peer]\nPublicKey = server-public\nPresharedKey = value\n"
+            )
+            obfuscated.write_text(
+                "[Interface]\nPrivateKey = value\n"
+                "[Peer]\nPublicKey = server-public\nPresharedKey = value\n"
+            )
 
             with unittest.mock.patch("sslproxy_ops.commands.up_ready.peers.repo_root", return_value=root):
                 self.assertFalse(peer_material_complete("peer1"))
 
-                direct.write_text("[Interface]\nPrivateKey = value\n[Peer]\nPresharedKey = value\n")
+                direct.write_text(
+                    "[Interface]\nPrivateKey = value\n"
+                    "[Peer]\nPublicKey = <server-public-key>\nPresharedKey = value\n"
+                )
+                self.assertFalse(peer_material_complete("peer1"))
+
+                direct.write_text(
+                    "[Interface]\nPrivateKey = value\n"
+                    "[Peer]\nPublicKey = server-public\nPresharedKey = value\n"
+                )
                 self.assertTrue(peer_material_complete("peer1"))
 
     def test_runtime_obfuscation_accepts_service_name(self):
@@ -112,11 +127,18 @@ class UpReadyHelpersTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             peer_dir = root / "config" / "peer1"
+            server_dir = root / "config" / "server"
             peer_dir.mkdir(parents=True)
+            server_dir.mkdir(parents=True)
+            (server_dir / "privatekey-server").write_text("server-private\n")
+            (server_dir / "publickey-server").write_text("server-public\n")
             (peer_dir / "privatekey-peer1").write_text("private\n")
             (peer_dir / "publickey-peer1").write_text("public\n")
             (peer_dir / "presharedkey-peer1").write_text("preshared\n")
-            resolved = "[Interface]\nPrivateKey = private\n[Peer]\nPresharedKey = preshared\n"
+            resolved = (
+                "[Interface]\nPrivateKey = private\n"
+                "[Peer]\nPublicKey = server-public\nPresharedKey = preshared\n"
+            )
             (peer_dir / "peer1.conf").write_text(resolved)
             (peer_dir / "peer1-obfuscated.conf").write_text(resolved)
             settings = Settings()
@@ -145,7 +167,8 @@ class UpReadyHelpersTest(unittest.TestCase):
             (peer_dir / "publickey-peer1").write_text("public\n")
             (peer_dir / "presharedkey-peer1").write_text("preshared\n")
             (peer_dir / "peer1.conf").write_text(
-                "[Interface]\nPrivateKey = private\n[Peer]\nPresharedKey = preshared\n"
+                "[Interface]\nPrivateKey = private\n"
+                "[Peer]\nPublicKey = server-public\nPresharedKey = preshared\n"
             )
             settings = Settings()
             settings.profile_mode = "mac"
@@ -162,10 +185,12 @@ class UpReadyHelpersTest(unittest.TestCase):
                     "sslproxy_ops.commands.up_ready.peers.render_obfuscated_peer_config"
                 ) as render_obfuscated,
             ):
-                ensure_one_peer_material(ctx, "peer1")
+                ensure_one_peer_material(ctx, "peer1", "server-public")
 
             render_direct.assert_not_called()
-            render_obfuscated.assert_called_once_with("peer1", "private", "preshared")
+            render_obfuscated.assert_called_once_with(
+                "peer1", "private", "preshared", "server-public"
+            )
 
     def test_registry_helpers(self):
         self.assertEqual(registry_host_value("http://192.168.1.2:5000/foo"), "192.168.1.2:5000")
@@ -210,10 +235,14 @@ class UpReadyHelpersTest(unittest.TestCase):
                     clear=False,
                 ),
             ):
-                render_direct_peer_config("peer1", "private", "preshared", "192.0.2.10")
+                render_direct_peer_config(
+                    "peer1", "private", "preshared", "192.0.2.10", "server-public"
+                )
 
             profile = (root / "config" / "peer1" / "peer1.conf").read_text()
             self.assertIn("Endpoint = 192.0.2.10:51820", profile)
+            self.assertIn("PublicKey = server-public", profile)
+            self.assertNotIn("<server-public-key>", profile)
             self.assertNotIn("Endpoint = 127.0.0.1", profile)
             self.assertNotIn("ListenPort =", profile)
 
