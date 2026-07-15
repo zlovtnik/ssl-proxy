@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -355,6 +356,68 @@ def dashboard_set_file_args() -> list[str]:
     return args
 
 
+def helm_release_status(ctx: UpReadyContext) -> str | None:
+    completed = shell.helm(
+        "status",
+        ctx.settings.helm_release,
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--output",
+        "json",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return None
+    try:
+        payload = json.loads(completed.stdout or "{}")
+        status = payload.get("info", {}).get("status")
+    except (AttributeError, TypeError, json.JSONDecodeError) as exc:
+        raise UpReadyError("Unable to parse Helm release status") from exc
+    if not isinstance(status, str) or not status:
+        raise UpReadyError("Helm release status response did not include info.status")
+    return status
+
+
+def prepare_helm_release(ctx: UpReadyContext) -> bool:
+    """Return true for an upgrade, false for a clean first install."""
+    status = helm_release_status(ctx)
+    if status is None:
+        return False
+    if status == "deployed":
+        return True
+    if status in {"failed", "uninstalled", "uninstalling"}:
+        step("S03", f"helm_recover: removing {status} release={ctx.settings.helm_release}")
+        shell.helm(
+            "uninstall",
+            ctx.settings.helm_release,
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "--ignore-not-found",
+            "--no-hooks",
+            "--cascade",
+            "foreground",
+            "--wait=watcher",
+            "--timeout",
+            ctx.settings.helm_timeout,
+            context=ctx.settings.kube_context,
+            capture=True,
+        )
+        for attempt in range(60):
+            if helm_release_status(ctx) is None:
+                return False
+            if attempt < 59:
+                time.sleep(1)
+        raise UpReadyError(
+            f"Helm release {ctx.settings.helm_release!r} still exists after cleanup"
+        )
+    raise UpReadyError(
+        f"Helm release {ctx.settings.helm_release!r} is {status}; "
+        "another Helm operation may still be active"
+    )
+
+
 def helm_upgrade(ctx: UpReadyContext) -> None:
     root = repo_root()
     registry = os.environ["REGISTRY"].rstrip("/")
@@ -364,6 +427,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
     values = root / "helm" / "ssl-proxy" / "values-k8s.yaml"
     chart = root / "helm" / "ssl-proxy"
+    is_upgrade = prepare_helm_release(ctx)
     set_values = {
         "global.image.registry": registry,
         "global.rolloutRevision": ctx.run_ts,
@@ -380,8 +444,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         "proxy.wireguard.obfuscation.enabled": os.environ["WG_OBFUSCATION_ENABLED"],
     }
     args = [
-        "upgrade",
-        "--install",
+        "upgrade" if is_upgrade else "install",
         release,
         str(chart),
         "--namespace",
@@ -395,7 +458,6 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     args.extend(dashboard_set_file_args())
     args.extend(
         [
-            "--rollback-on-failure",
             "--server-side=true",
             "--wait=watcher",
             "--wait-for-jobs",
@@ -405,8 +467,11 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
             ctx.settings.helm_timeout,
         ]
     )
+    if is_upgrade:
+        args.append("--rollback-on-failure")
     target = ctx.settings.kube_context or "current-context"
-    step("S03", f"helm_upgrade: release={release} context={target}")
+    operation = "upgrade" if is_upgrade else "install"
+    step("S03", f"helm_{operation}: release={release} context={target}")
     completed = shell.helm(*args, context=ctx.settings.kube_context, capture=True)
     if isinstance(completed.stdout, str) and completed.stdout:
         print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")

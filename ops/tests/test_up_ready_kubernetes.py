@@ -8,6 +8,7 @@ from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
     dashboard_set_file_args,
     helm_upgrade,
+    helm_release_status,
     proxy_workload,
     publish_registry_images,
     resolve_kube_context,
@@ -98,14 +99,28 @@ class UpReadyKubernetesTest(unittest.TestCase):
             "WG_INTERNAL_PORT": "443",
             "WG_OBFUSCATION_ENABLED": "true",
         }
+        deployed = subprocess.CompletedProcess(
+            args=["helm"],
+            returncode=0,
+            stdout='{"info":{"status":"deployed"}}',
+            stderr="",
+        )
+        upgraded = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="", stderr=""
+        )
 
         with (
             patch.dict(os.environ, environment, clear=False),
-            patch("sslproxy_ops.commands.up_ready.kubernetes.shell.helm") as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                side_effect=[deployed, upgraded],
+            ) as mocked_helm,
         ):
             helm_upgrade(ctx)
 
-        args = mocked_helm.call_args.args
+        args = mocked_helm.call_args_list[-1].args
+        self.assertEqual(args[0], "upgrade")
+        self.assertNotIn("--install", args)
         self.assertIn("global.image.registry=192.168.1.221:32000", args)
         self.assertIn("global.rolloutRevision=2026-07-14T12:00:00-0400", args)
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
@@ -115,8 +130,96 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("--wait=watcher", args)
         self.assertIn("--wait-for-jobs", args)
         self.assertIn("--history-max", args)
-        self.assertEqual(mocked_helm.call_args.kwargs["context"], "server-k8s")
-        self.assertTrue(mocked_helm.call_args.kwargs["capture"])
+        self.assertIn("--rollback-on-failure", args)
+        self.assertEqual(mocked_helm.call_args_list[-1].kwargs["context"], "server-k8s")
+        self.assertTrue(mocked_helm.call_args_list[-1].kwargs["capture"])
+
+    def test_helm_first_install_does_not_request_rollback(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        environment = {
+            "REGISTRY": "192.168.1.221:5000",
+            "IMAGE_TAG": "latest",
+            "WG_PORT": "51820",
+            "WG_INTERNAL_PORT": "443",
+            "WG_OBFUSCATION_ENABLED": "true",
+        }
+        missing = subprocess.CompletedProcess(
+            args=["helm"], returncode=1, stdout="", stderr="release not found"
+        )
+        installed = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="", stderr=""
+        )
+
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                side_effect=[missing, installed],
+            ) as mocked_helm,
+        ):
+            helm_upgrade(ctx)
+
+        args = mocked_helm.call_args_list[-1].args
+        self.assertEqual(args[0], "install")
+        self.assertNotIn("--install", args)
+        self.assertNotIn("--rollback-on-failure", args)
+
+    def test_helm_stale_first_install_is_removed_before_retry(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        environment = {
+            "REGISTRY": "192.168.1.221:5000",
+            "IMAGE_TAG": "latest",
+            "WG_PORT": "51820",
+            "WG_INTERNAL_PORT": "443",
+            "WG_OBFUSCATION_ENABLED": "true",
+        }
+        uninstalling = subprocess.CompletedProcess(
+            args=["helm"],
+            returncode=0,
+            stdout='{"info":{"status":"uninstalling"}}',
+            stderr="",
+        )
+        completed = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="", stderr=""
+        )
+        missing = subprocess.CompletedProcess(
+            args=["helm"], returncode=1, stdout="", stderr="release not found"
+        )
+
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                side_effect=[uninstalling, completed, missing, completed],
+            ) as mocked_helm,
+        ):
+            helm_upgrade(ctx)
+
+        cleanup = mocked_helm.call_args_list[1].args
+        install = mocked_helm.call_args_list[3].args
+        self.assertEqual(cleanup[0], "uninstall")
+        self.assertIn("--no-hooks", cleanup)
+        self.assertEqual(install[0], "install")
+
+    def test_helm_release_status_rejects_malformed_json(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        malformed = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="not-json", stderr=""
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                return_value=malformed,
+            ),
+            self.assertRaisesRegex(UpReadyError, "parse Helm release status"),
+        ):
+            helm_release_status(ctx)
 
     def test_registry_pull_probe_uses_canonical_registry_and_cleans_up(self):
         settings = Settings()
