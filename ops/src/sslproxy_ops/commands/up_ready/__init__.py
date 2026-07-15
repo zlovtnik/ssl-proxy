@@ -275,7 +275,11 @@ def run_up_ready(ctx: UpReadyContext) -> None:
         kubernetes_up(ctx) if ctx.settings.deployment_target == "kubernetes" else compose_up(ctx)
     )
     if not deployed:
-        diagnostics(ctx)
+        # The Kubernetes registry preflight already emits the failing Pod's
+        # description. Avoid burying that actionable error under stale events
+        # from an earlier release.
+        if ctx.last_failure.name != "docker_registry_plain_http_untrusted":
+            diagnostics(ctx)
         memo_write(ctx, "fail", ctx.last_failure.name, ctx.last_failure.fix)
         failure_detail = ctx.last_failure_text or ctx.last_failure.cause
         raise UpReadyError(f"{ctx.settings.deployment_target}_up failed: {failure_detail}")
