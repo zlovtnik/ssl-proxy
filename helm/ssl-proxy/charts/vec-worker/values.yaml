@@ -52,7 +52,6 @@ metrics:
   enabled: true
   port: 9092
 
-# Integration Console (Rails + Svelte dashboard)
 
 
 # Planned embedding-provider connection; unused until a workload template is added.

@@ -427,6 +427,14 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
     values = root / "helm" / "ssl-proxy" / "values-k8s.yaml"
     chart = root / "helm" / "ssl-proxy"
+    step("S03", f"helm_dependencies: refreshing chart={chart}")
+    shell.helm(
+        "dependency",
+        "update",
+        str(chart),
+        context=ctx.settings.kube_context,
+        capture=True,
+    )
     is_upgrade = prepare_helm_release(ctx)
     set_values = {
         "global.image.registry": registry,

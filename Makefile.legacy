@@ -1,3 +1,4 @@
+ifeq ($(ENABLE_LEGACY_TARGETS),1)
 # Opt-in wrappers for the pre-Python operational scripts.
 # Enable with: make ENABLE_LEGACY_TARGETS=1 legacy-up-ready
 .PHONY: legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections
@@ -16,3 +17,8 @@ legacy-memo-log:
 
 legacy-db-check-connections:
 	./scripts/check-db-connections.sh
+else
+legacy-up-ready legacy-diagnose legacy-memo-show legacy-memo-log legacy-db-check-connections:
+	@echo "Legacy targets disabled; set ENABLE_LEGACY_TARGETS=1" >&2
+	@exit 2
+endif

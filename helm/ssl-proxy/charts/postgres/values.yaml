@@ -23,6 +23,8 @@ external: true
 # -- Postgres connection URL (without password, password goes in secret)
 host: "postgres-primary.postgres.svc.cluster.local"
 port: 5432
+# -- Optional node port bound directly by the Postgres pod (single-node deployments only)
+hostPort: null
 database: "sync"
 user: "sync"
 # -- Secret reference for Postgres password

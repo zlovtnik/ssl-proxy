@@ -45,7 +45,7 @@ spec:
             - --path.procfs=/host/proc
             - --path.sysfs=/host/sys
             - --path.rootfs=/host/root
-            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)
           ports:
             - name: metrics
               containerPort: 9100

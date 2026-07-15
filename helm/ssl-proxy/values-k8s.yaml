@@ -35,6 +35,8 @@ redpanda:
 postgres:
   external: false
   host: "ssl-proxy-postgres"
+  # Expose password-protected Postgres on the single Kubernetes node's LAN IP.
+  hostPort: 5432
   image:
     repository: "ssl-proxy-postgres"
     tag: latest

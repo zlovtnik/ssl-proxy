@@ -38,6 +38,16 @@
         }
       }
     },
+    "postgres": {
+      "type": "object",
+      "properties": {
+        "hostPort": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
     "integrationConsole": {
       "type": "object",
       "properties": {

@@ -171,13 +171,6 @@ production rollout on the Kubernetes server with its working kubeconfig.
 
 2. Validate dependencies and the server-specific render:
 
-   ```bash
-   helm dependency build helm/ssl-proxy
-   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml
-   helm template ssl-proxy helm/ssl-proxy \
-     -f helm/ssl-proxy/values-k8s.yaml >/tmp/ssl-proxy-rendered.yaml
-   ```
-
 3. Start or upgrade the stack from the server repository. Supply the real
    client profile values used by the deployment:
 

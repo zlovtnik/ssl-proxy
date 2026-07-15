@@ -108,17 +108,22 @@ class UpReadyKubernetesTest(unittest.TestCase):
         upgraded = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
+        dependencies_updated = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="", stderr=""
+        )
 
         with (
             patch.dict(os.environ, environment, clear=False),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
-                side_effect=[deployed, upgraded],
+                side_effect=[dependencies_updated, deployed, upgraded],
             ) as mocked_helm,
         ):
             helm_upgrade(ctx)
 
+        dependency_args = mocked_helm.call_args_list[0].args
         args = mocked_helm.call_args_list[-1].args
+        self.assertEqual(dependency_args[:2], ("dependency", "update"))
         self.assertEqual(args[0], "upgrade")
         self.assertNotIn("--install", args)
         self.assertIn("global.image.registry=192.168.1.221:32000", args)
@@ -151,12 +156,15 @@ class UpReadyKubernetesTest(unittest.TestCase):
         installed = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
+        dependencies_updated = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="", stderr=""
+        )
 
         with (
             patch.dict(os.environ, environment, clear=False),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
-                side_effect=[missing, installed],
+                side_effect=[dependencies_updated, missing, installed],
             ) as mocked_helm,
         ):
             helm_upgrade(ctx)
@@ -187,6 +195,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
+        dependencies_updated = subprocess.CompletedProcess(
+            args=["helm"], returncode=0, stdout="", stderr=""
+        )
         missing = subprocess.CompletedProcess(
             args=["helm"], returncode=1, stdout="", stderr="release not found"
         )
@@ -195,13 +206,13 @@ class UpReadyKubernetesTest(unittest.TestCase):
             patch.dict(os.environ, environment, clear=False),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
-                side_effect=[uninstalling, completed, missing, completed],
+                side_effect=[dependencies_updated, uninstalling, completed, missing, completed],
             ) as mocked_helm,
         ):
             helm_upgrade(ctx)
 
-        cleanup = mocked_helm.call_args_list[1].args
-        install = mocked_helm.call_args_list[3].args
+        cleanup = mocked_helm.call_args_list[2].args
+        install = mocked_helm.call_args_list[4].args
         self.assertEqual(cleanup[0], "uninstall")
         self.assertIn("--no-hooks", cleanup)
         self.assertEqual(install[0], "install")
