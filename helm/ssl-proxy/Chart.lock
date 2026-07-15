@@ -1,7 +1,7 @@
 dependencies:
 - name: proxy
   repository: file://charts/proxy
-  version: 0.1.1
+  version: 0.1.2
 - name: java-coordinator
   repository: file://charts/java-coordinator
   version: 0.1.1
@@ -32,5 +32,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.0
-digest: sha256:e45fd7d91e1576ccbd901f8451c5d225e1a23b621a01d42792b2c9eecaa8a408
-generated: "2026-07-14T21:46:19.072336-04:00"
+digest: sha256:a6f30ce6fd95e079295c55d2af43af727b973916d270c91e9695012eab1e63f5
+generated: "2026-07-14T22:11:05.624429-04:00"

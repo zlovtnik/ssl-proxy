@@ -156,12 +156,6 @@ spec:
               {{- end }}
               protocol: TCP
               name: policy
-            {{- if and .Values.hostPorts.enabled .Values.global.shared.monitoring.enabled .Values.service.metricsPort }}
-            - containerPort: {{ .Values.service.adminPort }}
-              hostPort: {{ .Values.service.metricsPort }}
-              protocol: TCP
-              name: metrics-host
-            {{- end }}
           {{- with .Values.healthcheck.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
