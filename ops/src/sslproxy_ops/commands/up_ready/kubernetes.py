@@ -288,7 +288,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         str(values),
     ]
     for key, value in set_values.items():
-        args.extend(["--set-string", f"{key}={value}"])
+        args.extend(["--set-literal", f"{key}={value}"])
     args.extend(dashboard_set_file_args())
     args.extend(
         [

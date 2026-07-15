@@ -91,8 +91,11 @@ class UpReadyKubernetesTest(unittest.TestCase):
         args = mocked_helm.call_args.args
         self.assertIn("global.image.registry=192.168.1.221:32000", args)
         self.assertIn("global.rolloutRevision=2026-07-14T12:00:00-0400", args)
+        self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
         self.assertIn("proxy.adminService.externalIPs[0]=192.168.1.221", args)
         self.assertIn("observability.prometheus.service.externalIPs[0]=192.168.1.221", args)
+        self.assertEqual(args.count("--set-literal"), 19)
+        self.assertNotIn("--set-string", args)
         self.assertIn("--wait-for-jobs", args)
         self.assertEqual(mocked_helm.call_args.kwargs["context"], "server-k8s")
 
