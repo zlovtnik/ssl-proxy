@@ -101,6 +101,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("--wait-for-jobs", args)
         self.assertIn("--history-max", args)
         self.assertEqual(mocked_helm.call_args.kwargs["context"], "server-k8s")
+        self.assertTrue(mocked_helm.call_args.kwargs["capture"])
 
     def test_registry_pull_probe_uses_canonical_registry_and_cleans_up(self):
         settings = Settings()

@@ -444,20 +444,27 @@ def kubernetes_diagnostics(ctx: UpReadyContext) -> None:
             run_started = datetime.fromisoformat(ctx.run_ts)
             recent: list[tuple[datetime, dict[str, object]]] = []
             for event in payload.get("items", []):
+                if not isinstance(event, dict):
+                    continue
+                series = event.get("series") or {}
+                metadata = event.get("metadata") or {}
                 timestamp = (
                     event.get("eventTime")
-                    or event.get("series", {}).get("lastObservedTime")
+                    or series.get("lastObservedTime")
                     or event.get("lastTimestamp")
-                    or event.get("metadata", {}).get("creationTimestamp")
+                    or metadata.get("creationTimestamp")
                 )
                 if not isinstance(timestamp, str):
                     continue
-                parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                try:
+                    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
                 if parsed >= run_started:
                     recent.append((parsed, event))
             print("--- Kubernetes warning events from this run ---")
             for timestamp, event in sorted(recent, key=lambda item: item[0])[-40:]:
-                involved = event.get("involvedObject", {})
+                involved = event.get("involvedObject") or {}
                 target = f"{involved.get('kind', 'Object')}/{involved.get('name', 'unknown')}"
                 print(
                     f"{timestamp.isoformat()} {event.get('reason', 'Warning')} "
