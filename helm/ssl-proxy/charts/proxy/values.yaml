@@ -54,6 +54,13 @@ resources:
   requests:
     cpu: 500m
     memory: 512Mi
+initResources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
 # WireGuard configuration
 wireguard:
   interfaceName: "wg0"

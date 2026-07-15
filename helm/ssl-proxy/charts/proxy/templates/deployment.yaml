@@ -42,6 +42,11 @@ spec:
           securityContext:
             runAsUser: 0
             runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.initResources | nindent 12 }}
           volumeMounts:
             - name: config-source
               mountPath: /config-source
