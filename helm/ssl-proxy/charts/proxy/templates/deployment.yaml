@@ -39,7 +39,7 @@ spec:
         - name: copy-wireguard-config
           image: {{ include "ssl-proxy.proxy.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/"]
+          command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/ && chmod -R g+rX /config"]
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -181,7 +181,7 @@ spec:
       volumes:
         - name: config-source
           projected:
-            defaultMode: 0400
+            defaultMode: 0440
             sources:
               - secret:
                   name: {{ .Values.wireguard.configSecret.name }}
@@ -209,7 +209,7 @@ spec:
         - name: runtime-secrets
           secret:
             secretName: {{ .Values.runtimeSecret.name }}
-            defaultMode: 0400
+            defaultMode: 0440
             items:
               - key: {{ .Values.runtimeSecret.obfuscationKey }}
                 path: wg_obfuscation_key

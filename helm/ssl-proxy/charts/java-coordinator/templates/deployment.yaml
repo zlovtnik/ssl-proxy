@@ -7,18 +7,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.javaCoordinator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: zig-coordinator
+    app.kubernetes.io/component: java-coordinator
 spec:
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: zig-coordinator
+      app.kubernetes.io/component: java-coordinator
   template:
     metadata:
       labels:
         {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: zig-coordinator
+        app.kubernetes.io/component: java-coordinator
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
         {{- with .Values.global.rolloutRevision }}
@@ -321,6 +321,10 @@ spec:
           {{- end }}
           {{- with .Values.healthcheck.livenessProbe }}
           livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.healthcheck.readinessProbe }}
+          readinessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           resources:

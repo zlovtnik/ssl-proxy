@@ -7,16 +7,15 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy.javaCoordinator.labels" . | nindent 4 }}
-    app.kubernetes.io/component: zig-coordinator
+    app.kubernetes.io/component: java-coordinator
 spec:
   type: {{ .Values.service.type }}
   selector:
     {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: zig-coordinator
+    app.kubernetes.io/component: java-coordinator
   ports:
     - name: http
       port: {{ .Values.service.port }}
       targetPort: 8081
       protocol: TCP
 {{- end }}
-

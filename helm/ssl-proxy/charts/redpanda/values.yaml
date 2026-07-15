@@ -28,8 +28,10 @@ image:
   repository: redpandadata/redpanda
   tag: latest
   pullPolicy: IfNotPresent
+# The bundled StatefulSet intentionally supports one broker. Use an external
+# Redpanda cluster for multi-broker deployments.
 replicas: 1
-topicReplicationFactor: 3
+topicReplicationFactor: 1
 initJob:
   activeDeadlineSeconds: 600
   backoffLimit: 3

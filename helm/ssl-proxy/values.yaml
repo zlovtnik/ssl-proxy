@@ -14,7 +14,8 @@ global:
     name: "ssl-proxy"
     annotations: {}
     automountServiceAccountToken: false
-  podSecurityContext: {}
+  podSecurityContext:
+    fsGroup: 1000
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
@@ -97,17 +98,14 @@ global:
         networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
       topicPartitions: 5
     integrationConsole:
-      enabled: true
       web:
         service:
           port: 3005
     atherosSensor:
-      enabled: true
       metricsPort: 9097
-    monitoring:
-      enabled: true
 
-# Dependency switches remain at their historical paths for Helm --set compatibility.
+# Dependency aliases are the authoritative enablement paths and preserve the
+# historical Helm --set names.
 proxy:
   enabled: true
 javaCoordinator:

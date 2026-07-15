@@ -1,4 +1,7 @@
 {{- if not .Values.external }}
+{{- if ne (int .Values.replicas) 1 }}
+{{- fail "redpanda.replicas must be 1; this chart's service and storage layout is single-node only" }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: StatefulSet

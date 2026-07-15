@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")
     image_tag: str | None = Field(default=None, validation_alias="IMAGE_TAG")
+    wg_port: int = Field(default=443, ge=1, le=65535, validation_alias="WG_PORT")
+    wg_internal_port: int = Field(
+        default=51820, ge=1, le=65535, validation_alias="WG_INTERNAL_PORT"
+    )
+    wg_obfuscation_enabled: bool = Field(
+        default=False, validation_alias="WG_OBFUSCATION_ENABLED"
+    )
 
     sync_scan_topic: str = Field(default="sync.scan.request", validation_alias="SYNC_SCAN_TOPIC")
     sync_scan_consumer: str = Field(

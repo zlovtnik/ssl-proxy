@@ -22,7 +22,7 @@ spec:
       port: {{ .Values.service.policyPort }}
       targetPort: {{ .Values.service.policyPort }}
       protocol: TCP
-{{- if and .Values.global.shared.monitoring.enabled .Values.service.metricsPort }}
+{{- if .Values.service.metricsPort }}
     - name: metrics
       port: {{ .Values.service.metricsPort }}
       targetPort: admin

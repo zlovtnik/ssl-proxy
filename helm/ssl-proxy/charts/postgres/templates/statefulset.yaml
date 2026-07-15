@@ -58,6 +58,8 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.passwordSecret.name }}
                   key: {{ .Values.passwordSecret.key }}
+            - name: PGDATA
+              value: {{ .Values.persistence.pgData | quote }}
           ports:
             - name: postgres
               containerPort: {{ .Values.port }}
@@ -82,7 +84,7 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: postgres-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: {{ .Values.persistence.mountPath | quote }}
       volumes:
         - name: postgres-data
           {{- if .Values.persistence.hostPath }}

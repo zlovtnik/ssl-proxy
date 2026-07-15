@@ -17,7 +17,12 @@ app = typer.Typer(help="Host bootstrap and sensor preparation commands.")
 
 def normalize_registry_authority(value: str) -> str:
     registry = re.sub(r"^https?://", "", value.strip()).rstrip("/")
-    if not registry or "/" in registry or any(char.isspace() for char in registry):
+    if (
+        not registry
+        or registry in {".", ".."}
+        or "/" in registry
+        or any(char.isspace() for char in registry)
+    ):
         raise ValueError("registry must be a host[:port] without a URL path")
     return registry
 

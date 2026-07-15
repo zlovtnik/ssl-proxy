@@ -12,7 +12,8 @@ global:
     create: true
     name: "ssl-proxy"
     annotations: {}
-  podSecurityContext: {}
+  podSecurityContext:
+    fsGroup: 1000
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
@@ -21,15 +22,13 @@ global:
     javaCoordinator:
       tracing:
         otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
-    monitoring:
-      enabled: true
 
 enabled: true
 replicas: 1
 image:
   repository: ssl-proxy
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 service:
   type: ClusterIP
   # -- WireGuard UDP port
@@ -107,7 +106,7 @@ healthcheck:
   livenessProbe:
     httpGet:
       path: /health
-      port: 3002
+      port: admin
     initialDelaySeconds: 40
     periodSeconds: 30
     timeoutSeconds: 10
@@ -115,7 +114,7 @@ healthcheck:
   readinessProbe:
     httpGet:
       path: /ready
-      port: 3002
+      port: admin
     initialDelaySeconds: 20
     periodSeconds: 10
     timeoutSeconds: 5

@@ -138,6 +138,8 @@ def ensure_compose_env_defaults(ctx: UpReadyContext) -> None:
         raise UpReadyError("IMAGE_TAG resolved to a placeholder; set IMAGE_TAG before running up-ready")
     os.environ["REGISTRY"] = registry
     os.environ["IMAGE_TAG"] = image_tag
+    ctx.settings.registry = registry
+    ctx.settings.image_tag = image_tag
 
 
 def require_dotenv_value_resolved(key: str) -> None:

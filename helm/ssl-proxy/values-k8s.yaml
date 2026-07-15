@@ -16,14 +16,10 @@ global:
     minio:
       endpoint: "http://ssl-proxy-minio:9000"
     integrationConsole:
-      enabled: true
       web:
         service:
           port: 3005
     atherosSensor:
-      enabled: true
-    monitoring:
-      enabled: true
 
 redpanda:
   external: false

@@ -58,24 +58,24 @@ def apply_profile_runtime_env(ctx: UpReadyContext) -> None:
         case "iphone":
             # Preserve the established shim endpoint while exposing the
             # boringtun listener on the separate direct-client port.
-            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
-            os.environ["WG_PORT"] = "443"
-            os.environ["WG_INTERNAL_PORT"] = "51820"
+            obfuscation_enabled, wg_port, wg_internal_port = True, 443, 51820
             activate_obfuscation_key_env_fallback()
         case "linux-direct":
-            os.environ["WG_OBFUSCATION_ENABLED"] = "false"
-            os.environ["WG_PORT"] = "443"
-            os.environ["WG_INTERNAL_PORT"] = "51820"
+            obfuscation_enabled, wg_port, wg_internal_port = False, 443, 51820
         case "linux-shim":
-            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
-            os.environ["WG_PORT"] = "443"
-            os.environ["WG_INTERNAL_PORT"] = "51820"
+            obfuscation_enabled, wg_port, wg_internal_port = True, 443, 51820
             activate_obfuscation_key_env_fallback()
         case "mac":
-            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
-            os.environ["WG_PORT"] = "51820"
-            os.environ["WG_INTERNAL_PORT"] = "443"
+            obfuscation_enabled, wg_port, wg_internal_port = True, 51820, 443
             activate_obfuscation_key_env_fallback()
+        case _:
+            return
+    ctx.settings.wg_obfuscation_enabled = obfuscation_enabled
+    ctx.settings.wg_port = wg_port
+    ctx.settings.wg_internal_port = wg_internal_port
+    os.environ["WG_OBFUSCATION_ENABLED"] = str(obfuscation_enabled).lower()
+    os.environ["WG_PORT"] = str(wg_port)
+    os.environ["WG_INTERNAL_PORT"] = str(wg_internal_port)
 
 
 def required_stack_healthy(ctx: UpReadyContext) -> bool:
@@ -139,21 +139,27 @@ def auto_fix(ctx: UpReadyContext, failure_class: str, text: str = "") -> bool:
         return False
 
     if ctx.settings.deployment_target == "kubernetes":
-        match failure_class:
-            case "profile_obfuscation_mismatch":
-                apply_profile_runtime_env(ctx)
-                helm_upgrade(ctx)
-                ctx.auto_fixed_classes.add(failure_class)
-                return True
-            case "wg_peer_material_missing":
-                ensure_local_peer_material(ctx)
-                sync_kubernetes_secrets(ctx)
-                helm_upgrade(ctx)
-                ctx.auto_fixed_classes.add(failure_class)
-                return True
-            case "admin_loopback_false_negative" | "qr_permission_denied":
-                ctx.auto_fixed_classes.add(failure_class)
-                return True
+        try:
+            match failure_class:
+                case "profile_obfuscation_mismatch":
+                    apply_profile_runtime_env(ctx)
+                    if not helm_upgrade(ctx):
+                        return False
+                    ctx.auto_fixed_classes.add(failure_class)
+                    return True
+                case "wg_peer_material_missing":
+                    ensure_local_peer_material(ctx)
+                    if not sync_kubernetes_secrets(ctx) or not helm_upgrade(ctx):
+                        return False
+                    ctx.auto_fixed_classes.add(failure_class)
+                    return True
+                case "admin_loopback_false_negative" | "qr_permission_denied":
+                    step("S09", f"auto_fix[{failure_class}]: no-op (handled by fallback path)")
+                    ctx.auto_fixed_classes.add(failure_class)
+                    return True
+        except (shell.ShellCommandError, UpReadyError) as exc:
+            ctx.classify(str(exc))
+            return False
         return False
 
     match failure_class:

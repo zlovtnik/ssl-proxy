@@ -72,54 +72,6 @@ resources:
   requests:
     cpu: 250m
     memory: 256Mi
-# Topic configuration
-topics:
-  scanTopic: "sync.scan.request"
-  loadTopic: "sync.oracle.load"
-  resultTopic: "sync.oracle.result"
-  payloadAuditTopic: "proxy.payload_audit"
-# Consumer group names
-consumers:
-  scanConsumer: "zig-coordinator-scan"
-  loadConsumer: "oracle-worker-load"
-  resultConsumer: "zig-coordinator-result"
-  payloadAuditConsumer: "zig-coordinator-payload-audit"
-# Stream names configuration
-streams:
-  syncStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
-  oracleStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
-  auditStreamName: "AUDIT_STREAM"
-  resultStreamName: "ORACLE_RESULT_STREAM"
-  wirelessBacklogStreamName: "WIRELESS_BACKLOG_STREAM"
-  wirelessMacStreamName: "WIRELESS_MAC_STREAM"
-  wirelessNetworksStreamName: "WIRELESS_NETWORKS_STREAM"
-  wirelessProbeStreamName: "WIRELESS_PROBE_STREAM"
-# Wireless operation topics
-wirelessTopics:
-  backlogSaveTopic: "wireless.backlog.save"
-  backlogListTopic: "wireless.backlog.list"
-  backlogSyncedTopic: "wireless.backlog.synced"
-  backlogPruneTopic: "wireless.backlog.prune"
-  macLookupTopic: "wireless.mac.lookup"
-  networksAuthorizedTopic: "wireless.networks.authorized"
-  probeFlushTopic: "wireless.probe.flush"
-# Wireless consumer groups
-wirelessConsumers:
-  backlogSaveConsumer: "wireless-backlog-save"
-  backlogListConsumer: "wireless-backlog-list"
-  backlogSyncedConsumer: "wireless-backlog-synced"
-  backlogPruneConsumer: "wireless-backlog-prune"
-  macLookupConsumer: "wireless-mac-lookup"
-  networksAuthorizedConsumer: "wireless-networks-authorized"
-  probeFlushConsumer: "wireless-probe-flush"
-# Wireless reply topics
-wirelessReplyTopics:
-  backlogListReplyTopic: "wireless.backlog.list.reply"
-  backlogPruneReplyTopic: "wireless.backlog.prune.reply"
-  macLookupReplyTopic: "wireless.mac.lookup.reply"
-  networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
-# Topic partition count (must be >= max replicas)
-topicPartitions: 5
 # Health check - Spring Boot Actuator
 healthcheck:
   startupProbe:
@@ -135,6 +87,13 @@ healthcheck:
     periodSeconds: 30
     timeoutSeconds: 10
     failureThreshold: 5
+  readinessProbe:
+    tcpSocket:
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
 # Metrics endpoint (embedded in Actuator)
 metrics:
   enabled: true

@@ -18,6 +18,11 @@ class HostCommandTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_registry_authority("192.168.1.221:5000/team")
 
+    def test_rejects_dot_only_registry_authorities(self):
+        for authority in (".", "..", "http://./", "https://../"):
+            with self.subTest(authority=authority), self.assertRaises(ValueError):
+                normalize_registry_authority(authority)
+
     def test_plain_http_hosts_toml_is_pull_only(self):
         rendered = containerd_registry_hosts_toml(
             "192.168.1.221:5000", plain_http=True

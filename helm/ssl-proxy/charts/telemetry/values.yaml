@@ -40,12 +40,10 @@ global:
       service:
         port: 8080
     integrationConsole:
-      enabled: true
       web:
         service:
           port: 3005
     atherosSensor:
-      enabled: true
       metricsPort: 9097
 
 # KEDA, ServiceMonitor, and dashboard-discovery values remain explicitly tracked as gaps in the umbrella chart.
@@ -220,7 +218,7 @@ keda:
     scaleDown:
       stabilizationWindowSeconds: 300
 
-# TODO: ServiceMonitor templates do not exist yet; monitoring.enabled currently only controls proxy metrics exposure.
+# TODO: ServiceMonitor templates do not exist yet.
 monitoring:
   # -- Set to true to create ServiceMonitors for Prometheus scraping
   enabled: true

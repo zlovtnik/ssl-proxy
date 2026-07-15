@@ -38,7 +38,12 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: loki
     spec:
+      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: loki
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.loki.image) }}
@@ -82,6 +87,18 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- if and .Values.loki.persistence.enabled (not .Values.loki.persistence.hostPath) }}
 ---
 apiVersion: v1

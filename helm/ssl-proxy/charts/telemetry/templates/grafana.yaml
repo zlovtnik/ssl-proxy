@@ -37,10 +37,21 @@ spec:
       labels:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: grafana
+      {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
+      annotations:
+        {{- with .Values.global.rolloutRevision }}
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
     spec:
+      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- $podSecurityContext := mergeOverwrite (deepCopy (default (dict) .Values.global.podSecurityContext)) (dict "fsGroup" 472) }}
       securityContext:
-        fsGroup: 472
+        {{- toYaml $podSecurityContext | nindent 8 }}
       containers:
         - name: grafana
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.grafana.image) }}
@@ -101,6 +112,18 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- if and .Values.grafana.persistence.enabled (not .Values.grafana.persistence.hostPath) }}
 ---
 apiVersion: v1

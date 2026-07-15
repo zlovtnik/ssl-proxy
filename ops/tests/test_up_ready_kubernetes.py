@@ -90,6 +90,11 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings = Settings()
         settings.server_ip = "192.168.1.221"
         settings.kube_context = "server-k8s"
+        settings.registry = "192.168.1.221:32000/"
+        settings.image_tag = "latest"
+        settings.wg_port = 51820
+        settings.wg_internal_port = 443
+        settings.wg_obfuscation_enabled = True
         ctx = UpReadyContext(settings=settings, run_ts="2026-07-14T12:00:00-0400")
         environment = {
             "REGISTRY": "192.168.1.221:32000/",
@@ -129,7 +134,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("global.image.registry=192.168.1.221:32000", args)
         self.assertIn("global.rolloutRevision=2026-07-14T12:00:00-0400", args)
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
-        self.assertEqual(args.count("--set-literal"), 13)
+        self.assertEqual(args.count("--set-literal"), 10)
+        self.assertEqual(args.count("--set"), 3)
+        self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)
         self.assertIn("--server-side=true", args)
         self.assertIn("--wait=watcher", args)
@@ -139,9 +146,22 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertEqual(mocked_helm.call_args_list[-1].kwargs["context"], "server-k8s")
         self.assertTrue(mocked_helm.call_args_list[-1].kwargs["capture"])
 
+    def test_helm_upgrade_requires_validated_settings(self):
+        settings = Settings()
+        settings.registry = None
+        settings.image_tag = None
+
+        with self.assertRaisesRegex(UpReadyError, "REGISTRY"):
+            helm_upgrade(UpReadyContext(settings=settings))
+
     def test_helm_first_install_does_not_request_rollback(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
+        settings.registry = "192.168.1.221:5000"
+        settings.image_tag = "latest"
+        settings.wg_port = 51820
+        settings.wg_internal_port = 443
+        settings.wg_obfuscation_enabled = True
         ctx = UpReadyContext(settings=settings)
         environment = {
             "REGISTRY": "192.168.1.221:5000",
@@ -178,6 +198,11 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_helm_stale_first_install_is_removed_before_retry(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
+        settings.registry = "192.168.1.221:5000"
+        settings.image_tag = "latest"
+        settings.wg_port = 51820
+        settings.wg_internal_port = 443
+        settings.wg_obfuscation_enabled = True
         ctx = UpReadyContext(settings=settings)
         environment = {
             "REGISTRY": "192.168.1.221:5000",
@@ -261,19 +286,27 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
     def test_registry_publish_builds_and_mirrors(self):
         settings = Settings()
+        settings.registry = "192.168.1.221:32000/"
+        settings.image_tag = "latest"
         ctx = UpReadyContext(settings=settings)
-        environment = {"REGISTRY": "192.168.1.221:32000", "IMAGE_TAG": "latest"}
 
-        with (
-            patch.dict(os.environ, environment, clear=False),
-            patch("sslproxy_ops.commands.up_ready.kubernetes.shell.run") as mocked_run,
-        ):
+        with patch("sslproxy_ops.commands.up_ready.kubernetes.shell.run") as mocked_run:
             publish_registry_images(ctx)
 
         self.assertEqual(
             [call.args[0][1] for call in mocked_run.call_args_list],
             ["registry-build-all", "registry-mirror-all"],
         )
+        self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[0].args[0])
+        self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[1].args[0])
+
+    def test_registry_publish_requires_validated_settings(self):
+        settings = Settings()
+        settings.registry = None
+        ctx = UpReadyContext(settings=settings)
+
+        with self.assertRaisesRegex(UpReadyError, "REGISTRY"):
+            publish_registry_images(ctx)
 
     def test_registry_publish_does_not_require_environment_when_disabled(self):
         settings = Settings()
@@ -319,11 +352,25 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.helm_upgrade",
                 side_effect=UpReadyError("upgrade failed"),
             ),
-            self.assertRaisesRegex(UpReadyError, "upgrade failed"),
         ):
-            auto_fix(ctx, "profile_obfuscation_mismatch")
+            self.assertFalse(auto_fix(ctx, "profile_obfuscation_mismatch"))
 
         self.assertNotIn("profile_obfuscation_mismatch", ctx.auto_fixed_classes)
+
+    def test_kubernetes_auto_fix_checks_secret_sync_result(self):
+        settings = Settings()
+        settings.deployment_target = "kubernetes"
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch("sslproxy_ops.commands.up_ready.ensure_local_peer_material"),
+            patch("sslproxy_ops.commands.up_ready.sync_kubernetes_secrets", return_value=False),
+            patch("sslproxy_ops.commands.up_ready.helm_upgrade") as mocked_upgrade,
+        ):
+            self.assertFalse(auto_fix(ctx, "wg_peer_material_missing"))
+
+        mocked_upgrade.assert_not_called()
+        self.assertNotIn("wg_peer_material_missing", ctx.auto_fixed_classes)
 
 
 if __name__ == "__main__":

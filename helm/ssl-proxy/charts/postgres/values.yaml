@@ -38,6 +38,9 @@ image:
 persistence:
   enabled: true
   hostPath: ""
+  # postgres:16 uses the pre-18 data-directory layout.
+  mountPath: "/var/lib/postgresql/data"
+  pgData: "/var/lib/postgresql/data/pgdata"
   size: 100Gi
   storageClassName: ""
 resources:

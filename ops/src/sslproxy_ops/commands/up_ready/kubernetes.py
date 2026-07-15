@@ -158,7 +158,7 @@ def apply_secret(
     _apply_rendered_resource(ctx, rendered or "")
 
 
-def sync_kubernetes_secrets(ctx: UpReadyContext) -> None:
+def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
     step("S02", "kubernetes_secrets: applying protected files with server-side apply")
     root = repo_root()
     secrets = root / "secrets"
@@ -211,6 +211,7 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> None:
             ]
         )
     apply_secret(ctx, "wireguard-config", wireguard_files)
+    return True
 
 
 def publish_registry_images(ctx: UpReadyContext) -> None:
@@ -219,9 +220,13 @@ def publish_registry_images(ctx: UpReadyContext) -> None:
     ):
         return
 
-    registry = os.environ["REGISTRY"]
+    registry = (ctx.settings.registry or "").strip().rstrip("/")
+    if not registry:
+        raise UpReadyError("REGISTRY is required to publish registry images")
     if ctx.settings.build_registry_images:
-        image_tag = os.environ["IMAGE_TAG"]
+        image_tag = (ctx.settings.image_tag or "").strip()
+        if not image_tag:
+            raise UpReadyError("IMAGE_TAG is required to build registry images")
         step("S03", f"registry_build: first-party images -> {registry} tag={image_tag}")
         shell.run(
             ["make", "registry-build-all", f"REGISTRY={registry}", f"TAG={image_tag}"]
@@ -418,10 +423,14 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
     )
 
 
-def helm_upgrade(ctx: UpReadyContext) -> None:
+def helm_upgrade(ctx: UpReadyContext) -> bool:
     root = repo_root()
-    registry = os.environ["REGISTRY"].rstrip("/")
-    image_tag = os.environ["IMAGE_TAG"]
+    registry = (ctx.settings.registry or "").strip().rstrip("/")
+    image_tag = (ctx.settings.image_tag or "").strip()
+    if not registry:
+        raise UpReadyError("REGISTRY is required for Helm deployment")
+    if not image_tag:
+        raise UpReadyError("IMAGE_TAG is required for Helm deployment")
     release = ctx.settings.helm_release
     namespace = ctx.settings.kube_namespace
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
@@ -436,7 +445,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         capture=True,
     )
     is_upgrade = prepare_helm_release(ctx)
-    set_values = {
+    literal_values = {
         "global.image.registry": registry,
         "global.rolloutRevision": ctx.run_ts,
         "proxy.image.tag": image_tag,
@@ -447,9 +456,13 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         "atherosSearch.image.tag": image_tag,
         "postgres.image.tag": image_tag,
         "proxy.wireguard.peerNames": peers,
-        "proxy.wireguard.port": os.environ["WG_PORT"],
-        "proxy.wireguard.internalPort": os.environ["WG_INTERNAL_PORT"],
-        "proxy.wireguard.obfuscation.enabled": os.environ["WG_OBFUSCATION_ENABLED"],
+    }
+    typed_values = {
+        "proxy.wireguard.port": ctx.settings.wg_port,
+        "proxy.wireguard.internalPort": ctx.settings.wg_internal_port,
+        "proxy.wireguard.obfuscation.enabled": str(
+            ctx.settings.wg_obfuscation_enabled
+        ).lower(),
     }
     args = [
         "upgrade" if is_upgrade else "install",
@@ -461,8 +474,10 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         "--values",
         str(values),
     ]
-    for key, value in set_values.items():
+    for key, value in literal_values.items():
         args.extend(["--set-literal", f"{key}={value}"])
+    for key, value in typed_values.items():
+        args.extend(["--set", f"{key}={value}"])
     args.extend(dashboard_set_file_args())
     args.extend(
         [
@@ -487,6 +502,7 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
             end="" if completed.stderr.endswith("\n") else "\n",
             file=__import__("sys").stderr,
         )
+    return True
 
 
 def kubernetes_up(ctx: UpReadyContext) -> bool:

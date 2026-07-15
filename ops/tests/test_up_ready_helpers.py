@@ -216,6 +216,9 @@ class UpReadyHelpersTest(unittest.TestCase):
             self.assertEqual(os.environ["WG_OBFUSCATION_ENABLED"], "true")
             self.assertEqual(os.environ["WG_PORT"], "443")
             self.assertEqual(os.environ["WG_INTERNAL_PORT"], "51820")
+            self.assertTrue(settings.wg_obfuscation_enabled)
+            self.assertEqual(settings.wg_port, 443)
+            self.assertEqual(settings.wg_internal_port, 51820)
             activate_key.assert_called_once_with()
 
     def test_direct_profile_uses_plain_internal_port_without_listen_port(self):
