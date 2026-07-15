@@ -31,7 +31,7 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 service:
-  type: LoadBalancer
+  type: ClusterIP
   # -- WireGuard UDP port
   wgPort: 443
   # -- Plain WireGuard UDP port
@@ -42,10 +42,10 @@ service:
   metricsPort: 3003
   # -- Policy enforcement port
   policyPort: 3001
-  externalIPs: []
   annotations: {}
-adminService:
-  externalIPs: []
+hostPorts:
+  # Single-node values may bind the public ports directly on the node.
+  enabled: false
 # Resource limits (matches docker-compose)
 resources:
   limits:

@@ -54,7 +54,7 @@ prometheus:
     pullPolicy: IfNotPresent
   service:
     port: 9090
-    externalIPs: []
+    hostPort: null
   persistence:
     enabled: true
     hostPath: ""
@@ -86,7 +86,9 @@ jaeger:
     pullPolicy: IfNotPresent
   service:
     port: 16686
-    externalIPs: []
+    hostPort: null
+    otlpGrpcHostPort: null
+    metricsHostPort: null
 otelCollector:
   image:
     repository: otel/opentelemetry-collector-contrib
@@ -100,7 +102,7 @@ grafana:
   service:
     port: 3004
     targetPort: 3000
-    externalIPs: []
+    hostPort: null
   adminUser: admin
   adminPasswordSecret:
     name: observability-credentials

@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -228,6 +228,14 @@ prep-ath: $(OPS_BOOTSTRAP)
 
 setup-ubuntu: $(OPS_BOOTSTRAP)
 	$(OPS) host setup-ubuntu
+
+# Run once as root on each Kubernetes node that pulls from a plain-HTTP REGISTRY.
+configure-containerd-registry: require-registry $(OPS_BOOTSTRAP)
+	@if [ -n "$(UV)" ]; then \
+		sudo env REGISTRY="$(REGISTRY)" "$(UV)" run --project "$(CURDIR)/ops" python -m sslproxy_ops host configure-containerd-registry --registry "$(REGISTRY)" --plain-http; \
+	else \
+		sudo env REGISTRY="$(REGISTRY)" "$(OPS_PYTHON)" -m sslproxy_ops host configure-containerd-registry --registry "$(REGISTRY)" --plain-http; \
+	fi
 
 shellcheck-tier-b: $(OPS_BOOTSTRAP)
 	$(OPS) host shellcheck-tier-b

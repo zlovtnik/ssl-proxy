@@ -8,10 +8,6 @@ metadata:
     {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
     app.kubernetes.io/component: prometheus
 spec:
-  {{- with .Values.prometheus.service.externalIPs }}
-  externalIPs:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
   selector:
     {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: prometheus
@@ -52,6 +48,9 @@ spec:
           ports:
             - name: http
               containerPort: 9090
+              {{- with .Values.prometheus.service.hostPort }}
+              hostPort: {{ . }}
+              {{- end }}
           readinessProbe:
             httpGet:
               path: /-/ready
@@ -110,4 +109,3 @@ spec:
       storage: {{ .Values.prometheus.persistence.size }}
 {{- end }}
 {{- end }}
-

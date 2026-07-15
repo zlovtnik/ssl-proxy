@@ -59,11 +59,8 @@ proxy:
     pullPolicy: Always
   service:
     type: ClusterIP
-    externalIPs:
-      - "192.168.1.221"
-  adminService:
-    externalIPs:
-      - "192.168.1.221"
+  hostPorts:
+    enabled: true
   wireguard:
     obfuscationMaxDatagramBytes: 1500
   healthcheck:
@@ -110,8 +107,7 @@ integrationConsole:
       port: 3005
       targetPort: 3000
       type: ClusterIP
-      externalIPs:
-        - "192.168.1.221"
+      hostPort: 3005
   dbSetup:
     image:
       repository: integration-console
@@ -139,8 +135,7 @@ observability:
     enabled: true
   prometheus:
     service:
-      externalIPs:
-        - "192.168.1.221"
+      hostPort: 9090
     persistence:
       hostPath: "/var/lib/docker/volumes/ssl-proxy_prometheus-data/_data"
   loki:
@@ -148,11 +143,11 @@ observability:
       hostPath: "/var/lib/docker/volumes/ssl-proxy_loki-data/_data"
   jaeger:
     service:
-      externalIPs:
-        - "192.168.1.221"
+      hostPort: 16686
+      otlpGrpcHostPort: 4317
+      metricsHostPort: 14269
   grafana:
     service:
-      externalIPs:
-        - "192.168.1.221"
+      hostPort: 3004
     persistence:
       hostPath: "/var/lib/docker/volumes/ssl-proxy_grafana-data/_data"

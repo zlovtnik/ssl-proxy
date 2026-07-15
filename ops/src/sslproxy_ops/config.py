@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     kube_namespace: str = Field(default="ssl-proxy", validation_alias="UP_READY_KUBE_NAMESPACE")
     helm_release: str = Field(default="ssl-proxy", validation_alias="UP_READY_HELM_RELEASE")
     helm_timeout: str = Field(default="15m", validation_alias="UP_READY_HELM_TIMEOUT")
+    kube_registry_probe_timeout: str = Field(
+        default="45s", validation_alias="UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT"
+    )
 
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -218,6 +219,103 @@ def publish_registry_images(ctx: UpReadyContext) -> None:
         shell.run(["make", "registry-mirror-all", *common])
 
 
+def verify_kubernetes_registry_pull(ctx: UpReadyContext) -> None:
+    """Prove that the node runtime can pull the canonical registry reference."""
+    if ctx.settings.skip_registry_preflight:
+        return
+
+    registry = os.environ["REGISTRY"].rstrip("/")
+    image = f"{registry}/redis:7-alpine"
+    name = f"{ctx.settings.helm_release}-registry-pull-probe"
+    namespace = ctx.settings.kube_namespace
+    context = ctx.settings.kube_context
+    delete_args = [
+        "--namespace",
+        namespace,
+        "delete",
+        "pod",
+        name,
+        "--ignore-not-found",
+        "--wait=true",
+    ]
+
+    step("S03", f"kubernetes_registry_pull: image={image}")
+    shell.kubectl(*delete_args, context=context, check=False, capture=True)
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/name": ctx.settings.helm_release,
+                "app.kubernetes.io/component": "registry-pull-probe",
+                "app.kubernetes.io/managed-by": "sslproxy-ops",
+            },
+        },
+        "spec": {
+            "automountServiceAccountToken": False,
+            "restartPolicy": "Never",
+            "securityContext": {"seccompProfile": {"type": "RuntimeDefault"}},
+            "containers": [
+                {
+                    "name": "registry-pull-probe",
+                    "image": image,
+                    "imagePullPolicy": "Always",
+                    "command": ["/bin/sh", "-c", "true"],
+                    "resources": {
+                        "requests": {"cpu": "10m", "memory": "16Mi"},
+                        "limits": {"cpu": "100m", "memory": "64Mi"},
+                    },
+                    "securityContext": {
+                        "allowPrivilegeEscalation": False,
+                        "capabilities": {"drop": ["ALL"]},
+                        "readOnlyRootFilesystem": True,
+                    },
+                }
+            ],
+        },
+    }
+    _apply_rendered_resource(ctx, json.dumps(manifest))
+    try:
+        completed = shell.kubectl(
+            "--namespace",
+            namespace,
+            "wait",
+            f"pod/{name}",
+            "--for=jsonpath={.status.phase}=Succeeded",
+            f"--timeout={ctx.settings.kube_registry_probe_timeout}",
+            context=context,
+            check=False,
+            capture=True,
+        )
+        if completed.returncode == 0:
+            return
+
+        described = shell.kubectl(
+            "--namespace",
+            namespace,
+            "describe",
+            "pod",
+            name,
+            context=context,
+            check=False,
+            capture=True,
+        )
+        detail = "\n".join(
+            part.strip()
+            for part in (completed.stdout, completed.stderr, described.stdout, described.stderr)
+            if part and part.strip()
+        )
+        raise UpReadyError(
+            "Kubernetes containerd could not pull "
+            f"{image} before Helm started. Configure node {ctx.settings.server_ip} for the "
+            f"plain-HTTP registry {registry}, restart containerd, and retry.\n{detail}"
+        )
+    finally:
+        shell.kubectl(*delete_args, context=context, check=False, capture=True)
+
+
 def dashboard_set_file_args() -> list[str]:
     dashboards = repo_root() / "docker" / "observability" / "grafana" / "dashboards"
     names = {
@@ -269,12 +367,6 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
         "proxy.wireguard.port": os.environ["WG_PORT"],
         "proxy.wireguard.internalPort": os.environ["WG_INTERNAL_PORT"],
         "proxy.wireguard.obfuscation.enabled": os.environ["WG_OBFUSCATION_ENABLED"],
-        "proxy.service.externalIPs[0]": ctx.settings.server_ip,
-        "proxy.adminService.externalIPs[0]": ctx.settings.server_ip,
-        "integrationConsole.web.service.externalIPs[0]": ctx.settings.server_ip,
-        "observability.prometheus.service.externalIPs[0]": ctx.settings.server_ip,
-        "observability.grafana.service.externalIPs[0]": ctx.settings.server_ip,
-        "observability.jaeger.service.externalIPs[0]": ctx.settings.server_ip,
     }
     args = [
         "upgrade",
@@ -293,8 +385,11 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     args.extend(
         [
             "--rollback-on-failure",
-            "--wait",
+            "--server-side=true",
+            "--wait=watcher",
             "--wait-for-jobs",
+            "--history-max",
+            "5",
             "--timeout",
             ctx.settings.helm_timeout,
         ]
@@ -308,6 +403,7 @@ def kubernetes_up(ctx: UpReadyContext) -> bool:
     try:
         sync_kubernetes_secrets(ctx)
         publish_registry_images(ctx)
+        verify_kubernetes_registry_pull(ctx)
         helm_upgrade(ctx)
     except (shell.ShellCommandError, UpReadyError) as exc:
         ctx.classify(str(exc))

@@ -45,6 +45,9 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.web.service.targetPort }}
+              {{- with .Values.web.service.hostPort }}
+              hostPort: {{ . }}
+              {{- end }}
           startupProbe:
             tcpSocket:
               port: http
@@ -62,4 +65,3 @@ spec:
           resources:
             {{- toYaml .Values.web.resources | nindent 12 }}
 {{- end }}
-

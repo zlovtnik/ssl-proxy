@@ -10,10 +10,6 @@ metadata:
     app.kubernetes.io/component: proxy
 spec:
   type: ClusterIP
-  {{- with .Values.adminService.externalIPs }}
-  externalIPs:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
   selector:
     {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: proxy
@@ -33,4 +29,3 @@ spec:
       protocol: TCP
 {{- end }}
 {{- end }}
-

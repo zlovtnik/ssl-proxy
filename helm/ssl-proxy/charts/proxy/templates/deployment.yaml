@@ -127,17 +127,35 @@ spec:
               value: "ssl-proxy"
           ports:
             - containerPort: {{ .Values.wireguard.port }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.wireguard.port }}
+              {{- end }}
               protocol: UDP
               name: wireguard
             - containerPort: {{ .Values.wireguard.internalPort }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.wireguard.internalPort }}
+              {{- end }}
               protocol: UDP
               name: wg-internal
             - containerPort: {{ .Values.service.adminPort }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.service.adminPort }}
+              {{- end }}
               protocol: TCP
               name: admin
             - containerPort: {{ .Values.service.policyPort }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.service.policyPort }}
+              {{- end }}
               protocol: TCP
               name: policy
+            {{- if and .Values.hostPorts.enabled .Values.global.shared.monitoring.enabled .Values.service.metricsPort }}
+            - containerPort: {{ .Values.service.adminPort }}
+              hostPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+              name: metrics-host
+            {{- end }}
           {{- with .Values.healthcheck.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -209,4 +227,3 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}
-

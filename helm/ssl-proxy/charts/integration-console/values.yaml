@@ -51,7 +51,7 @@ web:
     port: 3000
     targetPort: 3000
     type: ClusterIP
-    externalIPs: []
+    hostPort: null
   resources:
     limits:
       cpu: "1"

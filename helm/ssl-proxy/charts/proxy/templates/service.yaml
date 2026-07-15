@@ -14,10 +14,6 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
-  {{- with .Values.service.externalIPs }}
-  externalIPs:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
   selector:
     {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: proxy
@@ -31,4 +27,3 @@ spec:
       targetPort: {{ .Values.wireguard.internalPort }}
       protocol: UDP
 {{- end }}
-

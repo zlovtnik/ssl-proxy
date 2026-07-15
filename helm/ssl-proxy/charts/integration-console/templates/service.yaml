@@ -10,10 +10,6 @@ metadata:
     app.kubernetes.io/component: integration-console-web
 spec:
   type: {{ .Values.web.service.type }}
-  {{- with .Values.web.service.externalIPs }}
-  externalIPs:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
   selector:
     {{- include "ssl-proxy.integrationConsole.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: integration-console-web
@@ -22,4 +18,3 @@ spec:
       port: {{ .Values.web.service.port }}
       targetPort: {{ .Values.web.service.targetPort }}
 {{- end }}
-
