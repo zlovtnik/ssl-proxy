@@ -35,8 +35,10 @@ def write_host_config(path: Path, content: str) -> bool:
     if path.is_file() and path.read_text() == content:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    path.chmod(0o644)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content)
+    temporary.chmod(0o644)
+    temporary.replace(path)
     return True
 
 
