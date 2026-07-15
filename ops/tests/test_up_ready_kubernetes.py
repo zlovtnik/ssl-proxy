@@ -164,6 +164,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         args = mocked_helm.call_args_list[-1].args
         self.assertEqual(args[0], "install")
         self.assertNotIn("--install", args)
+        self.assertNotIn("--history-max", args)
         self.assertNotIn("--rollback-on-failure", args)
 
     def test_helm_stale_first_install_is_removed_before_retry(self):

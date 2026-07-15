@@ -461,14 +461,12 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
             "--server-side=true",
             "--wait=watcher",
             "--wait-for-jobs",
-            "--history-max",
-            "5",
             "--timeout",
             ctx.settings.helm_timeout,
         ]
     )
     if is_upgrade:
-        args.append("--rollback-on-failure")
+        args.extend(["--history-max", "5", "--rollback-on-failure"])
     target = ctx.settings.kube_context or "current-context"
     operation = "upgrade" if is_upgrade else "install"
     step("S03", f"helm_{operation}: release={release} context={target}")
