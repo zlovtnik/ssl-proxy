@@ -14,7 +14,10 @@ from sslproxy_ops.util.ini import peer_names
 
 
 def proxy_workload(ctx: UpReadyContext) -> str:
-    return f"deployment/{ctx.settings.helm_release}-proxy"
+    release = ctx.settings.helm_release
+    chart_name = "ssl-proxy"
+    fullname = release if chart_name in release else f"{release}-{chart_name}"
+    return f"deployment/{fullname[:63].rstrip('-')}-proxy"
 
 
 def resolve_kube_context(ctx: UpReadyContext) -> None:

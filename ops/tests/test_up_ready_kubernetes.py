@@ -7,6 +7,7 @@ from unittest.mock import patch
 from sslproxy_ops.commands.up_ready.kubernetes import (
     dashboard_set_file_args,
     helm_upgrade,
+    proxy_workload,
     publish_registry_images,
     resolve_kube_context,
     verify_kubernetes_registry_pull,
@@ -27,6 +28,19 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertTrue(any("stackHealthOverview=" in arg for arg in args))
         self.assertTrue(any("prometheus.alertRules=" in arg for arg in args))
         self.assertTrue(any("postgresExporter.queries=" in arg for arg in args))
+
+    def test_proxy_workload_matches_chart_fullname_for_custom_releases(self):
+        cases = {
+            "ssl-proxy": "deployment/ssl-proxy-proxy",
+            "prod": "deployment/prod-ssl-proxy-proxy",
+            "prod-ssl-proxy": "deployment/prod-ssl-proxy-proxy",
+        }
+
+        for release, expected in cases.items():
+            with self.subTest(release=release):
+                settings = Settings()
+                settings.helm_release = release
+                self.assertEqual(proxy_workload(UpReadyContext(settings=settings)), expected)
 
     def test_empty_default_context_uses_current_kubernetes_context(self):
         settings = Settings()
