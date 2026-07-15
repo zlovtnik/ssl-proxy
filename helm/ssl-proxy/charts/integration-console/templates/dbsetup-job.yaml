@@ -15,7 +15,8 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
   {{- end }}
 spec:
-  backoffLimit: 6
+  activeDeadlineSeconds: {{ .Values.dbSetup.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.dbSetup.backoffLimit }}
   ttlSecondsAfterFinished: 600
   template:
     metadata:
@@ -27,7 +28,8 @@ spec:
         ssl-proxy.io/rollout-revision: {{ . | quote }}
       {{- end }}
     spec:
-      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      restartPolicy: Never
       containers:
         - name: db-setup
           image: {{ include "ssl-proxy.integrationConsole.image" (dict "root" . "image" .Values.dbSetup.image) }}
@@ -41,5 +43,6 @@ spec:
               value: "http://{{ include "ssl-proxy.integrationConsole.fullname" . }}-pushgateway:9091"
             - name: OTEL_SERVICE_NAME
               value: "integration-console-db-setup"
+          resources:
+            {{- toYaml .Values.dbSetup.resources | nindent 12 }}
 {{- end }}
-

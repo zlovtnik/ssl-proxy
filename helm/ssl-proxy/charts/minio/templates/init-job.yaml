@@ -12,14 +12,17 @@ metadata:
     helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 6
+  activeDeadlineSeconds: {{ .Values.initJob.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.initJob.backoffLimit }}
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
         {{- include "ssl-proxy.minio.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: minio-init
     spec:
-      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      restartPolicy: Never
       containers:
         - name: minio-init
           image: {{ include "ssl-proxy.minio.image" (dict "root" . "image" .Values.clientImage) }}
@@ -42,4 +45,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secretKeySecret.name }}
                   key: {{ .Values.secretKeySecret.key }}
+          resources:
+            {{- toYaml .Values.initJob.resources | nindent 12 }}
 {{- end }}

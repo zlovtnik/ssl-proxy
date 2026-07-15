@@ -30,6 +30,16 @@ image:
   pullPolicy: IfNotPresent
 replicas: 1
 topicReplicationFactor: 3
+initJob:
+  activeDeadlineSeconds: 600
+  backoffLimit: 3
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 persistence:
   enabled: true
   hostPath: ""

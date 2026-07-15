@@ -109,6 +109,15 @@ dbSetup:
   image:
     repository: integration-console
     tag: latest
+  activeDeadlineSeconds: 900
+  backoffLimit: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
 # Rails environment
 railsEnv: "development"
 logFormat: "json"
