@@ -71,6 +71,11 @@ spec:
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.promtail.image) }}
           imagePullPolicy: {{ .Values.promtail.image.pullPolicy }}
           args: ["-config.file=/etc/promtail/config.yml"]
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           ports:
             - name: http
               containerPort: 9080

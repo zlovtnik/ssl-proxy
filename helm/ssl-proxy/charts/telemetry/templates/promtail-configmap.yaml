@@ -22,6 +22,8 @@ data:
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: __host__
           - source_labels: [__meta_kubernetes_namespace]
             target_label: namespace
           - source_labels: [__meta_kubernetes_pod_name]
@@ -49,4 +51,3 @@ data:
               level:
               service:
 {{- end }}
-
