@@ -52,6 +52,8 @@ spec:
               port: otlp-grpc
             initialDelaySeconds: 5
             periodSeconds: 10
+          resources:
+            {{- toYaml .Values.otelCollector.resources | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/otelcol
@@ -61,4 +63,3 @@ spec:
           configMap:
             name: {{ include "ssl-proxy.telemetry.fullname" . }}-otel-collector-config
 {{- end }}
-

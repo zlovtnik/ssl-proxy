@@ -32,6 +32,21 @@ This host daemon setting is separate from the Buildx builder setting below. If
 it is missing, `docker compose pull` fails with `http: server gave HTTP response
 to HTTPS client` even when `make registry-build-all` can push images.
 
+Kubernetes nodes use containerd rather than the Docker daemon. Configure every
+node that pulls the canonical `REGISTRY/...` image names separately. For the
+single-node server, run once from the repository checkout on that node:
+
+```bash
+make configure-containerd-registry REGISTRY=<server-local-ip>:5000
+```
+
+The command writes a containerd 2.x CRI `config_path` drop-in and a pull-only
+`/etc/containerd/certs.d/<registry>/hosts.toml`, restarts containerd only when
+the files change, and verifies a CRI pull. This follows containerd's supported
+[registry host configuration](https://github.com/containerd/containerd/blob/main/docs/hosts.md).
+It intentionally keeps `<server-local-ip>:5000` as the image registry; it does
+not rewrite Kubernetes images to `localhost`.
+
 The Makefile also configures the container-based buildx builder for plain HTTP.
 `REGISTRY_PLAIN_HTTP=auto` is the default and treats `localhost`, `127.*`,
 `10.*`, `172.16.*`-`172.31.*`, and `192.168.*` registries as HTTP. For a
@@ -131,6 +146,11 @@ Or from the development machine:
 ```bash
 make deploy DEPLOY_HOST=user@<server-local-ip> DEPLOY_PATH=/path/to/ssl-proxy
 ```
+
+For Kubernetes, `make up-ready` performs a short node-runtime pull probe after
+publishing images and before starting Helm. A missing containerd registry
+configuration therefore fails with the relevant pod event instead of appearing
+to hang during Helm readiness waiting.
 
 For local development builds, opt into the build override explicitly:
 

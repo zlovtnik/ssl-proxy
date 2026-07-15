@@ -48,6 +48,8 @@ spec:
           ports:
             - name: metrics
               containerPort: 9100
+          resources:
+            {{- toYaml .Values.nodeExporter.resources | nindent 12 }}
           volumeMounts:
             - {name: proc, mountPath: /host/proc, readOnly: true}
             - {name: sys, mountPath: /host/sys, readOnly: true}
@@ -61,4 +63,3 @@ spec:
           hostPath: {path: /, type: Directory}
 ---
 {{- end }}
-

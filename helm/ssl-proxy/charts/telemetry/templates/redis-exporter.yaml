@@ -50,5 +50,7 @@ spec:
               port: metrics
             initialDelaySeconds: 5
             periodSeconds: 10
+          resources:
+            {{- toYaml .Values.redisExporter.resources | nindent 12 }}
 ---
 {{- end }}

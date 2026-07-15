@@ -14,6 +14,9 @@ make ops-test
 It uses standard `kubectl` and `helm` with `UP_READY_KUBE_CONTEXT` when set,
 or the current kubeconfig context otherwise. Set
 `UP_READY_DEPLOYMENT_TARGET=compose` for the compatibility Compose path.
+Kubernetes deployments first probe a real containerd pull from the canonical
+`REGISTRY`. Configure a plain-HTTP registry once on each node with
+`make configure-containerd-registry REGISTRY=<host>:5000`.
 
 For direct module execution, install the ops package first or use `uv`:
 

@@ -13,6 +13,7 @@ global:
     create: true
     name: "ssl-proxy"
     annotations: {}
+    automountServiceAccountToken: false
   podSecurityContext: {}
   podAnnotations: {}
   nodeSelector: {}

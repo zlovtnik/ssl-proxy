@@ -61,6 +61,9 @@ prometheus:
     size: 20Gi
     storageClassName: ""
   alertRules: ""
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "1", memory: 2Gi}
 loki:
   image:
     repository: grafana/loki
@@ -73,12 +76,18 @@ loki:
     hostPath: ""
     size: 20Gi
     storageClassName: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 1Gi}
 promtail:
   image:
     repository: grafana/promtail
     tag: 3.1.1
     pullPolicy: IfNotPresent
   positionsHostPath: "/var/lib/ssl-proxy/promtail"
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
 jaeger:
   image:
     repository: jaegertracing/all-in-one
@@ -89,11 +98,17 @@ jaeger:
     hostPort: null
     otlpGrpcHostPort: null
     metricsHostPort: null
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 1Gi}
 otelCollector:
   image:
     repository: otel/opentelemetry-collector-contrib
     tag: 0.107.0
     pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
 grafana:
   image:
     repository: grafana/grafana
@@ -119,33 +134,51 @@ grafana:
     serviceRedMetrics: ""
     stackHealthOverview: ""
     syncPipelineLatency: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 1Gi}
 postgresExporter:
   image:
     repository: quay.io/prometheuscommunity/postgres-exporter
     tag: v0.19.1
     pullPolicy: IfNotPresent
   queries: ""
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
 redisExporter:
   image:
     repository: oliver006/redis_exporter
     tag: v1.61.0
     pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
 nodeExporter:
   image:
     repository: prom/node-exporter
     tag: v1.8.2
     pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
 cadvisor:
   image:
     repository: gcr.io/cadvisor/cadvisor
     tag: v0.49.1
     pullPolicy: IfNotPresent
   containerdHostPath: "/var/lib/containerd"
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
 pushgateway:
   image:
     repository: prom/pushgateway
     tag: v1.8.0
     pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 256Mi}
 
 
 # TODO: no ScaledObject templates exist yet. Keep disabled until the vec-worker workload exists.

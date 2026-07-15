@@ -356,6 +356,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `schema-migrator-smoke` | Run schema migrator list/validate/apply smoke flow |
 | `prep-ath` | Prepare the Atheros capture interface |
 | `setup-ubuntu` | Bootstrap Docker and start the stack on Ubuntu |
+| `configure-containerd-registry` | Configure a Kubernetes node's containerd CRI pulls from a plain-HTTP `REGISTRY` |
 | `shellcheck-tier-b` | Validate retained container/init shell scripts |
 | `ops-test` | Run the Python operator CLI unit tests |
 | `audit-threats` | Query wireless threat alerts view |
@@ -377,6 +378,18 @@ processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
 OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
 reusing the retained Compose data volumes.
 
+The image name remains canonical end to end: the development machine builds
+`linux/amd64` and pushes to `192.168.1.221:5000`, and Kubernetes pulls the same
+`192.168.1.221:5000/...` references. On each Kubernetes node, configure
+containerd once before the first deployment:
+
+```bash
+make configure-containerd-registry REGISTRY=192.168.1.221:5000
+```
+
+The single-node values expose the fixed LAN ports with pod `hostPort` mappings;
+they do not use the deprecated Kubernetes 1.36 `Service.spec.externalIPs` field.
+
 ```bash
 make up-ready PROFILE_MODE=mac \
   SERVER_IP=192.168.1.221 \
@@ -386,6 +399,10 @@ make up-ready PROFILE_MODE=mac \
 The operator uses standard `kubectl` and `helm`. It selects
 `UP_READY_KUBE_CONTEXT` when set and otherwise uses the current kubeconfig
 context. Run it on the Kubernetes server or provide a working remote context.
+Before Helm starts, it verifies that containerd can pull a mirrored image from
+`REGISTRY`; `UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT` controls the default 45-second
+probe timeout. Helm upgrades use server-side apply, rollback on failure, bounded
+history, Job waiting, and an explicit readiness timeout.
 Use `UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose
 workflow.
 

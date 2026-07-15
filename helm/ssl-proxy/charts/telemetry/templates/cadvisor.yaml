@@ -45,6 +45,8 @@ spec:
           ports:
             - name: metrics
               containerPort: 8080
+          resources:
+            {{- toYaml .Values.cadvisor.resources | nindent 12 }}
           volumeMounts:
             - {name: root, mountPath: /rootfs, readOnly: true}
             - {name: run, mountPath: /var/run, readOnly: true}
@@ -65,4 +67,3 @@ spec:
         - name: disk
           hostPath: {path: /dev/disk, type: DirectoryOrCreate}
 {{- end }}
-

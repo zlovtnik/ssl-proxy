@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string" },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "rolloutRevision": { "type": "string" },
+        "serviceAccount": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "name": { "type": "string", "minLength": 1 },
+            "automountServiceAccountToken": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "proxy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "hostPorts": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "integrationConsole": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "web": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "object",
+              "properties": {
+                "hostPort": {
+                  "type": ["integer", "null"],
+                  "minimum": 1,
+                  "maximum": 65535
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    }
+  }
+}

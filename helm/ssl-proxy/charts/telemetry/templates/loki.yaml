@@ -58,6 +58,8 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 20
+          resources:
+            {{- toYaml .Values.loki.resources | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/loki
@@ -99,4 +101,3 @@ spec:
       storage: {{ .Values.loki.persistence.size }}
 {{- end }}
 {{- end }}
-
