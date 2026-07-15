@@ -38,6 +38,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: grafana
     spec:
+      automountServiceAccountToken: false
       securityContext:
         fsGroup: 472
       containers:

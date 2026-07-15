@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from sslproxy_ops import shell
@@ -396,7 +397,15 @@ def helm_upgrade(ctx: UpReadyContext) -> None:
     )
     target = ctx.settings.kube_context or "current-context"
     step("S03", f"helm_upgrade: release={release} context={target}")
-    shell.helm(*args, context=ctx.settings.kube_context)
+    completed = shell.helm(*args, context=ctx.settings.kube_context, capture=True)
+    if isinstance(completed.stdout, str) and completed.stdout:
+        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+    if isinstance(completed.stderr, str) and completed.stderr:
+        print(
+            completed.stderr,
+            end="" if completed.stderr.endswith("\n") else "\n",
+            file=__import__("sys").stderr,
+        )
 
 
 def kubernetes_up(ctx: UpReadyContext) -> bool:
@@ -417,22 +426,65 @@ def kubernetes_diagnostics(ctx: UpReadyContext) -> None:
     shell.kubectl(
         "--namespace", namespace, "get", "pods", "-o", "wide", context=context, check=False
     )
-    shell.kubectl(
+    events = shell.kubectl(
         "--namespace",
         namespace,
         "get",
         "events",
-        "--sort-by=.lastTimestamp",
+        "--field-selector=type=Warning",
+        "-o",
+        "json",
         context=context,
         check=False,
+        capture=True,
     )
-    shell.kubectl(
+    if events.returncode == 0:
+        try:
+            payload = json.loads(events.stdout or "{}")
+            run_started = datetime.fromisoformat(ctx.run_ts)
+            recent: list[tuple[datetime, dict[str, object]]] = []
+            for event in payload.get("items", []):
+                timestamp = (
+                    event.get("eventTime")
+                    or event.get("series", {}).get("lastObservedTime")
+                    or event.get("lastTimestamp")
+                    or event.get("metadata", {}).get("creationTimestamp")
+                )
+                if not isinstance(timestamp, str):
+                    continue
+                parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                if parsed >= run_started:
+                    recent.append((parsed, event))
+            print("--- Kubernetes warning events from this run ---")
+            for timestamp, event in sorted(recent, key=lambda item: item[0])[-40:]:
+                involved = event.get("involvedObject", {})
+                target = f"{involved.get('kind', 'Object')}/{involved.get('name', 'unknown')}"
+                print(
+                    f"{timestamp.isoformat()} {event.get('reason', 'Warning')} "
+                    f"{target}: {event.get('message', '')}"
+                )
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            print(events.stdout or events.stderr or "Unable to parse Kubernetes warning events")
+
+    workload = shell.kubectl(
         "--namespace",
         namespace,
-        "logs",
-        "--tail",
-        str(ctx.settings.log_tail_lines),
+        "get",
         proxy_workload(ctx),
+        "-o",
+        "name",
         context=context,
         check=False,
+        capture=True,
     )
+    if workload.returncode == 0:
+        shell.kubectl(
+            "--namespace",
+            namespace,
+            "logs",
+            "--tail",
+            str(ctx.settings.log_tail_lines),
+            proxy_workload(ctx),
+            context=context,
+            check=False,
+        )

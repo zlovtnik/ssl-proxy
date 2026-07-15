@@ -20,6 +20,7 @@ spec:
         {{- include "ssl-proxy.redis.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: redis
           image: {{ include "ssl-proxy.redis.image" (dict "root" . "image" .Values.image) }}

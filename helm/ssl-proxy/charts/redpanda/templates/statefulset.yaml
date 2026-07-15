@@ -21,6 +21,7 @@ spec:
         {{- include "ssl-proxy.redpanda.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redpanda
     spec:
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
       containers:
         - name: redpanda

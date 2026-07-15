@@ -34,6 +34,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: redis-exporter
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: redis-exporter
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.redisExporter.image) }}

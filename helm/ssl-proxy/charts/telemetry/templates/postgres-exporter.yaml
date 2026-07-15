@@ -35,6 +35,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres-exporter
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: postgres-exporter
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.postgresExporter.image) }}

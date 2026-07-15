@@ -30,6 +30,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.javaCoordinator.serviceAccountName" . }}
+      automountServiceAccountToken: false
       containers:
         - name: java-coordinator
           image: {{ include "ssl-proxy.javaCoordinator.image" (dict "root" . "image" .Values.image) }}

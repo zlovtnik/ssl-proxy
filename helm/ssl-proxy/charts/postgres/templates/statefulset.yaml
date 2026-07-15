@@ -25,6 +25,7 @@ spec:
         ssl-proxy.io/rollout-revision: {{ . | quote }}
       {{- end }}
     spec:
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
       containers:
         - name: postgres

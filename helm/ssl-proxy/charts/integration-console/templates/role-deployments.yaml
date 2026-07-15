@@ -27,6 +27,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.integrationConsole.serviceAccountName" $ }}
+      automountServiceAccountToken: false
       containers:
         - name: {{ $name }}
           image: {{ include "ssl-proxy.integrationConsole.image" (dict "root" $ "image" $.Values.web.image) }}
@@ -56,4 +57,3 @@ spec:
 {{- end }}
 {{- end }}
 {{- end }}
-

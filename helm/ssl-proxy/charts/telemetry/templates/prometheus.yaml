@@ -37,6 +37,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: prometheus
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: prometheus
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.prometheus.image) }}

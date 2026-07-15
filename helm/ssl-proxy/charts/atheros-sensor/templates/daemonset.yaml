@@ -24,6 +24,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.atherosSensor.serviceAccountName" . }}
+      automountServiceAccountToken: false
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:
@@ -131,4 +132,3 @@ spec:
         - name: sync-outbox
           emptyDir: {}
 {{- end }}
-

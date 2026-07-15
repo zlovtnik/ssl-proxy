@@ -43,6 +43,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: jaeger
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: jaeger
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.jaeger.image) }}

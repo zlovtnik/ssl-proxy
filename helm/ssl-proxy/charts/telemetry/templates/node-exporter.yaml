@@ -34,6 +34,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: node-exporter
     spec:
+      automountServiceAccountToken: false
       hostNetwork: true
       hostPID: true
       containers:

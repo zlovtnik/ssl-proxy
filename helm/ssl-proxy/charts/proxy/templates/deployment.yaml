@@ -30,6 +30,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.proxy.serviceAccountName" . }}
+      automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

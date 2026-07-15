@@ -38,6 +38,7 @@ spec:
         {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: loki
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: loki
           image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.loki.image) }}

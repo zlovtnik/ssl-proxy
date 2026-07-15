@@ -26,6 +26,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.integrationConsole.serviceAccountName" . }}
+      automountServiceAccountToken: false
       containers:
         - name: worker
           image: {{ include "ssl-proxy.integrationConsole.image" (dict "root" . "image" .Values.web.image) }}
@@ -49,4 +50,3 @@ spec:
             {{- toYaml .Values.worker.resources | nindent 12 }}
 {{- end }}
 {{- end }}
-
