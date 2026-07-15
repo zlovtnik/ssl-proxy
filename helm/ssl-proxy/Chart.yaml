@@ -20,7 +20,7 @@ dependencies:
     repository: "file://charts/proxy"
     condition: proxy.enabled
   - name: java-coordinator
-    version: 0.1.0
+    version: 0.1.1
     repository: "file://charts/java-coordinator"
     alias: javaCoordinator
     condition: javaCoordinator.enabled
@@ -30,12 +30,12 @@ dependencies:
     alias: integrationConsole
     condition: integrationConsole.enabled
   - name: atheros-sensor
-    version: 0.1.0
+    version: 0.1.1
     repository: "file://charts/atheros-sensor"
     alias: atherosSensor
     condition: atherosSensor.enabled
   - name: postgres
-    version: 0.1.0
+    version: 0.1.1
     repository: "file://charts/postgres"
   - name: redpanda
     version: 0.1.1
@@ -44,7 +44,7 @@ dependencies:
     version: 0.1.1
     repository: "file://charts/minio"
   - name: redis
-    version: 0.1.0
+    version: 0.1.1
     repository: "file://charts/redis"
   - name: telemetry
     version: 0.1.1

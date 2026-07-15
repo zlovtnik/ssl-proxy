@@ -4,16 +4,16 @@ dependencies:
   version: 0.1.1
 - name: java-coordinator
   repository: file://charts/java-coordinator
-  version: 0.1.0
+  version: 0.1.1
 - name: integration-console
   repository: file://charts/integration-console
   version: 0.1.1
 - name: atheros-sensor
   repository: file://charts/atheros-sensor
-  version: 0.1.0
+  version: 0.1.1
 - name: postgres
   repository: file://charts/postgres
-  version: 0.1.0
+  version: 0.1.1
 - name: redpanda
   repository: file://charts/redpanda
   version: 0.1.1
@@ -22,7 +22,7 @@ dependencies:
   version: 0.1.1
 - name: redis
   repository: file://charts/redis
-  version: 0.1.0
+  version: 0.1.1
 - name: telemetry
   repository: file://charts/telemetry
   version: 0.1.1
@@ -32,5 +32,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.0
-digest: sha256:eaf0020f4e56920ad33a03ff6d846e7aad91753348e983c0f52b8f2d0279a80a
-generated: "2026-07-14T21:39:47.72662-04:00"
+digest: sha256:e45fd7d91e1576ccbd901f8451c5d225e1a23b621a01d42792b2c9eecaa8a408
+generated: "2026-07-14T21:46:19.072336-04:00"

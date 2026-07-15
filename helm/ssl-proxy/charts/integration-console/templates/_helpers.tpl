@@ -22,7 +22,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "ssl-proxy.integrationConsole.labels" -}}
-helm.sh/chart: ssl-proxy-0.2.0
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "ssl-proxy.integrationConsole.selectorLabels" . }}
 app.kubernetes.io/version: "1.0.0"
 app.kubernetes.io/managed-by: {{ .Release.Service }}
@@ -89,4 +89,3 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 - name: OTEL_EXPORTER_OTLP_PROTOCOL
   value: "grpc"
 {{- end }}
-
