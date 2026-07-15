@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
 
 external: true
 endpoint: "http://minio.minio.svc.cluster.local:9000"
@@ -29,12 +29,12 @@ secretKeySecret:
   key: "secret-key"
 image:
   repository: minio/minio
-  tag: latest
-  pullPolicy: IfNotPresent
+  tag: RELEASE.2025-09-07T16-13-09Z
+  pullPolicy: Always
 clientImage:
   repository: minio/mc
-  tag: latest
-  pullPolicy: IfNotPresent
+  tag: RELEASE.2025-08-13T08-35-41Z
+  pullPolicy: Always
 extraBuckets:
   - ssl-proxy-wireless-raw-archive
 initJob:
@@ -59,5 +59,3 @@ resources:
   requests:
     cpu: 250m
     memory: 512Mi
-
-# Ollama connection settings (for vec-worker embedding provider)

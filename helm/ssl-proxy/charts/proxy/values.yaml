@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
   shared:
     javaCoordinator:
       tracing:
@@ -96,7 +96,10 @@ runtimeSecret:
 securityContext:
   runAsUser: 0
   runAsGroup: 0
+  allowPrivilegeEscalation: false
   capabilities:
+    drop:
+      - ALL
     add:
       - NET_ADMIN
 # Health check

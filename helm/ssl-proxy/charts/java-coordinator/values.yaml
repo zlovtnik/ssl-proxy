@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
   shared:
     postgres:
       host: "postgres-primary.postgres.svc.cluster.local"

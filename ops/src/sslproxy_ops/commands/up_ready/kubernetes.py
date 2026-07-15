@@ -164,6 +164,7 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> None:
     config = root / "config"
     ensure_namespace(ctx)
     apply_secret(ctx, "postgres-credentials", [("password", secrets / "postgres.key")])
+    apply_secret(ctx, "redis-credentials", [("password", secrets / "redis.key")])
     apply_secret(
         ctx,
         "minio-credentials",
@@ -212,15 +213,21 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> None:
 
 
 def publish_registry_images(ctx: UpReadyContext) -> None:
+    if not (
+        ctx.settings.build_registry_images or ctx.settings.mirror_registry_images
+    ):
+        return
+
     registry = os.environ["REGISTRY"]
-    image_tag = os.environ["IMAGE_TAG"]
-    common = [f"REGISTRY={registry}", f"TAG={image_tag}"]
     if ctx.settings.build_registry_images:
+        image_tag = os.environ["IMAGE_TAG"]
         step("S03", f"registry_build: first-party images -> {registry} tag={image_tag}")
-        shell.run(["make", "registry-build-all", *common])
+        shell.run(
+            ["make", "registry-build-all", f"REGISTRY={registry}", f"TAG={image_tag}"]
+        )
     if ctx.settings.mirror_registry_images:
         step("S03", f"registry_mirror: pinned third-party images -> {registry}")
-        shell.run(["make", "registry-mirror-all", *common])
+        shell.run(["make", "registry-mirror-all", f"REGISTRY={registry}"])
 
 
 def verify_kubernetes_registry_pull(ctx: UpReadyContext) -> None:

@@ -4,6 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
+from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
     dashboard_set_file_args,
     helm_upgrade,
@@ -158,6 +159,56 @@ class UpReadyKubernetesTest(unittest.TestCase):
             [call.args[0][1] for call in mocked_run.call_args_list],
             ["registry-build-all", "registry-mirror-all"],
         )
+
+    def test_registry_publish_does_not_require_environment_when_disabled(self):
+        settings = Settings()
+        settings.build_registry_images = False
+        settings.mirror_registry_images = False
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.shell.run") as mocked_run,
+        ):
+            publish_registry_images(ctx)
+
+        mocked_run.assert_not_called()
+
+    def test_kubernetes_auto_fix_marks_successful_repairs(self):
+        settings = Settings()
+        settings.deployment_target = "kubernetes"
+        settings.profile_mode = "iphone"
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.apply_profile_runtime_env"
+            ) as mocked_profile,
+            patch("sslproxy_ops.commands.up_ready.helm_upgrade") as mocked_upgrade,
+        ):
+            self.assertTrue(auto_fix(ctx, "profile_obfuscation_mismatch"))
+
+        mocked_profile.assert_called_once_with(ctx)
+        mocked_upgrade.assert_called_once_with(ctx)
+        self.assertIn("profile_obfuscation_mismatch", ctx.auto_fixed_classes)
+
+    def test_kubernetes_auto_fix_does_not_mark_failed_repairs(self):
+        settings = Settings()
+        settings.deployment_target = "kubernetes"
+        settings.profile_mode = "iphone"
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch("sslproxy_ops.commands.up_ready.apply_profile_runtime_env"),
+            patch(
+                "sslproxy_ops.commands.up_ready.helm_upgrade",
+                side_effect=UpReadyError("upgrade failed"),
+            ),
+            self.assertRaisesRegex(UpReadyError, "upgrade failed"),
+        ):
+            auto_fix(ctx, "profile_obfuscation_mismatch")
+
+        self.assertNotIn("profile_obfuscation_mismatch", ctx.auto_fixed_classes)
 
 
 if __name__ == "__main__":

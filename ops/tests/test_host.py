@@ -1,6 +1,7 @@
 import unittest
 
 from sslproxy_ops.commands.host import (
+    containerd_config_version,
     containerd_registry_hosts_toml,
     normalize_registry_authority,
 )
@@ -25,6 +26,25 @@ class HostCommandTest(unittest.TestCase):
         self.assertIn('server = "http://192.168.1.221:5000"', rendered)
         self.assertIn('capabilities = ["pull", "resolve"]', rendered)
         self.assertNotIn('"push"', rendered)
+
+    def test_parses_top_level_containerd_config_version(self):
+        self.assertEqual(
+            containerd_config_version(
+                'version = 3\nimports = ["/etc/containerd/conf.d/*.toml"]\n'
+            ),
+            3,
+        )
+
+    def test_missing_containerd_config_version_is_reported(self):
+        self.assertIsNone(
+            containerd_config_version(
+                'imports = ["/etc/containerd/conf.d/*.toml"]\n'
+            )
+        )
+
+    def test_invalid_containerd_config_version_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "top-level version"):
+            containerd_config_version('version = "3"\n')
 
 
 if __name__ == "__main__":

@@ -18,13 +18,22 @@ spec:
       labels:
         {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: atheros-sensor
-      {{- with .Values.global.rolloutRevision }}
+      {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
+        {{- with .Values.global.rolloutRevision }}
         ssl-proxy.io/rollout-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
     spec:
       serviceAccountName: {{ include "ssl-proxy.atherosSensor.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:
@@ -131,4 +140,16 @@ spec:
             type: CharDevice
         - name: sync-outbox
           emptyDir: {}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- end }}

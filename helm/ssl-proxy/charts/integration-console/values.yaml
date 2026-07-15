@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
   shared:
     redpanda:
       bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
@@ -30,6 +30,9 @@ global:
         key: "password"
     redis:
       url: "redis://redis.redis.svc.cluster.local:6379/1"
+      passwordSecret:
+        name: "redis-credentials"
+        key: "password"
     minio:
       endpoint: "http://minio.minio.svc.cluster.local:9000"
       bucket: "integration-console-exports"

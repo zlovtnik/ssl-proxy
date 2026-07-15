@@ -35,7 +35,7 @@ ATHEROS_SEARCH_UI_API_BASE ?= http://localhost:8080
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
 REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator integration-console atheros-sensor atheros-search wg-key-rotator postgres atheros-search-ui
 REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
-REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest redis:7-alpine minio/minio:latest minio/mc:latest prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 oliver006/redis_exporter:v1.61.0 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0
+REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest redis:7-alpine minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 oliver006/redis_exporter:v1.61.0 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0
 
 ifeq ($(ENABLE_LEGACY_TARGETS),1)
 include Makefile.legacy
@@ -229,12 +229,30 @@ prep-ath: $(OPS_BOOTSTRAP)
 setup-ubuntu: $(OPS_BOOTSTRAP)
 	$(OPS) host setup-ubuntu
 
-# Run once as root on each Kubernetes node that pulls from a plain-HTTP REGISTRY.
+# Run once as root on each Kubernetes node that pulls from REGISTRY.
 configure-containerd-registry: require-registry $(OPS_BOOTSTRAP)
-	@if [ -n "$(UV)" ]; then \
-		sudo env REGISTRY="$(REGISTRY)" "$(UV)" run --project "$(CURDIR)/ops" python -m sslproxy_ops host configure-containerd-registry --registry "$(REGISTRY)" --plain-http; \
+	@registry_host="$(REGISTRY)"; \
+	registry_host="$${registry_host%%/*}"; \
+	plain_http="$(REGISTRY_PLAIN_HTTP)"; \
+	case "$$plain_http" in \
+		auto) \
+			case "$$registry_host" in \
+				localhost:*|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) plain_http=1 ;; \
+				*) plain_http=0 ;; \
+			esac ;; \
+		1|true|yes) plain_http=1 ;; \
+		0|false|no) plain_http=0 ;; \
+		*) echo "REGISTRY_PLAIN_HTTP must be auto, 1, or 0" >&2; exit 2 ;; \
+	esac; \
+	if [ "$$plain_http" = 1 ]; then \
+		transport_arg=--plain-http; \
 	else \
-		sudo env REGISTRY="$(REGISTRY)" "$(OPS_PYTHON)" -m sslproxy_ops host configure-containerd-registry --registry "$(REGISTRY)" --plain-http; \
+		transport_arg=--tls; \
+	fi; \
+	if [ -n "$(UV)" ]; then \
+		sudo env REGISTRY="$(REGISTRY)" "$(UV)" run --project "$(CURDIR)/ops" python -m sslproxy_ops host configure-containerd-registry --registry "$(REGISTRY)" "$$transport_arg"; \
+	else \
+		sudo env REGISTRY="$(REGISTRY)" "$(OPS_PYTHON)" -m sslproxy_ops host configure-containerd-registry --registry "$(REGISTRY)" "$$transport_arg"; \
 	fi
 
 shellcheck-tier-b: $(OPS_BOOTSTRAP)

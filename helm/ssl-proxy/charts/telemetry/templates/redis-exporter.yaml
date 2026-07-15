@@ -42,6 +42,11 @@ spec:
           env:
             - name: REDIS_ADDR
               value: {{ .Values.global.shared.redis.url | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.redis.passwordSecret.name }}
+                  key: {{ .Values.global.shared.redis.passwordSecret.key }}
           ports:
             - name: metrics
               containerPort: 9121

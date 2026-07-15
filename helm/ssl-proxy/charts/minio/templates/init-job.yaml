@@ -20,8 +20,22 @@ spec:
       labels:
         {{- include "ssl-proxy.minio.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: minio-init
+      {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
+      annotations:
+        {{- with .Values.global.rolloutRevision }}
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
     spec:
+      serviceAccountName: {{ include "ssl-proxy.minio.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       restartPolicy: Never
       containers:
         - name: minio-init
@@ -47,4 +61,16 @@ spec:
                   key: {{ .Values.secretKeySecret.key }}
           resources:
             {{- toYaml .Values.initJob.resources | nindent 12 }}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- end }}

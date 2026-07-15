@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tomllib
 from pathlib import Path
 from typing import Annotated
 
@@ -29,6 +30,20 @@ def containerd_registry_hosts_toml(registry: str, *, plain_http: bool) -> str:
         f'[host."{endpoint}"]\n'
         '  capabilities = ["pull", "resolve"]\n'
     )
+
+
+def containerd_config_version(config_text: str) -> int | None:
+    try:
+        config = tomllib.loads(config_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"invalid containerd config TOML: {exc}") from exc
+
+    version = config.get("version")
+    if version is None:
+        return None
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("containerd config top-level version must be an integer")
+    return version
 
 
 def write_host_config(path: Path, content: str) -> bool:
@@ -91,7 +106,7 @@ def configure_containerd_registry(
         typer.Option("--probe-image", help="Repository:tag to pull with crictl after restart."),
     ] = "redis:7-alpine",
 ) -> None:
-    """Configure containerd 2.x CRI pulls from the canonical local registry."""
+    """Configure containerd CRI pulls from the canonical local registry."""
     if os.geteuid() != 0:
         typer.echo(
             "Error: run through `make configure-containerd-registry "
@@ -114,6 +129,25 @@ def configure_containerd_registry(
         typer.echo(f"Error: missing {config_path}", err=True)
         raise typer.Exit(1)
     config_text = config_path.read_text()
+    try:
+        config_version = containerd_config_version(config_text)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if config_version is None:
+        typer.echo(
+            "Error: /etc/containerd/config.toml is missing top-level version = 3; "
+            "containerd v3 configuration is required",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if config_version != 3:
+        typer.echo(
+            "Error: /etc/containerd/config.toml has incompatible top-level "
+            f"version = {config_version}; version = 3 is required",
+            err=True,
+        )
+        raise typer.Exit(1)
     if "/etc/containerd/conf.d/*.toml" not in config_text:
         typer.echo(
             "Error: /etc/containerd/config.toml does not import "

@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
   shared:
     redpanda:
       bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"

@@ -55,7 +55,7 @@ Redpanda bootstrap servers connection string
 Postgres connection URL
 */}}
 {{- define "ssl-proxy.postgresUrl" -}}
-jdbc:postgresql://{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}
+jdbc:postgresql://{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}
 {{- end }}
 
 {{/*

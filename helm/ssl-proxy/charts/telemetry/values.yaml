@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
   shared:
     redpanda:
       adminPort: 9644
@@ -30,6 +30,9 @@ global:
         key: "password"
     redis:
       url: "redis://redis.redis.svc.cluster.local:6379/1"
+      passwordSecret:
+        name: "redis-credentials"
+        key: "password"
     proxy:
       service:
         adminPort: 3002
@@ -184,7 +187,7 @@ pushgateway:
 # TODO: no ScaledObject templates exist yet. Keep disabled until the vec-worker workload exists.
 keda:
   # -- Set to true to deploy KEDA ScaledObjects (requires KEDA operator in cluster)
-  enabled: true
+  enabled: false
 
   # Java Coordinator auto-scaling (based on Redpanda consumer lag)
   javaCoordinator:

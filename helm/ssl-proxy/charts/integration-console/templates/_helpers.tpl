@@ -68,6 +68,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: {{ .Values.global.shared.redpanda.bootstrapServers | quote }}
 - name: INTEGRATION_CONSOLE_REDIS_URL
   value: {{ .Values.global.shared.redis.url | quote }}
+- name: INTEGRATION_CONSOLE_REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.global.shared.redis.passwordSecret.name }}
+      key: {{ .Values.global.shared.redis.passwordSecret.key }}
 - name: MINIO_ENDPOINT
   value: {{ .Values.global.shared.minio.endpoint | quote }}
 - name: MINIO_ACCESS_KEY_ID

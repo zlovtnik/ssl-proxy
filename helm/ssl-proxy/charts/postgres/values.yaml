@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
 
 # -- Set to true if Postgres is managed externally (not deployed by this chart)
 external: true
@@ -31,8 +31,8 @@ passwordSecret:
   key: "password"
 image:
   repository: ssl-proxy-postgres
-  tag: latest
-  pullPolicy: IfNotPresent
+  tag: 16-bookworm
+  pullPolicy: Always
 persistence:
   enabled: true
   hostPath: ""
@@ -45,5 +45,3 @@ resources:
   requests:
     cpu: "1"
     memory: 2Gi
-
-# Redis connection settings (used by integration-console)

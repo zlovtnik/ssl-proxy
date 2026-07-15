@@ -16,7 +16,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
 
 # -- Set to true if Redpanda is managed externally (not deployed by this chart)
 external: true

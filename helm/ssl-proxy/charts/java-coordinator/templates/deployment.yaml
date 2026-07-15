@@ -31,6 +31,10 @@ spec:
     spec:
       serviceAccountName: {{ include "ssl-proxy.javaCoordinator.serviceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: java-coordinator
           image: {{ include "ssl-proxy.javaCoordinator.image" (dict "root" . "image" .Values.image) }}
@@ -327,30 +331,38 @@ spec:
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
+            {{- if .Values.oracle.enabled }}
             - name: oracle-wallet
               mountPath: /app/wallet
               readOnly: true
             - name: oracle-password
               mountPath: /run/secrets/oracle
               readOnly: true
+            {{- end }}
       volumes:
         - name: topics-manifest
           configMap:
             name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-topics-manifest
         - name: sync-outbox
           emptyDir: {}
+        {{- if .Values.oracle.enabled }}
         - name: oracle-wallet
           secret:
             secretName: {{ .Values.oracle.walletSecret.name }}
         - name: oracle-password
           secret:
             secretName: {{ .Values.oracle.passwordSecret.name }}
+        {{- end }}
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.global.tolerations }}
       tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}

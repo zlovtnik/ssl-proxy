@@ -4,7 +4,6 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -16,7 +15,7 @@ global:
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
-  affinity: []
+  affinity: {}
 
 external: true
 url: "redis://redis.redis.svc.cluster.local:6379/1"
