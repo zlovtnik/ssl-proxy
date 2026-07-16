@@ -1,0 +1,59 @@
+{{- if .Values.enabled }}
+{{- range $name, $role := dict "heatmap-refresh" .Values.heatmapRefresh "heartbeat" .Values.heartbeat }}
+{{- if $role.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.integrationConsole.fullname" $ }}-integration-console-{{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.integrationConsole.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: integration-console-{{ $name }}
+spec:
+  replicas: {{ $role.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.integrationConsole.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: integration-console-{{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.integrationConsole.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: integration-console-{{ $name }}
+      {{- with $.Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.integrationConsole.serviceAccountName" $ }}
+      automountServiceAccountToken: false
+      containers:
+        - name: {{ $name }}
+          image: {{ include "ssl-proxy.integrationConsole.image" (dict "root" $ "image" $.Values.web.image) }}
+          imagePullPolicy: {{ $.Values.web.image.pullPolicy }}
+          {{- if eq $name "heatmap-refresh" }}
+          command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
+          {{- else }}
+          command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
+          {{- end }}
+          env:
+            {{- include "ssl-proxy.integrationConsole.integrationConsoleEnv" $ | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ $.Values.web.syncDbPool | quote }}
+            - name: PUSHGATEWAY_URL
+              value: "http://{{ include "ssl-proxy.integrationConsole.fullname" $ }}-pushgateway:9091"
+            {{- if eq $name "heatmap-refresh" }}
+            - name: HEATMAP_REFRESH_INTERVAL_SECONDS
+              value: {{ $role.intervalSeconds | quote }}
+            {{- else }}
+            - name: SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS
+              value: {{ $role.intervalSeconds | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-{{ $name }}"
+          resources:
+            {{- toYaml $role.resources | nindent 12 }}
+{{- end }}
+{{- end }}
+{{- end }}

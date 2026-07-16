@@ -345,7 +345,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `registry-build-vec-worker` | Build vec-worker when its Dockerfile exists; otherwise fail clearly |
 | `deploy` | SSH to `DEPLOY_HOST`, pull images in `DEPLOY_PATH`, and run Compose |
 | `clean` | Clean build artifacts |
-| `up-ready` | Bring up compose stack, verify services, print peer QR codes |
+| `up-ready` | Publish local-registry images, upgrade Kubernetes with Helm, verify services, and print peer QR codes |
 | `diagnose` | Non-mutating diagnosis and signature classification |
 | `pipeline-health` | Check sync-plane pipeline health |
 | `memo-show` | Show operational memory ledger |
@@ -356,18 +356,61 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `schema-migrator-smoke` | Run schema migrator list/validate/apply smoke flow |
 | `prep-ath` | Prepare the Atheros capture interface |
 | `setup-ubuntu` | Bootstrap Docker and start the stack on Ubuntu |
+| `configure-containerd-registry` | Configure a Kubernetes node's containerd CRI pulls from a plain-HTTP `REGISTRY` |
 | `shellcheck-tier-b` | Validate retained container/init shell scripts |
 | `ops-test` | Run the Python operator CLI unit tests |
 | `audit-threats` | Query wireless threat alerts view |
 
 ## Kubernetes Deployment
 
-A Helm chart is available at [helm/ssl-proxy/](helm/ssl-proxy/):
+The umbrella Helm chart is at [helm/ssl-proxy/](helm/ssl-proxy/), with
+service and infrastructure charts under `helm/ssl-proxy/charts/`. Shared
+connection values used across chart boundaries are explicit under
+`global.shared`; workload and image overrides retain paths such as
+`proxy.image.tag`, `javaCoordinator.image.tag`, and
+`observability.grafana.image.tag`.
+
+`make up-ready` defaults to the Kubernetes target: it builds first-party
+images, mirrors pinned third-party images into `REGISTRY`, synchronizes the
+protected local files as Kubernetes Secrets, and upgrades the complete
+Kubernetes release. The release includes the proxy, coordinator, console
+processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
+OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
+reusing the retained Compose data volumes.
+
+The image name remains canonical end to end: the development machine builds
+`linux/amd64` and pushes to `192.168.1.221:5000`, and Kubernetes pulls the same
+`192.168.1.221:5000/...` references. On each Kubernetes node, configure
+containerd once before the first deployment:
 
 ```bash
-helm upgrade --install ssl-proxy ./helm/ssl-proxy \
-  --set proxy.adminApiKey=your-key \
-  --set postgres.password=sync
+make configure-containerd-registry REGISTRY=192.168.1.221:5000
+```
+
+The single-node values expose the fixed LAN ports with pod `hostPort` mappings;
+they do not use the deprecated Kubernetes 1.36 `Service.spec.externalIPs` field.
+
+```bash
+make up-ready PROFILE_MODE=mac \
+  SERVER_IP=192.168.1.221 \
+  CLIENT_IP=192.168.1.53
+```
+
+The operator uses standard `kubectl` and `helm`. It selects
+`UP_READY_KUBE_CONTEXT` when set and otherwise uses the current kubeconfig
+context. Run it on the Kubernetes server or provide a working remote context.
+Before Helm starts, it verifies that containerd can pull a mirrored image from
+`REGISTRY`; `UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT` controls the default 45-second
+probe timeout. Helm upgrades use server-side apply, rollback on failure, bounded
+history, Job waiting, and an explicit readiness timeout.
+Use `UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose
+workflow.
+
+The legacy Make targets are opt-in so they do not remain interleaved with the
+current operator workflow:
+
+```bash
+make ENABLE_LEGACY_TARGETS=1 legacy-diagnose
 ```
 
 ## Operational Scripts

@@ -1,0 +1,121 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  selector:
+    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+  ports:
+    - name: http
+      port: {{ .Values.loki.service.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  serviceName: {{ include "ssl-proxy.telemetry.fullname" . }}-loki
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: loki
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: loki
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: loki
+          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.loki.image) }}
+          imagePullPolicy: {{ .Values.loki.image.pullPolicy }}
+          args: ["-config.file=/etc/loki/config.yml"]
+          ports:
+            - name: http
+              containerPort: 3100
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.loki.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+              readOnly: true
+            - name: data
+              mountPath: /loki
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-config
+        - name: data
+          {{- if .Values.loki.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.loki.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else if .Values.loki.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if and .Values.loki.persistence.enabled (not .Values.loki.persistence.hostPath) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: loki
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.loki.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.loki.persistence.size }}
+{{- end }}
+{{- end }}

@@ -20,7 +20,19 @@ from sslproxy_ops.commands.up_ready.checks import (
     wait_for_container_healthy,
     write_credential_handoff,
 )
-from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, desired_obfuscation_value, step, warn
+from sslproxy_ops.commands.up_ready.kubernetes import (
+    helm_upgrade,
+    kubernetes_up,
+    resolve_kube_context,
+    sync_kubernetes_secrets,
+)
+from sslproxy_ops.commands.up_ready.model import (
+    UpReadyContext,
+    UpReadyError,
+    desired_obfuscation_value,
+    step,
+    warn,
+)
 from sslproxy_ops.commands.up_ready.peers import ensure_local_peer_material
 from sslproxy_ops.commands.up_ready.secrets import (
     activate_obfuscation_key_env_fallback,
@@ -28,9 +40,9 @@ from sslproxy_ops.commands.up_ready.secrets import (
     ensure_secret_bootstrap,
     verify_registry_transport,
 )
-from sslproxy_ops.config import ProfileMode, Settings
+from sslproxy_ops.config import DeploymentTarget, ProfileMode, Settings
 
-app = typer.Typer(help="Bring up compose stack, verify services, and print peer QR codes.")
+app = typer.Typer(help="Build and deploy the stack, verify services, and print peer QR codes.")
 
 
 def require_concrete_endpoint_values(settings: Settings) -> None:
@@ -46,32 +58,36 @@ def apply_profile_runtime_env(ctx: UpReadyContext) -> None:
         case "iphone":
             # Preserve the established shim endpoint while exposing the
             # boringtun listener on the separate direct-client port.
-            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
-            os.environ["WG_PORT"] = "443"
-            os.environ["WG_INTERNAL_PORT"] = "51820"
+            obfuscation_enabled, wg_port, wg_internal_port = True, 443, 51820
             activate_obfuscation_key_env_fallback()
         case "linux-direct":
-            os.environ["WG_OBFUSCATION_ENABLED"] = "false"
-            os.environ["WG_PORT"] = "443"
-            os.environ["WG_INTERNAL_PORT"] = "51820"
+            obfuscation_enabled, wg_port, wg_internal_port = False, 443, 51820
         case "linux-shim":
-            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
-            os.environ["WG_PORT"] = "443"
-            os.environ["WG_INTERNAL_PORT"] = "51820"
+            obfuscation_enabled, wg_port, wg_internal_port = True, 443, 51820
             activate_obfuscation_key_env_fallback()
         case "mac":
-            os.environ["WG_OBFUSCATION_ENABLED"] = "true"
-            os.environ["WG_PORT"] = "51820"
-            os.environ["WG_INTERNAL_PORT"] = "443"
+            obfuscation_enabled, wg_port, wg_internal_port = True, 51820, 443
             activate_obfuscation_key_env_fallback()
+        case _:
+            return
+    ctx.settings.wg_obfuscation_enabled = obfuscation_enabled
+    ctx.settings.wg_port = wg_port
+    ctx.settings.wg_internal_port = wg_internal_port
+    os.environ["WG_OBFUSCATION_ENABLED"] = str(obfuscation_enabled).lower()
+    os.environ["WG_PORT"] = str(wg_port)
+    os.environ["WG_INTERNAL_PORT"] = str(wg_internal_port)
 
 
 def required_stack_healthy(ctx: UpReadyContext) -> bool:
-    return all(wait_for_container_healthy(ctx, service) for service in ctx.settings.stack_health_service_names)
+    return all(
+        wait_for_container_healthy(ctx, service)
+        for service in ctx.settings.stack_health_service_names
+    )
 
 
 def recover_required_compose_stack(ctx: UpReadyContext, phase: str, failure_output: str) -> bool:
-    warn(f"{phase} failed; retrying readiness-critical services only: {' '.join(ctx.settings.stack_health_service_names)}")
+    services = ctx.settings.stack_health_service_names
+    warn(f"{phase} failed; retrying readiness-critical services only: {' '.join(services)}")
     step(
         "S03",
         "compose_pull_required: docker compose pull --include-deps "
@@ -87,10 +103,19 @@ def recover_required_compose_stack(ctx: UpReadyContext, phase: str, failure_outp
     pull_output = f"{pull.stdout or ''}{pull.stderr or ''}"
     if pull.returncode != 0:
         print(pull_output, file=__import__("sys").stderr)
-        warn("compose_pull_required failed; attempting compose_up_required with locally available images")
+        warn(
+            "compose_pull_required failed; attempting compose_up_required "
+            "with locally available images"
+        )
 
-    step("S03", "compose_up_required: docker compose up -d " + " ".join(ctx.settings.stack_health_service_names))
-    up = shell.compose("up", "-d", *ctx.settings.stack_health_service_names, check=False, capture=True)
+    step(
+        "S03",
+        "compose_up_required: docker compose up -d "
+        + " ".join(ctx.settings.stack_health_service_names),
+    )
+    up = shell.compose(
+        "up", "-d", *ctx.settings.stack_health_service_names, check=False, capture=True
+    )
     output = f"{up.stdout or ''}{up.stderr or ''}"
     if up.returncode != 0:
         print(output, file=__import__("sys").stderr)
@@ -98,7 +123,9 @@ def recover_required_compose_stack(ctx: UpReadyContext, phase: str, failure_outp
         return False
 
     if required_stack_healthy(ctx):
-        warn("Full compose operation failed, but readiness-critical services are healthy; continuing")
+        warn(
+            "Full compose operation failed, but readiness-critical services are healthy; continuing"
+        )
         ctx.classify(f"{failure_output}\n{pull_output}")
         return True
     ctx.classify(f"{failure_output}\n{pull_output}")
@@ -111,6 +138,30 @@ def auto_fix(ctx: UpReadyContext, failure_class: str, text: str = "") -> bool:
             warn(f"auto_fix skipped (already attempted): {failure_class}")
         return False
 
+    if ctx.settings.deployment_target == "kubernetes":
+        try:
+            match failure_class:
+                case "profile_obfuscation_mismatch":
+                    apply_profile_runtime_env(ctx)
+                    if not helm_upgrade(ctx):
+                        return False
+                    ctx.auto_fixed_classes.add(failure_class)
+                    return True
+                case "wg_peer_material_missing":
+                    ensure_local_peer_material(ctx)
+                    if not sync_kubernetes_secrets(ctx) or not helm_upgrade(ctx):
+                        return False
+                    ctx.auto_fixed_classes.add(failure_class)
+                    return True
+                case "admin_loopback_false_negative" | "qr_permission_denied":
+                    step("S09", f"auto_fix[{failure_class}]: no-op (handled by fallback path)")
+                    ctx.auto_fixed_classes.add(failure_class)
+                    return True
+        except (shell.ShellCommandError, UpReadyError) as exc:
+            ctx.classify(str(exc))
+            return False
+        return False
+
     match failure_class:
         case "docker_registry_dns_timeout":
             step("S09", f"auto_fix[{failure_class}]: recreate with locally available images")
@@ -120,12 +171,18 @@ def auto_fix(ctx: UpReadyContext, failure_class: str, text: str = "") -> bool:
         case "profile_obfuscation_mismatch":
             desired = desired_obfuscation_value(str(ctx.settings.profile_mode))
             apply_profile_runtime_env(ctx)
-            step("S09", f"auto_fix[{failure_class}]: recreate with WG_OBFUSCATION_ENABLED={desired}")
+            step(
+                "S09", f"auto_fix[{failure_class}]: recreate with WG_OBFUSCATION_ENABLED={desired}"
+            )
             if shell.compose("up", "-d", "--force-recreate", check=False).returncode == 0:
                 ctx.auto_fixed_classes.add(failure_class)
                 return True
         case "secret_file_owner_mismatch":
-            step("S09", f"auto_fix[{failure_class}]: use direct WG_OBFUSCATION_KEY env fallback and recreate")
+            step(
+                "S09",
+                f"auto_fix[{failure_class}]: use direct WG_OBFUSCATION_KEY "
+                "env fallback and recreate",
+            )
             activate_obfuscation_key_env_fallback()
             if (
                 shell.compose(
@@ -164,9 +221,7 @@ def compose_up(ctx: UpReadyContext) -> bool:
         failure = ctx.classify(pull_output)
         if auto_fix(ctx, failure.name, pull_output):
             return True
-        if recover_required_compose_stack(ctx, "compose pull", pull_output):
-            return True
-        return False
+        return recover_required_compose_stack(ctx, "compose pull", pull_output)
 
     step("S03", "compose_up: docker compose up -d")
     up = shell.compose("up", "-d", check=False, capture=True)
@@ -178,16 +233,31 @@ def compose_up(ctx: UpReadyContext) -> bool:
     failure = ctx.classify(output)
     if auto_fix(ctx, failure.name, output):
         return True
-    if recover_required_compose_stack(ctx, "compose up -d", output):
-        return True
-    return False
+    return recover_required_compose_stack(ctx, "compose up -d", output)
 
 
 def preflight(ctx: UpReadyContext) -> None:
     step("S01", "preflight")
-    for command in ["docker", "curl", "qrencode"]:
+    needs_docker = ctx.settings.deployment_target == "compose" or (
+        ctx.settings.build_registry_images or ctx.settings.mirror_registry_images
+    )
+    commands = ["curl", "qrencode"]
+    if needs_docker:
+        commands.append("docker")
+    if ctx.settings.deployment_target == "kubernetes":
+        commands.extend(["make", "kubectl", "helm"])
+    for command in commands:
         if shutil.which(command) is None:
             raise UpReadyError(f"Missing required command: {command}")
+    if ctx.settings.deployment_target == "kubernetes":
+        resolve_kube_context(ctx)
+    if needs_docker:
+        docker_info = shell.run(["docker", "info"], check=False, capture=True)
+        if docker_info.returncode != 0:
+            raise UpReadyError(
+                "Docker daemon is unavailable; start Docker before building or mirroring "
+                "local-registry images"
+            )
     if ctx.settings.profile_mode is None:
         raise UpReadyError(
             "PROFILE_MODE is required.\n"
@@ -197,7 +267,8 @@ def preflight(ctx: UpReadyContext) -> None:
     require_concrete_endpoint_values(ctx.settings)
     os.environ["WG_PEERS"] = os.getenv("WG_PEERS", ctx.settings.wg_peers)
     ensure_secret_bootstrap(ctx)
-    verify_registry_transport(ctx)
+    if needs_docker:
+        verify_registry_transport(ctx)
     ensure_memory_schema(ctx)
 
 
@@ -206,20 +277,32 @@ def run_up_ready(ctx: UpReadyContext) -> None:
     apply_profile_runtime_env(ctx)
     ensure_local_peer_material(ctx)
 
-    if not compose_up(ctx):
-        diagnostics(ctx)
+    deployed = (
+        kubernetes_up(ctx) if ctx.settings.deployment_target == "kubernetes" else compose_up(ctx)
+    )
+    if not deployed:
+        # The Kubernetes registry preflight already emits the failing Pod's
+        # description. Avoid burying that actionable error under stale events
+        # from an earlier release.
+        if ctx.last_failure.name != "docker_registry_plain_http_untrusted":
+            diagnostics(ctx)
         memo_write(ctx, "fail", ctx.last_failure.name, ctx.last_failure.fix)
-        raise UpReadyError(f"compose_up failed: {ctx.last_failure.cause}")
+        failure_detail = ctx.last_failure_text or ctx.last_failure.cause
+        raise UpReadyError(f"{ctx.settings.deployment_target}_up failed: {failure_detail}")
 
     if not mode_guardrails(ctx):
         if auto_fix(ctx, "profile_obfuscation_mismatch", ctx.last_failure_text):
             if not mode_guardrails(ctx):
                 diagnostics(ctx)
-                memo_write(ctx, "fail", ctx.last_failure.name or "mode_guardrails", ctx.last_failure.fix)
+                memo_write(
+                    ctx, "fail", ctx.last_failure.name or "mode_guardrails", ctx.last_failure.fix
+                )
                 raise UpReadyError("mode_guardrails failed after bounded auto-fix")
         else:
             diagnostics(ctx)
-            memo_write(ctx, "fail", ctx.last_failure.name or "mode_guardrails", ctx.last_failure.fix)
+            memo_write(
+                ctx, "fail", ctx.last_failure.name or "mode_guardrails", ctx.last_failure.fix
+            )
             raise UpReadyError("mode_guardrails failed")
 
     if not health_checks(ctx) or not network_checks(ctx):
@@ -237,7 +320,9 @@ def run_up_ready(ctx: UpReadyContext) -> None:
     discover_peer_configs(ctx)
     if not qr_render(ctx):
         diagnostics(ctx)
-        memo_write(ctx, "fail", ctx.last_failure.name or "qr_permission_denied", ctx.last_failure.fix)
+        memo_write(
+            ctx, "fail", ctx.last_failure.name or "qr_permission_denied", ctx.last_failure.fix
+        )
         raise UpReadyError("qr_render failed")
 
     write_credential_handoff(ctx)
@@ -248,9 +333,15 @@ def run_up_ready(ctx: UpReadyContext) -> None:
 @app.callback(invoke_without_command=True)
 def up_ready(
     ctx: typer.Context,
-    profile_mode: Annotated[ProfileMode | None, typer.Option("--profile-mode", envvar="PROFILE_MODE")] = None,
+    profile_mode: Annotated[
+        ProfileMode | None, typer.Option("--profile-mode", envvar="PROFILE_MODE")
+    ] = None,
     server_ip: Annotated[str | None, typer.Option("--server-ip", envvar="SERVER_IP")] = None,
     client_ip: Annotated[str | None, typer.Option("--client-ip", envvar="CLIENT_IP")] = None,
+    deployment_target: Annotated[
+        DeploymentTarget | None,
+        typer.Option("--deployment-target", envvar="UP_READY_DEPLOYMENT_TARGET"),
+    ] = None,
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -261,6 +352,8 @@ def up_ready(
         settings.server_ip = server_ip
     if client_ip is not None:
         settings.client_ip = client_ip
+    if deployment_target is not None:
+        settings.deployment_target = deployment_target
     up_ctx = UpReadyContext(settings=settings)
     try:
         run_up_ready(up_ctx)

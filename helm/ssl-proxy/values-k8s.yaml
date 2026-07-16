@@ -1,0 +1,151 @@
+# Single-node Kubernetes deployment for the ssl-proxy server.
+# Secrets are created out-of-band from the existing protected server files.
+
+global:
+  image:
+    # Set dynamically by `ops up-ready`.
+    registry: ""
+  shared:
+    redpanda:
+      bootstrapServers: "ssl-proxy-redpanda:9092"
+      topicReplicationFactor: 1
+    postgres:
+      host: "ssl-proxy-postgres"
+    redis:
+      url: "redis://ssl-proxy-redis:6379/1"
+    minio:
+      endpoint: "http://ssl-proxy-minio:9000"
+    integrationConsole:
+      web:
+        service:
+          port: 3005
+    atherosSensor:
+
+redpanda:
+  external: false
+  bootstrapServers: "ssl-proxy-redpanda:9092"
+  topicReplicationFactor: 1
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_redpanda-data/_data"
+
+postgres:
+  external: false
+  host: "ssl-proxy-postgres"
+  # Expose password-protected Postgres on the single Kubernetes node's LAN IP.
+  hostPort: 5432
+  image:
+    repository: "ssl-proxy-postgres"
+    tag: latest
+    pullPolicy: Always
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_postgres-data/_data"
+
+redis:
+  external: false
+  url: "redis://ssl-proxy-redis:6379/1"
+
+minio:
+  external: false
+  endpoint: "http://ssl-proxy-minio:9000"
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_minio-data/_data"
+
+proxy:
+  image:
+    repository: "ssl-proxy"
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+  hostPorts:
+    enabled: true
+  wireguard:
+    obfuscationMaxDatagramBytes: 1500
+  healthcheck:
+    livenessProbe:
+      httpGet: null
+      exec:
+        command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]
+      initialDelaySeconds: 40
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    readinessProbe:
+      httpGet: null
+      exec:
+        command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]
+      initialDelaySeconds: 20
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+javaCoordinator:
+  image:
+    repository: "java-coordinator"
+    tag: latest
+    pullPolicy: Always
+  resources:
+    limits:
+      cpu: "2"
+      memory: 3Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+vecWorker:
+  enabled: false
+integrationConsole:
+  enabled: true
+  web:
+    image:
+      repository: integration-console
+      tag: latest
+      pullPolicy: Always
+    service:
+      port: 3005
+      targetPort: 3000
+      type: ClusterIP
+      hostPort: 3005
+  dbSetup:
+    image:
+      repository: integration-console
+      tag: latest
+      pullPolicy: Always
+atherosSensor:
+  enabled: true
+  image:
+    repository: atheros-sensor
+    tag: latest
+    pullPolicy: Always
+atherosSearch:
+  enabled: false
+  image:
+    repository: atheros-search
+    tag: latest
+    pullPolicy: Always
+observability:
+  enabled: true
+  keda:
+    enabled: false
+  monitoring:
+    enabled: true
+  dashboardDiscovery:
+    enabled: true
+  prometheus:
+    service:
+      hostPort: 9090
+    persistence:
+      hostPath: "/var/lib/docker/volumes/ssl-proxy_prometheus-data/_data"
+  loki:
+    persistence:
+      hostPath: "/var/lib/docker/volumes/ssl-proxy_loki-data/_data"
+  jaeger:
+    service:
+      hostPort: 16686
+      otlpGrpcHostPort: 4317
+      metricsHostPort: 14269
+  grafana:
+    service:
+      hostPort: 3004
+    persistence:
+      hostPath: "/var/lib/docker/volumes/ssl-proxy_grafana-data/_data"

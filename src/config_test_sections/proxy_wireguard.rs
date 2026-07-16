@@ -124,7 +124,7 @@
 
     #[cfg(unix)]
     #[test]
-    fn wireguard_obfuscation_key_file_loads_with_strict_permissions() {
+    fn wireguard_obfuscation_key_file_loads_with_read_only_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_lock();
@@ -132,12 +132,38 @@
         std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), "file-key").unwrap();
-        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o400)).unwrap();
         std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
 
-        let config = Config::from_env().unwrap();
+        for mode in [0o400, 0o440] {
+            std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+            let config = Config::from_env().unwrap();
 
-        assert_eq!(config.wireguard.obfuscation_key.as_slice(), b"file-key");
+            assert_eq!(config.wireguard.obfuscation_key.as_slice(), b"file-key");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wireguard_obfuscation_key_file_rejects_world_read_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_lock();
+        clear_env();
+        std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "file-key").unwrap();
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o444)).unwrap();
+        std::env::set_var("WG_OBFUSCATION_KEY_FILE", file.path());
+
+        let err = Config::from_env().unwrap_err();
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidSecretFile {
+                file_var: "WG_OBFUSCATION_KEY_FILE",
+                message,
+            } if message.contains("mode 0400 or 0440") && message.contains("got 0444")
+        ));
     }
 
     #[cfg(unix)]

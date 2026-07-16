@@ -1,0 +1,20 @@
+# Values local to the atheros-search subchart.
+# TODO: no Kubernetes workload template exists yet; this chart intentionally renders nothing.
+enabled: false
+image:
+  repository: atheros-search
+  tag: latest
+  pullPolicy: IfNotPresent
+httpPort: 8080
+grpcPort: 50051
+metricsPort: 9090
+embeddingBackend: "http://host.docker.internal:8083"
+embeddingModel: "nomic-embed-text-v2-moe"
+embeddingDimensions: 768
+apiTokenSecret:
+  name: atheros-credentials
+  key: api-token-sha256
+otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+
+# Compose-equivalent in-cluster observability stack.
+

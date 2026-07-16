@@ -1,0 +1,36 @@
+dependencies:
+- name: proxy
+  repository: file://charts/proxy
+  version: 0.1.2
+- name: java-coordinator
+  repository: file://charts/java-coordinator
+  version: 0.1.1
+- name: integration-console
+  repository: file://charts/integration-console
+  version: 0.1.1
+- name: atheros-sensor
+  repository: file://charts/atheros-sensor
+  version: 0.1.1
+- name: postgres
+  repository: file://charts/postgres
+  version: 0.1.2
+- name: redpanda
+  repository: file://charts/redpanda
+  version: 0.1.1
+- name: minio
+  repository: file://charts/minio
+  version: 0.1.1
+- name: redis
+  repository: file://charts/redis
+  version: 0.1.1
+- name: telemetry
+  repository: file://charts/telemetry
+  version: 0.1.1
+- name: vec-worker
+  repository: file://charts/vec-worker
+  version: 0.1.0
+- name: atheros-search
+  repository: file://charts/atheros-search
+  version: 0.1.0
+digest: sha256:d0896d6f7ba55da3ea9bff452c0d393125dced8d76175b4a85cacfd9e7ee2d8a
+generated: "2026-07-15T20:11:04.288519-04:00"

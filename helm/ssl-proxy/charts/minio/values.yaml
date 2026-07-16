@@ -1,0 +1,61 @@
+# Values local to the minio subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+external: true
+endpoint: "http://minio.minio.svc.cluster.local:9000"
+bucket: "integration-console-exports"
+accessKeySecret:
+  name: "minio-credentials"
+  key: "access-key"
+secretKeySecret:
+  name: "minio-credentials"
+  key: "secret-key"
+image:
+  repository: minio/minio
+  tag: RELEASE.2025-09-07T16-13-09Z
+  pullPolicy: Always
+clientImage:
+  repository: minio/mc
+  tag: RELEASE.2025-08-13T08-35-41Z
+  pullPolicy: Always
+extraBuckets:
+  - ssl-proxy-wireless-raw-archive
+initJob:
+  activeDeadlineSeconds: 600
+  backoffLimit: 3
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+persistence:
+  enabled: true
+  hostPath: ""
+  size: 50Gi
+  storageClassName: ""
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi

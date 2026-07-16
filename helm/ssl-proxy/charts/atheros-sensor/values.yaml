@@ -1,0 +1,46 @@
+# Values local to the atheros-sensor subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  shared:
+    redpanda:
+      bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
+
+enabled: false
+image:
+  repository: atheros-sensor
+  tag: latest
+  pullPolicy: IfNotPresent
+device: ""
+locationId: "default"
+channel: 11
+channelHopEnabled: true
+channelHopIntervalMs: 1000
+regDomain: "US"
+auditLayerStream: "off"
+metricsPort: 9097
+otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Optional search/vector service; disabled like the Compose vector profile.

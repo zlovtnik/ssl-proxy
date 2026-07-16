@@ -34,8 +34,11 @@ overrides a rule for its subtree.
   It has its own local `AGENTS.md`.
 - `sql/` contains split Postgres schema objects plus the canonical Oracle
   baseline schema.
-- `docker/`, `helm/`, `scripts/`, and `docs/` hold deployment, operational, and
-  design material.
+- `helm/ssl-proxy/` is the umbrella chart; deployable units live under
+  `helm/ssl-proxy/charts/`, while only shared ConfigMaps and the shared service
+  account remain in the umbrella templates.
+- `docker/`, `scripts/`, and `docs/` hold deployment, operational, and design
+  material.
 
 ## Architecture Guardrails
 - Treat the Rust proxy and wireless sensor as producers of sync-plane work, not

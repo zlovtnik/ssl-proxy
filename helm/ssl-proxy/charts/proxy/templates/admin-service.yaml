@@ -1,0 +1,31 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.proxy.fullname" . }}-proxy-admin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+  ports:
+    - name: admin
+      port: {{ .Values.service.adminPort }}
+      targetPort: {{ .Values.service.adminPort }}
+      protocol: TCP
+    - name: policy
+      port: {{ .Values.service.policyPort }}
+      targetPort: {{ .Values.service.policyPort }}
+      protocol: TCP
+{{- if .Values.service.metricsPort }}
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: admin
+      protocol: TCP
+{{- end }}
+{{- end }}

@@ -1,0 +1,21 @@
+{{- if .Values.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-coordinator
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.javaCoordinator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: java-coordinator
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: java-coordinator
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: 8081
+      protocol: TCP
+{{- end }}

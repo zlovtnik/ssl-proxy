@@ -1,0 +1,155 @@
+{{- if .Values.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ssl-proxy.atherosSensor.fullname" . }}-atheros-sensor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.atherosSensor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: atheros-sensor
+spec:
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: atheros-sensor
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: atheros-sensor
+      {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
+      annotations:
+        {{- with .Values.global.rolloutRevision }}
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.atherosSensor.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: atheros-sensor
+          image: {{ include "ssl-proxy.atherosSensor.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+              value: "redpanda://{{ .Values.global.shared.redpanda.bootstrapServers }}"
+            - name: ATH_SENSOR_REQUIRE_HOST_ENDPOINTS
+              value: "false"
+            - name: ATH_SENSOR_DEVICE
+              value: {{ .Values.device | quote }}
+            - name: ATH_SENSOR_LOCATION_ID
+              value: {{ .Values.locationId | quote }}
+            - name: ATH_SENSOR_CHANNEL
+              value: {{ .Values.channel | quote }}
+            - name: ATH_SENSOR_CHANNEL_HOP_ENABLED
+              value: {{ .Values.channelHopEnabled | quote }}
+            - name: ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS
+              value: {{ .Values.channelHopIntervalMs | quote }}
+            - name: ATH_SENSOR_REG_DOMAIN
+              value: {{ .Values.regDomain | quote }}
+            - name: ATH_SENSOR_AUDIT_LAYER_STREAM
+              value: {{ .Values.auditLayerStream | quote }}
+            - name: ATH_SENSOR_METRICS_PORT
+              value: {{ .Values.metricsPort | quote }}
+            - name: ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED
+              value: "true"
+            - name: ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS
+              value: "60"
+            - name: ATH_SENSOR_SIGNAL_ANOMALY_DBM_DELTA
+              value: "15"
+            - name: ATH_SENSOR_DEAUTH_FLOOD_THRESHOLD
+              value: "20"
+            - name: ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS
+              value: "30"
+            - name: ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS
+              value: "60"
+            - name: ATH_SENSOR_EXPORT_HANDSHAKES
+              value: "false"
+            - name: ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS
+              value: "60"
+            - name: ATH_SENSOR_SHUTDOWN_GRACE_SECS
+              value: "5"
+            - name: ATH_SENSOR_BACKLOG_MAX_ATTEMPTS
+              value: "10"
+            - name: ATH_SENSOR_BACKLOG_MAX_AGE_HOURS
+              value: "72"
+            - name: ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS
+              value: "10000"
+            - name: ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS
+              value: "30"
+            - name: SYNC_OUTBOX_DIR
+              value: "/sync-outbox"
+            - name: RUST_LOG
+              value: "warn,atheros_sensor=info"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otlpEndpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_SERVICE_NAME
+              value: "atheros-sensor"
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metricsPort }}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/atheros-sensor", "healthcheck"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/atheros-sensor", "healthcheck"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: sys-class-net
+              mountPath: /sys/class/net
+              readOnly: true
+            - name: tun-device
+              mountPath: /dev/net/tun
+            - name: sync-outbox
+              mountPath: /sync-outbox
+      volumes:
+        - name: sys-class-net
+          hostPath:
+            path: /sys/class/net
+            type: Directory
+        - name: tun-device
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        - name: sync-outbox
+          emptyDir: {}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

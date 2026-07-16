@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sslproxy_ops.paths import repo_root
 
 ProfileMode = Literal["iphone", "linux-shim", "linux-direct", "mac"]
+DeploymentTarget = Literal["compose", "kubernetes"]
 
 
 class Settings(BaseSettings):
@@ -29,7 +30,9 @@ class Settings(BaseSettings):
     profile_mode: ProfileMode | None = Field(default=None, validation_alias="PROFILE_MODE")
     server_ip: str = Field(default="192.168.1.221", validation_alias="SERVER_IP")
     client_ip: str = Field(default="192.168.1.68", validation_alias="CLIENT_IP")
-    wg_peers: str = Field(default="peer1,peer2", validation_alias=AliasChoices("WG_PEERS", "ROTATOR_PEERS"))
+    wg_peers: str = Field(
+        default="peer1,peer2", validation_alias=AliasChoices("WG_PEERS", "ROTATOR_PEERS")
+    )
     health_timeout_secs: int = Field(default=120, validation_alias="UP_READY_HEALTH_TIMEOUT_SECS")
     check_retry_secs: int = Field(default=15, validation_alias="UP_READY_CHECK_RETRY_SECS")
     log_tail_lines: int = Field(default=200, validation_alias="UP_READY_LOG_TAIL_LINES")
@@ -42,10 +45,33 @@ class Settings(BaseSettings):
     skip_registry_preflight: bool = Field(
         default=False, validation_alias="UP_READY_SKIP_REGISTRY_PREFLIGHT"
     )
+    deployment_target: DeploymentTarget = Field(
+        default="kubernetes", validation_alias="UP_READY_DEPLOYMENT_TARGET"
+    )
+    build_registry_images: bool = Field(
+        default=True, validation_alias="UP_READY_BUILD_REGISTRY_IMAGES"
+    )
+    mirror_registry_images: bool = Field(
+        default=True, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
+    )
+    kube_context: str = Field(default="", validation_alias="UP_READY_KUBE_CONTEXT")
+    kube_namespace: str = Field(default="ssl-proxy", validation_alias="UP_READY_KUBE_NAMESPACE")
+    helm_release: str = Field(default="ssl-proxy", validation_alias="UP_READY_HELM_RELEASE")
+    helm_timeout: str = Field(default="15m", validation_alias="UP_READY_HELM_TIMEOUT")
+    kube_registry_probe_timeout: str = Field(
+        default="45s", validation_alias="UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT"
+    )
 
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")
     image_tag: str | None = Field(default=None, validation_alias="IMAGE_TAG")
+    wg_port: int = Field(default=443, ge=1, le=65535, validation_alias="WG_PORT")
+    wg_internal_port: int = Field(
+        default=51820, ge=1, le=65535, validation_alias="WG_INTERNAL_PORT"
+    )
+    wg_obfuscation_enabled: bool = Field(
+        default=False, validation_alias="WG_OBFUSCATION_ENABLED"
+    )
 
     sync_scan_topic: str = Field(default="sync.scan.request", validation_alias="SYNC_SCAN_TOPIC")
     sync_scan_consumer: str = Field(
@@ -79,4 +105,3 @@ class Settings(BaseSettings):
     @property
     def stack_health_service_names(self) -> list[str]:
         return self.stack_health_services.split()
-

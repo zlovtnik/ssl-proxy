@@ -1,0 +1,68 @@
+{{- if .Values.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.integrationConsole.fullname" . }}-integration-console-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.integrationConsole.labels" . | nindent 4 }}
+    app.kubernetes.io/component: integration-console-web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.integrationConsole.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: integration-console-web
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.integrationConsole.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: integration-console-web
+      {{- with .Values.global.rolloutRevision }}
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.integrationConsole.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      containers:
+        - name: web
+          image: {{ include "ssl-proxy.integrationConsole.image" (dict "root" . "image" .Values.web.image) }}
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          command: ["bin/rails", "server", "-b", "0.0.0.0"]
+          env:
+            {{- include "ssl-proxy.integrationConsole.integrationConsoleEnv" . | nindent 12 }}
+            - name: SYNC_DB_POOL
+              value: {{ .Values.web.syncDbPool | quote }}
+            - name: INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY
+              value: {{ .Values.web.cache.ttlInventory | quote }}
+            - name: INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT
+              value: {{ .Values.web.cache.ttlAuditRecent | quote }}
+            - name: INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD
+              value: {{ .Values.web.cache.ttlDashboard | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: "integration-console-web"
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.service.targetPort }}
+              {{- with .Values.web.service.hostPort }}
+              hostPort: {{ . }}
+              {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+{{- end }}

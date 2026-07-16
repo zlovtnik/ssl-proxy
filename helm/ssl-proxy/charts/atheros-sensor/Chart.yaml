@@ -1,0 +1,6 @@
+apiVersion: v2
+name: atheros-sensor
+description: Linux wireless monitor-mode sensor
+type: application
+version: 0.1.1
+appVersion: "1.0.0"

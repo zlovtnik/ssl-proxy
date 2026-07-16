@@ -1,0 +1,232 @@
+{{- if .Values.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.proxy.fullname" . }}-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: proxy
+      {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
+      annotations:
+        {{- with .Values.global.rolloutRevision }}
+        ssl-proxy.io/rollout-revision: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.proxy.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: copy-wireguard-config
+          image: {{ include "ssl-proxy.proxy.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/ && chmod -R g+rX /config"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.initResources | nindent 12 }}
+          volumeMounts:
+            - name: config-source
+              mountPath: /config-source
+              readOnly: true
+            - name: config
+              mountPath: /config
+      containers:
+        - name: ssl-proxy
+          image: {{ include "ssl-proxy.proxy.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/start-proxy-wg"]
+          env:
+            # WireGuard
+            - name: WG_INTERFACE_NAME
+              value: {{ .Values.wireguard.interfaceName | quote }}
+            - name: WG_TEMPLATE_PATH
+              value: "/config/templates/server.conf"
+            - name: WG_CONFIG_PATH
+              value: "/run/wireguard/wg0.conf"
+            - name: WG_UAPI_SOCKET_DIR
+              value: "/var/run/wireguard"
+            - name: WG_SERVER_ADDRESS
+              value: {{ .Values.wireguard.serverAddress | quote }}
+            - name: WG_PORT
+              value: {{ .Values.wireguard.port | quote }}
+            - name: WG_INTERNAL_PORT
+              value: {{ .Values.wireguard.internalPort | quote }}
+            - name: WG_MTU
+              value: {{ .Values.wireguard.mtu | quote }}
+            {{- if .Values.wireguard.obfuscationMaxDatagramBytes }}
+            - name: WG_OBFUSCATION_MAX_DATAGRAM_BYTES
+              value: {{ .Values.wireguard.obfuscationMaxDatagramBytes | quote }}
+            {{- end }}
+            - name: WG_UDP_SOCKET_BUFFER_BYTES
+              value: {{ .Values.wireguard.udpSocketBufferBytes | quote }}
+            - name: WG_OBFUSCATION_ENABLED
+              value: {{ .Values.wireguard.obfuscation.enabled | quote }}
+            - name: WG_OBFUSCATION_KEY
+              value: ""
+            - name: WG_OBFUSCATION_KEY_FILE
+              value: "/run/local-secrets/wg_obfuscation_key"
+            - name: WG_OBFUSCATION_MAGIC_BYTE
+              value: {{ .Values.wireguard.obfuscation.magicByte | quote }}
+            - name: WG_OBFUSCATION_SESSION_IDLE_SECS
+              value: {{ .Values.wireguard.obfuscation.sessionIdleSecs | quote }}
+            - name: WG_SUDO
+              value: "1"
+            - name: WG_RUNTIME_SYSCTLS
+              value: "0"
+            - name: WG_WAN_INTERFACE
+              value: "auto"
+            - name: WG_PEERS
+              value: {{ .Values.wireguard.peerNames | quote }}
+            # Redpanda
+            - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.proxy.fullname" . }}-config
+                  key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+            - name: SYNC_CONTENT_TOPICS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ssl-proxy.proxy.fullname" . }}-config
+                  key: SYNC_STREAM_NAMES
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminApiKeySecret.name }}
+                  key: {{ .Values.adminApiKeySecret.key }}
+            - name: ADMIN_BIND_ADDR
+              value: {{ .Values.wireguard.adminBindAddress | quote }}
+            - name: RUST_LOG
+              value: "ssl_proxy=info"
+            - name: EXPLICIT_PROXY_ENABLED
+              value: "false"
+            - name: SYNC_OUTBOX_DIR
+              value: "/sync-outbox"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.global.shared.javaCoordinator.tracing.otlpEndpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_SERVICE_NAME
+              value: "ssl-proxy"
+          ports:
+            - containerPort: {{ .Values.wireguard.port }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.wireguard.port }}
+              {{- end }}
+              protocol: UDP
+              name: wireguard
+            - containerPort: {{ .Values.wireguard.internalPort }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.wireguard.internalPort }}
+              {{- end }}
+              protocol: UDP
+              name: wg-internal
+            - containerPort: {{ .Values.service.adminPort }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.service.adminPort }}
+              {{- end }}
+              protocol: TCP
+              name: admin
+            - containerPort: {{ .Values.service.policyPort }}
+              {{- if .Values.hostPorts.enabled }}
+              hostPort: {{ .Values.service.policyPort }}
+              {{- end }}
+              protocol: TCP
+              name: policy
+          {{- with .Values.healthcheck.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.healthcheck.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: sync-outbox
+              mountPath: /sync-outbox
+            - name: runtime-secrets
+              mountPath: /run/local-secrets
+              readOnly: true
+            - name: tun-device
+              mountPath: /dev/net/tun
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      volumes:
+        - name: config-source
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ .Values.wireguard.configSecret.name }}
+                  items:
+                    - {key: server.conf, path: templates/server.conf}
+                    - {key: Corefile, path: coredns/Corefile}
+                    - {key: privatekey-server, path: server/privatekey-server}
+                    - {key: publickey-server, path: server/publickey-server}
+                    {{- range $peer := splitList "," .Values.wireguard.peerNames }}
+                    {{- $peer = trim $peer }}
+                    - {key: {{ $peer }}.conf, path: {{ $peer }}/{{ $peer }}.conf}
+                    - {key: {{ $peer }}-obfuscated.conf, path: {{ $peer }}/{{ $peer }}-obfuscated.conf}
+                    - {key: presharedkey-{{ $peer }}, path: {{ $peer }}/presharedkey-{{ $peer }}}
+                    - {key: publickey-{{ $peer }}, path: {{ $peer }}/publickey-{{ $peer }}}
+                    {{- end }}
+              - configMap:
+                  name: {{ include "ssl-proxy.proxy.fullname" . }}-topics-manifest
+                  items:
+                    - key: topics.manifest
+                      path: topics/topics.manifest
+        - name: config
+          emptyDir: {}
+        - name: sync-outbox
+          emptyDir: {}
+        - name: runtime-secrets
+          secret:
+            secretName: {{ .Values.runtimeSecret.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.runtimeSecret.obfuscationKey }}
+                path: wg_obfuscation_key
+        - name: tun-device
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

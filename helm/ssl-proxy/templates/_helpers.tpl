@@ -2,17 +2,17 @@
 Expand the name of the chart.
 */}}
 {{- define "ssl-proxy.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- default .Chart.Name .Values.global.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
 {{- define "ssl-proxy.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- if .Values.global.fullnameOverride }}
+{{- .Values.global.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- $name := default .Chart.Name .Values.global.nameOverride }}
 {{- if contains $name .Release.Name }}
 {{- .Release.Name | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -48,23 +48,35 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 Redpanda bootstrap servers connection string
 */}}
 {{- define "ssl-proxy.redpandaBootstrapServers" -}}
-{{- .Values.redpanda.bootstrapServers }}
+{{- .Values.global.shared.redpanda.bootstrapServers }}
 {{- end }}
 
 {{/*
 Postgres connection URL
 */}}
 {{- define "ssl-proxy.postgresUrl" -}}
-postgres://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}
+jdbc:postgresql://{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}
+{{- end }}
+
+{{/*
+Build an image reference, optionally prefixed by the global registry.
+Usage: include "ssl-proxy.image" (dict "root" . "image" .Values.proxy.image)
+*/}}
+{{- define "ssl-proxy.image" -}}
+{{- $repository := .image.repository -}}
+{{- with .root.Values.global.image.registry -}}
+{{- $repository = printf "%s/%s" (trimSuffix "/" .) $repository -}}
+{{- end -}}
+{{- printf "%s:%s" $repository .image.tag -}}
 {{- end }}
 
 {{/*
 Service account name
 */}}
 {{- define "ssl-proxy.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "ssl-proxy.fullname" .) .Values.serviceAccount.name }}
+{{- if .Values.global.serviceAccount.create }}
+{{- default (include "ssl-proxy.fullname" .) .Values.global.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- default "default" .Values.global.serviceAccount.name }}
 {{- end }}
 {{- end }}

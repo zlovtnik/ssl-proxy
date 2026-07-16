@@ -15,8 +15,8 @@
   retry: auto
 - name: docker_registry_plain_http_untrusted
   pattern: 'server gave HTTP response to HTTPS client|http: server gave HTTP response to HTTPS client'
-  cause: 'Docker daemon is treating the plain-HTTP local registry as HTTPS'
-  fix: 'Add REGISTRY to Docker daemon insecure-registries and restart Docker, or put TLS in front of the registry'
+  cause: 'A container runtime is treating the plain-HTTP local registry as HTTPS'
+  fix: 'Configure both the build host Docker daemon and Kubernetes node containerd for REGISTRY, or put TLS in front of the registry'
   retry: manual
 - name: docker_registry_dns_timeout
   pattern: 'lookup registry-1\.docker\.io .* i/o timeout'
@@ -98,4 +98,3 @@
   cause: 'Required image is missing from the configured registry'
   fix: 'Build and push the missing image tag to REGISTRY, then rerun up-ready'
   retry: manual
-

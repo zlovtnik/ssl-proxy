@@ -1,0 +1,123 @@
+# Values local to the proxy subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext:
+    fsGroup: 1000
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  shared:
+    javaCoordinator:
+      tracing:
+        otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+
+enabled: true
+replicas: 1
+image:
+  repository: ssl-proxy
+  tag: latest
+  pullPolicy: Always
+service:
+  type: ClusterIP
+  # -- WireGuard UDP port
+  wgPort: 443
+  # -- Plain WireGuard UDP port
+  wgInternalPort: 51820
+  # -- Admin API HTTP port
+  adminPort: 3002
+  # -- Metrics HTTP port (separate from adminPort to avoid duplicate port numbers)
+  metricsPort: 3003
+  # -- Policy enforcement port
+  policyPort: 3001
+  annotations: {}
+hostPorts:
+  # Single-node values may bind the public ports directly on the node.
+  enabled: false
+# Resource limits (matches docker-compose)
+resources:
+  limits:
+    cpu: "2"
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+initResources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+# WireGuard configuration
+wireguard:
+  interfaceName: "wg0"
+  serverAddress: "10.13.13.1/24"
+  port: 443
+  internalPort: 51820
+  mtu: 1420
+  obfuscationMaxDatagramBytes: null
+  udpSocketBufferBytes: "16777216"
+  obfuscation:
+    enabled: false
+    key: ""
+    magicByte: "0xAA"
+    sessionIdleSecs: 300
+  peerNames: "peer1,peer2"
+  # Peer configuration is mounted from Secrets
+  peers: []
+  # - name: peer1
+  #   privateKeySecret: {name: "wg-peer1-key", key: "private-key"}
+  #   publicKeySecret: {name: "wg-peer1-key", key: "public-key"}
+  #   allowedIPs: "10.13.13.2/32"
+  configSecret:
+    name: "wireguard-config"
+  adminBindAddress: "0.0.0.0"
+# Admin API key for dashboard access
+adminApiKeySecret:
+  name: "proxy-admin-key"
+  key: "api-key"
+runtimeSecret:
+  name: "proxy-runtime-secrets"
+  obfuscationKey: "wg-obfuscation-key"
+# Security context (needs NET_ADMIN capability for BoringTun)
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_ADMIN
+# Health check
+healthcheck:
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: admin
+    initialDelaySeconds: 40
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: admin
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# Java Coordinator (scan/load/result pipeline)

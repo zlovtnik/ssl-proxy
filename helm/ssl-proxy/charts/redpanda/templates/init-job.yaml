@@ -1,0 +1,53 @@
+{{- if not .Values.external }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.redpanda.fullname" . }}-redpanda-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.redpanda.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: {{ .Values.initJob.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.initJob.backoffLimit }}
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.redpanda.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redpanda-init
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.redpanda.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: redpanda-init
+          image: {{ include "ssl-proxy.redpanda.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              brokers={{ include "ssl-proxy.redpanda.fullname" . }}-redpanda:9092
+              until rpk cluster info --brokers "$brokers" >/dev/null 2>&1; do sleep 2; done
+              while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
+                case "$topic" in ''|'#'*) continue ;; esac
+                if ! rpk topic describe "$topic" --brokers "$brokers" >/dev/null 2>&1; then
+                  rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas"
+                fi
+                rpk topic alter-config "$topic" --brokers "$brokers" --set "retention.ms=$retention_ms" --set "retention.bytes=$retention_bytes" >/dev/null
+              done < /config/topics.manifest
+          volumeMounts:
+            - name: topics-manifest
+              mountPath: /config
+              readOnly: true
+          resources:
+            {{- toYaml .Values.initJob.resources | nindent 12 }}
+      volumes:
+        - name: topics-manifest
+          configMap:
+            name: {{ include "ssl-proxy.redpanda.fullname" . }}-topics-manifest
+{{- end }}

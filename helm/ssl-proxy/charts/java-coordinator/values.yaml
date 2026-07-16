@@ -1,0 +1,119 @@
+# Values local to the java-coordinator subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  shared:
+    postgres:
+      host: "postgres-primary.postgres.svc.cluster.local"
+      port: 5432
+      database: "sync"
+      user: "sync"
+      passwordSecret:
+        name: "postgres-credentials"
+        key: "password"
+    minio:
+      endpoint: "http://minio.minio.svc.cluster.local:9000"
+      accessKeySecret:
+        name: "minio-credentials"
+        key: "access-key"
+      secretKeySecret:
+        name: "minio-credentials"
+        key: "secret-key"
+
+enabled: true
+replicas: 1
+image:
+  repository: java-coordinator
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  port: 8080
+  type: ClusterIP
+jvmOptions: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
+datasource:
+  maximumPoolSize: 35
+  minimumIdle: 10
+consumerConcurrency:
+  scan: 1
+  result: 1
+  wireless: 1
+  wirelessMaxPollRecords: 1
+retention:
+  wirelessRawPayloadHotDays: 7
+  syncEventRowRetentionDays: 30
+  syncEventTombstoneRetentionDays: 45
+  wirelessRawArchiveBucket: "ssl-proxy-wireless-raw-archive"
+  wirelessRawArchiveBatchSize: 100
+  wirelessRawArchiveIntervalMs: 300000
+  maintenanceIntervalMs: "3600000"
+tracing:
+  samplingProbability: 0.05
+  otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+# Resource limits
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+# Health check - Spring Boot Actuator
+healthcheck:
+  startupProbe:
+    tcpSocket:
+      port: 8081
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+  livenessProbe:
+    tcpSocket:
+      port: 8081
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+  readinessProbe:
+    tcpSocket:
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+# Metrics endpoint (embedded in Actuator)
+metrics:
+  enabled: true
+  port: 8081
+  redpandaLagMetricsEnabled: true
+  redpandaLagMetricsPollIntervalMs: 10000
+  redpandaLagMetricsTimeoutMs: 5000
+  heartbeatLogIntervalMs: 15000
+oracle:
+  enabled: true
+  wirelessEnabled: true
+  schemaValidationWarnOnly: false
+  loadMaxRetries: 3
+  conn: "mainerc_high"
+  user: "USCIS_APP"
+  passwordSecret:
+    name: "oracle-credentials"
+    key: "password"
+  # TNS_ADMIN for Oracle wallet
+  walletSecret:
+    name: "oracle-wallet"
+
+# Vec Worker

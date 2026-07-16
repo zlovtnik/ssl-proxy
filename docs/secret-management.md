@@ -169,18 +169,18 @@ java-coordinator:   ./secrets:/run/secrets:ro
 
 ## 5. Rotation Procedures
 
-### 5.1 Postgres password (planning required)
+### 5.1 Postgres password (stable bootstrap credential)
 
-Postgres credentials are consumed by multiple services. Rotation requires a coordinated restart:
+`secrets/postgres.key` is generated once and is the durable password authority. Routine
+`up-ready` runs must not replace it. For Kubernetes, `up-ready` removes the file's trailing
+newline before creating the Secret, marks the Secret immutable, and the Postgres pod reconciles
+the persistent `sync` role to that value before its password-authenticated readiness probe can
+pass. This also repairs volumes that were originally initialized with a stale password or with
+the newline included in the password.
 
-1. Update the secret file: `openssl rand -base64 32 | tr -d '\n' > secrets/postgres.key`
-2. Re-render `.env`: `scripts/gen-secrets env`
-3. Restart postgres: `docker compose up -d postgres` (this restarts with the new password)
-4. Restart every service that connects to postgres: `docker compose up -d java-coordinator integration-console-web integration-console-worker integration-console-db-setup integration-console-heatmap-refresh integration-console-heartbeat postgres-exporter atheros-sensor`
-5. Verify: `docker compose logs postgres | grep "password"` (should show no auth failures)
-
-**After a Postgres password change**, re-render `.env` before recreating services so every
-Compose interpolation sees the generated `POSTGRES_PASSWORD`.
+Do not edit, regenerate, or delete `secrets/postgres.key` as part of a normal stack update.
+Postgres password rotation is intentionally outside the routine deployment workflow because it
+requires a maintenance window and an explicit replacement of the immutable Kubernetes Secret.
 
 ### 5.2 MinIO credentials (planning required)
 

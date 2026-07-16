@@ -1,0 +1,22 @@
+{{- if not .Values.external }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.redpanda.fullname" . }}-redpanda
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.redpanda.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda
+spec:
+  selector:
+    {{- include "ssl-proxy.redpanda.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+    - name: admin
+      port: {{ .Values.adminPort }}
+      targetPort: admin
+{{- end }}
