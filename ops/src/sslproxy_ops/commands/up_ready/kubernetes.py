@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -11,7 +12,7 @@ from pathlib import Path
 from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step, warn
 from sslproxy_ops.paths import repo_root
-from sslproxy_ops.util.ini import peer_names
+from sslproxy_ops.util.ini import peer_names, trim_key_value
 
 
 def proxy_workload(ctx: UpReadyContext) -> str:
@@ -158,13 +159,52 @@ def apply_secret(
     _apply_rendered_resource(ctx, rendered or "")
 
 
+def apply_secret_value(
+    ctx: UpReadyContext,
+    name: str,
+    key: str,
+    path: Path,
+    *,
+    immutable: bool = False,
+) -> None:
+    """Apply a file-backed Secret value without exposing it in command arguments."""
+    if not path.is_file():
+        raise UpReadyError(f"Missing Kubernetes Secret source: {path}")
+    value = trim_key_value(path.read_text())
+    if not value:
+        raise UpReadyError(f"Kubernetes Secret source is empty: {path}")
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": name,
+            "namespace": ctx.settings.kube_namespace,
+        },
+        "immutable": immutable,
+        "type": "Opaque",
+        "data": {
+            key: base64.b64encode(value.encode()).decode(),
+        },
+    }
+    _apply_rendered_resource(ctx, json.dumps(manifest))
+
+
 def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
     step("S02", "kubernetes_secrets: applying protected files with server-side apply")
     root = repo_root()
     secrets = root / "secrets"
     config = root / "config"
     ensure_namespace(ctx)
-    apply_secret(ctx, "postgres-credentials", [("password", secrets / "postgres.key")])
+    # postgres.key is generated once and is the durable credential authority. Store the
+    # same newline-free value used by .env and the operator credential handoff, then make
+    # the Kubernetes Secret immutable so routine upgrades cannot rotate it accidentally.
+    apply_secret_value(
+        ctx,
+        "postgres-credentials",
+        "password",
+        secrets / "postgres.key",
+        immutable=True,
+    )
     apply_secret(ctx, "redis-credentials", [("password", secrets / "redis.key")])
     apply_secret(
         ctx,

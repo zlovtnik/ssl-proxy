@@ -1,11 +1,15 @@
+import base64
 import json
 import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
+    apply_secret_value,
     dashboard_set_file_args,
     helm_upgrade,
     helm_release_status,
@@ -30,6 +34,33 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertTrue(any("stackHealthOverview=" in arg for arg in args))
         self.assertTrue(any("prometheus.alertRules=" in arg for arg in args))
         self.assertTrue(any("postgresExporter.queries=" in arg for arg in args))
+
+    def test_postgres_secret_value_is_trimmed_and_immutable(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        ctx = UpReadyContext(settings=settings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "postgres.key"
+            source.write_text("correct-password\n")
+            with patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._apply_rendered_resource"
+            ) as mocked_apply:
+                apply_secret_value(
+                    ctx,
+                    "postgres-credentials",
+                    "password",
+                    source,
+                    immutable=True,
+                )
+
+        manifest = json.loads(mocked_apply.call_args.args[1])
+        self.assertTrue(manifest["immutable"])
+        self.assertEqual(manifest["metadata"]["namespace"], "ssl-proxy")
+        self.assertEqual(
+            base64.b64decode(manifest["data"]["password"]),
+            b"correct-password",
+        )
 
     def test_proxy_workload_matches_chart_fullname_for_custom_releases(self):
         cases = {
