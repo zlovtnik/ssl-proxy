@@ -171,12 +171,31 @@ production rollout on the Kubernetes server with its working kubeconfig.
 
 2. Validate dependencies and the server-specific render:
 
+   ```bash
+   helm dependency update helm/ssl-proxy
+   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml \
+     --set-string schemaMigrator.publicHostname=schema.example.com \
+     --set-string schemaMigrator.traefik.acme.email=ops@example.com
+   helm template ssl-proxy helm/ssl-proxy -n ssl-proxy \
+     -f helm/ssl-proxy/values-k8s.yaml \
+     --set-string schemaMigrator.publicHostname=schema.example.com \
+     --set-string schemaMigrator.traefik.acme.email=ops@example.com >/tmp/ssl-proxy.yaml
+   kubectl apply --dry-run=client -f /tmp/ssl-proxy.yaml
+   ```
+
+   DNS must resolve the chosen hostname to the public address forwarding TCP
+   80/443 to `192.168.1.221`. Allow inbound TCP 80 for Let's Encrypt HTTP-01
+   and TCP 443 for the UI/API/Keycloak origin. UDP 443 remains owned by the
+   proxy and is a separate transport.
+
 3. Start or upgrade the stack from the server repository. Supply the real
    client profile values used by the deployment:
 
    ```bash
    make up-ready PROFILE_MODE=<profile> \
-     SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip>
+     SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip> \
+     SCHEMA_MIGRATOR_PUBLIC_HOSTNAME=schema.example.com \
+     ACME_EMAIL=ops@example.com
    ```
 
 4. Verify the release and every namespace-scoped workload:
@@ -185,7 +204,32 @@ production rollout on the Kubernetes server with its working kubeconfig.
    helm status ssl-proxy -n ssl-proxy
    kubectl get pods,jobs,services -n ssl-proxy -o wide
    kubectl get daemonsets,statefulsets,deployments -n ssl-proxy
+   curl -fsS https://schema.example.com/
+   curl -fsS https://schema.example.com/api/health
+   curl -fsS https://schema.example.com/realms/middleware/.well-known/openid-configuration
    ```
+
+5. Read `secrets/up-ready-credentials.txt` (mode `0600`) for the initial
+   `schema-admin` password, sign in, and change the temporary password. Store
+   the replacement in the approved password manager; the bootstrap Job never
+   resets an existing user.
+
+6. Confirm state and upgrade safety:
+
+   ```bash
+   kubectl rollout restart -n ssl-proxy statefulset/ssl-proxy-schema-migrator-mongo
+   kubectl rollout status -n ssl-proxy statefulset/ssl-proxy-schema-migrator-mongo
+   kubectl exec -n ssl-proxy ssl-proxy-postgres-0 -- \
+     psql -U sync -d sync -Atc "select datname from pg_database where datname in ('sync','keycloak') order by 1"
+   make up-ready PROFILE_MODE=<profile> SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip> \
+     SCHEMA_MIGRATOR_PUBLIC_HOSTNAME=schema.example.com ACME_EMAIL=ops@example.com
+   ```
+
+   After the repeated upgrade, verify the changed `schema-admin` password still
+   works, both databases remain, MongoDB data survives a pod restart, and the
+   pre-existing SSL Proxy workloads and `sync` data are unchanged. MongoDB and
+   ACME data live under `/var/lib/ssl-proxy/schema-migrator/`; no Compose volume
+   migration is performed.
 
 The `vecWorker` and `atherosSearch` charts are explicit placeholders and
 render no workloads yet. The telemetry values also call out the existing KEDA,
@@ -267,10 +311,10 @@ All views are optimized for ADB columnar storage.
 
 - `java-coordinator` is the sync control-plane service. The source still lives under `services/zig-coordinator/` for historical reasons, but the runtime service is Java/Spring/Camel; inspect it with `docker compose logs java-coordinator`.
 - `sql/postgres.sql` is a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Maintain split schema files directly and keep `sql/postgres.source.sql` in sync as the aggregate reference when split objects change.
-- `services/schema-migrator` is the canonical CLI for schema ordering and validation:
-  - `cd services/schema-migrator && sbt "run --sql-dir ../../sql list"`
-  - `cd services/schema-migrator && sbt "run --sql-dir ../../sql validate"`
-  - `export DATABASE_URL=... && cd services/schema-migrator && sbt "run --sql-dir ../../sql apply"`
+- `apps/schema-migrator` is the canonical CLI for schema ordering and validation:
+  - `cd apps/schema-migrator && sbt "run --sql-dir ../../sql list"`
+  - `cd apps/schema-migrator && sbt "run --sql-dir ../../sql validate"`
+  - `export DATABASE_URL=... && cd apps/schema-migrator && sbt "run --sql-dir ../../sql apply"`
 - `schema-migrator apply` bootstraps `schema_control.schema_objects`, `schema_control.schema_apply_log`, and the single-row readiness view `schema_control.schema_ready`. Runtime apps should gate startup with:
   ```sql
   select ready, all_applied, pending_count, failed_count, failed_objects

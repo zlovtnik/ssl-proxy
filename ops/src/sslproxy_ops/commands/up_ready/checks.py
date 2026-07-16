@@ -511,6 +511,9 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
     grafana_password = read_handoff_secret(repo_root() / "secrets" / "grafana_admin_password.key")
     admin_api_key = read_handoff_secret(repo_root() / "secrets" / "admin_api_key")
     wg_obfuscation_key = read_handoff_secret(repo_root() / "secrets" / "wg_obfuscation_key")
+    schema_admin_password = read_handoff_secret(
+        repo_root() / "secrets" / "schema-migrator" / "application_admin_password.key"
+    )
     with tmp.open("w") as handle:
         handle.write("# ssl-proxy credential handoff\n")
         handle.write(f"generated_at={ctx.run_ts}\n")
@@ -544,6 +547,14 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
         handle.write("url=http://127.0.0.1:3004\n")
         handle.write(f"username={os.getenv('GRAFANA_ADMIN_USER', 'admin')}\n")
         handle.write(f"password={grafana_password}\n")
+        if ctx.settings.deployment_target == "kubernetes":
+            handle.write("\n## Schema Migrator first login\n")
+            handle.write(
+                f"url=https://{ctx.settings.schema_migrator_public_hostname or ''}\n"
+            )
+            handle.write("username=schema-admin\n")
+            handle.write(f"temporary_password={schema_admin_password}\n")
+            handle.write("password_change_required=true\n")
 
     for peer_id in peer_names(os.getenv("WG_PEERS", ctx.settings.wg_peers)):
         peer_dir = repo_root() / "config" / peer_id

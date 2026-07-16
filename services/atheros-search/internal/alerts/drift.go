@@ -16,7 +16,7 @@ WITH candidates AS (
     dic.centroid_sample_count,
     e.embedding_id,
     dic.cluster_id
-  FROM vec_embeddings e
+  FROM vec_embeddings_expanded e
   JOIN device_identity_clusters dic
     ON EXISTS (
       SELECT 1 FROM unnest(dic.mac_ids) AS cluster_mac(mac)

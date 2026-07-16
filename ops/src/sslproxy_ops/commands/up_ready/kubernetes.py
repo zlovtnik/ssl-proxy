@@ -248,6 +248,45 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
         "oracle-credentials",
         [("password", secrets / "oracle_password.txt")],
     )
+    schema_migrator_secrets = secrets / "schema-migrator"
+    apply_secret_values(
+        ctx,
+        "schema-migrator-backend",
+        [
+            ("encrypt-key", schema_migrator_secrets / "encrypt_key.key"),
+            ("jwt-secret", schema_migrator_secrets / "jwt_secret.key"),
+            ("api-bearer-token", schema_migrator_secrets / "api_bearer_token.key"),
+        ],
+    )
+    apply_secret_values(
+        ctx,
+        "schema-migrator-mongo",
+        [("password", schema_migrator_secrets / "mongo_password.key")],
+    )
+    apply_secret_values(
+        ctx,
+        "schema-migrator-keycloak",
+        [
+            (
+                "database-password",
+                schema_migrator_secrets / "keycloak_database_password.key",
+            ),
+            (
+                "bootstrap-admin-password",
+                schema_migrator_secrets / "keycloak_bootstrap_admin_password.key",
+            ),
+        ],
+    )
+    apply_secret_values(
+        ctx,
+        "schema-migrator-bootstrap",
+        [
+            (
+                "application-admin-password",
+                schema_migrator_secrets / "application_admin_password.key",
+            )
+        ],
+    )
     apply_secret(ctx, "oracle-wallet", [(None, root / "wallet")])
 
     wireguard_files: list[tuple[str | None, Path]] = [
@@ -488,6 +527,12 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         raise UpReadyError("REGISTRY is required for Helm deployment")
     if not image_tag:
         raise UpReadyError("IMAGE_TAG is required for Helm deployment")
+    public_hostname = (ctx.settings.schema_migrator_public_hostname or "").strip()
+    if not public_hostname:
+        raise UpReadyError("SCHEMA_MIGRATOR_PUBLIC_HOSTNAME is required for Helm deployment")
+    acme_email = (ctx.settings.acme_email or "").strip()
+    if not acme_email:
+        raise UpReadyError("ACME_EMAIL is required for Helm deployment")
     release = ctx.settings.helm_release
     namespace = ctx.settings.kube_namespace
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
@@ -509,6 +554,10 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "javaCoordinator.image.tag": image_tag,
         "integrationConsole.web.image.tag": image_tag,
         "integrationConsole.dbSetup.image.tag": image_tag,
+        "schemaMigrator.backend.image.tag": image_tag,
+        "schemaMigrator.ui.image.tag": image_tag,
+        "schemaMigrator.publicHostname": public_hostname,
+        "schemaMigrator.traefik.acme.email": acme_email,
         "atherosSensor.image.tag": image_tag,
         "atherosSearch.image.tag": image_tag,
         "postgres.image.tag": image_tag,

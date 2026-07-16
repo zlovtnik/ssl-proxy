@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "publicHostname": {
+      "type": "string",
+      "pattern": "^$|^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$"
+    },
+    "backend": {
+      "type": "object",
+      "required": ["image", "credentialsSecret", "resources"]
+    },
+    "ui": {
+      "type": "object",
+      "required": ["image", "resources"]
+    },
+    "mongo": {
+      "type": "object",
+      "required": ["image", "credentialsSecret", "persistence", "resources"]
+    },
+    "keycloak": {
+      "type": "object",
+      "required": ["image", "realm", "clientId", "credentialsSecret", "applicationAdmin"]
+    },
+    "traefik": {
+      "type": "object",
+      "required": ["image", "hostPorts", "acme", "resources"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "enabled": { "const": true } },
+        "required": ["enabled"]
+      },
+      "then": {
+        "required": ["publicHostname", "traefik"],
+        "properties": {
+          "publicHostname": { "minLength": 1 },
+          "traefik": {
+            "properties": {
+              "acme": {
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string", "minLength": 3 }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

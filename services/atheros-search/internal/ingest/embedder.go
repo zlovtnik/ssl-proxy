@@ -381,7 +381,7 @@ SELECT
   mac_rotation_indicators::text,
   coalesce(embedding_text, ''),
   coalesce(text_summary, '')
-FROM vec_behaviour_snapshots
+FROM vec_behaviour_snapshots_expanded
 WHERE snapshot_id::text = $1 OR snapshot_key = $1
 `, job.SourceKey).Scan(
 		&windowStart,
@@ -621,7 +621,7 @@ SELECT
   coalesce(beacon_interval_median_ms::text, ''),
   coalesce(beacon_jitter_ms::text, ''),
   coalesce(embedding_text, '')
-FROM vec_timing_profiles
+FROM vec_timing_profiles_expanded
 WHERE profile_id::text = $1 OR profile_key = $1
 `, job.SourceKey).Scan(
 		&sourceMAC,
@@ -684,17 +684,23 @@ func completeEmbeddingBatch(ctx context.Context, pool *pgxpool.Pool, rows []comp
 func failEmbeddingJob(ctx context.Context, pool *pgxpool.Pool, job embeddingJob, cause error) error {
 	backoff := int32(math.Max(10, math.Min(300, float64(job.Attempts*10))))
 	_, err := pool.Exec(ctx, `
-UPDATE vec_embedding_jobs
-SET status = CASE WHEN $2 >= max_attempts THEN 'failed' ELSE 'pending' END,
-    lease_token = NULL,
-    leased_at = NULL,
-    locked_by = NULL,
-    last_error = $1,
-    due_at = now() + make_interval(secs => $3),
+WITH lease_updated AS (
+  UPDATE vec_embedding_job_leases
+  SET lease_token = NULL,
+      leased_at = NULL,
+      locked_by = NULL,
+      last_error = $1,
+      due_at = now() + make_interval(secs => $4)
+  WHERE job_id = $5
+    AND lease_token IS NOT DISTINCT FROM $6
+  RETURNING job_id
+)
+UPDATE vec_embedding_jobs job
+SET status = CASE WHEN $2 >= $3 THEN 'failed' ELSE 'pending' END,
     updated_at = now()
-WHERE job_id = $4
-  AND lease_token IS NOT DISTINCT FROM $5
-`, truncateError(cause), job.Attempts, backoff, job.JobID, job.LeaseToken)
+FROM lease_updated
+WHERE job.job_id = lease_updated.job_id
+`, truncateError(cause), job.Attempts, job.MaxAttempts, backoff, job.JobID, job.LeaseToken)
 	return err
 }
 

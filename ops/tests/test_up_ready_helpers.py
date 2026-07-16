@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sslproxy_ops.commands.up_ready import apply_profile_runtime_env
+from sslproxy_ops.commands.up_ready import apply_profile_runtime_env, preflight
 from sslproxy_ops.commands.up_ready.checks import (
     discover_peer_configs,
     runtime_obfuscation_value,
@@ -35,6 +35,40 @@ from sslproxy_ops.config import Settings
 
 
 class UpReadyHelpersTest(unittest.TestCase):
+    def test_kubernetes_preflight_requires_public_hostname_before_mutation(self):
+        settings = Settings()
+        settings.deployment_target = "kubernetes"
+        settings.schema_migrator_public_hostname = None
+        settings.acme_email = None
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.ensure_secret_bootstrap"
+            ) as secret_bootstrap,
+            self.assertRaisesRegex(UpReadyError, "SCHEMA_MIGRATOR_PUBLIC_HOSTNAME"),
+        ):
+            preflight(ctx)
+
+        secret_bootstrap.assert_not_called()
+
+    def test_kubernetes_preflight_requires_acme_email_before_mutation(self):
+        settings = Settings()
+        settings.deployment_target = "kubernetes"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = None
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.ensure_secret_bootstrap"
+            ) as secret_bootstrap,
+            self.assertRaisesRegex(UpReadyError, "ACME_EMAIL"),
+        ):
+            preflight(ctx)
+
+        secret_bootstrap.assert_not_called()
+
     def test_peer_tunnel_address(self):
         self.assertEqual(peer_tunnel_address("peer1"), "10.13.13.2/32")
         self.assertEqual(peer_tunnel_address("peer7"), "10.13.13.8/32")
@@ -275,6 +309,8 @@ class UpReadyHelpersTest(unittest.TestCase):
             secret_dir = root / "secrets"
             peer_dir.mkdir(parents=True)
             secret_dir.mkdir()
+            schema_secret_dir = secret_dir / "schema-migrator"
+            schema_secret_dir.mkdir()
             for name in [
                 "postgres.key",
                 "grafana_admin_password.key",
@@ -282,6 +318,9 @@ class UpReadyHelpersTest(unittest.TestCase):
                 "wg_obfuscation_key",
             ]:
                 (secret_dir / name).write_text(f"{name}-value\n")
+            (schema_secret_dir / "application_admin_password.key").write_text(
+                "temporary-schema-password\n"
+            )
             (peer_dir / "peer1.conf").write_text(
                 "[Interface]\nPrivateKey = private\n"
                 "[Peer]\nEndpoint = 192.0.2.10:51820\n"
@@ -294,6 +333,7 @@ class UpReadyHelpersTest(unittest.TestCase):
             settings.profile_mode = "iphone"
             settings.server_ip = "192.0.2.10"
             settings.client_ip = "192.0.2.20"
+            settings.schema_migrator_public_hostname = "schema.example.com"
             settings.credential_handoff_file = output
             ctx = UpReadyContext(settings=settings)
 
@@ -311,6 +351,10 @@ class UpReadyHelpersTest(unittest.TestCase):
             self.assertNotIn("WG_OBFS_", handoff)
             self.assertNotIn("obfuscated config", handoff)
             self.assertNotIn("127.0.0.1:51821", handoff)
+            self.assertIn("url=https://schema.example.com", handoff)
+            self.assertIn("username=schema-admin", handoff)
+            self.assertIn("temporary_password=temporary-schema-password", handoff)
+            self.assertIn("password_change_required=true", handoff)
 
 
 if __name__ == "__main__":

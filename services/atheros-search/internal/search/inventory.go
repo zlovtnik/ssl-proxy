@@ -455,7 +455,7 @@ WITH candidate_pairs AS (
     greatest(lower(left_source_mac), lower(right_source_mac)) AS mac_b,
     max(cosine_similarity)::double precision AS confidence,
     max(computed_at) AS computed_at
-  FROM vec_similarity_pairs
+  FROM vec_similarity_pairs_expanded
   WHERE pair_kind IN ('device_device', 'timing_timing')
     AND left_source_mac IS NOT NULL
     AND right_source_mac IS NOT NULL

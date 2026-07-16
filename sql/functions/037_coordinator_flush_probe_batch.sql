@@ -27,7 +27,7 @@ begin
     values (
       v_probe->>'ssid',
       v_probe->>'client_mac',
-      (select bssid from wireless_authorized_networks 
+      (select bssid from wireless_authorized_networks
        where lower(ssid) = lower(v_probe->>'ssid') and enabled limit 1),
       (v_probe->>'first_seen')::timestamptz,
       (v_probe->>'last_seen')::timestamptz,

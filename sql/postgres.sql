@@ -1,6 +1,6 @@
 -- Postgres schema bootstrap shim.
 -- Active schema objects live in the split sql/* folders and are applied by
--- services/schema-migrator. Keep sql/postgres.source.sql in sync as the aggregate
+-- apps/schema-migrator. Keep sql/postgres.source.sql in sync as the aggregate
 -- reference when split objects change.
 
 -- extensions
@@ -44,6 +44,17 @@
 \ir tables/029_sync_event_payload_archives.sql
 \ir tables/030_sync_event_tombstones.sql
 \ir tables/031_device_graph_workmap_hardening.sql
+\ir tables/032_vec_timing_profile_stats.sql
+\ir tables/033_vec_behaviour_snapshot_stats.sql
+\ir tables/034_vec_embedding_sources.sql
+\ir tables/035_vec_embedding_job_leases.sql
+\ir tables/036_vec_similarity_pair_meta.sql
+\ir tables/037_wireless_frame_radio.sql
+\ir tables/038_wireless_frame_qos.sql
+\ir tables/039_wireless_frame_network.sql
+\ir tables/040_wireless_frame_app_signals.sql
+\ir tables/041_wireless_frame_identity.sql
+\ir tables/042_wireless_frame_security.sql
 
 -- indexes
 \ir indexes/001_sync_events_indexes.sql
@@ -78,7 +89,9 @@
 \ir functions/010_vec_build_behaviour_snapshots.sql
 \ir functions/011_vec_enqueue_embedding_jobs.sql
 \ir functions/012_vec_lease_embedding_jobs.sql
+\ir functions/012a_vec_upsert_embedding.sql
 \ir functions/013_vec_complete_embedding_batch.sql
+\ir functions/013a_vec_upsert_similarity_pair.sql
 \ir functions/014_vec_materialize_similarity_pairs.sql
 \ir functions/015_vec_reembed_changed_jobs.sql
 \ir functions/016_vec_release_expired_leases.sql
@@ -122,6 +135,12 @@
 \ir functions/054_coordinator_record_scan_request_batch_deduplicate.sql
 
 -- views
+\ir views/000_wireless_frames_expanded.sql
+\ir views/000a_vec_embeddings_expanded.sql
+\ir views/000b_vec_behaviour_snapshots_expanded.sql
+\ir views/000c_vec_embedding_jobs_expanded.sql
+\ir views/000d_vec_similarity_pairs_expanded.sql
+\ir views/000e_vec_timing_profiles_expanded.sql
 \ir views/001_sync_events_expanded.sql
 \ir views/002_v_wireless_audit_with_devices.sql
 \ir views/003_v_wireless_threats.sql

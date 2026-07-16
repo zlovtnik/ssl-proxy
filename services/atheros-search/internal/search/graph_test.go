@@ -40,7 +40,7 @@ func TestGraphDeviceSSIDScopeIncludesWirelessEvidenceSources(t *testing.T) {
 	require.Len(t, clauses, 1)
 	require.Equal(t, "%lab\\%net%", args[1])
 	require.Contains(t, clauses[0], "FROM wireless_clients wc")
-	require.Contains(t, clauses[0], "FROM wireless_frames wf")
+	require.Contains(t, clauses[0], "FROM wireless_frames_expanded wf")
 	require.Contains(t, clauses[0], "FROM wireless_shadow_alerts s")
 	require.Contains(t, clauses[0], "lower(wc.client_mac) = lower(d.mac_id)")
 	require.Contains(t, clauses[0], "lower(coalesce(wc.ssid, '')) like $2")

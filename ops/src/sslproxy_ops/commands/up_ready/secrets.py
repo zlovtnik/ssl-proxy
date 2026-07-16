@@ -195,6 +195,10 @@ def ensure_secret_bootstrap(ctx: UpReadyContext) -> None:
         materialize_secret_env(ctx)
         step("S00", "secret_bootstrap: repaired generated secrets")
         return
+    if (repo_root() / "secrets" / "ONE_TIME_TOKENS").is_file():
+        raise UpReadyError(
+            "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
+        )
 
     step("S00", "secret_bootstrap: generating missing secrets")
     shell.run([repo_root() / "scripts" / "gen-secrets", "generate"], check=True)

@@ -19,7 +19,7 @@ overrides a rule for its subtree.
   tunnel transport, admin/readiness surfaces, and proxy-side sync publishing.
 - `crates/sync-plane/` contains shared Rust Redpanda publisher/config/contract
   code used by producers.
-- `services/schema-migrator/` is the Scala Cats Effect runner for ordered
+- `apps/schema-migrator/` is the Scala Cats Effect runner for ordered
   split Postgres and Oracle schema files under `sql/`.
 - `services/atheros-sensor/` is the Rust Linux monitor-mode wireless sensor.
 - `services/atheros-search/` is the Go HTTP/gRPC search and vector service for
@@ -90,7 +90,7 @@ overrides a rule for its subtree.
   - `cargo test -p ssl-proxy`
   - `cargo test -p sync-plane`
   - `cargo test -p atheros-sensor`
-  - `cd services/schema-migrator && sbt test`
+  - `cd apps/schema-migrator && sbt test`
   - `make dependency-boundaries`
   - `make atheros-search-test`
   - `cd services/zig-coordinator && ./gradlew test`

@@ -111,6 +111,32 @@ integrationConsole:
       repository: integration-console
       tag: latest
       pullPolicy: Always
+schemaMigrator:
+  enabled: true
+  # Set dynamically by `ops up-ready` from SCHEMA_MIGRATOR_PUBLIC_HOSTNAME.
+  publicHostname: ""
+  backend:
+    image:
+      repository: schema-migrator-backend
+      tag: latest
+      pullPolicy: Always
+    dbTestAllowedHosts:
+      - 192.168.1.221
+  ui:
+    image:
+      repository: schema-migrator-ui
+      tag: latest
+      pullPolicy: Always
+  mongo:
+    persistence:
+      enabled: true
+      hostPath: /var/lib/ssl-proxy/schema-migrator/mongo
+  traefik:
+    acme:
+      # Set dynamically by `ops up-ready` from ACME_EMAIL.
+      email: ""
+      persistence:
+        hostPath: /var/lib/ssl-proxy/schema-migrator/traefik-acme
 atherosSensor:
   enabled: true
   image:

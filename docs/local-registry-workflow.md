@@ -94,6 +94,12 @@ Image names:
 | wg-key-rotator | `$REGISTRY/wg-key-rotator:$IMAGE_TAG` |
 | postgres extension image | `$REGISTRY/ssl-proxy-postgres:$IMAGE_TAG` |
 | atheros-search-ui | `$REGISTRY/atheros-search-ui:$IMAGE_TAG` |
+| schema-migrator backend | `$REGISTRY/schema-migrator-backend:$IMAGE_TAG` |
+| schema-migrator UI | `$REGISTRY/schema-migrator-ui:$IMAGE_TAG` |
+
+`registry-mirror-all` also mirrors the exact Schema Migrator runtime tags used
+by Helm: `mongo:7.0.22`, `quay.io/keycloak/keycloak:26.2.5`,
+`traefik:v3.6.2`, `postgres:16.9-alpine3.21`, and `busybox:1.37.0`.
 
 `vec-worker` is pending in this checkout. `make registry-build-all` skips it
 while `services/vec-worker/Dockerfile` is absent; `make registry-build-vec-worker`

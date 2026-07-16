@@ -254,6 +254,8 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `DATABASE_URL` | Compose default: `jdbc:postgresql://postgres:5432/sync` | Primary Postgres connection. PostgreSQL credentials are supplied separately as `POSTGRES_USER=sync` and the generated `POSTGRES_PASSWORD`; URL-style values must follow `postgres://sync:${POSTGRES_PASSWORD}@postgres:5432/sync` when credentials are embedded. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
+| `SCHEMA_MIGRATOR_PUBLIC_HOSTNAME` | *(required for Kubernetes)* | Public DNS hostname for the Schema Migrator HTTPS origin; provide a hostname only, without `https://` |
+| `ACME_EMAIL` | *(required for Kubernetes)* | Let's Encrypt account and expiry-notification email used by the Helm-owned Traefik edge |
 
 `wg-udp-frontdoor` listener entries also support `session_idle` and `jitter_ms`
 TOML fields. Keep `jitter_ms` low; `5` ms is intended for coarse timing
@@ -376,7 +378,10 @@ protected local files as Kubernetes Secrets, and upgrades the complete
 Kubernetes release. The release includes the proxy, coordinator, console
 processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
 OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
-reusing the retained Compose data volumes.
+reusing the retained Compose data volumes. It also deploys Schema Migrator's
+React UI, Scala API, MongoDB, Keycloak, and dedicated Traefik edge. Schema
+Migrator reuses the root `sync` Postgres target; Keycloak receives its own
+role and database on that same server.
 
 The image name remains canonical end to end: the development machine builds
 `linux/amd64` and pushes to `192.168.1.221:5000`, and Kubernetes pulls the same
@@ -393,8 +398,17 @@ they do not use the deprecated Kubernetes 1.36 `Service.spec.externalIPs` field.
 ```bash
 make up-ready PROFILE_MODE=mac \
   SERVER_IP=192.168.1.221 \
-  CLIENT_IP=192.168.1.53
+  CLIENT_IP=192.168.1.53 \
+  SCHEMA_MIGRATOR_PUBLIC_HOSTNAME=schema.example.com \
+  ACME_EMAIL=ops@example.com
 ```
+
+Before deployment, point the selected hostname at the public address that
+forwards TCP 80 and 443 to `192.168.1.221`. Permit inbound TCP 80 for the ACME
+HTTP-01 challenge and redirect, and TCP 443 for the application. UDP 443
+remains assigned to WireGuard and does not conflict with the Schema Migrator
+TCP listener. The live profile persists MongoDB and ACME state beneath
+`/var/lib/ssl-proxy/schema-migrator/`.
 
 The operator uses standard `kubectl` and `helm`. It selects
 `UP_READY_KUBE_CONTEXT` when set and otherwise uses the current kubeconfig

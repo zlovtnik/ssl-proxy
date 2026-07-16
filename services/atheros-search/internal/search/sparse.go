@@ -73,7 +73,7 @@ SELECT
   %s as keyword_rank,
   coalesce(jsonb_path_query_array(%s, '$[*]'), '[]'::jsonb)::text as tags_json,
   %s::text as detail_json
-FROM wireless_frames wf
+FROM wireless_frames_expanded wf
 JOIN sync_events_expanded se ON se.dedupe_key = wf.dedupe_key
 %s
 ORDER BY keyword_rank DESC, se.observed_at DESC
@@ -161,7 +161,7 @@ SELECT
     'frame_type_distribution', b.frame_type_distribution,
     'mac_rotation_indicators', b.mac_rotation_indicators
   )::text as detail_json
-FROM vec_behaviour_snapshots b
+FROM vec_behaviour_snapshots_expanded b
 %s
 ORDER BY keyword_rank DESC, b.window_start DESC
 LIMIT $%d`, rankExpr, where, limitParam)

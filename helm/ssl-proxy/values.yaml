@@ -112,6 +112,12 @@ javaCoordinator:
   enabled: true
 integrationConsole:
   enabled: true
+schemaMigrator:
+  enabled: false
+  publicHostname: ""
+  traefik:
+    acme:
+      email: ""
 atherosSensor:
   enabled: true
 observability:

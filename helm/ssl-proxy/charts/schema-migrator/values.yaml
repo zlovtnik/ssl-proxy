@@ -1,0 +1,155 @@
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+  shared:
+    postgres:
+      host: "postgres-primary.postgres.svc.cluster.local"
+      port: 5432
+      database: "sync"
+      user: "sync"
+      passwordSecret:
+        name: "postgres-credentials"
+        key: "password"
+
+enabled: false
+publicHostname: ""
+
+backend:
+  image:
+    repository: schema-migrator-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    port: 8080
+  dbTestAllowedHosts: []
+  credentialsSecret:
+    name: schema-migrator-backend
+    encryptKey: encrypt-key
+    jwtSecret: jwt-secret
+    apiBearerToken: api-bearer-token
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+ui:
+  image:
+    repository: schema-migrator-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    port: 80
+    targetPort: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+mongo:
+  image:
+    repository: mongo
+    tag: 7.0.22
+    pullPolicy: IfNotPresent
+  username: schema_migrator
+  database: schema_migrator
+  credentialsSecret:
+    name: schema-migrator-mongo
+    passwordKey: password
+  persistence:
+    enabled: true
+    hostPath: /var/lib/ssl-proxy/schema-migrator/mongo
+    mountPath: /data/db
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+keycloak:
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: 26.2.5
+    pullPolicy: IfNotPresent
+  realm: middleware
+  clientId: bedrock-ui
+  adminRole: admin
+  database: keycloak
+  databaseUser: keycloak
+  bootstrapAdminUsername: keycloak-admin
+  credentialsSecret:
+    name: schema-migrator-keycloak
+    databasePasswordKey: database-password
+    bootstrapAdminPasswordKey: bootstrap-admin-password
+  applicationAdmin:
+    username: schema-admin
+    credentialsSecret:
+      name: schema-migrator-bootstrap
+      passwordKey: application-admin-password
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  bootstrapJob:
+    backoffLimit: 4
+    activeDeadlineSeconds: 600
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+traefik:
+  image:
+    repository: traefik
+    tag: v3.6.2
+    pullPolicy: IfNotPresent
+  hostPorts:
+    http: 80
+    https: 443
+  acme:
+    email: ""
+    server: https://acme-v02.api.letsencrypt.org/directory
+    storagePath: /data/acme.json
+    persistence:
+      hostPath: /var/lib/ssl-proxy/schema-migrator/traefik-acme
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+bootstrapImages:
+  postgres:
+    repository: postgres
+    tag: 16.9-alpine3.21
+    pullPolicy: IfNotPresent
+  busybox:
+    repository: busybox
+    tag: 1.37.0
+    pullPolicy: IfNotPresent
+

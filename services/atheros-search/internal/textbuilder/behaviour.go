@@ -55,7 +55,7 @@ SELECT
   coalesce(unprotected_count, 0),
   coalesce(unique_bssid_count, 0),
   coalesce(mac_rotation_indicators::text, '')
-FROM vec_behaviour_snapshots
+FROM vec_behaviour_snapshots_expanded
 WHERE snapshot_id::text = ANY($1::text[])
    OR snapshot_key = ANY($1::text[])
 `, sourceKeys(jobs))

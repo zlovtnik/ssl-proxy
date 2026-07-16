@@ -13,7 +13,7 @@ type SuggestCache struct {
 	Response  *searchv1.SuggestFiltersResponse
 }
 
-const suggestSSIDSQL = "SELECT DISTINCT ssid FROM wireless_frames WHERE ssid IS NOT NULL AND ($1 = '' OR ssid ILIKE $1 || '%' ESCAPE '\\') ORDER BY ssid"
+const suggestSSIDSQL = "SELECT DISTINCT ssid FROM wireless_frames_expanded WHERE ssid IS NOT NULL AND ($1 = '' OR ssid ILIKE $1 || '%' ESCAPE '\\') ORDER BY ssid"
 
 func SuggestFilters(ctx context.Context, pool *pgxpool.Pool, prefix string) (*searchv1.SuggestFiltersResponse, error) {
 	resp := &searchv1.SuggestFiltersResponse{}
@@ -21,13 +21,13 @@ func SuggestFilters(ctx context.Context, pool *pgxpool.Pool, prefix string) (*se
 	if err := scanDistinct(ctx, pool, suggestSSIDSQL, escapedPrefix, &resp.Ssids); err != nil {
 		return nil, err
 	}
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT location_id FROM wireless_frames WHERE location_id IS NOT NULL AND ($1 = '' OR location_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY location_id LIMIT 50", escapedPrefix, &resp.LocationIds); err != nil {
+	if err := scanDistinct(ctx, pool, "SELECT DISTINCT location_id FROM wireless_frames_expanded WHERE location_id IS NOT NULL AND ($1 = '' OR location_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY location_id LIMIT 50", escapedPrefix, &resp.LocationIds); err != nil {
 		return nil, err
 	}
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT sensor_id FROM wireless_frames WHERE sensor_id IS NOT NULL AND ($1 = '' OR sensor_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY sensor_id LIMIT 50", escapedPrefix, &resp.SensorIds); err != nil {
+	if err := scanDistinct(ctx, pool, "SELECT DISTINCT sensor_id FROM wireless_frames_expanded WHERE sensor_id IS NOT NULL AND ($1 = '' OR sensor_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY sensor_id LIMIT 50", escapedPrefix, &resp.SensorIds); err != nil {
 		return nil, err
 	}
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT frame_subtype FROM wireless_frames WHERE frame_subtype IS NOT NULL AND ($1 = '' OR frame_subtype ILIKE $1 || '%' ESCAPE '\\') ORDER BY frame_subtype LIMIT 50", escapedPrefix, &resp.FrameSubtypes); err != nil {
+	if err := scanDistinct(ctx, pool, "SELECT DISTINCT frame_subtype FROM wireless_frames_expanded WHERE frame_subtype IS NOT NULL AND ($1 = '' OR frame_subtype ILIKE $1 || '%' ESCAPE '\\') ORDER BY frame_subtype LIMIT 50", escapedPrefix, &resp.FrameSubtypes); err != nil {
 		return nil, err
 	}
 	return resp, nil

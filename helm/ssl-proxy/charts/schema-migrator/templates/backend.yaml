@@ -1,0 +1,169 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "backend") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: schema-migrator-backend
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: schema-migrator-backend
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.backend.image) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: -Djava.io.tmpdir=/tmp
+            - name: BEDROCK_HTTP_HOST
+              value: 0.0.0.0
+            - name: BEDROCK_HTTP_PORT
+              value: {{ .Values.backend.service.port | quote }}
+            - name: BEDROCK_CORS_ORIGINS
+              value: {{ include "ssl-proxy.schemaMigrator.publicOrigin" . | quote }}
+            - name: BEDROCK_ENCRYPT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.credentialsSecret.name }}
+                  key: {{ .Values.backend.credentialsSecret.encryptKey }}
+            - name: BEDROCK_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.credentialsSecret.name }}
+                  key: {{ .Values.backend.credentialsSecret.jwtSecret }}
+            - name: BEDROCK_API_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.credentialsSecret.name }}
+                  key: {{ .Values.backend.credentialsSecret.apiBearerToken }}
+            - name: BEDROCK_DEV_AUTH_ENABLED
+              value: "false"
+            - name: BEDROCK_KEYCLOAK_ENABLED
+              value: "true"
+            - name: BEDROCK_KEYCLOAK_ISSUER
+              value: {{ printf "%s/realms/%s" (include "ssl-proxy.schemaMigrator.publicOrigin" .) .Values.keycloak.realm | quote }}
+            - name: BEDROCK_KEYCLOAK_JWKS_URI
+              value: {{ printf "http://%s:8080/realms/%s/protocol/openid-connect/certs" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak")) .Values.keycloak.realm | quote }}
+            - name: BEDROCK_KEYCLOAK_CLIENT_ID
+              value: {{ .Values.keycloak.clientId | quote }}
+            - name: BEDROCK_KEYCLOAK_AUDIENCE
+              value: {{ .Values.keycloak.clientId | quote }}
+            - name: MONGO_USERNAME
+              value: {{ .Values.mongo.username | quote }}
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mongo.credentialsSecret.name }}
+                  key: {{ .Values.mongo.credentialsSecret.passwordKey }}
+            - name: BEDROCK_MONGO_URI
+              value: {{ printf "mongodb://$(MONGO_USERNAME):$(MONGO_PASSWORD)@%s:27017/?authSource=admin" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "mongo")) | quote }}
+            - name: BEDROCK_MONGO_DATABASE
+              value: {{ .Values.mongo.database | quote }}
+            - name: BEDROCK_MONGO_TARGETS_COLLECTION
+              value: targets
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
+                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
+            - name: BEDROCK_DB_USER
+              value: {{ .Values.global.shared.postgres.user | quote }}
+            - name: BEDROCK_DB_PASSWORD
+              value: $(POSTGRES_PASSWORD)
+            - name: BEDROCK_DB_URL
+              value: {{ printf "postgres://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" .Values.global.shared.postgres.user .Values.global.shared.postgres.host .Values.global.shared.postgres.port .Values.global.shared.postgres.database | quote }}
+            - name: DATABASE_URL
+              value: {{ printf "postgres://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" .Values.global.shared.postgres.user .Values.global.shared.postgres.host .Values.global.shared.postgres.port .Values.global.shared.postgres.database | quote }}
+            - name: BEDROCK_DB_TEST_ALLOWED_HOSTS
+              value: {{ concat (list .Values.global.shared.postgres.host) .Values.backend.dbTestAllowedHosts | uniq | join "," | quote }}
+            - name: BEDROCK_PATCH_STAGE_DIR
+              value: /tmp/schema-migrator-patches
+            - name: BEDROCK_REPO_CACHE_DIR
+              value: /tmp/schema-migrator-repos
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.port }}
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "backend") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-backend
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-backend
+  ports:
+    - name: http
+      port: {{ .Values.backend.service.port }}
+      targetPort: http
+{{- end }}
+

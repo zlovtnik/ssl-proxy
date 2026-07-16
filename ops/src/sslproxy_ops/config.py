@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")
     image_tag: str | None = Field(default=None, validation_alias="IMAGE_TAG")
+    schema_migrator_public_hostname: str | None = Field(
+        default=None, validation_alias="SCHEMA_MIGRATOR_PUBLIC_HOSTNAME"
+    )
+    acme_email: str | None = Field(default=None, validation_alias="ACME_EMAIL")
     wg_port: int = Field(default=443, ge=1, le=65535, validation_alias="WG_PORT")
     wg_internal_port: int = Field(
         default=51820, ge=1, le=65535, validation_alias="WG_INTERNAL_PORT"
@@ -100,6 +104,15 @@ class Settings(BaseSettings):
         allowed = {"auto", "1", "0", "true", "false", "yes", "no"}
         if value not in allowed:
             raise ValueError("must be one of auto, 1, 0, true, false, yes, no")
+        return value
+
+    @field_validator("schema_migrator_public_hostname")
+    @classmethod
+    def schema_migrator_hostname_must_not_include_scheme(
+        cls, value: str | None
+    ) -> str | None:
+        if value and "://" in value:
+            raise ValueError("must be a hostname without a URL scheme")
         return value
 
     @property

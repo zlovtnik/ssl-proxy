@@ -20,6 +20,14 @@ secrets/
 ├── grafana_admin_password.key            # GF_SECURITY_ADMIN_PASSWORD
 ├── oracle_password.txt                   # ORACLE_PASS_FILE for java-coordinator
 ├── atheros_api_token_sha256.key          # ATHSEARCH_API_TOKEN_SHA256 (hex hash)
+├── schema-migrator/
+│   ├── encrypt_key.key                    # Base64 AES-256-GCM key
+│   ├── jwt_secret.key                     # backend internal JWT signing secret
+│   ├── api_bearer_token.key               # backend static API token
+│   ├── mongo_password.key                 # MongoDB root/application password
+│   ├── keycloak_database_password.key     # dedicated Postgres role password
+│   ├── keycloak_bootstrap_admin_password.key # Keycloak master bootstrap password
+│   └── application_admin_password.key     # schema-admin initial temporary password
 ├── ONE_TIME_TOKENS                       # raw bootstrap tokens to consume and delete
 ├── wg-rotation/
 │   ├── frontdoor/
@@ -58,7 +66,7 @@ The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
 | Step | Detail |
 |---|---|
 | Entropy source | Uses Erlang/OTP `:crypto.strong_rand_bytes/1` |
-| Encoding | URL-safe base64 without padding for generated literal values |
+| Encoding | URL-safe base64 without padding for generated literal values; the Schema Migrator AES key uses standard Base64 so Java decodes exactly 32 bytes |
 | Atomic writes | Writes a temporary file, applies mode, then renames to the final path |
 | Overwrite policy | Refuses to overwrite managed files unless `--force` is passed |
 | Permissions | Applies per-secret file modes and locks generated directories to `0700` |
@@ -77,6 +85,13 @@ The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
 | `grafana_admin_password.key` | 32 | ~43 chars | Grafana |
 | `oracle_password.txt` | 32 | ~43 chars | java-coordinator Oracle sink |
 | `atheros_api_token_sha256.key` | 48 | hex(64) | atheros-search |
+| `schema-migrator/encrypt_key.key` | 32 | 44 chars | Schema Migrator AES-256-GCM response and target-password encryption |
+| `schema-migrator/jwt_secret.key` | 48 | ~64 chars | Schema Migrator internal JWT signing |
+| `schema-migrator/api_bearer_token.key` | 48 | ~64 chars | Static backend API authentication |
+| `schema-migrator/mongo_password.key` | 32 | ~43 chars | MongoDB authentication |
+| `schema-migrator/keycloak_database_password.key` | 32 | ~43 chars | Keycloak's dedicated `keycloak` Postgres role |
+| `schema-migrator/keycloak_bootstrap_admin_password.key` | 32 | ~43 chars | Keycloak master-realm bootstrap administrator |
+| `schema-migrator/application_admin_password.key` | 24 | ~32 chars | Initial temporary password for `schema-admin` |
 | `waha/api_key.key` | 32 | ~43 chars | Waha WhatsApp bridge |
 | `waha/dashboard_password.key` | 32 | ~43 chars | Waha dashboard |
 | `waha/swagger_password.key` | 32 | ~43 chars | Waha Swagger UI |
@@ -88,7 +103,10 @@ The generator also copies `admin_api_key` and `wg_obfuscation_key` into
 
 - **Never run generation with `--force` in the same environment** unless you intend to rotate
   *all* managed secrets. Without `--force`, existing managed files are not overwritten.
-- The raw Atheros API token is written to `secrets/ONE_TIME_TOKENS` **once** at generation time.
+- The raw Atheros API token and initial `schema-admin` password are written to
+  `secrets/ONE_TIME_TOKENS` **once** at generation time. When `repair` adds the
+  Schema Migrator secrets to an existing installation, it recreates this
+  one-time file for the new administrator password.
   Save it outside the repository, then delete the file:
   ```
   cat secrets/ONE_TIME_TOKENS
@@ -102,7 +120,8 @@ The generator also copies `admin_api_key` and `wg_obfuscation_key` into
   Oracle ADB sink, replace it with the actual `ORACLE_USER` password before enabling loads.
 - `scripts/up-ready.sh` writes a local `secrets/up-ready-credentials.txt` handoff file on
   success. It is mode `0600` and contains the two peer configs, Postgres password, Grafana
-  password, admin API key, WireGuard shim pass, and magic byte.
+  password, admin API key, WireGuard shim pass, magic byte, and Schema Migrator first-login
+  credentials.
 - The wrapper does not create the `wg-rotation/frontdoor/wg-udp-frontdoor.toml` file. That is
   maintained by the WireGuard key rotator (`apps/wg-key-rotator/bin/wg_key_rotator`).
 
@@ -164,6 +183,16 @@ java-coordinator:   ./secrets:/run/secrets:ro
 | `ssl-proxy-next` | rotation candidate copies | `ADMIN_API_KEY_FILE`, `WG_OBFUSCATION_KEY_FILE` |
 | `atheros-search` | `atheros_api_token_sha256.key` | `ATHSEARCH_API_TOKEN_SHA256` |
 | `waha` | `waha/api_key.key`, `waha/dashboard_password.key`, `waha/swagger_password.key` | `WAHA_API_KEY`, `WAHA_DASHBOARD_PASSWORD`, `WHATSAPP_SWAGGER_PASSWORD` |
+| Schema Migrator backend | `schema-migrator/encrypt_key.key`, `jwt_secret.key`, `api_bearer_token.key`; `postgres.key` | `BEDROCK_ENCRYPT_KEY`, `BEDROCK_JWT_SECRET`, `BEDROCK_API_BEARER_TOKEN`, default `DATABASE_URL` password |
+| Schema Migrator MongoDB | `schema-migrator/mongo_password.key` | `MONGO_INITDB_ROOT_PASSWORD`, backend `BEDROCK_MONGO_URI` |
+| Schema Migrator Keycloak | `schema-migrator/keycloak_database_password.key`, `keycloak_bootstrap_admin_password.key` | `KC_DB_PASSWORD`, `KC_BOOTSTRAP_ADMIN_PASSWORD` |
+| Schema Migrator bootstrap Job | `schema-migrator/application_admin_password.key` | Temporary password used only when `schema-admin` is absent |
+
+For Kubernetes, `up-ready` synchronizes these files into four Secrets:
+`schema-migrator-backend`, `schema-migrator-mongo`,
+`schema-migrator-keycloak`, and `schema-migrator-bootstrap`. The Keycloak realm
+ConfigMap contains only realm, client, redirect, origin, and role metadata.
+Credentials must never be added to that ConfigMap.
 
 ---
 
@@ -236,6 +265,22 @@ The token is SHA-256 hashed, so clients must be updated with the raw token:
 2. Re-render `.env`: `scripts/gen-secrets env`
 3. Restart: `docker compose --profile rotator up -d waha`
 4. Verify via the Waha dashboard or API health endpoint
+
+### 5.7 Schema Migrator first-login and rotation
+
+1. After the first successful Kubernetes deployment, read the
+   `Schema Migrator first login` section of
+   `secrets/up-ready-credentials.txt`.
+2. Sign in as `schema-admin` and replace the temporary password immediately.
+3. Store the replacement outside the repository. The Helm bootstrap Job checks
+   for the user before setting any password, so later upgrades do not reset it.
+4. Rotating backend encryption or authentication keys requires a planned
+   restart. Rotating `encrypt_key.key` also requires a data migration strategy
+   for values already encrypted with the prior key; do not replace it during a
+   routine upgrade.
+5. Keycloak database-password rotation must update the Postgres role and the
+   `schema-migrator-keycloak` Secret together. The normal init container keeps
+   them aligned on pod start, but coordinate the restart to avoid an outage.
 
 ---
 

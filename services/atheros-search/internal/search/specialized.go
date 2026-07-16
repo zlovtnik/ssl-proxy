@@ -63,7 +63,7 @@ LIMIT $1`, limit)
 func CrossSensorCorrelation(ctx context.Context, pool *pgxpool.Pool, sourceKey string, limit int) ([]CorrelationResult, error) {
 	rows, err := pool.Query(ctx, `
 SELECT left_source_key, right_source_key, coalesce(left_sensor_id, ''), coalesce(right_sensor_id, ''), cosine_similarity
-FROM vec_similarity_pairs
+FROM vec_similarity_pairs_expanded
 WHERE pair_kind = 'cross_sensor'
   AND (left_source_key = $1 OR right_source_key = $1)
 ORDER BY cosine_similarity DESC
@@ -90,7 +90,7 @@ SELECT
   coalesce(p.right_source_mac, ''),
   p.cosine_similarity,
   coalesce(alert.reason, '')
-FROM vec_similarity_pairs p
+FROM vec_similarity_pairs_expanded p
 JOIN wireless_shadow_alerts alert
   ON alert.reason = 'mac_rotation_suspected'
  AND alert.resolved_at IS NULL

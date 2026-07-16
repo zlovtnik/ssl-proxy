@@ -2,7 +2,7 @@ apiVersion: v2
 name: ssl-proxy
 description: Umbrella chart for the SSL Proxy platform
 type: application
-version: 0.2.3
+version: 0.2.4
 appVersion: "1.0.0"
 kubeVersion: ">=1.28.0-0"
 keywords:
@@ -29,6 +29,11 @@ dependencies:
     repository: "file://charts/integration-console"
     alias: integrationConsole
     condition: integrationConsole.enabled
+  - name: schema-migrator
+    version: 0.1.0
+    repository: "file://charts/schema-migrator"
+    alias: schemaMigrator
+    condition: schemaMigrator.enabled
   - name: atheros-sensor
     version: 0.1.1
     repository: "file://charts/atheros-sensor"

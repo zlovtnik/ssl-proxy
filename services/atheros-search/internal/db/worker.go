@@ -234,9 +234,10 @@ func CountWorkerQueueDepth(ctx context.Context, pool *pgxpool.Pool) (int64, erro
 
 const countWorkerQueueDepthSQL = `
 SELECT count(*)
-FROM vec_embedding_jobs
-WHERE status IN ('pending', 'failed')
-  AND attempts < max_attempts
+FROM vec_embedding_jobs job
+JOIN vec_embedding_job_leases lease USING (job_id)
+WHERE job.status IN ('pending', 'failed')
+  AND lease.attempts < lease.max_attempts
 `
 
 func backoffSeconds(attempts int32) int32 {
@@ -251,14 +252,20 @@ func backoffSeconds(attempts int32) int32 {
 }
 
 const failJobSQL = `
-UPDATE vec_embedding_jobs
+WITH lease_updated AS (
+    UPDATE vec_embedding_job_leases
+    SET lease_token = NULL,
+        leased_at = NULL,
+        locked_by = NULL,
+        last_error = $1::text,
+        due_at = now() + make_interval(secs => $4::integer)
+    WHERE job_id = $5::bigint
+      AND lease_token IS NOT DISTINCT FROM $6::text
+    RETURNING job_id
+)
+UPDATE vec_embedding_jobs job
 SET status = CASE WHEN $2::integer >= $3::integer THEN 'failed' ELSE 'pending' END,
-    lease_token = NULL,
-    leased_at = NULL,
-    locked_by = NULL,
-    last_error = $1::text,
-    due_at = now() + make_interval(secs => $4::integer),
     updated_at = now()
-WHERE job_id = $5::bigint
-  AND lease_token IS NOT DISTINCT FROM $6::text
+FROM lease_updated
+WHERE job.job_id = lease_updated.job_id
 `

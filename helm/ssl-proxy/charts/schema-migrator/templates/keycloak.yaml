@@ -1,0 +1,205 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-keycloak
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: schema-migrator-keycloak
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: schema-migrator-keycloak
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
+        checksum/realm: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: reconcile-database
+          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.bootstrapImages.postgres) }}
+          imagePullPolicy: {{ .Values.bootstrapImages.postgres.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              until pg_isready --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" --dbname="$PGDATABASE"; do
+                sleep 2
+              done
+              psql --no-password --set=ON_ERROR_STOP=1 \
+                --variable=keycloak_role="$KEYCLOAK_DB_USER" \
+                --variable=keycloak_password="$KEYCLOAK_DB_PASSWORD" \
+                --variable=keycloak_database="$KEYCLOAK_DB_NAME" <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'keycloak_role', :'keycloak_password')
+              WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'keycloak_role')
+              \gexec
+              SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'keycloak_role', :'keycloak_password')
+              \gexec
+              SELECT format('CREATE DATABASE %I OWNER %I', :'keycloak_database', :'keycloak_role')
+              WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'keycloak_database')
+              \gexec
+              SELECT format('ALTER DATABASE %I OWNER TO %I', :'keycloak_database', :'keycloak_role')
+              \gexec
+              SQL
+          env:
+            - name: PGHOST
+              value: {{ .Values.global.shared.postgres.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.global.shared.postgres.port | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.global.shared.postgres.database | quote }}
+            - name: PGUSER
+              value: {{ .Values.global.shared.postgres.user | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
+                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
+            - name: KEYCLOAK_DB_USER
+              value: {{ .Values.keycloak.databaseUser | quote }}
+            - name: KEYCLOAK_DB_NAME
+              value: {{ .Values.keycloak.database | quote }}
+            - name: KEYCLOAK_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.credentialsSecret.name }}
+                  key: {{ .Values.keycloak.credentialsSecret.databasePasswordKey }}
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+      containers:
+        - name: keycloak
+          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.keycloak.image) }}
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          args:
+            - start
+            - --import-realm
+            - --hostname={{ include "ssl-proxy.schemaMigrator.publicOrigin" . }}
+            - --hostname-strict=true
+            - --http-enabled=true
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL_HOST
+              value: {{ .Values.global.shared.postgres.host | quote }}
+            - name: KC_DB_URL_PORT
+              value: {{ .Values.global.shared.postgres.port | quote }}
+            - name: KC_DB_URL_DATABASE
+              value: {{ .Values.keycloak.database | quote }}
+            - name: KC_DB_USERNAME
+              value: {{ .Values.keycloak.databaseUser | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.credentialsSecret.name }}
+                  key: {{ .Values.keycloak.credentialsSecret.databasePasswordKey }}
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.keycloak.bootstrapAdminUsername | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.credentialsSecret.name }}
+                  key: {{ .Values.keycloak.credentialsSecret.bootstrapAdminPasswordKey }}
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: {{ printf "/realms/%s/.well-known/openid-configuration" .Values.keycloak.realm }}
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: keycloak-data
+              mountPath: /opt/keycloak/data
+            - name: realm
+              mountPath: /opt/keycloak/data/import/realm.json
+              subPath: realm.json
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: keycloak-data
+          emptyDir: {}
+        - name: realm
+          configMap:
+            name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-realm") }}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-keycloak
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}
+

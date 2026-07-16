@@ -36,7 +36,7 @@ WITH keys AS (
 SELECT
   k.source_key,
   EXISTS (
-    SELECT 1 FROM vec_similarity_pairs p
+    SELECT 1 FROM vec_similarity_pairs_expanded p
     WHERE p.cosine_distance < 0.05
       AND (
         (p.left_source_table = 'sync_events' AND p.left_source_key = k.source_key)

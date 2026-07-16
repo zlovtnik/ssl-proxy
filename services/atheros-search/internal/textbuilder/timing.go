@@ -43,7 +43,7 @@ SELECT
   coalesce(beacon_interval_median_ms::text, ''),
   coalesce(beacon_jitter_ms::text, ''),
   coalesce(embedding_text, '')
-FROM vec_timing_profiles
+FROM vec_timing_profiles_expanded
 WHERE profile_id::text = ANY($1::text[])
    OR profile_key = ANY($1::text[])
 `, sourceKeys(jobs))

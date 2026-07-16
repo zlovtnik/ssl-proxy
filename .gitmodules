@@ -4,3 +4,6 @@
 [submodule "apps/wg-key-rotator"]
 	path = apps/wg-key-rotator
 	url = https://github.com/zlovtnik/wg-key-rotator.git
+[submodule "apps/schema-migrator"]
+	path = apps/schema-migrator
+	url = https://github.com/zlovtnik/schema-migrator.git

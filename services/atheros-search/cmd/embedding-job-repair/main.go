@@ -203,8 +203,8 @@ SELECT
   j.created_at,
   j.updated_at,
   e.content_sha256 AS embedding_content_sha256
-FROM vec_embedding_jobs j
-JOIN vec_embeddings e
+FROM vec_embedding_jobs_expanded j
+JOIN vec_embeddings_expanded e
   ON e.source_table = j.source_table
  AND e.source_key = j.source_key
  AND e.embedding_model = j.embedding_model
@@ -225,22 +225,28 @@ LIMIT $3
 
 func markCompleted(ctx context.Context, pool *pgxpool.Pool, jobIDs []int64) (int64, error) {
 	tag, err := pool.Exec(ctx, `
-UPDATE vec_embedding_jobs j
-SET status = 'completed',
-    content_sha256 = e.content_sha256,
-    completed_at = now(),
+WITH jobs_completed AS (
+  UPDATE vec_embedding_jobs job
+  SET status = 'completed',
+      content_sha256 = embedding.content_sha256,
+      updated_at = now()
+  FROM vec_embeddings_expanded embedding
+  WHERE job.job_id = ANY($1::bigint[])
+    AND job.status = 'pending'
+    AND embedding.source_table = job.source_table
+    AND embedding.source_key = job.source_key
+    AND embedding.embedding_model = job.embedding_model
+    AND embedding.embedding_kind = job.embedding_kind
+  RETURNING job.job_id
+)
+UPDATE vec_embedding_job_leases lease
+SET completed_at = now(),
     lease_token = NULL,
     leased_at = NULL,
     locked_by = NULL,
-    last_error = NULL,
-    updated_at = now()
-FROM vec_embeddings e
-WHERE j.job_id = ANY($1::bigint[])
-  AND j.status = 'pending'
-  AND e.source_table = j.source_table
-  AND e.source_key = j.source_key
-  AND e.embedding_model = j.embedding_model
-  AND e.embedding_kind = j.embedding_kind
+    last_error = NULL
+FROM jobs_completed
+WHERE lease.job_id = jobs_completed.job_id
 `, jobIDs)
 	if err != nil {
 		return 0, fmt.Errorf("mark completed: %w", err)

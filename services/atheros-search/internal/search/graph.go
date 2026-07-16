@@ -359,7 +359,7 @@ EXISTS (
 )
 OR EXISTS (
   SELECT 1
-  FROM wireless_frames wf
+  FROM wireless_frames_expanded wf
   WHERE lower(coalesce(wf.source_mac, '')) = lower(%[1]s)
     AND %[4]s
 )

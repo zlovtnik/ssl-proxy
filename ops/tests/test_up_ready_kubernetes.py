@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
     apply_secret_value,
@@ -17,6 +19,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     proxy_workload,
     publish_registry_images,
     resolve_kube_context,
+    sync_kubernetes_secrets,
     verify_kubernetes_registry_pull,
 )
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError
@@ -157,6 +160,8 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:32000/"
         settings.image_tag = "latest"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = "ops@example.com"
         settings.wg_port = 51820
         settings.wg_internal_port = 443
         settings.wg_obfuscation_enabled = True
@@ -199,7 +204,11 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("global.image.registry=192.168.1.221:32000", args)
         self.assertIn("global.rolloutRevision=2026-07-14T12:00:00-0400", args)
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
-        self.assertEqual(args.count("--set-literal"), 10)
+        self.assertIn("schemaMigrator.backend.image.tag=latest", args)
+        self.assertIn("schemaMigrator.ui.image.tag=latest", args)
+        self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
+        self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
+        self.assertEqual(args.count("--set-literal"), 14)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)
@@ -224,6 +233,8 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:5000"
         settings.image_tag = "latest"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = "ops@example.com"
         settings.wg_port = 51820
         settings.wg_internal_port = 443
         settings.wg_obfuscation_enabled = True
@@ -265,6 +276,8 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:5000"
         settings.image_tag = "latest"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = "ops@example.com"
         settings.wg_port = 51820
         settings.wg_internal_port = 443
         settings.wg_obfuscation_enabled = True
@@ -348,6 +361,76 @@ class UpReadyKubernetesTest(unittest.TestCase):
             "192.168.1.221:5000/redis:7-alpine",
         )
         self.assertEqual(mocked_kubectl.call_count, 3)
+
+    def test_schema_migrator_secret_groups_are_synchronized(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch("sslproxy_ops.commands.up_ready.kubernetes.ensure_namespace"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.apply_secret_value"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.apply_secret_values") as values,
+            patch("sslproxy_ops.commands.up_ready.kubernetes.apply_secret"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.peer_names",
+                return_value=[],
+            ),
+        ):
+            sync_kubernetes_secrets(ctx)
+
+        groups = {
+            call.args[1]: [key for key, _path in call.args[2]]
+            for call in values.call_args_list
+        }
+        self.assertEqual(
+            groups["schema-migrator-backend"],
+            ["encrypt-key", "jwt-secret", "api-bearer-token"],
+        )
+        self.assertEqual(groups["schema-migrator-mongo"], ["password"])
+        self.assertEqual(
+            groups["schema-migrator-keycloak"],
+            ["database-password", "bootstrap-admin-password"],
+        )
+        self.assertEqual(
+            groups["schema-migrator-bootstrap"],
+            ["application-admin-password"],
+        )
+
+    def test_schema_migrator_image_pipeline_is_complete_and_pinned(self):
+        root = Path(__file__).resolve().parents[2]
+        makefile = (root / "Makefile").read_text()
+        chart_values = yaml.safe_load(
+            (root / "helm/ssl-proxy/charts/schema-migrator/values.yaml").read_text()
+        )
+
+        for image in ("schema-migrator-backend", "schema-migrator-ui"):
+            self.assertIn(image, makefile)
+
+        pinned_images = {
+            "mongo:7.0.22",
+            "quay.io/keycloak/keycloak:26.2.5",
+            "traefik:v3.6.2",
+            "postgres:16.9-alpine3.21",
+            "busybox:1.37.0",
+        }
+        for image in pinned_images:
+            self.assertIn(image, makefile)
+
+        self.assertEqual(
+            f"{chart_values['mongo']['image']['repository']}:"
+            f"{chart_values['mongo']['image']['tag']}",
+            "mongo:7.0.22",
+        )
+        self.assertEqual(
+            f"{chart_values['keycloak']['image']['repository']}:"
+            f"{chart_values['keycloak']['image']['tag']}",
+            "quay.io/keycloak/keycloak:26.2.5",
+        )
+        self.assertEqual(
+            f"{chart_values['traefik']['image']['repository']}:"
+            f"{chart_values['traefik']['image']['tag']}",
+            "traefik:v3.6.2",
+        )
 
     def test_registry_publish_builds_and_mirrors(self):
         settings = Settings()

@@ -51,7 +51,7 @@ WITH candidates AS (
     e.source_location_id,
     e.source_observed_at,
     (e.embedding::vector(768) <=> $1::vector(768)) AS cosine_distance
-  FROM vec_embeddings e
+  FROM vec_embeddings_expanded e
   %s
   ORDER BY e.embedding::vector(768) <=> $1::vector(768)
   LIMIT $4
