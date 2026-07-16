@@ -10,6 +10,11 @@ metadata:
     app.kubernetes.io/component: integration-console-web
 spec:
   replicas: {{ .Values.web.replicas }}
+  {{- if .Values.web.service.hostPort }}
+  # Single-node host-port deployments must release the port before replacement.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.integrationConsole.selectorLabels" . | nindent 6 }}

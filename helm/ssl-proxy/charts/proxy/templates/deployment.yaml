@@ -10,6 +10,11 @@ metadata:
     app.kubernetes.io/component: proxy
 spec:
   replicas: {{ .Values.replicas }}
+  {{- if .Values.hostPorts.enabled }}
+  # A second pod cannot schedule while the current pod owns the fixed node ports.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 6 }}

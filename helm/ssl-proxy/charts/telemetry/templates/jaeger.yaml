@@ -33,6 +33,11 @@ metadata:
     app.kubernetes.io/component: jaeger
 spec:
   replicas: 1
+  {{- if or .Values.jaeger.service.hostPort .Values.jaeger.service.otlpGrpcHostPort .Values.jaeger.service.metricsHostPort }}
+  # Fixed host ports make a surge pod unschedulable on a single-node cluster.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}

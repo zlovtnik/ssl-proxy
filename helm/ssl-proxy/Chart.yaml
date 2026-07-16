@@ -2,7 +2,7 @@ apiVersion: v2
 name: ssl-proxy
 description: Umbrella chart for the SSL Proxy platform
 type: application
-version: 0.2.5
+version: 0.2.6
 appVersion: "1.0.0"
 kubeVersion: ">=1.28.0-0"
 keywords:
@@ -16,7 +16,7 @@ maintainers:
   - name: ssl-proxy-team
 dependencies:
   - name: proxy
-    version: 0.1.2
+    version: 0.1.3
     repository: "file://charts/proxy"
     condition: proxy.enabled
   - name: java-coordinator
@@ -25,7 +25,7 @@ dependencies:
     alias: javaCoordinator
     condition: javaCoordinator.enabled
   - name: integration-console
-    version: 0.1.1
+    version: 0.1.2
     repository: "file://charts/integration-console"
     alias: integrationConsole
     condition: integrationConsole.enabled
@@ -52,7 +52,7 @@ dependencies:
     version: 0.1.1
     repository: "file://charts/redis"
   - name: telemetry
-    version: 0.1.1
+    version: 0.1.2
     repository: "file://charts/telemetry"
     alias: observability
     condition: observability.enabled
