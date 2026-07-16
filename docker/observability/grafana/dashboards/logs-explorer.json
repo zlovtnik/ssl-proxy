@@ -1,0 +1,193 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessages": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "showTailCheckbox": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "{service=~\"$service\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Live Logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum by (service) (count_over_time({service=~\"$service\", level=\"error\"}[5m]))",
+          "legendFormat": "{{service}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum by (service) (count_over_time({service=~\"$service\"}[5m]))",
+          "legendFormat": "{{service}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Log Volume by Service",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "observability",
+    "logs",
+    "loki"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "definition": "label_values(service)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": "label_values(service)",
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "tagValuesQuery": "",
+        "tags": [],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Logs Explorer",
+  "uid": "logs-explorer",
+  "version": 1,
+  "weekStart": ""
+}
