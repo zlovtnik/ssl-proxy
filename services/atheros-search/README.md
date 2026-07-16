@@ -266,7 +266,14 @@ Worker configuration:
 | `ATHSEARCH_WORKER_MAX_INPUT_TOKENS` | `512` | Text truncation limit before embedding |
 | `ATHSEARCH_WORKER_DB_CALL_TIMEOUT_MS` | `30000` | Timeout for worker DB calls |
 | `ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED` | `4` | Concurrent embedding requests |
-| `ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE` | `16` | Concurrent completion writes |
+| `ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE` | `16` | Global limit for in-flight completion database calls across a drain cycle |
+
+For an external PostgreSQL server, keep the DSN outside the repository and set
+an explicit `sslmode` appropriate to that environment. For example, use
+`ATHSEARCH_POSTGRES_DSN=postgres://sync:<password>@db.example.net:5432/sync?sslmode=verify-full`
+with a trusted CA in production, or `sslmode=disable` only on an explicitly
+trusted plaintext development network. Do not commit the password or a local
+`.env` file.
 
 Optional feature flags:
 

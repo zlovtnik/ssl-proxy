@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "tuning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_connections",
+        "shared_buffers",
+        "effective_cache_size",
+        "work_mem",
+        "maintenance_work_mem",
+        "autovacuum_work_mem",
+        "wal_buffers",
+        "max_parallel_workers_per_gather",
+        "max_parallel_maintenance_workers"
+      ],
+      "properties": {
+        "max_connections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "shared_buffers": {
+          "$ref": "#/definitions/postgresMemory"
+        },
+        "effective_cache_size": {
+          "$ref": "#/definitions/postgresMemory"
+        },
+        "work_mem": {
+          "$ref": "#/definitions/postgresMemory"
+        },
+        "maintenance_work_mem": {
+          "$ref": "#/definitions/postgresMemory"
+        },
+        "autovacuum_work_mem": {
+          "$ref": "#/definitions/postgresMemory"
+        },
+        "wal_buffers": {
+          "$ref": "#/definitions/postgresMemory"
+        },
+        "max_parallel_workers_per_gather": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "max_parallel_maintenance_workers": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        }
+      }
+    }
+  },
+  "definitions": {
+    "postgresMemory": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(kB|MB|GB)$"
+    }
+  }
+}

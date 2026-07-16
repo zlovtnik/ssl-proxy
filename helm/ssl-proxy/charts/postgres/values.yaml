@@ -49,4 +49,16 @@ resources:
     memory: 8Gi
   requests:
     cpu: "1"
-    memory: 2Gi
+    memory: 4Gi
+tuning:
+  # Kubernetes profile for the 8 GiB container limit. The image's
+  # /etc/postgresql/postgresql.conf remains tuned for the 32 GiB Compose host.
+  max_connections: 128
+  shared_buffers: 2GB
+  effective_cache_size: 6GB
+  work_mem: 8MB
+  maintenance_work_mem: 512MB
+  autovacuum_work_mem: 256MB
+  wal_buffers: 32MB
+  max_parallel_workers_per_gather: 2
+  max_parallel_maintenance_workers: 2

@@ -327,7 +327,83 @@ All views are optimized for ADB columnar storage.
 - `redpanda-init` must complete successfully before `java-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the coordinator at runtime: `zig-coordinator-scan`, the legacy-compatible `oracle-worker-load` load group, and `zig-coordinator-result`.
 - `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
-### 8. Wireless Audit Minute Cleanup
+### 8. PostgreSQL OOM Recovery and Embedding Drain Safety
+
+Use this procedure when Atheros Search reports SQLSTATE `57P01`, `57P02`, or
+`57P03`, or when PostgreSQL repeatedly enters crash recovery. Pause the drainer
+before intentionally restarting PostgreSQL so it cannot multiply recovery load.
+
+1. Confirm memory pressure before changing runtime state:
+
+   ```sh
+   kubectl -n ssl-proxy get pod -l app.kubernetes.io/component=postgres -o wide
+   kubectl -n ssl-proxy describe pod -l app.kubernetes.io/component=postgres
+   kubectl -n ssl-proxy logs -l app.kubernetes.io/component=postgres --tail=200
+   kubectl -n ssl-proxy exec statefulset/ssl-proxy-postgres -- cat /sys/fs/cgroup/memory.events
+   kubectl -n ssl-proxy exec statefulset/ssl-proxy-postgres -- sh -ec \
+     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "show shared_buffers; show effective_cache_size; show work_mem; show maintenance_work_mem; show autovacuum_work_mem; show wal_buffers;"'
+   ```
+
+   A rising `oom_kill` count, an 8 GiB cgroup limit, and `shared_buffers=8GB`
+   identify the known misconfiguration. Preserve the PostgreSQL logs before a
+   restart so the crash-recovery sequence remains available for diagnosis.
+
+2. Pause the embedding drainer. For the current Compose-hosted Atheros Search:
+
+   ```sh
+   docker compose stop atheros-search
+   ```
+
+   If the worker is later deployed to Kubernetes, scale only its owning
+   workload to zero or roll it out with `ATHSEARCH_WORKER_ENABLED=false`, then
+   wait until no worker pod remains. Keep read-only API replicas running only if
+   they do not contain an enabled embedded worker.
+
+3. Restart PostgreSQL only after the drainer is stopped. Wait for the database
+   readiness probe and crash recovery to finish before resuming any worker.
+   Do not repeatedly restart a recovering postmaster.
+
+4. During a planned repository rollout, refresh and validate the chart before
+   the Helm upgrade:
+
+   ```sh
+   helm dependency update helm/ssl-proxy
+   helm lint helm/ssl-proxy/charts/postgres
+   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml
+   helm template ssl-proxy helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml > /tmp/ssl-proxy.yaml
+   kubectl apply --dry-run=client -f /tmp/ssl-proxy.yaml
+   ```
+
+   Apply the Helm upgrade through the normal deployment workflow. For Compose,
+   retain the 32 GiB image tuning profile and only recreate Atheros Search after
+   exporting `ATHSEARCH_POSTGRES_DSN` with an environment-appropriate explicit
+   `sslmode`.
+
+5. Recover leases without violating at-least-once delivery. Never bulk-reset
+   unexpired leases: uncertain completions may have committed before the
+   connection failed. Wait at least `ATHSEARCH_WORKER_LEASE_SECONDS`, then let
+   the worker's normal expiry sweep run or release only expired leases:
+
+   ```sql
+   SELECT vec_release_expired_leases();
+   ```
+
+6. Resume the drainer and verify the rollout:
+
+   ```sh
+   docker compose up -d atheros-search
+   curl -fsS http://127.0.0.1:8080/readyz
+   curl -fsS http://127.0.0.1:19090/metrics | grep '^athsearch_worker_jobs_deferred_total'
+   kubectl -n ssl-proxy exec statefulset/ssl-proxy-postgres -- cat /sys/fs/cgroup/memory.events
+   ```
+
+   Confirm PostgreSQL reports `shared_buffers=2GB`, `effective_cache_size=6GB`,
+   and the remaining chart tuning values; the pod request is 4 GiB and the
+   limit remains 8 GiB. Verify `oom_kill` is stable, `/readyz` stays successful,
+   lease counts decline after expiry, and drain errors are bounded summaries
+   rather than per-job connection failures.
+
+### 9. Wireless Audit Minute Cleanup
 
 Use the cleanup function after confirming an audit time range is safe to normalize. It truncates `wireless.audit` `observed_at` values to the UTC minute and removes duplicate rows with the same wireless fingerprint, keeping the newest row by `updated_at`, then `created_at`, then `dedupe_key`.
 

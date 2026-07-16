@@ -2,11 +2,9 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/semaphore"
 
@@ -15,54 +13,124 @@ import (
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/search"
 )
 
+const deferredReasonDatabaseUnavailable = "database_unavailable"
+
 type CompleteChunkResult struct {
 	ChunkIndex            int
 	Succeeded             int
 	Failed                int
+	Deferred              int
 	PermanentFailed       int
 	SucceededByKind       map[string]int
 	FailedByKind          map[string]int
+	DeferredByKind        map[string]int
 	PermanentFailedByKind map[string]int
+	DeferredReason        string
 	Err                   error
 	PrepareMS             int64
 	EmbedMS               int64
 	CompleteMS            int64
 }
 
-func CompleteChunk(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, embedded EmbeddedChunkResult) CompleteChunkResult {
+type completionStore interface {
+	CompleteEmbeddingBatch(context.Context, []db.CompleteBatchRow) (int32, error)
+	CompletedJobIDs(context.Context, []int64) (map[int64]struct{}, error)
+	CompleteOneEmbedding(context.Context, db.CompleteBatchRow) (bool, error)
+	FailJob(context.Context, int64, *string, int32, int32, string) error
+}
+
+type postgresCompletionStore struct {
+	pool *pgxpool.Pool
+}
+
+func (s postgresCompletionStore) CompleteEmbeddingBatch(ctx context.Context, rows []db.CompleteBatchRow) (int32, error) {
+	return db.CompleteEmbeddingBatch(ctx, s.pool, rows)
+}
+
+func (s postgresCompletionStore) CompletedJobIDs(ctx context.Context, jobIDs []int64) (map[int64]struct{}, error) {
+	return db.CompletedJobIDs(ctx, s.pool, jobIDs)
+}
+
+func (s postgresCompletionStore) CompleteOneEmbedding(ctx context.Context, row db.CompleteBatchRow) (bool, error) {
+	return db.CompleteOneEmbedding(ctx, s.pool, row)
+}
+
+func (s postgresCompletionStore) FailJob(ctx context.Context, jobID int64, leaseToken *string, attempts, maxAttempts int32, message string) error {
+	return db.FailJob(ctx, s.pool, jobID, leaseToken, attempts, maxAttempts, message)
+}
+
+func CompleteChunk(
+	ctx context.Context,
+	cfg config.Config,
+	pool *pgxpool.Pool,
+	completeSem *semaphore.Weighted,
+	onDatabaseUnavailable func(error),
+	embedded EmbeddedChunkResult,
+) CompleteChunkResult {
+	return completeChunkWithStore(
+		ctx,
+		cfg,
+		postgresCompletionStore{pool: pool},
+		completeSem,
+		onDatabaseUnavailable,
+		embedded,
+	)
+}
+
+func completeChunkWithStore(
+	ctx context.Context,
+	cfg config.Config,
+	store completionStore,
+	completeSem *semaphore.Weighted,
+	onDatabaseUnavailable func(error),
+	embedded EmbeddedChunkResult,
+) (result CompleteChunkResult) {
 	started := time.Now()
-	result := CompleteChunkResult{
+	errorsSeen := newBoundedErrors("completion persistence failures")
+	result = CompleteChunkResult{
 		ChunkIndex:            embedded.ChunkIndex,
 		Failed:                embedded.Failed,
 		PermanentFailed:       embedded.PermanentFailed,
 		SucceededByKind:       map[string]int{},
 		FailedByKind:          copyCounts(embedded.FailedByKind),
+		DeferredByKind:        map[string]int{},
 		PermanentFailedByKind: copyCounts(embedded.PermanentFailedByKind),
 		PrepareMS:             embedded.PrepareMS,
 		EmbedMS:               embedded.EmbedMS,
 	}
-	if len(embedded.Items) == 0 {
+	defer func() {
+		result.Err = errorsSeen.Err()
 		result.CompleteMS = time.Since(started).Milliseconds()
+	}()
+
+	if len(embedded.Items) == 0 {
 		return result
 	}
+
 	rows := make([]db.CompleteBatchRow, 0, len(embedded.Items))
 	for _, item := range embedded.Items {
 		rows = append(rows, completeBatchRow(cfg, item))
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, cfg.WorkerDBCallTimeout)
-	completed, err := db.CompleteEmbeddingBatch(callCtx, pool, rows)
-	cancel()
+	completed, err := withCompletionSlot(
+		ctx,
+		completeSem,
+		cfg.WorkerDBCallTimeout,
+		func(callCtx context.Context) (int32, error) {
+			return store.CompleteEmbeddingBatch(callCtx, rows)
+		},
+	)
 	if err == nil && int(completed) == len(rows) {
 		for _, item := range embedded.Items {
 			markCompleteSuccess(item, &result)
 		}
-		result.CompleteMS = time.Since(started).Milliseconds()
 		return result
 	}
-	if err != nil && isDBPressureError(err) {
-		markCompleteFailed(embedded.Items, &result)
-		result.CompleteMS = time.Since(started).Milliseconds()
+	if shouldDeferDatabaseOperation(ctx, err) {
+		cause := databaseUnavailableCause(ctx, err)
+		notifyDatabaseUnavailable(onDatabaseUnavailable, cause)
+		markCompleteDeferred(embedded.Items, deferredReason(ctx, err), &result)
+		errorsSeen.Add(firstNonNil(cause, err))
 		return result
 	}
 
@@ -72,68 +140,161 @@ func CompleteChunk(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, e
 		for _, row := range rows {
 			ids = append(ids, row.JobID)
 		}
-		callCtx, cancel := context.WithTimeout(ctx, cfg.WorkerDBCallTimeout)
-		got, idsErr := db.CompletedJobIDs(callCtx, pool, ids)
-		cancel()
-		if idsErr == nil {
-			completedIDs = got
-		} else {
-			result.Err = errors.Join(result.Err, fmt.Errorf("query completed fallback job ids: %w", idsErr))
+		completedIDs, err = withCompletionSlot(
+			ctx,
+			completeSem,
+			cfg.WorkerDBCallTimeout,
+			func(callCtx context.Context) (map[int64]struct{}, error) {
+				return store.CompletedJobIDs(callCtx, ids)
+			},
+		)
+		if shouldDeferDatabaseOperation(ctx, err) {
+			cause := databaseUnavailableCause(ctx, err)
+			notifyDatabaseUnavailable(onDatabaseUnavailable, cause)
+			markCompleteDeferred(embedded.Items, deferredReason(ctx, err), &result)
+			errorsSeen.Add(firstNonNil(cause, err))
+			return result
+		}
+		if err != nil {
+			errorsSeen.Add(fmt.Errorf("query completed fallback job ids: %w", err))
+			completedIDs = map[int64]struct{}{}
 		}
 	}
 
-	limit := cfg.WorkerMaxConcurrentComplete
-	if limit < 1 {
-		limit = 1
-	}
-	sem := semaphore.NewWeighted(int64(limit))
 	resultCh := make(chan completeOneResult, len(rows))
+	pending := 0
 	for i, row := range rows {
 		item := embedded.Items[i]
 		if _, ok := completedIDs[row.JobID]; ok {
 			markCompleteSuccess(item, &result)
 			continue
 		}
-		if acquireErr := sem.Acquire(ctx, 1); acquireErr != nil {
-			resultCh <- completeOneResult{item: item, err: acquireErr}
-			continue
-		}
+		pending++
 		go func(row db.CompleteBatchRow, item EmbeddedItem) {
-			defer sem.Release(1)
-			callCtx, cancel := context.WithTimeout(ctx, cfg.WorkerDBCallTimeout)
-			ok, oneErr := db.CompleteOneEmbedding(callCtx, pool, row)
-			cancel()
-			resultCh <- completeOneResult{item: item, ok: ok, err: oneErr}
+			resultCh <- completeOneWithFallback(
+				ctx,
+				cfg,
+				store,
+				completeSem,
+				onDatabaseUnavailable,
+				row,
+				item,
+			)
 		}(row, item)
 	}
 
-	pending := len(rows) - len(completedIDs)
 	for i := 0; i < pending; i++ {
 		one := <-resultCh
-		if one.err == nil && one.ok {
+		switch {
+		case one.ok:
 			markCompleteSuccess(one.item, &result)
-			continue
+		case one.deferred:
+			markCompleteDeferred([]EmbeddedItem{one.item}, one.deferredReason, &result)
+			errorsSeen.Add(one.err)
+		default:
+			result.Failed++
+			result.FailedByKind[one.item.Prepared.Job.EmbeddingKind]++
+			errorsSeen.Add(one.err)
 		}
-		if one.err != nil {
-			job := one.item.Prepared.Job
-			callCtx, cancel := context.WithTimeout(ctx, cfg.WorkerDBCallTimeout)
-			failErr := db.FailJob(callCtx, pool, job.JobID, job.LeaseToken, job.Attempts, job.MaxAttempts, one.err.Error())
-			cancel()
-			if failErr != nil {
-				result.Err = errors.Join(result.Err, fmt.Errorf("fail completion job %d: %w", job.JobID, failErr))
-			}
-		}
-		result.Failed++
-		result.FailedByKind[one.item.Prepared.Job.EmbeddingKind]++
 	}
-	result.CompleteMS = time.Since(started).Milliseconds()
 	return result
 }
 
 type completeOneResult struct {
-	item EmbeddedItem
-	ok   bool
-	err  error
+	item           EmbeddedItem
+	ok             bool
+	deferred       bool
+	deferredReason string
+	err            error
+}
+
+func completeOneWithFallback(
+	ctx context.Context,
+	cfg config.Config,
+	store completionStore,
+	completeSem *semaphore.Weighted,
+	onDatabaseUnavailable func(error),
+	row db.CompleteBatchRow,
+	item EmbeddedItem,
+) completeOneResult {
+	ok, err := withCompletionSlot(
+		ctx,
+		completeSem,
+		cfg.WorkerDBCallTimeout,
+		func(callCtx context.Context) (bool, error) {
+			return store.CompleteOneEmbedding(callCtx, row)
+		},
+	)
+	if err == nil {
+		return completeOneResult{item: item, ok: ok}
+	}
+	if shouldDeferDatabaseOperation(ctx, err) {
+		cause := databaseUnavailableCause(ctx, err)
+		notifyDatabaseUnavailable(onDatabaseUnavailable, cause)
+		return completeOneResult{
+			item:           item,
+			deferred:       true,
+			deferredReason: deferredReason(ctx, err),
+			err:            firstNonNil(cause, err),
+		}
+	}
+
+	job := item.Prepared.Job
+	failErr := withCompletionSlotError(
+		ctx,
+		completeSem,
+		cfg.WorkerDBCallTimeout,
+		func(callCtx context.Context) error {
+			return store.FailJob(callCtx, job.JobID, job.LeaseToken, job.Attempts, job.MaxAttempts, err.Error())
+		},
+	)
+	if shouldDeferDatabaseOperation(ctx, failErr) {
+		cause := databaseUnavailableCause(ctx, failErr)
+		notifyDatabaseUnavailable(onDatabaseUnavailable, cause)
+		return completeOneResult{
+			item:           item,
+			deferred:       true,
+			deferredReason: deferredReason(ctx, failErr),
+			err:            firstNonNil(cause, failErr),
+		}
+	}
+	if failErr != nil {
+		return completeOneResult{item: item, err: fmt.Errorf("record completion failure: %w", failErr)}
+	}
+	return completeOneResult{item: item}
+}
+
+func withCompletionSlot[T any](
+	ctx context.Context,
+	sem *semaphore.Weighted,
+	timeout time.Duration,
+	call func(context.Context) (T, error),
+) (T, error) {
+	var zero T
+	if sem != nil {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return zero, err
+		}
+		defer sem.Release(1)
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return call(callCtx)
+}
+
+func withCompletionSlotError(
+	ctx context.Context,
+	sem *semaphore.Weighted,
+	timeout time.Duration,
+	call func(context.Context) error,
+) error {
+	_, err := withCompletionSlot(ctx, sem, timeout, func(callCtx context.Context) (struct{}, error) {
+		return struct{}{}, call(callCtx)
+	})
+	return err
 }
 
 func completeBatchRow(cfg config.Config, item EmbeddedItem) db.CompleteBatchRow {
@@ -169,13 +330,28 @@ func markCompleteSuccess(item EmbeddedItem, result *CompleteChunkResult) {
 	result.SucceededByKind[item.Prepared.Job.EmbeddingKind]++
 }
 
-func markCompleteFailed(items []EmbeddedItem, result *CompleteChunkResult) {
+func markCompleteDeferred(items []EmbeddedItem, reason string, result *CompleteChunkResult) {
+	if reason == "" {
+		reason = deferredReasonDatabaseUnavailable
+	}
+	result.DeferredReason = reason
 	for _, item := range items {
-		result.Failed++
-		result.FailedByKind[item.Prepared.Job.EmbeddingKind]++
+		result.Deferred++
+		result.DeferredByKind[item.Prepared.Job.EmbeddingKind]++
 	}
 }
 
-func isDBPressureError(err error) bool {
-	return errors.Is(err, pgx.ErrNoRows) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+func notifyDatabaseUnavailable(callback func(error), err error) {
+	if callback != nil && err != nil && isTransientDatabaseError(err) {
+		callback(err)
+	}
+}
+
+func firstNonNil(errors ...error) error {
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

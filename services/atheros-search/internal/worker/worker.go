@@ -25,10 +25,12 @@ type Worker struct {
 	Config    config.Config
 	Metrics   *metrics.Metrics
 	Logger    zerolog.Logger
+	leaseJobs func(context.Context, int, string, int) ([]db.EmbeddingJob, error)
 }
 
 type RunOnceResult struct {
 	Processed            int
+	Deferred             int
 	PermanentFailures    int
 	RowsLeased           int
 	DrainBatches         int
@@ -48,6 +50,7 @@ type KindRunStats struct {
 	Leased          int
 	Completed       int
 	Failed          int
+	Deferred        int
 	PermanentFailed int
 }
 
@@ -56,10 +59,8 @@ func (w *Worker) Start(ctx context.Context) error {
 	if poll <= 0 {
 		poll = 5 * time.Second
 	}
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
-
 	iteration := 0
+	transientFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -69,11 +70,20 @@ func (w *Worker) Start(ctx context.Context) error {
 
 		iteration++
 		result, err := w.RunOnce(ctx)
+		databaseUnavailable := isTransientDatabaseError(err)
+		retryDelay := time.Duration(0)
+		transientFailures, retryDelay = databaseBackoffState(transientFailures, err)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			w.Logger.Warn().Err(err).Msg("worker drain iteration failed")
+			event := w.Logger.Warn().Err(err)
+			if databaseUnavailable {
+				event = event.
+					Int("transient_db_failures", transientFailures).
+					Dur("retry_after", retryDelay)
+			}
+			event.Msg("worker drain iteration failed")
 		}
 
-		if iteration%10 == 0 {
+		if !databaseUnavailable && iteration%10 == 0 {
 			if released, err := db.ReleaseExpiredLeases(ctx, w.Pool); err == nil && released > 0 {
 				w.Logger.Info().Int32("released", released).Msg("released expired embedding leases")
 			} else if err != nil {
@@ -94,16 +104,20 @@ func (w *Worker) Start(ctx context.Context) error {
 			continue
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
+		wait := poll
+		if databaseUnavailable {
+			wait = retryDelay
+		}
+		if err := waitForContext(ctx, wait); err != nil {
+			return err
 		}
 	}
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 	started := time.Now()
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
 	result := RunOnceResult{KindStats: map[string]KindRunStats{}}
 	runStarted := time.Now()
 	_ = db.MarkWorkerState(ctx, w.Pool, db.WorkerStateParams{
@@ -117,9 +131,10 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 	processCh := make(chan processResult, batchWorkers)
 	leaseSummaryCh := make(chan leaseRunSummary, 1)
 	embedSem := semaphore.NewWeighted(int64(effectiveEmbedWorkerCount(w.Config)))
+	completeSem := semaphore.NewWeighted(int64(effectiveCompleteWorkerCount(w.Config)))
 
 	go func() {
-		leaseSummaryCh <- w.leaseBatches(ctx, batchCh)
+		leaseSummaryCh <- w.leaseBatches(runCtx, batchCh)
 	}()
 
 	var processWG sync.WaitGroup
@@ -128,10 +143,8 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 		go func() {
 			defer processWG.Done()
 			for jobs := range batchCh {
-				process := w.processJobs(ctx, jobs, embedSem)
-				if !sendWithContext(ctx, processCh, process) {
-					return
-				}
+				process := w.processJobs(runCtx, jobs, embedSem, completeSem, cancelRun)
+				processCh <- process
 			}
 		}()
 	}
@@ -140,10 +153,11 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 		close(processCh)
 	}()
 
-	var processErr error
+	runErrors := newBoundedErrors("worker drain failures")
 	for process := range processCh {
-		processErr = errors.Join(processErr, process.Err)
+		runErrors.Add(process.Err)
 		result.Processed += process.Completed
+		result.Deferred += process.Deferred
 		result.PermanentFailures += process.PermanentFailed
 		result.PrepareMS += process.PrepareMS
 		result.EmbedMS += process.EmbedMS
@@ -160,9 +174,13 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 	result.DrainedToEmpty = leaseSummary.DrainedToEmpty
 	result.MaxDrainBatchReached = leaseSummary.MaxDrainBatchReached
 	mergeKindStats(result.KindStats, leaseSummary.KindStats)
+	runErrors.Add(leaseSummary.Err)
+	if cause := context.Cause(runCtx); cause != nil {
+		runErrors.Add(cause)
+	}
 
 	finished := time.Now()
-	runErr := errors.Join(leaseSummary.Err, processErr)
+	runErr := runErrors.Err()
 	var lastErr *string
 	if runErr != nil {
 		msg := runErr.Error()
@@ -184,13 +202,14 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 		LastCursor:        nil,
 		LastError:         lastErr,
 	})
-	if w.Metrics != nil {
+	if w.Metrics != nil && !isTransientDatabaseError(runErr) {
 		if depth, err := db.CountWorkerQueueDepth(ctx, w.Pool); err == nil {
 			w.Metrics.SetWorkerQueueDepth(depth)
 		}
 	}
 	w.Logger.Info().
 		Int("processed", result.Processed).
+		Int("deferred", result.Deferred).
 		Int("permanent_failures", result.PermanentFailures).
 		Int("rows_leased", result.RowsLeased).
 		Int("drain_batches", result.DrainBatches).
@@ -211,6 +230,7 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 type processResult struct {
 	Completed       int
 	Failed          int
+	Deferred        int
 	PermanentFailed int
 	Err             error
 	PrepareMS       int64
@@ -240,12 +260,20 @@ func (w *Worker) leaseBatches(ctx context.Context, batchCh chan<- []db.Embedding
 	defer close(batchCh)
 	summary := leaseRunSummary{KindStats: map[string]KindRunStats{}}
 	for {
+		if cause := context.Cause(ctx); cause != nil {
+			summary.Err = cause
+			return summary
+		}
 		if reachedMaxDrain(summary.DrainBatches, w.Config.WorkerMaxDrainBatches) {
 			summary.MaxDrainBatchReached = true
 			return summary
 		}
-		callCtx, cancel := context.WithTimeout(ctx, w.Config.WorkerDBCallTimeout)
-		jobs, err := db.LeaseJobs(callCtx, w.Pool, w.Config.WorkerBatchSize, w.Config.WorkerName, w.Config.WorkerLeaseSeconds)
+		timeout := w.Config.WorkerDBCallTimeout
+		if timeout <= 0 {
+			timeout = 30 * time.Second
+		}
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		jobs, err := w.callLeaseJobs(callCtx)
 		cancel()
 		if err != nil {
 			summary.Err = err
@@ -269,13 +297,26 @@ func (w *Worker) leaseBatches(ctx context.Context, batchCh chan<- []db.Embedding
 			w.Metrics.WorkerBatchSize.Observe(float64(len(jobs)))
 		}
 		if !sendWithContext(ctx, batchCh, jobs) {
-			summary.Err = ctx.Err()
+			summary.Err = context.Cause(ctx)
 			return summary
 		}
 	}
 }
 
-func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedSem *semaphore.Weighted) processResult {
+func (w *Worker) callLeaseJobs(ctx context.Context) ([]db.EmbeddingJob, error) {
+	if w.leaseJobs != nil {
+		return w.leaseJobs(ctx, w.Config.WorkerBatchSize, w.Config.WorkerName, w.Config.WorkerLeaseSeconds)
+	}
+	return db.LeaseJobs(ctx, w.Pool, w.Config.WorkerBatchSize, w.Config.WorkerName, w.Config.WorkerLeaseSeconds)
+}
+
+func (w *Worker) processJobs(
+	ctx context.Context,
+	jobs []db.EmbeddingJob,
+	embedSem *semaphore.Weighted,
+	completeSem *semaphore.Weighted,
+	onDatabaseUnavailable func(error),
+) processResult {
 	chunks := makeJobChunks(jobs, effectiveRequestBatchSize(w.Config))
 	result := processResult{KindStats: map[string]KindRunStats{}}
 	if len(chunks) == 0 {
@@ -286,6 +327,7 @@ func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedS
 	prepCh := make(chan PrepareChunkResult, stageWorkerCount(len(chunks), effectivePrepareWorkerCount(w.Config)))
 	embedCh := make(chan EmbeddedChunkResult, stageWorkerCount(len(chunks), effectiveEmbedWorkerCount(w.Config)))
 	completeCh := make(chan CompleteChunkResult, len(chunks))
+	completionErrors := newBoundedErrors("completion stage failures")
 
 	var prepWG sync.WaitGroup
 	for i := 0; i < stageWorkerCount(len(chunks), effectivePrepareWorkerCount(w.Config)); i++ {
@@ -343,13 +385,11 @@ func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedS
 		go func() {
 			defer completeWG.Done()
 			for embedded := range embedCh {
-				complete := CompleteChunk(ctx, w.Config, w.Pool, embedded)
+				complete := CompleteChunk(ctx, w.Config, w.Pool, completeSem, onDatabaseUnavailable, embedded)
 				if w.Metrics != nil {
 					w.Metrics.WorkerCompleteLatency.Observe(float64(complete.CompleteMS))
 				}
-				if !sendWithContext(ctx, completeCh, complete) {
-					return
-				}
+				completeCh <- complete
 			}
 		}()
 	}
@@ -359,9 +399,10 @@ func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedS
 	}()
 
 	for complete := range completeCh {
-		result.Err = errors.Join(result.Err, complete.Err)
+		completionErrors.Add(complete.Err)
 		result.Completed += complete.Succeeded
 		result.Failed += complete.Failed
+		result.Deferred += complete.Deferred
 		result.PermanentFailed += complete.PermanentFailed
 		result.PrepareMS += complete.PrepareMS
 		result.EmbedMS += complete.EmbedMS
@@ -385,6 +426,18 @@ func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedS
 				w.Metrics.WorkerJobsFailed.WithLabelValues(kind, "complete").Add(float64(count))
 			}
 		}
+		for kind, count := range complete.DeferredByKind {
+			stats := result.KindStats[kind]
+			stats.Deferred += count
+			result.KindStats[kind] = stats
+			if w.Metrics != nil {
+				reason := complete.DeferredReason
+				if reason == "" {
+					reason = deferredReasonDatabaseUnavailable
+				}
+				w.Metrics.WorkerJobsDeferred.WithLabelValues(kind, reason).Add(float64(count))
+			}
+		}
 		for kind, count := range complete.PermanentFailedByKind {
 			stats := result.KindStats[kind]
 			stats.PermanentFailed += count
@@ -394,6 +447,7 @@ func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedS
 			}
 		}
 	}
+	result.Err = completionErrors.Err()
 	return result
 }
 
@@ -542,6 +596,43 @@ func shouldPollImmediately(result RunOnceResult, err error) bool {
 	return err == nil && !result.DrainedToEmpty
 }
 
+func databaseBackoffState(previousFailures int, err error) (int, time.Duration) {
+	if !isTransientDatabaseError(err) {
+		return 0, 0
+	}
+	failures := previousFailures + 1
+	return failures, transientDatabaseBackoff(failures)
+}
+
+func transientDatabaseBackoff(failures int) time.Duration {
+	delays := [...]time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		30 * time.Second,
+	}
+	if failures <= 1 {
+		return delays[0]
+	}
+	if failures >= len(delays) {
+		return delays[len(delays)-1]
+	}
+	return delays[failures-1]
+}
+
+func waitForContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func shouldRunAlertSweep(iteration, interval int) bool {
 	if interval <= 0 {
 		interval = 10
@@ -562,6 +653,7 @@ func mergeKindStats(dst map[string]KindRunStats, src map[string]KindRunStats) {
 		stats.Leased += item.Leased
 		stats.Completed += item.Completed
 		stats.Failed += item.Failed
+		stats.Deferred += item.Deferred
 		stats.PermanentFailed += item.PermanentFailed
 		dst[kind] = stats
 	}

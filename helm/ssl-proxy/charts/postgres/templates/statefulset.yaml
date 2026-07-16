@@ -48,6 +48,24 @@ spec:
             - listen_addresses=*
             - -c
             - track_io_timing=on
+            - -c
+            - max_connections={{ .Values.tuning.max_connections }}
+            - -c
+            - shared_buffers={{ .Values.tuning.shared_buffers }}
+            - -c
+            - effective_cache_size={{ .Values.tuning.effective_cache_size }}
+            - -c
+            - work_mem={{ .Values.tuning.work_mem }}
+            - -c
+            - maintenance_work_mem={{ .Values.tuning.maintenance_work_mem }}
+            - -c
+            - autovacuum_work_mem={{ .Values.tuning.autovacuum_work_mem }}
+            - -c
+            - wal_buffers={{ .Values.tuning.wal_buffers }}
+            - -c
+            - max_parallel_workers_per_gather={{ .Values.tuning.max_parallel_workers_per_gather }}
+            - -c
+            - max_parallel_maintenance_workers={{ .Values.tuning.max_parallel_maintenance_workers }}
           env:
             - name: POSTGRES_DB
               value: {{ .Values.database | quote }}

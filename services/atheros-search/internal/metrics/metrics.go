@@ -21,6 +21,7 @@ type Metrics struct {
 	WorkerJobsLeased      *prometheus.CounterVec
 	WorkerJobsCompleted   *prometheus.CounterVec
 	WorkerJobsFailed      *prometheus.CounterVec
+	WorkerJobsDeferred    *prometheus.CounterVec
 	WorkerJobsPermanent   *prometheus.CounterVec
 	WorkerPrepareLatency  prometheus.Histogram
 	WorkerEmbedLatency    prometheus.Histogram
@@ -69,6 +70,10 @@ func New() *Metrics {
 			Name: "athsearch_worker_jobs_failed_total",
 			Help: "Embedding jobs retried after worker failures.",
 		}, []string{"kind", "failure_type"}),
+		WorkerJobsDeferred: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "athsearch_worker_jobs_deferred_total",
+			Help: "Embedding jobs left leased for retry after a transient worker dependency failure.",
+		}, []string{"kind", "reason"}),
 		WorkerJobsPermanent: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "athsearch_worker_jobs_permanent_total",
 			Help: "Embedding jobs permanently failed by the worker.",
@@ -112,6 +117,7 @@ func New() *Metrics {
 		m.WorkerJobsLeased,
 		m.WorkerJobsCompleted,
 		m.WorkerJobsFailed,
+		m.WorkerJobsDeferred,
 		m.WorkerJobsPermanent,
 		m.WorkerPrepareLatency,
 		m.WorkerEmbedLatency,

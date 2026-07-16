@@ -185,13 +185,13 @@ func runHealthcheck() error {
 		port = parsed
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", port))
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/readyz", port))
 	if err != nil {
-		return fmt.Errorf("healthz request failed: %w", err)
+		return fmt.Errorf("readyz request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("healthz returned %s", resp.Status)
+		return fmt.Errorf("readyz returned %s", resp.Status)
 	}
 	return nil
 }
