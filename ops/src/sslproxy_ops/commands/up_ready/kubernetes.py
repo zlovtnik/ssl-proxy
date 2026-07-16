@@ -168,11 +168,26 @@ def apply_secret_value(
     immutable: bool = False,
 ) -> None:
     """Apply a file-backed Secret value without exposing it in command arguments."""
-    if not path.is_file():
-        raise UpReadyError(f"Missing Kubernetes Secret source: {path}")
-    value = trim_key_value(path.read_text())
-    if not value:
-        raise UpReadyError(f"Kubernetes Secret source is empty: {path}")
+    apply_secret_values(ctx, name, [(key, path)], immutable=immutable)
+
+
+def apply_secret_values(
+    ctx: UpReadyContext,
+    name: str,
+    files: list[tuple[str, Path]],
+    *,
+    immutable: bool = False,
+) -> None:
+    """Apply newline-free scalar Secret values without exposing command arguments."""
+    data: dict[str, str] = {}
+    for key, path in files:
+        if not path.is_file():
+            raise UpReadyError(f"Missing Kubernetes Secret source: {path}")
+        value = trim_key_value(path.read_text())
+        if not value:
+            raise UpReadyError(f"Kubernetes Secret source is empty: {path}")
+        data[key] = base64.b64encode(value.encode()).decode()
+
     manifest = {
         "apiVersion": "v1",
         "kind": "Secret",
@@ -182,9 +197,7 @@ def apply_secret_value(
         },
         "immutable": immutable,
         "type": "Opaque",
-        "data": {
-            key: base64.b64encode(value.encode()).decode(),
-        },
+        "data": data,
     }
     _apply_rendered_resource(ctx, json.dumps(manifest))
 
@@ -205,8 +218,8 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
         secrets / "postgres.key",
         immutable=True,
     )
-    apply_secret(ctx, "redis-credentials", [("password", secrets / "redis.key")])
-    apply_secret(
+    apply_secret_values(ctx, "redis-credentials", [("password", secrets / "redis.key")])
+    apply_secret_values(
         ctx,
         "minio-credentials",
         [
@@ -214,23 +227,27 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
             ("secret-key", secrets / "minio_secret_key.key"),
         ],
     )
-    apply_secret(ctx, "proxy-admin-key", [("api-key", secrets / "admin_api_key")])
-    apply_secret(
+    apply_secret_values(ctx, "proxy-admin-key", [("api-key", secrets / "admin_api_key")])
+    apply_secret_values(
         ctx,
         "proxy-runtime-secrets",
         [("wg-obfuscation-key", secrets / "wg_obfuscation_key")],
     )
-    apply_secret(
+    apply_secret_values(
         ctx,
         "observability-credentials",
         [("grafana-admin-password", secrets / "grafana_admin_password.key")],
     )
-    apply_secret(
+    apply_secret_values(
         ctx,
         "atheros-credentials",
         [("api-token-sha256", secrets / "atheros_api_token_sha256.key")],
     )
-    apply_secret(ctx, "oracle-credentials", [("password", secrets / "oracle_password.txt")])
+    apply_secret_values(
+        ctx,
+        "oracle-credentials",
+        [("password", secrets / "oracle_password.txt")],
+    )
     apply_secret(ctx, "oracle-wallet", [(None, root / "wallet")])
 
     wireguard_files: list[tuple[str | None, Path]] = [

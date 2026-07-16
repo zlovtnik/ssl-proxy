@@ -10,6 +10,7 @@ from unittest.mock import patch
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
     apply_secret_value,
+    apply_secret_values,
     dashboard_set_file_args,
     helm_upgrade,
     helm_release_status,
@@ -60,6 +61,39 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertEqual(
             base64.b64decode(manifest["data"]["password"]),
             b"correct-password",
+        )
+
+    def test_minio_secret_values_are_trimmed_together(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        ctx = UpReadyContext(settings=settings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            access_key = Path(directory) / "minio_access_key.key"
+            secret_key = Path(directory) / "minio_secret_key.key"
+            access_key.write_text("access-key\n")
+            secret_key.write_text("secret-key\r\n")
+            with patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._apply_rendered_resource"
+            ) as mocked_apply:
+                apply_secret_values(
+                    ctx,
+                    "minio-credentials",
+                    [
+                        ("access-key", access_key),
+                        ("secret-key", secret_key),
+                    ],
+                )
+
+        manifest = json.loads(mocked_apply.call_args.args[1])
+        self.assertFalse(manifest["immutable"])
+        self.assertEqual(
+            base64.b64decode(manifest["data"]["access-key"]),
+            b"access-key",
+        )
+        self.assertEqual(
+            base64.b64decode(manifest["data"]["secret-key"]),
+            b"secret-key",
         )
 
     def test_proxy_workload_matches_chart_fullname_for_custom_releases(self):
