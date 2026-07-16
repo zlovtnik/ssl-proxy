@@ -112,7 +112,7 @@ dbSetup:
   image:
     repository: integration-console
     tag: latest
-  activeDeadlineSeconds: 900
+  activeDeadlineSeconds: 1800
   backoffLimit: 3
   resources:
     requests:

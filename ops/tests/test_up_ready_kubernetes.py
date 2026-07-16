@@ -215,6 +215,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("--server-side=true", args)
         self.assertIn("--wait=watcher", args)
         self.assertIn("--wait-for-jobs", args)
+        self.assertEqual(args[args.index("--timeout") + 1], "30m")
         self.assertIn("--history-max", args)
         self.assertIn("--rollback-on-failure", args)
         self.assertEqual(mocked_helm.call_args_list[-1].kwargs["context"], "server-k8s")

@@ -111,6 +111,7 @@ integrationConsole:
       repository: integration-console
       tag: latest
       pullPolicy: Always
+    activeDeadlineSeconds: 1800
 schemaMigrator:
   enabled: true
   # Set dynamically by `ops up-ready` from SCHEMA_MIGRATOR_PUBLIC_HOSTNAME.
