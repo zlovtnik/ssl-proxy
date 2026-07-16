@@ -38,7 +38,9 @@ spec:
             - |
               mkdir -p {{ .Values.mongo.persistence.mountPath | quote }}
               chown 999:999 {{ .Values.mongo.persistence.mountPath | quote }}
-              chmod 0700 {{ .Values.mongo.persistence.mountPath | quote }}
+              if ! chmod 0700 {{ .Values.mongo.persistence.mountPath | quote }}; then
+                echo "warning: filesystem does not support chmod; continuing with uid 999 ownership" >&2
+              fi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

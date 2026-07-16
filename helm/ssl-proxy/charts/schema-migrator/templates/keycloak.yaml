@@ -33,6 +33,30 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        - name: prepare-keycloak-home
+          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.keycloak.image) }}
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - cp -R /opt/keycloak/. /keycloak-home/
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: keycloak-home
+              mountPath: /keycloak-home
         - name: reconcile-database
           image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.bootstrapImages.postgres) }}
           imagePullPolicy: {{ .Values.bootstrapImages.postgres.pullPolicy }}
@@ -167,6 +191,8 @@ spec:
             runAsUser: 1000
             runAsGroup: 1000
           volumeMounts:
+            - name: keycloak-home
+              mountPath: /opt/keycloak
             - name: keycloak-data
               mountPath: /opt/keycloak/data
             - name: realm
@@ -176,6 +202,8 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: keycloak-home
+          emptyDir: {}
         - name: keycloak-data
           emptyDir: {}
         - name: realm
@@ -202,4 +230,3 @@ spec:
       port: 8080
       targetPort: http
 {{- end }}
-

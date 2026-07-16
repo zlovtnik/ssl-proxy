@@ -579,7 +579,7 @@ services:
     image: ${REGISTRY:?REGISTRY is required}/atheros-search:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - ATHSEARCH_POSTGRES_DSN=postgres://sync:62UiI7GVBFrtz9Jj9DtC7dbdEoD6HcwC65mBcPs-Gy4@192.168.1.221:5432/sync
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
       - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8083}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
@@ -610,7 +610,6 @@ services:
       - OTEL_SERVICE_NAME=atheros-search
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=atheros-search
     ports:
-      - "127.0.0.1:50051:50051"
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:19090:9090"
     extra_hosts:
