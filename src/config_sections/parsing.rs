@@ -88,10 +88,14 @@ fn validate_secret_file(path: &Path, file_var: &'static str) -> Result<(), Confi
         });
     }
     let mode = metadata.mode() & 0o777;
-    if mode != 0o400 {
+    if !matches!(mode, 0o400 | 0o440) {
         return Err(ConfigError::InvalidSecretFile {
             file_var,
-            message: format!("{:?} must have mode 0400; got {:04o}", path.display(), mode),
+            message: format!(
+                "{:?} must have mode 0400 or 0440; got {:04o}",
+                path.display(),
+                mode
+            ),
         });
     }
 
