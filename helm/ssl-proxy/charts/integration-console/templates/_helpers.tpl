@@ -92,5 +92,5 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 - name: OTEL_EXPORTER_OTLP_ENDPOINT
   value: {{ .Values.otlpEndpoint | quote }}
 - name: OTEL_EXPORTER_OTLP_PROTOCOL
-  value: "grpc"
+  value: "http/protobuf"
 {{- end }}

@@ -124,6 +124,6 @@ dbSetup:
 # Rails environment
 railsEnv: "development"
 logFormat: "json"
-otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+otlpEndpoint: "http://ssl-proxy-otel-collector:4318"
 
 # Atheros wireless sensor (host-networked producer; no direct Postgres ownership)
