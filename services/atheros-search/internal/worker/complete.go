@@ -90,11 +90,13 @@ func completeChunkWithStore(
 	result = CompleteChunkResult{
 		ChunkIndex:            embedded.ChunkIndex,
 		Failed:                embedded.Failed,
+		Deferred:              embedded.Deferred,
 		PermanentFailed:       embedded.PermanentFailed,
 		SucceededByKind:       map[string]int{},
 		FailedByKind:          copyCounts(embedded.FailedByKind),
-		DeferredByKind:        map[string]int{},
+		DeferredByKind:        copyCounts(embedded.DeferredByKind),
 		PermanentFailedByKind: copyCounts(embedded.PermanentFailedByKind),
+		DeferredReason:        embedded.DeferredReason,
 		PrepareMS:             embedded.PrepareMS,
 		EmbedMS:               embedded.EmbedMS,
 	}
@@ -103,6 +105,14 @@ func completeChunkWithStore(
 		result.CompleteMS = time.Since(started).Milliseconds()
 	}()
 
+	if embedded.Err != nil {
+		errorsSeen.Add(embedded.Err)
+		if isTransientDatabaseError(embedded.Err) {
+			notifyDatabaseUnavailable(onDatabaseUnavailable, embedded.Err)
+			markCompleteDeferred(embedded.Items, deferredReasonDatabaseUnavailable, &result)
+			return result
+		}
+	}
 	if len(embedded.Items) == 0 {
 		return result
 	}

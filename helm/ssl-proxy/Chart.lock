@@ -16,7 +16,7 @@ dependencies:
   version: 0.1.1
 - name: postgres
   repository: file://charts/postgres
-  version: 0.1.2
+  version: 0.1.3
 - name: redpanda
   repository: file://charts/redpanda
   version: 0.1.1
@@ -35,5 +35,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.0
-digest: sha256:df52a7d62e95edaee06bdc67e7369ea5a9602344c4857e6417636b262d20a154
-generated: "2026-07-16T10:29:55.656247-04:00"
+digest: sha256:95b9d23f8650b5e07fae2dc354811acdc599e35d4b8ef49c504b371adc90520e
+generated: "2026-07-16T16:44:02.371318-04:00"

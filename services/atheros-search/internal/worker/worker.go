@@ -90,11 +90,11 @@ func (w *Worker) Start(ctx context.Context) error {
 				w.Logger.Warn().Err(err).Msg("release expired embedding leases failed")
 			}
 		}
-		if w.Config.AlertEnabled && shouldRunAlertSweep(iteration, w.Config.AlertSweepInterval) {
+		if !databaseUnavailable && w.Config.AlertEnabled && shouldRunAlertSweep(iteration, w.Config.AlertSweepInterval) {
 			w.startAlertSweep(ctx)
 		}
 
-		// Only ticker-sleep when the queue was genuinely drained. Under
+		// Only poll-sleep when the queue was genuinely drained. Under
 		// sustained load, immediately start the next drain cycle.
 		if shouldPollImmediately(result, err) {
 			w.Logger.Debug().
@@ -134,7 +134,11 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 	completeSem := semaphore.NewWeighted(int64(effectiveCompleteWorkerCount(w.Config)))
 
 	go func() {
-		leaseSummaryCh <- w.leaseBatches(runCtx, batchCh)
+		summary := w.leaseBatches(runCtx, batchCh)
+		if isTransientDatabaseError(summary.Err) {
+			cancelRun(summary.Err)
+		}
+		leaseSummaryCh <- summary
 	}()
 
 	var processWG sync.WaitGroup
@@ -181,6 +185,25 @@ func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
 
 	finished := time.Now()
 	runErr := runErrors.Err()
+	if isTransientDatabaseError(runErr) || errors.Is(runErr, context.Canceled) {
+		reason := "canceled"
+		if isTransientDatabaseError(runErr) {
+			reason = deferredReasonDatabaseUnavailable
+		}
+		for kind, stats := range result.KindStats {
+			accounted := stats.Completed + stats.Failed + stats.Deferred + stats.PermanentFailed
+			if stats.Leased <= accounted {
+				continue
+			}
+			unaccounted := stats.Leased - accounted
+			stats.Deferred += unaccounted
+			result.KindStats[kind] = stats
+			result.Deferred += unaccounted
+			if w.Metrics != nil {
+				w.Metrics.WorkerJobsDeferred.WithLabelValues(kind, reason).Add(float64(unaccounted))
+			}
+		}
+	}
 	var lastErr *string
 	if runErr != nil {
 		msg := runErr.Error()

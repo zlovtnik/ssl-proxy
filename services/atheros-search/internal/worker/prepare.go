@@ -22,21 +22,34 @@ type PreparedJob struct {
 }
 
 type PrepareChunkResult struct {
-	ChunkIndex   int
-	Prepared     []PreparedJob
-	Failed       int
-	FailedByKind map[string]int
-	PrepareMS    int64
+	ChunkIndex     int
+	Prepared       []PreparedJob
+	Failed         int
+	Deferred       int
+	FailedByKind   map[string]int
+	DeferredByKind map[string]int
+	Err            error
+	PrepareMS      int64
 }
 
 func PrepareChunk(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, chunkIndex int, jobs []db.EmbeddingJob) PrepareChunkResult {
 	started := time.Now()
 	result := PrepareChunkResult{
-		ChunkIndex:   chunkIndex,
-		FailedByKind: map[string]int{},
+		ChunkIndex:     chunkIndex,
+		FailedByKind:   map[string]int{},
+		DeferredByKind: map[string]int{},
 	}
 	inputs, err := textbuilder.BuildBatch(ctx, pool, jobs)
 	if err != nil {
+		if shouldDeferDatabaseOperation(ctx, err) {
+			result.Err = firstNonNil(databaseUnavailableCause(ctx, err), err)
+			for _, job := range jobs {
+				result.Deferred++
+				result.DeferredByKind[job.EmbeddingKind]++
+			}
+			result.PrepareMS = time.Since(started).Milliseconds()
+			return result
+		}
 		for _, job := range jobs {
 			failPreparedJob(ctx, pool, job, err)
 			result.Failed++

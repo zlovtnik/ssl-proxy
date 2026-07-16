@@ -3,8 +3,11 @@ package worker
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/config"
@@ -93,6 +96,63 @@ func TestEffectiveStageWorkerCountsUseExistingKnobs(t *testing.T) {
 	require.Equal(t, 3, effectiveEmbedWorkerCount(cfg))
 	require.Equal(t, 3, effectiveBatchWorkerCount(cfg))
 	require.Equal(t, 5, effectiveCompleteWorkerCount(cfg))
+}
+
+func TestDatabaseBackoffCapsAndResetsAfterSuccess(t *testing.T) {
+	err := &pgconn.PgError{Code: "57P03", Message: "database is starting"}
+	want := []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		30 * time.Second,
+		30 * time.Second,
+	}
+	state := 0
+	for _, expected := range want {
+		var delay time.Duration
+		state, delay = databaseBackoffState(state, err)
+		require.Equal(t, expected, delay)
+	}
+
+	state, delay := databaseBackoffState(state, nil)
+	require.Zero(t, state)
+	require.Zero(t, delay)
+	state, delay = databaseBackoffState(state, err)
+	require.Equal(t, 1, state)
+	require.Equal(t, time.Second, delay)
+}
+
+func TestLeaseBatchesStopsAfterSharedCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	called := make(chan struct{})
+	var calls atomic.Int32
+	w := Worker{
+		Config: config.Config{
+			WorkerBatchSize:     4,
+			WorkerDBCallTimeout: time.Second,
+		},
+		leaseJobs: func(context.Context, int, string, int) ([]db.EmbeddingJob, error) {
+			calls.Add(1)
+			close(called)
+			return []db.EmbeddingJob{{JobID: 1, EmbeddingKind: "event"}}, nil
+		},
+	}
+	batchCh := make(chan []db.EmbeddingJob)
+	done := make(chan leaseRunSummary, 1)
+	go func() {
+		done <- w.leaseBatches(ctx, batchCh)
+	}()
+
+	<-called
+	databaseErr := &pgconn.PgError{Code: "57P03", Message: "database is starting"}
+	cancel(databaseErr)
+	summary := <-done
+
+	require.Equal(t, int32(1), calls.Load())
+	require.True(t, isTransientDatabaseError(summary.Err))
+	require.Equal(t, 1, summary.RowsLeased)
 }
 
 func TestSendWithContextReturnsOnCanceledContext(t *testing.T) {
