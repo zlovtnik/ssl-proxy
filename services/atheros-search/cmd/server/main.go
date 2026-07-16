@@ -43,6 +43,8 @@ func main() {
 	if err != nil {
 		level = zerolog.InfoLevel
 	}
+	zerolog.TimestampFieldName = "timestamp"
+	zerolog.MessageFieldName = "event"
 	zerolog.SetGlobalLevel(level)
 	logger := log.With().Str("service", "atheros-search").Logger()
 	logStartupConfig(logger, cfg)

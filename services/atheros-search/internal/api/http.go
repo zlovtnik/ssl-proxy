@@ -16,6 +16,7 @@ import (
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -76,7 +77,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/search", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/search").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/search").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("search request started")
 
 		body, ok := readRequestBody(w, r)
@@ -123,7 +124,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/search/stream", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/search/stream").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/search/stream").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("search stream request started")
 
 		body, ok := readRequestBody(w, r)
@@ -192,7 +193,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "GET", "/v1/explain/{source_key}", tokenAuth, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/explain").Str("method", "GET").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/explain").Str("method", "GET").Str("req_id", reqID).Logger(), r.Context())
 
 		sourceKey := params["source_key"]
 		query := r.URL.Query().Get("query")
@@ -228,13 +229,13 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		start := time.Now()
 		reqID := requestID()
 		prefix := r.URL.Query().Get("prefix")
-		log := logger.With().
+		log := loggerWithTrace(logger.With().
 			Str("endpoint", "/v1/suggest/filters").
 			Str("method", "GET").
 			Str("req_id", reqID).
 			Bool("has_prefix", strings.TrimSpace(prefix) != "").
 			Str("prefix_hash", shortHash(prefix)).
-			Logger()
+			Logger(), r.Context())
 		log.Info().Msg("suggest filters request started")
 
 		resp, err := svc.SuggestFilters(r.Context(), &searchv1.SuggestFiltersRequest{Prefix: prefix})
@@ -255,7 +256,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/graph", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/graph").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/graph").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("graph request started")
 
 		body, ok := readRequestBody(w, r)
@@ -309,7 +310,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/inventory", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/inventory").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/inventory").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("inventory request started")
 
 		body, ok := readRequestBody(w, r)
@@ -352,12 +353,12 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		start := time.Now()
 		reqID := requestID()
 		candidateID := params["candidate_id"]
-		log := logger.With().
+		log := loggerWithTrace(logger.With().
 			Str("endpoint", "/v1/inventory/merge-candidates/:id/decision").
 			Str("method", "POST").
 			Str("req_id", reqID).
 			Str("candidate_hash", shortHash(candidateID)).
-			Logger()
+			Logger(), r.Context())
 		log.Info().Msg("merge decision request started")
 
 		body, ok := readRequestBody(w, r)
@@ -493,4 +494,18 @@ func requestID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+func loggerWithTrace(logger zerolog.Logger, ctx context.Context) zerolog.Logger {
+	span := trace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		sc := span.SpanContext()
+		if sc.HasTraceID() {
+			logger = logger.With().Str("trace_id", sc.TraceID().String()).Logger()
+		}
+		if sc.HasSpanID() {
+			logger = logger.With().Str("span_id", sc.SpanID().String()).Logger()
+		}
+	}
+	return logger
 }
