@@ -900,6 +900,7 @@ func fetchGraphClusters(ctx context.Context, tx pgx.Tx, filters GraphFilters, bu
 	if filters.ObservedBefore != nil {
 		add("c.last_seen <= $%d", *filters.ObservedBefore)
 	}
+	clauses = append(clauses, "cardinality(c.mac_ids) > 1")
 
 	rows, err := tx.Query(ctx, `
 SELECT
@@ -928,6 +929,11 @@ LIMIT $1`, args...)
 		if err := rows.Scan(&id, &name, &macIDs, &size, &centroidUpdatedAt, &centroidSampleCount, &firstSeen, &lastSeen); err != nil {
 			return err
 		}
+		macIDs = normalizeLowerList(macIDs)
+		if !isDedupedIdentityCluster(macIDs) {
+			continue
+		}
+		size = int32(len(macIDs))
 		nodeID := graphNodeID(NodeKindCluster, fmt.Sprintf("%d", id))
 		builder.clusterMembers[nodeID] = macIDs
 		builder.addNode(GraphNode{

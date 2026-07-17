@@ -208,7 +208,14 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("schemaMigrator.ui.image.tag=latest", args)
         self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
         self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
-        self.assertEqual(args.count("--set-literal"), 14)
+        self.assertIn(
+            "schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args
+        )
+        self.assertIn("atherosSearch.ui.image.tag=latest", args)
+        self.assertIn(
+            "atherosSearch.embeddingBackend=http://192.168.1.221:8083", args
+        )
+        self.assertEqual(args.count("--set-literal"), 17)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)
@@ -448,6 +455,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
         )
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[0].args[0])
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[1].args[0])
+        self.assertIn(
+            "ATHEROS_SEARCH_UI_API_BASE=", mocked_run.call_args_list[0].args[0]
+        )
 
     def test_registry_publish_requires_validated_settings(self):
         settings = Settings()

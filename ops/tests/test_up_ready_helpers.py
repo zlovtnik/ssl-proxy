@@ -352,6 +352,12 @@ class UpReadyHelpersTest(unittest.TestCase):
             self.assertNotIn("obfuscated config", handoff)
             self.assertNotIn("127.0.0.1:51821", handoff)
             self.assertIn("url=https://schema.example.com", handoff)
+            self.assertIn("url=http://192.0.2.10:3004", handoff)
+            self.assertIn("url=http://192.0.2.10:3005", handoff)
+            self.assertIn("url=http://192.0.2.10:3007", handoff)
+            self.assertIn(
+                "url=http://192.0.2.10:8180/admin/middleware/console/", handoff
+            )
             self.assertIn("username=schema-admin", handoff)
             self.assertIn("temporary_password=temporary-schema-password", handoff)
             self.assertIn("password_change_required=true", handoff)

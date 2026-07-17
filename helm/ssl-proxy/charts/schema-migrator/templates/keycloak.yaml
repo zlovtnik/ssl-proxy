@@ -128,6 +128,9 @@ spec:
             - --import-realm
             - --hostname={{ include "ssl-proxy.schemaMigrator.publicOrigin" . }}
             - --hostname-strict=true
+            {{- with .Values.keycloak.adminHostname }}
+            - --hostname-admin={{ . }}
+            {{- end }}
             - --http-enabled=true
           env:
             - name: KC_DB
@@ -161,6 +164,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              {{- with .Values.keycloak.service.hostPort }}
+              hostPort: {{ . }}
+              {{- end }}
           startupProbe:
             tcpSocket:
               port: http
@@ -227,6 +233,6 @@ spec:
     app.kubernetes.io/component: schema-migrator-keycloak
   ports:
     - name: http
-      port: 8080
+      port: {{ .Values.keycloak.service.port }}
       targetPort: http
 {{- end }}

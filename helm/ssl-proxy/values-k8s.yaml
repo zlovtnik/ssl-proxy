@@ -130,6 +130,12 @@ schemaMigrator:
       repository: schema-migrator-ui
       tag: latest
       pullPolicy: Always
+  keycloak:
+    # Set dynamically by `ops up-ready` so the admin console has a LAN origin.
+    adminHostname: ""
+    service:
+      hostPort: 8180
+      port: 8080
   mongo:
     persistence:
       enabled: true
@@ -147,11 +153,26 @@ atherosSensor:
     tag: latest
     pullPolicy: Always
 atherosSearch:
-  enabled: false
+  enabled: true
   image:
     repository: atheros-search
     tag: latest
     pullPolicy: Always
+  # Set dynamically by `ops up-ready` from SERVER_IP.
+  embeddingBackend: ""
+  # The browser UI is same-origin through its in-cluster nginx proxy. Do not
+  # expose the digest-protected API directly to the browser.
+  apiTokenEnabled: false
+  worker:
+    enabled: true
+  ui:
+    enabled: true
+    image:
+      repository: atheros-search-ui
+      tag: latest
+      pullPolicy: Always
+    service:
+      hostPort: 3007
 observability:
   enabled: true
   keda:

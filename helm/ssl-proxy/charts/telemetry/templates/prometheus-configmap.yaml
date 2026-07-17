@@ -54,6 +54,14 @@ data:
         metrics_path: /metrics
         static_configs:
           - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-atheros-sensor:{{ .Values.global.shared.atherosSensor.metricsPort }}"]
+      - job_name: atheros-search
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-atheros-search:{{ .Values.global.shared.atherosSearch.metricsPort }}"]
+      - job_name: vec-worker
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-vec-worker:{{ .Values.global.shared.atherosSearch.workerMetricsPort }}"]
       - job_name: redpanda
         static_configs:
           - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-redpanda:{{ .Values.global.shared.redpanda.adminPort }}"]

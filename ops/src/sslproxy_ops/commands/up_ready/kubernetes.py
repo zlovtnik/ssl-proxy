@@ -325,7 +325,15 @@ def publish_registry_images(ctx: UpReadyContext) -> None:
             raise UpReadyError("IMAGE_TAG is required to build registry images")
         step("S03", f"registry_build: first-party images -> {registry} tag={image_tag}")
         shell.run(
-            ["make", "registry-build-all", f"REGISTRY={registry}", f"TAG={image_tag}"]
+            [
+                "make",
+                "registry-build-all",
+                f"REGISTRY={registry}",
+                f"TAG={image_tag}",
+                # The Kubernetes UI proxies /v1 to the in-cluster API. Keeping
+                # this empty avoids baking a developer's localhost into it.
+                "ATHEROS_SEARCH_UI_API_BASE=",
+            ]
         )
     if ctx.settings.mirror_registry_images:
         step("S03", f"registry_mirror: pinned third-party images -> {registry}")
@@ -533,6 +541,10 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     acme_email = (ctx.settings.acme_email or "").strip()
     if not acme_email:
         raise UpReadyError("ACME_EMAIL is required for Helm deployment")
+    embedding_backend = (
+        ctx.settings.atheros_search_embedding_backend
+        or f"http://{ctx.settings.server_ip}:8083"
+    ).strip()
     release = ctx.settings.helm_release
     namespace = ctx.settings.kube_namespace
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
@@ -558,8 +570,11 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "schemaMigrator.ui.image.tag": image_tag,
         "schemaMigrator.publicHostname": public_hostname,
         "schemaMigrator.traefik.acme.email": acme_email,
+        "schemaMigrator.keycloak.adminHostname": f"http://{ctx.settings.server_ip}:8180",
         "atherosSensor.image.tag": image_tag,
         "atherosSearch.image.tag": image_tag,
+        "atherosSearch.ui.image.tag": image_tag,
+        "atherosSearch.embeddingBackend": embedding_backend,
         "postgres.image.tag": image_tag,
         "proxy.wireguard.peerNames": peers,
     }

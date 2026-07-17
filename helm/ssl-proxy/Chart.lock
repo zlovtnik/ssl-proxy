@@ -34,6 +34,6 @@ dependencies:
   version: 0.1.0
 - name: atheros-search
   repository: file://charts/atheros-search
-  version: 0.1.0
-digest: sha256:dcce40308840298a715306c5feb6d41e2a309c0ca51d5e02f6e8cdccc1ce7c48
-generated: "2026-07-16T20:33:27.260314-04:00"
+  version: 0.1.1
+digest: sha256:438c6594f582fc0f5c79aa16c32749da31c780b24442eec12d5bafb173d4413e
+generated: "2026-07-16T20:53:35.009254-04:00"

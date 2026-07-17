@@ -101,9 +101,9 @@ Image names:
 by Helm: `mongo:7.0.22`, `quay.io/keycloak/keycloak:26.2.5`,
 `traefik:v3.6.2`, `postgres:16.9-alpine3.21`, and `busybox:1.37.0`.
 
-`vec-worker` is pending in this checkout. `make registry-build-all` skips it
-while `services/vec-worker/Dockerfile` is absent; `make registry-build-vec-worker`
-fails clearly until that service exists.
+The former standalone `vec-worker` is consolidated into the Atheros Search
+image. `make registry-build-vec-worker` remains as a compatibility alias for
+`make registry-build-atheros-search`.
 
 ## Build And Push
 
@@ -127,14 +127,18 @@ make registry-build-all REGISTRY=<registry-host>:5000 REGISTRY_PLAIN_HTTP=1
 make registry-build-all REGISTRY=<server-local-ip>:5000 TAG=latest PLATFORM=linux/amd64
 ```
 
-The standalone `atheros-search-ui` image bakes the API base URL into the static
-Vite build:
+The standalone `atheros-search-ui` can bake an API base URL into the static
+Vite build for non-Kubernetes use:
 
 ```bash
 make registry-build-atheros-search-ui \
   REGISTRY=<server-local-ip>:5000 \
   ATHEROS_SEARCH_UI_API_BASE=http://<server-local-ip>:8080
 ```
+
+`make up-ready` deliberately builds it with an empty API base. Its Helm nginx
+configuration proxies same-origin `/v1` requests to the in-cluster Atheros
+Search Service, so LAN browsers never receive a `localhost` API URL.
 
 ## Deploy
 

@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     schema_migrator_public_hostname: str | None = Field(
         default=None, validation_alias="SCHEMA_MIGRATOR_PUBLIC_HOSTNAME"
     )
+    atheros_search_embedding_backend: str | None = Field(
+        default=None, validation_alias="ATHSEARCH_EMBEDDING_BACKEND"
+    )
     acme_email: str | None = Field(default=None, validation_alias="ACME_EMAIL")
     wg_port: int = Field(default=443, ge=1, le=65535, validation_alias="WG_PORT")
     wg_internal_port: int = Field(

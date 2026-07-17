@@ -118,11 +118,6 @@ registry-buildx:
 	fi
 
 registry-build-all: $(REGISTRY_BUILD_TARGETS)
-	@if [ -f services/vec-worker/Dockerfile ]; then \
-		"$${MAKE:-make}" registry-build-vec-worker REGISTRY="$(REGISTRY)" TAG="$(TAG)" PLATFORM="$(PLATFORM)"; \
-	else \
-		echo "[registry-build-all] skipping vec-worker: services/vec-worker/Dockerfile not found"; \
-	fi
 
 registry-mirror-all: require-registry
 	@set -e; \
@@ -157,16 +152,9 @@ $(eval $(call registry_build_target,atheros-search-ui,apps/integration-console/a
 $(eval $(call registry_build_target,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,./apps/schema-migrator))
 $(eval $(call registry_build_target,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,./apps/schema-migrator))
 
-registry-build-vec-worker: registry-buildx require-registry
-	@if [ ! -f services/vec-worker/Dockerfile ]; then \
-		echo "vec-worker image cannot be built: services/vec-worker/Dockerfile not found" >&2; \
-		exit 1; \
-	fi
-	docker buildx build --platform $(PLATFORM) \
-		--file services/vec-worker/Dockerfile \
-		--tag $(REGISTRY)/vec-worker:$(TAG) \
-		--tag $(REGISTRY)/vec-worker:latest \
-		--push .
+registry-build-vec-worker:
+	@echo "[registry-build-vec-worker] vec-worker is consolidated into atheros-search"
+	@"$${MAKE:-make}" registry-build-atheros-search REGISTRY="$(REGISTRY)" TAG="$(TAG)" PLATFORM="$(PLATFORM)"
 
 deploy: require-deploy-vars
 	ssh "$(DEPLOY_HOST)" "cd '$(DEPLOY_PATH)' && docker compose pull && docker compose up -d"

@@ -544,10 +544,19 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
         handle.write(f"password={postgres_password}\n")
         handle.write(f"url=postgres://sync:{uri_encode(postgres_password)}@127.0.0.1:5432/sync\n")
         handle.write("\n## Grafana\n")
-        handle.write("url=http://127.0.0.1:3004\n")
+        handle.write(f"url=http://{ctx.settings.server_ip}:3004\n")
         handle.write(f"username={os.getenv('GRAFANA_ADMIN_USER', 'admin')}\n")
         handle.write(f"password={grafana_password}\n")
         if ctx.settings.deployment_target == "kubernetes":
+            handle.write("\n## Integration Console\n")
+            handle.write(f"url=http://{ctx.settings.server_ip}:3005\n")
+            handle.write("\n## Atheros Search\n")
+            handle.write(f"url=http://{ctx.settings.server_ip}:3007\n")
+            handle.write("worker=ssl-proxy-vec-worker\n")
+            handle.write("\n## Keycloak admin\n")
+            handle.write(
+                f"url=http://{ctx.settings.server_ip}:8180/admin/middleware/console/\n"
+            )
             handle.write("\n## Schema Migrator first login\n")
             handle.write(
                 f"url=https://{ctx.settings.schema_migrator_public_hostname or ''}\n"

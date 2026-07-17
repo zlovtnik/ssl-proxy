@@ -414,6 +414,7 @@ WHERE EXISTS (
   FROM unnest(c.mac_ids) AS member(mac)
   WHERE lower(member.mac) = any($1::text[])
 )
+  AND cardinality(c.mac_ids) > 1
 ORDER BY c.last_seen DESC, c.cluster_id DESC
 LIMIT $2`, macs, limit)
 	if err != nil {
@@ -437,11 +438,19 @@ LIMIT $2`, macs, limit)
 			return nil, err
 		}
 		row.MACs = normalizeLowerList(row.MACs)
+		if !isDedupedIdentityCluster(row.MACs) {
+			continue
+		}
+		row.Size = int32(len(row.MACs))
 		for _, mac := range row.MACs {
 			byMAC[mac] = row
 		}
 	}
 	return byMAC, rows.Err()
+}
+
+func isDedupedIdentityCluster(macs []string) bool {
+	return len(normalizeLowerList(macs)) > 1
 }
 
 func fetchInventoryCandidates(ctx context.Context, tx pgx.Tx, macs []string, minConfidence float64, limit int) ([]inventoryCandidateRow, error) {

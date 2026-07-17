@@ -1,0 +1,162 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.atherosSearch.labels" . | nindent 4 }}
+    app.kubernetes.io/component: atheros-search
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: atheros-search
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: atheros-search
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy.atherosSearch.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: atheros-search
+          image: {{ include "ssl-proxy.atherosSearch.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
+                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
+            - name: ATHSEARCH_POSTGRES_DSN
+              value: {{ include "ssl-proxy.atherosSearch.postgresDsn" . | quote }}
+            - name: ATHSEARCH_REDPANDA_BOOTSTRAP
+              value: {{ .Values.global.shared.redpanda.bootstrapServers | quote }}
+            - name: ATHSEARCH_EMBEDDING_BACKEND
+              value: {{ .Values.apiEmbeddingBackend | quote }}
+            - name: ATHSEARCH_EMBEDDING_MODEL
+              value: {{ .Values.embeddingModel | quote }}
+            - name: ATHSEARCH_EMBEDDING_DIMENSIONS
+              value: {{ .Values.embeddingDimensions | quote }}
+            - name: ATHSEARCH_EVENT_EMBEDDING_SCOPE
+              value: {{ .Values.eventEmbeddingScope | quote }}
+            - name: ATHSEARCH_HTTP_PORT
+              value: {{ .Values.service.httpPort | quote }}
+            - name: ATHSEARCH_GRPC_PORT
+              value: {{ .Values.service.grpcPort | quote }}
+            - name: ATHSEARCH_METRICS_PORT
+              value: {{ .Values.service.metricsPort | quote }}
+            - name: ATHSEARCH_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: ATHSEARCH_CORS_ALLOWED_ORIGINS
+              value: {{ .Values.corsAllowedOrigins | quote }}
+            - name: ATHSEARCH_SCHEMA_READY_REQUIRED
+              value: {{ .Values.schemaReadyRequired | quote }}
+            - name: ATHSEARCH_WORKER_ENABLED
+              value: "false"
+            - name: ATHSEARCH_WORKER_NAME
+              value: {{ .Values.worker.name | quote }}
+            - name: ATHSEARCH_WORKER_BATCH_SIZE
+              value: {{ .Values.worker.batchSize | quote }}
+            - name: ATHSEARCH_WORKER_REQUEST_BATCH_SIZE
+              value: {{ .Values.worker.requestBatchSize | quote }}
+            - name: ATHSEARCH_WORKER_REQUEST_BATCH_MAX
+              value: {{ .Values.worker.requestBatchMax | quote }}
+            - name: ATHSEARCH_WORKER_LEASE_SECONDS
+              value: {{ .Values.worker.leaseSeconds | quote }}
+            - name: ATHSEARCH_WORKER_POLL_INTERVAL_MS
+              value: {{ .Values.worker.pollIntervalMs | quote }}
+            - name: ATHSEARCH_WORKER_MAX_DRAIN_BATCHES
+              value: {{ .Values.worker.maxDrainBatches | quote }}
+            - name: ATHSEARCH_WORKER_MAX_INPUT_TOKENS
+              value: {{ .Values.worker.maxInputTokens | quote }}
+            - name: ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED
+              value: {{ .Values.worker.maxConcurrentEmbed | quote }}
+            - name: ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE
+              value: {{ .Values.worker.maxConcurrentComplete | quote }}
+            - name: ATHSEARCH_ALERT_ENABLED
+              value: "false"
+            - name: ATHSEARCH_INGEST_ENABLED
+              value: {{ .Values.ingestEnabled | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otlpEndpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_SERVICE_NAME
+              value: atheros-search
+            {{- if .Values.apiTokenEnabled }}
+            - name: ATHSEARCH_API_TOKEN_SHA256
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiTokenSecret.name }}
+                  key: {{ .Values.apiTokenSecret.key }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+            - name: grpc
+              containerPort: {{ .Values.service.grpcPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

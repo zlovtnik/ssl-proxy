@@ -59,6 +59,21 @@ func TestInventoryDeviceTagsIncludeDerivedOperationalTags(t *testing.T) {
 	require.True(t, inventoryTagsMatch(device.Tags, nil))
 }
 
+func TestDedupedIdentityClusterRequiresMultipleDistinctMACs(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, isDedupedIdentityCluster(nil))
+	require.False(t, isDedupedIdentityCluster([]string{"aa:bb:cc:dd:ee:01"}))
+	require.False(t, isDedupedIdentityCluster([]string{
+		"AA:BB:CC:DD:EE:01",
+		"aa:bb:cc:dd:ee:01",
+	}))
+	require.True(t, isDedupedIdentityCluster([]string{
+		"aa:bb:cc:dd:ee:01",
+		"aa:bb:cc:dd:ee:02",
+	}))
+}
+
 func TestInventoryBuilderAppliesGrouping(t *testing.T) {
 	t.Parallel()
 

@@ -103,6 +103,9 @@ global:
           port: 3005
     atherosSensor:
       metricsPort: 9097
+    atherosSearch:
+      metricsPort: 9090
+      workerMetricsPort: 9090
 
 # Dependency aliases are the authoritative enablement paths and preserve the
 # historical Helm --set names.
@@ -123,8 +126,8 @@ atherosSensor:
 observability:
   enabled: true
 
-# These charts intentionally render no workloads until their service contracts land.
+# The standalone vec-worker was retired; Atheros Search owns its embedding worker.
 vecWorker:
   enabled: false
 atherosSearch:
-  enabled: true
+  enabled: false

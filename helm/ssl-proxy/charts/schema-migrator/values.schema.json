@@ -21,7 +21,25 @@
     },
     "keycloak": {
       "type": "object",
-      "required": ["image", "realm", "clientId", "credentialsSecret", "applicationAdmin"]
+      "required": ["image", "realm", "clientId", "credentialsSecret", "applicationAdmin", "service"],
+      "properties": {
+        "adminHostname": {
+          "type": "string",
+          "pattern": "^$|^https?://[^/]+$"
+        },
+        "service": {
+          "type": "object",
+          "required": ["port"],
+          "properties": {
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "hostPort": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        }
+      }
     },
     "traefik": {
       "type": "object",

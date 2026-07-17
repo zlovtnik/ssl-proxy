@@ -124,6 +124,8 @@ wg genpsk > presharedkey-peer1
 | Explicit Proxy | 3000 | TCP | Legacy opt-in listener, disabled by default |
 | Coordinator Actuator | 8081 | TCP | Health/actuator (internal) |
 | Integration Console | 3005 | TCP | Rails dashboard (device inventory, heatmaps) |
+| Atheros Search UI | 3007 | TCP | Search, graph, and inventory UI (single-node Kubernetes) |
+| Keycloak Admin | 8180 | TCP | LAN admin console (single-node Kubernetes) |
 | Redis | 6379 | TCP | Caching and job queues (internal) |
 | MinIO API | 9000 | TCP | S3-compatible object storage (internal) |
 | MinIO Console | 9001 | TCP | MinIO admin UI (internal) |
@@ -139,8 +141,8 @@ wg genpsk > presharedkey-peer1
 | Jaeger UI | 16686 | TCP | Distributed tracing |
 | OTel gRPC | 4317 | TCP | OpenTelemetry collector gRPC |
 | OTel HTTP | 4320 | TCP | OpenTelemetry collector HTTP |
-| Search gRPC | 50051 | TCP | Atheros Search gRPC API (vector profile) |
-| Search HTTP | 8080 | TCP | Atheros Search REST API (vector profile) |
+| Search gRPC | 50051 | TCP | Atheros Search gRPC API (cluster-internal in Kubernetes) |
+| Search HTTP | 8080 | TCP | Atheros Search REST API (proxied by the UI in Kubernetes) |
 
 ## Components
 
@@ -176,8 +178,8 @@ wg genpsk > presharedkey-peer1
 
 | Service | Description | README |
 |---------|-------------|--------|
-| **vec-worker** | PostgreSQL-only embedding worker (Ollama/llama.cpp) | [services/vec-worker/README.md](services/vec-worker/README.md) |
-| **atheros-search** | Go gRPC search service for wireless audit embeddings | [services/atheros-search/](services/atheros-search/) |
+| **vec-worker** | Embedding worker role in the consolidated Atheros Search image | [services/atheros-search/](services/atheros-search/) |
+| **atheros-search** | Go HTTP/gRPC search API and worker implementation | [services/atheros-search/](services/atheros-search/) |
 | **ollama** | Local embedding model server | - |
 
 ### Rotator Profile (optional)
@@ -344,7 +346,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `docker` | Build selected local Docker images through `docker-compose.build.yaml` |
 | `registry-buildx` | Create or use the registry-aware buildx builder |
 | `registry-build-all` | Build and push linux/amd64 registry images |
-| `registry-build-vec-worker` | Build vec-worker when its Dockerfile exists; otherwise fail clearly |
+| `registry-build-vec-worker` | Compatibility alias that builds the consolidated Atheros Search worker image |
 | `deploy` | SSH to `DEPLOY_HOST`, pull images in `DEPLOY_PATH`, and run Compose |
 | `clean` | Clean build artifacts |
 | `up-ready` | Publish local-registry images, upgrade Kubernetes with Helm, verify services, and print peer QR codes |
@@ -394,6 +396,10 @@ make configure-containerd-registry REGISTRY=192.168.1.221:5000
 
 The single-node values expose the fixed LAN ports with pod `hostPort` mappings;
 they do not use the deprecated Kubernetes 1.36 `Service.spec.externalIPs` field.
+The operator-facing URLs are Grafana on `:3004`, Integration Console on
+`:3005`, Atheros Search on `:3007`, and the Keycloak admin console on `:8180`.
+The vector worker uses `http://$SERVER_IP:8083` by default; set
+`ATHSEARCH_EMBEDDING_BACKEND` to point it at a different embedding service.
 
 ```bash
 make up-ready PROFILE_MODE=mac \
