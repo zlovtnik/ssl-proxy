@@ -131,7 +131,9 @@ schemaMigrator:
       tag: latest
       pullPolicy: Always
   keycloak:
-    # Set dynamically by `ops up-ready` so the admin console has a LAN origin.
+    # Set dynamically by `ops up-ready` so Keycloak's browser-facing issuer
+    # and admin console use the reachable LAN origin.
+    browserOrigin: ""
     adminHostname: ""
     service:
       hostPort: 8180

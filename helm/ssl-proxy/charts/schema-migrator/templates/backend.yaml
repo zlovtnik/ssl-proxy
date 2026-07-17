@@ -67,7 +67,7 @@ spec:
             - name: BEDROCK_KEYCLOAK_ENABLED
               value: "true"
             - name: BEDROCK_KEYCLOAK_ISSUER
-              value: {{ printf "%s/realms/%s" (include "ssl-proxy.schemaMigrator.publicOrigin" .) .Values.keycloak.realm | quote }}
+              value: {{ printf "%s/realms/%s" (include "ssl-proxy.schemaMigrator.keycloakOrigin" .) .Values.keycloak.realm | quote }}
             - name: BEDROCK_KEYCLOAK_JWKS_URI
               value: {{ printf "http://%s:8080/realms/%s/protocol/openid-connect/certs" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak")) .Values.keycloak.realm | quote }}
             - name: BEDROCK_KEYCLOAK_CLIENT_ID
@@ -166,4 +166,3 @@ spec:
       port: {{ .Values.backend.service.port }}
       targetPort: http
 {{- end }}
-

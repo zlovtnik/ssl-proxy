@@ -209,13 +209,16 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
         self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
         self.assertIn(
+            "schemaMigrator.keycloak.browserOrigin=http://192.168.1.221:8180", args
+        )
+        self.assertIn(
             "schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args
         )
         self.assertIn("atherosSearch.ui.image.tag=latest", args)
         self.assertIn(
             "atherosSearch.embeddingBackend=http://192.168.1.221:8083", args
         )
-        self.assertEqual(args.count("--set-literal"), 17)
+        self.assertEqual(args.count("--set-literal"), 18)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)

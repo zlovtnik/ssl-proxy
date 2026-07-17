@@ -570,6 +570,7 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "schemaMigrator.ui.image.tag": image_tag,
         "schemaMigrator.publicHostname": public_hostname,
         "schemaMigrator.traefik.acme.email": acme_email,
+        "schemaMigrator.keycloak.browserOrigin": f"http://{ctx.settings.server_ip}:8180",
         "schemaMigrator.keycloak.adminHostname": f"http://{ctx.settings.server_ip}:8180",
         "atherosSensor.image.tag": image_tag,
         "atherosSearch.image.tag": image_tag,

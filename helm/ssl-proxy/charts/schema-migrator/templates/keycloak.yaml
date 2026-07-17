@@ -126,7 +126,7 @@ spec:
           args:
             - start
             - --import-realm
-            - --hostname={{ include "ssl-proxy.schemaMigrator.publicOrigin" . }}
+            - --hostname={{ include "ssl-proxy.schemaMigrator.keycloakOrigin" . }}
             - --hostname-strict=true
             {{- with .Values.keycloak.adminHostname }}
             - --hostname-admin={{ . }}
