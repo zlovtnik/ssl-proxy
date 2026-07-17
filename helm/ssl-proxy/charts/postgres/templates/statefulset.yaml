@@ -140,7 +140,13 @@ spec:
           volumeMounts:
             - name: postgres-data
               mountPath: {{ .Values.persistence.mountPath | quote }}
+            - name: postgres-shm
+              mountPath: /dev/shm
       volumes:
+        - name: postgres-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.sharedMemory.sizeLimit | quote }}
         - name: postgres-data
           {{- if .Values.persistence.hostPath }}
           hostPath:

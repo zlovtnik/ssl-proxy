@@ -39,6 +39,8 @@ postgres:
     pullPolicy: Always
   persistence:
     hostPath: "/var/lib/docker/volumes/ssl-proxy_postgres-data/_data"
+  sharedMemory:
+    sizeLimit: 512Mi
 
 redis:
   external: false

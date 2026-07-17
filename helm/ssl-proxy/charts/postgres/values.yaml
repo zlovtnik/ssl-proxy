@@ -50,6 +50,11 @@ resources:
   requests:
     cpu: "1"
     memory: 4Gi
+# PostgreSQL parallel query workers allocate POSIX dynamic shared memory here.
+# Mount a dedicated tmpfs instead of relying on the container runtime's 64 MiB
+# default. Memory consumed by this volume counts against the container limit.
+sharedMemory:
+  sizeLimit: 512Mi
 tuning:
   # Kubernetes profile for the 8 GiB container limit. The image's
   # /etc/postgresql/postgresql.conf remains tuned for the 32 GiB Compose host.
