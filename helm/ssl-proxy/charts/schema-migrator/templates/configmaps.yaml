@@ -14,7 +14,7 @@ data:
       VITE_KEYCLOAK_URL: {{ include "ssl-proxy.schemaMigrator.keycloakOrigin" . | quote }},
       VITE_KEYCLOAK_REALM: {{ .Values.keycloak.realm | quote }},
       VITE_KEYCLOAK_CLIENT_ID: {{ .Values.keycloak.clientId | quote }},
-      VITE_KEYCLOAK_REDIRECT_URI: {{ printf "%s/callback" (include "ssl-proxy.schemaMigrator.publicOrigin" .) | quote }},
+      VITE_KEYCLOAK_REDIRECT_URI: {{ printf "%s/callback" (include "ssl-proxy.schemaMigrator.uiOrigin" .) | quote }},
       VITE_KEYCLOAK_DIRECT_ACCESS_GRANTS: "false"
     };
 ---
@@ -59,8 +59,18 @@ data:
           "directAccessGrantsEnabled": false,
           "implicitFlowEnabled": false,
           "serviceAccountsEnabled": false,
-          "redirectUris": [{{ printf "%s/*" (include "ssl-proxy.schemaMigrator.publicOrigin" .) | toJson }}],
-          "webOrigins": [{{ include "ssl-proxy.schemaMigrator.publicOrigin" . | toJson }}],
+          "redirectUris": [
+            {{- printf "%s/*" (include "ssl-proxy.schemaMigrator.publicOrigin" .) | toJson }}
+            {{- if and .Values.ui.browserOrigin (ne (include "ssl-proxy.schemaMigrator.uiOrigin" .) (include "ssl-proxy.schemaMigrator.publicOrigin" .)) }},
+            {{- printf "%s/*" (include "ssl-proxy.schemaMigrator.uiOrigin" .) | toJson }}
+            {{- end }}
+          ],
+          "webOrigins": [
+            {{- include "ssl-proxy.schemaMigrator.publicOrigin" . | toJson }}
+            {{- if and .Values.ui.browserOrigin (ne (include "ssl-proxy.schemaMigrator.uiOrigin" .) (include "ssl-proxy.schemaMigrator.publicOrigin" .)) }},
+            {{- include "ssl-proxy.schemaMigrator.uiOrigin" . | toJson }}
+            {{- end }}
+          ],
           "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
           "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
         }
@@ -79,6 +89,18 @@ data:
   dynamic.yaml: |
     http:
       routers:
+        {{- with .Values.traefik.hostPorts.lan }}
+        lan-backend:
+          rule: "PathPrefix(`/api`)"
+          entryPoints: [lan]
+          priority: 20
+          service: backend
+        lan-ui:
+          rule: "PathPrefix(`/`)"
+          entryPoints: [lan]
+          priority: 10
+          service: ui
+        {{- end }}
         keycloak:
           rule: {{ printf "Host(`%s`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`) || PathPrefix(`/admin`))" .Values.publicHostname | quote }}
           entryPoints: [websecure]

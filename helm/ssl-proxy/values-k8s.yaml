@@ -126,6 +126,8 @@ schemaMigrator:
     dbTestAllowedHosts:
       - 192.168.1.221
   ui:
+    # Set dynamically by `ops up-ready` to the HTTP LAN edge origin.
+    browserOrigin: ""
     image:
       repository: schema-migrator-ui
       tag: latest
@@ -143,6 +145,9 @@ schemaMigrator:
       enabled: true
       hostPath: /var/lib/ssl-proxy/schema-migrator/mongo
   traefik:
+    hostPorts:
+      # Unified LAN edge for the UI and backend API.
+      lan: 8081
     acme:
       # Set dynamically by `ops up-ready` from ACME_EMAIL.
       email: ""

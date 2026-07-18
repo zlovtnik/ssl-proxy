@@ -206,6 +206,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
         self.assertIn("schemaMigrator.backend.image.tag=latest", args)
         self.assertIn("schemaMigrator.ui.image.tag=latest", args)
+        self.assertIn(
+            "schemaMigrator.ui.browserOrigin=http://192.168.1.221:8081", args
+        )
         self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
         self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
         self.assertIn(
@@ -218,7 +221,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn(
             "atherosSearch.embeddingBackend=http://192.168.1.221:8083", args
         )
-        self.assertEqual(args.count("--set-literal"), 18)
+        self.assertEqual(args.count("--set-literal"), 19)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)

@@ -10,11 +10,17 @@ metadata:
 spec:
   replicas: {{ .Values.ui.replicas }}
   revisionHistoryLimit: 3
+  {{- if .Values.ui.service.hostPort }}
+  # A fixed host port must be released before its replacement can schedule.
+  strategy:
+    type: Recreate
+  {{- else }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
+  {{- end }}
   selector:
     matchLabels:
       {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
@@ -42,6 +48,9 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.ui.service.targetPort }}
+              {{- with .Values.ui.service.hostPort }}
+              hostPort: {{ . }}
+              {{- end }}
           startupProbe:
             httpGet:
               path: /
@@ -113,4 +122,3 @@ spec:
       port: {{ .Values.ui.service.port }}
       targetPort: http
 {{- end }}
-

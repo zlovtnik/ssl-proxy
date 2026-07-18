@@ -102,11 +102,27 @@
         "ui": {
           "type": "object",
           "properties": {
+            "browserOrigin": {
+              "type": "string",
+              "pattern": "^$|^https?://[^/]+$"
+            },
             "image": {
               "type": "object",
               "properties": {
                 "repository": { "type": "string", "minLength": 1 },
                 "tag": { "type": "string", "minLength": 1 }
+              }
+            },
+            "service": {
+              "type": "object",
+              "properties": {
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "targetPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "hostPort": {
+                  "type": ["integer", "null"],
+                  "minimum": 1,
+                  "maximum": 65535
+                }
               }
             },
             "resources": { "type": "object" }
@@ -138,7 +154,12 @@
               "type": "object",
               "properties": {
                 "http": { "type": "integer", "minimum": 1, "maximum": 65535 },
-                "https": { "type": "integer", "minimum": 1, "maximum": 65535 }
+                "https": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "lan": {
+                  "type": ["integer", "null"],
+                  "minimum": 1,
+                  "maximum": 65535
+                }
               }
             },
             "acme": {

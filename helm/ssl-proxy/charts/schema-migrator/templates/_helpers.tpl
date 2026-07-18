@@ -55,6 +55,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- printf "https://%s" .Values.publicHostname -}}
 {{- end }}
 
+{{- define "ssl-proxy.schemaMigrator.uiOrigin" -}}
+{{- if .Values.ui.browserOrigin -}}
+{{- .Values.ui.browserOrigin -}}
+{{- else -}}
+{{- include "ssl-proxy.schemaMigrator.publicOrigin" . -}}
+{{- end -}}
+{{- end }}
+
 {{- define "ssl-proxy.schemaMigrator.keycloakOrigin" -}}
 {{- if .Values.keycloak.browserOrigin -}}
 {{- .Values.keycloak.browserOrigin -}}

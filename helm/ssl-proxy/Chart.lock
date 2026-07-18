@@ -10,7 +10,7 @@ dependencies:
   version: 0.1.2
 - name: schema-migrator
   repository: file://charts/schema-migrator
-  version: 0.1.0
+  version: 0.1.2
 - name: atheros-sensor
   repository: file://charts/atheros-sensor
   version: 0.1.1
@@ -35,5 +35,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.1
-digest: sha256:438c6594f582fc0f5c79aa16c32749da31c780b24442eec12d5bafb173d4413e
-generated: "2026-07-16T20:53:35.009254-04:00"
+digest: sha256:6d74383c03fecd0793a61ba1197691772ff3c8e7182cd98f84343703d4924372
+generated: "2026-07-18T11:01:58.259692-04:00"

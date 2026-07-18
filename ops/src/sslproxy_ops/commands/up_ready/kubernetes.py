@@ -568,6 +568,7 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "integrationConsole.dbSetup.image.tag": image_tag,
         "schemaMigrator.backend.image.tag": image_tag,
         "schemaMigrator.ui.image.tag": image_tag,
+        "schemaMigrator.ui.browserOrigin": f"http://{ctx.settings.server_ip}:8081",
         "schemaMigrator.publicHostname": public_hostname,
         "schemaMigrator.traefik.acme.email": acme_email,
         "schemaMigrator.keycloak.browserOrigin": f"http://{ctx.settings.server_ip}:8180",

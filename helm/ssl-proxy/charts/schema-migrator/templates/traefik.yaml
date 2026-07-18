@@ -77,6 +77,9 @@ spec:
             - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
             - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0s
             - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=3600s
+            {{- with .Values.traefik.hostPorts.lan }}
+            - --entrypoints.lan.address=:8081
+            {{- end }}
             - --certificatesresolvers.letsencrypt.acme.email={{ .Values.traefik.acme.email }}
             - --certificatesresolvers.letsencrypt.acme.storage={{ .Values.traefik.acme.storagePath }}
             - --certificatesresolvers.letsencrypt.acme.caserver={{ .Values.traefik.acme.server }}
@@ -93,6 +96,12 @@ spec:
               containerPort: 8443
               hostPort: {{ .Values.traefik.hostPorts.https }}
               protocol: TCP
+            {{- with .Values.traefik.hostPorts.lan }}
+            - name: lan
+              containerPort: 8081
+              hostPort: {{ . }}
+              protocol: TCP
+            {{- end }}
           startupProbe:
             httpGet:
               path: /ping
