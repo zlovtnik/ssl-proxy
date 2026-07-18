@@ -4,6 +4,10 @@
 > **Project:** `ssl-proxy`
 > **Scope:** Compliance-grade audit persistence, intelligent blocklist infrastructure, transaction-level user data capture, and bandwidth/performance hardening.
 
+> **State-store policy update:** Redis-specific cache tasks and ADRs below are
+> superseded and must not be implemented. Any durable cache or coordination
+> state must use PostgreSQL; process-local acceleration may remain in memory.
+
 ---
 
 ## Table of Contents

@@ -16,7 +16,6 @@ In scope:
 - `atheros-sensor`
 - `redpanda`
 - `postgres`
-- `redis`
 - `minio`
 - `redpanda-init`
 - `minio-init`
@@ -41,7 +40,7 @@ Explicitly excluded from this rollout:
 
 Delivered in this pass:
 
-- `docker-compose.yaml` services: `prometheus`, `loki`, `promtail`, `jaeger`, `otel-collector`, `grafana`, `postgres-exporter`, `redis-exporter`, `pushgateway`
+- `docker-compose.yaml` services: `prometheus`, `loki`, `promtail`, `jaeger`, `otel-collector`, `grafana`, `postgres-exporter`, `pushgateway`
 - `docker/observability/prometheus.yml`
 - `docker/observability/alerts.yml`
 - `docker/observability/loki.yml`
@@ -99,7 +98,6 @@ Delivered in this pass:
 
 - `redpanda` scrape target on `:9644`
 - `postgres-exporter` and scrape
-- `redis-exporter` and scrape
 - `minio` scrape target on `/minio/v2/metrics/cluster`
 - log collection for infra containers through Promtail
 
@@ -188,14 +186,13 @@ Runtime controls:
 - OTel Collector self-metrics: `127.0.0.1:8888`
 - Pushgateway: `127.0.0.1:9091`
 - Postgres exporter: `127.0.0.1:9187`
-- Redis exporter: `127.0.0.1:9121`
 
 ## Verification Commands
 
 Compose health:
 
 ```bash
-docker compose up -d prometheus loki promtail jaeger otel-collector grafana postgres-exporter redis-exporter pushgateway
+docker compose up -d prometheus loki promtail jaeger otel-collector grafana postgres-exporter pushgateway
 docker compose ps
 ```
 

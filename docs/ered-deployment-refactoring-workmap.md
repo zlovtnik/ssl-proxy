@@ -4,7 +4,11 @@
 **Version:** 1.0  
 **Source:** ered deployment document  
 **Date:** 2026-07-18  
-**Status:** Ready for team assignment
+**Status:** Superseded by the PostgreSQL state-store implementation
+
+> Historical reference only. MongoDB-specific tasks in this document must not be
+> implemented; Schema Migrator persistence now belongs to its dedicated
+> PostgreSQL role and `schema_migrator` schema.
 
 ---
 
