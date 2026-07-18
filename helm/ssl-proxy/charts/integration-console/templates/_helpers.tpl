@@ -66,13 +66,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: "postgres://{{ .Values.global.shared.postgres.user }}@{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}"
 - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
   value: {{ .Values.global.shared.redpanda.bootstrapServers | quote }}
-- name: INTEGRATION_CONSOLE_REDIS_URL
-  value: {{ .Values.global.shared.redis.url | quote }}
-- name: INTEGRATION_CONSOLE_REDIS_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: {{ .Values.global.shared.redis.passwordSecret.name }}
-      key: {{ .Values.global.shared.redis.passwordSecret.key }}
 - name: MINIO_ENDPOINT
   value: {{ .Values.global.shared.minio.endpoint | quote }}
 - name: MINIO_ACCESS_KEY_ID

@@ -126,12 +126,10 @@ wg genpsk > presharedkey-peer1
 | Integration Console | 3005 | TCP | Rails dashboard (device inventory, heatmaps) |
 | Atheros Search UI | 3007 | TCP | Search, graph, and inventory UI (single-node Kubernetes) |
 | Keycloak Admin | 8180 | TCP | LAN admin console (single-node Kubernetes) |
-| Redis | 6379 | TCP | Caching and job queues (internal) |
 | MinIO API | 9000 | TCP | S3-compatible object storage (internal) |
 | MinIO Console | 9001 | TCP | MinIO admin UI (internal) |
 | Postgres | 5432 | TCP | Primary state store (internal) |
 | Postgres Exporter | 9187 | TCP | Postgres metrics (observability) |
-| Redis Exporter | 9121 | TCP | Redis metrics (observability) |
 | Prometheus | 9090 | TCP | Metrics aggregation (observability) |
 | Pushgateway | 9091 | TCP | Metrics push endpoint (observability) |
 | Node Exporter | 9100 | TCP | Host metrics (observability) |
@@ -155,7 +153,6 @@ wg genpsk > presharedkey-peer1
 | **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
 | **redpanda** | Kafka-compatible event backbone for sync topics | - |
 | **postgres** | Primary state store (sync_events, devices, vec_embeddings, etc.) | [sql/postgres.sql](sql/postgres.sql) |
-| **redis** | Caching and job queues for integration console | - |
 | **minio** | S3-compatible object store (console exports) | - |
 
 ### Observability Stack
@@ -171,7 +168,6 @@ wg genpsk > presharedkey-peer1
 | **cadvisor** | Container resource metrics | 8082 |
 | **node-exporter** | Host-level metrics | 9100 |
 | **postgres-exporter** | Postgres query performance metrics | 9187 |
-| **redis-exporter** | Redis metrics | 9121 |
 | **pushgateway** | Metrics push endpoint for batch jobs | 9091 |
 
 ### Vector Profile (optional, `docker compose --profile vector up`)
@@ -381,9 +377,9 @@ Kubernetes release. The release includes the proxy, coordinator, console
 processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
 OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
 reusing the retained Compose data volumes. It also deploys Schema Migrator's
-React UI, Scala API, MongoDB, Keycloak, and dedicated Traefik edge. Schema
-Migrator reuses the root `sync` Postgres target; Keycloak receives its own
-role and database on that same server.
+React UI, Scala API, PostgreSQL state schema, Keycloak, and dedicated Traefik
+edge. Schema Migrator uses a dedicated role and schema in the root `sync`
+Postgres database; Keycloak receives its own role and database on that server.
 
 The image name remains canonical end to end: the development machine builds
 `linux/amd64` and pushes to `192.168.1.221:5000`, and Kubernetes pulls the same
@@ -413,8 +409,8 @@ Before deployment, point the selected hostname at the public address that
 forwards TCP 80 and 443 to `192.168.1.221`. Permit inbound TCP 80 for the ACME
 HTTP-01 challenge and redirect, and TCP 443 for the application. UDP 443
 remains assigned to WireGuard and does not conflict with the Schema Migrator
-TCP listener. The live profile persists MongoDB and ACME state beneath
-`/var/lib/ssl-proxy/schema-migrator/`.
+TCP listener. The live profile persists Schema Migrator state in PostgreSQL;
+ACME state remains beneath `/var/lib/ssl-proxy/schema-migrator/`.
 
 The operator uses standard `kubectl` and `helm`. It selects
 `UP_READY_KUBE_CONTEXT` when set and otherwise uses the current kubeconfig

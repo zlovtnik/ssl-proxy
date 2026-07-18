@@ -372,7 +372,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         manifest = json.loads(mocked_apply.call_args.args[1])
         self.assertEqual(
             manifest["spec"]["containers"][0]["image"],
-            "192.168.1.221:5000/redis:7-alpine",
+            "192.168.1.221:5000/busybox:1.37.0",
         )
         self.assertEqual(mocked_kubectl.call_count, 3)
 
@@ -400,7 +400,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             groups["schema-migrator-backend"],
             ["encrypt-key", "jwt-secret", "api-bearer-token"],
         )
-        self.assertEqual(groups["schema-migrator-mongo"], ["password"])
+        self.assertEqual(groups["schema-migrator-state-db"], ["password"])
         self.assertEqual(
             groups["schema-migrator-keycloak"],
             ["database-password", "bootstrap-admin-password"],
@@ -421,7 +421,6 @@ class UpReadyKubernetesTest(unittest.TestCase):
             self.assertIn(image, makefile)
 
         pinned_images = {
-            "mongo:7.0.22",
             "quay.io/keycloak/keycloak:26.2.5",
             "traefik:v3.6.2",
             "postgres:16.9-alpine3.21",
@@ -431,9 +430,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
             self.assertIn(image, makefile)
 
         self.assertEqual(
-            f"{chart_values['mongo']['image']['repository']}:"
-            f"{chart_values['mongo']['image']['tag']}",
-            "mongo:7.0.22",
+            f"{chart_values['stateStore']['bootstrapImage']['repository']}:"
+            f"{chart_values['stateStore']['bootstrapImage']['tag']}",
+            "postgres:16.9-alpine3.21",
         )
         self.assertEqual(
             f"{chart_values['keycloak']['image']['repository']}:"

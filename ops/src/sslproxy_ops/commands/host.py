@@ -109,7 +109,7 @@ def configure_containerd_registry(
     probe_image: Annotated[
         str,
         typer.Option("--probe-image", help="Repository:tag to pull with crictl after restart."),
-    ] = "redis:7-alpine",
+    ] = "busybox:1.37.0",
 ) -> None:
     """Configure containerd CRI pulls from the canonical local registry."""
     if os.geteuid() != 0:

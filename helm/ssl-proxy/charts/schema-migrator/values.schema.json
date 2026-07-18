@@ -34,9 +34,9 @@
         }
       }
     },
-    "mongo": {
+    "stateStore": {
       "type": "object",
-      "required": ["image", "credentialsSecret", "persistence", "resources"]
+      "required": ["user", "schema", "credentialsSecret", "bootstrapImage"]
     },
     "keycloak": {
       "type": "object",

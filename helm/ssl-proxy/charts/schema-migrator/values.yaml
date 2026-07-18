@@ -65,27 +65,17 @@ ui:
       cpu: 500m
       memory: 256Mi
 
-mongo:
-  image:
-    repository: mongo
-    tag: 7.0.22
-    pullPolicy: IfNotPresent
-  username: schema_migrator
-  database: schema_migrator
+stateStore:
+  user: schema_migrator
+  schema: schema_migrator
+  poolSize: 10
   credentialsSecret:
-    name: schema-migrator-mongo
+    name: schema-migrator-state-db
     passwordKey: password
-  persistence:
-    enabled: true
-    hostPath: /var/lib/ssl-proxy/schema-migrator/mongo
-    mountPath: /data/db
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: "2"
-      memory: 2Gi
+  bootstrapImage:
+    repository: postgres
+    tag: 16.9-alpine3.21
+    pullPolicy: IfNotPresent
 
 keycloak:
   image:

@@ -28,11 +28,6 @@ global:
       passwordSecret:
         name: "postgres-credentials"
         key: "password"
-    redis:
-      url: "redis://redis.redis.svc.cluster.local:6379/1"
-      passwordSecret:
-        name: "redis-credentials"
-        key: "password"
     proxy:
       service:
         adminPort: 3002
@@ -147,14 +142,6 @@ postgresExporter:
     tag: v0.19.1
     pullPolicy: IfNotPresent
   queries: ""
-  resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
-redisExporter:
-  image:
-    repository: oliver006/redis_exporter
-    tag: v1.61.0
-    pullPolicy: IfNotPresent
   resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {cpu: 250m, memory: 256Mi}

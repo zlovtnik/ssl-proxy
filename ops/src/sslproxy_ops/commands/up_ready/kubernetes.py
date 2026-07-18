@@ -218,7 +218,6 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
         secrets / "postgres.key",
         immutable=True,
     )
-    apply_secret_values(ctx, "redis-credentials", [("password", secrets / "redis.key")])
     apply_secret_values(
         ctx,
         "minio-credentials",
@@ -260,8 +259,8 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
     )
     apply_secret_values(
         ctx,
-        "schema-migrator-mongo",
-        [("password", schema_migrator_secrets / "mongo_password.key")],
+        "schema-migrator-state-db",
+        [("password", schema_migrator_secrets / "state_db_password.key")],
     )
     apply_secret_values(
         ctx,
@@ -346,7 +345,7 @@ def verify_kubernetes_registry_pull(ctx: UpReadyContext) -> None:
         return
 
     registry = os.environ["REGISTRY"].rstrip("/")
-    image = f"{registry}/redis:7-alpine"
+    image = f"{registry}/busybox:1.37.0"
     name = f"{ctx.settings.helm_release}-registry-pull-probe"
     namespace = ctx.settings.kube_namespace
     context = ctx.settings.kube_context

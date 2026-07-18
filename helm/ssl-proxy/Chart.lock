@@ -23,9 +23,6 @@ dependencies:
 - name: minio
   repository: file://charts/minio
   version: 0.1.1
-- name: redis
-  repository: file://charts/redis
-  version: 0.1.1
 - name: telemetry
   repository: file://charts/telemetry
   version: 0.1.2
@@ -35,5 +32,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.1
-digest: sha256:6d74383c03fecd0793a61ba1197691772ff3c8e7182cd98f84343703d4924372
-generated: "2026-07-18T11:01:58.259692-04:00"
+digest: sha256:300fc3546f495bf9bb0a885fc9f1a85c495488cfad15fa981fe1a8832c1a7f83
+generated: "2026-07-18T15:25:49.9939-04:00"

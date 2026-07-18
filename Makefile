@@ -39,7 +39,7 @@ KUBE_RELEASE ?= ssl-proxy
 KUBECTL ?= kubectl
 REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator integration-console atheros-sensor atheros-search wg-key-rotator postgres atheros-search-ui schema-migrator-backend schema-migrator-ui
 REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
-REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest redis:7-alpine minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 oliver006/redis_exporter:v1.61.0 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 mongo:7.0.22 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 postgres:16.9-alpine3.21 busybox:1.37.0
+REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 postgres:16.9-alpine3.21 busybox:1.37.0
 
 ifeq ($(ENABLE_LEGACY_TARGETS),1)
 include Makefile.legacy

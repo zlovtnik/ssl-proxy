@@ -98,7 +98,7 @@ Image names:
 | schema-migrator UI | `$REGISTRY/schema-migrator-ui:$IMAGE_TAG` |
 
 `registry-mirror-all` also mirrors the exact Schema Migrator runtime tags used
-by Helm: `mongo:7.0.22`, `quay.io/keycloak/keycloak:26.2.5`,
+by Helm: `postgres:16.9-alpine3.21`, `quay.io/keycloak/keycloak:26.2.5`,
 `traefik:v3.6.2`, `postgres:16.9-alpine3.21`, and `busybox:1.37.0`.
 
 The former standalone `vec-worker` is consolidated into the Atheros Search

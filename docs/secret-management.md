@@ -24,7 +24,7 @@ secrets/
 │   ├── encrypt_key.key                    # Base64 AES-256-GCM key
 │   ├── jwt_secret.key                     # backend internal JWT signing secret
 │   ├── api_bearer_token.key               # backend static API token
-│   ├── mongo_password.key                 # MongoDB root/application password
+│   ├── state_db_password.key              # dedicated PostgreSQL state role password
 │   ├── keycloak_database_password.key     # dedicated Postgres role password
 │   ├── keycloak_bootstrap_admin_password.key # Keycloak master bootstrap password
 │   └── application_admin_password.key     # schema-admin initial temporary password
@@ -88,7 +88,7 @@ The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
 | `schema-migrator/encrypt_key.key` | 32 | 44 chars | Schema Migrator AES-256-GCM response and target-password encryption |
 | `schema-migrator/jwt_secret.key` | 48 | ~64 chars | Schema Migrator internal JWT signing |
 | `schema-migrator/api_bearer_token.key` | 48 | ~64 chars | Static backend API authentication |
-| `schema-migrator/mongo_password.key` | 32 | ~43 chars | MongoDB authentication |
+| `schema-migrator/state_db_password.key` | 32 | ~43 chars | Schema Migrator PostgreSQL state role |
 | `schema-migrator/keycloak_database_password.key` | 32 | ~43 chars | Keycloak's dedicated `keycloak` Postgres role |
 | `schema-migrator/keycloak_bootstrap_admin_password.key` | 32 | ~43 chars | Keycloak master-realm bootstrap administrator |
 | `schema-migrator/application_admin_password.key` | 24 | ~32 chars | Initial temporary password for `schema-admin` |
@@ -184,12 +184,12 @@ java-coordinator:   ./secrets:/run/secrets:ro
 | `atheros-search` | `atheros_api_token_sha256.key` | `ATHSEARCH_API_TOKEN_SHA256` |
 | `waha` | `waha/api_key.key`, `waha/dashboard_password.key`, `waha/swagger_password.key` | `WAHA_API_KEY`, `WAHA_DASHBOARD_PASSWORD`, `WHATSAPP_SWAGGER_PASSWORD` |
 | Schema Migrator backend | `schema-migrator/encrypt_key.key`, `jwt_secret.key`, `api_bearer_token.key`; `postgres.key` | `BEDROCK_ENCRYPT_KEY`, `BEDROCK_JWT_SECRET`, `BEDROCK_API_BEARER_TOKEN`, default `DATABASE_URL` password |
-| Schema Migrator MongoDB | `schema-migrator/mongo_password.key` | `MONGO_INITDB_ROOT_PASSWORD`, backend `BEDROCK_MONGO_URI` |
+| Schema Migrator state store | `schema-migrator/state_db_password.key` | backend `BEDROCK_STATE_DB_PASSWORD` |
 | Schema Migrator Keycloak | `schema-migrator/keycloak_database_password.key`, `keycloak_bootstrap_admin_password.key` | `KC_DB_PASSWORD`, `KC_BOOTSTRAP_ADMIN_PASSWORD` |
 | Schema Migrator bootstrap Job | `schema-migrator/application_admin_password.key` | Temporary password used only when `schema-admin` is absent |
 
 For Kubernetes, `up-ready` synchronizes these files into four Secrets:
-`schema-migrator-backend`, `schema-migrator-mongo`,
+`schema-migrator-backend`, `schema-migrator-state-db`,
 `schema-migrator-keycloak`, and `schema-migrator-bootstrap`. The Keycloak realm
 ConfigMap contains only realm, client, redirect, origin, and role metadata.
 Credentials must never be added to that ConfigMap.

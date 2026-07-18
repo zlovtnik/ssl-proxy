@@ -361,8 +361,6 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       integration-console-db-setup:
@@ -378,7 +376,6 @@ services:
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY=${INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY:-60}
       - INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT=${INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT:-10}
       - INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD=${INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD:-15}
@@ -400,8 +397,6 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
       otel-collector:
@@ -415,7 +410,6 @@ services:
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
@@ -454,8 +448,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
       otel-collector:
@@ -468,7 +460,6 @@ services:
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
@@ -480,8 +471,6 @@ services:
   integration-console-heartbeat:
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
@@ -495,7 +484,6 @@ services:
       - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
@@ -653,17 +641,6 @@ services:
     volumes:
       - redpanda-data:/data
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    sysctls:
-      - net.core.somaxconn=1024
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -785,7 +762,6 @@ services:
     depends_on:
       - pushgateway
       - postgres-exporter
-      - redis-exporter
       - node-exporter
       - cadvisor
       - otel-collector
@@ -869,17 +845,6 @@ services:
       - "9187:9187"
     depends_on:
       postgres:
-        condition: service_healthy
-
-  redis-exporter:
-    image: oliver006/redis_exporter:v1.61.0
-    restart: unless-stopped
-    command:
-      - --redis.addr=redis://redis:6379
-    ports:
-      - "127.0.0.1:9121:9121"
-    depends_on:
-      redis:
         condition: service_healthy
 
   node-exporter:

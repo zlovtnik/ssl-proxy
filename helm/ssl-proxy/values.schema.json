@@ -128,16 +128,11 @@
             "resources": { "type": "object" }
           }
         },
-        "mongo": {
+        "stateStore": {
           "type": "object",
           "properties": {
-            "persistence": {
-              "type": "object",
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "hostPath": { "type": "string", "minLength": 1 }
-              }
-            }
+            "user": { "type": "string", "minLength": 1 },
+            "schema": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
           }
         },
         "keycloak": {

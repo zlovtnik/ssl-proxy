@@ -217,19 +217,18 @@ production rollout on the Kubernetes server with its working kubeconfig.
 6. Confirm state and upgrade safety:
 
    ```bash
-   kubectl rollout restart -n ssl-proxy statefulset/ssl-proxy-schema-migrator-mongo
-   kubectl rollout status -n ssl-proxy statefulset/ssl-proxy-schema-migrator-mongo
    kubectl exec -n ssl-proxy ssl-proxy-postgres-0 -- \
-     psql -U sync -d sync -Atc "select datname from pg_database where datname in ('sync','keycloak') order by 1"
+     psql -U sync -d sync -Atc "select schema_name from information_schema.schemata where schema_name = 'schema_migrator'"
    make up-ready PROFILE_MODE=<profile> SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip> \
      SCHEMA_MIGRATOR_PUBLIC_HOSTNAME=schema.example.com ACME_EMAIL=ops@example.com
    ```
 
    After the repeated upgrade, verify the changed `schema-admin` password still
-   works, both databases remain, MongoDB data survives a pod restart, and the
-   pre-existing SSL Proxy workloads and `sync` data are unchanged. MongoDB and
-   ACME data live under `/var/lib/ssl-proxy/schema-migrator/`; no Compose volume
-   migration is performed.
+   works, the `schema_migrator` schema and dedicated role remain, and the
+   pre-existing SSL Proxy workloads and `sync` data are unchanged. Existing
+   MongoDB data is intentionally not imported; remove its retired Secret/PVC only
+   after the PostgreSQL-backed backend passes health and smoke checks. ACME data
+   remains under `/var/lib/ssl-proxy/schema-migrator/`.
 
 The `vecWorker` and `atherosSearch` charts are explicit placeholders and
 render no workloads yet. The telemetry values also call out the existing KEDA,
@@ -525,7 +524,7 @@ OTel HTTP:   127.0.0.1:4320
 Verification:
 
 ```sh
-docker compose up -d prometheus loki promtail jaeger otel-collector grafana postgres-exporter redis-exporter pushgateway
+docker compose up -d prometheus loki promtail jaeger otel-collector grafana postgres-exporter pushgateway
 docker compose ps
 curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health, instance: .labels.instance}'
 curl -s "http://127.0.0.1:16686/api/services" | jq

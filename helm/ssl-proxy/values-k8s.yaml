@@ -11,8 +11,6 @@ global:
       topicReplicationFactor: 1
     postgres:
       host: "ssl-proxy-postgres"
-    redis:
-      url: "redis://ssl-proxy-redis:6379/1"
     minio:
       endpoint: "http://ssl-proxy-minio:9000"
     integrationConsole:
@@ -41,10 +39,6 @@ postgres:
     hostPath: "/var/lib/docker/volumes/ssl-proxy_postgres-data/_data"
   sharedMemory:
     sizeLimit: 512Mi
-
-redis:
-  external: false
-  url: "redis://ssl-proxy-redis:6379/1"
 
 minio:
   external: false
@@ -140,10 +134,6 @@ schemaMigrator:
     service:
       hostPort: 8180
       port: 8080
-  mongo:
-    persistence:
-      enabled: true
-      hostPath: /var/lib/ssl-proxy/schema-migrator/mongo
   traefik:
     hostPorts:
       # Unified LAN edge for the UI and backend API.
