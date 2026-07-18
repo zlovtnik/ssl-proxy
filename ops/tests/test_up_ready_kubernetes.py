@@ -4,6 +4,8 @@ import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,10 +16,13 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     apply_secret_value,
     apply_secret_values,
     dashboard_set_file_args,
-    helm_upgrade,
     helm_release_status,
+    helm_upgrade,
+    kubernetes_diagnostics,
+    prepare_helm_release,
     proxy_workload,
     publish_registry_images,
+    recent_kubernetes_warning_lines,
     resolve_kube_context,
     sync_kubernetes_secrets,
     verify_kubernetes_registry_pull,
@@ -123,7 +128,10 @@ class UpReadyKubernetesTest(unittest.TestCase):
         )
 
         with (
-            patch("sslproxy_ops.commands.up_ready.kubernetes.shutil.which", return_value="/bin/tool"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shutil.which",
+                return_value="/bin/tool",
+            ),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.run",
                 side_effect=[contexts, current],
@@ -350,12 +358,191 @@ class UpReadyKubernetesTest(unittest.TestCase):
         ):
             helm_release_status(ctx)
 
+    def test_pending_rollback_reports_latest_stable_revision(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        pending = subprocess.CompletedProcess(
+            args=["helm"],
+            returncode=0,
+            stdout='{"info":{"status":"pending-rollback"}}',
+            stderr="",
+        )
+        history = subprocess.CompletedProcess(
+            args=["helm"],
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {"revision": 22, "status": "failed"},
+                    {"revision": 23, "status": "deployed"},
+                    {"revision": 24, "status": "failed"},
+                    {"revision": 25, "status": "pending-rollback"},
+                ]
+            ),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                side_effect=[pending, pending, pending, pending, pending, pending, history],
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.time.sleep"),
+            self.assertRaisesRegex(
+                UpReadyError,
+                r"pending-rollback.*helm --kube-context server-k8s rollback ssl-proxy 23",
+            ),
+        ):
+            prepare_helm_release(ctx)
+
+    def test_recent_kubernetes_warnings_ignore_events_before_run(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings, run_ts="2026-07-18T16:00:00-04:00")
+        events = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "lastTimestamp": "2026-07-18T19:59:59Z",
+                            "reason": "OldWarning",
+                            "message": "historical failure",
+                            "involvedObject": {"kind": "Pod", "name": "old"},
+                        },
+                        {
+                            "lastTimestamp": "2026-07-18T20:00:01Z",
+                            "reason": "FailedCreatePodSandBox",
+                            "message": "flannel could not load subnet.env",
+                            "involvedObject": {"kind": "Pod", "name": "current"},
+                        },
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=events,
+        ):
+            lines = recent_kubernetes_warning_lines(ctx)
+
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Pod/current", lines[0])
+        self.assertNotIn("historical failure", lines[0])
+
+    def test_kubernetes_diagnostics_prints_root_cause_before_bulk_output(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        ctx.classify("Helm release ssl-proxy remains pending-rollback")
+        empty_events = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout='{"items":[]}', stderr=""
+        )
+        completed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="", stderr=""
+        )
+        missing = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="not found"
+        )
+
+        def kubectl_side_effect(*args, **_kwargs):
+            if "events" in args:
+                return empty_events
+            if "pods" in args:
+                print("BULK POD OUTPUT")
+                return completed
+            return missing
+
+        output = StringIO()
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                return_value=subprocess.CompletedProcess(
+                    args=["helm"],
+                    returncode=0,
+                    stdout='{"info":{"status":"pending-rollback"}}',
+                    stderr="",
+                ),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=kubectl_side_effect,
+            ),
+            redirect_stdout(output),
+        ):
+            kubernetes_diagnostics(ctx)
+
+        rendered = output.getvalue()
+        self.assertIn("helm_release_status=pending-rollback", rendered)
+        self.assertLess(
+            rendered.index("class=helm_pending_operation"),
+            rendered.index("BULK POD OUTPUT"),
+        )
+
+    def test_kubernetes_diagnostics_classifies_current_cni_event(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings, run_ts="2026-07-18T16:00:00-04:00")
+        ctx.classify("helm upgrade failed: context canceled")
+        events = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "lastTimestamp": "2026-07-18T20:00:01Z",
+                            "reason": "FailedCreatePodSandBox",
+                            "message": "flannel failed to load /run/flannel/subnet.env",
+                            "involvedObject": {"kind": "Pod", "name": "proxy"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+        completed = subprocess.CompletedProcess(
+            args=["tool"], returncode=0, stdout="", stderr=""
+        )
+        missing = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="not found"
+        )
+
+        def kubectl_side_effect(*args, **_kwargs):
+            if "events" in args:
+                return events
+            if "pods" in args:
+                return completed
+            return missing
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                return_value=subprocess.CompletedProcess(
+                    args=["helm"],
+                    returncode=0,
+                    stdout='{"info":{"status":"failed"}}',
+                    stderr="",
+                ),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=kubectl_side_effect,
+            ),
+            redirect_stdout(StringIO()),
+        ):
+            kubernetes_diagnostics(ctx)
+
+        self.assertEqual(ctx.last_failure.name, "kubernetes_cni_unavailable")
+
     def test_registry_pull_probe_uses_canonical_registry_and_cleans_up(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
         environment = {"REGISTRY": "192.168.1.221:5000"}
-        completed = subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout="", stderr="")
+        completed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="", stderr=""
+        )
 
         with (
             patch.dict(os.environ, environment, clear=False),

@@ -1,3 +1,23 @@
+- name: kubernetes_cni_unavailable
+  pattern: 'FailedCreatePodSandBox|failed to setup network for sandbox|flannel.*subnet\.env'
+  cause: 'Kubernetes CNI networking is unavailable, so Pods cannot create network sandboxes'
+  fix: 'Restore the node CNI/Flannel service and verify the node is Ready before retrying up-ready'
+  retry: manual
+- name: kubernetes_node_not_ready
+  pattern: 'NodeNotReady|Node is not ready'
+  cause: 'The Kubernetes node became unavailable during deployment'
+  fix: 'Restore node readiness and verify kubelet and CNI health before retrying up-ready'
+  retry: manual
+- name: helm_pending_operation
+  pattern: 'pending-(install|upgrade|rollback)|another (install/upgrade/rollback )?operation.*in progress'
+  cause: 'The Helm release is locked by an incomplete operation'
+  fix: 'Use the rollback command reported by up-ready, then rerun after Helm reports deployed'
+  retry: manual
+- name: helm_context_canceled
+  pattern: 'Upgrade .* failed: context canceled|command failed.*helm.*context canceled'
+  cause: 'The Helm operation was canceled before it completed'
+  fix: 'Inspect Helm history and current cluster health, recover any pending release, then retry'
+  retry: manual
 - name: profile_obfuscation_mismatch
   pattern: 'magic_byte_mismatch'
   cause: 'Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint'

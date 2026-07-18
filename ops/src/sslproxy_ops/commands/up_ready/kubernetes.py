@@ -14,6 +14,8 @@ from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, s
 from sslproxy_ops.paths import repo_root
 from sslproxy_ops.util.ini import peer_names, trim_key_value
 
+HELM_PENDING_SETTLE_ATTEMPTS = 5
+
 
 def proxy_workload(ctx: UpReadyContext) -> str:
     release = ctx.settings.helm_release
@@ -488,9 +490,73 @@ def helm_release_status(ctx: UpReadyContext) -> str | None:
     return status
 
 
+def helm_release_history(ctx: UpReadyContext) -> list[dict[str, object]]:
+    completed = shell.helm(
+        "history",
+        ctx.settings.helm_release,
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--output",
+        "json",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return []
+    try:
+        payload = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise UpReadyError("Unable to parse Helm release history") from exc
+    if not isinstance(payload, list):
+        raise UpReadyError("Helm release history response was not a list")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def helm_pending_recovery_command(ctx: UpReadyContext) -> str:
+    history = helm_release_history(ctx)
+    candidates = [
+        item
+        for item in history
+        if item.get("status") in {"deployed", "superseded"}
+        and isinstance(item.get("revision"), int)
+    ]
+    if not candidates:
+        return (
+            f"helm history {ctx.settings.helm_release} "
+            f"--namespace {ctx.settings.kube_namespace}"
+        )
+    revision = max(candidates, key=lambda item: int(item["revision"]))["revision"]
+    context = (
+        f" --kube-context {ctx.settings.kube_context}" if ctx.settings.kube_context else ""
+    )
+    return (
+        f"helm{context} rollback {ctx.settings.helm_release} {revision} "
+        f"--namespace {ctx.settings.kube_namespace} --no-hooks --wait=watcher "
+        f"--timeout {ctx.settings.helm_timeout}"
+    )
+
+
 def prepare_helm_release(ctx: UpReadyContext) -> bool:
     """Return true for an upgrade, false for a clean first install."""
     status = helm_release_status(ctx)
+    if status and status.startswith("pending-"):
+        step(
+            "S03",
+            f"helm_pending: waiting for release={ctx.settings.helm_release} status={status}",
+        )
+        for attempt in range(HELM_PENDING_SETTLE_ATTEMPTS):
+            if attempt:
+                time.sleep(1)
+            status = helm_release_status(ctx)
+            if status is None or not status.startswith("pending-"):
+                break
+        if status and status.startswith("pending-"):
+            recovery = helm_pending_recovery_command(ctx)
+            raise UpReadyError(
+                f"Helm release {ctx.settings.helm_release!r} remains {status}; "
+                f"recover it before rerunning up-ready: {recovery}"
+            )
     if status is None:
         return False
     if status == "deployed":
@@ -639,58 +705,86 @@ def kubernetes_up(ctx: UpReadyContext) -> bool:
     return True
 
 
-def kubernetes_diagnostics(ctx: UpReadyContext) -> None:
-    namespace = ctx.settings.kube_namespace
-    context = ctx.settings.kube_context
-    shell.kubectl(
-        "--namespace", namespace, "get", "pods", "-o", "wide", context=context, check=False
-    )
+def recent_kubernetes_warning_lines(ctx: UpReadyContext) -> list[str]:
     events = shell.kubectl(
         "--namespace",
-        namespace,
+        ctx.settings.kube_namespace,
         "get",
         "events",
         "--field-selector=type=Warning",
         "-o",
         "json",
-        context=context,
+        context=ctx.settings.kube_context,
         check=False,
         capture=True,
     )
-    if events.returncode == 0:
-        try:
-            payload = json.loads(events.stdout or "{}")
-            run_started = datetime.fromisoformat(ctx.run_ts)
-            recent: list[tuple[datetime, dict[str, object]]] = []
-            for event in payload.get("items", []):
-                if not isinstance(event, dict):
-                    continue
-                series = event.get("series") or {}
-                metadata = event.get("metadata") or {}
-                timestamp = (
-                    event.get("eventTime")
-                    or series.get("lastObservedTime")
-                    or event.get("lastTimestamp")
-                    or metadata.get("creationTimestamp")
-                )
-                if not isinstance(timestamp, str):
-                    continue
-                try:
-                    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                except ValueError:
-                    continue
-                if parsed >= run_started:
-                    recent.append((parsed, event))
-            print("--- Kubernetes warning events from this run ---")
-            for timestamp, event in sorted(recent, key=lambda item: item[0])[-40:]:
-                involved = event.get("involvedObject") or {}
-                target = f"{involved.get('kind', 'Object')}/{involved.get('name', 'unknown')}"
-                print(
-                    f"{timestamp.isoformat()} {event.get('reason', 'Warning')} "
-                    f"{target}: {event.get('message', '')}"
-                )
-        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-            print(events.stdout or events.stderr or "Unable to parse Kubernetes warning events")
+    if events.returncode != 0:
+        return []
+    try:
+        payload = json.loads(events.stdout or "{}")
+        run_started = datetime.fromisoformat(ctx.run_ts)
+        recent: list[tuple[datetime, str]] = []
+        for event in payload.get("items", []):
+            if not isinstance(event, dict):
+                continue
+            series = event.get("series") or {}
+            metadata = event.get("metadata") or {}
+            timestamp = (
+                event.get("eventTime")
+                or series.get("lastObservedTime")
+                or event.get("lastTimestamp")
+                or metadata.get("creationTimestamp")
+            )
+            if not isinstance(timestamp, str):
+                continue
+            try:
+                parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if parsed < run_started:
+                continue
+            involved = event.get("involvedObject") or {}
+            target = f"{involved.get('kind', 'Object')}/{involved.get('name', 'unknown')}"
+            line = (
+                f"{parsed.isoformat()} {event.get('reason', 'Warning')} "
+                f"{target}: {event.get('message', '')}"
+            )
+            recent.append((parsed, line))
+        return [line for _timestamp, line in sorted(recent, key=lambda item: item[0])[-40:]]
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def print_classified_failure(ctx: UpReadyContext) -> None:
+    print("--- classified failure ---")
+    print(f"class={ctx.last_failure.name}")
+    print(f"cause={ctx.last_failure.cause}")
+    print(f"fix={ctx.last_failure.fix}")
+    print(f"retry={ctx.last_failure.retry}")
+
+
+def kubernetes_diagnostics(ctx: UpReadyContext) -> None:
+    namespace = ctx.settings.kube_namespace
+    context = ctx.settings.kube_context
+    try:
+        release_status = helm_release_status(ctx) or "not-found"
+    except UpReadyError as exc:
+        release_status = f"unknown ({exc})"
+    warning_lines = recent_kubernetes_warning_lines(ctx)
+    evidence = "\n".join([ctx.last_failure_text, *warning_lines])
+    ctx.classify(evidence)
+    print("--- deployment failure ---")
+    print(ctx.last_failure_text or ctx.last_failure.cause)
+    print(f"helm_release_status={release_status}")
+    print_classified_failure(ctx)
+    shell.kubectl(
+        "--namespace", namespace, "get", "pods", "-o", "wide", context=context, check=False
+    )
+    print("--- Kubernetes warning events from this run ---")
+    if warning_lines:
+        print("\n".join(warning_lines))
+    else:
+        print("none")
 
     workload = shell.kubectl(
         "--namespace",
