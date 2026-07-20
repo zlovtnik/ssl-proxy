@@ -47,6 +47,3 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end }}
 
-{{- define "ssl-proxy.javaCoordinator.postgresUrl" -}}
-jdbc:postgresql://{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}
-{{- end }}

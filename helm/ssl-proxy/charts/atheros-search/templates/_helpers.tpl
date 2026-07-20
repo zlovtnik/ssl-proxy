@@ -47,6 +47,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end }}
 
-{{- define "ssl-proxy.atherosSearch.postgresDsn" -}}
-postgres://{{ .Values.global.shared.postgres.user }}:$(POSTGRES_PASSWORD)@{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}?sslmode=disable
+{{- define "ssl-proxy.atherosSearch.tidbDsn" -}}
+mysql://{{ .Values.global.shared.tidb.user }}:$(TIDB_PASSWORD)@{{ .Values.global.shared.tidb.host }}:{{ .Values.global.shared.tidb.port }}/{{ .Values.global.shared.tidb.database }}
 {{- end }}

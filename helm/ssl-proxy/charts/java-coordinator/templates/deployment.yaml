@@ -40,22 +40,8 @@ spec:
           image: {{ include "ssl-proxy.javaCoordinator.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            # Postgres
-            - name: DATABASE_URL
-              value: {{ include "ssl-proxy.javaCoordinator.postgresUrl" . }}
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
-                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
-            - name: POSTGRES_USER
-              value: {{ .Values.global.shared.postgres.user | quote }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .Values.jvmOptions | quote }}
-            - name: COORDINATOR_DB_POOL
-              value: {{ .Values.datasource.maximumPoolSize | quote }}
-            - name: COORDINATOR_DB_POOL_MIN_IDLE
-              value: {{ .Values.datasource.minimumIdle | quote }}
             # Redpanda
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
               valueFrom:

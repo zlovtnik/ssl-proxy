@@ -9,16 +9,6 @@ global:
   serviceAccount:
     create: true
     name: "ssl-proxy"
-  shared:
-    postgres:
-      host: "postgres-primary.postgres.svc.cluster.local"
-      port: 5432
-      database: "sync"
-      user: "sync"
-      passwordSecret:
-        name: "postgres-credentials"
-        key: "password"
-
 enabled: false
 publicHostname: ""
 
@@ -64,18 +54,6 @@ ui:
     limits:
       cpu: 500m
       memory: 256Mi
-
-stateStore:
-  user: schema_migrator
-  schema: schema_migrator
-  poolSize: 10
-  credentialsSecret:
-    name: schema-migrator-state-db
-    passwordKey: password
-  bootstrapImage:
-    repository: postgres
-    tag: 16.9-alpine3.21
-    pullPolicy: IfNotPresent
 
 keycloak:
   image:
@@ -150,10 +128,6 @@ traefik:
       memory: 512Mi
 
 bootstrapImages:
-  postgres:
-    repository: postgres
-    tag: 16.9-alpine3.21
-    pullPolicy: IfNotPresent
   mysql:
     repository: bitnami/mysql
     tag: 8.0

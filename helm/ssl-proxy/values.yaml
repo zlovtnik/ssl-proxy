@@ -26,14 +26,6 @@ global:
       bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
       adminPort: 9644
       topicReplicationFactor: 3
-    postgres:
-      host: "postgres-primary.postgres.svc.cluster.local"
-      port: 5432
-      database: "sync"
-      user: "sync"
-      passwordSecret:
-        name: "postgres-credentials"
-        key: "password"
     tidb:
       host: "tidb"
       port: 4000
@@ -100,10 +92,6 @@ global:
         macLookupReplyTopic: "wireless.mac.lookup.reply"
         networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
       topicPartitions: 5
-    integrationConsole:
-      web:
-        service:
-          port: 3005
     atherosSensor:
       metricsPort: 9097
     atherosSearch:
@@ -115,8 +103,6 @@ global:
 proxy:
   enabled: true
 javaCoordinator:
-  enabled: true
-integrationConsole:
   enabled: true
 schemaMigrator:
   enabled: false

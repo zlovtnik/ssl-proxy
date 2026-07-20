@@ -37,9 +37,9 @@ KUBE_NAMESPACE ?= ssl-proxy
 KUBE_CONTEXT ?=
 KUBE_RELEASE ?= ssl-proxy
 KUBECTL ?= kubectl
-REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator integration-console atheros-sensor atheros-search wg-key-rotator postgres atheros-search-ui schema-migrator-backend schema-migrator-ui
+REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui
 REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
-REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 postgres:16.9-alpine3.21 busybox:1.37.0
+REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 busybox:1.37.0
 
 ifeq ($(ENABLE_LEGACY_TARGETS),1)
 include Makefile.legacy
@@ -74,7 +74,7 @@ bench:
 
 # Build Docker images used by the compose stack.
 docker:
-	REGISTRY=local IMAGE_TAG=dev docker compose -f docker-compose.yaml -f docker-compose.build.yaml build ssl-proxy java-coordinator postgres
+	REGISTRY=local IMAGE_TAG=dev docker compose -f docker-compose.yaml -f docker-compose.build.yaml build ssl-proxy java-coordinator
 
 require-registry:
 	@test -n "$(REGISTRY)" || (echo "REGISTRY is required, for example REGISTRY=192.168.1.221:5000" >&2; exit 2)
@@ -147,7 +147,6 @@ $(eval $(call registry_build_target,integration-console,apps/integration-console
 $(eval $(call registry_build_target,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
 $(eval $(call registry_build_target,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
 $(eval $(call registry_build_target,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,./apps/wg-key-rotator))
-$(eval $(call registry_build_target,postgres,docker/postgres/Dockerfile,,ssl-proxy-postgres,.))
 $(eval $(call registry_build_target,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg VITE_API_BASE="$(ATHEROS_SEARCH_UI_API_BASE)" --build-arg VITE_APP_TITLE="$(ATHEROS_SEARCH_UI_TITLE)",atheros-search-ui,./apps/integration-console/atheros-search-ui))
 $(eval $(call registry_build_target,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,./apps/schema-migrator))
 $(eval $(call registry_build_target,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,./apps/schema-migrator))
@@ -266,9 +265,7 @@ ops-test: $(OPS_BOOTSTRAP)
 	$(OPS_TEST)
 
 audit-threats:
-	docker compose exec -T postgres psql "$${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}" \
-	  -c "SELECT * FROM v_wireless_threats LIMIT 50;" 2>/dev/null || \
-	  echo "[audit-threats] Run 'make pipeline-health' first to verify DB is up"
+	$(OPS) pipeline status
 
 # Backward-compatible alias with deprecation warning.
 deploy-ready: up-ready

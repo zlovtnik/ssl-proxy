@@ -24,11 +24,6 @@ dependencies:
     repository: "file://charts/java-coordinator"
     alias: javaCoordinator
     condition: javaCoordinator.enabled
-  - name: integration-console
-    version: 0.1.2
-    repository: "file://charts/integration-console"
-    alias: integrationConsole
-    condition: integrationConsole.enabled
   - name: schema-migrator
     version: 0.1.2
     repository: "file://charts/schema-migrator"
@@ -39,9 +34,6 @@ dependencies:
     repository: "file://charts/atheros-sensor"
     alias: atherosSensor
     condition: atherosSensor.enabled
-  - name: postgres
-    version: 0.1.4
-    repository: "file://charts/postgres"
   - name: redpanda
     version: 0.1.1
     repository: "file://charts/redpanda"

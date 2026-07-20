@@ -1,6 +1,5 @@
 x-ath-sensor-env: &ath_sensor_env
   SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda://127.0.0.1:19092
-  DATABASE_URL: postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync
 
 services:
   registry:
@@ -15,8 +14,6 @@ services:
   ssl-proxy:
     depends_on:
       redpanda:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -135,8 +132,6 @@ services:
     profiles: ["rotation"]
     depends_on:
       redpanda:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -303,8 +298,6 @@ services:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       tidb:
         condition: service_healthy
       tidb-init:
@@ -314,12 +307,7 @@ services:
     image: ${REGISTRY:?REGISTRY is required}/java-coordinator:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - DATABASE_URL=${DATABASE_URL:-jdbc:postgresql://postgres:5432/sync}
-      - POSTGRES_USER=${POSTGRES_USER:-sync}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75}
-      - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
-      - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
       - SYNC_STREAM_NAME=proxy.events
@@ -384,8 +372,6 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       integration-console-db-setup:
@@ -420,8 +406,6 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
       otel-collector:
@@ -450,8 +434,6 @@ services:
 
   integration-console-db-setup:
     depends_on:
-      postgres:
-        condition: service_healthy
       otel-collector:
         condition: service_started
     image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
@@ -471,8 +453,6 @@ services:
 
   integration-console-heatmap-refresh:
     depends_on:
-      postgres:
-        condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
       otel-collector:
@@ -495,8 +475,6 @@ services:
 
   integration-console-heartbeat:
     depends_on:
-      postgres:
-        condition: service_healthy
       integration-console-db-setup:
         condition: service_completed_successfully
       otel-collector:
@@ -522,8 +500,6 @@ services:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       java-coordinator:
         condition: service_healthy
     image: ${REGISTRY:?REGISTRY is required}/atheros-sensor:${IMAGE_TAG:-latest}
@@ -542,7 +518,6 @@ services:
       # The sensor runs in host networking for capture, so Docker service DNS
       # names such as redpanda are not reachable from this container.
       SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://127.0.0.1:19092}
-      DATABASE_URL: ${DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync}
       ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
       ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
@@ -592,7 +567,7 @@ services:
     image: ${REGISTRY:?REGISTRY is required}/atheros-search:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - ATHSEARCH_POSTGRES_DSN=postgres://sync:62UiI7GVBFrtz9Jj9DtC7dbdEoD6HcwC65mBcPs-Gy4@192.168.1.221:5432/sync
+      - ATHSEARCH_TIDB_DSN=mysql://root@tidb:4000/coordinator
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
       - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8083}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
@@ -731,46 +706,6 @@ services:
     entrypoint: ["sh"]
     command: ["/config/bootstrap.sh"]
 
-  postgres:
-    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy-postgres:${IMAGE_TAG:-latest}
-    command:
-      - postgres
-      - -c
-      - config_file=/etc/postgresql/postgresql.conf
-      - -c
-      - shared_preload_libraries=pg_cron,pg_stat_statements
-      - -c
-      - cron.database_name=sync
-      - -c
-      - listen_addresses=*
-      - -c
-      - track_io_timing=on
-    restart: unless-stopped
-    shm_size: ${POSTGRES_SHM_SIZE:-256m}
-    deploy:
-      resources:
-        limits:
-          cpus: ${POSTGRES_CPUS:-16.0}
-          memory: ${POSTGRES_MEMORY:-32G}
-        reservations:
-          cpus: ${POSTGRES_RESERVED_CPUS:-4.0}
-          memory: ${POSTGRES_RESERVED_MEMORY:-16G}
-    environment:
-      POSTGRES_DB: sync
-      POSTGRES_USER: sync
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sync -d sync"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      # /docker-entrypoint-initdb.d is intentionally unused; schema changes are
-      # applied by apps/schema-migrator against the split sql/* tree.
-      - postgres-data:/var/lib/postgresql/data
-
   prometheus:
     image: prom/prometheus:v2.54.1
     restart: unless-stopped
@@ -786,7 +721,6 @@ services:
       - "127.0.0.1:9090:9090"
     depends_on:
       - pushgateway
-      - postgres-exporter
       - node-exporter
       - cadvisor
       - otel-collector
@@ -858,20 +792,6 @@ services:
       - loki
       - jaeger
 
-  postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:v0.19.1
-    restart: unless-stopped
-    environment:
-      - DATA_SOURCE_NAME=postgresql://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync?sslmode=disable
-      - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres-exporter/queries.yml
-    volumes:
-      - ./docker/observability/postgres-exporter-queries.yml:/etc/postgres-exporter/queries.yml:ro
-    ports:
-      - "9187:9187"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   node-exporter:
     image: prom/node-exporter:v1.8.2
     restart: unless-stopped
@@ -912,7 +832,6 @@ services:
 
 volumes:
   redpanda-data:
-  postgres-data:
   sync-outbox:
   tidb-data:
   minio-data:

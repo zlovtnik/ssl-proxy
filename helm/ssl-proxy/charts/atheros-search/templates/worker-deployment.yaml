@@ -35,13 +35,13 @@ spec:
           image: {{ include "ssl-proxy.atherosSearch.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: POSTGRES_PASSWORD
+            - name: TIDB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
-                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
-            - name: ATHSEARCH_POSTGRES_DSN
-              value: {{ include "ssl-proxy.atherosSearch.postgresDsn" . | quote }}
+                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
+            - name: ATHSEARCH_TIDB_DSN
+              value: {{ include "ssl-proxy.atherosSearch.tidbDsn" . | quote }}
             - name: ATHSEARCH_REDPANDA_BOOTSTRAP
               value: {{ .Values.global.shared.redpanda.bootstrapServers | quote }}
             - name: ATHSEARCH_EMBEDDING_BACKEND

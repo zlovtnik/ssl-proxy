@@ -20,14 +20,6 @@ global:
   shared:
     redpanda:
       bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
-    postgres:
-      host: "postgres-primary.postgres.svc.cluster.local"
-      port: 5432
-      database: "sync"
-      user: "sync"
-      passwordSecret:
-        name: "postgres-credentials"
-        key: "password"
 
 enabled: false
 replicas: 1

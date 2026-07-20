@@ -20,24 +20,12 @@ global:
   shared:
     redpanda:
       adminPort: 9644
-    postgres:
-      host: "postgres-primary.postgres.svc.cluster.local"
-      port: 5432
-      database: "sync"
-      user: "sync"
-      passwordSecret:
-        name: "postgres-credentials"
-        key: "password"
     proxy:
       service:
         adminPort: 3002
     javaCoordinator:
       service:
         port: 8080
-    integrationConsole:
-      web:
-        service:
-          port: 3005
     atherosSensor:
       metricsPort: 9097
     atherosSearch:
@@ -136,15 +124,6 @@ grafana:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: 500m, memory: 1Gi}
-postgresExporter:
-  image:
-    repository: quay.io/prometheuscommunity/postgres-exporter
-    tag: v0.19.1
-    pullPolicy: IfNotPresent
-  queries: ""
-  resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
 nodeExporter:
   image:
     repository: prom/node-exporter
@@ -194,7 +173,7 @@ keda:
     scaleDown:
       stabilizationWindowSeconds: 300
 
-  # Vec Worker auto-scaling (based on Postgres pending job count)
+  # Vec Worker auto-scaling
   vecWorker:
     enabled: true
     minReplicas: 1
@@ -225,18 +204,6 @@ monitoring:
     enabled: true
     # Endpoint for Redpanda metrics
     endpoint: "redpanda-0.redpanda.redpanda.svc.cluster.local:9644"
-
-  # Postgres metrics (via postgres_exporter sidecar)
-  postgres:
-    enabled: true
-    # postgres_exporter queries
-    queries:
-      vecPendingJobs: |
-        SELECT status, count(*) as count
-        FROM vec_embedding_jobs
-        WHERE status = 'pending'
-          AND (leased_until IS NULL OR leased_until < NOW())
-        GROUP BY status
 
 # TODO: dashboard discovery is not templated; Grafana's built-in dashboard ConfigMaps are managed above.
 dashboardDiscovery:

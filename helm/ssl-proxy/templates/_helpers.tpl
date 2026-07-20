@@ -52,13 +52,6 @@ Redpanda bootstrap servers connection string
 {{- end }}
 
 {{/*
-Postgres connection URL
-*/}}
-{{- define "ssl-proxy.postgresUrl" -}}
-jdbc:postgresql://{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}
-{{- end }}
-
-{{/*
 Build an image reference, optionally prefixed by the global registry.
 Usage: include "ssl-proxy.image" (dict "root" . "image" .Values.proxy.image)
 */}}

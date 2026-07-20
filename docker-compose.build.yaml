@@ -75,7 +75,3 @@ services:
       # in the default Compose stack, but disable it for developer builds.
       ATHSEARCH_API_TOKEN_SHA256: ""
 
-  postgres:
-    build:
-      context: .
-      dockerfile: docker/postgres/Dockerfile
