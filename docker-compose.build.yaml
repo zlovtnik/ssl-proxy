@@ -33,7 +33,7 @@ services:
   java-coordinator:
     build:
       context: .
-      dockerfile: services/zig-coordinator/Dockerfile
+      dockerfile: services/octopus/Dockerfile
 
   integration-console-web:
     build:

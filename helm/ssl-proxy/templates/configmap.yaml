@@ -22,7 +22,7 @@ data:
   SYNC_PAYLOAD_AUDIT_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.payloadAuditConsumer | quote }}
   # Stream names
   SYNC_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.syncStreamNames | quote }}
-  SYNC_ORACLE_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.oracleStreamNames | quote }}
+  COORDINATOR_LOAD_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.loadStreamNames | quote }}
   AUDIT_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.auditStreamName | quote }}
   SYNC_RESULT_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.resultStreamName | quote }}
   # Wireless stream names (Java coordinator)
@@ -53,7 +53,7 @@ data:
   WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC: {{ .Values.global.shared.javaCoordinator.wirelessReplyTopics.networksAuthorizedReplyTopic | quote }}
 
 ---
-# Redpanda topic manifest ConfigMap (mounted by zig-coordinator for topic validation)
+# Redpanda topic manifest ConfigMap (mounted by octopus for topic validation)
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -20,20 +20,20 @@ overrides a rule for its subtree.
 - `crates/sync-plane/` contains shared Rust Redpanda publisher/config/contract
   code used by producers.
 - `apps/schema-migrator/` is the Scala Cats Effect runner for ordered
-  split Postgres and Oracle schema files under `sql/`.
+  split Postgres and TiDB schema files under `sql/`.
 - `services/atheros-sensor/` is the Rust Linux monitor-mode wireless sensor.
 - `services/atheros-search/` is the Go HTTP/gRPC search and vector service for
   wireless audit data.
-- `services/zig-coordinator/` is a legacy path name for the current Java 21
-  Spring Boot/Camel coordinator and Oracle sink.
+- `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator with
+  TiDB and Postgres sinks, built via sbt.
 - `services/` has local `AGENTS.md` files for shared service rules and
   service-specific conventions.
 - `apps/integration-console/` is a git submodule containing the Rails 7
   management console. It has its own local `AGENTS.md`.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
   It has its own local `AGENTS.md`.
-- `sql/` contains split Postgres schema objects plus the canonical Oracle
-  baseline schema.
+- `sql/` contains split Postgres schema objects plus the canonical TiDB
+  baseline schema under `sql/tidb/`.
 - `helm/ssl-proxy/` is the umbrella chart; deployable units live under
   `helm/ssl-proxy/charts/`, while only shared ConfigMaps and the shared service
   account remain in the umbrella templates.
@@ -41,18 +41,14 @@ overrides a rule for its subtree.
   material.
 
 ## Architecture Guardrails
-- Treat the Rust proxy and wireless sensor as producers of sync-plane work, not
-  as Oracle clients.
-- Keep Oracle ownership in `services/zig-coordinator/`; do not add direct Oracle
-  wiring, wallet dependencies, or an `oracle-db` feature gate back into `src/`,
-  `crates/sync-plane/`, or `services/atheros-sensor/`.
-- Keep coordinator concerns in `services/zig-coordinator/`: cursoring, dedupe,
-  job state, batching, backlog handling, result handling, and Oracle wallet
-  preflight/load behavior.
+- Keep coordinator concerns in `services/octopus/`: cursoring, dedupe,
+  job state, batching, backlog handling, and TiDB load/result behavior.
+- Keep TiDB ownership in `services/octopus/`; do not add direct TiDB
+  wiring into `src/`, `crates/sync-plane/`, or `services/atheros-sensor/`.
 - Preserve the locked sync topic meanings:
   - `sync.scan.request` for producer-to-coordinator work discovery
-  - `sync.oracle.load` for coordinator-owned Oracle load dispatch
-  - `sync.oracle.result` for coordinator-owned Oracle load outcomes
+  - `sync.oracle.load` for coordinator-owned TiDB load dispatch (legacy name)
+  - `sync.oracle.result` for coordinator-owned TiDB load outcomes (legacy name)
 - Keep delivery semantics at-least-once with dedupe in Postgres.
 - Keep wireless sensor persistence indirect: publish `wireless.audit` and the
   matching `sync.scan.request`; do not give the sensor direct Postgres ownership.
@@ -73,8 +69,7 @@ overrides a rule for its subtree.
   explicitly asks for a replacement. When split `sql/*` objects change, keep
   `sql/postgres.sql` and `sql/postgres.source.sql` aligned with the ordered
   object list.
-- Treat `sql/oracle.sql` as the fresh canonical Oracle baseline. Do not append
-  migration-style ALTER blocks there casually.
+- Treat TiDB schema under `sql/tidb/` as authoritative for the coordinator sink.
 - Preserve API contracts, Redpanda payload shapes, schema-versioned wireless
   events, and UI data contracts unless the user asks for a contract change.
 - Avoid introducing new dependencies unless they clearly earn their keep.
@@ -91,9 +86,9 @@ overrides a rule for its subtree.
   - `cargo test -p sync-plane`
   - `cargo test -p atheros-sensor`
   - `cd apps/schema-migrator && sbt test`
+  - `cd services/octopus && sbt test`
   - `make dependency-boundaries`
   - `make atheros-search-test`
-  - `cd services/zig-coordinator && ./gradlew test`
   - `make lint`
   - `make test` for a broad repository pass
 - If a check cannot be run, state the blocker and the risk.

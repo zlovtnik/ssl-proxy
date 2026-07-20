@@ -111,6 +111,10 @@ keycloak:
     limits:
       cpu: "2"
       memory: 2Gi
+  persistence:
+    enabled: false
+    size: 2Gi
+    storageClass: ""
   bootstrapJob:
     backoffLimit: 4
     activeDeadlineSeconds: 600
@@ -149,6 +153,10 @@ bootstrapImages:
   postgres:
     repository: postgres
     tag: 16.9-alpine3.21
+    pullPolicy: IfNotPresent
+  mysql:
+    repository: bitnami/mysql
+    tag: 8.0
     pullPolicy: IfNotPresent
   busybox:
     repository: busybox

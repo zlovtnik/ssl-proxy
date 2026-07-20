@@ -244,11 +244,6 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
         "atheros-credentials",
         [("api-token-sha256", secrets / "atheros_api_token_sha256.key")],
     )
-    apply_secret_values(
-        ctx,
-        "oracle-credentials",
-        [("password", secrets / "oracle_password.txt")],
-    )
     schema_migrator_secrets = secrets / "schema-migrator"
     apply_secret_values(
         ctx,
@@ -288,8 +283,6 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
             )
         ],
     )
-    apply_secret(ctx, "oracle-wallet", [(None, root / "wallet")])
-
     wireguard_files: list[tuple[str | None, Path]] = [
         ("server.conf", config / "templates" / "server.conf"),
         ("Corefile", config / "coredns" / "Corefile"),

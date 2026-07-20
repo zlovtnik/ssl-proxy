@@ -92,8 +92,8 @@ Redpanda/Kafka freshness consumer
 vec_enqueue_embedding_jobs(...)
 ```
 
-The service does not own Oracle persistence. Oracle loading, cursoring, dedupe,
-and backlog control belong to `services/zig-coordinator/`. Shared
+The service does not own TiDB persistence. TiDB loading, cursoring, dedupe,
+and backlog control belong to `services/octopus/`. Shared
 Postgres/vector schema lives under the repository-level `sql/` tree.
 
 ## Repository Layout

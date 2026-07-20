@@ -102,18 +102,16 @@ metrics:
   redpandaLagMetricsPollIntervalMs: 10000
   redpandaLagMetricsTimeoutMs: 5000
   heartbeatLogIntervalMs: 15000
-oracle:
+tidb:
   enabled: true
-  wirelessEnabled: true
-  schemaValidationWarnOnly: false
-  loadMaxRetries: 3
-  conn: "mainerc_high"
-  user: "USCIS_APP"
-  passwordSecret:
-    name: "oracle-credentials"
-    key: "password"
-  # TNS_ADMIN for Oracle wallet
-  walletSecret:
-    name: "oracle-wallet"
+  host: "tidb"
+  port: 4000
+  database: "coordinator"
+  user: "root"
+  password: ""
+  poolSize: 10
+  connectionTimeoutMs: 5000
+  statementTimeoutSecs: 30
+  warnOnly: false
 
 # Vec Worker

@@ -51,7 +51,7 @@ build:
 	cargo build --release -p ssl-proxy
 	cargo build --release -p atheros-sensor
 	cd apps/schema-migrator && sbt compile
-	cd services/zig-coordinator && gradle build
+	cd services/octopus && sbt assembly
 
 # Run tests
 test:
@@ -60,7 +60,7 @@ test:
 	cargo test -p atheros-sensor
 	$(MAKE) schema-migrator-test
 	$(MAKE) dependency-boundaries
-	cd services/zig-coordinator && gradle test
+	cd services/octopus && sbt test
 
 dependency-boundaries:
 	@command -v rg >/dev/null
@@ -142,7 +142,7 @@ registry-build-$(1): registry-buildx require-registry
 endef
 
 $(eval $(call registry_build_target,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
-$(eval $(call registry_build_target,java-coordinator,services/zig-coordinator/Dockerfile,,java-coordinator,.))
+$(eval $(call registry_build_target,java-coordinator,services/octopus/Dockerfile,,java-coordinator,.))
 $(eval $(call registry_build_target,integration-console,apps/integration-console/Dockerfile,,integration-console,.))
 $(eval $(call registry_build_target,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
 $(eval $(call registry_build_target,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))

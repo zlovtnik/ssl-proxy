@@ -308,7 +308,7 @@ All views are optimized for ADB columnar storage.
 
 ### 7. Compose Startup Log Notes
 
-- `java-coordinator` is the sync control-plane service. The source still lives under `services/zig-coordinator/` for historical reasons, but the runtime service is Java/Spring/Camel; inspect it with `docker compose logs java-coordinator`.
+- `java-coordinator` is the sync control-plane service. The source lives under `services/octopus/`; inspect it with `docker compose logs java-coordinator`.
 - `sql/postgres.sql` is a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Maintain split schema files directly and keep `sql/postgres.source.sql` in sync as the aggregate reference when split objects change.
 - `apps/schema-migrator` is the canonical CLI for schema ordering and validation:
   - `cd apps/schema-migrator && sbt "run --sql-dir ../../sql list"`
@@ -323,7 +323,7 @@ All views are optimized for ADB columnar storage.
 - Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
 - Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
 - If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
-- `redpanda-init` must complete successfully before `java-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the coordinator at runtime: `zig-coordinator-scan`, the legacy-compatible `oracle-worker-load` load group, and `zig-coordinator-result`.
+- `redpanda-init` must complete successfully before `java-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the coordinator at runtime: `octopus-scan`, the legacy-compatible `oracle-worker-load` load group, and `octopus-result`.
 - `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
 
 ### 8. PostgreSQL OOM Recovery and Embedding Drain Safety
@@ -424,7 +424,7 @@ Manual checks:
 ```sh
 docker compose run --rm redpanda-init rpk topic describe sync.scan.request --brokers redpanda:9092
 docker compose run --rm redpanda-init rpk topic describe sync.oracle.load --brokers redpanda:9092
-docker compose run --rm redpanda-init rpk group describe zig-coordinator-scan --brokers redpanda:9092
+docker compose run --rm redpanda-init rpk group describe octopus-scan --brokers redpanda:9092
 curl -s http://127.0.0.1:8081/actuator/prometheus | grep '^coordinator_redpanda_consumer_lag_records'
 docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_events group by status"
 docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_jobs; select count(*) from sync_batches;"

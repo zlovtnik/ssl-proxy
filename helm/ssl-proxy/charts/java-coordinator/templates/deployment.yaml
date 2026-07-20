@@ -148,11 +148,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
                   key: SYNC_STREAM_NAMES
-            - name: SYNC_ORACLE_STREAM_NAMES
+            - name: COORDINATOR_LOAD_STREAM_NAMES
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
-                  key: SYNC_ORACLE_STREAM_NAMES
+                  key: COORDINATOR_LOAD_STREAM_NAMES
             - name: AUDIT_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
@@ -287,22 +287,26 @@ spec:
               value: {{ .Values.metrics.redpandaLagMetricsTimeoutMs | quote }}
             - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
               value: {{ .Values.metrics.heartbeatLogIntervalMs | quote }}
-            - name: ORACLE_SINK_ENABLED
-              value: {{ .Values.oracle.enabled | quote }}
-            - name: ORACLE_SINK_WIRELESS_ENABLED
-              value: {{ .Values.oracle.wirelessEnabled | quote }}
-            - name: ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY
-              value: {{ .Values.oracle.schemaValidationWarnOnly | quote }}
-            - name: ORACLE_LOAD_MAX_RETRIES
-              value: {{ .Values.oracle.loadMaxRetries | quote }}
-            - name: ORACLE_CONN
-              value: {{ .Values.oracle.conn | quote }}
-            - name: ORACLE_USER
-              value: {{ .Values.oracle.user | quote }}
-            - name: ORACLE_PASS_FILE
-              value: "/run/secrets/oracle/{{ .Values.oracle.passwordSecret.key }}"
-            - name: TNS_ADMIN
-              value: "/app/wallet"
+            - name: TIDB_ENABLED
+              value: {{ .Values.tidb.enabled | quote }}
+            - name: TIDB_HOST
+              value: {{ .Values.tidb.host | quote }}
+            - name: TIDB_PORT
+              value: {{ .Values.tidb.port | quote }}
+            - name: TIDB_DATABASE
+              value: {{ .Values.tidb.database | quote }}
+            - name: TIDB_USER
+              value: {{ .Values.tidb.user | quote }}
+            - name: TIDB_PASSWORD
+              value: {{ .Values.tidb.password | quote }}
+            - name: TIDB_POOL_SIZE
+              value: {{ .Values.tidb.poolSize | quote }}
+            - name: TIDB_CONNECTION_TIMEOUT_MS
+              value: {{ .Values.tidb.connectionTimeoutMs | quote }}
+            - name: TIDB_STATEMENT_TIMEOUT_SECS
+              value: {{ .Values.tidb.statementTimeoutSecs | quote }}
+            - name: TIDB_WARN_ONLY
+              value: {{ .Values.tidb.warnOnly | quote }}
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -335,28 +339,12 @@ spec:
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
-            {{- if .Values.oracle.enabled }}
-            - name: oracle-wallet
-              mountPath: /app/wallet
-              readOnly: true
-            - name: oracle-password
-              mountPath: /run/secrets/oracle
-              readOnly: true
-            {{- end }}
       volumes:
         - name: topics-manifest
           configMap:
             name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-topics-manifest
         - name: sync-outbox
           emptyDir: {}
-        {{- if .Values.oracle.enabled }}
-        - name: oracle-wallet
-          secret:
-            secretName: {{ .Values.oracle.walletSecret.name }}
-        - name: oracle-password
-          secret:
-            secretName: {{ .Values.oracle.passwordSecret.name }}
-        {{- end }}
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -259,6 +259,44 @@ services:
         target: "${ROTATOR_REPO_ROOT:-${PWD}}"
       - /var/run/docker.sock:/var/run/docker.sock
 
+  tidb:
+    image: pingcap/tidb:latest
+    container_name: tidb
+    hostname: tidb
+    restart: unless-stopped
+    environment:
+      TIDB_ARGS: >
+        --store=unistore
+        --path=/tmp/tidb
+        --log-file=
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - tidb-data:/tmp/tidb
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-P", "4000", "-u", "root", "-e", "SELECT 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  tidb-init:
+    image: pingcap/tidb:latest
+    container_name: tidb-init
+    depends_on:
+      tidb:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS coordinator;'
+      && mysql -h tidb -P 4000 -u root coordinator < /docker-entrypoint-initdb.d/001_schema.sql"
+    volumes:
+      - type: bind
+        source: ./services/octopus/tidb/init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+
   java-coordinator:
     depends_on:
       redpanda:
@@ -267,6 +305,10 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      tidb:
+        condition: service_healthy
+      tidb-init:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     image: ${REGISTRY:?REGISTRY is required}/java-coordinator:${IMAGE_TAG:-latest}
@@ -282,15 +324,15 @@ services:
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
-      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - COORDINATOR_LOAD_STREAM_NAMES=${COORDINATOR_LOAD_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
       - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
       - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
       - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
-      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-octopus-scan}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
-      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-octopus-result}
       - SYNC_SCAN_CONSUMERS_COUNT=${SYNC_SCAN_CONSUMERS_COUNT:-1}
       - SYNC_RESULT_CONSUMERS_COUNT=${SYNC_RESULT_CONSUMERS_COUNT:-1}
       - WIRELESS_CONSUMERS_COUNT=${WIRELESS_CONSUMERS_COUNT:-1}
@@ -310,19 +352,17 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=java-coordinator
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator
-      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-0.05}
       - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
       - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
       - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
       - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
-      - ORACLE_SINK_ENABLED=${ORACLE_SINK_ENABLED:-true}
-      - ORACLE_SINK_WIRELESS_ENABLED=${ORACLE_SINK_WIRELESS_ENABLED:-true}
-      - ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY=${ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY:-false}
-      - ORACLE_LOAD_MAX_RETRIES=${ORACLE_LOAD_MAX_RETRIES:-3}
-      - TNS_ADMIN=/app/wallet
-      - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
-      - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
-      - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
+      - TIDB_HOST=tidb
+      - TIDB_PORT=4000
+      - TIDB_DATABASE=coordinator
+      - TIDB_USER=root
+      - TIDB_PASSWORD=
+      - TIDB_ENABLED=true
+      - TIDB_POOL_SIZE=10
     volumes:
       - sync-outbox:/sync-outbox
       - type: bind
@@ -331,25 +371,10 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - type: bind
-        source: ./wallet
-        target: /app/wallet
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./secrets
-        target: /run/secrets
-        read_only: true
-        bind:
-          create_host_path: false
     ports:
       - "127.0.0.1:8081:8081"
-    # ORACLE_SINK_ENABLED is intentionally fail-fast by default here: unless it
-    # is explicitly "false", the healthcheck verifies tnsnames.ora, sqlnet.ora,
-    # cwallet.sso, and ORACLE_PASS_FILE before probing Actuator.
     healthcheck:
-      test: ["CMD-SHELL", "if [ \"${ORACLE_SINK_ENABLED:-true}\" != \"false\" ]; then test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s \"${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}\"; fi && wget -qO- http://localhost:8081/actuator/health >/dev/null"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -889,6 +914,7 @@ volumes:
   redpanda-data:
   postgres-data:
   sync-outbox:
+  tidb-data:
   minio-data:
   ollama-data:
   waha-sessions:

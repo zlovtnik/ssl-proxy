@@ -197,7 +197,7 @@ def shellcheck_tier_b() -> None:
         ],
         "sh": [
             repo_root() / "docker" / "redpanda" / "bootstrap.sh",
-            repo_root() / "services" / "zig-coordinator" / "setup-wireless-redpanda.sh",
+            repo_root() / "services" / "octopus" / "setup-wireless-redpanda.sh",
         ],
     }
     failed = False

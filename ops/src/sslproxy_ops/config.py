@@ -82,7 +82,7 @@ class Settings(BaseSettings):
 
     sync_scan_topic: str = Field(default="sync.scan.request", validation_alias="SYNC_SCAN_TOPIC")
     sync_scan_consumer: str = Field(
-        default="zig-coordinator-scan", validation_alias="SYNC_SCAN_CONSUMER"
+        default="octopus-scan", validation_alias="SYNC_SCAN_CONSUMER"
     )
     sync_redpanda_bootstrap_servers: str = Field(
         default="redpanda:9092", validation_alias="SYNC_REDPANDA_BOOTSTRAP_SERVERS"

@@ -149,7 +149,7 @@ wg genpsk > presharedkey-peer1
 | Service | Description | Implementation |
 |---------|-------------|----------------|
 | **ssl-proxy** | Rust transparent proxy, WireGuard terminator, obfuscation engine | [src/](src/) |
-| **coordinator** | Java sync control plane plus Oracle ADB sink - cursoring, dedupe, job state, batching, wallet-backed Oracle loads. 3 replicas for HA. | [services/zig-coordinator/](services/zig-coordinator/) (Gradle/Java) |
+| **octopus** | Scala 3 Cats Effect/FS2 coordinator with TiDB sink - cursoring, dedupe, job state, batching. 3 replicas for HA. | [services/octopus/](services/octopus/) (sbt/Scala 3) |
 | **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
 | **redpanda** | Kafka-compatible event backbone for sync topics | - |
 | **postgres** | Primary state store (sync_events, devices, vec_embeddings, etc.) | [sql/postgres.sql](sql/postgres.sql) |

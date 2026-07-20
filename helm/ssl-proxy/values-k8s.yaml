@@ -11,6 +11,8 @@ global:
       topicReplicationFactor: 1
     postgres:
       host: "ssl-proxy-postgres"
+    tidb:
+      host: "ssl-proxy-tidb"
     minio:
       endpoint: "http://ssl-proxy-minio:9000"
     integrationConsole:
@@ -131,6 +133,8 @@ schemaMigrator:
     # and admin console use the reachable LAN origin.
     browserOrigin: ""
     adminHostname: ""
+    persistence:
+      enabled: true
     service:
       hostPort: 8180
       port: 8080

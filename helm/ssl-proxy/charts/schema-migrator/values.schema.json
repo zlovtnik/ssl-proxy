@@ -50,6 +50,14 @@
           "type": "string",
           "pattern": "^$|^https?://[^/]+$"
         },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "size": { "type": "string", "pattern": "^[1-9][0-9]*(Gi|Mi)$" },
+            "storageClass": { "type": "string" }
+          }
+        },
         "service": {
           "type": "object",
           "required": ["port"],

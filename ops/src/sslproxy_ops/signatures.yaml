@@ -60,8 +60,8 @@
   retry: auto
 - name: coordinator_unhealthy
   pattern: 'java-coordinator unhealthy'
-  cause: 'Coordinator failed health, Redpanda, Postgres, or Oracle checks'
-  fix: 'Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings'
+  cause: 'Coordinator failed health, Redpanda, Postgres, or TiDB checks'
+  fix: 'Inspect java-coordinator logs, TIDB_HOST/TIDB_PORT, DATABASE_URL, and SYNC_REDPANDA_BOOTSTRAP_SERVERS'
   retry: manual
 - name: postgres_unavailable
   pattern: 'postgres unhealthy|Postgres unavailable'
@@ -73,10 +73,10 @@
   cause: 'Redpanda dependency unavailable'
   fix: 'Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:9092'
   retry: manual
-- name: coordinator_wallet_missing
-  pattern: 'missing Oracle wallet artifact|wallet directory missing|missing Oracle password file'
-  cause: 'Coordinator Oracle assets are missing'
-  fix: 'Mount wallet and secrets into java-coordinator'
+- name: tidb_unavailable
+  pattern: 'TiDB sink schema objects unavailable|tidb health check failed'
+  cause: 'TiDB or its schema is unavailable'
+  fix: 'Ensure TiDB is healthy, TIDB_HOST/TIDB_PORT are correct, and the schema is applied'
   retry: manual
 - name: rust_toolchain_mismatch
   pattern: 'rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages'

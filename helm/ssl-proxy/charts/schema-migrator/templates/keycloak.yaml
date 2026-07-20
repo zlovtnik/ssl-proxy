@@ -1,4 +1,23 @@
 {{- if .Values.enabled }}
+{{- if .Values.keycloak.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-data") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-keycloak
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.keycloak.persistence.size }}
+  {{- with .Values.keycloak.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+---
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -58,52 +77,30 @@ spec:
             - name: keycloak-home
               mountPath: /keycloak-home
         - name: reconcile-database
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.bootstrapImages.postgres) }}
-          imagePullPolicy: {{ .Values.bootstrapImages.postgres.pullPolicy }}
+          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.bootstrapImages.mysql) }}
+          imagePullPolicy: {{ .Values.bootstrapImages.mysql.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              until pg_isready --host="$PGHOST" --port="$PGPORT" --username="$PGUSER" --dbname="$PGDATABASE"; do
+              until mysqladmin ping --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASSWORD" --silent; do
                 sleep 2
               done
-              psql --no-password --set=ON_ERROR_STOP=1 \
-                --variable=keycloak_role="$KEYCLOAK_DB_USER" \
-                --variable=keycloak_password="$KEYCLOAK_DB_PASSWORD" \
-                --variable=keycloak_database="$KEYCLOAK_DB_NAME" <<'SQL'
-              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'keycloak_role', :'keycloak_password')
-              WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'keycloak_role')
-              \gexec
-              SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'keycloak_role', :'keycloak_password')
-              \gexec
-              SELECT format('CREATE DATABASE %I OWNER %I', :'keycloak_database', :'keycloak_role')
-              WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'keycloak_database')
-              \gexec
-              SELECT format('ALTER DATABASE %I OWNER TO %I', :'keycloak_database', :'keycloak_role')
-              \gexec
-              SQL
+              mysql --host="$DB_HOST" --port="$DB_PORT" --user="$DB_USER" --password="$DB_PASSWORD" \
+                --execute="CREATE DATABASE IF NOT EXISTS \`$KEYCLOAK_DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
           env:
-            - name: PGHOST
-              value: {{ .Values.global.shared.postgres.host | quote }}
-            - name: PGPORT
-              value: {{ .Values.global.shared.postgres.port | quote }}
-            - name: PGDATABASE
-              value: {{ .Values.global.shared.postgres.database | quote }}
-            - name: PGUSER
-              value: {{ .Values.global.shared.postgres.user | quote }}
-            - name: PGPASSWORD
+            - name: DB_HOST
+              value: {{ .Values.global.shared.tidb.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.global.shared.tidb.port | quote }}
+            - name: DB_USER
+              value: {{ .Values.global.shared.tidb.user | quote }}
+            - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
-                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
-            - name: KEYCLOAK_DB_USER
-              value: {{ .Values.keycloak.databaseUser | quote }}
+                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
             - name: KEYCLOAK_DB_NAME
               value: {{ .Values.keycloak.database | quote }}
-            - name: KEYCLOAK_DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.keycloak.credentialsSecret.name }}
-                  key: {{ .Values.keycloak.credentialsSecret.databasePasswordKey }}
           resources:
             requests:
               cpu: 25m
@@ -134,20 +131,20 @@ spec:
             - --http-enabled=true
           env:
             - name: KC_DB
-              value: postgres
+              value: mysql
             - name: KC_DB_URL_HOST
-              value: {{ .Values.global.shared.postgres.host | quote }}
+              value: {{ .Values.global.shared.tidb.host | quote }}
             - name: KC_DB_URL_PORT
-              value: {{ .Values.global.shared.postgres.port | quote }}
+              value: {{ .Values.global.shared.tidb.port | quote }}
             - name: KC_DB_URL_DATABASE
               value: {{ .Values.keycloak.database | quote }}
             - name: KC_DB_USERNAME
-              value: {{ .Values.keycloak.databaseUser | quote }}
+              value: {{ .Values.global.shared.tidb.user | quote }}
             - name: KC_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.keycloak.credentialsSecret.name }}
-                  key: {{ .Values.keycloak.credentialsSecret.databasePasswordKey }}
+                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               value: {{ .Values.keycloak.bootstrapAdminUsername | quote }}
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
@@ -211,7 +208,12 @@ spec:
         - name: keycloak-home
           emptyDir: {}
         - name: keycloak-data
+          {{- if .Values.keycloak.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-data") }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: realm
           configMap:
             name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-realm") }}

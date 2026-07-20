@@ -9,14 +9,14 @@ repository root instructions.
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
 - `atheros-search/` is a Go HTTP/gRPC search, ingest, alert, and embedding
   service backed by Postgres/vector schema.
-- `zig-coordinator/` is the legacy directory name for the Java 21
-  Spring Boot/Camel coordinator and Oracle sink.
+- `octopus/` is the Scala 3 Cats Effect/FS2 coordinator with
+  TiDB sink.
 - Keep cross-service contracts explicit: Redpanda topic names, stream names,
   schema-versioned payloads, SQL function signatures, protobuf fields, and
   HTTP routes are compatibility surfaces.
 
 ## Shared Guardrails
-- Do not introduce direct Oracle access outside `zig-coordinator/`.
+- Do not introduce direct Oracle access outside `octopus/`.
 - Do not introduce direct Postgres writes from `atheros-sensor/`; persistence
   stays through Redpanda and coordinator backlog/request flows.
 - Keep shared schema changes in `/Users/rcs/git/ssl-proxy/sql`, not in
@@ -38,7 +38,7 @@ repository root instructions.
   - `cargo test -p atheros-sensor`
   - `cd apps/schema-migrator && sbt test`
   - `make atheros-search-test`
-  - `cd services/zig-coordinator && ./gradlew test`
+  - `cd services/octopus && sbt test`
   - `make dependency-boundaries`
 - If a change touches SQL contracts used by services, also consider
   `cd apps/schema-migrator && sbt test` and the coordinator SQL contract

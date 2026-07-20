@@ -39,4 +39,4 @@
 
 ## Ownership boundary
 - The proxy produces work signals and metadata.
-- `services/zig-coordinator` owns orchestration, batching, dedupe, cursor advancement, and Oracle sink behavior.
+- `services/octopus` owns orchestration, batching, dedupe, cursor advancement, and TiDB sink behavior.

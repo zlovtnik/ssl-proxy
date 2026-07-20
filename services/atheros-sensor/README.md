@@ -7,7 +7,7 @@ sync-plane used by this repository.
 ## Runtime Model
 
 - Runs on a Linux host with direct access to a monitor-capable Wi-Fi interface (AR9271 preferred).
-- Uses Redpanda through `SYNC_REDPANDA_BOOTSTRAP_SERVERS`; the zig-coordinator owns all Postgres access.
+- Uses Redpanda through `SYNC_REDPANDA_BOOTSTRAP_SERVERS`; octopus owns all database access.
 - Publishes the raw audit payload on topic `wireless.audit`.
 - Publishes a matching `sync.scan.request` message with `stream_name=wireless.audit`.
 - Asks the coordinator to persist `sync_backlog` rows when Redpanda publish paths fail.

@@ -2,10 +2,10 @@
 --
 -- This function upserts embeddings into vec_embeddings and marks jobs as
 -- completed in a single database round-trip. It was originally co-located in
--- services/zig-coordinator/schema/postgres.sql but was not being applied to
+-- services/octopus/schema/postgres.sql but was not being applied to
 -- databases that were bootstrapped before the function was added.
 --
--- Extracted from services/zig-coordinator/schema/postgres.sql:1500-1587.
+-- Extracted from services/octopus/schema/postgres.sql:1500-1587.
 
 create or replace function vec_complete_embedding_batch(p_payload jsonb)
 returns integer
