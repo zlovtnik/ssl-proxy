@@ -284,7 +284,10 @@ spec:
             - name: TIDB_USER
               value: {{ .Values.tidb.user | quote }}
             - name: TIDB_PASSWORD
-              value: {{ .Values.tidb.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
             - name: TIDB_POOL_SIZE
               value: {{ .Values.tidb.poolSize | quote }}
             - name: TIDB_CONNECTION_TIMEOUT_MS

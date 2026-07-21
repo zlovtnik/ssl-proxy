@@ -69,6 +69,9 @@ javaCoordinator:
     requests:
       cpu: 500m
       memory: 1Gi
+  tidb:
+    host: "ssl-proxy-tidb"
+    sslMode: "DISABLED"
 
 vecWorker:
   enabled: false

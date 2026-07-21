@@ -105,6 +105,6 @@ tidb:
   connectionTimeoutMs: 5000
   statementTimeoutSecs: 30
   warnOnly: false
-  sslMode: "VERIFY_IDENTITY"
+  sslMode: "DISABLED"
 
 # Vec Worker
