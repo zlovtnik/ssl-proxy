@@ -5,24 +5,21 @@ dependencies:
 - name: java-coordinator
   repository: file://charts/java-coordinator
   version: 0.1.1
-- name: integration-console
-  repository: file://charts/integration-console
-  version: 0.1.2
 - name: schema-migrator
   repository: file://charts/schema-migrator
   version: 0.1.2
 - name: atheros-sensor
   repository: file://charts/atheros-sensor
   version: 0.1.1
-- name: postgres
-  repository: file://charts/postgres
-  version: 0.1.4
 - name: redpanda
   repository: file://charts/redpanda
   version: 0.1.1
 - name: minio
   repository: file://charts/minio
   version: 0.1.1
+- name: tidb
+  repository: file://charts/tidb
+  version: 0.1.0
 - name: telemetry
   repository: file://charts/telemetry
   version: 0.1.2
@@ -32,5 +29,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.1
-digest: sha256:300fc3546f495bf9bb0a885fc9f1a85c495488cfad15fa981fe1a8832c1a7f83
-generated: "2026-07-18T15:25:49.9939-04:00"
+digest: sha256:cc624107e1e76e0953cf4b919a68a782763ea67d6e56e2611d593ca07938f2e1
+generated: "2026-07-20T22:33:52.434334-04:00"

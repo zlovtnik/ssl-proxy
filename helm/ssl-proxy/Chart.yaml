@@ -40,6 +40,9 @@ dependencies:
   - name: minio
     version: 0.1.1
     repository: "file://charts/minio"
+  - name: tidb
+    version: 0.1.0
+    repository: "file://charts/tidb"
   - name: telemetry
     version: 0.1.2
     repository: "file://charts/telemetry"

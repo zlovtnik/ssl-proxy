@@ -73,12 +73,18 @@ javaCoordinator:
     host: "ssl-proxy-tidb"
     sslMode: "DISABLED"
 
+tidb:
+  external: false
+  persistence:
+    hostPath: "/var/lib/docker/volumes/ssl-proxy_tidb-data/_data"
 vecWorker:
   enabled: false
 schemaMigrator:
   enabled: true
   # Set dynamically by `ops up-ready` from SCHEMA_MIGRATOR_PUBLIC_HOSTNAME.
   publicHostname: ""
+  stateStore:
+    host: "192.168.1.221"
   backend:
     image:
       repository: schema-migrator-backend

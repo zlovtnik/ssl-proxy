@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tidb
+description: TiDB MySQL-compatible database for coordinator state
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

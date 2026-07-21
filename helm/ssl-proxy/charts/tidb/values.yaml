@@ -1,0 +1,40 @@
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: IfNotPresent
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+external: true
+image:
+  repository: pingcap/tidb
+  tag: latest
+  pullPolicy: IfNotPresent
+replicas: 1
+service:
+  port: 4000
+  statusPort: 10080
+persistence:
+  enabled: true
+  hostPath: ""
+  size: 10Gi
+  storageClassName: ""
+resources:
+  limits:
+    cpu: "2"
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi

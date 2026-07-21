@@ -34,6 +34,17 @@ backend:
       cpu: "2"
       memory: 2Gi
 
+stateStore:
+  host: ""
+  port: 5432
+  databaseName: "schema_migrator"
+  user: "schema_migrator"
+  schema: "public"
+  poolSize: 10
+  credentialsSecret:
+    name: schema-migrator-state-db
+    passwordKey: password
+
 ui:
   # Optional browser-facing origin for a separate LAN edge entrypoint.
   browserOrigin: ""

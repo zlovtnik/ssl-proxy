@@ -131,8 +131,19 @@
         "stateStore": {
           "type": "object",
           "properties": {
+            "host": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "databaseName": { "type": "string", "minLength": 1 },
             "user": { "type": "string", "minLength": 1 },
-            "schema": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+            "schema": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "poolSize": { "type": "integer", "minimum": 1 },
+            "credentialsSecret": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "passwordKey": { "type": "string", "minLength": 1 }
+              }
+            }
           }
         },
         "keycloak": {
@@ -164,6 +175,18 @@
                 "server": { "type": "string", "format": "uri" }
               }
             }
+          }
+        }
+      }
+    },
+    "tidb": {
+      "type": "object",
+      "properties": {
+        "external": { "type": "boolean" },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "hostPath": { "type": "string" }
           }
         }
       }

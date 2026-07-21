@@ -112,6 +112,8 @@ schemaMigrator:
       email: ""
 atherosSensor:
   enabled: true
+tidb:
+  external: true
 observability:
   enabled: true
 
