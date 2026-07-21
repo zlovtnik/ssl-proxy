@@ -134,11 +134,20 @@ registry-build-stack: registry-build-all registry-mirror-all
 define registry_build_target
 .PHONY: registry-build-$(1)
 registry-build-$(1): registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file $(2) $(3) \
-		--tag $(REGISTRY)/$(4):$(TAG) \
-		--tag $(REGISTRY)/$(4):latest \
-		--push $(5)
+	@set -e; \
+	for _r in 1 2 3; do \
+		if docker buildx build --platform $(PLATFORM) \
+			--file $(2) $(3) \
+			--tag $(REGISTRY)/$(4):$(TAG) \
+			--tag $(REGISTRY)/$(4):latest \
+			--push $(5); then \
+			exit 0; \
+		fi; \
+		echo "[registry-build-$(1)] attempt $$$${_r} failed, retrying in 3s..." >&2; \
+		sleep 3; \
+	done; \
+	echo "[registry-build-$(1)] failed after 3 attempts" >&2; \
+	exit 1
 endef
 
 $(eval $(call registry_build_target,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
