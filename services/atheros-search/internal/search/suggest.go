@@ -2,9 +2,10 @@ package search
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
@@ -13,28 +14,43 @@ type SuggestCache struct {
 	Response  *searchv1.SuggestFiltersResponse
 }
 
-const suggestSSIDSQL = "SELECT DISTINCT ssid FROM wireless_frames_expanded WHERE ssid IS NOT NULL AND ($1 = '' OR ssid ILIKE $1 || '%' ESCAPE '\\') ORDER BY ssid"
+const suggestSSIDSQL = `
+SELECT DISTINCT filter_value
+FROM search_filter_values
+WHERE filter_kind = 'ssid'
+  AND (? = '' OR normalized_value LIKE ? ESCAPE '\\')
+ORDER BY normalized_value, filter_value`
 
-func SuggestFilters(ctx context.Context, pool *pgxpool.Pool, prefix string) (*searchv1.SuggestFiltersResponse, error) {
+func SuggestFilters(ctx context.Context, pool *sql.DB, prefix string) (*searchv1.SuggestFiltersResponse, error) {
 	resp := &searchv1.SuggestFiltersResponse{}
-	escapedPrefix := escapeLike(prefix)
-	if err := scanDistinct(ctx, pool, suggestSSIDSQL, escapedPrefix, &resp.Ssids); err != nil {
+	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	pattern := escapeLike(normalizedPrefix) + "%"
+	if err := scanDistinct(ctx, pool, suggestSSIDSQL, &resp.Ssids, normalizedPrefix, pattern); err != nil {
 		return nil, err
 	}
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT location_id FROM wireless_frames_expanded WHERE location_id IS NOT NULL AND ($1 = '' OR location_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY location_id LIMIT 50", escapedPrefix, &resp.LocationIds); err != nil {
-		return nil, err
-	}
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT sensor_id FROM wireless_frames_expanded WHERE sensor_id IS NOT NULL AND ($1 = '' OR sensor_id ILIKE $1 || '%' ESCAPE '\\') ORDER BY sensor_id LIMIT 50", escapedPrefix, &resp.SensorIds); err != nil {
-		return nil, err
-	}
-	if err := scanDistinct(ctx, pool, "SELECT DISTINCT frame_subtype FROM wireless_frames_expanded WHERE frame_subtype IS NOT NULL AND ($1 = '' OR frame_subtype ILIKE $1 || '%' ESCAPE '\\') ORDER BY frame_subtype LIMIT 50", escapedPrefix, &resp.FrameSubtypes); err != nil {
-		return nil, err
+	for _, item := range []struct {
+		kind   string
+		target *[]string
+	}{
+		{kind: "location_id", target: &resp.LocationIds},
+		{kind: "sensor_id", target: &resp.SensorIds},
+		{kind: "frame_subtype", target: &resp.FrameSubtypes},
+	} {
+		if err := scanDistinct(ctx, pool, `
+SELECT DISTINCT filter_value
+FROM search_filter_values
+WHERE filter_kind = ?
+  AND (? = '' OR normalized_value LIKE ? ESCAPE '\\')
+ORDER BY normalized_value, filter_value
+		LIMIT 50`, item.target, item.kind, normalizedPrefix, pattern); err != nil {
+			return nil, err
+		}
 	}
 	return resp, nil
 }
 
-func scanDistinct(ctx context.Context, pool *pgxpool.Pool, sql, prefix string, target *[]string) error {
-	rows, err := pool.Query(ctx, sql, prefix)
+func scanDistinct(ctx context.Context, pool *sql.DB, query string, target *[]string, args ...any) error {
+	rows, err := pool.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

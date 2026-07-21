@@ -28,7 +28,7 @@ image:
   pullPolicy: IfNotPresent
 device: ""
 locationId: "default"
-channel: 11
+channel: 6
 channelHopEnabled: true
 channelHopIntervalMs: 1000
 regDomain: "US"

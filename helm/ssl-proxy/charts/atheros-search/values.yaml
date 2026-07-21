@@ -1,5 +1,4 @@
-# Values local to the atheros-search subchart. The Go service owns both search
-# APIs and the embedding worker that replaced the retired standalone vec-worker.
+# Values local to the TiDB query-only Atheros Search subchart.
 global:
   nameOverride: ""
   fullnameOverride: ""
@@ -42,33 +41,12 @@ eventEmbeddingScope: "high_signal"
 logLevel: "info"
 corsAllowedOrigins: ""
 schemaReadyRequired: true
+schemaManifestSHA256: "0000000000000000000000000000000000000000000000000000000000000000"
 apiTokenSecret:
   name: atheros-credentials
   key: api-token-sha256
 apiTokenEnabled: true
 otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
-worker:
-  # Enable only with a real embeddingBackend; the single-node profile does so.
-  enabled: false
-  name: "atheros-search-worker"
-  batchSize: 256
-  requestBatchSize: 256
-  requestBatchMax: 512
-  leaseSeconds: 600
-  pollIntervalMs: 500
-  maxDrainBatches: 0
-  maxInputTokens: 512
-  maxConcurrentEmbed: 4
-  maxConcurrentComplete: 8
-  alertsEnabled: true
-  resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
-    limits:
-      cpu: "2"
-      memory: 2Gi
-ingestEnabled: false
 resources:
   requests:
     cpu: 250m

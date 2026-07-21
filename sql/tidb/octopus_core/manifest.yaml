@@ -1,0 +1,20 @@
+engine: tidb
+layer: octopus_core
+database: octopus_core
+schema_version: 2026072101
+checksum_algorithm: sha256
+manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
+manifest_sha256: 1d06e05446773d356c5ee559da3fa33407a61df9edf968d5647820f0fda3fd43
+checksums_file: checksums.sha256
+grant_fixture: grants/least_privilege.sql.tmpl
+apply_order:
+  - 00_schemas/001_octopus_core_database.sql
+  - 01_tables/001_schema_control.sql
+  - 01_tables/002_sync_state.sql
+  - 01_tables/003_ingestion_evidence.sql
+  - 01_tables/004_proxy_sink.sql
+  - 01_tables/005_wireless_sink.sql
+  - 01_tables/006_wireless_state.sql
+  - 01_tables/007_processor_leases_and_outbox.sql
+  - 01_tables/008_operational_projections.sql
+retired: []

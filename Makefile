@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries runtime-datastore-policy tidb-schema-contract cutover-evidence-test bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -55,12 +55,24 @@ build:
 
 # Run tests
 test:
+	$(MAKE) runtime-datastore-policy
+	$(MAKE) tidb-schema-contract
+	$(MAKE) cutover-evidence-test
 	cargo test -p sync-plane
 	cargo test -p ssl-proxy
 	cargo test -p atheros-sensor
 	$(MAKE) schema-migrator-test
 	$(MAKE) dependency-boundaries
 	cd services/octopus && sbt test
+
+runtime-datastore-policy:
+	scripts/check-runtime-datastores.py
+
+tidb-schema-contract:
+	scripts/check-tidb-schema-contract.py
+
+cutover-evidence-test:
+	python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
 dependency-boundaries:
 	@command -v rg >/dev/null

@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "scan_roots": [
+    "src",
+    "crates",
+    "services",
+    "apps/integration-console",
+    "apps/schema-migrator",
+    "helm",
+    "ops",
+    "config",
+    "docker",
+    "scripts",
+    "docker-compose.yaml",
+    "docker-compose.build.yaml"
+  ],
+  "excluded_path_parts": [
+    ".git",
+    ".omx",
+    ".venv",
+    "node_modules",
+    "target",
+    "dist",
+    "vendor",
+    "coverage"
+  ],
+  "text_extensions": [
+    ".conf",
+    ".env",
+    ".ex",
+    ".exs",
+    ".go",
+    ".hcl",
+    ".html",
+    ".java",
+    ".json",
+    ".kt",
+    ".properties",
+    ".py",
+    ".rb",
+    ".rs",
+    ".scala",
+    ".service",
+    ".sh",
+    ".sql",
+    ".toml",
+    ".xml",
+    ".yaml",
+    ".yml"
+  ],
+  "forbidden_patterns": {
+    "mongodb_runtime": "(?i)(mongodb(?:\\+srv)?://|MONGO(?:DB)?_[A-Z0-9_]*|mongo(?:db)?[.-](?:service|credentials))",
+    "postgres_runtime": "(?i)(jdbc:postgresql:|postgres(?:ql)?://|ATHSEARCH_POSTGRES_DSN|POSTGRES_(?:HOST|PORT|DB|DATABASE|USER|PASSWORD)|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD|global\\.shared\\.postgres)"
+  },
+  "allowlist": [
+    {
+      "path_glob": "apps/schema-migrator/**",
+      "pattern_ids": ["postgres_runtime"],
+      "reason": "PostgreSQL remains a supported external migration target; the control store is checked separately by its TiDB tests."
+    },
+    {
+      "path_glob": "apps/integration-console/db/legacy_postgresql_*",
+      "pattern_ids": ["postgres_runtime"],
+      "reason": "Non-executable historical Rails schema archive retained for audit; runtime migration paths are empty."
+    },
+    {
+      "path_glob": "apps/integration-console/test/contracts/runtime_contract_test.rb",
+      "pattern_ids": ["postgres_runtime"],
+      "reason": "Negative contract fixture proves PostgreSQL runtime URLs fail closed."
+    },
+    {
+      "path_glob": "helm/ssl-proxy/cutover-compat/**",
+      "pattern_ids": ["postgres_runtime", "mongodb_runtime"],
+      "reason": "One-release, pinned-digest compatibility manifests are allowed only in the isolated cutover compatibility directory."
+    },
+    {
+      "path_glob": "scripts/check-runtime-datastores.py",
+      "pattern_ids": ["postgres_runtime", "mongodb_runtime"],
+      "reason": "The policy checker contains the forbidden tokens it enforces."
+    },
+    {
+      "path_glob": "config/runtime-datastore-policy.json",
+      "pattern_ids": ["postgres_runtime", "mongodb_runtime"],
+      "reason": "The policy definition contains the forbidden tokens it enforces."
+    }
+  ]
+}

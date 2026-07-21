@@ -1,0 +1,233 @@
+-- object: atheros_search_projection_state
+-- depends_on: atheros_search_vectors
+-- Octopus owns all writes to these incrementally maintained projections.
+
+USE atheros_search;
+
+CREATE TABLE IF NOT EXISTS behaviour_snapshots (
+  snapshot_id      CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  snapshot_key     VARCHAR(255) NOT NULL,
+  source_mac       VARCHAR(17) NOT NULL,
+  location_id      VARCHAR(128) DEFAULT NULL,
+  sensor_id        VARCHAR(64) DEFAULT NULL,
+  window_start     DATETIME(6) NOT NULL,
+  window_end       DATETIME(6) NOT NULL,
+  event_count      BIGINT NOT NULL DEFAULT 0,
+  text_summary     TEXT NOT NULL,
+  embedding_text   TEXT DEFAULT NULL,
+  protocol_mix     JSON NOT NULL,
+  frame_type_distribution JSON NOT NULL,
+  signal_min_dbm   INT DEFAULT NULL,
+  signal_max_dbm   INT DEFAULT NULL,
+  signal_avg_dbm   DECIMAL(8,2) DEFAULT NULL,
+  retry_count      BIGINT NOT NULL DEFAULT 0,
+  protected_count  BIGINT NOT NULL DEFAULT 0,
+  unprotected_count BIGINT NOT NULL DEFAULT 0,
+  unique_bssid_count BIGINT NOT NULL DEFAULT 0,
+  mac_rotation_indicators JSON NOT NULL,
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (snapshot_id),
+  UNIQUE KEY behaviour_snapshots_key_uq (snapshot_key),
+  KEY behaviour_snapshots_mac_window_idx (source_mac, window_start),
+  CONSTRAINT behaviour_snapshots_window_ck CHECK (window_end > window_start)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS baseline_profiles (
+  baseline_id      CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  bssid            VARCHAR(17) NOT NULL,
+  metric           VARCHAR(128) NOT NULL,
+  p5               DECIMAL(24,8) NOT NULL,
+  p50              DECIMAL(24,8) NOT NULL,
+  p95              DECIMAL(24,8) NOT NULL,
+  sample_count     BIGINT NOT NULL DEFAULT 0,
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (baseline_id),
+  UNIQUE KEY baseline_profiles_bssid_metric_uq (bssid, metric)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS frame_sequences (
+  session_key      VARCHAR(255) NOT NULL,
+  source_mac       VARCHAR(17) DEFAULT NULL,
+  location_id      VARCHAR(128) DEFAULT NULL,
+  sensor_id        VARCHAR(64) DEFAULT NULL,
+  window_start     DATETIME(6) NOT NULL,
+  window_end       DATETIME(6) NOT NULL,
+  sequence_tokens  TEXT NOT NULL,
+  semantic_tokens  TEXT DEFAULT NULL,
+  frame_count      BIGINT NOT NULL DEFAULT 0,
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (session_key),
+  KEY frame_sequences_mac_window_idx (source_mac, window_start),
+  CONSTRAINT frame_sequences_window_ck CHECK (window_end >= window_start)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS sequence_transitions (
+  previous_token   VARCHAR(191) NOT NULL,
+  next_token       VARCHAR(191) NOT NULL,
+  sequence_kind    VARCHAR(64) NOT NULL DEFAULT 'frame_sequence',
+  transition_count BIGINT NOT NULL DEFAULT 0,
+  previous_total   BIGINT NOT NULL DEFAULT 0,
+  vocabulary_size  BIGINT NOT NULL DEFAULT 0,
+  probability      DOUBLE DEFAULT NULL,
+  last_updated     DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  PRIMARY KEY (previous_token, next_token, sequence_kind),
+  KEY sequence_transitions_next_idx (next_token, sequence_kind)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS timing_profiles (
+  profile_id       CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  profile_key      VARCHAR(255) NOT NULL,
+  source_mac       VARCHAR(17) NOT NULL,
+  sensor_id        VARCHAR(64) DEFAULT NULL,
+  location_id      VARCHAR(128) DEFAULT NULL,
+  window_start     DATETIME(6) NOT NULL,
+  window_end       DATETIME(6) NOT NULL,
+  embedding_text   TEXT DEFAULT NULL,
+  tsft_p50_us      DECIMAL(24,8) DEFAULT NULL,
+  tsft_p95_us      DECIMAL(24,8) DEFAULT NULL,
+  tsft_jitter      DECIMAL(24,8) DEFAULT NULL,
+  wall_p50_ms      DECIMAL(24,8) DEFAULT NULL,
+  wall_jitter_ms   DECIMAL(24,8) DEFAULT NULL,
+  beacon_interval_median_ms DECIMAL(24,8) DEFAULT NULL,
+  beacon_jitter_ms DECIMAL(24,8) DEFAULT NULL,
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (profile_id),
+  UNIQUE KEY timing_profiles_key_uq (profile_key),
+  KEY timing_profiles_mac_window_idx (source_mac, window_start),
+  CONSTRAINT timing_profiles_window_ck CHECK (window_end > window_start)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS similarity_pairs (
+  pair_id            CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  pair_kind          VARCHAR(64) NOT NULL,
+  embedding_model    VARCHAR(128) NOT NULL,
+  embedding_kind     VARCHAR(32) NOT NULL,
+  left_document_id   CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  right_document_id  CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  left_source_table  VARCHAR(128) NOT NULL,
+  left_source_key    VARCHAR(255) NOT NULL,
+  left_source_mac    VARCHAR(17) DEFAULT NULL,
+  left_sensor_id     VARCHAR(64) DEFAULT NULL,
+  left_location_id   VARCHAR(128) DEFAULT NULL,
+  left_observed_at   DATETIME(6) DEFAULT NULL,
+  right_source_table VARCHAR(128) NOT NULL,
+  right_source_key   VARCHAR(255) NOT NULL,
+  right_source_mac   VARCHAR(17) DEFAULT NULL,
+  right_sensor_id    VARCHAR(64) DEFAULT NULL,
+  right_location_id  VARCHAR(128) DEFAULT NULL,
+  right_observed_at  DATETIME(6) DEFAULT NULL,
+  cosine_distance    DOUBLE NOT NULL,
+  cosine_similarity  DOUBLE NOT NULL,
+  pair_rank          INT NOT NULL DEFAULT 1,
+  evidence           JSON NOT NULL,
+  computed_at        DATETIME(6) NOT NULL,
+  projection_run_id  CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_at         DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at         DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (pair_id),
+  UNIQUE KEY similarity_pairs_documents_uq (
+    pair_kind, embedding_model, left_document_id, right_document_id
+  ),
+  KEY similarity_pairs_left_idx (left_source_key, computed_at),
+  KEY similarity_pairs_right_idx (right_source_key, computed_at),
+  CONSTRAINT similarity_pairs_similarity_ck CHECK (
+    cosine_similarity >= -1 AND cosine_similarity <= 1
+  )
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS threat_signals (
+  source_key       VARCHAR(255) NOT NULL,
+  near_duplicate  TINYINT(1) NOT NULL DEFAULT 0,
+  shadow_open      TINYINT(1) NOT NULL DEFAULT 0,
+  risk_score       DOUBLE NOT NULL DEFAULT 0,
+  ap_risk          DOUBLE NOT NULL DEFAULT 0,
+  threat_tag_count BIGINT NOT NULL DEFAULT 0,
+  signal_id        CHAR(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  signal_type      VARCHAR(64) DEFAULT NULL,
+  dedupe_key       VARCHAR(255) DEFAULT NULL,
+  source_mac       VARCHAR(17) DEFAULT NULL,
+  sensor_id        VARCHAR(64) DEFAULT NULL,
+  location_id      VARCHAR(128) DEFAULT NULL,
+  score            DOUBLE DEFAULT NULL,
+  severity         VARCHAR(32) DEFAULT NULL,
+  explanation_text TEXT DEFAULT NULL,
+  evidence         JSON DEFAULT NULL,
+  detected_at      DATETIME(6) DEFAULT NULL,
+  resolved_at      DATETIME(6) DEFAULT NULL,
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  created_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at       DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (source_key),
+  UNIQUE KEY threat_signals_id_uq (signal_id),
+  UNIQUE KEY threat_signals_dedupe_uq (signal_type, dedupe_key),
+  KEY threat_signals_open_idx (resolved_at, severity, detected_at),
+  KEY threat_signals_source_idx (source_mac, detected_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ap_risk_scores (
+  bssid            VARCHAR(17) NOT NULL,
+  composite_risk   DOUBLE NOT NULL DEFAULT 0,
+  signal_risk      DOUBLE NOT NULL DEFAULT 0,
+  identity_risk    DOUBLE NOT NULL DEFAULT 0,
+  behaviour_risk   DOUBLE NOT NULL DEFAULT 0,
+  evidence         JSON NOT NULL,
+  measured_at      DATETIME(6) NOT NULL,
+  projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  PRIMARY KEY (bssid),
+  KEY ap_risk_scores_risk_idx (composite_risk)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS v_vec_similarity_audit (
+  pair_id                   CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  pair_kind                 VARCHAR(64) NOT NULL,
+  embedding_model           VARCHAR(128) NOT NULL,
+  embedding_kind            VARCHAR(32) NOT NULL,
+  cosine_distance           DOUBLE NOT NULL,
+  cosine_similarity         DOUBLE NOT NULL,
+  `rank`                    INT NOT NULL,
+  evidence                  JSON NOT NULL,
+  computed_at               DATETIME(6) NOT NULL,
+  left_source_table         VARCHAR(128) NOT NULL,
+  left_source_key           VARCHAR(255) NOT NULL,
+  left_source_mac           VARCHAR(17) DEFAULT NULL,
+  left_sensor_id            VARCHAR(64) DEFAULT NULL,
+  left_location_id          VARCHAR(128) DEFAULT NULL,
+  left_observed_at          DATETIME(6) DEFAULT NULL,
+  left_stream_name          VARCHAR(255) DEFAULT NULL,
+  left_ssid                 VARCHAR(256) DEFAULT NULL,
+  left_bssid                VARCHAR(17) DEFAULT NULL,
+  left_destination_bssid    VARCHAR(17) DEFAULT NULL,
+  left_device_display_name  VARCHAR(255) DEFAULT NULL,
+  left_snapshot_id          CHAR(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  left_window_start         DATETIME(6) DEFAULT NULL,
+  left_window_end           DATETIME(6) DEFAULT NULL,
+  right_source_table        VARCHAR(128) NOT NULL,
+  right_source_key          VARCHAR(255) NOT NULL,
+  right_source_mac          VARCHAR(17) DEFAULT NULL,
+  right_sensor_id           VARCHAR(64) DEFAULT NULL,
+  right_location_id         VARCHAR(128) DEFAULT NULL,
+  right_observed_at         DATETIME(6) DEFAULT NULL,
+  right_stream_name         VARCHAR(255) DEFAULT NULL,
+  right_ssid                VARCHAR(256) DEFAULT NULL,
+  right_bssid               VARCHAR(17) DEFAULT NULL,
+  right_destination_bssid   VARCHAR(17) DEFAULT NULL,
+  right_device_display_name VARCHAR(255) DEFAULT NULL,
+  right_snapshot_id         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+  right_window_start        DATETIME(6) DEFAULT NULL,
+  right_window_end          DATETIME(6) DEFAULT NULL,
+  projection_run_id         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  updated_at                DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (pair_id),
+  KEY v_vec_similarity_audit_computed_idx (computed_at),
+  KEY v_vec_similarity_audit_left_idx (left_source_key),
+  KEY v_vec_similarity_audit_right_idx (right_source_key)
+) ENGINE=InnoDB;

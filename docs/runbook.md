@@ -1,535 +1,167 @@
 # Operator Runbook
 
-## Operational Procedures
+This runbook covers the current external-TiDB runtime. Historical PostgreSQL,
+MongoDB, embedded Keycloak, local mock-TiDB, and vector-worker procedures have
+been retired. Use Git history if an old-release incident requires them; do not
+apply them to the current runtime.
 
----
+The authoritative fresh-start sequence and evidence requirements are in
+[Fresh TiDB Runtime Cutover](tidb-runtime-cutover.md).
 
-### 1. Adding a New Obfuscation Profile
+## Safety boundary
 
-#### Steps
+Repository checks, Helm renders, dry runs, and local tests are safe preparation.
+Provisioning accounts, changing Redpanda consumer offsets, upgrading a live
+release, pruning resources, and deleting the old database host path require the
+approved change window and named operator approval.
 
-1. **Edit `src/obfuscation.rs`:**
-   - Add new domain patterns to the `FOX_DOMAINS` array
-   - Add new variant to the `Profile` enum
-   - Update `as_str()` conversion method
-   - Extend match statement in `classify_obfuscation()`
+The three deployment modes are:
 
-2. **Update configuration struct:**
-   - Add profile enable flag in `src/config.rs`
-   - Add environment variable mapping
+| Mode | New clients | New consumers | Legacy compatibility |
+|---|---|---|---|
+| `stage` | Deployed for version/schema/TLS readiness | Disabled | Active |
+| `activate` | Ready Services receive traffic | Enabled at signed offsets | Present but quiesced |
+| `prune` | Active | Active | Absent |
 
-3. **Verify implementation:**
-   ```bash
-   cargo test obfuscation::tests
-   ```
+Never jump from `stage` to `prune`.
 
-4. **Publish and redeploy the image:**
-   ```bash
-   make registry-build-ssl-proxy REGISTRY=<server-local-ip>:5000
-   export REGISTRY=<server-local-ip>:5000
-   docker compose pull ssl-proxy wg-udp-frontdoor
-   docker compose up -d ssl-proxy wg-udp-frontdoor
-   ```
+## External prerequisites
 
----
+Before rendering an activation release, supply:
 
-### 2. Updating Blocklist URL
+- an external TiDB v8.5+ endpoint with TiFlash capacity;
+- `octopus_core`, `atheros_search`, `integration_console`, and
+  `schema_migrator` databases;
+- one dedicated least-privilege runtime account per database plus a separate
+  DDL/provisioning account;
+- TLS CA/server-name configuration and account Secrets;
+- a fresh external Keycloak realm and clients (no realm/user/client import);
+- Redis for reconstructible Rails cache and ActionCable fan-out only;
+- the signed cutover artifact, detached signature, and pinned Ed25519 public
+  key for the exact Redpanda cluster.
 
-Set the environment variable in your compose override or shell:
+The database grants are documented as templates under each
+`sql/tidb/<domain>/grants/` directory. Applications verify schemas; only the
+schema executor applies DDL.
+
+## Repository qualification
+
+Run the deterministic policy and evidence checks:
 
 ```bash
-BLOCKLIST_URL=https://example.com/blocklist.txt
+make runtime-datastore-policy
+make tidb-schema-contract
+make cutover-evidence-test
+helm lint helm/ssl-proxy
 ```
 
-Blocklist is automatically refreshed on service startup and every 24 hours.
-
-Apply changes by restarting the service:
+Then run the client suites:
 
 ```bash
-docker compose restart ssl-proxy
+cd services/octopus && sbt test
+cd ../../services/atheros-search && go test ./...
+cd ../../apps/schema-migrator && sbt test
+cd ../integration-console && bin/rails test
 ```
 
----
-
-### 3. Rotate WireGuard and Runtime Secrets
-
-Use the rotator in `apps/wg-key-rotator` for stable-port scheduled rotation. It creates a candidate key generation under ignored local state, starts `ssl-proxy-next`, and updates `wg-udp-frontdoor` so old and new WireGuard keysets can both receive packets on the stable public UDP ports.
-
-1. **Stage a candidate generation from the repository root:**
-   ```bash
-   cd apps/wg-key-rotator
-   bin/wg_key_rotator stage
-   bin/wg_key_rotator start-next
-   ```
-
-2. **Distribute generated client bundles:**
-   - Bundles are written under `secrets/wg-rotation/generations/<generation>/client-bundles/`
-   - Private keys, PSKs, admin keys, and obfuscation keys stay in ignored local files
-   - Clients keep the same public UDP endpoint; the frontdoor probes active and candidate backends, then pins each client to the backend that replies first
-
-3. **Promote after every configured peer handshakes with the candidate:**
-   ```bash
-   bin/wg_key_rotator status
-   bin/wg_key_rotator promote
-   ```
-
-4. **Rollback if migration does not complete:**
-   ```bash
-   bin/wg_key_rotator rollback
-   ```
-
-> **Important:** Do not hand-edit tracked example configs with live keys. Live WireGuard keys, peer configs, admin API keys, and obfuscation keys are generated under ignored local paths.
-
----
-
-### 3.1 Compose Runtime Compatibility Mode for Peer Config Mounts
-
-- `ssl-proxy` is intentionally pinned to `user: "0:0"` in `docker-compose.yaml` for compatibility with host bind-mounted peer config files such as `config/<peer>/<peer>.conf` that are commonly `0600`.
-- This preserves legacy startup behavior where entrypoint key sync reads/writes `PublicKey` and `PresharedKey` data from configured `/config/<peer>/*.conf` files.
-- Security tradeoff: root-in-container plus `NET_ADMIN` increases impact if the container is compromised. Keep `--privileged` disabled and avoid broad writable host mounts.
-
----
-
-### 4. Verify Container Provenance for WireGuard Startup
-
-First-party service images are built off-host and pulled from the local
-registry. See [local-registry-workflow.md](local-registry-workflow.md) for the
-registry setup, access control, and buildx workflow.
-
-1. **Publish a fresh image with explicit metadata:**
-   ```bash
-   export VCS_REF="$(git rev-parse --short HEAD)"
-   export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-   make registry-build-ssl-proxy REGISTRY=<server-local-ip>:5000 TAG="$VCS_REF"
-   ```
-
-2. **Pull and recreate the runtime container on the server:**
-   ```bash
-   export REGISTRY=<server-local-ip>:5000
-   export IMAGE_TAG="$VCS_REF"
-   docker compose down --remove-orphans
-   docker compose pull ssl-proxy wg-udp-frontdoor
-   docker compose up -d
-   ```
-
-3. **Compare the pulled image and compose input:**
-   ```bash
-   docker images "$REGISTRY/ssl-proxy"
-   docker compose config | sed -n '20,55p'
-   ```
-
-4. **Verify the runtime fingerprint and rendered config:**
-   ```bash
-   docker compose logs ssl-proxy | grep '\[startup-fingerprint\]'
-   docker compose exec -T ssl-proxy sed -n '1,12p' /run/wireguard/wg0.conf
-   ```
-
-   If a mounted template drifted and duplicated `Address = ...` lines, startup now canonicalizes them back to one line before bringing the BoringTun-backed `wg0` interface up.
-
-5. **If logs contradict the repo:**
-   - Remove the old container with `docker compose down --remove-orphans`
-   - Re-push the image, then run `docker compose pull && docker compose up -d`
-   - Re-check the `[startup-fingerprint]` lines before debugging WireGuard behavior
-
----
-
-### 4.1 WireGuard Throughput Acceptance
-
-Use the same client, server, network, and `iperf3` target for all paths. Disable
-background traffic and confirm the frontdoor metrics are reachable at
-`http://127.0.0.1:3003/metrics`.
-
-1. Warm each path for five seconds, then run five trials with
-   `iperf3 -c <target> -t 30 -P 4 -J` and retain each JSON result.
-2. Measure in this order: tunnel disabled (bypass), iPhone/direct profile on the
-   plain frontdoor port, then the shim profile on the obfuscated frontdoor port.
-3. Compute the median `end.sum_received.bits_per_second` for each path.
-4. Accept the build only when `direct / bypass >= 0.90` and
-   `shim / direct >= 0.90`.
-5. Reject any trial set where either
-   `wg_frontdoor_dropped_rate_limited_total` or
-   `wg_frontdoor_dropped_dispatch_saturated_total` increases. Record
-   `wg_frontdoor_dispatch_queue_high_watermark` with the results.
-
-The packet limiter is opt-in. Leave `WG_FRONTDOOR_RATE_LIMIT_PPS=0` for this
-test so the measurement covers forwarding capacity rather than an intentional
-traffic cap.
-
-### 4.2 Kubernetes Umbrella Chart Rollout
-
-The chart at `helm/ssl-proxy` is an umbrella over the service,
-infrastructure, and telemetry charts in `helm/ssl-proxy/charts`. Perform the
-production rollout on the Kubernetes server with its working kubeconfig.
-
-1. Connect to the server and update the committed `dev` branch:
-
-   ```bash
-   ssh 192.168.1.221
-   cd ~/git/ssl-proxy
-   git pull --ff-only origin dev
-   ```
-
-2. Validate dependencies and the server-specific render:
-
-   ```bash
-   helm dependency update helm/ssl-proxy
-   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml \
-     --set-string schemaMigrator.publicHostname=schema.example.com \
-     --set-string schemaMigrator.traefik.acme.email=ops@example.com
-   helm template ssl-proxy helm/ssl-proxy -n ssl-proxy \
-     -f helm/ssl-proxy/values-k8s.yaml \
-     --set-string schemaMigrator.publicHostname=schema.example.com \
-     --set-string schemaMigrator.traefik.acme.email=ops@example.com >/tmp/ssl-proxy.yaml
-   kubectl apply --dry-run=client -f /tmp/ssl-proxy.yaml
-   ```
-
-   DNS must resolve the chosen hostname to the public address forwarding TCP
-   80/443 to `192.168.1.221`. Allow inbound TCP 80 for Let's Encrypt HTTP-01
-   and TCP 443 for the UI/API/Keycloak origin. UDP 443 remains owned by the
-   proxy and is a separate transport.
-
-3. Start or upgrade the stack from the server repository. Supply the real
-   client profile values used by the deployment:
-
-   ```bash
-   make up-ready PROFILE_MODE=<profile> \
-     SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip> \
-     SCHEMA_MIGRATOR_PUBLIC_HOSTNAME=schema.example.com \
-     ACME_EMAIL=ops@example.com
-   ```
-
-4. Verify the release and every namespace-scoped workload:
-
-   ```bash
-   helm status ssl-proxy -n ssl-proxy
-   kubectl get pods,jobs,services -n ssl-proxy -o wide
-   kubectl get daemonsets,statefulsets,deployments -n ssl-proxy
-   curl -fsS https://schema.example.com/
-   curl -fsS https://schema.example.com/api/health
-   curl -fsS https://schema.example.com/realms/middleware/.well-known/openid-configuration
-   ```
-
-5. Read `secrets/up-ready-credentials.txt` (mode `0600`) for the initial
-   `schema-admin` password, sign in, and change the temporary password. Store
-   the replacement in the approved password manager; the bootstrap Job never
-   resets an existing user.
-
-6. Confirm state and upgrade safety:
-
-   ```bash
-   kubectl exec -n ssl-proxy ssl-proxy-postgres-0 -- \
-     psql -U sync -d sync -Atc "select schema_name from information_schema.schemata where schema_name = 'schema_migrator'"
-   make up-ready PROFILE_MODE=<profile> SERVER_IP=192.168.1.221 CLIENT_IP=<client-ip> \
-     SCHEMA_MIGRATOR_PUBLIC_HOSTNAME=schema.example.com ACME_EMAIL=ops@example.com
-   ```
-
-   After the repeated upgrade, verify the changed `schema-admin` password still
-   works, the `schema_migrator` schema and dedicated role remain, and the
-   pre-existing SSL Proxy workloads and `sync` data are unchanged. Existing
-   MongoDB data is intentionally not imported; remove its retired Secret/PVC only
-   after the PostgreSQL-backed backend passes health and smoke checks. ACME data
-   remains under `/var/lib/ssl-proxy/schema-migrator/`.
-
-The `vecWorker` and `atherosSearch` charts are explicit placeholders and
-render no workloads yet. The telemetry values also call out the existing KEDA,
-ServiceMonitor, and dashboard-discovery template gaps.
-
-### 5. Oracle ADB Connection & Views
-
-1. **Place auto-login Oracle wallet files in `./wallet/` directory**
-   - Restart the container after adding the wallet so the startup preflight can enable Oracle persistence.
-   - `GET /ready` on `http://127.0.0.1:3002/ready` stays `503` until the wallet contains the configured `ORACLE_CONN` alias, default `mainerc_high`, plus `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, and a non-empty password file.
-
-2. **Connect using SQL*Plus:**
-   ```bash
-   sqlplus USCIS_APP@mainerc_high
-   ```
-
-   Before applying `sql/oracle.sql`, connect as the Oracle security
-   administrator and grant the schema owner direct access to the packages used
-   to install fine-grained audit and VPD policies:
-
-   ```sql
-   GRANT EXECUTE ON SYS.DBMS_FGA TO USCIS_APP;
-   GRANT EXECUTE ON SYS.DBMS_RLS TO USCIS_APP;
-   ```
-
-   Keep these as direct grants. The baseline deliberately fails instead of
-   silently omitting its audit and append-only policies when the grants are
-   absent.
-
-3. **Available Audit Views:**
-   ```sql
-   -- Session traffic summary
-   SELECT * FROM v_proxy_session_stats;
-
-   -- Obfuscation events
-   SELECT * FROM v_obfuscation_log;
-
-   -- Blocked requests
-   SELECT * FROM v_blocked_requests;
-
-   -- Daily bandwidth usage
-   SELECT * FROM v_daily_bandwidth;
-   ```
-
-All views are optimized for ADB columnar storage.
-
----
-
-### 6. Prometheus / Vector Pipeline Setup
-
-> Note: the non-vector Grafana/Loki/Jaeger/Prometheus rollout in `docs/observability-workmap-non-vector.md` explicitly excludes this Vector-profile pipeline.
-
-1. **Start pipeline:**
-   ```bash
-   LOG_FORMAT=json ./ssl-proxy | vector --config vector.toml
-   ```
-
-2. **Configuration:**
-   - `vector.toml` filters audit events
-   - Normalizes timestamps for ClickHouse
-   - Batches inserts for optimal warehouse performance
-
-3. **Environment Variables:**
-   ```text
-   CLICKHOUSE_URL=http://clickhouse:8123
-   CLICKHOUSE_USER=default
-   CLICKHOUSE_PASSWORD=yourpassword
-   ```
-
-4. **Operational health and dashboard are available at:**
-   ```text
-   http://127.0.0.1:3002/health
-   http://127.0.0.1:3002/dashboard
-   ```
-
----
-
-### 7. Compose Startup Log Notes
-
-- `java-coordinator` is the sync control-plane service. The source lives under `services/octopus/`; inspect it with `docker compose logs java-coordinator`.
-- `sql/postgres.sql` is a compatibility shim that `\ir`-includes the split schema tree (`sql/extensions`, `sql/tables`, `sql/functions`, etc.). Maintain split schema files directly and keep `sql/postgres.source.sql` in sync as the aggregate reference when split objects change.
-- `apps/schema-migrator` is the canonical CLI for schema ordering and validation:
-  - `cd apps/schema-migrator && sbt "run --sql-dir ../../sql list"`
-  - `cd apps/schema-migrator && sbt "run --sql-dir ../../sql validate"`
-  - `export DATABASE_URL=... && cd apps/schema-migrator && sbt "run --sql-dir ../../sql apply"`
-- `schema-migrator apply` bootstraps `schema_control.schema_objects`, `schema_control.schema_apply_log`, and the single-row readiness view `schema_control.schema_ready`. Runtime apps should gate startup with:
-  ```sql
-  select ready, all_applied, pending_count, failed_count, failed_objects
-  from schema_control.schema_ready;
-  ```
-  Proceed only when `ready = true` and `failed_count = 0`. `atheros-search` enforces this by default before serving traffic or starting its embedded worker path; tune with `ATHSEARCH_SCHEMA_READY_TIMEOUT_MS`, `ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS`, or temporarily bypass legacy environments with `ATHSEARCH_SCHEMA_READY_REQUIRED=false`. Any standalone `vec-worker` deployment should perform the same query before leasing embedding jobs.
-- Postgres init scripts are intentionally unused. A line such as `/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*` is expected when that directory has no mounted scripts; inspect it with `docker compose logs postgres`.
-- Redpanda is part of the compose stack and runs Redpanda for sync topics. The Redpanda banner, storage directory, monitor address, and `Server is ready` indicate normal readiness; inspect with `docker compose logs redpanda`.
-- If any expected message is missing, run `docker compose ps` and `docker compose logs <service>` for the affected service, then check failed healthchecks, missing volumes, and environment values before restarting that service.
-- `redpanda-init` must complete successfully before `java-coordinator` is healthy. It creates the Redpanda topics in `docker/redpanda/topics.manifest`, including `wireless.audit`, `sync.scan.request`, `sync.oracle.load`, and `sync.oracle.result`. Consumer groups are created by the coordinator at runtime: `octopus-scan`, the legacy-compatible `oracle-worker-load` load group, and `octopus-result`.
-- `atheros-sensor` auto-detects a wireless capture interface when `ATH_SENSOR_DEVICE` is empty (prefers `ath9k_htc`, then falls back to the lexicographically first wireless interface under `/sys/class/net`). Set `ATH_SENSOR_DEVICE=wlxc01c3038d5e8` or another exact wireless interface to pin capture to a specific adapter.
-
-### 8. PostgreSQL OOM Recovery and Embedding Drain Safety
-
-Use this procedure when Atheros Search reports SQLSTATE `57P01`, `57P02`, or
-`57P03`, or when PostgreSQL repeatedly enters crash recovery. Pause the drainer
-before intentionally restarting PostgreSQL so it cannot multiply recovery load.
-
-1. Confirm memory pressure before changing runtime state:
-
-   ```sh
-   kubectl -n ssl-proxy get pod -l app.kubernetes.io/component=postgres -o wide
-   kubectl -n ssl-proxy describe pod -l app.kubernetes.io/component=postgres
-   kubectl -n ssl-proxy logs -l app.kubernetes.io/component=postgres --tail=200
-   kubectl -n ssl-proxy exec statefulset/ssl-proxy-postgres -- cat /sys/fs/cgroup/memory.events
-   kubectl -n ssl-proxy exec statefulset/ssl-proxy-postgres -- sh -ec \
-     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "show shared_buffers; show effective_cache_size; show work_mem; show maintenance_work_mem; show autovacuum_work_mem; show wal_buffers;"'
-   ```
-
-   A rising `oom_kill` count, an 8 GiB cgroup limit, and `shared_buffers=8GB`
-   identify the known misconfiguration. Preserve the PostgreSQL logs before a
-   restart so the crash-recovery sequence remains available for diagnosis.
-
-2. Pause the embedding drainer. For the current Compose-hosted Atheros Search:
-
-   ```sh
-   docker compose stop atheros-search
-   ```
-
-   If the worker is later deployed to Kubernetes, scale only its owning
-   workload to zero or roll it out with `ATHSEARCH_WORKER_ENABLED=false`, then
-   wait until no worker pod remains. Keep read-only API replicas running only if
-   they do not contain an enabled embedded worker.
-
-3. Restart PostgreSQL only after the drainer is stopped. Wait for the database
-   readiness probe and crash recovery to finish before resuming any worker.
-   Do not repeatedly restart a recovering postmaster.
-
-4. During a planned repository rollout, refresh and validate the chart before
-   the Helm upgrade:
-
-   ```sh
-   helm dependency update helm/ssl-proxy
-   helm lint helm/ssl-proxy/charts/postgres
-   helm lint helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml
-   helm template ssl-proxy helm/ssl-proxy -f helm/ssl-proxy/values-k8s.yaml > /tmp/ssl-proxy.yaml
-   kubectl apply --dry-run=client -f /tmp/ssl-proxy.yaml
-   ```
-
-   Apply the Helm upgrade through the normal deployment workflow. For Compose,
-   retain the 32 GiB image tuning profile and only recreate Atheros Search after
-   exporting `ATHSEARCH_POSTGRES_DSN` with an environment-appropriate explicit
-   `sslmode`.
-
-5. Recover leases without violating at-least-once delivery. Never bulk-reset
-   unexpired leases: uncertain completions may have committed before the
-   connection failed. Wait at least `ATHSEARCH_WORKER_LEASE_SECONDS`, then let
-   the worker's normal expiry sweep run or release only expired leases:
-
-   ```sql
-   SELECT vec_release_expired_leases();
-   ```
-
-6. Resume the drainer and verify the rollout:
-
-   ```sh
-   docker compose up -d atheros-search
-   curl -fsS http://127.0.0.1:8080/readyz
-   curl -fsS http://127.0.0.1:19090/metrics | grep '^athsearch_worker_jobs_deferred_total'
-   kubectl -n ssl-proxy exec statefulset/ssl-proxy-postgres -- cat /sys/fs/cgroup/memory.events
-   ```
-
-   Confirm PostgreSQL reports `shared_buffers=2GB`, `effective_cache_size=6GB`,
-   and the remaining chart tuning values; the pod request is 4 GiB and the
-   limit remains 8 GiB. Verify `oom_kill` is stable, `/readyz` stays successful,
-   lease counts decline after expiry, and drain errors are bounded summaries
-   rather than per-job connection failures.
-
-### 9. Wireless Audit Minute Cleanup
-
-Use the cleanup function after confirming an audit time range is safe to normalize. It truncates `wireless.audit` `observed_at` values to the UTC minute and removes duplicate rows with the same wireless fingerprint, keeping the newest row by `updated_at`, then `created_at`, then `dedupe_key`.
-
-```sql
-SELECT * FROM normalize_wireless_audit_minutes(
-  '2026-04-29 00:00:00+00'::timestamptz,
-  '2026-04-30 00:00:00+00'::timestamptz
-);
+Unit tests cannot qualify TiFlash/HNSW, TLS identity, transaction conflicts, or
+consumer offsets. Record those results against the exact external environment.
+
+## Schema provisioning
+
+Use the repository schema executor in verify/dry-run mode first. It validates
+the ordered manifests and checksums for all four domains. The Atheros Search
+post-TiFlash phase is separate: it sets replicas, proves all four vector tables
+report available, and only then applies the four cosine HNSW indexes.
+
+Runtime accounts must not have DDL privileges. After apply, run executor verify
+with each runtime identity and capture the manifest/version/readiness output.
+
+## Stage
+
+1. Render the `stage` inventory and confirm no Service selector moves.
+2. Deploy new images with Octopus processors and consumers disabled.
+3. Prove TiDB v8.5+, TLS identity, database/account ownership, canonical
+   manifest checksums, TiFlash availability, Redis degradation behavior, and a
+   token from the fresh Keycloak client.
+4. Confirm legacy writers remain the only authoritative writers.
+
+Abort if any client accepts loopback, a root account, the wrong database, an
+unverified TLS connection, or a mismatched schema checksum.
+
+## Activate
+
+1. Quiesce legacy PostgreSQL-backed Rails/Go/coordinator writers while
+   Redpanda producers continue.
+2. Capture every new consumer-group/topic/partition next offset, canonicalize
+   the artifact, and sign it offline.
+3. Review the generated `rpk group seek` plan. Apply it only with the exact
+   signed SHA-256 and confirmed cluster identity.
+4. Enable Octopus processors/consumers and wait for durable readiness.
+5. Switch Rails and Atheros Search Services only after their schema and smoke
+   checks pass. Enable schema-migrator against its TiDB control database.
+
+Commands and artifact shapes are in
+[Signed offset artifacts](tidb-runtime-cutover.md#signed-offset-artifacts).
+
+## Thirty-minute observation
+
+Capture evidence for at least 30 clean minutes:
+
+- no application PostgreSQL or MongoDB connections;
+- no consumed offsets below the signed cutoff;
+- no unexplained gap or duplicate in the bounded ingestion ledger;
+- no `retrying` or `parked` record at audit end;
+- stable/growing-free consumer lag, lease backlog, and outbox backlog;
+- successful vector queries with correct cosine ordering and bounded filtering;
+- Redis loss affects cache/cable delivery only and loses no durable records;
+- Rails routes/channels, Atheros Search HTTP/gRPC/NDJSON, and schema-migrator
+  public APIs remain compatible.
+
+Sign the exclusive `audit_end` offsets and run the coverage command before
+accepting the observation window.
+
+## Prune and irreversible cleanup
+
+Apply the atomic `prune` revision only after observation acceptance. Confirm
+the rendered inventory has no PostgreSQL/MongoDB workload, Service, PVC,
+Secret, ConfigMap, NetworkPolicy, exporter, scrape, alert, dashboard, or legacy
+worker object. Delete orphaned failed-revision resources only by exact name and
+release labels.
+
+The repository intentionally does not automate the destructive host deletion.
+During the approved window, an operator must:
+
+1. Resolve the exact expected path
+   `/var/lib/docker/volumes/ssl-proxy_postgres-data/_data` on the intended host.
+2. Prove no process, mount, container, or Kubernetes object uses it.
+3. Reconfirm the accepted audit evidence, successful `prune` revision, host,
+   path, and irreversible-deletion approval.
+4. Delete that exact directory with the approved host procedure and verify it
+   is absent.
+
+Do not broaden the target with variables, globs, parent directories, or a
+recursive workspace/volume-root command.
+
+## Abort and recovery
+
+Abort activation for a signature/checksum/cluster mismatch, pre-cutoff replay,
+schema drift, TLS downgrade, growing lag, stuck leases/outbox, vector failure,
+public contract regression, or unexpected retired-datastore connection.
+
+Before TiDB-only writes begin, restore the staged legacy release. After
+TiDB-only writes begin, do not copy records back to PostgreSQL and do not replay
+old history; stop new consumers, preserve signed evidence, and diagnose forward.
+
+## WireGuard and proxy operations
+
+Database migration does not change the network-path controls:
+
+```bash
+make dependency-boundaries
+make diagnose PROFILE_MODE=linux-shim SERVER_IP=<server> CLIENT_IP=<client>
+make k8s-status KUBE_NAMESPACE=ssl-proxy
 ```
 
-Quick sync-plane inspection:
-
-```sh
-scripts/sync-status.sh
-```
-
-Manual checks:
-
-```sh
-docker compose run --rm redpanda-init rpk topic describe sync.scan.request --brokers redpanda:9092
-docker compose run --rm redpanda-init rpk topic describe sync.oracle.load --brokers redpanda:9092
-docker compose run --rm redpanda-init rpk group describe octopus-scan --brokers redpanda:9092
-curl -s http://127.0.0.1:8081/actuator/prometheus | grep '^coordinator_redpanda_consumer_lag_records'
-docker compose exec -T postgres psql -U sync -d sync -c "select status, count(*) from sync_events group by status"
-docker compose exec -T postgres psql -U sync -d sync -c "select count(*) from sync_jobs; select count(*) from sync_batches;"
-```
-
-KEDA-ready coordinator lag PromQL uses `max(...)` so multi-replica scrapes do not double count the same consumer-group lag:
-
-```promql
-max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="scan",topic="sync.scan.request"})
-max(coordinator_redpanda_consumer_lag_records{job="java-coordinator",role="result",topic="sync.oracle.result"})
-```
-
-If `java-coordinator` logs `event=oracle_load status=failed` or `unsupported stream_name`, confirm the coordinator load consumer is subscribed to the load topic and that `SYNC_ORACLE_STREAM_NAMES` contains only streams with Oracle sink support:
-
-With `ORACLE_SINK_ENABLED=true`, `java-coordinator` validates the mounted wallet before the Kafka load consumer can process batches. Wallet preflight failures use these exact messages in `java-coordinator` logs: `wallet directory missing`, `missing Oracle wallet artifact`, `Oracle TNS alias not found`, `missing Oracle password file`, and `Oracle password file is empty`. Missing wallet artifact errors include a sanitized listing of `/app/wallet`. Unrecoverable corrupt dispatch rows are marked with `sync.oracle.load payload_ref missing and stored payload unavailable`.
-
-`ORA-06550` with `PLS-00201: identifier 'WIRELESS_UPSERT_SENSOR' must be declared` means the connected `ORACLE_USER` can reach Oracle but cannot see the active sink schema from `sql/oracle.sql`; apply the Oracle DDL to that schema or grant visible synonyms for the required tables and procedures.
-
-```sh
-docker compose config java-coordinator | sed -n '/target: \/app\/wallet/,+4p'
-docker compose exec -T java-coordinator sh -lc 'ls -la /app/wallet && test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s "${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}"'
-docker compose run --rm redpanda-init rpk group describe oracle-worker-load --brokers redpanda:9092
-docker compose exec -T java-coordinator env | grep '^SYNC_ORACLE_STREAM_NAMES='
-docker compose exec -T postgres psql -U sync -d sync -c "select job.stream_name, batch.status, count(*) from sync_batches batch join sync_jobs job on job.job_id = batch.job_id group by job.stream_name, batch.status order by job.stream_name, batch.status"
-```
-
-Recovery path:
-
-```sh
-docker compose run --rm redpanda-init
-docker compose restart java-coordinator
-```
-
-If the consumer group offset is stuck after a poison load message, reset it after the bad row is addressed:
-
-```sh
-docker compose run --rm redpanda-init rpk group offset-delete oracle-worker-load --topics sync.oracle.load --brokers redpanda:9092
-docker compose restart java-coordinator
-```
-
-For attribution, usernames come from the device registry. Passive wireless-only observations should remain `identity_source='unknown'` until a registered device record provides a reliable correlation such as `wg_pubkey`, claim token, hostname, or MAC hint.
-
-### Device upsert response note
-
-`DeviceUpsertResponse.claim_token` is now optional on device upsert responses.
-
-- `claim_token` is returned (`Some`) only when a new device is created or when `regenerate_claim_token=true` is set on the request.
-- For metadata-only updates to an existing device, `claim_token` is `None` and omitted from JSON (`skip_serializing_if = "Option::is_none"`).
-
-Client migration guidance: treat `claim_token` as nullable/optional and only persist a new token when the field is present; do not assume every upsert response contains a token string.
-
----
-
-### 9. Security Hardening Controls (Threat-Model Gap Closure)
-
-Set these environment variables for hardened control-plane behavior:
-
-```text
-ADMIN_BIND_ADDR=127.0.0.1
-ADMIN_REQUIRE_MFA_CLAIM=true
-ADMIN_MFA_HEADER_NAMES=x-auth-amr,x-auth-acr,x-mfa-claim
-ENABLE_NETWORK_SEGMENTATION=true
-ALLOWED_BINARY_SHA256=<sha256 of ssl-proxy binary>
-ALLOWED_CONFIG_SHA256=server.conf=<sha256>,peer.conf=<sha256>
-INTEGRITY_CONFIG_PATHS=config/templates/server.conf,config/templates/peer.conf
-PATCH_CADENCE_REPORT_PATH=/var/run/security/patch-cadence.json
-RECOVERY_DRILL_REPORT_PATH=/var/run/security/recovery-drills.json
-```
-
-`ALLOWED_CONFIG_SHA256` is matched by config filename, not by a shared allowlist across all config paths.
-`v_payload_audit_sensitive` is intended to remain owner-only; if operators grant access, they should do so through DBA-managed least-privilege roles and database audit policy outside this repo.
-
-When configured, additional admin endpoints are exposed (still under API key + MFA middleware):
-
-```text
-GET /security/patch-cadence
-GET /security/recovery-drills
-```
-
----
-
-### 10. Non-Vector Observability Rollout Ops
-
-This runbook section covers the non-vector observability control plane. Full rollout details live in `docs/observability-workmap-non-vector.md`.
-
-Ports:
-
-```text
-Grafana:     127.0.0.1:3004
-Prometheus:  127.0.0.1:9090
-Loki:        127.0.0.1:3100
-Jaeger UI:   127.0.0.1:16686
-OTel gRPC:   127.0.0.1:4317
-OTel HTTP:   127.0.0.1:4320
-```
-
-Verification:
-
-```sh
-docker compose up -d prometheus loki promtail jaeger otel-collector grafana postgres-exporter pushgateway
-docker compose ps
-curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health, instance: .labels.instance}'
-curl -s "http://127.0.0.1:16686/api/services" | jq
-curl -s http://127.0.0.1:3003/metrics | head -n 30
-curl -s http://127.0.0.1:9090/api/v1/query --data-urlencode 'query=observability_job_last_run_unixtime' | jq
-```
-
-Scope guardrail: this rollout excludes vector-profile services (`vec-worker*`, `ollama`) and does not change `vector.toml`.
+Keep admin endpoints host-local, protect secrets with the existing rotator,
+and preserve the locked Redpanda topic payload contracts.

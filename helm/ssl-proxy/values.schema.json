@@ -4,7 +4,15 @@
   "properties": {
     "global": {
       "type": "object",
+      "required": ["migration", "shared"],
       "properties": {
+        "migration": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {"type": "string", "enum": ["stage", "activate", "prune"]}
+          }
+        },
         "image": {
           "type": "object",
           "properties": {
@@ -23,6 +31,70 @@
             "name": { "type": "string", "minLength": 1 },
             "automountServiceAccountToken": { "type": "boolean" }
           }
+        },
+        "shared": {
+          "type": "object",
+          "required": ["tidb", "keycloak", "redis"],
+          "properties": {
+            "tidb": {
+              "type": "object",
+              "required": ["host", "port", "minimumVersion", "tls", "accounts"],
+              "properties": {
+                "host": {"type": "string", "minLength": 1},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                "minimumVersion": {"type": "string", "pattern": "^8\\.(?:[5-9]|[1-9][0-9])(?:\\.[0-9]+)?$"},
+                "tls": {
+                  "type": "object",
+                  "required": ["serverName", "caSecret"],
+                  "properties": {
+                    "serverName": {"type": "string", "minLength": 1},
+                    "caSecret": {
+                      "type": "object",
+                      "required": ["name", "key"],
+                      "properties": {
+                        "name": {"type": "string", "minLength": 1},
+                        "key": {"type": "string", "minLength": 1}
+                      }
+                    }
+                  }
+                },
+                "accounts": {
+                  "type": "object",
+                  "required": ["octopus", "atherosSearch", "integrationConsole", "schemaMigrator"],
+                  "properties": {
+                    "octopus": {"$ref": "#/definitions/tidbAccount"},
+                    "atherosSearch": {"$ref": "#/definitions/tidbAccount"},
+                    "integrationConsole": {"$ref": "#/definitions/tidbAccount"},
+                    "schemaMigrator": {"$ref": "#/definitions/tidbAccount"}
+                  }
+                }
+              }
+            },
+            "keycloak": {
+              "type": "object",
+              "required": ["issuer", "jwksUri", "consoleClientId", "schemaMigratorClientId"],
+              "properties": {
+                "issuer": {"type": "string", "format": "uri", "pattern": "^https://"},
+                "jwksUri": {"type": "string", "format": "uri", "pattern": "^https://"},
+                "consoleClientId": {"type": "string", "minLength": 1},
+                "schemaMigratorClientId": {"type": "string", "minLength": 1}
+              }
+            },
+            "redis": {
+              "type": "object",
+              "required": ["urlSecret"],
+              "properties": {
+                "urlSecret": {
+                  "type": "object",
+                  "required": ["name", "key"],
+                  "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "key": {"type": "string", "minLength": 1}
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -34,46 +106,6 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" }
-          }
-        }
-      }
-    },
-    "postgres": {
-      "type": "object",
-      "properties": {
-        "hostPort": {
-          "type": ["integer", "null"],
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "sharedMemory": {
-          "type": "object",
-          "properties": {
-            "sizeLimit": {
-              "type": "string",
-              "pattern": "^[1-9][0-9]*(Ki|Mi|Gi)$"
-            }
-          }
-        }
-      }
-    },
-    "integrationConsole": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "web": {
-          "type": "object",
-          "properties": {
-            "service": {
-              "type": "object",
-              "properties": {
-                "hostPort": {
-                  "type": ["integer", "null"],
-                  "minimum": 1,
-                  "maximum": 65535
-                }
-              }
-            }
           }
         }
       }
@@ -135,7 +167,6 @@
             "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "databaseName": { "type": "string", "minLength": 1 },
             "user": { "type": "string", "minLength": 1 },
-            "schema": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "poolSize": { "type": "integer", "minimum": 1 },
             "credentialsSecret": {
               "type": "object",
@@ -181,12 +212,19 @@
     },
     "tidb": {
       "type": "object",
+      "required": ["external", "minimumVersion", "egress"],
       "properties": {
-        "external": { "type": "boolean" },
-        "persistence": {
+        "external": { "const": true },
+        "minimumVersion": {"type": "string", "pattern": "^8\\.(?:[5-9]|[1-9][0-9])(?:\\.[0-9]+)?$"},
+        "egress": {
           "type": "object",
+          "required": ["enabled", "cidrs"],
           "properties": {
-            "hostPath": { "type": "string" }
+            "enabled": {"type": "boolean"},
+            "cidrs": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[0-9a-fA-F:.]+/[0-9]+$"}
+            }
           }
         }
       }
@@ -195,6 +233,24 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" }
+      }
+    }
+  },
+  "definitions": {
+    "tidbAccount": {
+      "type": "object",
+      "required": ["database", "user", "passwordSecret"],
+      "properties": {
+        "database": {"type": "string", "enum": ["octopus_core", "atheros_search", "integration_console", "schema_migrator"]},
+        "user": {"type": "string", "minLength": 1},
+        "passwordSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "key": {"type": "string", "minLength": 1}
+          }
+        }
       }
     }
   },

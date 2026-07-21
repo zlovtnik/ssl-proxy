@@ -46,7 +46,3 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default "default" .Values.global.serviceAccount.name }}
 {{- end }}
 {{- end }}
-
-{{- define "ssl-proxy.atherosSearch.tidbDsn" -}}
-mysql://{{ .Values.global.shared.tidb.user }}:$(TIDB_PASSWORD)@{{ .Values.global.shared.tidb.host }}:{{ .Values.global.shared.tidb.port }}/{{ .Values.global.shared.tidb.database }}
-{{- end }}

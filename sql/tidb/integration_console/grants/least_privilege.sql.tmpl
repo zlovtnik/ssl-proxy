@@ -1,0 +1,18 @@
+-- Provision accounts and credentials outside schema migration. Replace the
+-- account tokens with pre-existing TLS-authenticated TiDB identities.
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON integration_console.*
+  TO '{{RAILS_ACCOUNT}}';
+
+GRANT SELECT ON integration_console.schema_readiness
+  TO '{{OCTOPUS_ACCOUNT}}';
+GRANT SELECT ON integration_console.integration_configs
+  TO '{{OCTOPUS_ACCOUNT}}';
+GRANT SELECT, UPDATE ON integration_console.integration_runs
+  TO '{{OCTOPUS_ACCOUNT}}';
+GRANT SELECT ON integration_console.audit_windows
+  TO '{{OCTOPUS_ACCOUNT}}';
+GRANT SELECT, UPDATE ON integration_console.console_commands
+  TO '{{OCTOPUS_ACCOUNT}}';
+GRANT SELECT, INSERT, UPDATE ON integration_console.console_command_acknowledgements
+  TO '{{OCTOPUS_ACCOUNT}}';

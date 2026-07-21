@@ -24,6 +24,7 @@ spec:
       labels:
         {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: schema-migrator-backend
+        ssl-proxy.io/tidb-client: "true"
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
     spec:
@@ -41,17 +42,17 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: -Djava.io.tmpdir=/tmp
-            - name: SCHEMA_MIGRATOR_DB_KIND
-              value: {{ .Values.dbKind | default "postgres" | quote }}
-            - name: DATABASE_URL
-              value: {{ printf "r2dbc:mysql://%s:%v/%s" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.database | quote }}
-            - name: TIDB_USER
-              value: {{ .Values.global.shared.tidb.user | quote }}
-            - name: TIDB_PASSWORD
+            - name: BEDROCK_STATE_DB_URL
+              value: {{ printf "jdbc:mysql://%s:%v/%s?sslMode=VERIFY_IDENTITY&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.accounts.schemaMigrator.database | quote }}
+            - name: BEDROCK_STATE_DB_USER
+              value: {{ .Values.global.shared.tidb.accounts.schemaMigrator.user | quote }}
+            - name: BEDROCK_STATE_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
-                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
+                  name: {{ .Values.global.shared.tidb.accounts.schemaMigrator.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.accounts.schemaMigrator.passwordSecret.key }}
+            - name: BEDROCK_STATE_DB_POOL_SIZE
+              value: {{ .Values.stateStore.poolSize | quote }}
             - name: BEDROCK_HTTP_HOST
               value: 0.0.0.0
             - name: BEDROCK_HTTP_PORT
@@ -78,34 +79,19 @@ spec:
             - name: BEDROCK_KEYCLOAK_ENABLED
               value: "true"
             - name: BEDROCK_KEYCLOAK_ISSUER
-              value: {{ printf "%s/realms/%s" (include "ssl-proxy.schemaMigrator.keycloakOrigin" .) .Values.keycloak.realm | quote }}
+              value: {{ .Values.global.shared.keycloak.issuer | quote }}
             - name: BEDROCK_KEYCLOAK_JWKS_URI
-              value: {{ printf "http://%s:8080/realms/%s/protocol/openid-connect/certs" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak")) .Values.keycloak.realm | quote }}
+              value: {{ .Values.global.shared.keycloak.jwksUri | quote }}
             - name: BEDROCK_KEYCLOAK_CLIENT_ID
-              value: {{ .Values.keycloak.clientId | quote }}
+              value: {{ .Values.global.shared.keycloak.schemaMigratorClientId | quote }}
             - name: BEDROCK_KEYCLOAK_AUDIENCE
-              value: {{ .Values.keycloak.clientId | quote }}
+              value: {{ .Values.global.shared.keycloak.schemaMigratorClientId | quote }}
             - name: BEDROCK_DB_TEST_ALLOWED_HOSTS
               value: {{ .Values.backend.dbTestAllowedHosts | uniq | join "," | quote }}
             - name: BEDROCK_PATCH_STAGE_DIR
               value: /tmp/schema-migrator-patches
             - name: BEDROCK_REPO_CACHE_DIR
               value: /tmp/schema-migrator-repos
-            {{- if .Values.stateStore.host }}
-            - name: BEDROCK_STATE_DB_URL
-              value: {{ printf "jdbc:postgresql://%s:%v/%s" .Values.stateStore.host .Values.stateStore.port .Values.stateStore.databaseName | quote }}
-            - name: BEDROCK_STATE_DB_USER
-              value: {{ .Values.stateStore.user | quote }}
-            - name: BEDROCK_STATE_DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.stateStore.credentialsSecret.name }}
-                  key: {{ .Values.stateStore.credentialsSecret.passwordKey }}
-            - name: BEDROCK_STATE_DB_SCHEMA
-              value: {{ .Values.stateStore.schema | quote }}
-            - name: BEDROCK_STATE_DB_POOL_SIZE
-              value: {{ .Values.stateStore.poolSize | quote }}
-            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.backend.service.port }}

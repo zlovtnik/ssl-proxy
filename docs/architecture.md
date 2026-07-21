@@ -1,5 +1,20 @@
 # System Architecture
 
+## Runtime Persistence Boundary
+
+Application-owned durable state uses a fresh external TiDB 8.5+ cluster with
+TiFlash and four isolated databases: `octopus_core`, `atheros_search`,
+`integration_console`, and `schema_migrator`. Octopus, Atheros Search,
+Integration Console, and schema-migrator connect directly with separate TLS
+identities and least-privilege grants. Only Octopus writes core and maintained
+projection state; Rails and Search write only their owned tables.
+
+PostgreSQL is not a runtime datastore. It remains supported only as an explicit
+schema-migrator external target. Redis is reconstructible cache and ActionCable
+fan-out, never authoritative state. The canonical schemas, no-replay boundary,
+staged rollout, and destructive cleanup gates are documented in
+[Fresh TiDB Runtime Cutover](tidb-runtime-cutover.md).
+
 ## Runtime Data Plane
 
 ```mermaid

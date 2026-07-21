@@ -96,15 +96,18 @@ metrics:
   heartbeatLogIntervalMs: 15000
 tidb:
   enabled: true
-  host: "tidb"
-  port: 4000
-  database: "coordinator"
-  user: "root"
-  password: ""
   poolSize: 10
   connectionTimeoutMs: 5000
   statementTimeoutSecs: 30
   warnOnly: false
-  sslMode: "DISABLED"
+  sslMode: "VERIFY_IDENTITY"
+cutover:
+  secretName: octopus-cutover-v1
+  artifactKey: cutover.json
+  signatureKey: cutover.sig
+  publicKeyKey: cutover-ed25519.pub.pem
+  publicKeySHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+  clusterId: redpanda-production-a
+  schemaVersion: 1
 
 # Vec Worker

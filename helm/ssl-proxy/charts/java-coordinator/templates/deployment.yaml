@@ -19,6 +19,8 @@ spec:
       labels:
         {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: java-coordinator
+        app.kubernetes.io/name-alias: octopus
+        ssl-proxy.io/tidb-client: "true"
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
         {{- with .Values.global.rolloutRevision }}
@@ -276,18 +278,18 @@ spec:
             - name: TIDB_ENABLED
               value: {{ .Values.tidb.enabled | quote }}
             - name: TIDB_HOST
-              value: {{ .Values.tidb.host | quote }}
+              value: {{ .Values.global.shared.tidb.host | quote }}
             - name: TIDB_PORT
-              value: {{ .Values.tidb.port | quote }}
+              value: {{ .Values.global.shared.tidb.port | quote }}
             - name: TIDB_DATABASE
-              value: {{ .Values.tidb.database | quote }}
+              value: {{ .Values.global.shared.tidb.accounts.octopus.database | quote }}
             - name: TIDB_USER
-              value: {{ .Values.tidb.user | quote }}
+              value: {{ .Values.global.shared.tidb.accounts.octopus.user | quote }}
             - name: TIDB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
-                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
+                  name: {{ .Values.global.shared.tidb.accounts.octopus.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.accounts.octopus.passwordSecret.key }}
             - name: TIDB_POOL_SIZE
               value: {{ .Values.tidb.poolSize | quote }}
             - name: TIDB_CONNECTION_TIMEOUT_MS
@@ -298,6 +300,22 @@ spec:
               value: {{ .Values.tidb.warnOnly | quote }}
             - name: TIDB_SSL_MODE
               value: {{ .Values.tidb.sslMode | quote }}
+            - name: OCTOPUS_PROCESSORS_ENABLED
+              value: {{ ne .Values.global.migration.mode "stage" | quote }}
+            - name: OCTOPUS_CONSUMERS_ENABLED
+              value: {{ ne .Values.global.migration.mode "stage" | quote }}
+            - name: OCTOPUS_CUTOVER_ARTIFACT_PATH
+              value: /etc/octopus-cutover/cutover.json
+            - name: OCTOPUS_CUTOVER_SIGNATURE_PATH
+              value: /etc/octopus-cutover/cutover.sig
+            - name: OCTOPUS_CUTOVER_PUBLIC_KEY_PATH
+              value: /etc/octopus-cutover/public.pem
+            - name: OCTOPUS_CUTOVER_PUBLIC_KEY_SHA256
+              value: {{ .Values.cutover.publicKeySHA256 | quote }}
+            - name: OCTOPUS_CUTOVER_SCHEMA_VERSION
+              value: {{ .Values.cutover.schemaVersion | quote }}
+            - name: OCTOPUS_CUTOVER_CLUSTER_ID
+              value: {{ .Values.cutover.clusterId | quote }}
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -330,12 +348,32 @@ spec:
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+            - name: octopus-cutover
+              mountPath: /etc/octopus-cutover
+              readOnly: true
       volumes:
         - name: topics-manifest
           configMap:
             name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-topics-manifest
         - name: sync-outbox
           emptyDir: {}
+        - name: tidb-tls
+          secret:
+            secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
+        - name: octopus-cutover
+          secret:
+            secretName: {{ .Values.cutover.secretName }}
+            optional: {{ eq .Values.global.migration.mode "stage" }}
+            items:
+              - key: {{ .Values.cutover.artifactKey }}
+                path: cutover.json
+              - key: {{ .Values.cutover.signatureKey }}
+                path: cutover.sig
+              - key: {{ .Values.cutover.publicKeyKey }}
+                path: public.pem
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

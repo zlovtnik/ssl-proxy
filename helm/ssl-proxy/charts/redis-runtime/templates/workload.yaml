@@ -1,0 +1,48 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-redis-runtime
+  namespace: {{ .Release.Namespace }}
+  labels: &labels {app.kubernetes.io/name: redis-runtime, app.kubernetes.io/instance: {{ .Release.Name }}}
+spec:
+  replicas: 1
+  selector: {matchLabels: *labels}
+  template:
+    metadata:
+      labels: *labels
+      annotations: {ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}}
+    spec:
+      serviceAccountName: {{ .Values.global.serviceAccount.name }}
+      automountServiceAccountToken: false
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: redis
+          image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args: ['exec redis-server --save "" --appendonly no --requirepass "$REDIS_PASSWORD"']
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.credentialsSecret.name }}, key: {{ .Values.credentialsSecret.passwordKey }}}}
+          ports: [{name: redis, containerPort: 6379}]
+          readinessProbe: {tcpSocket: {port: redis}, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: redis}, periodSeconds: 15}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: {{ .Release.Name }}-redis-runtime, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: *labels
+  ports: [{name: redis, port: 6379, targetPort: redis}]
+{{- end }}

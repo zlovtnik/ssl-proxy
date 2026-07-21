@@ -12,23 +12,11 @@ import (
 )
 
 type Metrics struct {
-	SearchRequests        *prometheus.CounterVec
-	SearchLatency         *prometheus.HistogramVec
-	ResultsReturned       *prometheus.CounterVec
-	EmbeddingCacheHits    prometheus.Counter
-	EmbeddingCacheMiss    prometheus.Counter
-	EmbeddingJobsQueued   prometheus.Counter
-	WorkerJobsLeased      *prometheus.CounterVec
-	WorkerJobsCompleted   *prometheus.CounterVec
-	WorkerJobsFailed      *prometheus.CounterVec
-	WorkerJobsDeferred    *prometheus.CounterVec
-	WorkerJobsPermanent   *prometheus.CounterVec
-	WorkerPrepareLatency  prometheus.Histogram
-	WorkerEmbedLatency    prometheus.Histogram
-	WorkerCompleteLatency prometheus.Histogram
-	WorkerBatchSize       prometheus.Histogram
-	WorkerQueueDepth      prometheus.Gauge
-	AlertsInserted        *prometheus.CounterVec
+	SearchRequests     *prometheus.CounterVec
+	SearchLatency      *prometheus.HistogramVec
+	ResultsReturned    *prometheus.CounterVec
+	EmbeddingCacheHits prometheus.Counter
+	EmbeddingCacheMiss prometheus.Counter
 }
 
 func New() *Metrics {
@@ -54,58 +42,6 @@ func New() *Metrics {
 			Name: "athsearch_embedding_cache_misses_total",
 			Help: "Query embedding cache misses.",
 		}),
-		EmbeddingJobsQueued: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "athsearch_embedding_jobs_enqueued_total",
-			Help: "Embedding jobs enqueued by search ingest.",
-		}),
-		WorkerJobsLeased: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "athsearch_worker_jobs_leased_total",
-			Help: "Embedding jobs leased by the worker.",
-		}, []string{"kind"}),
-		WorkerJobsCompleted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "athsearch_worker_jobs_completed_total",
-			Help: "Embedding jobs completed by the worker.",
-		}, []string{"kind"}),
-		WorkerJobsFailed: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "athsearch_worker_jobs_failed_total",
-			Help: "Embedding jobs retried after worker failures.",
-		}, []string{"kind", "failure_type"}),
-		WorkerJobsDeferred: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "athsearch_worker_jobs_deferred_total",
-			Help: "Embedding jobs left leased for retry after a transient worker dependency failure.",
-		}, []string{"kind", "reason"}),
-		WorkerJobsPermanent: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "athsearch_worker_jobs_permanent_total",
-			Help: "Embedding jobs permanently failed by the worker.",
-		}, []string{"kind"}),
-		WorkerPrepareLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "athsearch_worker_prepare_latency_ms",
-			Help:    "Worker job preparation latency in milliseconds.",
-			Buckets: []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000},
-		}),
-		WorkerEmbedLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "athsearch_worker_embed_latency_ms",
-			Help:    "Worker embedding provider latency in milliseconds.",
-			Buckets: []float64{25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000},
-		}),
-		WorkerCompleteLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "athsearch_worker_complete_latency_ms",
-			Help:    "Worker embedding completion latency in milliseconds.",
-			Buckets: []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000},
-		}),
-		WorkerBatchSize: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "athsearch_worker_batch_size",
-			Help:    "Number of jobs in each leased worker batch.",
-			Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024},
-		}),
-		WorkerQueueDepth: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "athsearch_worker_queue_depth",
-			Help: "Current count of pending or failed embedding jobs.",
-		}),
-		AlertsInserted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "athsearch_alerts_inserted_total",
-			Help: "Alerts inserted by alert type.",
-		}, []string{"alert_type"}),
 	}
 	prometheus.MustRegister(
 		m.SearchRequests,
@@ -113,18 +49,6 @@ func New() *Metrics {
 		m.ResultsReturned,
 		m.EmbeddingCacheHits,
 		m.EmbeddingCacheMiss,
-		m.EmbeddingJobsQueued,
-		m.WorkerJobsLeased,
-		m.WorkerJobsCompleted,
-		m.WorkerJobsFailed,
-		m.WorkerJobsDeferred,
-		m.WorkerJobsPermanent,
-		m.WorkerPrepareLatency,
-		m.WorkerEmbedLatency,
-		m.WorkerCompleteLatency,
-		m.WorkerBatchSize,
-		m.WorkerQueueDepth,
-		m.AlertsInserted,
 	)
 	return m
 }
@@ -133,10 +57,6 @@ func (m *Metrics) ObserveSearch(kind, mode, status string, started time.Time, re
 	m.SearchRequests.WithLabelValues(kind, mode, status).Inc()
 	m.SearchLatency.WithLabelValues(kind, mode).Observe(float64(time.Since(started).Milliseconds()))
 	m.ResultsReturned.WithLabelValues(kind).Add(float64(results))
-}
-
-func (m *Metrics) SetWorkerQueueDepth(depth int64) {
-	m.WorkerQueueDepth.Set(float64(depth))
 }
 
 func StartServer(ctx context.Context, port int) (*http.Server, error) {

@@ -1,0 +1,21 @@
+-- Provision accounts and credentials outside schema migration. Replace the
+-- account tokens with pre-existing TLS-authenticated TiDB identities.
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.*
+  TO '{{OCTOPUS_ACCOUNT}}';
+
+GRANT SELECT ON atheros_search.*
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_queries
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_query_results
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_feedback
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT ON atheros_search.merge_decisions
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+
+GRANT SELECT ON atheros_search.schema_manifest
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON atheros_search.v_vec_similarity_audit
+  TO '{{RAILS_ACCOUNT}}';

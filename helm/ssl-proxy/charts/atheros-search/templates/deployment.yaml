@@ -24,6 +24,7 @@ spec:
       labels:
         {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: atheros-search
+        ssl-proxy.io/tidb-client: "true"
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
         {{- with .Values.global.podAnnotations }}
@@ -41,17 +42,17 @@ spec:
           image: {{ include "ssl-proxy.atherosSearch.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: TIDB_PASSWORD
+            - name: ATHSEARCH_TIDB_DSN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
-                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
-            - name: ATHSEARCH_TIDB_DSN
-              value: {{ include "ssl-proxy.atherosSearch.tidbDsn" . | quote }}
-            - name: ATHSEARCH_REDPANDA_BOOTSTRAP
-              value: {{ .Values.global.shared.redpanda.bootstrapServers | quote }}
-            - name: ATHSEARCH_EMBEDDING_BACKEND
-              value: {{ .Values.apiEmbeddingBackend | quote }}
+                  name: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.name }}
+                  key: dsn
+            - name: ATHSEARCH_TIDB_TLS_CA_FILE
+              value: /etc/tidb-tls/ca.crt
+            - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
+              value: {{ .Values.global.shared.tidb.tls.serverName | quote }}
+            - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
+              value: {{ required "atherosSearch.schemaManifestSHA256 is required" .Values.schemaManifestSHA256 | quote }}
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: {{ .Values.embeddingModel | quote }}
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS
@@ -70,32 +71,6 @@ spec:
               value: {{ .Values.corsAllowedOrigins | quote }}
             - name: ATHSEARCH_SCHEMA_READY_REQUIRED
               value: {{ .Values.schemaReadyRequired | quote }}
-            - name: ATHSEARCH_WORKER_ENABLED
-              value: "false"
-            - name: ATHSEARCH_WORKER_NAME
-              value: {{ .Values.worker.name | quote }}
-            - name: ATHSEARCH_WORKER_BATCH_SIZE
-              value: {{ .Values.worker.batchSize | quote }}
-            - name: ATHSEARCH_WORKER_REQUEST_BATCH_SIZE
-              value: {{ .Values.worker.requestBatchSize | quote }}
-            - name: ATHSEARCH_WORKER_REQUEST_BATCH_MAX
-              value: {{ .Values.worker.requestBatchMax | quote }}
-            - name: ATHSEARCH_WORKER_LEASE_SECONDS
-              value: {{ .Values.worker.leaseSeconds | quote }}
-            - name: ATHSEARCH_WORKER_POLL_INTERVAL_MS
-              value: {{ .Values.worker.pollIntervalMs | quote }}
-            - name: ATHSEARCH_WORKER_MAX_DRAIN_BATCHES
-              value: {{ .Values.worker.maxDrainBatches | quote }}
-            - name: ATHSEARCH_WORKER_MAX_INPUT_TOKENS
-              value: {{ .Values.worker.maxInputTokens | quote }}
-            - name: ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED
-              value: {{ .Values.worker.maxConcurrentEmbed | quote }}
-            - name: ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE
-              value: {{ .Values.worker.maxConcurrentComplete | quote }}
-            - name: ATHSEARCH_ALERT_ENABLED
-              value: "false"
-            - name: ATHSEARCH_INGEST_ENABLED
-              value: {{ .Values.ingestEnabled | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.otlpEndpoint | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
@@ -116,6 +91,10 @@ spec:
               containerPort: {{ .Values.service.grpcPort }}
             - name: metrics
               containerPort: {{ .Values.service.metricsPort }}
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
           startupProbe:
             httpGet:
               path: /healthz
@@ -147,6 +126,13 @@ spec:
             runAsNonRoot: true
             runAsUser: 65532
             runAsGroup: 65532
+      volumes:
+        - name: tidb-tls
+          secret:
+            secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
+            items:
+              - key: {{ .Values.global.shared.tidb.tls.caSecret.key }}
+                path: ca.crt
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

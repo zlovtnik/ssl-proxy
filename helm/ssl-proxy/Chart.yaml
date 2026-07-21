@@ -2,7 +2,7 @@ apiVersion: v2
 name: ssl-proxy
 description: Umbrella chart for the SSL Proxy platform
 type: application
-version: 0.2.10
+version: 0.3.0
 appVersion: "1.0.0"
 kubeVersion: ">=1.28.0-0"
 keywords:
@@ -41,7 +41,7 @@ dependencies:
     version: 0.1.1
     repository: "file://charts/minio"
   - name: tidb
-    version: 0.1.0
+    version: 0.2.0
     repository: "file://charts/tidb"
   - name: telemetry
     version: 0.1.2
@@ -58,3 +58,18 @@ dependencies:
     repository: "file://charts/atheros-search"
     alias: atherosSearch
     condition: atherosSearch.enabled
+  - name: integration-console
+    version: 0.1.0
+    repository: "file://charts/integration-console"
+    alias: integrationConsole
+    condition: integrationConsole.enabled
+  - name: redis-runtime
+    version: 0.1.0
+    repository: "file://charts/redis-runtime"
+    alias: redisRuntime
+    condition: redisRuntime.enabled
+  - name: tidb-schema-executor
+    version: 0.1.0
+    repository: "file://charts/tidb-schema-executor"
+    alias: tidbSchemaExecutor
+    condition: tidbSchemaExecutor.enabled

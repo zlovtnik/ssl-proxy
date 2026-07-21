@@ -36,10 +36,9 @@ backend:
 
 stateStore:
   host: ""
-  port: 5432
+  port: 4000
   databaseName: "schema_migrator"
-  user: "schema_migrator"
-  schema: "public"
+  user: "root"
   poolSize: 10
   credentialsSecret:
     name: schema-migrator-state-db

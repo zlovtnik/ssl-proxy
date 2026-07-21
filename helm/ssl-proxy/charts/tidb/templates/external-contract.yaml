@@ -1,0 +1,46 @@
+{{- if not .Values.external -}}
+{{- fail "the bundled/mock TiDB runtime is retired; tidb.external must be true" -}}
+{{- end -}}
+{{- $tidb := required "global.shared.tidb is required" .Values.global.shared.tidb -}}
+{{- required "global.shared.tidb.host must name the external TiDB endpoint" $tidb.host -}}
+{{- if or (eq $tidb.host "tidb") (eq $tidb.host "127.0.0.1") (eq $tidb.host "localhost") -}}
+{{- fail "global.shared.tidb.host must be external, not a bundled or loopback endpoint" -}}
+{{- end -}}
+{{- required "global.shared.tidb.tls.caSecret.name is required" $tidb.tls.caSecret.name -}}
+{{- required "global.shared.tidb.tls.caSecret.key is required" $tidb.tls.caSecret.key -}}
+{{- range $name := list "octopus" "atherosSearch" "integrationConsole" "schemaMigrator" -}}
+{{- $account := index $tidb.accounts $name -}}
+{{- required (printf "global.shared.tidb.accounts.%s.database is required" $name) $account.database -}}
+{{- required (printf "global.shared.tidb.accounts.%s.user is required" $name) $account.user -}}
+{{- required (printf "global.shared.tidb.accounts.%s.passwordSecret.name is required" $name) $account.passwordSecret.name -}}
+{{- required (printf "global.shared.tidb.accounts.%s.passwordSecret.key is required" $name) $account.passwordSecret.key -}}
+{{- end -}}
+{{- if and .Values.egress.enabled (empty .Values.egress.cidrs) -}}
+{{- fail "tidb.egress.cidrs must contain the external TiDB routes when egress policy is enabled" -}}
+{{- end -}}
+{{- if .Values.egress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ssl-proxy.tidb.fullname" . }}-external-tidb-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy.tidb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: external-tidb-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: ssl-proxy.io/tidb-client
+        operator: In
+        values: ["true"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        {{- range .Values.egress.cidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $tidb.port }}
+{{- end }}

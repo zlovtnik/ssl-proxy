@@ -2,7 +2,8 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-A privacy-focused transparent proxy and VPN system with wireless audit capabilities, vector embeddings for device intelligence, and Oracle-backed audit persistence.
+A privacy-focused transparent proxy and VPN system with wireless audit,
+TiDB/TiFlash vector search, and a Redpanda-backed processing plane.
 
 ## Overview
 
@@ -11,8 +12,9 @@ ssl-proxy provides:
 - **WireGuard VPN ingress** - UDP 443 (plain) and UDP 51820 (obfuscated) endpoints for client traffic
 - **Transparent TLS interception** - Redirects TCP 80/443 through a Rust proxy with SNI-based classification and obfuscation profiles
 - **Wireless audit sensor** - Monitor-mode 802.11 capture (AR9271/ath9k_htc) publishing to a Redpanda-backed sync plane
-- **Vector embeddings worker** - PostgreSQL-only embedding pipeline for device behaviour, frame sequences, and infrastructure graphs
-- **Oracle sink in the Java coordinator** - At-least-once delivery of classified audit events to Oracle ADB
+- **Octopus processing plane** - supervised Cats Effect/FS2 ingestion,
+  projections, leases, outbox publishing, retention, and vector preparation
+- **Atheros Search** - TiDB ANN plus normalized sparse/hybrid HTTP and gRPC query facade
 - **Integration console** - Rails dashboard for device inventory, heatmaps, and sync-plane observability
 
 ## Architecture
@@ -24,12 +26,14 @@ ssl-proxy provides:
 ```text
 Client -> WireGuard (UDP 443/51820) -> Transparent Proxy (TCP 3001) -> Origin
                     |
-            Audit Events -> Redpanda -> Coordinator (x3) -> Oracle ADB
+            Audit Events -> Redpanda -> Octopus -> TiDB/TiFlash
                     |
-            PostgreSQL -> Vec Worker -> Embeddings (pgvector) -> Similarity Search
+            Maintained projections -> Atheros Search -> Rails console
 ```
 
-The **coordinator** (3 replicas for HA) provides sync-plane job orchestration: cursoring, deduplication, batch dispatch, and result handling. Topics are locked to these meanings:
+**Octopus** provides sync-plane orchestration, durable dedupe, tokenized leases,
+transactional outbox publishing, and maintained projections. Topics are locked
+to these meanings:
 
 | Topic | Purpose |
 |-------|---------|
@@ -44,6 +48,9 @@ See [docs/architecture.md](docs/architecture.md) for detailed diagrams and [docs
 ### Prerequisites
 
 - Docker + Docker Compose
+- An external TiDB v8.5+ cluster with TiFlash, four provisioned databases, and
+  TLS credentials
+- A fresh external Keycloak realm/client and a Redis endpoint
 - Oracle wallet (for Oracle sink) in `./wallet/`
 - WireGuard peer configs for `WG_PEERS` under `config/<peer>/` (`peer1,peer2` by default)
 
@@ -125,11 +132,9 @@ wg genpsk > presharedkey-peer1
 | Coordinator Actuator | 8081 | TCP | Health/actuator (internal) |
 | Integration Console | 3005 | TCP | Rails dashboard (device inventory, heatmaps) |
 | Atheros Search UI | 3007 | TCP | Search, graph, and inventory UI (single-node Kubernetes) |
-| Keycloak Admin | 8180 | TCP | LAN admin console (single-node Kubernetes) |
+| External TiDB | 4000 | TCP/TLS | Four isolated runtime databases (not deployed by this repository) |
 | MinIO API | 9000 | TCP | S3-compatible object storage (internal) |
 | MinIO Console | 9001 | TCP | MinIO admin UI (internal) |
-| Postgres | 5432 | TCP | Primary state store (internal) |
-| Postgres Exporter | 9187 | TCP | Postgres metrics (observability) |
 | Prometheus | 9090 | TCP | Metrics aggregation (observability) |
 | Pushgateway | 9091 | TCP | Metrics push endpoint (observability) |
 | Node Exporter | 9100 | TCP | Host metrics (observability) |
@@ -149,10 +154,10 @@ wg genpsk > presharedkey-peer1
 | Service | Description | Implementation |
 |---------|-------------|----------------|
 | **ssl-proxy** | Rust transparent proxy, WireGuard terminator, obfuscation engine | [src/](src/) |
-| **octopus** | Scala 3 Cats Effect/FS2 coordinator with TiDB sink - cursoring, dedupe, job state, batching. 3 replicas for HA. | [services/octopus/](services/octopus/) (sbt/Scala 3) |
+| **octopus** | Scala 3 Cats Effect/FS2 owner of durable TiDB ingestion, leases, outbox, and projections | [services/octopus/](services/octopus/) |
 | **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
 | **redpanda** | Kafka-compatible event backbone for sync topics | - |
-| **postgres** | Primary state store (sync_events, devices, vec_embeddings, etc.) | [sql/postgres.sql](sql/postgres.sql) |
+| **atheros-search** | Go TiDB dense/sparse/hybrid query facade; no background workers | [services/atheros-search/](services/atheros-search/) |
 | **minio** | S3-compatible object store (console exports) | - |
 
 ### Observability Stack
@@ -167,15 +172,14 @@ wg genpsk > presharedkey-peer1
 | **jaeger** | Distributed tracing UI | 16686 |
 | **cadvisor** | Container resource metrics | 8082 |
 | **node-exporter** | Host-level metrics | 9100 |
-| **postgres-exporter** | Postgres query performance metrics | 9187 |
 | **pushgateway** | Metrics push endpoint for batch jobs | 9091 |
 
-### Vector Profile (optional, `docker compose --profile vector up`)
+### Vector search
 
 | Service | Description | README |
 |---------|-------------|--------|
-| **vec-worker** | Embedding worker role in the consolidated Atheros Search image | [services/atheros-search/](services/atheros-search/) |
-| **atheros-search** | Go HTTP/gRPC search API and worker implementation | [services/atheros-search/](services/atheros-search/) |
+| **Octopus processors** | Prepare/complete embeddings and maintain similarity projections | [services/octopus/](services/octopus/) |
+| **atheros-search** | Go HTTP/gRPC query facade | [services/atheros-search/](services/atheros-search/) |
 | **ollama** | Local embedding model server | - |
 
 ### Rotator Profile (optional)
@@ -249,7 +253,11 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `EXPLICIT_PROXY_ENABLED` | `false` | Enable legacy HTTP CONNECT proxy on :3000 |
 | `ADMIN_API_KEY_FILE` | `secrets/admin_api_key` via Compose mount | File-backed bearer token for admin endpoints |
 | `SYNC_REDPANDA_BOOTSTRAP_SERVERS` | `redpanda:9092` | Kafka bootstrap for sync plane |
-| `DATABASE_URL` | Compose default: `jdbc:postgresql://postgres:5432/sync` | Primary Postgres connection. PostgreSQL credentials are supplied separately as `POSTGRES_USER=sync` and the generated `POSTGRES_PASSWORD`; URL-style values must follow `postgres://sync:${POSTGRES_PASSWORD}@postgres:5432/sync` when credentials are embedded. |
+| `TIDB_HOST` / `TIDB_PORT` | *(required)* | External TiDB endpoint; loopback and bundled defaults are rejected |
+| `TIDB_DATABASE` | `octopus_core` | Octopus-owned database |
+| `TIDB_USER` / `TIDB_PASSWORD` | *(required)* | Dedicated least-privilege Octopus account |
+| `ATHSEARCH_TIDB_DSN` | *(required)* | Native MySQL DSN from a Secret for the `atheros_search` account |
+| `REDIS_URL` | *(required for console)* | Ephemeral Rails cache and ActionCable fan-out only |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
 | `SCHEMA_MIGRATOR_PUBLIC_HOSTNAME` | *(required for Kubernetes)* | Public DNS hostname for the Schema Migrator HTTPS origin; provide a hostname only, without `https://` |
@@ -261,13 +269,12 @@ correlation resistance, while values above `50` ms add noticeable variance.
 | `REGISTRY_PLAIN_HTTP` | `auto` | Buildx plain-HTTP registry mode; auto-detects localhost and private IPv4 registries |
 | `IMAGE_TAG` | `latest` | Image tag consumed by Compose |
 
-The coordinator resolves the database URL in `DataSourceConfig.java` by
-preferring `JDBC_DATABASE_URL`, then `DATABASE_URL`, then
-`spring.datasource.url`, and finally `jdbc:postgresql://localhost:5432/sync`.
-If the selected URL does not embed credentials, it falls back to
-`POSTGRES_USER=sync` and `POSTGRES_PASSWORD`. In the Compose network the
-expected components are host `postgres`, port `5432`, database `sync`, and user
-`sync`.
+All four direct clients require verified TLS, dedicated non-root accounts, the
+expected database name, TiDB v8.5+, and the canonical manifest checksum. Rails
+uses `mysql2://` URLs for `integration_console` and its read-only core/search
+connections. Schema-migrator uses `BEDROCK_STATE_DB_*` for its TiDB control
+store; PostgreSQL URLs are accepted only for an explicitly configured external
+migration target.
 
 ### Rotator Profile
 
@@ -294,16 +301,16 @@ expected components are host `postgres`, port `5432`, database `sync`, and user
 
 The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORACLE_CONN` alias, and a non-empty password file before opening the Oracle pool. `scripts/gen-secrets` creates `secrets/oracle_password.txt`; for a real Oracle ADB user, replace that file with the actual `ORACLE_USER` password before enabling the sink.
 
-### Vector Worker
+### Vector processing
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VECTOR_EMBEDDINGS_ENABLED` | `true` | Enable embedding pipeline |
+| `OCTOPUS_PROCESSORS_ENABLED` | `false` | Enable processors only after the signed fresh-start cutover gate |
 | `VECTOR_EMBEDDING_PROVIDER` | `ollama` | `ollama` or `llamacpp` |
 | `VECTOR_EMBEDDING_URL` | `http://127.0.0.1:11434` | Provider endpoint |
 | `VECTOR_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | Model name |
 | `VECTOR_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
-| `VECTOR_EMBEDDING_BATCH_SIZE` | `64` | Jobs leased per iteration |
+| `VECTOR_EMBEDDING_BATCH_SIZE` | `64` | Octopus embedding lease batch size |
 
 ### Wireless Sensor
 
@@ -342,7 +349,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `docker` | Build selected local Docker images through `docker-compose.build.yaml` |
 | `registry-buildx` | Create or use the registry-aware buildx builder |
 | `registry-build-all` | Build and push linux/amd64 registry images |
-| `registry-build-vec-worker` | Compatibility alias that builds the consolidated Atheros Search worker image |
+| `registry-build-vec-worker` | Retired compatibility alias; do not use for runtime deployment |
 | `deploy` | SSH to `DEPLOY_HOST`, pull images in `DEPLOY_PATH`, and run Compose |
 | `clean` | Clean build artifacts |
 | `up-ready` | Publish local-registry images, upgrade Kubernetes with Helm, verify services, and print peer QR codes |
@@ -350,7 +357,7 @@ The coordinator validates `tnsnames.ora`, `sqlnet.ora`, `cwallet.sso`, the `ORAC
 | `pipeline-health` | Check sync-plane pipeline health |
 | `memo-show` | Show operational memory ledger |
 | `memo-log` | Append one operational incident line |
-| `db-check-connections` | Check coordinator actuator/HikariCP health and Postgres password fingerprints |
+| `db-check-connections` | Verify external TiDB client connectivity and schema readiness |
 | `smoke` | Run the Docker Compose smoke scenarios |
 | `bench-wg-path` | Run WireGuard path iperf benchmark cases |
 | `schema-migrator-smoke` | Run schema migrator list/validate/apply smoke flow |
@@ -370,16 +377,11 @@ connection values used across chart boundaries are explicit under
 `proxy.image.tag`, `javaCoordinator.image.tag`, and
 `observability.grafana.image.tag`.
 
-`make up-ready` defaults to the Kubernetes target: it builds first-party
-images, mirrors pinned third-party images into `REGISTRY`, synchronizes the
-protected local files as Kubernetes Secrets, and upgrades the complete
-Kubernetes release. The release includes the proxy, coordinator, console
-processes, wireless sensor, data services, Prometheus, Loki/Promtail, Jaeger,
-OpenTelemetry Collector, Grafana, exporters, cAdvisor, and Pushgateway while
-reusing the retained Compose data volumes. It also deploys Schema Migrator's
-React UI, Scala API, PostgreSQL state schema, Keycloak, and dedicated Traefik
-edge. Schema Migrator uses a dedicated role and schema in the root `sync`
-Postgres database; Keycloak receives its own role and database on that server.
+The chart deploys application workloads but never deploys TiDB or Keycloak.
+Configure the external TiDB endpoint, CA Secret, four account Secrets, fresh
+external Keycloak issuer/clients, and Redis Secret under `global.shared`.
+`global.migration.mode` is one of `stage`, `activate`, or `prune`; follow the
+cutover gates in [docs/tidb-runtime-cutover.md](docs/tidb-runtime-cutover.md).
 
 The image name remains canonical end to end: the development machine builds
 `linux/amd64` and pushes to `192.168.1.221:5000`, and Kubernetes pulls the same
@@ -390,12 +392,9 @@ containerd once before the first deployment:
 make configure-containerd-registry REGISTRY=192.168.1.221:5000
 ```
 
-The single-node values expose the fixed LAN ports with pod `hostPort` mappings;
-they do not use the deprecated Kubernetes 1.36 `Service.spec.externalIPs` field.
-The operator-facing URLs are Grafana on `:3004`, Integration Console on
-`:3005`, Atheros Search on `:3007`, and the Keycloak admin console on `:8180`.
-The vector worker uses `http://$SERVER_IP:8083` by default; set
-`ATHSEARCH_EMBEDDING_BACKEND` to point it at a different embedding service.
+Single-node developer values may expose application ports, but identity and
+TiDB remain external. Atheros Search has no ingest, embedding, alert, or repair
+worker; those supervised workloads run in Octopus.
 
 ```bash
 make up-ready PROFILE_MODE=mac \
@@ -409,8 +408,8 @@ Before deployment, point the selected hostname at the public address that
 forwards TCP 80 and 443 to `192.168.1.221`. Permit inbound TCP 80 for the ACME
 HTTP-01 challenge and redirect, and TCP 443 for the application. UDP 443
 remains assigned to WireGuard and does not conflict with the Schema Migrator
-TCP listener. The live profile persists Schema Migrator state in PostgreSQL;
-ACME state remains beneath `/var/lib/ssl-proxy/schema-migrator/`.
+TCP listener. Schema Migrator control state lives only in its isolated TiDB
+database; ACME state is edge configuration, not application business state.
 
 The operator uses standard `kubectl` and `helm`. It selects
 `UP_READY_KUBE_CONTEXT` when set and otherwise uses the current kubeconfig
@@ -462,9 +461,11 @@ make ENABLE_LEGACY_TARGETS=1 legacy-diagnose
 - Confirm `ORACLE_CONN` TNS alias matches the wallet configuration, default `mainerc_high`
 - Check `docker compose logs java-coordinator` for Oracle load failures
 
-**Postgres connection refused**
-- Postgres may still be initializing (can take 15-30s on first boot)
-- Check `docker compose logs postgres` for startup progress
+**TiDB connection or readiness refused**
+- Confirm the external hostname, TLS server name/CA, dedicated account, and
+  expected database.
+- Verify TiDB is v8.5+ and the recorded canonical manifest checksum matches.
+- Vector readiness also requires all four TiFlash replicas before HNSW DDL.
 
 ### Getting Help
 

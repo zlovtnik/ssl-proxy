@@ -1,0 +1,56 @@
+-- Provision accounts and credentials outside schema migration. Replace the
+-- account tokens with pre-existing TLS-authenticated TiDB identities.
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.*
+  TO '{{OCTOPUS_ACCOUNT}}';
+
+GRANT SELECT ON octopus_core.schema_readiness
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sync_events
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sync_backlog
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sync_jobs
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sync_batches
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sync_cursors
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sync_errors
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.devices
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_authorized_networks
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_clients
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frames
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frame_radio
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frame_qos
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frame_network
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frame_app_signals
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frame_identity
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_frame_security
+  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.wireless_shadow_alerts
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sensors
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.sensor_alerts
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.redpanda_traffic_samples
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.mv_wireless_heatmap
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.v_wireless_device_inventory
+  TO '{{RAILS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT SELECT ON octopus_core.v_wireless_shadow_alerts
+  TO '{{RAILS_ACCOUNT}}';
+GRANT SELECT ON octopus_core.v_sync_plane_health
+  TO '{{RAILS_ACCOUNT}}';

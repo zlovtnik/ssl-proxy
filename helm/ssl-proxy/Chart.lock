@@ -19,7 +19,7 @@ dependencies:
   version: 0.1.1
 - name: tidb
   repository: file://charts/tidb
-  version: 0.1.0
+  version: 0.2.0
 - name: telemetry
   repository: file://charts/telemetry
   version: 0.1.2
@@ -29,5 +29,5 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.1
-digest: sha256:cc624107e1e76e0953cf4b919a68a782763ea67d6e56e2611d593ca07938f2e1
-generated: "2026-07-20T22:33:52.434334-04:00"
+digest: sha256:21b31daf5e0663f3c4f41ddb94f3ec3a246f772035bd3e9f82af9e3ecc62217d
+generated: "2026-07-21T17:32:20.160825-04:00"

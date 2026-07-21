@@ -1,5 +1,10 @@
 # SSL-Proxy umbrella values. Workload defaults live with their subcharts.
 global:
+  migration:
+    # stage: new clients deployed with consumers disabled; legacy stays active.
+    # activate: legacy is quiesced and ready new clients receive traffic.
+    # prune: PostgreSQL/MongoDB compatibility objects are absent.
+    mode: stage
   nameOverride: ""
   fullnameOverride: ""
   image:
@@ -22,18 +27,45 @@ global:
   affinity: {}
   # Values consumed by more than one subchart belong in this explicit contract.
   shared:
+    keycloak:
+      issuer: "https://identity.example.internal/realms/ssl-proxy-fresh"
+      jwksUri: "https://identity.example.internal/realms/ssl-proxy-fresh/protocol/openid-connect/certs"
+      consoleClientId: "integration-console"
+      schemaMigratorClientId: "schema-migrator"
+    redis:
+      urlSecret:
+        name: "redis-runtime"
+        key: "url"
     redpanda:
       bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
       adminPort: 9644
       topicReplicationFactor: 3
     tidb:
-      host: "tidb"
+      host: "tidb.example.internal"
       port: 4000
-      database: "coordinator"
-      user: "root"
-      passwordSecret:
-        name: "tidb-credentials"
-        key: "password"
+      minimumVersion: "8.5.0"
+      tls:
+        serverName: "tidb.example.internal"
+        caSecret:
+          name: "tidb-client-ca"
+          key: "ca.crt"
+      accounts:
+        octopus:
+          database: "octopus_core"
+          user: "octopus_runtime"
+          passwordSecret: {name: "tidb-octopus", key: "password"}
+        atherosSearch:
+          database: "atheros_search"
+          user: "atheros_search_runtime"
+          passwordSecret: {name: "tidb-atheros-search", key: "password"}
+        integrationConsole:
+          database: "integration_console"
+          user: "integration_console_runtime"
+          passwordSecret: {name: "tidb-integration-console", key: "password"}
+        schemaMigrator:
+          database: "schema_migrator"
+          user: "schema_migrator_runtime"
+          passwordSecret: {name: "tidb-schema-migrator", key: "password"}
     minio:
       endpoint: "http://minio.minio.svc.cluster.local:9000"
       bucket: "integration-console-exports"
@@ -57,10 +89,10 @@ global:
         resultTopic: "sync.oracle.result"
         payloadAuditTopic: "proxy.payload_audit"
       consumers:
-        scanConsumer: "octopus-scan"
-        loadConsumer: "oracle-worker-load"
-        resultConsumer: "octopus-result"
-        payloadAuditConsumer: "octopus-payload-audit"
+        scanConsumer: "octopus-scan-v1"
+        loadConsumer: "octopus-load-v1"
+        resultConsumer: "octopus-result-v1"
+        payloadAuditConsumer: "octopus-payload-audit-v1"
       streams:
         syncStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
         loadStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
@@ -79,13 +111,13 @@ global:
         networksAuthorizedTopic: "wireless.networks.authorized"
         probeFlushTopic: "wireless.probe.flush"
       wirelessConsumers:
-        backlogSaveConsumer: "wireless-backlog-save"
-        backlogListConsumer: "wireless-backlog-list"
-        backlogSyncedConsumer: "wireless-backlog-synced"
-        backlogPruneConsumer: "wireless-backlog-prune"
-        macLookupConsumer: "wireless-mac-lookup"
-        networksAuthorizedConsumer: "wireless-networks-authorized"
-        probeFlushConsumer: "wireless-probe-flush"
+        backlogSaveConsumer: "wireless-backlog-save-v1"
+        backlogListConsumer: "wireless-backlog-list-v1"
+        backlogSyncedConsumer: "wireless-backlog-synced-v1"
+        backlogPruneConsumer: "wireless-backlog-prune-v1"
+        macLookupConsumer: "wireless-mac-lookup-v1"
+        networksAuthorizedConsumer: "wireless-networks-authorized-v1"
+        probeFlushConsumer: "wireless-probe-flush-v1"
       wirelessReplyTopics:
         backlogListReplyTopic: "wireless.backlog.list.reply"
         backlogPruneReplyTopic: "wireless.backlog.prune.reply"
@@ -114,6 +146,10 @@ atherosSensor:
   enabled: true
 tidb:
   external: true
+  minimumVersion: "8.5.0"
+  egress:
+    enabled: false
+    cidrs: []
 observability:
   enabled: true
 
@@ -121,4 +157,10 @@ observability:
 vecWorker:
   enabled: false
 atherosSearch:
+  enabled: false
+integrationConsole:
+  enabled: false
+redisRuntime:
+  enabled: true
+tidbSchemaExecutor:
   enabled: false

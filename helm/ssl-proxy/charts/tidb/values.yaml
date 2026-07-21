@@ -18,23 +18,9 @@ global:
   affinity: {}
 
 external: true
-image:
-  repository: pingcap/tidb
-  tag: latest
-  pullPolicy: IfNotPresent
-replicas: 1
-service:
-  port: 4000
-  statusPort: 10080
-persistence:
+minimumVersion: "8.5.0"
+egress:
   enabled: true
-  hostPath: ""
-  size: 10Gi
-  storageClassName: ""
-resources:
-  limits:
-    cpu: "2"
-    memory: 2Gi
-  requests:
-    cpu: 500m
-    memory: 1Gi
+  # NetworkPolicy cannot select a DNS name. Supply the routed external TiDB
+  # CIDRs for production; empty is rejected when the policy is enabled.
+  cidrs: []

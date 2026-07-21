@@ -29,7 +29,7 @@ func (r *Readiness) Check(ctx context.Context) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if r.DB == nil {
-		return errors.New("postgres pool is not initialized")
+		return errors.New("TiDB pool is not initialized")
 	}
 	if err := r.DB.Health(checkCtx); err != nil {
 		return err
@@ -48,7 +48,7 @@ func (r *Readiness) Check(ctx context.Context) error {
 		return fmt.Errorf("count embeddings: %w", err)
 	}
 	if count < 1 {
-		log.Warn().Msg("vec_embeddings is empty")
+		log.Warn().Msg("search vector tables are empty")
 	}
 	if r.Embedder != nil {
 		if err := r.Embedder.Health(checkCtx); err != nil {
@@ -81,14 +81,10 @@ func WaitForSchemaReady(ctx context.Context, store Database, timeout, pollInterv
 			lastErr = nil
 			if status.Ready {
 				logger.Info().
-					Int64("total_count", status.TotalCount).
-					Int64("pending_count", status.PendingCount).
-					Int64("failed_count", status.FailedCount).
+					Bool("vector_ready", status.VectorReady).
+					Str("manifest_sha256", status.ManifestSHA256).
 					Msg("schema readiness gate passed")
 				return nil
-			}
-			if status.FailedCount > 0 {
-				return fmt.Errorf("schema readiness gate failed: %s", schemaStatusSummary(status))
 			}
 			logger.Debug().Str("schema_status", schemaStatusSummary(status)).Msg("waiting for schema readiness gate")
 		} else {
@@ -119,12 +115,10 @@ func WaitForSchemaReady(ctx context.Context, store Database, timeout, pollInterv
 
 func schemaStatusSummary(status db.SchemaReadyStatus) string {
 	return fmt.Sprintf(
-		"ready=%t all_applied=%t total_count=%d pending_count=%d failed_count=%d failed_objects=%v",
+		"ready=%t vector_ready=%t manifest_sha256=%s expected_sha256=%s",
 		status.Ready,
-		status.AllApplied,
-		status.TotalCount,
-		status.PendingCount,
-		status.FailedCount,
-		status.FailedObjects,
+		status.VectorReady,
+		status.ManifestSHA256,
+		status.ExpectedSHA256,
 	)
 }

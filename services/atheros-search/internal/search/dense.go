@@ -2,15 +2,28 @@ package search
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Dense(ctx context.Context, pool *pgxpool.Pool, qvec []float32, model string, opts Options) ([]RawResult, error) {
+const embeddingDimensions = 768
+
+var vectorTableByKind = map[string]string{
+	"event":            "search_vectors_event",
+	"device":           "search_vectors_device",
+	"behaviour_window": "search_vectors_behaviour",
+	"frame_sequence":   "search_vectors_sequence",
+}
+
+func Dense(ctx context.Context, pool *sql.DB, qvec []float32, model string, opts Options) ([]RawResult, error) {
+	if err := validateVector(qvec); err != nil {
+		return nil, err
+	}
 	out := make([]RawResult, 0, opts.TopK*len(opts.Kinds))
 	for _, kind := range opts.Kinds {
 		results, err := denseKind(ctx, pool, qvec, model, kind, opts)
@@ -19,91 +32,97 @@ func Dense(ctx context.Context, pool *pgxpool.Pool, qvec []float32, model string
 		}
 		out = append(out, results...)
 	}
-	return out, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CosineSimilarity == out[j].CosineSimilarity {
+			return out[i].SourceKey < out[j].SourceKey
+		}
+		return out[i].CosineSimilarity > out[j].CosineSimilarity
+	})
+	return filterResults(out, opts.Filters, opts.TopK*4), nil
 }
 
-func denseKind(ctx context.Context, pool *pgxpool.Pool, qvec []float32, model, kind string, opts Options) ([]RawResult, error) {
-	args := []any{VectorLiteral(qvec), kind, model, opts.TopK * 4}
-	embedFilter := BuildEmbeddingFilters(opts.Filters, len(args)+1)
-	args = append(args, embedFilter.Args...)
-	wirelessFilter := BuildWirelessFilters(opts.Filters, len(args)+1)
-	args = append(args, wirelessFilter.Args...)
-	baseClauses := []string{
-		"e.embedding_kind = $2",
-		"e.embedding_model = $3",
-		"e.embedding_dimensions = 768",
+func denseKind(ctx context.Context, pool *sql.DB, qvec []float32, model, kind string, opts Options) ([]RawResult, error) {
+	table, ok := vectorTableByKind[kind]
+	if !ok {
+		return nil, fmt.Errorf("unsupported dense search kind %q", kind)
 	}
-	if len(wirelessFilter.Clauses) > 0 {
-		baseClauses = append(baseClauses, "EXISTS (SELECT 1 FROM sync_events_expanded se"+WhereSQL([]string{
-			"e.source_table = 'sync_events'",
-			"se.dedupe_key = e.source_key",
-		}, wirelessFilter.Clauses)+")")
+	overfetch := opts.TopK * opts.OverfetchFactor
+	if overfetch < opts.TopK {
+		overfetch = opts.TopK
 	}
-	where := WhereSQL(baseClauses, embedFilter.Clauses)
-	sql := fmt.Sprintf(`
-WITH candidates AS (
-  SELECT
-    e.source_key,
-    e.source_table,
-    e.embedding_kind,
-    e.source_mac,
-    e.source_sensor_id,
-    e.source_location_id,
-    e.source_observed_at,
-    (e.embedding::vector(768) <=> $1::vector(768)) AS cosine_distance
-  FROM vec_embeddings_expanded e
-  %s
-  ORDER BY e.embedding::vector(768) <=> $1::vector(768)
-  LIMIT $4
-)
-SELECT
-  c.source_key,
-  c.source_table,
-  c.embedding_kind,
-  coalesce(c.source_mac, se.source_mac, '') as source_mac,
-  coalesce(c.source_location_id, se.location_id, '') as location_id,
-  coalesce(c.source_sensor_id, se.sensor_id, '') as sensor_id,
-  coalesce(c.source_observed_at, se.observed_at) as observed_at,
-  coalesce(se.bssid, se.destination_bssid, '') as bssid,
-  coalesce(se.ssid, '') as ssid,
-  coalesce(se.frame_subtype, '') as frame_subtype,
-  (1.0 - c.cosine_distance)::real as cosine_similarity,
-  coalesce(jsonb_path_query_array(%s, '$[*]'), '[]'::jsonb)::text as tags_json,
-  %s::text as detail_json
-FROM candidates c
-LEFT JOIN sync_events_expanded se
-  ON c.source_table = 'sync_events'
- AND se.dedupe_key = c.source_key
-`, where, wirelessTagsSQL, compactEventDetailSQL)
-	sql += `
-ORDER BY cosine_similarity DESC
-LIMIT $4`
+	if overfetch > 5000 {
+		overfetch = 5000
+	}
+	vector := VectorLiteral(qvec)
+	query := denseKindQuery(table)
 
-	rows, err := pool.Query(ctx, sql, args...)
+	rows, err := pool.QueryContext(ctx, query, vector, vector, overfetch, model)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	results := []RawResult{}
+
+	results := make([]RawResult, 0, overfetch)
 	for rows.Next() {
-		result, err := scanResult(rows)
+		result, err := scanDenseResult(rows)
 		if err != nil {
 			return nil, err
 		}
-		if opts.MinSimilarity > 0 && result.CosineSimilarity < opts.MinSimilarity {
+		if result.CosineSimilarity < opts.MinSimilarity || !resultMatchesFilters(result, opts.Filters) {
 			continue
 		}
 		result.Score = result.CosineSimilarity
 		results = append(results, result)
+		if len(results) >= opts.TopK*4 {
+			break
+		}
 	}
 	return results, rows.Err()
 }
 
-func scanResult(rows pgx.Rows) (RawResult, error) {
+func denseKindQuery(table string) string {
+	return fmt.Sprintf(`
+SELECT
+  d.source_key,
+  d.source_table,
+  d.source_kind,
+  COALESCE(d.source_mac, ''),
+  COALESCE(d.location_id, ''),
+  COALESCE(d.sensor_id, ''),
+  d.observed_at,
+  COALESCE(d.bssid, ''),
+  COALESCE(d.ssid, ''),
+  COALESCE(d.frame_subtype, ''),
+  CAST(1.0 - nearest.cosine_distance AS FLOAT),
+  COALESCE(CAST(d.tags AS CHAR), '[]'),
+  COALESCE(CAST(d.detail_json AS CHAR), '{}'),
+  COALESCE(d.security_flags, 0),
+  COALESCE(d.handshake_captured, 0)
+FROM (
+  SELECT
+    document_id,
+    embedding_model,
+    VEC_COSINE_DISTANCE(embedding, ?) AS cosine_distance
+  FROM %s
+  ORDER BY VEC_COSINE_DISTANCE(embedding, ?) ASC
+  LIMIT ?
+) nearest
+JOIN search_documents d ON d.document_id = nearest.document_id
+WHERE nearest.embedding_model = ? AND d.status = 'active'
+ORDER BY nearest.cosine_distance ASC, d.source_key ASC`, table)
+}
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+func scanDenseResult(row scanner) (RawResult, error) {
 	var result RawResult
-	var observed pgtype.Timestamptz
-	var tagsJSON string
-	err := rows.Scan(
+	var observed sql.NullTime
+	var tagsJSON, detailJSON string
+	var securityFlags int64
+	var handshake bool
+	err := row.Scan(
 		&result.SourceKey,
 		&result.SourceTable,
 		&result.SourceKind,
@@ -116,32 +135,59 @@ func scanResult(rows pgx.Rows) (RawResult, error) {
 		&result.FrameSubtype,
 		&result.CosineSimilarity,
 		&tagsJSON,
-		&result.DetailJSON,
+		&detailJSON,
+		&securityFlags,
+		&handshake,
 	)
 	if err != nil {
 		return result, err
 	}
 	if observed.Valid {
-		result.ObservedAt = &observed.Time
+		value := observed.Time.UTC()
+		result.ObservedAt = &value
 	}
 	result.Tags = parseTagsJSON(tagsJSON)
+	result.DetailJSON = normalizeJSONObject(detailJSON)
+	result.securityFlags = int32(securityFlags)
+	result.handshakeCaptured = handshake
 	return result, nil
+}
+
+func validateVector(vector []float32) error {
+	if len(vector) != embeddingDimensions {
+		return fmt.Errorf("embedding vector has %d dimensions, expected %d", len(vector), embeddingDimensions)
+	}
+	for i, value := range vector {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return fmt.Errorf("embedding vector contains a non-finite value at index %d", i)
+		}
+	}
+	return nil
 }
 
 func parseTagsJSON(value string) []string {
 	value = strings.TrimSpace(value)
-	if value == "" || value == "[]" {
+	if value == "" || value == "null" || value == "[]" {
 		return nil
 	}
-	value = strings.TrimPrefix(value, "[")
-	value = strings.TrimSuffix(value, "]")
-	parts := strings.Split(value, ",")
-	tags := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.Trim(strings.TrimSpace(part), `"`)
-		if part != "" {
-			tags = append(tags, part)
-		}
+	var tags []string
+	if err := json.Unmarshal([]byte(value), &tags); err != nil {
+		return nil
 	}
 	return TagsFromJSON(tags)
+}
+
+func normalizeJSONObject(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "null" || !json.Valid([]byte(value)) {
+		return "{}"
+	}
+	return value
+}
+
+func ensureDB(pool *sql.DB) error {
+	if pool == nil {
+		return errors.New("TiDB pool is not initialized")
+	}
+	return nil
 }

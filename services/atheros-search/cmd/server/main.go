@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,10 +19,8 @@ import (
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/db"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/embed"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/health"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/ingest"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/search"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/worker"
 )
 
 func main() {
@@ -52,9 +49,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.PostgresDSN)
+	pool, err := db.NewPool(ctx, db.Options{
+		DSN:                  cfg.TiDBDSN,
+		TLSCAFile:            cfg.TiDBTLSCAFile,
+		TLSCertFile:          cfg.TiDBTLSCertFile,
+		TLSKeyFile:           cfg.TiDBTLSKeyFile,
+		TLSServerName:        cfg.TiDBTLSServerName,
+		SchemaManifestSHA256: cfg.TiDBSchemaManifestSHA256,
+		MaxOpenConns:         cfg.TiDBMaxOpenConns,
+		MaxIdleConns:         cfg.TiDBMaxIdleConns,
+		ConnMaxLifetime:      cfg.TiDBConnMaxLifetime,
+		ConnMaxIdleTime:      cfg.TiDBConnMaxIdleTime,
+	})
 	if err != nil {
-		logger.Fatal().Err(err).Msg("connect postgres")
+		logger.Fatal().Err(err).Msg("connect TiDB")
 	}
 	defer pool.Close()
 	if cfg.SchemaReadyRequired {
@@ -77,7 +85,6 @@ func main() {
 	} else {
 		embedder = embed.NewCircuitClient(embed.NewHTTPClient(cfg.EmbeddingBackend, cfg.EmbeddingModel, cfg.EmbeddingDimensions))
 	}
-	workerEmbedder := embedder
 	m := metrics.New()
 	embedder = embed.CachedClient{
 		Inner: embedder,
@@ -86,14 +93,8 @@ func main() {
 		Miss:  m.EmbeddingCacheMiss.Inc,
 	}
 
-	svc := search.NewService(pool.Pool, embedder, cfg, m, logger)
+	svc := search.NewService(pool.DB, embedder, cfg, m, logger)
 	readiness := &health.Readiness{DB: pool, Embedder: embedder, SchemaReadyRequired: cfg.SchemaReadyRequired}
-	ingest.StartFreshnessConsumer(ctx, pool.Pool, cfg, logger)
-	if cfg.WorkerEnabled {
-		logger.Info().Msg("new worker drain enabled; legacy embedded job drainer suppressed")
-	} else {
-		ingest.StartEmbedder(ctx, pool.Pool, cfg, embedder, logger)
-	}
 
 	metricsServer, err := metrics.StartServer(ctx, cfg.MetricsPort)
 	if err != nil {
@@ -106,38 +107,6 @@ func main() {
 	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, cfg.CORSAllowedOrigins, svc, readiness, tokenAuth, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start http gateway")
-	}
-
-	var alertPool *db.Pool
-	if cfg.WorkerEnabled {
-		if cfg.AlertEnabled {
-			alertPool, err = db.NewPool(ctx, cfg.PostgresDSN)
-			if err != nil {
-				logger.Fatal().Err(err).Msg("connect alert postgres pool")
-			}
-			defer alertPool.Close()
-		}
-		w := &worker.Worker{
-			Pool:     pool.Pool,
-			Embedder: workerEmbedder,
-			Config:   cfg,
-			Metrics:  m,
-			Logger:   logger,
-		}
-		if alertPool != nil {
-			w.AlertPool = alertPool.Pool
-		}
-		go func() {
-			if err := w.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				logger.Error().Err(err).Msg("worker stopped unexpectedly")
-				os.Exit(1)
-			}
-		}()
 	}
 
 	<-ctx.Done()
@@ -164,15 +133,11 @@ func main() {
 }
 
 func logStartupConfig(logger zerolog.Logger, cfg config.Config) {
-	logger.Warn().
-		Bool("worker_enabled", cfg.WorkerEnabled).
-		Bool("embedder_enabled", cfg.EmbedderEnabled).
-		Bool("ingest_enabled", cfg.IngestEnabled).
-		Bool("alert_enabled", cfg.AlertEnabled).
+	logger.Info().
 		Bool("embedding_backend_configured", cfg.EmbeddingBackend != "").
 		Str("embedding_model", cfg.EmbeddingModel).
-		Str("event_embedding_scope", cfg.EventEmbeddingScope).
-		Msg("atheros-search startup feature flags")
+		Int("dense_overfetch_factor", cfg.DenseOverfetchFactor).
+		Msg("atheros-search TiDB query facade configured")
 }
 
 func runHealthcheck() error {
