@@ -293,6 +293,8 @@ spec:
               value: {{ .Values.tidb.statementTimeoutSecs | quote }}
             - name: TIDB_WARN_ONLY
               value: {{ .Values.tidb.warnOnly | quote }}
+            - name: TIDB_SSL_MODE
+              value: {{ .Values.tidb.sslMode | quote }}
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
