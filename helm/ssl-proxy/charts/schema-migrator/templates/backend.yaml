@@ -41,6 +41,17 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: -Djava.io.tmpdir=/tmp
+            - name: SCHEMA_MIGRATOR_DB_KIND
+              value: {{ .Values.dbKind | default "postgres" | quote }}
+            - name: DATABASE_URL
+              value: {{ printf "r2dbc:mysql://%s:%v/%s" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.database | quote }}
+            - name: TIDB_USER
+              value: {{ .Values.global.shared.tidb.user | quote }}
+            - name: TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.tidb.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.passwordSecret.key }}
             - name: BEDROCK_HTTP_HOST
               value: 0.0.0.0
             - name: BEDROCK_HTTP_PORT

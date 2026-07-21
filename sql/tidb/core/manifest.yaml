@@ -1,0 +1,25 @@
+engine: tidb
+layer: core
+apply_order:
+  - 00_schemas/001_coordinator_database.sql
+  - 01_tables/001_proxy_events.sql
+  - 01_tables/002_proxy_blocked_host_rollups.sql
+  - 01_tables/003_proxy_payload_audit.sql
+  - 01_tables/004_wireless_sensors.sql
+  - 01_tables/005_wireless_audit_frames.sql
+  - 01_tables/006_wireless_bandwidth_windows.sql
+  - 01_tables/007_wireless_alerts.sql
+  - 01_tables/008_wireless_alerts_ledger.sql
+  - 01_tables/009_wireless_client_inventory.sql
+  - 01_tables/010_wireless_probe_requests.sql
+  - 01_tables/011_sync_cursors.sql
+  - 01_tables/012_sync_event_tombstones.sql
+  - 01_tables/013_sync_events.sql
+  - 01_tables/014_sync_jobs.sql
+  - 01_tables/015_sync_batches.sql
+  - 01_tables/016_sync_errors.sql
+  - 01_tables/017_devices.sql
+  - 01_tables/018_wireless_authorized_networks.sql
+  - 01_tables/019_wireless_clients.sql
+  - 01_tables/020_wireless_shadow_alerts.sql
+retired: []
