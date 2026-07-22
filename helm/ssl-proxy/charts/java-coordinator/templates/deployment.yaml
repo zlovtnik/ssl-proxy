@@ -300,6 +300,10 @@ spec:
               value: {{ .Values.tidb.warnOnly | quote }}
             - name: TIDB_SSL_MODE
               value: {{ .Values.tidb.sslMode | quote }}
+            - name: TIDB_SSL_CA_PATH
+              value: "/etc/tidb-tls/ca.crt"
+            - name: TIDB_SSL_SERVER_NAME
+              value: {{ .Values.global.shared.tidb.tls.serverName | quote }}
             - name: OCTOPUS_PROCESSORS_ENABLED
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
             - name: OCTOPUS_CONSUMERS_ENABLED

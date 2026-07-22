@@ -42,6 +42,8 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: -Djava.io.tmpdir=/tmp
+            - name: SCHEMA_MIGRATOR_DB_KIND
+              value: "tidb"
             - name: BEDROCK_STATE_DB_URL
               value: {{ printf "jdbc:mysql://%s:%v/%s?sslMode=VERIFY_IDENTITY&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.accounts.schemaMigrator.database | quote }}
             - name: BEDROCK_STATE_DB_USER
