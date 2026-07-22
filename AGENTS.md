@@ -51,6 +51,13 @@ overrides a rule for its subtree.
   enforce the table-level grant matrix documented in
   `docs/tidb-runtime-cutover.md`. Do not add direct database wiring to `src/`,
   `crates/sync-plane/`, or `services/atheros-sensor/`.
+- Keep TiDB connection configuration consistent between application config
+  (`AppConfig.scala` TiDbConfig fields) and the Helm chart values. Every TiDB
+  env var consumed by a service must have a corresponding Helm value source in
+  the chart's deployment template. When changing TiDB connection parameters
+  (host, port, sslMode, sslCaPath, sslServerName), update both the application
+  config defaults and the chart's `global.shared.tidb` values and per-chart env
+  vars in parallel.
 - Preserve the locked sync topic meanings:
   - `sync.scan.request` for producer-to-coordinator work discovery
   - `sync.oracle.load` for coordinator-owned TiDB load dispatch (legacy name)

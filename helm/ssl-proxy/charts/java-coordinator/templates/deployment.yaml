@@ -1,4 +1,7 @@
 {{- if .Values.enabled }}
+{{- if and .Values.tidb.enabled (ne .Values.tidb.sslMode "VERIFY_IDENTITY") -}}
+{{- fail "tidb.sslMode must be VERIFY_IDENTITY when tidb is enabled" -}}
+{{- end -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
