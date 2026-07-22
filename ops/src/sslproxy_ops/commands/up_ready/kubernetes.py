@@ -608,8 +608,6 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "global.rolloutRevision": ctx.run_ts,
         "proxy.image.tag": image_tag,
         "javaCoordinator.image.tag": image_tag,
-        "integrationConsole.web.image.tag": image_tag,
-        "integrationConsole.dbSetup.image.tag": image_tag,
         "schemaMigrator.backend.image.tag": image_tag,
         "schemaMigrator.ui.image.tag": image_tag,
         "schemaMigrator.ui.browserOrigin": f"http://{ctx.settings.server_ip}:8081",

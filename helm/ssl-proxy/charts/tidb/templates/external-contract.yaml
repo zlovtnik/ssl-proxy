@@ -8,7 +8,7 @@
 {{- end -}}
 {{- $_ = required "global.shared.tidb.tls.caSecret.name is required" $tidb.tls.caSecret.name -}}
 {{- $_ = required "global.shared.tidb.tls.caSecret.key is required" $tidb.tls.caSecret.key -}}
-{{- range $name := list "octopus" "atherosSearch" "integrationConsole" "schemaMigrator" -}}
+{{- range $name := list "octopus" "atherosSearch" "schemaMigrator" -}}
 {{- $account := index $tidb.accounts $name -}}
 {{- $_ = required (printf "global.shared.tidb.accounts.%s.database is required" $name) $account.database -}}
 {{- $_ = required (printf "global.shared.tidb.accounts.%s.user is required" $name) $account.user -}}

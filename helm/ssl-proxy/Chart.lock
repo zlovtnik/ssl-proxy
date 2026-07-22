@@ -29,14 +29,11 @@ dependencies:
 - name: atheros-search
   repository: file://charts/atheros-search
   version: 0.1.1
-- name: integration-console
-  repository: file://charts/integration-console
-  version: 0.1.0
 - name: redis-runtime
   repository: file://charts/redis-runtime
   version: 0.1.0
 - name: tidb-schema-executor
   repository: file://charts/tidb-schema-executor
   version: 0.1.0
-digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
-generated: "2026-07-21T18:00:00.000000-00:00"
+digest: sha256:5e10c2f05b0a83876cc3b06da1f83f51f0b844a873b1652933f356354c52eb70
+generated: "2026-07-22T07:48:14.715787-04:00"

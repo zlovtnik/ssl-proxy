@@ -60,11 +60,10 @@
                 },
                 "accounts": {
                   "type": "object",
-                  "required": ["octopus", "atherosSearch", "integrationConsole", "schemaMigrator"],
+                  "required": ["octopus", "atherosSearch", "schemaMigrator"],
                   "properties": {
                     "octopus": {"$ref": "#/definitions/tidbAccount"},
                     "atherosSearch": {"$ref": "#/definitions/tidbAccount"},
-                    "integrationConsole": {"$ref": "#/definitions/tidbAccount"},
                     "schemaMigrator": {"$ref": "#/definitions/tidbAccount"}
                   }
                 }
@@ -72,11 +71,10 @@
             },
             "keycloak": {
               "type": "object",
-              "required": ["issuer", "jwksUri", "consoleClientId", "schemaMigratorClientId"],
+              "required": ["issuer", "jwksUri", "schemaMigratorClientId"],
               "properties": {
                 "issuer": {"type": "string", "format": "uri", "pattern": "^https://"},
                 "jwksUri": {"type": "string", "format": "uri", "pattern": "^https://"},
-                "consoleClientId": {"type": "string", "minLength": 1},
                 "schemaMigratorClientId": {"type": "string", "minLength": 1}
               }
             },
