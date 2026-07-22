@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import yaml
 
+from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
     apply_secret_value,
@@ -19,13 +20,18 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     helm_release_status,
     helm_upgrade,
     kubernetes_diagnostics,
+    kubernetes_up,
+    node_condition_problems,
     prepare_helm_release,
     proxy_workload,
     publish_registry_images,
     recent_kubernetes_warning_lines,
+    release_workloads,
     resolve_kube_context,
+    rollout_restart_release_workloads,
     sync_kubernetes_secrets,
     verify_kubernetes_registry_pull,
+    warn_unhealthy_nodes,
 )
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError
 from sslproxy_ops.config import Settings
@@ -224,11 +230,15 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn(
             "schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args
         )
+        self.assertIn(
+            "global.shared.keycloak.issuer=http://192.168.1.221:8180/realms/middleware",
+            args,
+        )
         self.assertIn("atherosSearch.ui.image.tag=latest", args)
         self.assertIn(
             "atherosSearch.embeddingBackend=http://192.168.1.221:8083", args
         )
-        self.assertEqual(args.count("--set-literal"), 19)
+        self.assertEqual(args.count("--set-literal"), 17)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)
@@ -721,6 +731,220 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
         mocked_upgrade.assert_not_called()
         self.assertNotIn("wg_peer_material_missing", ctx.auto_fixed_classes)
+
+    def test_node_condition_problems_reports_unhealthy_states(self):
+        node = {
+            "metadata": {"name": "node-1"},
+            "spec": {"unschedulable": True},
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "False"},
+                    {"type": "MemoryPressure", "status": "True"},
+                    {"type": "DiskPressure", "status": "False"},
+                    {"type": "PIDPressure", "status": "True"},
+                    {"type": "NetworkUnavailable", "status": "True"},
+                ]
+            },
+        }
+
+        self.assertEqual(
+            node_condition_problems(node),
+            [
+                "node-1: Ready=False",
+                "node-1: MemoryPressure=True",
+                "node-1: PIDPressure=True",
+                "node-1: NetworkUnavailable=True",
+                "node-1: unschedulable (cordoned)",
+            ],
+        )
+
+    def test_node_condition_problems_empty_for_ready_node(self):
+        node = {
+            "metadata": {"name": "node-1"},
+            "spec": {},
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "True"},
+                    {"type": "MemoryPressure", "status": "False"},
+                    {"type": "DiskPressure", "status": "False"},
+                    {"type": "PIDPressure", "status": "False"},
+                    {"type": "NetworkUnavailable", "status": "False"},
+                ]
+            },
+        }
+
+        self.assertEqual(node_condition_problems(node), [])
+
+    def test_warn_unhealthy_nodes_never_blocks_on_kubectl_failure(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        failed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="connection refused"
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                return_value=failed,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.warn") as mocked_warn,
+        ):
+            warn_unhealthy_nodes(ctx)
+
+        mocked_warn.assert_called_once()
+        self.assertIn("connection refused", mocked_warn.call_args.args[0])
+
+    def test_warn_unhealthy_nodes_reports_problem_nodes(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        payload = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {"name": "node-bad"},
+                            "spec": {},
+                            "status": {
+                                "conditions": [{"type": "Ready", "status": "False"}]
+                            },
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                return_value=payload,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.warn") as mocked_warn,
+        ):
+            warn_unhealthy_nodes(ctx)
+
+        mocked_warn.assert_called_once_with("node health: node-bad: Ready=False")
+
+    def test_release_workloads_selects_deployments_and_daemonsets(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        settings.kube_context = "server-k8s"
+        settings.helm_release = "ssl-proxy"
+        ctx = UpReadyContext(settings=settings)
+        listed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="deployment.apps/ssl-proxy-proxy\ndaemonset.apps/ssl-proxy-atheros-sensor\n",
+            stderr="",
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=listed,
+        ) as mocked_kubectl:
+            workloads = release_workloads(ctx)
+
+        self.assertEqual(
+            workloads,
+            ["deployment.apps/ssl-proxy-proxy", "daemonset.apps/ssl-proxy-atheros-sensor"],
+        )
+        args = mocked_kubectl.call_args.args
+        self.assertIn("deployments,daemonsets", args)
+        self.assertIn("app.kubernetes.io/instance=ssl-proxy", args)
+
+    def test_rollout_restart_restarts_and_verifies_each_workload(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        settings.kube_context = "server-k8s"
+        settings.helm_release = "ssl-proxy"
+        settings.rollout_status_timeout = "7m"
+        ctx = UpReadyContext(settings=settings)
+        listed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="deployment.apps/ssl-proxy-proxy\ndaemonset.apps/ssl-proxy-atheros-sensor\n",
+            stderr="",
+        )
+        ok = subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout="", stderr="")
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            side_effect=[listed, ok, ok, ok],
+        ) as mocked_kubectl:
+            rollout_restart_release_workloads(ctx)
+
+        restart = mocked_kubectl.call_args_list[1].args
+        self.assertEqual(restart[:4], ("--namespace", "ssl-proxy", "rollout", "restart"))
+        self.assertIn("deployment.apps/ssl-proxy-proxy", restart)
+        self.assertIn("daemonset.apps/ssl-proxy-atheros-sensor", restart)
+        statuses = [call.args for call in mocked_kubectl.call_args_list[2:]]
+        self.assertEqual(len(statuses), 2)
+        for status_args, workload in zip(
+            statuses,
+            ["deployment.apps/ssl-proxy-proxy", "daemonset.apps/ssl-proxy-atheros-sensor"],
+        ):
+            self.assertEqual(status_args[2:4], ("rollout", "status"))
+            self.assertIn(workload, status_args)
+            self.assertIn("--timeout=7m", status_args)
+
+    def test_rollout_restart_raises_when_status_fails(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        listed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="deployment.apps/ssl-proxy-proxy\n",
+            stderr="",
+        )
+        ok = subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout="", stderr="")
+
+        def kubectl_side_effect(*args, **kwargs):
+            if "status" in args:
+                raise shell.ShellCommandError(
+                    command=tuple(args),
+                    cwd=Path("."),
+                    returncode=1,
+                    stdout="",
+                    stderr="timed out waiting for the condition",
+                )
+            if "restart" in args:
+                return ok
+            return listed
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=kubectl_side_effect,
+            ),
+            self.assertRaises(shell.ShellCommandError),
+        ):
+            rollout_restart_release_workloads(ctx)
+
+    def test_kubernetes_up_returns_false_when_rollout_restart_fails(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_kubernetes_secrets",
+                return_value=True,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.publish_registry_images"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.verify_kubernetes_registry_pull"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.helm_upgrade",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.rollout_restart_release_workloads",
+                side_effect=UpReadyError("rollout status timed out"),
+            ),
+        ):
+            self.assertFalse(kubernetes_up(ctx))
+
+        self.assertIn("rollout status timed out", ctx.last_failure_text)
 
 
 if __name__ == "__main__":

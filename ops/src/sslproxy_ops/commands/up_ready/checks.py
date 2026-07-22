@@ -15,6 +15,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_diagnostics,
     kubernetes_exec,
     kubernetes_logs,
+    release_fullname,
 )
 from sslproxy_ops.commands.up_ready.model import (
     UpReadyContext,
@@ -128,6 +129,77 @@ def wait_for_container_healthy(ctx: UpReadyContext, service: str) -> bool:
     return False
 
 
+def kubernetes_service_exists(ctx: UpReadyContext, service: str) -> bool:
+    return (
+        shell.kubectl(
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "get",
+            "service",
+            service,
+            context=ctx.settings.kube_context,
+            check=False,
+            capture=True,
+        ).returncode
+        == 0
+    )
+
+
+def check_cluster_http(ctx: UpReadyContext, url: str) -> bool:
+    """HTTP GET an in-cluster Service URL via curl in the proxy pod."""
+    return (
+        kubernetes_exec(
+            ctx,
+            "curl",
+            "-fsS",
+            "--max-time",
+            "5",
+            url,
+            check=False,
+            capture=True,
+        ).returncode
+        == 0
+    )
+
+
+def kubernetes_component_health_endpoints(ctx: UpReadyContext) -> list[tuple[str, str, str]]:
+    """(label, service, health URL) tuples for first-party HTTP health checks."""
+    fullname = release_fullname(ctx)
+    return [
+        (
+            "java_coordinator_health",
+            f"{fullname}-coordinator",
+            f"http://{fullname}-coordinator:8080/actuator/health",
+        ),
+        (
+            "schema_migrator_backend_health",
+            f"{fullname}-schema-migrator-backend",
+            f"http://{fullname}-schema-migrator-backend:8080/api/health",
+        ),
+        (
+            "schema_migrator_keycloak_health",
+            f"{fullname}-schema-migrator-keycloak",
+            f"http://{fullname}-schema-migrator-keycloak:8080/health/ready",
+        ),
+    ]
+
+
+def verify_component_health(ctx: UpReadyContext) -> bool:
+    """Verify schema-migrator backend, coordinator, and keycloak health endpoints.
+
+    Components whose Service is absent (for example a disabled subchart) are
+    skipped; present components must answer their health endpoint.
+    """
+    for label, service, url in kubernetes_component_health_endpoints(ctx):
+        if not kubernetes_service_exists(ctx, service):
+            step("S04", f"{label}: service {service} absent; skipping")
+            continue
+        if not run_check_with_retry(ctx, label, lambda url=url: check_cluster_http(ctx, url)):
+            ctx.classify(f"{label} failed: {url} did not return a successful response")
+            return False
+    return True
+
+
 def classify_service_failure(ctx: UpReadyContext, service: str) -> None:
     logs = shell.compose(
         "logs", "--tail", str(ctx.settings.log_tail_lines), service, check=False, capture=True
@@ -182,6 +254,8 @@ def health_checks(ctx: UpReadyContext) -> bool:
         if not wait_for_kubernetes_stack(ctx):
             ctx.last_failed_check = "kubernetes_stack_health"
             ctx.classify("Kubernetes stack did not become Ready before the health timeout")
+            return False
+        if not verify_component_health(ctx):
             return False
     else:
         for service in ctx.settings.stack_health_service_names:

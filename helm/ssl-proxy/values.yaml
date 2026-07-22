@@ -61,6 +61,12 @@ global:
           database: "schema_migrator"
           user: "schema_migrator_runtime"
           passwordSecret: {name: "tidb-schema-migrator", key: "password"}
+        # Chart-local account for the in-cluster Keycloak (schema-migrator
+        # subchart). Keycloak owns and migrates its own database.
+        keycloak:
+          database: "keycloak"
+          user: "keycloak"
+          passwordSecret: {name: "tidb-keycloak", key: "password"}
       metricsPort: 10080
     minio:
       endpoint: "http://minio.minio.svc.cluster.local:9000"

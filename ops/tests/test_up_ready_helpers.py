@@ -8,7 +8,10 @@ from pathlib import Path
 from sslproxy_ops.commands.up_ready import apply_profile_runtime_env, preflight
 from sslproxy_ops.commands.up_ready.checks import (
     discover_peer_configs,
+    health_checks,
+    kubernetes_component_health_endpoints,
     runtime_obfuscation_value,
+    verify_component_health,
     write_credential_handoff,
 )
 from sslproxy_ops.commands.up_ready.model import (
@@ -361,6 +364,122 @@ class UpReadyHelpersTest(unittest.TestCase):
             self.assertIn("username=schema-admin", handoff)
             self.assertIn("temporary_password=temporary-schema-password", handoff)
             self.assertIn("password_change_required=true", handoff)
+
+    def test_component_health_endpoints_follow_release_fullname(self):
+        settings = Settings()
+        settings.helm_release = "prod"
+        ctx = UpReadyContext(settings=settings)
+
+        endpoints = kubernetes_component_health_endpoints(ctx)
+
+        by_label = {label: (service, url) for label, service, url in endpoints}
+        self.assertEqual(
+            by_label["java_coordinator_health"],
+            (
+                "prod-ssl-proxy-coordinator",
+                "http://prod-ssl-proxy-coordinator:8080/actuator/health",
+            ),
+        )
+        self.assertEqual(
+            by_label["schema_migrator_backend_health"],
+            (
+                "prod-ssl-proxy-schema-migrator-backend",
+                "http://prod-ssl-proxy-schema-migrator-backend:8080/api/health",
+            ),
+        )
+        self.assertEqual(
+            by_label["schema_migrator_keycloak_health"],
+            (
+                "prod-ssl-proxy-schema-migrator-keycloak",
+                "http://prod-ssl-proxy-schema-migrator-keycloak:8080/health/ready",
+            ),
+        )
+
+    def test_verify_component_health_skips_components_without_service(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.kubernetes_service_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.check_cluster_http"
+            ) as mocked_http,
+        ):
+            self.assertTrue(verify_component_health(ctx))
+
+        mocked_http.assert_not_called()
+
+    def test_verify_component_health_checks_present_components_only(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        existing = {
+            "ssl-proxy-coordinator": True,
+            "ssl-proxy-schema-migrator-backend": True,
+            "ssl-proxy-schema-migrator-keycloak": False,
+        }
+
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.kubernetes_service_exists",
+                side_effect=lambda _ctx, name: existing[name],
+            ),
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.check_cluster_http",
+                return_value=True,
+            ) as mocked_http,
+        ):
+            self.assertTrue(verify_component_health(ctx))
+
+        urls = [call.args[1] for call in mocked_http.call_args_list]
+        self.assertEqual(
+            urls,
+            [
+                "http://ssl-proxy-coordinator:8080/actuator/health",
+                "http://ssl-proxy-schema-migrator-backend:8080/api/health",
+            ],
+        )
+
+    def test_verify_component_health_fails_closed_on_unhealthy_component(self):
+        settings = Settings()
+        settings.check_retry_secs = 0
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.kubernetes_service_exists",
+                return_value=True,
+            ),
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.check_cluster_http",
+                return_value=False,
+            ),
+        ):
+            self.assertFalse(verify_component_health(ctx))
+
+        self.assertEqual(ctx.last_failed_check, "java_coordinator_health")
+        self.assertIn("java_coordinator_health", ctx.last_failure_text)
+
+    def test_health_checks_kubernetes_verifies_components_before_admin(self):
+        settings = Settings()
+        settings.deployment_target = "kubernetes"
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.wait_for_kubernetes_stack",
+                return_value=True,
+            ),
+            unittest.mock.patch(
+                "sslproxy_ops.commands.up_ready.checks.verify_component_health",
+                return_value=False,
+            ) as mocked_verify,
+        ):
+            self.assertFalse(health_checks(ctx))
+
+        mocked_verify.assert_called_once_with(ctx)
 
 
 if __name__ == "__main__":

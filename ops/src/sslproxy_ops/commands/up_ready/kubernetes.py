@@ -15,13 +15,18 @@ from sslproxy_ops.paths import repo_root
 from sslproxy_ops.util.ini import peer_names, trim_key_value
 
 HELM_PENDING_SETTLE_ATTEMPTS = 5
+ROLLOUT_RESTART_KINDS = "deployments,daemonsets"
 
 
-def proxy_workload(ctx: UpReadyContext) -> str:
+def release_fullname(ctx: UpReadyContext) -> str:
     release = ctx.settings.helm_release
     chart_name = "ssl-proxy"
     fullname = release if chart_name in release else f"{release}-{chart_name}"
-    return f"deployment/{fullname[:63].rstrip('-')}-proxy"
+    return fullname[:63].rstrip("-")
+
+
+def proxy_workload(ctx: UpReadyContext) -> str:
+    return f"deployment/{release_fullname(ctx)}-proxy"
 
 
 def resolve_kube_context(ctx: UpReadyContext) -> None:
@@ -66,6 +71,63 @@ def resolve_kube_context(ctx: UpReadyContext) -> None:
         f"No current Kubernetes context is configured; available contexts: {available}. "
         "Set UP_READY_KUBE_CONTEXT explicitly."
     )
+
+
+def node_condition_problems(node: dict) -> list[str]:
+    """Return human-readable problems for one node, or an empty list if healthy."""
+    metadata = node.get("metadata") or {}
+    name = metadata.get("name", "<unknown>")
+    spec = node.get("spec") or {}
+    status = node.get("status") or {}
+    conditions = {
+        condition.get("type"): condition.get("status")
+        for condition in status.get("conditions", [])
+        if isinstance(condition, dict)
+    }
+    problems: list[str] = []
+    ready = conditions.get("Ready")
+    if ready != "True":
+        problems.append(f"Ready={ready or 'Unknown'}")
+    for pressure in ("MemoryPressure", "DiskPressure", "PIDPressure"):
+        if conditions.get(pressure) == "True":
+            problems.append(f"{pressure}=True")
+    if conditions.get("NetworkUnavailable") == "True":
+        problems.append("NetworkUnavailable=True")
+    if spec.get("unschedulable"):
+        problems.append("unschedulable (cordoned)")
+    return [f"{name}: {problem}" for problem in problems]
+
+
+def warn_unhealthy_nodes(ctx: UpReadyContext) -> None:
+    """Report node health problems without blocking the deployment."""
+    completed = shell.kubectl(
+        "get",
+        "nodes",
+        "-o",
+        "json",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip() or "kubectl get nodes failed"
+        warn(f"node health check unavailable: {detail}")
+        return
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        warn("node health check unavailable: could not parse kubectl get nodes output")
+        return
+    nodes = payload.get("items", [])
+    if not nodes:
+        warn("node health check: cluster reports no nodes")
+        return
+    problems = [line for node in nodes for line in node_condition_problems(node)]
+    if problems:
+        for line in problems:
+            warn(f"node health: {line}")
+    else:
+        step("S01", f"node health: {len(nodes)} node(s) Ready")
 
 
 def kubernetes_exec(
@@ -615,6 +677,10 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "schemaMigrator.traefik.acme.email": acme_email,
         "schemaMigrator.keycloak.browserOrigin": f"http://{ctx.settings.server_ip}:8180",
         "schemaMigrator.keycloak.adminHostname": f"http://{ctx.settings.server_ip}:8180",
+        # The backend validates `iss`; the in-cluster Keycloak issues tokens
+        # from its browser-facing origin. Realm name matches the chart default
+        # (schemaMigrator.keycloak.realm=middleware).
+        "global.shared.keycloak.issuer": f"http://{ctx.settings.server_ip}:8180/realms/middleware",
         "atherosSensor.image.tag": image_tag,
         "atherosSearch.image.tag": image_tag,
         "atherosSearch.ui.image.tag": image_tag,
@@ -669,12 +735,69 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     return True
 
 
+def release_workloads(ctx: UpReadyContext) -> list[str]:
+    """Deployments and daemonsets owned by the Helm release.
+
+    StatefulSets are excluded on purpose: redpanda/minio/prometheus/loki are
+    data-bearing and the rolloutRevision annotation already covers their rare
+    config rolls.
+    """
+    completed = shell.kubectl(
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "get",
+        ROLLOUT_RESTART_KINDS,
+        "--selector",
+        f"app.kubernetes.io/instance={ctx.settings.helm_release}",
+        "-o",
+        "name",
+        context=ctx.settings.kube_context,
+        capture=True,
+    )
+    return [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+
+
+def rollout_restart_release_workloads(ctx: UpReadyContext) -> None:
+    """Explicitly restart and verify every release workload after a Helm upgrade.
+
+    This makes pod pickup of freshly published mutable image tags deterministic
+    instead of relying only on the rolloutRevision pod-template annotation.
+    """
+    workloads = release_workloads(ctx)
+    if not workloads:
+        warn("rollout_restart: no deployments or daemonsets found for the release")
+        return
+    step("S03", f"rollout_restart: {' '.join(workloads)}")
+    shell.kubectl(
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "rollout",
+        "restart",
+        *workloads,
+        context=ctx.settings.kube_context,
+        capture=True,
+    )
+    for workload in workloads:
+        step("S03", f"rollout_status: {workload}")
+        shell.kubectl(
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "rollout",
+            "status",
+            workload,
+            f"--timeout={ctx.settings.rollout_status_timeout}",
+            context=ctx.settings.kube_context,
+            capture=True,
+        )
+
+
 def kubernetes_up(ctx: UpReadyContext) -> bool:
     try:
         sync_kubernetes_secrets(ctx)
         publish_registry_images(ctx)
         verify_kubernetes_registry_pull(ctx)
         helm_upgrade(ctx)
+        rollout_restart_release_workloads(ctx)
     except (shell.ShellCommandError, UpReadyError) as exc:
         ctx.classify(str(exc))
         return False

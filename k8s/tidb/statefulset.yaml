@@ -24,15 +24,21 @@ spec:
               name: mysql
             - containerPort: 10080
               name: metrics
-          env:
-            - name: TIDB_ARGS
-              value: "--store=unistore --path=/tidb-data --log-file= --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local --status-port=10080 --ssl-cert=/etc/tidb-tls-server/tls.crt --ssl-key=/etc/tidb-tls-server/tls.key"
+          args:
+            - --store=unistore
+            - --path=/tidb-data
+            - --log-file=
+            - --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local
+            - --status=10080
+            - --config=/etc/tidb/config/tidb.toml
           volumeMounts:
             - name: tidb-data
               mountPath: /tidb-data
             - name: tidb-server-tls
               mountPath: /etc/tidb-tls-server
               readOnly: true
+            - name: tidb-config
+              mountPath: /etc/tidb/config
           resources:
             requests:
               cpu: 500m
@@ -61,3 +67,6 @@ spec:
         - name: tidb-server-tls
           secret:
             secretName: tidb-server-tls
+        - name: tidb-config
+          configMap:
+            name: ssl-proxy-tidb-config

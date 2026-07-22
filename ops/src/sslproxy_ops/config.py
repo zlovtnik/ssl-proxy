@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     kube_registry_probe_timeout: str = Field(
         default="45s", validation_alias="UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT"
     )
+    rollout_status_timeout: str = Field(
+        default="10m", validation_alias="UP_READY_ROLLOUT_STATUS_TIMEOUT"
+    )
 
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")

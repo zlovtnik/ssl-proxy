@@ -7,7 +7,7 @@ dependencies:
   version: 0.1.1
 - name: schema-migrator
   repository: file://charts/schema-migrator
-  version: 0.1.2
+  version: 0.1.3
 - name: atheros-sensor
   repository: file://charts/atheros-sensor
   version: 0.1.1
@@ -35,5 +35,5 @@ dependencies:
 - name: tidb-schema-executor
   repository: file://charts/tidb-schema-executor
   version: 0.1.0
-digest: sha256:5e10c2f05b0a83876cc3b06da1f83f51f0b844a873b1652933f356354c52eb70
-generated: "2026-07-22T07:48:14.715787-04:00"
+digest: sha256:4b19ebde3a64057f7162eebad6e5a41ba205b9da034275bb03a815bfab1c7e4c
+generated: "2026-07-22T19:12:14.293067-04:00"

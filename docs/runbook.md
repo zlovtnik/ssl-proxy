@@ -163,3 +163,31 @@ make k8s-status KUBE_NAMESPACE=ssl-proxy
 
 Keep admin endpoints host-local, protect secrets with the existing rotator,
 and preserve the locked Redpanda topic payload contracts.
+
+## Single-node Kubernetes dev stack
+
+The `helm/ssl-proxy/values-k8s.yaml` profile is the LAN development deployment
+driven by `make up-ready`. It differs from the external-IdP cutover shape in
+one way: the schema-migrator subchart deploys an in-cluster Keycloak (realm
+`middleware`, imported from the chart ConfigMap) for the Schema Migrator UI.
+This is a development convenience, not the production identity model.
+
+Keycloak owns and migrates its own TiDB database. Provision its account the
+same way as the application accounts:
+
+```bash
+k8s/tidb/generate-tls-secrets.sh   # creates the tidb-keycloak password Secret
+kubectl apply -f k8s/tidb/init-job.yaml  # creates the keycloak database/user/grants
+```
+
+During `make up-ready` the Kubernetes flow now also:
+
+- warns on unhealthy cluster nodes in preflight (NotReady, memory/disk/PID
+  pressure, cordoned) without blocking the deploy;
+- after `helm upgrade`, explicitly runs `kubectl rollout restart` and waits on
+  `rollout status` for every release Deployment and DaemonSet (StatefulSets
+  such as redpanda/minio are intentionally left to the rollout-revision
+  annotation);
+- verifies the coordinator (`/actuator/health`), schema-migrator backend
+  (`/api/health`), and keycloak (`/health/ready`) endpoints before finishing.
+  Override the per-workload wait with `UP_READY_ROLLOUT_STATUS_TIMEOUT`.

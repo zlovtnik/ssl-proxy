@@ -63,6 +63,7 @@ OCTOPUS_PW=$(generate_password)
 ATHEROS_SEARCH_PW=$(generate_password)
 INTEGRATION_CONSOLE_PW=$(generate_password)
 SCHEMA_MIGRATOR_PW=$(generate_password)
+KEYCLOAK_PW=$(generate_password)
 
 echo "Creating account secrets..."
 kubectl create secret generic tidb-octopus \
@@ -78,6 +79,11 @@ kubectl create secret generic tidb-atheros-search \
 kubectl create secret generic tidb-schema-migrator \
   --namespace=${NAMESPACE} \
   --from-literal=password="${SCHEMA_MIGRATOR_PW}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic tidb-keycloak \
+  --namespace=${NAMESPACE} \
+  --from-literal=password="${KEYCLOAK_PW}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "Creating schema owner DSN secret..."

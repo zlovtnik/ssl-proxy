@@ -17,3 +17,7 @@ data:
     
     [stmt_summary]
     enable = true
+    
+    [security]
+    ssl-cert = "/etc/tidb-tls-server/tls.crt"
+    ssl-key = "/etc/tidb-tls-server/tls.key"

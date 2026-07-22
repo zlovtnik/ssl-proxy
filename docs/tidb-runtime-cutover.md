@@ -51,7 +51,10 @@ state or as a global application database URL.
 Keycloak remains a supported JWT/JWKS issuer, but is external to this release.
 There is no realm/user/client backfill. Qualify a fresh realm, client, roles,
 admin identity, issuer/audience, discovery endpoint, JWKS endpoint, and smoke
-token for a newly created test principal.
+token for a newly created test principal. (The single-node dev stack rendered
+from `helm/ssl-proxy/values-k8s.yaml` is the one exception: it runs an
+in-cluster Keycloak from the schema-migrator subchart with its own TiDB
+account; see the runbook's single-node section.)
 
 ## Required qualification evidence
 

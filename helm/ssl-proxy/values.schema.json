@@ -64,7 +64,8 @@
                   "properties": {
                     "octopus": {"$ref": "#/definitions/tidbAccount"},
                     "atherosSearch": {"$ref": "#/definitions/tidbAccount"},
-                    "schemaMigrator": {"$ref": "#/definitions/tidbAccount"}
+                    "schemaMigrator": {"$ref": "#/definitions/tidbAccount"},
+                    "keycloak": {"$ref": "#/definitions/keycloakTidbAccount"}
                   }
                 }
               }
@@ -73,8 +74,8 @@
               "type": "object",
               "required": ["issuer", "jwksUri", "schemaMigratorClientId"],
               "properties": {
-                "issuer": {"type": "string", "format": "uri", "pattern": "^https://"},
-                "jwksUri": {"type": "string", "format": "uri", "pattern": "^https://"},
+                "issuer": {"type": "string", "format": "uri", "pattern": "^https?://"},
+                "jwksUri": {"type": "string", "format": "uri", "pattern": "^https?://"},
                 "schemaMigratorClientId": {"type": "string", "minLength": 1}
               }
             },
@@ -240,6 +241,22 @@
       "required": ["database", "user", "passwordSecret"],
       "properties": {
         "database": {"type": "string", "enum": ["octopus_core", "atheros_search", "schema_migrator"]},
+        "user": {"type": "string", "minLength": 1},
+        "passwordSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "key": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "keycloakTidbAccount": {
+      "type": "object",
+      "required": ["database", "user", "passwordSecret"],
+      "properties": {
+        "database": {"type": "string", "enum": ["keycloak"]},
         "user": {"type": "string", "minLength": 1},
         "passwordSecret": {
           "type": "object",

@@ -25,6 +25,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_up,
     resolve_kube_context,
     sync_kubernetes_secrets,
+    warn_unhealthy_nodes,
 )
 from sslproxy_ops.commands.up_ready.model import (
     UpReadyContext,
@@ -268,6 +269,7 @@ def preflight(ctx: UpReadyContext) -> None:
             raise UpReadyError(f"Missing required command: {command}")
     if ctx.settings.deployment_target == "kubernetes":
         resolve_kube_context(ctx)
+        warn_unhealthy_nodes(ctx)
     if needs_docker:
         docker_info = shell.run(["docker", "info"], check=False, capture=True)
         if docker_info.returncode != 0:

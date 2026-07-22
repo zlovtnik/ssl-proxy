@@ -138,10 +138,6 @@ traefik:
       memory: 512Mi
 
 bootstrapImages:
-  mysql:
-    repository: bitnami/mysql
-    tag: 8.0
-    pullPolicy: IfNotPresent
   busybox:
     repository: busybox
     tag: 1.37.0
