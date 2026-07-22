@@ -354,6 +354,7 @@ services:
       - TIDB_PASSWORD=
       - TIDB_ENABLED=true
       - TIDB_POOL_SIZE=10
+      - TIDB_SSL_MODE=${TIDB_SSL_MODE:-VERIFY_IDENTITY}
     volumes:
       - sync-outbox:/sync-outbox
       - type: bind
