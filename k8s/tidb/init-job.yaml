@@ -34,9 +34,13 @@ spec:
 
               echo "Creating accounts..."
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'octopus_runtime' IDENTIFIED BY '${OCTOPUS_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root -e "ALTER USER 'octopus_runtime' IDENTIFIED BY '${OCTOPUS_PASSWORD}';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'atheros_search_runtime' IDENTIFIED BY '${ATHEROS_SEARCH_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root -e "ALTER USER 'atheros_search_runtime' IDENTIFIED BY '${ATHEROS_SEARCH_PASSWORD}';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'schema_migrator_runtime' IDENTIFIED BY '${SCHEMA_MIGRATOR_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root -e "ALTER USER 'schema_migrator_runtime' IDENTIFIED BY '${SCHEMA_MIGRATOR_PASSWORD}';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'keycloak' IDENTIFIED BY '${KEYCLOAK_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root -e "ALTER USER 'keycloak' IDENTIFIED BY '${KEYCLOAK_PASSWORD}';"
 
               echo "Granting permissions..."
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.* TO 'octopus_runtime';"
