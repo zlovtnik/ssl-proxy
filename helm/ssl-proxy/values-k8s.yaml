@@ -97,7 +97,6 @@ javaCoordinator:
       memory: 1Gi
   tidb:
     host: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
-    sslMode: "DISABLED"
 
 tidb:
   external: true
