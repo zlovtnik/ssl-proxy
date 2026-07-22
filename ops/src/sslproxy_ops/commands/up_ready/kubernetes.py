@@ -441,9 +441,6 @@ def dashboard_set_file_args() -> list[str]:
             "--set-file",
             "observability.prometheus.alertRules="
             f"{repo_root() / 'docker' / 'observability' / 'alerts.yml'}",
-            "--set-file",
-            "observability.postgresExporter.queries="
-            f"{repo_root() / 'docker' / 'observability' / 'postgres-exporter-queries.yml'}",
         ]
     )
     return args

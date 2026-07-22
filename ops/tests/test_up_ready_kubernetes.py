@@ -39,10 +39,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_dashboard_files_cover_the_compose_observability_assets(self):
         args = dashboard_set_file_args()
 
-        self.assertEqual(args.count("--set-file"), 8)
+        self.assertEqual(args.count("--set-file"), 7)
         self.assertTrue(any("stackHealthOverview=" in arg for arg in args))
         self.assertTrue(any("prometheus.alertRules=" in arg for arg in args))
-        self.assertTrue(any("postgresExporter.queries=" in arg for arg in args))
 
     def test_postgres_secret_value_is_trimmed_and_immutable(self):
         settings = Settings()
