@@ -47,6 +47,11 @@ apiTokenSecret:
   key: api-token-sha256
 apiTokenEnabled: true
 otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+worker:
+  enabled: false
+  batchSize: 256
+  requestBatchSize: 64
+  requestBatchMax: 128
 resources:
   requests:
     cpu: 250m

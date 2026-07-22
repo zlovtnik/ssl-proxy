@@ -137,6 +137,9 @@ atherosSearch:
   apiTokenEnabled: false
   worker:
     enabled: true
+    batchSize: 256
+    requestBatchSize: 64
+    requestBatchMax: 128
   ui:
     enabled: true
     image:
