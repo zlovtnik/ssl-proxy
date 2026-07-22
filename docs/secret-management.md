@@ -78,7 +78,7 @@ The wrapper calls the Elixir rotator CLI (`wg_key_rotator secrets ...`):
 | File | Bytes of entropy | Encoded length | Used by |
 |---|---|---|---|
 | `postgres.key` | 32 | ~43 chars | Postgres, postgres-exporter |
-| `minio_access_key.key` | 24 | ~32 chars | MinIO, java-coordinator, integration-console web, minio-init |
+| `minio_access_key.key` | 24 | ~32 chars | MinIO, java-coordinator, minio-init |
 | `minio_secret_key.key` | 32 | ~43 chars | Same as above |
 | `wg_obfuscation_key` | 32 | ~43 chars | ssl-proxy, wg-obfs-shim clients |
 | `admin_api_key` | 48 | ~64 chars | ssl-proxy admin API |
@@ -176,7 +176,6 @@ java-coordinator:   ./secrets:/run/secrets:ro
 | `minio` | `minio_access_key.key`, `minio_secret_key.key` | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` |
 | `minio-init` | Same as minio | `MINIO_ACCESS_KEY_ID`, `MINIO_SECRET_ACCESS_KEY` |
 | `java-coordinator` | Same as minio; `oracle_password.txt` | `MINIO_ACCESS_KEY_ID`, `MINIO_SECRET_ACCESS_KEY`; `ORACLE_PASS_FILE` |
-| `integration-console-web` | Same as minio | `MINIO_ACCESS_KEY_ID`, `MINIO_SECRET_ACCESS_KEY` |
 | `grafana` | `grafana_admin_password.key` | `GF_SECURITY_ADMIN_PASSWORD` |
 | `postgres-exporter` | `postgres.key` | `DATA_SOURCE_NAME` (embeds `POSTGRES_PASSWORD`) |
 | `ssl-proxy` | `admin_api_key`, `wg_obfuscation_key` | `ADMIN_API_KEY_FILE`, `WG_OBFUSCATION_KEY_FILE` |
@@ -216,7 +215,7 @@ requires a maintenance window and an explicit replacement of the immutable Kuber
 1. Update both secret files: regenerate `minio_access_key.key` and `minio_secret_key.key`
 2. Restart minio: `docker compose up -d minio`
 3. Restart minio-init: `docker compose up -d minio-init` (recreates buckets with new creds)
-4. Restart consumers: `docker compose up -d java-coordinator integration-console-web`
+4. Restart consumers: `docker compose up -d java-coordinator`
 5. Verify: `docker compose logs minio-init | grep "bucket_ready"` should show success
 
 ### 5.3 WireGuard obfuscation key

@@ -30,7 +30,6 @@ global:
     keycloak:
       issuer: "https://identity.example.internal/realms/ssl-proxy-fresh"
       jwksUri: "https://identity.example.internal/realms/ssl-proxy-fresh/protocol/openid-connect/certs"
-      consoleClientId: "integration-console"
       schemaMigratorClientId: "schema-migrator"
     redis:
       urlSecret:
@@ -58,10 +57,6 @@ global:
           database: "atheros_search"
           user: "atheros_search_runtime"
           passwordSecret: {name: "tidb-atheros-search", key: "password"}
-        integrationConsole:
-          database: "integration_console"
-          user: "integration_console_runtime"
-          passwordSecret: {name: "tidb-integration-console", key: "password"}
         schemaMigrator:
           database: "schema_migrator"
           user: "schema_migrator_runtime"
@@ -158,8 +153,6 @@ observability:
 vecWorker:
   enabled: false
 atherosSearch:
-  enabled: false
-integrationConsole:
   enabled: false
 redisRuntime:
   enabled: true

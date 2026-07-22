@@ -241,7 +241,7 @@
       "type": "object",
       "required": ["database", "user", "passwordSecret"],
       "properties": {
-        "database": {"type": "string", "enum": ["octopus_core", "atheros_search", "integration_console", "schema_migrator"]},
+        "database": {"type": "string", "enum": ["octopus_core", "atheros_search", "schema_migrator"]},
         "user": {"type": "string", "minLength": 1},
         "passwordSecret": {
           "type": "object",

@@ -8,14 +8,8 @@ In scope:
 
 - `ssl-proxy`
 - `java-coordinator`, `java-coordinator-2`, `java-coordinator-3`
-- `integration-console-web`
-- `integration-console-worker`
-- `integration-console-heatmap-refresh`
-- `integration-console-heartbeat`
-- `integration-console-db-setup`
 - `atheros-sensor`
 - `redpanda`
-- `postgres`
 - `minio`
 - `redpanda-init`
 - `minio-init`
@@ -50,7 +44,7 @@ Delivered in this pass:
   - `docker/observability/grafana/provisioning/datasources/datasources.yml`
   - `docker/observability/grafana/provisioning/dashboards/dashboards.yml`
   - dashboards under `docker/observability/grafana/dashboards/`
-- Prometheus scrape targets for `java-coordinator` and `integration-console-web` are active and covered by critical "service down" alert rules
+- Prometheus scrape targets for `java-coordinator` are active and covered by critical "service down" alert rules
 
 ### Wave 1 - Telemetry contract (common schema)
 
@@ -74,7 +68,7 @@ Required trace resource attributes:
 
 Metrics contract:
 
-- service-level prefixing (for example: `ssl_proxy_*`, `coordinator_*`, `integration_console_*`)
+- service-level prefixing (for example: `ssl_proxy_*`, `coordinator_*`)
 - low-cardinality labels only (no request ids, no user ids, no high-cardinality path fragments)
 
 ### Wave 2 - App instrumentation status (non-vector)
@@ -83,11 +77,6 @@ Metrics contract:
 |---|---|---|---|---|
 | `ssl-proxy` | JSON stdout (existing) | `/metrics` admin path (existing) | OTLP env contract wired | platform wired |
 | `java-coordinator*` | JSON logback output enabled | `/actuator/prometheus` (existing) | OTLP env contract wired | platform wired |
-| `integration-console-web` | JSON formatter enabled via `LOG_FORMAT=json` | `/metrics` endpoint live | OTLP env contract wired | platform wired |
-| `integration-console-worker` | JSON formatter enabled | Pushgateway process heartbeat (`observability_process_*`) | loop telemetry with generated trace/span ids in job-cycle logs | platform wired |
-| `integration-console-heatmap-refresh` | JSON formatter enabled | Pushgateway cycle metrics (`observability_job_*`) | per-cycle generated trace/span ids in job-cycle logs | platform wired |
-| `integration-console-heartbeat` | JSON formatter enabled | Pushgateway cycle metrics (`observability_job_*`) | per-cycle generated trace/span ids in job-cycle logs | platform wired |
-| `integration-console-db-setup` | JSON formatter enabled | Pushgateway one-shot metrics (`observability_job_*`) | no long-lived traces required | platform wired |
 | `redpanda-init` | structured JSON logs in `bootstrap.sh` | Pushgateway one-shot metrics (`observability_job_*`) | no long-lived traces required | platform wired |
 | `minio-init` | structured JSON logs in `init.sh` | Pushgateway one-shot metrics (`observability_job_*`) | no long-lived traces required | platform wired |
 | `atheros-sensor` | JSON stdout (existing) | `/metrics` enabled via `ATH_SENSOR_METRICS_PORT` | OTLP env contract wired | platform wired |
@@ -112,7 +101,6 @@ Delivered in this pass:
   - per-service RED metrics
   - sync pipeline latency/failures
   - coordinator Oracle load lifecycle
-  - integration-console request/worker-cycle health
   - infra saturation
 - Critical alert pack in `docker/observability/alerts.yml`:
   - service down
@@ -143,7 +131,6 @@ Standard env variables now wired for non-vector app services:
 Additional toggles:
 
 - `MANAGEMENT_TRACING_SAMPLING_PROBABILITY` for `java-coordinator*`
-- `LOG_FORMAT` for integration-console services
 - `PUSHGATEWAY_URL` for one-shot init jobs
 
 ## Java Coordinator KEDA-Ready Metrics
@@ -206,7 +193,7 @@ Loki ingestion:
 
 ```bash
 curl -G -s "http://127.0.0.1:3100/loki/api/v1/query" \
-  --data-urlencode 'query={service=~"ssl-proxy|java-coordinator|integration-console-web|atheros-sensor"}' \
+  --data-urlencode 'query={service=~"ssl-proxy|java-coordinator|atheros-sensor"}' \
   | jq '.status'
 ```
 

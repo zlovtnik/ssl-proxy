@@ -7,8 +7,9 @@ repository root instructions.
 
 ## Service Boundaries
 - `atheros-sensor/` is a Rust host-side Wi-Fi sensor and sync-plane producer.
-- `atheros-search/` is the Go HTTP/gRPC TiDB query facade. Octopus owns its
-  former ingest, alert, repair, and embedding workflows.
+- `atheros-search/` is the Go HTTP/gRPC search, vector, and ETL control plane
+  service for wireless audit data. It owns embedding job processing via a
+  worker pool and exposes ETL health monitoring.
 - `octopus/` is the Scala 3 Cats Effect/FS2 coordinator and the sole owner of
   durable ingestion, leases, outbox, and maintained projections in TiDB.
 - Keep cross-service contracts explicit: Redpanda topic names, stream names,
@@ -16,8 +17,8 @@ repository root instructions.
   HTTP routes are compatibility surfaces.
 
 ## Shared Guardrails
-- Direct TiDB clients are limited to Octopus, Atheros Search, Integration
-  Console, and schema-migrator, each using an isolated database and account.
+- Direct TiDB clients are limited to Octopus, Atheros Search, and
+  schema-migrator, each using an isolated database and account.
 - PostgreSQL is not a service runtime dependency. It is allowed only inside
   schema-migrator as an explicit external target dialect.
 - Do not introduce direct database writes from `atheros-sensor/`; persistence

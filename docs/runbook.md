@@ -30,13 +30,12 @@ Never jump from `stage` to `prune`.
 Before rendering an activation release, supply:
 
 - an external TiDB v8.5+ endpoint with TiFlash capacity;
-- `octopus_core`, `atheros_search`, `integration_console`, and
+- `octopus_core`, `atheros_search`, and
   `schema_migrator` databases;
 - one dedicated least-privilege runtime account per database plus a separate
   DDL/provisioning account;
 - TLS CA/server-name configuration and account Secrets;
 - a fresh external Keycloak realm and clients (no realm/user/client import);
-- Redis for reconstructible Rails cache and ActionCable fan-out only;
 - the signed cutover artifact, detached signature, and pinned Ed25519 public
   key for the exact Redpanda cluster.
 
@@ -61,7 +60,6 @@ Then run the client suites:
 cd services/octopus && sbt test
 cd ../../services/atheros-search && go test ./...
 cd ../../apps/schema-migrator && sbt test
-cd ../integration-console && bin/rails test
 ```
 
 Unit tests cannot qualify TiFlash/HNSW, TLS identity, transaction conflicts, or

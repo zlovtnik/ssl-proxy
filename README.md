@@ -155,7 +155,6 @@ wg genpsk > presharedkey-peer1
 |---------|-------------|----------------|
 | **ssl-proxy** | Rust transparent proxy, WireGuard terminator, obfuscation engine | [src/](src/) |
 | **octopus** | Scala 3 Cats Effect/FS2 owner of durable TiDB ingestion, leases, outbox, and projections | [services/octopus/](services/octopus/) |
-| **integration-console** | Rails dashboard for devices, heatmaps, sync status | [apps/integration-console/](apps/integration-console/) |
 | **redpanda** | Kafka-compatible event backbone for sync topics | - |
 | **atheros-search** | Go TiDB dense/sparse/hybrid query facade; no background workers | [services/atheros-search/](services/atheros-search/) |
 | **minio** | S3-compatible object store (console exports) | - |
@@ -257,7 +256,6 @@ Domain matching supports wildcard subdomains and is case-insensitive.
 | `TIDB_DATABASE` | `octopus_core` | Octopus-owned database |
 | `TIDB_USER` / `TIDB_PASSWORD` | *(required)* | Dedicated least-privilege Octopus account |
 | `ATHSEARCH_TIDB_DSN` | *(required)* | Native MySQL DSN from a Secret for the `atheros_search` account |
-| `REDIS_URL` | *(required for console)* | Ephemeral Rails cache and ActionCable fan-out only |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | OpenTelemetry collector |
 | `REGISTRY` | *(required)* | Local registry host for first-party Compose images, e.g. `192.168.1.221:5000` |
 | `SCHEMA_MIGRATOR_PUBLIC_HOSTNAME` | *(required for Kubernetes)* | Public DNS hostname for the Schema Migrator HTTPS origin; provide a hostname only, without `https://` |
@@ -269,10 +267,9 @@ correlation resistance, while values above `50` ms add noticeable variance.
 | `REGISTRY_PLAIN_HTTP` | `auto` | Buildx plain-HTTP registry mode; auto-detects localhost and private IPv4 registries |
 | `IMAGE_TAG` | `latest` | Image tag consumed by Compose |
 
-All four direct clients require verified TLS, dedicated non-root accounts, the
-expected database name, TiDB v8.5+, and the canonical manifest checksum. Rails
-uses `mysql2://` URLs for `integration_console` and its read-only core/search
-connections. Schema-migrator uses `BEDROCK_STATE_DB_*` for its TiDB control
+All three direct clients require verified TLS, dedicated non-root accounts, the
+expected database name, TiDB v8.5+, and the canonical manifest checksum.
+Schema-migrator uses `BEDROCK_STATE_DB_*` for its TiDB control
 store; PostgreSQL URLs are accepted only for an explicitly configured external
 migration target.
 

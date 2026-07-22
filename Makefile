@@ -164,7 +164,6 @@ endef
 
 $(eval $(call registry_build_target,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
 $(eval $(call registry_build_target,java-coordinator,services/octopus/Dockerfile,,java-coordinator,.))
-$(eval $(call registry_build_target,integration-console,apps/integration-console/Dockerfile,,integration-console,.))
 $(eval $(call registry_build_target,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
 $(eval $(call registry_build_target,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
 $(eval $(call registry_build_target,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,./apps/wg-key-rotator))

@@ -31,12 +31,6 @@ global:
           passwordSecret:
             name: "tidb-atheros-search"
             key: "password"
-        integrationConsole:
-          database: "integration_console"
-          user: "integration_console_runtime"
-          passwordSecret:
-            name: "tidb-integration-console"
-            key: "password"
         schemaMigrator:
           database: "schema_migrator"
           user: "schema_migrator_runtime"

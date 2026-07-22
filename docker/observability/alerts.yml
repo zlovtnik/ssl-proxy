@@ -2,7 +2,7 @@ groups:
   - name: observability-critical
     rules:
       - alert: ServiceDown
-        expr: up{job=~"ssl-proxy|java-coordinator|integration-console-web|atheros-sensor|redpanda|minio|prometheus|loki|jaeger|otel-collector|otel-spanmetrics|pushgateway|node-exporter|cadvisor"} == 0
+        expr: up{job=~"ssl-proxy|java-coordinator|atheros-sensor|redpanda|minio|prometheus|loki|jaeger|otel-collector|otel-spanmetrics|pushgateway|node-exporter|cadvisor"} == 0
         for: 2m
         labels:
           severity: critical

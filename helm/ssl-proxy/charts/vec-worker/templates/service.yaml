@@ -1,0 +1,23 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-vec-worker
+  labels:
+    app.kubernetes.io/name: vec-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.service.port | default 9092 }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.metrics.port | default 9091 }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    app.kubernetes.io/name: vec-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

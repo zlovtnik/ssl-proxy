@@ -228,3 +228,64 @@ SELECT
 `).Scan(&count)
 	return count, err
 }
+
+func (p *Pool) PendingJobCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := p.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM embedding_jobs WHERE status = 'pending'
+`).Scan(&count)
+	return count, err
+}
+
+func (p *Pool) FailedJobCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := p.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM embedding_jobs WHERE status = 'failed'
+`).Scan(&count)
+	return count, err
+}
+
+func (p *Pool) LeasedJobCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := p.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM embedding_jobs WHERE status = 'leased'
+`).Scan(&count)
+	return count, err
+}
+
+func (p *Pool) CompletedJobCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := p.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM embedding_jobs WHERE status = 'completed'
+`).Scan(&count)
+	return count, err
+}
+
+func (p *Pool) WorkerHeartbeats(ctx context.Context) ([]WorkerHeartbeatRow, error) {
+	rows, err := p.QueryContext(ctx, `
+SELECT worker_id, worker_type, last_seen_at, metadata
+FROM worker_heartbeat
+ORDER BY worker_id
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []WorkerHeartbeatRow
+	for rows.Next() {
+		var r WorkerHeartbeatRow
+		if err := rows.Scan(&r.WorkerID, &r.WorkerType, &r.LastSeenAt, &r.Metadata); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+type WorkerHeartbeatRow struct {
+	WorkerID   string
+	WorkerType string
+	LastSeenAt time.Time
+	Metadata   []byte
+}

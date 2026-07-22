@@ -58,11 +58,6 @@ dependencies:
     repository: "file://charts/atheros-search"
     alias: atherosSearch
     condition: atherosSearch.enabled
-  - name: integration-console
-    version: 0.1.0
-    repository: "file://charts/integration-console"
-    alias: integrationConsole
-    condition: integrationConsole.enabled
   - name: redis-runtime
     version: 0.1.0
     repository: "file://charts/redis-runtime"

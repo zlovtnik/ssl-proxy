@@ -119,7 +119,6 @@ grafana:
   dashboards:
     dbCalls: ""
     infraSaturation: ""
-    integrationConsoleHealth: ""
     serviceRedMetrics: ""
     stackHealthOverview: ""
     syncPipelineLatency: ""

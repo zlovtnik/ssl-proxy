@@ -46,6 +46,14 @@ type Config struct {
 	SchemaReadyTimeout       time.Duration
 	SchemaReadyPollInterval  time.Duration
 	CORSAllowedOrigins       []string
+	WorkerEnabled            bool
+	WorkerCount              int
+	EmbeddingBatchSize       int
+	LeaseSeconds             int
+	WorkerPollInterval       time.Duration
+	WorkerID                 string
+	DLQEnabled               bool
+	WSEnabled                bool
 }
 
 func Load() (Config, error) {
@@ -77,10 +85,32 @@ func Load() (Config, error) {
 		SchemaReadyTimeout:       time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
 		SchemaReadyPollInterval:  time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
 		CORSAllowedOrigins:       envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
+		WorkerEnabled:            envBool("ATHSEARCH_WORKER_ENABLED", false),
+		WorkerCount:              envInt("ATHSEARCH_WORKER_COUNT", 4),
+		EmbeddingBatchSize:       envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 64),
+		LeaseSeconds:             envInt("ATHSEARCH_LEASE_SECONDS", 1800),
+		WorkerPollInterval:       time.Duration(envInt("ATHSEARCH_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
+		WorkerID:                 envString("ATHSEARCH_WORKER_ID", "worker-1"),
+		DLQEnabled:               envBool("ATHSEARCH_DLQ_ENABLED", true),
+		WSEnabled:                envBool("ATHSEARCH_WS_ENABLED", false),
 	}
 
 	if cfg.TiDBDSN == "" {
 		return cfg, errors.New("ATHSEARCH_TIDB_DSN is required")
+	}
+	if cfg.WorkerEnabled {
+		if cfg.WorkerCount <= 0 {
+			return cfg, errors.New("ATHSEARCH_WORKER_COUNT must be positive when workers are enabled")
+		}
+		if cfg.EmbeddingBatchSize <= 0 {
+			return cfg, errors.New("ATHSEARCH_EMBEDDING_BATCH_SIZE must be positive when workers are enabled")
+		}
+		if cfg.LeaseSeconds <= 0 {
+			return cfg, errors.New("ATHSEARCH_LEASE_SECONDS must be positive when workers are enabled")
+		}
+		if cfg.WorkerPollInterval <= 0 {
+			return cfg, errors.New("ATHSEARCH_POLL_INTERVAL_MS must be positive when workers are enabled")
+		}
 	}
 	if strings.Contains(cfg.TiDBDSN, "://") {
 		return cfg, errors.New("ATHSEARCH_TIDB_DSN must be a native MySQL DSN")

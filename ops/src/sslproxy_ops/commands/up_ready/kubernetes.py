@@ -426,7 +426,6 @@ def dashboard_set_file_args() -> list[str]:
     names = {
         "dbCalls": "db-calls.json",
         "infraSaturation": "infra-saturation.json",
-        "integrationConsoleHealth": "integration-console-health.json",
         "serviceRedMetrics": "service-red-metrics.json",
         "stackHealthOverview": "stack-health-overview.json",
         "syncPipelineLatency": "sync-pipeline-latency.json",

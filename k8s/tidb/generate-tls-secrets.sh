@@ -37,11 +37,6 @@ kubectl create secret generic tidb-atheros-search \
   --from-literal=password="${ATHEROS_SEARCH_PW}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl create secret generic tidb-integration-console \
-  --namespace=${NAMESPACE} \
-  --from-literal=password="${INTEGRATION_CONSOLE_PW}" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
 kubectl create secret generic tidb-schema-migrator \
   --namespace=${NAMESPACE} \
   --from-literal=password="${SCHEMA_MIGRATOR_PW}" \

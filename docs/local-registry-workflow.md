@@ -88,7 +88,6 @@ Image names:
 |---|---|
 | ssl-proxy, wg-udp-frontdoor, ssl-proxy-next | `$REGISTRY/ssl-proxy:$IMAGE_TAG` |
 | java-coordinator | `$REGISTRY/java-coordinator:$IMAGE_TAG` |
-| integration-console roles | `$REGISTRY/integration-console:$IMAGE_TAG` |
 | atheros-sensor | `$REGISTRY/atheros-sensor:$IMAGE_TAG` |
 | atheros-search | `$REGISTRY/atheros-search:$IMAGE_TAG` |
 | wg-key-rotator | `$REGISTRY/wg-key-rotator:$IMAGE_TAG` |

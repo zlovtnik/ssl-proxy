@@ -29,24 +29,18 @@ spec:
               echo "Creating databases..."
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE DATABASE IF NOT EXISTS octopus_core CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE DATABASE IF NOT EXISTS atheros_search CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-              mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE DATABASE IF NOT EXISTS integration_console CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE DATABASE IF NOT EXISTS schema_migrator CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
               
               echo "Creating accounts..."
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'octopus_runtime' IDENTIFIED BY '${OCTOPUS_PASSWORD}';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'atheros_search_runtime' IDENTIFIED BY '${ATHEROS_SEARCH_PASSWORD}';"
-              mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'integration_console_runtime' IDENTIFIED BY '${INTEGRATION_CONSOLE_PASSWORD}';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "CREATE USER IF NOT EXISTS 'schema_migrator_runtime' IDENTIFIED BY '${SCHEMA_MIGRATOR_PASSWORD}';"
               
               echo "Granting permissions..."
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.* TO 'octopus_runtime';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.* TO 'octopus_runtime';"
-              mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT ON integration_console.* TO 'octopus_runtime';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT ON atheros_search.* TO 'atheros_search_runtime';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT ON octopus_core.* TO 'atheros_search_runtime';"
-              mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON integration_console.* TO 'integration_console_runtime';"
-              mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT ON octopus_core.* TO 'integration_console_runtime';"
-              mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT ON atheros_search.* TO 'integration_console_runtime';"
               mysql -h ssl-proxy-tidb -P 4000 -u root -e "GRANT SELECT, INSERT, UPDATE, DELETE ON schema_migrator.* TO 'schema_migrator_runtime';"
               
               echo "TiDB initialization complete."
@@ -60,11 +54,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: tidb-atheros-search
-                  key: password
-            - name: INTEGRATION_CONSOLE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: tidb-integration-console
                   key: password
             - name: SCHEMA_MIGRATOR_PASSWORD
               valueFrom:

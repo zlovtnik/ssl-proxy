@@ -12,7 +12,6 @@ overrides a rule for its subtree.
 - Keep changes ASCII unless a file already uses Unicode for a clear reason.
 - Do not revert, overwrite, or tidy edits you did not make.
 - Assume the workspace may be dirty; stay inside the requested assignment.
-- Check both root and submodule git status when touching `apps/integration-console/`.
 
 ## Repo Anatomy
 - `src/` is the Rust `ssl-proxy` service: WireGuard ingress, transparent proxy,
@@ -22,18 +21,17 @@ overrides a rule for its subtree.
 - `apps/schema-migrator/` is the Scala Cats Effect runner whose control state
   lives in TiDB; PostgreSQL remains supported only as an external target dialect.
 - `services/atheros-sensor/` is the Rust Linux monitor-mode wireless sensor.
-- `services/atheros-search/` is the Go HTTP/gRPC search and vector service for
-  wireless audit data.
+- `services/atheros-search/` is the Go HTTP/gRPC search, vector, and ETL
+  control plane service for wireless audit data. It owns embedding job
+  processing via a worker pool and exposes ETL health monitoring.
 - `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
   durable ingestion, leases, outbox, and maintained TiDB projections, built via sbt.
 - `services/` has local `AGENTS.md` files for shared service rules and
   service-specific conventions.
-- `apps/integration-console/` is a git submodule containing the Rails 7
-  management console. It has its own local `AGENTS.md`.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
   It has its own local `AGENTS.md`.
-- `sql/tidb/` is the canonical runtime schema source for the four isolated
-  `octopus_core`, `atheros_search`, `integration_console`, and
+- `sql/tidb/` is the canonical runtime schema source for the three isolated
+  `octopus_core`, `atheros_search`, and
   `schema_migrator` databases. PostgreSQL SQL belongs only to the historical
   archive or schema-migrator external-target fixtures.
 - `helm/ssl-proxy/` is the umbrella chart; deployable units live under
@@ -45,8 +43,11 @@ overrides a rule for its subtree.
 ## Architecture Guardrails
 - Keep coordinator concerns in `services/octopus/`: cursoring, dedupe,
   job state, batching, backlog handling, and TiDB load/result behavior.
-- Direct TiDB clients are intentional for Octopus, Atheros Search, Integration
-  Console, and schema-migrator. Keep them on isolated databases/accounts and
+- Atheros Search owns embedding job processing (claim, embed, write vectors)
+  via its worker pool. Projection maintenance and alert derivation remain
+  Octopus concerns.
+- Direct TiDB clients are intentional for Octopus, Atheros Search, and
+  schema-migrator. Keep them on isolated databases/accounts and
   enforce the table-level grant matrix documented in
   `docs/tidb-runtime-cutover.md`. Do not add direct database wiring to `src/`,
   `crates/sync-plane/`, or `services/atheros-sensor/`.

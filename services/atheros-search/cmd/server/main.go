@@ -21,6 +21,7 @@ import (
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/health"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/search"
+	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/worker"
 )
 
 func main() {
@@ -93,6 +94,23 @@ func main() {
 		Miss:  m.EmbeddingCacheMiss.Inc,
 	}
 
+	healthMon := worker.NewHealthMonitor(pool.DB)
+
+	var workerPool *worker.Pool
+	if cfg.WorkerEnabled {
+		workerPool = worker.NewPool(pool.DB, &workerEmbedderAdapter{embedder: embedder}, worker.PoolConfig{
+			WorkerCount:       cfg.WorkerCount,
+			LeaseSeconds:      cfg.LeaseSeconds,
+			PollInterval:      cfg.WorkerPollInterval,
+			BatchSize:         cfg.EmbeddingBatchSize,
+			WorkerID:          cfg.WorkerID,
+			HealthPollEnabled: true,
+		}, logger)
+		workerPool.Start(ctx)
+	} else {
+		logger.Info().Msg("worker pool disabled (ATHSEARCH_WORKER_ENABLED=false)")
+	}
+
 	svc := search.NewService(pool.DB, embedder, cfg, m, logger)
 	readiness := &health.Readiness{DB: pool, Embedder: embedder, SchemaReadyRequired: cfg.SchemaReadyRequired}
 
@@ -104,13 +122,16 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start grpc server")
 	}
-	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, cfg.CORSAllowedOrigins, svc, readiness, tokenAuth, logger)
+	httpServer, err := api.StartHTTP(ctx, cfg.HTTPPort, cfg.CORSAllowedOrigins, svc, readiness, tokenAuth, healthMon, cfg.WSEnabled, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("start http gateway")
 	}
 
 	<-ctx.Done()
 	logger.Info().Msg("shutdown requested")
+	if workerPool != nil {
+		workerPool.Stop()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -137,7 +158,17 @@ func logStartupConfig(logger zerolog.Logger, cfg config.Config) {
 		Bool("embedding_backend_configured", cfg.EmbeddingBackend != "").
 		Str("embedding_model", cfg.EmbeddingModel).
 		Int("dense_overfetch_factor", cfg.DenseOverfetchFactor).
+		Bool("worker_enabled", cfg.WorkerEnabled).
+		Int("worker_count", cfg.WorkerCount).
 		Msg("atheros-search TiDB query facade configured")
+}
+
+type workerEmbedderAdapter struct {
+	embedder embed.Client
+}
+
+func (a *workerEmbedderAdapter) Embed(ctx context.Context, texts []string, kind string) ([][]float32, error) {
+	return a.embedder.Embed(ctx, texts, embed.Kind(kind))
 }
 
 func runHealthcheck() error {

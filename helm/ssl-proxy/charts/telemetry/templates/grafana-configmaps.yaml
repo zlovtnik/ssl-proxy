@@ -65,10 +65,6 @@ data:
   infra-saturation.json: |
     {{- . | nindent 4 }}
   {{- end }}
-  {{- with .Values.grafana.dashboards.integrationConsoleHealth }}
-  integration-console-health.json: |
-    {{- . | nindent 4 }}
-  {{- end }}
   {{- with .Values.grafana.dashboards.serviceRedMetrics }}
   service-red-metrics.json: |
     {{- . | nindent 4 }}

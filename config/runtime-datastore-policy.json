@@ -4,7 +4,6 @@
     "src",
     "crates",
     "services",
-    "apps/integration-console",
     "apps/schema-migrator",
     "helm",
     "ops",
@@ -56,16 +55,6 @@
       "path_glob": "apps/schema-migrator/**",
       "pattern_ids": ["postgres_runtime"],
       "reason": "PostgreSQL remains a supported external migration target; the control store is checked separately by its TiDB tests."
-    },
-    {
-      "path_glob": "apps/integration-console/db/legacy_postgresql_*",
-      "pattern_ids": ["postgres_runtime"],
-      "reason": "Non-executable historical Rails schema archive retained for audit; runtime migration paths are empty."
-    },
-    {
-      "path_glob": "apps/integration-console/test/contracts/runtime_contract_test.rb",
-      "pattern_ids": ["postgres_runtime"],
-      "reason": "Negative contract fixture proves PostgreSQL runtime URLs fail closed."
     },
     {
       "path_glob": "scripts/check-runtime-datastores.py",

@@ -35,31 +35,6 @@ services:
       context: .
       dockerfile: services/octopus/Dockerfile
 
-  integration-console-web:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-worker:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-db-setup:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-heatmap-refresh:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-heartbeat:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
   atheros-sensor:
     build:
       context: .
