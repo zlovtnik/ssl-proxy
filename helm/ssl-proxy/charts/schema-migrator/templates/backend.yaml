@@ -141,6 +141,9 @@ spec:
         - name: tidb-tls
           secret:
             secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
+            items:
+              - key: {{ .Values.global.shared.tidb.tls.caSecret.key }}
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Service
