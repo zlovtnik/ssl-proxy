@@ -26,10 +26,13 @@ spec:
               name: metrics
           env:
             - name: TIDB_ARGS
-              value: "--store=unistore --path=/tidb-data --log-file= --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local --status-port=10080"
+              value: "--store=unistore --path=/tidb-data --log-file= --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local --status-port=10080 --ssl-cert=/etc/tidb-tls-server/tls.crt --ssl-key=/etc/tidb-tls-server/tls.key"
           volumeMounts:
             - name: tidb-data
               mountPath: /tidb-data
+            - name: tidb-server-tls
+              mountPath: /etc/tidb-tls-server
+              readOnly: true
           resources:
             requests:
               cpu: 500m
@@ -55,3 +58,6 @@ spec:
         - name: tidb-data
           hostPath:
             path: /var/lib/docker/volumes/ssl-proxy_tidb-data/_data
+        - name: tidb-server-tls
+          secret:
+            secretName: tidb-server-tls

@@ -45,7 +45,7 @@ spec:
             - name: SCHEMA_MIGRATOR_DB_KIND
               value: "tidb"
             - name: BEDROCK_STATE_DB_URL
-              value: {{ printf "jdbc:mysql://%s:%v/%s?sslMode=VERIFY_IDENTITY&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.accounts.schemaMigrator.database | quote }}
+              value: {{ printf "jdbc:mysql://%s:%v/%s?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///etc/tidb-tls/ca.crt&trustCertificateKeyStoreType=PEM&fallbackToSystemTrustStore=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.accounts.schemaMigrator.database | quote }}
             - name: BEDROCK_STATE_DB_USER
               value: {{ .Values.global.shared.tidb.accounts.schemaMigrator.user | quote }}
             - name: BEDROCK_STATE_DB_PASSWORD
@@ -131,10 +131,16 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
+        - name: tidb-tls
+          secret:
+            secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
 ---
 apiVersion: v1
 kind: Service
