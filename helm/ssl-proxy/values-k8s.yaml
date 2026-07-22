@@ -10,7 +10,39 @@ global:
       bootstrapServers: "ssl-proxy-redpanda:9092"
       topicReplicationFactor: 1
     tidb:
-      host: "ssl-proxy-tidb"
+      host: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+      port: 4000
+      minimumVersion: "8.5.0"
+      tls:
+        serverName: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+        caSecret:
+          name: "tidb-client-ca"
+          key: "ca.crt"
+      accounts:
+        octopus:
+          database: "octopus_core"
+          user: "octopus_runtime"
+          passwordSecret:
+            name: "tidb-octopus"
+            key: "password"
+        atherosSearch:
+          database: "atheros_search"
+          user: "atheros_search_runtime"
+          passwordSecret:
+            name: "tidb-atheros-search"
+            key: "password"
+        integrationConsole:
+          database: "integration_console"
+          user: "integration_console_runtime"
+          passwordSecret:
+            name: "tidb-integration-console"
+            key: "password"
+        schemaMigrator:
+          database: "schema_migrator"
+          user: "schema_migrator_runtime"
+          passwordSecret:
+            name: "tidb-schema-migrator"
+            key: "password"
     minio:
       endpoint: "http://ssl-proxy-minio:9000"
     atherosSensor:
@@ -70,13 +102,15 @@ javaCoordinator:
       cpu: 500m
       memory: 1Gi
   tidb:
-    host: "ssl-proxy-tidb"
+    host: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
     sslMode: "DISABLED"
 
 tidb:
-  external: false
-  persistence:
-    hostPath: "/var/lib/docker/volumes/ssl-proxy_tidb-data/_data"
+  external: true
+  minimumVersion: "8.5.0"
+  egress:
+    enabled: false
+    cidrs: []
 vecWorker:
   enabled: false
 schemaMigrator:

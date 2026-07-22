@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ssl-proxy-tidb
+  namespace: ssl-proxy
+  labels:
+    app: ssl-proxy-tidb
+spec:
+  serviceName: ssl-proxy-tidb-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ssl-proxy-tidb
+  template:
+    metadata:
+      labels:
+        app: ssl-proxy-tidb
+    spec:
+      containers:
+        - name: tidb
+          image: pingcap/tidb:v8.5.0
+          ports:
+            - containerPort: 4000
+              name: mysql
+            - containerPort: 10080
+              name: metrics
+          args:
+            - --store=unistore
+            - --path=/tidb-data
+            - --log-file=
+            - --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local
+            - --status-port=10080
+          env:
+            - name: TIDB_ARGS
+              value: "--store=unistore --path=/tidb-data --log-file= --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local --status-port=10080"
+          volumeMounts:
+            - name: tidb-data
+              mountPath: /tidb-data
+            - name: tidb-config
+              mountPath: /tidb-config
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          livenessProbe:
+            exec:
+              command:
+                - mysql
+                - -h
+                - 127.0.0.1
+                - -P
+                - "4000"
+                - -u
+                - root
+                - -e
+                - SELECT 1
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - mysql
+                - -h
+                - 127.0.0.1
+                - -P
+                - "4000"
+                - -u
+                - root
+                - -e
+                - SELECT 1
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: tidb-config
+          configMap:
+            name: ssl-proxy-tidb-config
+  volumeClaimTemplates:
+    - metadata:
+        name: tidb-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: ssl-proxy-tidb-storage
+        resources:
+          requests:
+            storage: 20Gi

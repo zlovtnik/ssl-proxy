@@ -31,6 +31,8 @@ global:
     atherosSearch:
       metricsPort: 9090
       workerMetricsPort: 9090
+    tidb:
+      metricsPort: 10080
 
 # KEDA, ServiceMonitor, and dashboard-discovery values remain explicitly tracked as gaps in the umbrella chart.
 enabled: false
