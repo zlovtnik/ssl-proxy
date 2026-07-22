@@ -285,6 +285,10 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: >
       "mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS coordinator;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS octopus_core;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS integration_console;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS atheros_search;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS schema_migrator;'
       && mysql -h tidb -P 4000 -u root coordinator < /docker-entrypoint-initdb.d/001_schema.sql"
     volumes:
       - type: bind
@@ -383,8 +387,8 @@ services:
     command: ["bin/rails", "server", "-b", "0.0.0.0"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-mysql2://root@tidb:4000/integration_console}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-mysql2://root@tidb:4000/octopus_core}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY=${INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY:-60}
@@ -415,8 +419,8 @@ services:
     command: ["bin/rails", "runner", "Observability::WorkerRunner.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-mysql2://root@tidb:4000/integration_console}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-mysql2://root@tidb:4000/octopus_core}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
@@ -441,8 +445,8 @@ services:
     command: ["sh", "bin/observability-db-setup.sh"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-mysql2://root@tidb:4000/integration_console}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-mysql2://root@tidb:4000/octopus_core}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
       - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
@@ -462,8 +466,8 @@ services:
     command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-mysql2://root@tidb:4000/integration_console}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-mysql2://root@tidb:4000/octopus_core}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
@@ -484,8 +488,8 @@ services:
     command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
     environment:
       - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-mysql2://root@tidb:4000/integration_console}
+      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-mysql2://root@tidb:4000/octopus_core}
       - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
       - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
       - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}

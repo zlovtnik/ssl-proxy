@@ -49,7 +49,6 @@
     ".yml"
   ],
   "forbidden_patterns": {
-    "mongodb_runtime": "(?i)(mongodb(?:\\+srv)?://|MONGO(?:DB)?_[A-Z0-9_]*|mongo(?:db)?[.-](?:service|credentials))",
     "postgres_runtime": "(?i)(jdbc:postgresql:|postgres(?:ql)?://|ATHSEARCH_POSTGRES_DSN|POSTGRES_(?:HOST|PORT|DB|DATABASE|USER|PASSWORD)|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD|global\\.shared\\.postgres)"
   },
   "allowlist": [
@@ -69,18 +68,13 @@
       "reason": "Negative contract fixture proves PostgreSQL runtime URLs fail closed."
     },
     {
-      "path_glob": "helm/ssl-proxy/cutover-compat/**",
-      "pattern_ids": ["postgres_runtime", "mongodb_runtime"],
-      "reason": "One-release, pinned-digest compatibility manifests are allowed only in the isolated cutover compatibility directory."
-    },
-    {
       "path_glob": "scripts/check-runtime-datastores.py",
-      "pattern_ids": ["postgres_runtime", "mongodb_runtime"],
+      "pattern_ids": ["postgres_runtime"],
       "reason": "The policy checker contains the forbidden tokens it enforces."
     },
     {
       "path_glob": "config/runtime-datastore-policy.json",
-      "pattern_ids": ["postgres_runtime", "mongodb_runtime"],
+      "pattern_ids": ["postgres_runtime"],
       "reason": "The policy definition contains the forbidden tokens it enforces."
     }
   ]

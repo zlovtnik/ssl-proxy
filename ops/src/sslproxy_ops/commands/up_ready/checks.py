@@ -24,7 +24,7 @@ from sslproxy_ops.commands.up_ready.model import (
     warn,
 )
 from sslproxy_ops.paths import repo_root
-from sslproxy_ops.util.ini import peer_names, trim_key_value, uri_encode
+from sslproxy_ops.util.ini import peer_names, trim_key_value
 from sslproxy_ops.util.qr import render_qr_file, render_qr_text
 
 
@@ -134,7 +134,6 @@ def classify_service_failure(ctx: UpReadyContext, service: str) -> None:
     )
     suffix = {
         "java-coordinator": "java-coordinator unhealthy",
-        "postgres": "postgres unhealthy",
         "redpanda": "redpanda unhealthy",
     }.get(service, f"{service} unhealthy")
     ctx.classify(f"{logs.stdout}\n{logs.stderr}\n{suffix}")
@@ -507,7 +506,6 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f"{output.name}.", dir=output.parent)
     os.close(fd)
     tmp = Path(tmp_name)
-    postgres_password = read_handoff_secret(repo_root() / "secrets" / "postgres.key")
     grafana_password = read_handoff_secret(repo_root() / "secrets" / "grafana_admin_password.key")
     admin_api_key = read_handoff_secret(repo_root() / "secrets" / "admin_api_key")
     wg_obfuscation_key = read_handoff_secret(repo_root() / "secrets" / "wg_obfuscation_key")
@@ -539,10 +537,6 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
                 "WG_OBFUSCATION_SESSION_IDLE_SECS="
                 f"{os.getenv('WG_OBFUSCATION_SESSION_IDLE_SECS', '300')}\n"
             )
-        handle.write("\n## Postgres\n")
-        handle.write("host=127.0.0.1\nport=5432\ndatabase=sync\nusername=sync\n")
-        handle.write(f"password={postgres_password}\n")
-        handle.write(f"url=postgres://sync:{uri_encode(postgres_password)}@127.0.0.1:5432/sync\n")
         handle.write("\n## Grafana\n")
         handle.write(f"url=http://{ctx.settings.server_ip}:3004\n")
         handle.write(f"username={os.getenv('GRAFANA_ADMIN_USER', 'admin')}\n")

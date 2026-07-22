@@ -210,16 +210,6 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
     secrets = root / "secrets"
     config = root / "config"
     ensure_namespace(ctx)
-    # postgres.key is generated once and is the durable credential authority. Store the
-    # same newline-free value used by .env and the operator credential handoff, then make
-    # the Kubernetes Secret immutable so routine upgrades cannot rotate it accidentally.
-    apply_secret_value(
-        ctx,
-        "postgres-credentials",
-        "password",
-        secrets / "postgres.key",
-        immutable=True,
-    )
     apply_secret_values(
         ctx,
         "minio-credentials",
@@ -635,7 +625,6 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         "atherosSearch.image.tag": image_tag,
         "atherosSearch.ui.image.tag": image_tag,
         "atherosSearch.embeddingBackend": embedding_backend,
-        "postgres.image.tag": image_tag,
         "proxy.wireguard.peerNames": peers,
     }
     typed_values = {

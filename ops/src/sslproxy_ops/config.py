@@ -92,7 +92,6 @@ class Settings(BaseSettings):
         default="redpandadata/redpanda:latest", validation_alias="REDPANDA_IMAGE"
     )
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
-    postgres_password: str | None = Field(default=None, validation_alias="POSTGRES_PASSWORD")
 
     @field_validator("stack_health_services")
     @classmethod

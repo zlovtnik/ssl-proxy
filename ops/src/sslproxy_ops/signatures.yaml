@@ -60,13 +60,8 @@
   retry: auto
 - name: coordinator_unhealthy
   pattern: 'java-coordinator unhealthy'
-  cause: 'Coordinator failed health, Redpanda, Postgres, or TiDB checks'
-  fix: 'Inspect java-coordinator logs, TIDB_HOST/TIDB_PORT, DATABASE_URL, and SYNC_REDPANDA_BOOTSTRAP_SERVERS'
-  retry: manual
-- name: postgres_unavailable
-  pattern: 'postgres unhealthy|Postgres unavailable'
-  cause: 'Postgres dependency unavailable'
-  fix: 'Ensure postgres is healthy and DATABASE_URL points to postgres:5432'
+  cause: 'Coordinator failed health, Redpanda, or TiDB checks'
+  fix: 'Inspect java-coordinator logs, TIDB_HOST/TIDB_PORT, and SYNC_REDPANDA_BOOTSTRAP_SERVERS'
   retry: manual
 - name: redpanda_unavailable
   pattern: 'redpanda unhealthy|Redpanda unavailable'
