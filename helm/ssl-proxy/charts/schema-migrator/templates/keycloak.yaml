@@ -1,5 +1,5 @@
 {{- if .Values.enabled }}
-{{- $tidbAccount := required "global.shared.tidb.accounts.keycloak is required when schemaMigrator.enabled=true" .Values.global.shared.tidb.accounts.keycloak -}}
+{{- $tidbAccount := required "global.shared.tidb.accounts.keycloak is required when schemaMigrator.enabled=true" (dig "shared" "tidb" "accounts" "keycloak" nil .Values.global) -}}
 {{- if .Values.keycloak.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
