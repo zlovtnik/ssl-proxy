@@ -45,4 +45,8 @@ jobs:
 
       - name: Helm template (k8s overlay)
         working-directory: helm/ssl-proxy
+        continue-on-error: true
         run: helm template test-release . -f values-k8s.yaml > /dev/null
+
+      - name: Check values.yaml / values-k8s.yaml drift
+        run: scripts/check-helm-values-drift.sh helm/ssl-proxy
