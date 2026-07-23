@@ -21,6 +21,7 @@ spec:
           image: pingcap/tidb:v8.5.0
           ports:
             - containerPort: 4000
+              hostPort: 4000
               name: mysql
             - containerPort: 10080
               name: metrics

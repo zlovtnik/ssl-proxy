@@ -6,7 +6,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-tidb-schema-{{ .Values.global.rolloutRevision | default .Release.Revision | sha256sum | trunc 10 }}
+  name: {{ .Release.Name }}-tidb-schema-{{ .Values.global.rolloutRevision | default (.Release.Revision | toString) | sha256sum | trunc 10 }}
   namespace: {{ .Release.Namespace }}
   labels: {app.kubernetes.io/name: tidb-schema-executor, app.kubernetes.io/instance: {{ .Release.Name }}, ssl-proxy.io/tidb-client: "true"}
   annotations:

@@ -149,6 +149,8 @@ schemaMigrator:
       repository: schema-migrator-ui
       tag: latest
       pullPolicy: Always
+    service:
+      hostPort: 3008
   keycloak:
     # Set dynamically by `ops up-ready` so Keycloak's browser-facing issuer
     # and admin console use the reachable LAN origin.
