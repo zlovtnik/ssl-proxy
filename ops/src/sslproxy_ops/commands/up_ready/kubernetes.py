@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import os
+import secrets
 import shutil
+import string
 import subprocess
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +22,7 @@ ROLLOUT_RESTART_KINDS = "deployments,daemonsets"
 
 
 def release_fullname(ctx: UpReadyContext) -> str:
+    """Return the Helm release fullname for the ssl-proxy chart."""
     release = ctx.settings.helm_release
     chart_name = "ssl-proxy"
     fullname = release if chart_name in release else f"{release}-{chart_name}"
@@ -353,6 +357,197 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
             ]
         )
     apply_secret(ctx, "wireguard-config", wireguard_files)
+    return True
+
+
+def _generate_password(length: int = 32) -> str:
+    """Generate a secure random password."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _secret_exists(name: str, namespace: str, context: str | None) -> bool:
+    """Check if a Kubernetes secret exists."""
+    result = shell.kubectl(
+        "get", "secret", name,
+        "--namespace", namespace,
+        "--ignore-not-found",
+        context=context,
+        check=False,
+        capture=True,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _create_secret_from_literals(
+    ctx: UpReadyContext,
+    name: str,
+    literals: dict[str, str],
+) -> None:
+    """Create a secret from literal values using kubectl."""
+    command = [
+        "create", "secret", "generic", name,
+        "--namespace", ctx.settings.kube_namespace,
+        "--dry-run=client", "-o", "yaml",
+    ]
+    for key, value in literals.items():
+        command.append(f"--from-literal={key}={value}")
+    manifest = shell.kubectl(
+        *command,
+        context=ctx.settings.kube_context,
+        capture=True,
+    ).stdout
+    _apply_rendered_resource(ctx, manifest)
+
+
+def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
+    """Generate TiDB runtime and TLS secrets if they don't exist.
+
+    This function ensures all TiDB-related Kubernetes secrets exist before
+    Helm upgrade. Runtime secrets (passwords) are only created if missing
+    to preserve existing TiDB accounts. TLS secrets are always regenerated
+    to support certificate rotation.
+    """
+    namespace = ctx.settings.kube_namespace
+    context = ctx.settings.kube_context
+    tidb_host = "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+
+    # TiDB runtime secrets (only create if missing)
+    if not _secret_exists("tidb-octopus", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-octopus")
+        password = _generate_password()
+        _create_secret_from_literals(ctx, "tidb-octopus", {"password": password})
+
+    if not _secret_exists("tidb-atheros-search", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-atheros-search")
+        password = _generate_password()
+        dsn = f"atheros_search_runtime:{password}@tcp({tidb_host}:4000)/atheros_search"
+        _create_secret_from_literals(ctx, "tidb-atheros-search", {"password": password, "dsn": dsn})
+
+    if not _secret_exists("tidb-schema-migrator", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-schema-migrator")
+        password = _generate_password()
+        _create_secret_from_literals(ctx, "tidb-schema-migrator", {"password": password})
+
+    if not _secret_exists("tidb-keycloak", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-keycloak")
+        password = _generate_password()
+        _create_secret_from_literals(ctx, "tidb-keycloak", {"password": password})
+
+    if not _secret_exists("tidb-schema-owner", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-schema-owner")
+        dsn = f"mysql://root@{tidb_host}:4000/"
+        _create_secret_from_literals(ctx, "tidb-schema-owner", {"dsn": dsn})
+
+    if not _secret_exists("redis-runtime", namespace, context):
+        step("S02", "tidb_secrets: creating redis-runtime")
+        password = _generate_password()
+        _create_secret_from_literals(ctx, "redis-runtime", {"password": password})
+
+    # TiDB TLS secrets (always regenerate)
+    step("S02", "tidb_secrets: generating TiDB TLS certificates")
+    with tempfile.TemporaryDirectory() as cert_dir:
+        cert_path = Path(cert_dir)
+
+        # Generate CA
+        shell.run([
+            "openssl", "genrsa", "-out", str(cert_path / "ca.key"), "2048"
+        ], check=True, capture=True)
+
+        # Create CA config
+        ca_config = cert_path / "ca.cnf"
+        ca_config.write_text("""[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+prompt = no
+
+[req_distinguished_name]
+CN = TiDB Client CA
+
+[v3_ca]
+basicConstraints = critical,CA:true
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+""")
+
+        shell.run([
+            "openssl", "req", "-new", "-x509", "-days", "3650",
+            "-key", str(cert_path / "ca.key"),
+            "-out", str(cert_path / "ca.crt"),
+            "-config", str(ca_config),
+            "-extensions", "v3_ca"
+        ], check=True, capture=True)
+
+        # Create server config
+        server_config = cert_path / "tidb-server.cnf"
+        server_config.write_text(f"""[req]
+distinguished_name = req_distinguished_name
+req_extensions = req_ext
+prompt = no
+
+[req_distinguished_name]
+CN = ssl-proxy-tidb
+
+[req_ext]
+subjectAltName = @alt_names
+
+[v3_server]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = {tidb_host}
+DNS.2 = ssl-proxy-tidb
+""")
+
+        # Generate server key and CSR
+        shell.run([
+            "openssl", "req", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(cert_path / "tidb-server.key"),
+            "-out", str(cert_path / "tidb-server.csr"),
+            "-config", str(server_config)
+        ], check=True, capture=True)
+
+        # Sign server cert with CA
+        shell.run([
+            "openssl", "x509", "-req", "-days", "3650",
+            "-in", str(cert_path / "tidb-server.csr"),
+            "-CA", str(cert_path / "ca.crt"),
+            "-CAkey", str(cert_path / "ca.key"),
+            "-CAcreateserial",
+            "-out", str(cert_path / "tidb-server.crt"),
+            "-extfile", str(server_config),
+            "-extensions", "v3_server"
+        ], check=True, capture=True)
+
+        # Create tidb-client-ca secret
+        ca_manifest = shell.kubectl(
+            "create", "secret", "generic", "tidb-client-ca",
+            "--namespace", namespace,
+            f"--from-file=ca.crt={cert_path / 'ca.crt'}",
+            "--dry-run=client", "-o", "yaml",
+            context=context,
+            capture=True,
+        ).stdout
+        _apply_rendered_resource(ctx, ca_manifest)
+
+        # Create tidb-server-tls secret
+        tls_manifest = shell.kubectl(
+            "create", "secret", "tls", "tidb-server-tls",
+            "--namespace", namespace,
+            f"--cert={cert_path / 'tidb-server.crt'}",
+            f"--key={cert_path / 'tidb-server.key'}",
+            "--dry-run=client", "-o", "yaml",
+            context=context,
+            capture=True,
+        ).stdout
+        _apply_rendered_resource(ctx, tls_manifest)
+
     return True
 
 
@@ -820,6 +1015,7 @@ def rollout_restart_release_workloads(ctx: UpReadyContext) -> None:
 def kubernetes_up(ctx: UpReadyContext) -> bool:
     try:
         sync_kubernetes_secrets(ctx)
+        sync_tidb_secrets(ctx)
         publish_registry_images(ctx)
         verify_kubernetes_registry_pull(ctx)
         helm_upgrade(ctx)
