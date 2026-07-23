@@ -846,7 +846,7 @@ def preflight_required_secrets(ctx: UpReadyContext) -> None:
         result = shell.kubectl(
             "get", "secret", name,
             "--namespace", ctx.settings.kube_namespace,
-            "-o", f"jsonpath={{.data.{key}}}",
+            "-o", f"jsonpath={{.data['{key}']}}",
             context=ctx.settings.kube_context,
             check=False,
             capture=True,
