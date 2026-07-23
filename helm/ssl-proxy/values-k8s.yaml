@@ -171,7 +171,7 @@ schemaMigrator:
       persistence:
         hostPath: /var/lib/ssl-proxy/schema-migrator/traefik-acme
 atherosSensor:
-  enabled: false
+  enabled: true
   image:
     repository: atheros-sensor
     tag: latest

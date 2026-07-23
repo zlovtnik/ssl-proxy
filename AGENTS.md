@@ -28,15 +28,18 @@ overrides a rule for its subtree.
   durable ingestion, leases, outbox, and maintained TiDB projections, built via sbt.
 - `services/` has local `AGENTS.md` files for shared service rules and
   service-specific conventions.
+- `apps/wg-key-rotator/` is an Elixir WireGuard key rotation tool.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
   It has its own local `AGENTS.md`.
-- `sql/tidb/` is the canonical runtime schema source for the three isolated
-  `octopus_core`, `atheros_search`, and
-  `schema_migrator` databases. PostgreSQL SQL belongs only to the historical
-  archive or schema-migrator external-target fixtures.
+- `sql/tidb/` is the canonical runtime schema source for the four isolated
+  databases (`octopus_core`, `atheros_search`, `schema_migrator`,
+  `integration_console`) and the shared `contracts/` layer. PostgreSQL SQL
+  belongs only to the historical archive or schema-migrator external-target
+  fixtures.
 - `helm/ssl-proxy/` is the umbrella chart; deployable units live under
   `helm/ssl-proxy/charts/`, while only shared ConfigMaps and the shared service
-  account remain in the umbrella templates.
+  account remain in the umbrella templates. All subcharts depend on the
+  `_common` library chart at `helm/ssl-proxy/charts/_common/`.
 - `docker/`, `scripts/`, and `docs/` hold deployment, operational, and design
   material.
 
@@ -82,9 +85,10 @@ overrides a rule for its subtree.
 - Treat active TiDB migrations and ordered schema additions as append-only unless
   a task explicitly asks for a replacement. Do not revive the retired
   `sql/tidb/core/` baseline or PostgreSQL runtime aggregates.
-- Treat the four domain manifests under `sql/tidb/` as authoritative. Only the
-  provisioning schema executor may apply DDL; application runtimes verify the
-  recorded manifest checksums and fail closed.
+- Treat the four domain manifests under `sql/tidb/` (and the shared
+  `contracts/` layer) as authoritative. Only the provisioning schema executor
+  may apply DDL; application runtimes verify the recorded manifest checksums
+  and fail closed.
 - Keep PostgreSQL libraries/configuration limited to schema-migrator's explicit
   external-target implementation and tests. Runtime Helm, Compose, monitoring,
   secrets, and application fallbacks must remain PostgreSQL/MongoDB-free outside
