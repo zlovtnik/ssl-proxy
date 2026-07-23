@@ -35,6 +35,31 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: pem-to-pkcs12
+          image: alpine/openssl:3
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              openssl pkcs12 -export \
+                -in /etc/tidb-tls/ca.crt \
+                -out /run/tidb-tls/truststore.p12 \
+                -name tidb-ca \
+                -nokeys \
+                -passout pass:changeit
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+            - name: tidb-truststore
+              mountPath: /run/tidb-tls
       containers:
         - name: backend
           image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.backend.image) }}
@@ -45,7 +70,7 @@ spec:
             - name: SCHEMA_MIGRATOR_DB_KIND
               value: "tidb"
             - name: BEDROCK_STATE_DB_URL
-              value: {{ printf "jdbc:mysql://%s:%v/%s?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///etc/tidb-tls/ca.crt&trustCertificateKeyStoreType=PEM&fallbackToSystemTrustStore=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.accounts.schemaMigrator.database | quote }}
+              value: {{ printf "jdbc:mysql://%s:%v/%s?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///run/tidb-tls/truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit&fallbackToSystemTrustStore=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true" .Values.global.shared.tidb.host .Values.global.shared.tidb.port .Values.global.shared.tidb.accounts.schemaMigrator.database | quote }}
             - name: BEDROCK_STATE_DB_USER
               value: {{ .Values.global.shared.tidb.accounts.schemaMigrator.user | quote }}
             - name: BEDROCK_STATE_DB_PASSWORD
@@ -134,6 +159,9 @@ spec:
             - name: tidb-tls
               mountPath: /etc/tidb-tls
               readOnly: true
+            - name: tidb-truststore
+              mountPath: /run/tidb-tls
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
@@ -144,6 +172,9 @@ spec:
             items:
               - key: {{ .Values.global.shared.tidb.tls.caSecret.key }}
                 path: ca.crt
+        - name: tidb-truststore
+          emptyDir:
+            sizeLimit: 1Mi
 ---
 apiVersion: v1
 kind: Service

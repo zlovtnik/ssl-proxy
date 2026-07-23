@@ -7,17 +7,10 @@ data:
   tidb.toml: |
     [log]
     level = "info"
-    
+
     [performance]
     max-procs = 0
-    txn-local-latches.enable = false
-    
-    [prepared_plan_cache]
-    enabled = true
-    
-    [stmt_summary]
-    enable = true
-    
+
     [security]
     ssl-cert = "/etc/tidb-tls-server/tls.crt"
     ssl-key = "/etc/tidb-tls-server/tls.key"
