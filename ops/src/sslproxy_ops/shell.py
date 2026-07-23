@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,26 +26,76 @@ class ShellCommandError(RuntimeError):
         return f"command failed rc={self.returncode} cwd={self.cwd}: {rendered}{suffix}"
 
 
+def _read_stream(stream: subprocess.PIPE, dest: list[str], dest_lock: threading.Lock, print_func):
+    """Read lines from *stream*, append them (with newline) to *dest* under *dest_lock*,
+    and pass each line to *print_func* for real-time output."""
+    try:
+        for line in iter(stream.readline, ""):
+            with dest_lock:
+                dest.append(line)
+            print_func(line, end="")
+    finally:
+        stream.close()
+
+
 def run(
     cmd: Sequence[str | Path],
     *,
     cwd: Path | None = None,
     check: bool = True,
     capture: bool = False,
+    stream: bool = False,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if capture and stream:
+        raise ValueError("capture and stream are mutually exclusive")
     command = tuple(str(part) for part in cmd)
     actual_cwd = cwd or repo_root()
-    completed = subprocess.run(
-        command,
-        cwd=actual_cwd,
-        check=False,
-        capture_output=capture,
-        text=True,
-        env={**os.environ, **dict(env)} if env is not None else None,
-        input=input_text,
-    )
+    merged_env = {**os.environ, **dict(env)} if env is not None else None
+
+    if stream:
+        proc = subprocess.Popen(
+            command,
+            cwd=actual_cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=merged_env,
+        )
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        lock = threading.Lock()
+        t_out = threading.Thread(
+            target=_read_stream, args=(proc.stdout, stdout_lines, lock, sys.stdout.write), daemon=True
+        )
+        t_err = threading.Thread(
+            target=_read_stream, args=(proc.stderr, stderr_lines, lock, sys.stderr.write), daemon=True
+        )
+        t_out.start()
+        t_err.start()
+        t_out.join()
+        t_err.join()
+        proc.wait()
+
+        stdout_str = "".join(stdout_lines)
+        stderr_str = "".join(stderr_lines)
+        completed = subprocess.CompletedProcess(
+            args=command,
+            returncode=proc.returncode,
+            stdout=stdout_str,
+            stderr=stderr_str,
+        )
+    else:
+        completed = subprocess.run(
+            command,
+            cwd=actual_cwd,
+            check=False,
+            capture_output=capture,
+            text=True,
+            env=merged_env,
+            input=input_text,
+        )
     if check and completed.returncode != 0:
         raise ShellCommandError(
             command=command,
@@ -79,6 +131,7 @@ def kubectl(
     cwd: Path | None = None,
     check: bool = True,
     capture: bool = False,
+    stream: bool = False,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -88,6 +141,7 @@ def kubectl(
         cwd=cwd,
         check=check,
         capture=capture,
+        stream=stream,
         env=env,
         input_text=input_text,
     )
@@ -99,6 +153,7 @@ def helm(
     cwd: Path | None = None,
     check: bool = True,
     capture: bool = False,
+    stream: bool = False,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -108,6 +163,7 @@ def helm(
         cwd=cwd,
         check=check,
         capture=capture,
+        stream=stream,
         env=env,
         input_text=input_text,
     )

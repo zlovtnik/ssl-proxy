@@ -723,15 +723,7 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     target = ctx.settings.kube_context or "current-context"
     operation = "upgrade" if is_upgrade else "install"
     step("S03", f"helm_{operation}: release={release} context={target}")
-    completed = shell.helm(*args, context=ctx.settings.kube_context, capture=True)
-    if isinstance(completed.stdout, str) and completed.stdout:
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-    if isinstance(completed.stderr, str) and completed.stderr:
-        print(
-            completed.stderr,
-            end="" if completed.stderr.endswith("\n") else "\n",
-            file=__import__("sys").stderr,
-        )
+    shell.helm(*args, context=ctx.settings.kube_context, stream=True)
     return True
 
 
