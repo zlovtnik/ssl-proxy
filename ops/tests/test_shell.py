@@ -1,4 +1,6 @@
+import io
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -42,6 +44,36 @@ class ShellTest(unittest.TestCase):
         commands = [call.args[0] for call in mocked.call_args_list]
         self.assertEqual(commands[0], ("kubectl", "get", "pods"))
         self.assertEqual(commands[1], ("helm", "list"))
+
+    def test_stream_outputs_lines_in_real_time(self):
+        result = shell.run(
+            ["printf", "hello\nworld\n"],
+            check=True,
+            stream=True,
+            cwd=Path("/tmp"),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("hello", result.stdout)
+        self.assertIn("world", result.stdout)
+
+    def test_stream_and_capture_are_mutually_exclusive(self):
+        with self.assertRaises(ValueError):
+            shell.run(["echo", "x"], capture=True, stream=True, cwd=Path("/tmp"))
+
+    def test_stream_stderr_is_collected_and_printed(self):
+        result = shell.run(
+            ["sh", "-c", 'echo "err-output" >&2; echo "std-output"'],
+            check=True,
+            stream=True,
+            cwd=Path("/tmp"),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("std-output", result.stdout)
+        self.assertIn("err-output", result.stderr)
+
+    def test_stream_raises_on_failure(self):
+        with self.assertRaises(shell.ShellCommandError):
+            shell.run(["false"], check=True, stream=True, cwd=Path("/tmp"))
 
 
 if __name__ == "__main__":

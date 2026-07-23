@@ -14,6 +14,7 @@ import yaml
 from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
+    PREFLIGHT_REQUIRED_SECRETS,
     apply_secret_value,
     apply_secret_values,
     dashboard_set_file_args,
@@ -23,6 +24,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_up,
     node_condition_problems,
     prepare_helm_release,
+    preflight_required_secrets,
     proxy_workload,
     publish_registry_images,
     recent_kubernetes_warning_lines,
@@ -206,6 +208,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
                 side_effect=[dependencies_updated, deployed, upgraded],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
         ):
             helm_upgrade(ctx)
 
@@ -249,14 +254,19 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("--history-max", args)
         self.assertIn("--rollback-on-failure", args)
         self.assertEqual(mocked_helm.call_args_list[-1].kwargs["context"], "server-k8s")
-        self.assertTrue(mocked_helm.call_args_list[-1].kwargs["capture"])
+        self.assertTrue(mocked_helm.call_args_list[-1].kwargs["stream"])
 
     def test_helm_upgrade_requires_validated_settings(self):
         settings = Settings()
         settings.registry = None
         settings.image_tag = None
 
-        with self.assertRaisesRegex(UpReadyError, "REGISTRY"):
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
+            self.assertRaisesRegex(UpReadyError, "REGISTRY"),
+        ):
             helm_upgrade(UpReadyContext(settings=settings))
 
     def test_helm_first_install_does_not_request_rollback(self):
@@ -293,6 +303,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
                 side_effect=[dependencies_updated, missing, installed],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
         ):
             helm_upgrade(ctx)
 
@@ -342,6 +355,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
                 side_effect=[dependencies_updated, uninstalling, completed, missing, completed],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
         ):
             helm_upgrade(ctx)
 
@@ -350,6 +366,58 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertEqual(cleanup[0], "uninstall")
         self.assertIn("--no-hooks", cleanup)
         self.assertEqual(install[0], "install")
+
+    def test_preflight_required_secrets_raises_on_missing(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        present = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="cGFzc3dvcmQ=", stderr=""
+        )
+        missing = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="not found"
+        )
+        side_effects = []
+        for name in PREFLIGHT_REQUIRED_SECRETS:
+            side_effects.append(present if name != "tidb-client-ca" else missing)
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=side_effects,
+            ) as mocked,
+            self.assertRaisesRegex(UpReadyError, "tidb-client-ca"),
+        ):
+            preflight_required_secrets(ctx)
+
+        expected_calls = len(PREFLIGHT_REQUIRED_SECRETS)
+        self.assertEqual(len(mocked.call_args_list), expected_calls)
+
+    def test_preflight_required_secrets_passes_when_all_present(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        present = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="cGFzc3dvcmQ=", stderr=""
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=present,
+        ):
+            preflight_required_secrets(ctx)  # should not raise
+
+    def test_preflight_required_secrets_constant_covers_all_chart_references(self):
+        expected = {
+            "redis-runtime",
+            "tidb-client-ca",
+            "tidb-octopus",
+            "tidb-atheros-search",
+            "tidb-schema-migrator",
+            "tidb-keycloak",
+            "tidb-schema-owner",
+        }
+        self.assertEqual(set(PREFLIGHT_REQUIRED_SECRETS.keys()), expected)
 
     def test_helm_release_status_rejects_malformed_json(self):
         settings = Settings()

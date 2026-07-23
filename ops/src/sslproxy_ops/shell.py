@@ -26,14 +26,15 @@ class ShellCommandError(RuntimeError):
         return f"command failed rc={self.returncode} cwd={self.cwd}: {rendered}{suffix}"
 
 
-def _read_stream(stream: subprocess.PIPE, dest: list[str], dest_lock: threading.Lock, print_func):
+def _read_stream(stream: subprocess.PIPE, dest: list[str], dest_lock: threading.Lock, output_stream):
     """Read lines from *stream*, append them (with newline) to *dest* under *dest_lock*,
-    and pass each line to *print_func* for real-time output."""
+    and write each line to *output_stream* for real-time output."""
     try:
         for line in iter(stream.readline, ""):
             with dest_lock:
                 dest.append(line)
-            print_func(line, end="")
+            output_stream.write(line)
+            output_stream.flush()
     finally:
         stream.close()
 
@@ -67,10 +68,10 @@ def run(
         stderr_lines: list[str] = []
         lock = threading.Lock()
         t_out = threading.Thread(
-            target=_read_stream, args=(proc.stdout, stdout_lines, lock, sys.stdout.write), daemon=True
+            target=_read_stream, args=(proc.stdout, stdout_lines, lock, sys.stdout), daemon=True
         )
         t_err = threading.Thread(
-            target=_read_stream, args=(proc.stderr, stderr_lines, lock, sys.stderr.write), daemon=True
+            target=_read_stream, args=(proc.stderr, stderr_lines, lock, sys.stderr), daemon=True
         )
         t_out.start()
         t_err.start()

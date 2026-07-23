@@ -633,7 +633,41 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
     )
 
 
+PREFLIGHT_REQUIRED_SECRETS: dict[str, str] = {
+    "redis-runtime": "password",
+    "tidb-client-ca": "ca.crt",
+    "tidb-octopus": "password",
+    "tidb-atheros-search": "password",
+    "tidb-schema-migrator": "password",
+    "tidb-keycloak": "password",
+    "tidb-schema-owner": "dsn",
+}
+
+
+def preflight_required_secrets(ctx: UpReadyContext) -> None:
+    """Verify required Kubernetes Secrets exist before Helm install."""
+    missing: list[str] = []
+    for name, key in PREFLIGHT_REQUIRED_SECRETS.items():
+        result = shell.kubectl(
+            "get", "secret", name,
+            "--namespace", ctx.settings.kube_namespace,
+            "-o", f"jsonpath={{.data.{key}}}",
+            context=ctx.settings.kube_context,
+            check=False,
+            capture=True,
+        )
+        if result.returncode != 0 or not result.stdout:
+            missing.append(name)
+    if missing:
+        raise UpReadyError(
+            f"Missing {len(missing)} required Kubernetes Secret(s) in namespace "
+            f"{ctx.settings.kube_namespace!r}: {', '.join(missing)}. "
+            "Ensure these secrets exist before running helm install."
+        )
+
+
 def helm_upgrade(ctx: UpReadyContext) -> bool:
+    preflight_required_secrets(ctx)
     root = repo_root()
     registry = (ctx.settings.registry or "").strip().rstrip("/")
     image_tag = (ctx.settings.image_tag or "").strip()
