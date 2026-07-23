@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-cadvisor
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-cadvisor
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: cadvisor
 spec:
   clusterIP: None
   selector:
-    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: cadvisor
   ports:
     - {name: metrics, port: 8080, targetPort: metrics}
@@ -18,27 +18,27 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-cadvisor
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-cadvisor
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: cadvisor
 spec:
   selector:
     matchLabels:
-      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 6 }}
       app.kubernetes.io/component: cadvisor
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 8 }}
         app.kubernetes.io/component: cadvisor
     spec:
       automountServiceAccountToken: false
       hostNetwork: true
       containers:
         - name: cadvisor
-          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.cadvisor.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.cadvisor.image) }}
           imagePullPolicy: {{ .Values.cadvisor.image.pullPolicy }}
           securityContext:
             privileged: true

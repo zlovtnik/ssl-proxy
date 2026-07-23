@@ -5,7 +5,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "bootstrap") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-bootstrap
   annotations:
     helm.sh/hook: post-install,post-upgrade
@@ -18,10 +18,10 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
         app.kubernetes.io/component: schema-migrator-bootstrap
     spec:
-      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
       automountServiceAccountToken: false
       restartPolicy: Never
       securityContext:
@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: bootstrap
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.keycloak.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.keycloak.image) }}
           imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
           command: ["/bin/bash", "-ec"]
           args:

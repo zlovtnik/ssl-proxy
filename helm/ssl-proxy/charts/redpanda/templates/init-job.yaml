@@ -3,10 +3,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "ssl-proxy.redpanda.fullname" . }}-redpanda-init
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "redpanda") }}-redpanda-init
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.redpanda.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "redpanda") | nindent 4 }}
     app.kubernetes.io/component: redpanda-init
   annotations:
     helm.sh/hook: post-install,post-upgrade
@@ -18,20 +18,20 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.redpanda.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "redpanda") | nindent 8 }}
         app.kubernetes.io/component: redpanda-init
     spec:
-      serviceAccountName: {{ include "ssl-proxy.redpanda.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "redpanda") }}
       automountServiceAccountToken: false
       restartPolicy: Never
       containers:
         - name: redpanda-init
-          image: {{ include "ssl-proxy.redpanda.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              brokers={{ include "ssl-proxy.redpanda.fullname" . }}-redpanda:9092
+              brokers={{ include "ssl-proxy-common.fullname" (dict "root" . "component" "redpanda") }}-redpanda:9092
               until rpk cluster info --brokers "$brokers" >/dev/null 2>&1; do sleep 2; done
               while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
                 case "$topic" in ''|'#'*) continue ;; esac
@@ -49,5 +49,5 @@ spec:
       volumes:
         - name: topics-manifest
           configMap:
-            name: {{ include "ssl-proxy.redpanda.fullname" . }}-topics-manifest
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "redpanda") }}-topics-manifest
 {{- end }}

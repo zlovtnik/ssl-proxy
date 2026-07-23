@@ -48,6 +48,9 @@ global:
         caSecret:
           name: "tidb-client-ca"
           key: "ca.crt"
+      # Each account is a {database, user, passwordSecret: {name, key}} block.
+      # Adding a 5th account means one entry here + one entry in the
+      # values-k8s.yaml overlay. No templates need changing.
       accounts:
         octopus:
           database: "octopus_core"
@@ -61,8 +64,6 @@ global:
           database: "schema_migrator"
           user: "schema_migrator_runtime"
           passwordSecret: {name: "tidb-schema-migrator", key: "password"}
-        # Chart-local account for the in-cluster Keycloak (schema-migrator
-        # subchart). Keycloak owns and migrates its own database.
         keycloak:
           database: "keycloak"
           user: "keycloak"
@@ -96,8 +97,7 @@ global:
         resultConsumer: "octopus-result-v1"
         payloadAuditConsumer: "octopus-payload-audit-v1"
       streams:
-        syncStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
-        loadStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
+        commonStreamNames: "proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit"
         auditStreamName: "AUDIT_STREAM"
         resultStreamName: "ORACLE_RESULT_STREAM"
         wirelessBacklogStreamName: "WIRELESS_BACKLOG_STREAM"

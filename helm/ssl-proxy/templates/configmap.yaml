@@ -21,8 +21,8 @@ data:
   SYNC_RESULT_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.resultConsumer | quote }}
   SYNC_PAYLOAD_AUDIT_CONSUMER: {{ .Values.global.shared.javaCoordinator.consumers.payloadAuditConsumer | quote }}
   # Stream names
-  SYNC_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.syncStreamNames | quote }}
-  COORDINATOR_LOAD_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.loadStreamNames | quote }}
+  SYNC_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.commonStreamNames | quote }}
+  COORDINATOR_LOAD_STREAM_NAMES: {{ .Values.global.shared.javaCoordinator.streams.commonStreamNames | quote }}
   AUDIT_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.auditStreamName | quote }}
   SYNC_RESULT_STREAM_NAME: {{ .Values.global.shared.javaCoordinator.streams.resultStreamName | quote }}
   # Wireless stream names (Java coordinator)

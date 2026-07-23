@@ -1,6 +1,10 @@
 apiVersion: v2
 name: java-coordinator
-description: Java sync coordinator and Oracle sink
+description: Octopus Redpanda-to-TiDB coordinator
 type: application
 version: 0.1.1
 appVersion: "1.0.0"
+dependencies:
+  - name: ssl-proxy-common
+    version: 0.1.0
+    repository: "file://../_common"

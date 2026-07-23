@@ -3,14 +3,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: loki
 spec:
   selector:
-    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: loki
   ports:
     - name: http
@@ -20,25 +20,25 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: loki
 spec:
-  serviceName: {{ include "ssl-proxy.telemetry.fullname" . }}-loki
+  serviceName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki
   replicas: 1
   selector:
     matchLabels:
-      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 6 }}
       app.kubernetes.io/component: loki
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 8 }}
         app.kubernetes.io/component: loki
     spec:
-      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "telemetry") }}
       automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
@@ -46,7 +46,7 @@ spec:
       {{- end }}
       containers:
         - name: loki
-          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.loki.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.loki.image) }}
           imagePullPolicy: {{ .Values.loki.image.pullPolicy }}
           args: ["-config.file=/etc/loki/config.yml"]
           ports:
@@ -75,7 +75,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-config
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki-config
         - name: data
           {{- if .Values.loki.persistence.hostPath }}
           hostPath:
@@ -83,7 +83,7 @@ spec:
             type: DirectoryOrCreate
           {{- else if .Values.loki.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-data
+            claimName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki-data
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -104,10 +104,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-data
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: loki
 spec:
   accessModes: ["ReadWriteOnce"]

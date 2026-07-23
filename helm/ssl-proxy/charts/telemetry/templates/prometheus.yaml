@@ -2,14 +2,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: prometheus
 spec:
   selector:
-    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: prometheus
   ports:
     - name: http
@@ -19,28 +19,28 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: prometheus
 spec:
-  serviceName: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus
+  serviceName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus
   replicas: 1
   selector:
     matchLabels:
-      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 6 }}
       app.kubernetes.io/component: prometheus
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 8 }}
         app.kubernetes.io/component: prometheus
     spec:
       automountServiceAccountToken: false
       containers:
         - name: prometheus
-          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.prometheus.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.prometheus.image) }}
           imagePullPolicy: {{ .Values.prometheus.image.pullPolicy }}
           args:
             - --config.file=/etc/prometheus/prometheus.yml
@@ -80,7 +80,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus-config
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus-config
         - name: data
           {{- if .Values.prometheus.persistence.hostPath }}
           hostPath:
@@ -88,7 +88,7 @@ spec:
             type: DirectoryOrCreate
           {{- else if .Values.prometheus.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus-data
+            claimName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus-data
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -97,10 +97,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus-data
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: prometheus
 spec:
   accessModes: ["ReadWriteOnce"]

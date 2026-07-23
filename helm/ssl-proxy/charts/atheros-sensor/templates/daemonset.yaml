@@ -3,20 +3,20 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "ssl-proxy.atherosSensor.fullname" . }}-atheros-sensor
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSensor") }}-atheros-sensor
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSensor.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSensor") | nindent 4 }}
     app.kubernetes.io/component: atheros-sensor
 spec:
   selector:
     matchLabels:
-      {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSensor") | nindent 6 }}
       app.kubernetes.io/component: atheros-sensor
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSensor") | nindent 8 }}
         app.kubernetes.io/component: atheros-sensor
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
@@ -28,7 +28,7 @@ spec:
         {{- end }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.atherosSensor.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "atherosSensor") }}
       automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
@@ -38,7 +38,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: atheros-sensor
-          image: {{ include "ssl-proxy.atherosSensor.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS

@@ -2,10 +2,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search-ui-nginx
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search-ui-nginx
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSearch.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search-ui
 data:
   default.conf: |
@@ -15,7 +15,7 @@ data:
       index index.html;
 
       location /v1/ {
-        proxy_pass http://{{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search:{{ .Values.service.httpPort }};
+        proxy_pass http://{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search:{{ .Values.service.httpPort }};
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_read_timeout 300s;
@@ -25,11 +25,11 @@ data:
       }
 
       location = /healthz {
-        proxy_pass http://{{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search:{{ .Values.service.httpPort }}/healthz;
+        proxy_pass http://{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search:{{ .Values.service.httpPort }}/healthz;
       }
 
       location = /readyz {
-        proxy_pass http://{{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search:{{ .Values.service.httpPort }}/readyz;
+        proxy_pass http://{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search:{{ .Values.service.httpPort }}/readyz;
       }
 
       location / {

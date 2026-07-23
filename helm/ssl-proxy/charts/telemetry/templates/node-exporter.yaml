@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-node-exporter
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-node-exporter
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: node-exporter
 spec:
   clusterIP: None
   selector:
-    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: node-exporter
   ports:
     - {name: metrics, port: 9100, targetPort: metrics}
@@ -18,20 +18,20 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-node-exporter
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-node-exporter
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: node-exporter
 spec:
   selector:
     matchLabels:
-      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 6 }}
       app.kubernetes.io/component: node-exporter
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 8 }}
         app.kubernetes.io/component: node-exporter
     spec:
       automountServiceAccountToken: false
@@ -39,7 +39,7 @@ spec:
       hostPID: true
       containers:
         - name: node-exporter
-          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.nodeExporter.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.nodeExporter.image) }}
           imagePullPolicy: {{ .Values.nodeExporter.image.pullPolicy }}
           args:
             - --path.procfs=/host/proc

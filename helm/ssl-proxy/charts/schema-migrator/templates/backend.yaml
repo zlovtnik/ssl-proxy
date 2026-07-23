@@ -5,7 +5,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "backend") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-backend
 spec:
   replicas: {{ .Values.backend.replicas }}
@@ -17,18 +17,18 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 6 }}
       app.kubernetes.io/component: schema-migrator-backend
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
         app.kubernetes.io/component: schema-migrator-backend
         ssl-proxy.io/tidb-client: "true"
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 1000
@@ -37,7 +37,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: pem-to-pkcs12
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.backend.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.backend.image) }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
@@ -63,7 +63,7 @@ spec:
               mountPath: /run/tidb-tls
       containers:
         - name: backend
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.backend.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.backend.image) }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           env:
             - name: JAVA_TOOL_OPTIONS
@@ -183,12 +183,12 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "backend") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-backend
 spec:
   type: ClusterIP
   selector:
-    {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-backend
   ports:
     - name: http

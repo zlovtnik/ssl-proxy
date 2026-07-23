@@ -3,10 +3,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-prometheus-config
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-prometheus-config
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: prometheus
 data:
   prometheus.yml: |
@@ -22,55 +22,55 @@ data:
           - targets: ["127.0.0.1:9090"]
       - job_name: otel-collector
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-otel-collector:8888"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-otel-collector:8888"]
       - job_name: otel-spanmetrics
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-otel-collector:9464"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-otel-collector:9464"]
       - job_name: loki
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-loki:3100"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki:3100"]
       - job_name: promtail
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-promtail:9080"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail:9080"]
       - job_name: jaeger
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-jaeger:14269"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-jaeger:14269"]
       - job_name: pushgateway
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-pushgateway:9091"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-pushgateway:9091"]
       - job_name: ssl-proxy
         metrics_path: /metrics
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-proxy-admin:{{ .Values.global.shared.proxy.service.adminPort }}"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-proxy-admin:{{ .Values.global.shared.proxy.service.adminPort }}"]
       - job_name: java-coordinator
         metrics_path: /actuator/prometheus
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-coordinator:{{ .Values.global.shared.javaCoordinator.service.port }}"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-coordinator:{{ .Values.global.shared.javaCoordinator.service.port }}"]
       - job_name: atheros-sensor
         metrics_path: /metrics
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-atheros-sensor:{{ .Values.global.shared.atherosSensor.metricsPort }}"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-atheros-sensor:{{ .Values.global.shared.atherosSensor.metricsPort }}"]
       - job_name: atheros-search
         metrics_path: /metrics
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-atheros-search:{{ .Values.global.shared.atherosSearch.metricsPort }}"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-atheros-search:{{ .Values.global.shared.atherosSearch.metricsPort }}"]
       - job_name: vec-worker
         metrics_path: /metrics
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-vec-worker:{{ .Values.global.shared.atherosSearch.workerMetricsPort }}"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-vec-worker:{{ .Values.global.shared.atherosSearch.workerMetricsPort }}"]
       - job_name: redpanda
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-redpanda:{{ .Values.global.shared.redpanda.adminPort }}"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-redpanda:{{ .Values.global.shared.redpanda.adminPort }}"]
       - job_name: node-exporter
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-node-exporter:9100"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-node-exporter:9100"]
       - job_name: cadvisor
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-cadvisor:8080"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-cadvisor:8080"]
       - job_name: minio
         metrics_path: /minio/v2/metrics/cluster
         static_configs:
-          - targets: ["{{ include "ssl-proxy.telemetry.fullname" . }}-minio:9000"]
+          - targets: ["{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-minio:9000"]
       - job_name: tidb
         metrics_path: /metrics
         static_configs:

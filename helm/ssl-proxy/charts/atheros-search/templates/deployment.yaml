@@ -2,10 +2,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSearch.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search
 spec:
   replicas: {{ .Values.replicas }}
@@ -17,12 +17,12 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 6 }}
       app.kubernetes.io/component: atheros-search
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 8 }}
         app.kubernetes.io/component: atheros-search
         ssl-proxy.io/tidb-client: "true"
       annotations:
@@ -31,7 +31,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.atherosSearch.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "atherosSearch") }}
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: atheros-search
-          image: {{ include "ssl-proxy.atherosSearch.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: ATHSEARCH_TIDB_DSN

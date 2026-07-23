@@ -3,15 +3,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.proxy.fullname" . }}-proxy-admin
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "proxy") }}-proxy-admin
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.proxy.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "proxy") | nindent 4 }}
     app.kubernetes.io/component: proxy
 spec:
   type: ClusterIP
   selector:
-    {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "proxy") | nindent 4 }}
     app.kubernetes.io/component: proxy
   ports:
     - name: admin

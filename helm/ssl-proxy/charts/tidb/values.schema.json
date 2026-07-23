@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["external", "minimumVersion", "egress"],
+  "properties": {
+    "external": {"type": "boolean"},
+    "minimumVersion": {"type": "string", "pattern": "^8\\.(?:[5-9]|[1-9][0-9])(?:\\.[0-9]+)?$"},
+    "egress": {
+      "type": "object",
+      "required": ["enabled", "cidrs"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "cidrs": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

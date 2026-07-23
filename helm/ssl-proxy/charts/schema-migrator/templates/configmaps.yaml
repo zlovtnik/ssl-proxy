@@ -5,7 +5,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "ui-config") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-ui
 data:
   runtime-config.js: |
@@ -24,7 +24,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-realm") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-keycloak
 data:
   realm.json: |
@@ -83,7 +83,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "traefik") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-edge
 data:
   dynamic.yaml: |

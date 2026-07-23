@@ -3,9 +3,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: promtail
 rules:
   - apiGroups: [""]
@@ -15,30 +15,30 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: promtail
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail
 subjects:
   - kind: ServiceAccount
-    name: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+    name: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "telemetry") }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: promtail
 spec:
   selector:
-    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: promtail
   ports:
     - name: http
@@ -48,27 +48,27 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: promtail
 spec:
   selector:
     matchLabels:
-      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 6 }}
       app.kubernetes.io/component: promtail
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 8 }}
         app.kubernetes.io/component: promtail
     spec:
-      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "telemetry") }}
       automountServiceAccountToken: true
       containers:
         - name: promtail
-          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.promtail.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.promtail.image) }}
           imagePullPolicy: {{ .Values.promtail.image.pullPolicy }}
           args: ["-config.file=/etc/promtail/config.yml"]
           env:
@@ -99,7 +99,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "ssl-proxy.telemetry.fullname" . }}-promtail-config
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-promtail-config
         - name: positions
           hostPath:
             path: {{ .Values.promtail.positionsHostPath | quote }}

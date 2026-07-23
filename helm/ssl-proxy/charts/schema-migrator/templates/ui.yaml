@@ -5,7 +5,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "ui") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-ui
 spec:
   replicas: {{ .Values.ui.replicas }}
@@ -23,18 +23,18 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 6 }}
       app.kubernetes.io/component: schema-migrator-ui
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
         app.kubernetes.io/component: schema-migrator-ui
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
         checksum/runtime-config: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 101
@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: ui
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.ui.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.ui.image) }}
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           ports:
             - name: http
@@ -110,12 +110,12 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "ui") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-ui
 spec:
   type: ClusterIP
   selector:
-    {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-ui
   ports:
     - name: http

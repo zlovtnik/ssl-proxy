@@ -3,10 +3,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ssl-proxy.proxy.fullname" . }}-proxy
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "proxy") }}-proxy
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.proxy.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "proxy") | nindent 4 }}
     app.kubernetes.io/component: proxy
 spec:
   replicas: {{ .Values.replicas }}
@@ -17,12 +17,12 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "proxy") | nindent 6 }}
       app.kubernetes.io/component: proxy
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.proxy.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "proxy") | nindent 8 }}
         app.kubernetes.io/component: proxy
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
@@ -34,7 +34,7 @@ spec:
         {{- end }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.proxy.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "proxy") }}
       automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
@@ -42,7 +42,7 @@ spec:
       {{- end }}
       initContainers:
         - name: copy-wireguard-config
-          image: {{ include "ssl-proxy.proxy.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/ && chmod -R g+rX /config"]
           securityContext:
@@ -61,7 +61,7 @@ spec:
               mountPath: /config
       containers:
         - name: ssl-proxy
-          image: {{ include "ssl-proxy.proxy.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/usr/local/bin/start-proxy-wg"]
           env:
@@ -110,12 +110,12 @@ spec:
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.proxy.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "proxy") }}-config
                   key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
             - name: SYNC_CONTENT_TOPICS
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.proxy.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "proxy") }}-config
                   key: SYNC_STREAM_NAMES
             - name: ADMIN_API_KEY
               valueFrom:
@@ -203,7 +203,7 @@ spec:
                     - {key: publickey-{{ $peer }}, path: {{ $peer }}/publickey-{{ $peer }}}
                     {{- end }}
               - configMap:
-                  name: {{ include "ssl-proxy.proxy.fullname" . }}-topics-manifest
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "proxy") }}-topics-manifest
                   items:
                     - key: topics.manifest
                       path: topics/topics.manifest

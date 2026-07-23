@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSearch.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search
   ports:
     - name: http

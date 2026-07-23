@@ -5,7 +5,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "edge") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-edge
 spec:
   replicas: 1
@@ -14,18 +14,18 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 6 }}
       app.kubernetes.io/component: schema-migrator-edge
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
         app.kubernetes.io/component: schema-migrator-edge
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
         checksum/traefik-config: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 65532
@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: prepare-acme-state
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.bootstrapImages.busybox) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.bootstrapImages.busybox) }}
           imagePullPolicy: {{ .Values.bootstrapImages.busybox.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
@@ -64,7 +64,7 @@ spec:
               mountPath: /data
       containers:
         - name: traefik
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.traefik.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.traefik.image) }}
           imagePullPolicy: {{ .Values.traefik.image.pullPolicy }}
           args:
             - --api.dashboard=false
@@ -159,12 +159,12 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "edge") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-edge
 spec:
   type: ClusterIP
   selector:
-    {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-edge
   ports:
     - name: http

@@ -3,15 +3,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-coordinator
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "javaCoordinator") }}-coordinator
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.javaCoordinator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "javaCoordinator") | nindent 4 }}
     app.kubernetes.io/component: java-coordinator
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "javaCoordinator") | nindent 4 }}
     app.kubernetes.io/component: java-coordinator
   ports:
     - name: http

@@ -4,3 +4,7 @@ description: Observability and telemetry stack
 type: application
 version: 0.1.2
 appVersion: "1.0.0"
+dependencies:
+  - name: ssl-proxy-common
+    version: 0.1.0
+    repository: "file://../_common"

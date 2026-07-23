@@ -34,12 +34,15 @@ dependencies:
     repository: "file://charts/atheros-sensor"
     alias: atherosSensor
     condition: atherosSensor.enabled
+  # mandatory - no enabled toggle by design; these are always required
   - name: redpanda
     version: 0.1.1
     repository: "file://charts/redpanda"
+  # mandatory - no enabled toggle by design; these are always required
   - name: minio
     version: 0.1.1
     repository: "file://charts/minio"
+  # mandatory - no enabled toggle by design; these are always required
   - name: tidb
     version: 0.2.0
     repository: "file://charts/tidb"

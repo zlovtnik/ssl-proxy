@@ -7,7 +7,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-data") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-keycloak
 spec:
   accessModes: ["ReadWriteOnce"]
@@ -25,7 +25,7 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-keycloak
 spec:
   replicas: 1
@@ -34,19 +34,19 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 6 }}
       app.kubernetes.io/component: schema-migrator-keycloak
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
         app.kubernetes.io/component: schema-migrator-keycloak
         ssl-proxy.io/tidb-client: "true"
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
         checksum/realm: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.schemaMigrator.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 1000
@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: pem-to-pkcs12
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.keycloak.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.keycloak.image) }}
           imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
@@ -80,7 +80,7 @@ spec:
             - name: tidb-truststore
               mountPath: /run/tidb-tls
         - name: prepare-keycloak-home
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.keycloak.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.keycloak.image) }}
           imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
@@ -105,7 +105,7 @@ spec:
               mountPath: /keycloak-home
       containers:
         - name: keycloak
-          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.keycloak.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.keycloak.image) }}
           imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
           args:
             - start
@@ -230,12 +230,12 @@ metadata:
   name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak") }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.schemaMigrator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-keycloak
 spec:
   type: ClusterIP
   selector:
-    {{- include "ssl-proxy.schemaMigrator.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
     app.kubernetes.io/component: schema-migrator-keycloak
   ports:
     - name: http

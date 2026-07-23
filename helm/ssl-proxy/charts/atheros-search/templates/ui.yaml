@@ -2,10 +2,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search-ui
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search-ui
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSearch.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search-ui
 spec:
   replicas: {{ .Values.ui.replicas }}
@@ -15,18 +15,18 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 6 }}
       app.kubernetes.io/component: atheros-search-ui
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 8 }}
         app.kubernetes.io/component: atheros-search-ui
       annotations:
         ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
         checksum/nginx-config: {{ include (print $.Template.BasePath "/ui-configmap.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.atherosSearch.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "atherosSearch") }}
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 101
@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: ui
-          image: {{ include "ssl-proxy.atherosSearch.image" (dict "root" . "image" .Values.ui.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.ui.image) }}
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           ports:
             - name: http
@@ -88,7 +88,7 @@ spec:
       volumes:
         - name: nginx-config
           configMap:
-            name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search-ui-nginx
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search-ui-nginx
         - name: nginx-cache
           emptyDir: {}
         - name: nginx-run
@@ -99,15 +99,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.atherosSearch.fullname" . }}-atheros-search-ui
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search-ui
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSearch.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search-ui
 spec:
   type: {{ .Values.ui.service.type }}
   selector:
-    {{- include "ssl-proxy.atherosSearch.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
     app.kubernetes.io/component: atheros-search-ui
   ports:
     - name: http
