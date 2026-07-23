@@ -788,11 +788,35 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
             if status is None or not status.startswith("pending-"):
                 break
         if status and status.startswith("pending-"):
-            recovery = helm_pending_recovery_command(ctx)
-            raise UpReadyError(
-                f"Helm release {ctx.settings.helm_release!r} remains {status}; "
-                f"recover it before rerunning up-ready: {recovery}"
+            step(
+                "S03",
+                f"helm_recover: removing stuck {status} release={ctx.settings.helm_release}",
             )
+            shell.helm(
+                "uninstall",
+                ctx.settings.helm_release,
+                "--namespace",
+                ctx.settings.kube_namespace,
+                "--ignore-not-found",
+                "--no-hooks",
+                "--cascade",
+                "foreground",
+                "--wait=watcher",
+                "--timeout",
+                ctx.settings.helm_timeout,
+                context=ctx.settings.kube_context,
+                capture=True,
+            )
+            for attempt in range(60):
+                if helm_release_status(ctx) is None:
+                    break
+                if attempt < 59:
+                    time.sleep(1)
+            else:
+                raise UpReadyError(
+                    f"Helm release {ctx.settings.helm_release!r} still exists after cleanup"
+                )
+            return False
     if status is None:
         return False
     if status == "deployed":
