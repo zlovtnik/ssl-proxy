@@ -131,7 +131,7 @@ func (s *Service) Graph(ctx context.Context, filters GraphFilters) (*GraphRespon
 		s.graphCache.Delete(cacheKey)
 	}
 
-	tx, err := s.Pool.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Pool.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

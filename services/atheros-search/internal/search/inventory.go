@@ -137,7 +137,7 @@ func (s *Service) Inventory(ctx context.Context, filters InventoryFilters) (*Inv
 	if err != nil {
 		return nil, err
 	}
-	tx, err := s.Pool.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.Pool.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
