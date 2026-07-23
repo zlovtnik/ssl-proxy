@@ -37,7 +37,7 @@ KUBE_NAMESPACE ?= ssl-proxy
 KUBE_CONTEXT ?=
 KUBE_RELEASE ?= ssl-proxy
 KUBECTL ?= kubectl
-REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui
+REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema
 REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
 REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 busybox:1.37.0
 
@@ -170,6 +170,7 @@ $(eval $(call registry_build_target,wg-key-rotator,apps/wg-key-rotator/Dockerfil
 $(eval $(call registry_build_target,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg VITE_API_BASE="$(ATHEROS_SEARCH_UI_API_BASE)" --build-arg VITE_APP_TITLE="$(ATHEROS_SEARCH_UI_TITLE)",atheros-search-ui,./apps/integration-console/atheros-search-ui))
 $(eval $(call registry_build_target,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,./apps/schema-migrator))
 $(eval $(call registry_build_target,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,./apps/schema-migrator))
+$(eval $(call registry_build_target,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
 
 registry-build-vec-worker:
 	@echo "[registry-build-vec-worker] vec-worker is consolidated into atheros-search"

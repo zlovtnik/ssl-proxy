@@ -176,7 +176,8 @@ Keycloak owns and migrates its own TiDB database. Provision its account the
 same way as the application accounts:
 
 ```bash
-k8s/tidb/generate-tls-secrets.sh   # creates the tidb-keycloak password Secret
+k8s/tidb/bootstrap-runtime-secrets.sh  # fresh-cluster credentials only
+k8s/tidb/generate-tls-secrets.sh       # TLS-only rotation; preserves credentials
 kubectl apply -f k8s/tidb/init-job.yaml  # creates the keycloak database/user/grants
 ```
 

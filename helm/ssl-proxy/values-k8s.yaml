@@ -123,6 +123,12 @@ tidb:
     cidrs: []
 vecWorker:
   enabled: false
+tidbSchemaExecutor:
+  enabled: true
+  image:
+    repository: tidb-runtime-schema
+    tag: latest
+    pullPolicy: Always
 schemaMigrator:
   enabled: true
   # Set dynamically by `ops up-ready` from SCHEMA_MIGRATOR_PUBLIC_HOSTNAME.
@@ -163,13 +169,14 @@ schemaMigrator:
       persistence:
         hostPath: /var/lib/ssl-proxy/schema-migrator/traefik-acme
 atherosSensor:
-  enabled: true
+  enabled: false
   image:
     repository: atheros-sensor
     tag: latest
     pullPolicy: Always
 atherosSearch:
   enabled: true
+  schemaManifestSHA256: "432b3debd58b6f046ce716736ea2e570cfcadb86349546a9151d2a1135034c85"
   image:
     repository: atheros-search
     tag: latest

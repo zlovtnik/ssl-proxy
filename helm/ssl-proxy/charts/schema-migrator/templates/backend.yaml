@@ -37,16 +37,17 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: pem-to-pkcs12
-          image: alpine/openssl:3
+          image: {{ include "ssl-proxy.schemaMigrator.image" (dict "root" . "image" .Values.backend.image) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              openssl pkcs12 -export \
-                -in /etc/tidb-tls/ca.crt \
-                -out /run/tidb-tls/truststore.p12 \
-                -name tidb-ca \
-                -nokeys \
-                -passout pass:changeit
+              keytool -importcert -noprompt \
+                -alias tidb-ca \
+                -file /etc/tidb-tls/ca.crt \
+                -keystore /run/tidb-tls/truststore.p12 \
+                -storetype PKCS12 \
+                -storepass changeit
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
