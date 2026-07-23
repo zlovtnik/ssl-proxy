@@ -1019,10 +1019,34 @@ def rollout_restart_release_workloads(ctx: UpReadyContext) -> None:
         )
 
 
+def restart_tidb(ctx: UpReadyContext) -> None:
+    """Restart TiDB so it picks up freshly generated TLS certificates.
+
+    TiDB reads TLS certs at process start and does not hot-reload them.
+    After sync_tidb_secrets() replaces the certs, the StatefulSet must be
+    restarted for the new certs to take effect.
+    """
+    step("S02", "restart_tidb: restarting ssl-proxy-tidb")
+    shell.kubectl(
+        "--namespace", ctx.settings.kube_namespace,
+        "rollout", "restart", "statefulset/ssl-proxy-tidb",
+        context=ctx.settings.kube_context,
+        capture=True,
+    )
+    shell.kubectl(
+        "--namespace", ctx.settings.kube_namespace,
+        "rollout", "status", "statefulset/ssl-proxy-tidb",
+        f"--timeout={ctx.settings.rollout_status_timeout}",
+        context=ctx.settings.kube_context,
+        capture=True,
+    )
+
+
 def kubernetes_up(ctx: UpReadyContext) -> bool:
     try:
         sync_kubernetes_secrets(ctx)
         sync_tidb_secrets(ctx)
+        restart_tidb(ctx)
         publish_registry_images(ctx)
         verify_kubernetes_registry_pull(ctx)
         helm_upgrade(ctx)
