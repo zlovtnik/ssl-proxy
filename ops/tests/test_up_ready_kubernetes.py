@@ -371,8 +371,17 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
+        present_stdout = json.dumps({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "data": {
+                "password": "cGFzc3dvcmQ=",
+                "ca.crt": "Y2EuY3J0",
+                "dsn": "ZHNu",
+            },
+        })
         present = subprocess.CompletedProcess(
-            args=["kubectl"], returncode=0, stdout="cGFzc3dvcmQ=", stderr=""
+            args=["kubectl"], returncode=0, stdout=present_stdout, stderr=""
         )
         missing = subprocess.CompletedProcess(
             args=["kubectl"], returncode=1, stdout="", stderr="not found"
@@ -397,8 +406,17 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
+        present_stdout = json.dumps({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "data": {
+                "password": "cGFzc3dvcmQ=",
+                "ca.crt": "Y2EuY3J0",
+                "dsn": "ZHNu",
+            },
+        })
         present = subprocess.CompletedProcess(
-            args=["kubectl"], returncode=0, stdout="cGFzc3dvcmQ=", stderr=""
+            args=["kubectl"], returncode=0, stdout=present_stdout, stderr=""
         )
 
         with patch(

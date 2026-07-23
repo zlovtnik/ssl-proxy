@@ -846,12 +846,19 @@ def preflight_required_secrets(ctx: UpReadyContext) -> None:
         result = shell.kubectl(
             "get", "secret", name,
             "--namespace", ctx.settings.kube_namespace,
-            "-o", f'jsonpath={{.data["{key}"]}}',
+            "-o", "json",
             context=ctx.settings.kube_context,
             check=False,
             capture=True,
         )
-        if result.returncode != 0 or not result.stdout:
+        if result.returncode != 0:
+            missing.append(name)
+            continue
+        try:
+            data = json.loads(result.stdout).get("data", {})
+            if key not in data or not data[key]:
+                missing.append(name)
+        except (json.JSONDecodeError, TypeError):
             missing.append(name)
     if missing:
         raise UpReadyError(
