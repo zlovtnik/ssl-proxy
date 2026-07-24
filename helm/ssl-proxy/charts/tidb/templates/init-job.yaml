@@ -77,7 +77,7 @@ spec:
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.* TO 'octopus_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
-                "GRANT SELECT ON atheros_search.* TO 'atheros_search_runtime';"
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.* TO 'atheros_search_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
                 "GRANT SELECT ON octopus_core.* TO 'atheros_search_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \

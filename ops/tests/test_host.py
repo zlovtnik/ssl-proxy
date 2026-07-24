@@ -3,6 +3,7 @@ import unittest
 from sslproxy_ops.commands.host import (
     containerd_config_version,
     containerd_registry_hosts_toml,
+    k3s_registries_yaml,
     normalize_registry_authority,
 )
 
@@ -31,6 +32,21 @@ class HostCommandTest(unittest.TestCase):
         self.assertIn('server = "http://192.168.1.221:5000"', rendered)
         self.assertIn('capabilities = ["pull", "resolve"]', rendered)
         self.assertNotIn('"push"', rendered)
+
+    def test_k3s_registries_yaml_plain_http(self):
+        rendered = k3s_registries_yaml(
+            "192.168.1.221:5000", plain_http=True
+        )
+        self.assertIn('mirrors:', rendered)
+        self.assertIn('"192.168.1.221:5000":', rendered)
+        self.assertIn('- "http://192.168.1.221:5000"', rendered)
+        self.assertNotIn('https', rendered)
+
+    def test_k3s_registries_yaml_tls(self):
+        rendered = k3s_registries_yaml(
+            "192.168.1.221:5000", plain_http=False
+        )
+        self.assertIn('- "https://192.168.1.221:5000"', rendered)
 
     def test_parses_top_level_containerd_config_version(self):
         self.assertEqual(

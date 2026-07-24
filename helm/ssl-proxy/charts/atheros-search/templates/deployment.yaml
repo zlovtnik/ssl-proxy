@@ -46,7 +46,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.name }}
-                  key: dsn
+                  key: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.key }}
             - name: ATHSEARCH_TIDB_TLS_CA_FILE
               value: /etc/tidb-tls/ca.crt
             - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
