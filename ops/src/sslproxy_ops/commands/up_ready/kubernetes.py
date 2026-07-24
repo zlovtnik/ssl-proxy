@@ -557,10 +557,10 @@ DNS.2 = ssl-proxy-tidb
         ).stdout
         _apply_rendered_resource(ctx, tls_manifest)
 
-    ctx.tidb_tls_cert_checksum = _compute_tls_checksum(
-        cert_path / "tidb-server.crt",
-        cert_path / "tidb-server.key",
-    )
+        ctx.tidb_tls_cert_checksum = _compute_tls_checksum(
+            cert_path / "tidb-server.crt",
+            cert_path / "tidb-server.key",
+        )
     return True
 
 
