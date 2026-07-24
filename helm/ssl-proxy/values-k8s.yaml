@@ -47,7 +47,7 @@ global:
             name: "tidb-schema-migrator"
             key: "password"
         # Chart-local account for the in-cluster Keycloak (schema-migrator
-        # subchart). Provisioned by k8s/tidb/init-job.yaml.
+        # subchart). Provisioned by the tidb init job hook.
         keycloak:
           database: "keycloak"
           user: "keycloak"
@@ -116,8 +116,19 @@ javaCoordinator:
     host: "ssl-proxy-tidb.default.svc.cluster.local"
 
 tidb:
-  external: true
-  minimumVersion: "8.5.0"
+  external: false
+  image:
+    tag: v8.5.0
+    pullPolicy: Always
+  persistence:
+    enabled: true
+    size: 10Gi
+  service:
+    hostPort: 4000
+  initJob:
+    image:
+      tag: latest
+      pullPolicy: Always
   egress:
     enabled: false
     cidrs: []

@@ -1025,10 +1025,6 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.ensure_tidb_ready",
                 return_value=None,
             ),
-            patch(
-                "sslproxy_ops.commands.up_ready.kubernetes.apply_tidb_init_job",
-                return_value=None,
-            ),
             patch("sslproxy_ops.commands.up_ready.kubernetes.publish_registry_images"),
             patch("sslproxy_ops.commands.up_ready.kubernetes.verify_kubernetes_registry_pull"),
             patch(

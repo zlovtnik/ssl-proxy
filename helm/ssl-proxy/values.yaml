@@ -147,7 +147,7 @@ schemaMigrator:
 atherosSensor:
   enabled: true
 tidb:
-  external: true
+  external: false
   minimumVersion: "8.5.0"
   egress:
     enabled: false

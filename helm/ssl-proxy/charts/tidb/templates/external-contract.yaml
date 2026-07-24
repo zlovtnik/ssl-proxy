@@ -1,6 +1,4 @@
-{{- if not .Values.external -}}
-{{- fail "the bundled/mock TiDB runtime is retired; tidb.external must be true" -}}
-{{- end -}}
+{{- if .Values.external }}
 {{- $tidb := required "global.shared.tidb is required" .Values.global.shared.tidb -}}
 {{- $_ := required "global.shared.tidb.host must name the external TiDB endpoint" $tidb.host -}}
 {{- if or (eq $tidb.host "tidb") (eq $tidb.host "127.0.0.1") (eq $tidb.host "localhost") -}}
@@ -46,4 +44,5 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $tidb.port }}
+{{- end }}
 {{- end }}

@@ -1,0 +1,21 @@
+{{- if not .Values.external }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "tidb") }}-tidb-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "tidb") | nindent 4 }}
+    app.kubernetes.io/component: tidb
+data:
+  tidb.toml: |
+    [log]
+    level = "info"
+
+    [performance]
+    max-procs = 0
+
+    [security]
+    ssl-cert = "/etc/tidb-tls-server/tls.crt"
+    ssl-key = "/etc/tidb-tls-server/tls.key"
+{{- end }}

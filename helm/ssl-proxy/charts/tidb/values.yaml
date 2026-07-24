@@ -21,6 +21,35 @@ external: true
 minimumVersion: "8.5.0"
 egress:
   enabled: true
-  # NetworkPolicy cannot select a DNS name. Supply the routed external TiDB
-  # CIDRs for production; empty is rejected when the policy is enabled.
   cidrs: []
+
+# In-cluster TiDB deployment (active when external=false).
+image:
+  repository: pingcap/tidb
+  tag: v8.5.0
+  pullPolicy: IfNotPresent
+replicas: 1
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+service:
+  type: ClusterIP
+  hostPort: 4000
+metricsPort: 10080
+initJob:
+  image:
+    repository: tidb-runtime-schema
+    tag: latest
+    pullPolicy: IfNotPresent
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+# Set dynamically by ops up-ready to force StatefulSet rollout on TLS rotation.
+tlsCertChecksum: ""
