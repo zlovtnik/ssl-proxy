@@ -44,7 +44,7 @@ dependencies:
     repository: "file://charts/minio"
   # mandatory - no enabled toggle by design; these are always required
   - name: tidb
-    version: 0.2.0
+    version: 0.2.1
     repository: "file://charts/tidb"
   - name: telemetry
     version: 0.1.2
