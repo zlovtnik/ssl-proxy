@@ -4,7 +4,7 @@ global:
     # stage: new clients deployed with consumers disabled; legacy stays active.
     # activate: legacy is quiesced and ready new clients receive traffic.
     # prune: PostgreSQL/MongoDB compatibility objects are absent.
-    mode: stage
+    mode: activate
   nameOverride: ""
   fullnameOverride: ""
   image:
