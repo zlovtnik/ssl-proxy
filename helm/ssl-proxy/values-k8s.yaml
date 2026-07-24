@@ -19,11 +19,11 @@ global:
       bootstrapServers: "ssl-proxy-redpanda:9092"
       topicReplicationFactor: 1
     tidb:
-      host: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+      host: "ssl-proxy-tidb.default.svc.cluster.local"
       port: 4000
       minimumVersion: "8.5.0"
       tls:
-        serverName: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+        serverName: "ssl-proxy-tidb.default.svc.cluster.local"
         caSecret:
           name: "tidb-client-ca"
           key: "ca.crt"
@@ -113,7 +113,7 @@ javaCoordinator:
       cpu: 500m
       memory: 1Gi
   tidb:
-    host: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+    host: "ssl-proxy-tidb.default.svc.cluster.local"
 
 tidb:
   external: true

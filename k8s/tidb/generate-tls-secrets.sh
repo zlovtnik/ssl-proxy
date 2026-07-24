@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-NAMESPACE="ssl-proxy"
+NAMESPACE="default"
 CA_SECRET_NAME="tidb-client-ca"
 SERVER_SECRET_NAME="tidb-server-tls"
 CERT_DIR="$(mktemp -d)"
@@ -62,7 +62,7 @@ authorityKeyIdentifier = keyid,issuer
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = ssl-proxy-tidb.ssl-proxy.svc.cluster.local
+DNS.1 = ssl-proxy-tidb.default.svc.cluster.local
 DNS.2 = ssl-proxy-tidb
 TLS_EOF
 

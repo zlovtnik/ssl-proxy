@@ -74,7 +74,7 @@ data:
       - job_name: tidb
         metrics_path: /metrics
         static_configs:
-          - targets: ["ssl-proxy-tidb.ssl-proxy.svc.cluster.local:10080"]
+          - targets: ["ssl-proxy-tidb.default.svc.cluster.local:10080"]
   alerts.yml: |
     {{- if .Values.prometheus.alertRules }}
     {{- .Values.prometheus.alertRules | nindent 4 }}

@@ -410,7 +410,7 @@ def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
     """
     namespace = ctx.settings.kube_namespace
     context = ctx.settings.kube_context
-    tidb_host = "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+    tidb_host = f"ssl-proxy-tidb.{namespace}.svc.cluster.local"
 
     # TiDB runtime secrets (only create if missing)
     if not _secret_exists("tidb-octopus", namespace, context):
@@ -1043,20 +1043,74 @@ def rollout_restart_release_workloads(ctx: UpReadyContext) -> None:
         )
 
 
-def restart_tidb(ctx: UpReadyContext) -> None:
-    """Restart TiDB so it picks up freshly generated TLS certificates.
+def _statefulset_exists(ctx: UpReadyContext, name: str) -> bool:
+    result = shell.kubectl(
+        "get", "statefulset", name,
+        "--namespace", ctx.settings.kube_namespace,
+        "--ignore-not-found",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    return result.returncode == 0 and bool((result.stdout or "").strip())
 
-    TiDB reads TLS certs at process start and does not hot-reload them.
-    After sync_tidb_secrets() replaces the certs, the StatefulSet must be
-    restarted for the new certs to take effect.
-    """
-    step("S02", "restart_tidb: restarting ssl-proxy-tidb")
+
+def apply_raw_tidb_manifests(ctx: UpReadyContext) -> None:
+    step("S02", "tidb_manifests: applying raw TiDB namespace, service, configmap, and statefulset")
+    root = repo_root()
+    for filename in ("namespace.yaml", "service.yaml", "configmap.yaml", "statefulset.yaml"):
+        path = root / "k8s" / "tidb" / filename
+        if not path.exists():
+            raise UpReadyError(f"Missing TiDB manifest: {path}")
+        _apply_rendered_resource(ctx, path.read_text())
+
+
+def apply_tidb_init_job(ctx: UpReadyContext) -> None:
+    result = shell.kubectl(
+        "get", "job", "ssl-proxy-tidb-init",
+        "--namespace", ctx.settings.kube_namespace,
+        "-o", "jsonpath={.status.succeeded}",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if result.returncode == 0 and (result.stdout or "").strip() == "1":
+        warn("tidb_init_job: ssl-proxy-tidb-init already completed; skipping")
+        return
+    step("S02", "tidb_init_job: applying database/user bootstrap job")
+    root = repo_root()
+    path = root / "k8s" / "tidb" / "init-job.yaml"
+    if not path.exists():
+        raise UpReadyError(f"Missing TiDB init job manifest: {path}")
+    _apply_rendered_resource(ctx, path.read_text())
+    step("S02", "tidb_init_job: waiting for ssl-proxy-tidb-init to complete")
     shell.kubectl(
         "--namespace", ctx.settings.kube_namespace,
-        "rollout", "restart", "statefulset/ssl-proxy-tidb",
+        "wait", "--for=condition=complete", "job/ssl-proxy-tidb-init",
+        f"--timeout={ctx.settings.rollout_status_timeout}",
         context=ctx.settings.kube_context,
         capture=True,
     )
+
+
+def ensure_tidb_ready(ctx: UpReadyContext) -> None:
+    """Ensure TiDB is running with current TLS certificates.
+
+    On a fresh install, applies raw manifests and waits for the StatefulSet.
+    On an existing install, rolls it out to pick up regenerated certs.
+    """
+    if _statefulset_exists(ctx, "ssl-proxy-tidb"):
+        step("S02", "restart_tidb: restarting ssl-proxy-tidb for TLS cert rotation")
+        shell.kubectl(
+            "--namespace", ctx.settings.kube_namespace,
+            "rollout", "restart", "statefulset/ssl-proxy-tidb",
+            context=ctx.settings.kube_context,
+            capture=True,
+        )
+    else:
+        step("S02", "tidb_fresh_install: applying raw TiDB manifests")
+        apply_raw_tidb_manifests(ctx)
+
     shell.kubectl(
         "--namespace", ctx.settings.kube_namespace,
         "rollout", "status", "statefulset/ssl-proxy-tidb",
@@ -1070,7 +1124,8 @@ def kubernetes_up(ctx: UpReadyContext) -> bool:
     try:
         sync_kubernetes_secrets(ctx)
         sync_tidb_secrets(ctx)
-        restart_tidb(ctx)
+        ensure_tidb_ready(ctx)
+        apply_tidb_init_job(ctx)
         publish_registry_images(ctx)
         verify_kubernetes_registry_pull(ctx)
         helm_upgrade(ctx)

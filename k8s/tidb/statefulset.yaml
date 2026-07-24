@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: ssl-proxy-tidb
-  namespace: ssl-proxy
+  namespace: default
   labels:
     app: ssl-proxy-tidb
 spec:
@@ -29,7 +29,7 @@ spec:
             - --store=unistore
             - --path=/tidb-data
             - --log-file=
-            - --advertise-address=ssl-proxy-tidb.ssl-proxy.svc.cluster.local
+            - --advertise-address=ssl-proxy-tidb.default.svc.cluster.local
             - --status=10080
             - --config=/etc/tidb/config/tidb.toml
           volumeMounts:

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Fresh-cluster bootstrap only. Do not run this script to rotate TiDB TLS:
 # k8s/tidb/generate-tls-secrets.sh preserves all existing runtime credentials.
-NAMESPACE="ssl-proxy"
+NAMESPACE="default"
 
 generate_password() {
   openssl rand -base64 32 | tr -d '=' | head -c 32
@@ -20,7 +20,7 @@ kubectl create secret generic tidb-octopus \
   --from-literal=password="${octopus_password}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-atheros_search_dsn="atheros_search_runtime:${atheros_search_password}@tcp(ssl-proxy-tidb.ssl-proxy.svc.cluster.local:4000)/atheros_search"
+atheros_search_dsn="atheros_search_runtime:${atheros_search_password}@tcp(ssl-proxy-tidb.default.svc.cluster.local:4000)/atheros_search"
 kubectl create secret generic tidb-atheros-search \
   --namespace="${NAMESPACE}" \
   --from-literal=password="${atheros_search_password}" \

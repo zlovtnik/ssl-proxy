@@ -55,7 +55,7 @@ class Settings(BaseSettings):
         default=True, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
     )
     kube_context: str = Field(default="", validation_alias="UP_READY_KUBE_CONTEXT")
-    kube_namespace: str = Field(default="ssl-proxy", validation_alias="UP_READY_KUBE_NAMESPACE")
+    kube_namespace: str = Field(default="default", validation_alias="UP_READY_KUBE_NAMESPACE")
     helm_release: str = Field(default="ssl-proxy", validation_alias="UP_READY_HELM_RELEASE")
     helm_timeout: str = Field(default="30m", validation_alias="UP_READY_HELM_TIMEOUT")
     kube_registry_probe_timeout: str = Field(

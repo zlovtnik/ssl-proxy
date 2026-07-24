@@ -158,7 +158,7 @@ Database migration does not change the network-path controls:
 ```bash
 make dependency-boundaries
 make diagnose PROFILE_MODE=linux-shim SERVER_IP=<server> CLIENT_IP=<client>
-make k8s-status KUBE_NAMESPACE=ssl-proxy
+make k8s-status KUBE_NAMESPACE=default
 ```
 
 Keep admin endpoints host-local, protect secrets with the existing rotator,

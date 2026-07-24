@@ -2,7 +2,7 @@
 
 set -uo pipefail
 
-namespace="${1:-ssl-proxy}"
+namespace="${1:-default}"
 kubectl_bin="${KUBECTL:-kubectl}"
 kube_context="${KUBE_CONTEXT:-}"
 helm_release="${KUBE_RELEASE:-ssl-proxy}"

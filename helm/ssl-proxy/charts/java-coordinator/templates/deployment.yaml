@@ -311,18 +311,7 @@ spec:
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
             - name: OCTOPUS_CONSUMERS_ENABLED
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
-            - name: OCTOPUS_CUTOVER_ARTIFACT_PATH
-              value: /etc/octopus-cutover/cutover.json
-            - name: OCTOPUS_CUTOVER_SIGNATURE_PATH
-              value: /etc/octopus-cutover/cutover.sig
-            - name: OCTOPUS_CUTOVER_PUBLIC_KEY_PATH
-              value: /etc/octopus-cutover/public.pem
-            - name: OCTOPUS_CUTOVER_PUBLIC_KEY_SHA256
-              value: {{ .Values.cutover.publicKeySHA256 | quote }}
-            - name: OCTOPUS_CUTOVER_SCHEMA_VERSION
-              value: {{ .Values.cutover.schemaVersion | quote }}
-            - name: OCTOPUS_CUTOVER_CLUSTER_ID
-              value: {{ .Values.cutover.clusterId | quote }}
+
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -358,9 +347,7 @@ spec:
             - name: tidb-tls
               mountPath: /etc/tidb-tls
               readOnly: true
-            - name: octopus-cutover
-              mountPath: /etc/octopus-cutover
-              readOnly: true
+
       volumes:
         - name: topics-manifest
           configMap:
@@ -370,17 +357,7 @@ spec:
         - name: tidb-tls
           secret:
             secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
-        - name: octopus-cutover
-          secret:
-            secretName: {{ .Values.cutover.secretName }}
-            optional: {{ eq .Values.global.migration.mode "stage" }}
-            items:
-              - key: {{ .Values.cutover.artifactKey }}
-                path: cutover.json
-              - key: {{ .Values.cutover.signatureKey }}
-                path: cutover.sig
-              - key: {{ .Values.cutover.publicKeyKey }}
-                path: public.pem
+
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
