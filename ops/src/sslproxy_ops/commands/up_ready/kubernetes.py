@@ -1049,10 +1049,9 @@ def _statefulset_exists(ctx: UpReadyContext, name: str) -> bool:
         "--namespace", ctx.settings.kube_namespace,
         "--ignore-not-found",
         context=ctx.settings.kube_context,
-        check=False,
         capture=True,
     )
-    return result.returncode == 0 and bool((result.stdout or "").strip())
+    return bool((result.stdout or "").strip())
 
 
 def apply_raw_tidb_manifests(ctx: UpReadyContext) -> None:
@@ -1066,17 +1065,40 @@ def apply_raw_tidb_manifests(ctx: UpReadyContext) -> None:
 
 
 def apply_tidb_init_job(ctx: UpReadyContext) -> None:
-    result = shell.kubectl(
-        "get", "job", "ssl-proxy-tidb-init",
-        "--namespace", ctx.settings.kube_namespace,
-        "-o", "jsonpath={.status.succeeded}",
-        context=ctx.settings.kube_context,
-        check=False,
-        capture=True,
-    )
-    if result.returncode == 0 and (result.stdout or "").strip() == "1":
-        warn("tidb_init_job: ssl-proxy-tidb-init already completed; skipping")
-        return
+    try:
+        result = shell.kubectl(
+            "get", "job", "ssl-proxy-tidb-init",
+            "--namespace", ctx.settings.kube_namespace,
+            "-o", "jsonpath={.status.succeeded}|{.status.active}|{.status.failed}",
+            context=ctx.settings.kube_context,
+            capture=True,
+        )
+    except shell.ShellCommandError as e:
+        if e.returncode == 1 and "NotFound" in e.stderr:
+            pass
+        else:
+            raise
+    else:
+        parts = (result.stdout or "").strip().split("|")
+        succeeded = parts[0] if len(parts) > 0 and parts[0] else ""
+        active = parts[1] if len(parts) > 1 and parts[1] else ""
+        failed = parts[2] if len(parts) > 2 and parts[2] else ""
+
+        if succeeded == "1":
+            warn("tidb_init_job: ssl-proxy-tidb-init already completed; skipping")
+            return
+        if active and int(active) > 0:
+            warn("tidb_init_job: ssl-proxy-tidb-init is active; skipping")
+            return
+        if failed and int(failed) > 0:
+            warn("tidb_init_job: ssl-proxy-tidb-init failed; deleting for retry")
+            shell.kubectl(
+                "delete", "job", "ssl-proxy-tidb-init",
+                "--namespace", ctx.settings.kube_namespace,
+                context=ctx.settings.kube_context,
+                capture=True,
+            )
+
     step("S02", "tidb_init_job: applying database/user bootstrap job")
     root = repo_root()
     path = root / "k8s" / "tidb" / "init-job.yaml"
