@@ -1,10 +1,10 @@
 engine: tidb
 layer: octopus_core
 database: octopus_core
-schema_version: 2026072501
+schema_version: 2026072502
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: f69cc2fc76a3af179cae51258e769f4ee6dbd319a40b2d111a9c9829a798b7d5
+manifest_sha256: 8a79537fa04bef8b5e2d366c9672f11c9ac086a3dd9345df2e09b237627b2a78
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
@@ -18,4 +18,5 @@ apply_order:
   - 01_tables/007_processor_leases_and_outbox.sql
   - 01_tables/008_operational_projections.sql
   - 01_tables/009_payload_ref_capacity.sql
+  - 01_tables/010_outbox_lease_lookup.sql
 retired: []
