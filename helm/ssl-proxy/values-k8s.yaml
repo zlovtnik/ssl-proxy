@@ -39,7 +39,7 @@ global:
           user: "atheros_search_runtime"
           passwordSecret:
             name: "tidb-atheros-search"
-            key: "password"
+            key: "dsn"
         schemaMigrator:
           database: "schema_migrator"
           user: "schema_migrator_runtime"
@@ -174,6 +174,9 @@ schemaMigrator:
       port: 8080
   traefik:
     hostPorts:
+      # Avoid k3s svclb-traefik which already binds 80/443 on the node.
+      http: 8082
+      https: 8444
       # Unified LAN edge for the UI and backend API.
       lan: 8081
     acme:

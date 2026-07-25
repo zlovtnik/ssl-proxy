@@ -4,15 +4,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $tidbSvc }}-tidb-init
+  name: {{ $tidbSvc }}-tidb-init-{{ .Release.Revision }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ssl-proxy-common.labels" (dict "root" . "component" "tidb") | nindent 4 }}
     app.kubernetes.io/component: tidb-init
-  annotations:
-    helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "-20"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   backoffLimit: {{ .Values.initJob.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.initJob.activeDeadlineSeconds }}
