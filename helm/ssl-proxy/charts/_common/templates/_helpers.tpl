@@ -30,7 +30,7 @@ Shared selector labels. Usage:
 */}}
 {{- define "ssl-proxy-common.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "ssl-proxy-common.name" . }}
-app.kubernetes.io/instance: {{ .root.Release.Name }}
+app.kubernetes.io/instance: {{ default .root.Release.Name .root.Values.global.instanceOverride }}
 {{- end }}
 
 {{/*
@@ -38,7 +38,7 @@ Shared labels. Usage:
   {{ include "ssl-proxy-common.labels" (dict "root" . "component" "proxy") }}
 */}}
 {{- define "ssl-proxy-common.labels" -}}
-helm.sh/chart: {{ printf "%s-%s" .root.Chart.Name .root.Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+helm.sh/chart: {{ printf "%s-%s" .component .root.Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "ssl-proxy-common.selectorLabels" . }}
 app.kubernetes.io/version: {{ .root.Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .root.Release.Service }}

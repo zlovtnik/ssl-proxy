@@ -1,0 +1,57 @@
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  instanceOverride: ""
+  labels: {}
+  image:
+    registry: ""
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+    automountServiceAccountToken: false
+  shared:
+    redpanda:
+      bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
+      topicReplicationFactor: 3
+    javaCoordinator:
+      topics:
+        scanTopic: "sync.scan.request"
+        loadTopic: "sync.oracle.load"
+        resultTopic: "sync.oracle.result"
+        payloadAuditTopic: "proxy.payload_audit"
+      consumers:
+        scanConsumer: "octopus-scan-v1"
+        loadConsumer: "octopus-load-v1"
+        resultConsumer: "octopus-result-v1"
+        payloadAuditConsumer: "octopus-payload-audit-v1"
+      streams:
+        commonStreamNames: "proxy.events,wireless.audit"
+        auditStreamName: "AUDIT_STREAM"
+        resultStreamName: "ORACLE_RESULT_STREAM"
+        wirelessBacklogStreamName: "WIRELESS_BACKLOG_STREAM"
+        wirelessMacStreamName: "WIRELESS_MAC_STREAM"
+        wirelessNetworksStreamName: "WIRELESS_NETWORKS_STREAM"
+        wirelessProbeStreamName: "WIRELESS_PROBE_STREAM"
+      wirelessTopics:
+        backlogSaveTopic: "wireless.backlog.save"
+        backlogListTopic: "wireless.backlog.list"
+        backlogSyncedTopic: "wireless.backlog.synced"
+        backlogPruneTopic: "wireless.backlog.prune"
+        macLookupTopic: "wireless.mac.lookup"
+        networksAuthorizedTopic: "wireless.networks.authorized"
+        probeFlushTopic: "wireless.probe.flush"
+      wirelessConsumers:
+        backlogSaveConsumer: "wireless-backlog-save-v1"
+        backlogListConsumer: "wireless-backlog-list-v1"
+        backlogSyncedConsumer: "wireless-backlog-synced-v1"
+        backlogPruneConsumer: "wireless-backlog-prune-v1"
+        macLookupConsumer: "wireless-mac-lookup-v1"
+        networksAuthorizedConsumer: "wireless-networks-authorized-v1"
+        probeFlushConsumer: "wireless-probe-flush-v1"
+      wirelessReplyTopics:
+        backlogListReplyTopic: "wireless.backlog.list.reply"
+        backlogPruneReplyTopic: "wireless.backlog.prune.reply"
+        macLookupReplyTopic: "wireless.mac.lookup.reply"
+        networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
+      topicPartitions: 5

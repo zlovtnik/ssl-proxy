@@ -33,17 +33,16 @@ preflight:
     - namespace: default
       name: minio-credentials
       key: access-key
-
-  service_accounts:
-    - default/ssl-proxy
+    - namespace: default
+      name: minio-credentials
+      key: secret-key
 
   node_requirements:
     atheros-sensor:
       labels:
         wiretrap.io/sensor: "true"
 
-  host_devices:
-    - /dev/net/tun
+  host_devices: []
 
   crds: []
 

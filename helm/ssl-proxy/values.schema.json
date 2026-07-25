@@ -6,6 +6,9 @@
       "type": "object",
       "required": ["migration", "shared"],
       "properties": {
+        "nameOverride": {"type": "string"},
+        "fullnameOverride": {"type": "string"},
+        "instanceOverride": {"type": "string"},
         "migration": {
           "type": "object",
           "required": ["mode"],

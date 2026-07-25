@@ -1,10 +1,12 @@
 {{- if .Values.enabled }}
+{{- $fullname := printf "%s-redis-runtime" (include "ssl-proxy-common.fullname" (dict "root" . "component" "redis-runtime")) }}
+{{- $instance := default .Release.Name .Values.global.instanceOverride }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-redis-runtime
+  name: {{ $fullname }}
   namespace: {{ .Release.Namespace }}
-  labels: &labels {app.kubernetes.io/name: redis-runtime, app.kubernetes.io/instance: {{ .Release.Name }}}
+  labels: &labels {app.kubernetes.io/name: redis-runtime, app.kubernetes.io/instance: {{ $instance }}}
 spec:
   replicas: 1
   selector: {matchLabels: *labels}
@@ -41,8 +43,8 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: {{ .Release.Name }}-redis-runtime, namespace: {{ .Release.Namespace }}}
+metadata: {name: {{ $fullname }}, namespace: {{ .Release.Namespace }}}
 spec:
-  selector: {app.kubernetes.io/name: redis-runtime, app.kubernetes.io/instance: {{ .Release.Name }}}
+  selector: {app.kubernetes.io/name: redis-runtime, app.kubernetes.io/instance: {{ $instance }}}
   ports: [{name: redis, port: 6379, targetPort: redis}]
 {{- end }}

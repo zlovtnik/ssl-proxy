@@ -167,7 +167,7 @@ class TestResolveGateResource:
         result = _resolve_gate_resource(gate, "release", "default", None, None)
         assert result is None
 
-    def test_discover_uses_first_match(self):
+    def test_discover_rejects_multiple_matches(self):
         gate = _make_gate(discover={"kind": "Pod"})
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.return_value = subprocess.CompletedProcess(
@@ -176,10 +176,8 @@ class TestResolveGateResource:
                 stdout="pod/pod-1\npod/pod-2\npod/pod-3\n",
                 stderr="",
             )
-            result = _resolve_gate_resource(
-                gate, "release", "default", None, None
-            )
-            assert result == "pod/pod-1"
+            with pytest.raises(RuntimeError, match="expected exactly one"):
+                _resolve_gate_resource(gate, "release", "default", None, None)
 
 
 class TestDiscoverResource:

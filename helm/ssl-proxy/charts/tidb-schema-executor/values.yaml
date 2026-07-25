@@ -1,10 +1,16 @@
 global:
+  nameOverride: ""
+  fullnameOverride: ""
+  instanceOverride: ""
   rolloutRevision: ""
   serviceAccount: {name: ssl-proxy}
 enabled: false
 image: {repository: tidb-runtime-schema, tag: "1.0.0", pullPolicy: IfNotPresent}
 ownerSecret: {name: tidb-schema-owner, dsnKey: dsn}
 applyPostTiFlash: false
+lifecycle:
+  # hook preserves umbrella behavior; managed is used by split stackctl releases.
+  mode: hook
 backoffLimit: 1
 activeDeadlineSeconds: 1800
 resources:

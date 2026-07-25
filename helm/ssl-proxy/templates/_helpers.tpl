@@ -41,7 +41,7 @@ Selector labels
 */}}
 {{- define "ssl-proxy.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "ssl-proxy.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/instance: {{ default .Release.Name .Values.global.instanceOverride }}
 {{- end }}
 
 {{/*

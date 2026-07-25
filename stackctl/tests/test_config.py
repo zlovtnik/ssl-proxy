@@ -36,11 +36,14 @@ class TestComponentTypes:
         assert comp.type == "helm-job"
 
     def test_valid_manifest_type(self):
-        comp = Component(type="manifest", release="test-release")
+        comp = Component(type="manifest", paths=["manifests/test.yaml"])
         assert comp.type == "manifest"
 
     def test_valid_external_check_type(self):
-        comp = Component(type="external-check", release="test-release")
+        comp = Component(
+            type="external-check",
+            checks=[{"type": "tcp", "target": "example.test", "port": 443}],
+        )
         assert comp.type == "external-check"
 
     def test_invalid_component_type(self):
@@ -62,17 +65,25 @@ class TestGate:
         assert gate.discover is None
 
     def test_discover_gate(self):
-        gate = Gate(discover={"kind": "Deployment"})
-        assert gate.discover == {"kind": "Deployment"}
+        gate = Gate(
+            discover={
+                "kind": "Deployment",
+                "selector": "app.kubernetes.io/name=test",
+            }
+        )
+        assert gate.discover["kind"] == "Deployment"
         assert gate.resource is None
 
     def test_discover_requires_kind(self):
         with pytest.raises(Exception) as exc_info:
             Gate(discover={"label": "app=test"})
-        assert "kind" in str(exc_info.value)
+        assert "discover" in str(exc_info.value)
 
     def test_gate_with_condition(self):
-        gate = Gate(discover={"kind": "Job"}, condition="complete")
+        gate = Gate(
+            discover={"kind": "Job", "selector": "app.kubernetes.io/name=test"},
+            condition="complete",
+        )
         assert gate.condition == "complete"
 
 
@@ -101,9 +112,8 @@ class TestStackConfig:
         assert config.defaults.values == []
 
     def test_helm_requires_chart(self):
-        comp = Component(type="helm", release="test")
-        # chart is optional at model level, validated in validate_config
-        assert comp.chart is None
+        with pytest.raises(Exception, match="chart"):
+            Component(type="helm", release="test")
 
     def test_helm_job_requires_job_config(self):
         comp = Component(
@@ -158,26 +168,12 @@ class TestValidateConfig:
         assert "unknown" in errors[0].lower()
 
     def test_helm_missing_chart_detected(self):
-        config = StackConfig(
-            version=1,
-            components={
-                "a": Component(type="helm", release="a"),
-            },
-        )
-        errors = validate_config(config)
-        assert len(errors) == 1
-        assert "chart" in errors[0]
+        with pytest.raises(Exception, match="chart"):
+            Component(type="helm", release="a")
 
     def test_helm_job_missing_job_config_detected(self):
-        config = StackConfig(
-            version=1,
-            components={
-                "a": Component(type="helm-job", release="a", chart="./charts/a"),
-            },
-        )
-        errors = validate_config(config)
-        assert len(errors) == 1
-        assert "job" in errors[0]
+        with pytest.raises(Exception, match="job"):
+            Component(type="helm-job", release="a", chart="./charts/a")
 
     def test_multiple_errors(self):
         config = StackConfig(

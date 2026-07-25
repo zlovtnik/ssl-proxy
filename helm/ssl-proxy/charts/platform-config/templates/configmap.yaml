@@ -3,13 +3,13 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ssl-proxy.fullname" . }}-config
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "platform-config") }}-config
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "platform-config") | nindent 4 }}
 data:
   # Redpanda
-  SYNC_REDPANDA_BOOTSTRAP_SERVERS: {{ include "ssl-proxy.redpandaBootstrapServers" . | quote }}
+  SYNC_REDPANDA_BOOTSTRAP_SERVERS: {{ .Values.global.shared.redpanda.bootstrapServers | quote }}
   # Sync topics
   SYNC_SCAN_TOPIC: {{ .Values.global.shared.javaCoordinator.topics.scanTopic | quote }}
   SYNC_LOAD_TOPIC: {{ .Values.global.shared.javaCoordinator.topics.loadTopic | quote }}
@@ -57,10 +57,10 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ssl-proxy.fullname" . }}-topics-manifest
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "platform-config") }}-topics-manifest
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "platform-config") | nindent 4 }}
 {{ $replicas := .Values.global.shared.redpanda.topicReplicationFactor }}
 data:
   topics.manifest: |

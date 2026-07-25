@@ -6,6 +6,7 @@ Checks fail fast in seconds, before Wave 1 begins.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -121,7 +122,7 @@ def check_api_connectivity(ctx: UpReadyContext) -> None:
 
 
 def check_nodes_ready(ctx: UpReadyContext, minimum_ready: int) -> None:
-    """Verify at least N nodes are in Ready state."""
+    """Verify Ready nodes and reject DiskPressure."""
     result = shell.kubectl(
         "get", "nodes",
         "-o", "json",
@@ -140,6 +141,12 @@ def check_nodes_ready(ctx: UpReadyContext, minimum_ready: int) -> None:
         ready_count = 0
         for node in nodes:
             conditions = (node.get("status") or {}).get("conditions", [])
+            disk_pressure = next(
+                (c for c in conditions if c.get("type") == "DiskPressure"), None
+            )
+            if disk_pressure and disk_pressure.get("status") != "False":
+                node_name = (node.get("metadata") or {}).get("name", "unknown")
+                raise UpReadyError(f"Node {node_name} reports DiskPressure")
             for c in conditions:
                 if c.get("type") == "Ready" and c.get("status") == "True":
                     ready_count += 1
@@ -153,6 +160,38 @@ def check_nodes_ready(ctx: UpReadyContext, minimum_ready: int) -> None:
             f"{minimum_ready} required"
         )
     step("S01", f"nodes_ready: {ready_count} node(s) Ready (minimum={minimum_ready})")
+
+
+def check_node_requirements(
+    ctx: UpReadyContext, requirements: dict[str, NodeRequirement]
+) -> None:
+    """Verify at least one Ready node satisfies each declared label contract."""
+
+    for workload, requirement in requirements.items():
+        selector = ",".join(f"{key}={value}" for key, value in requirement.labels.items())
+        result = shell.kubectl(
+            "get",
+            "nodes",
+            "-l",
+            selector,
+            "-o",
+            "json",
+            context=ctx.settings.kube_context,
+            check=False,
+            capture=True,
+        )
+        if result.returncode != 0:
+            raise UpReadyError(f"Failed to query nodes for {workload}")
+        try:
+            nodes = json.loads(result.stdout or "{}").get("items", [])
+        except json.JSONDecodeError as exc:
+            raise UpReadyError(f"Failed to parse nodes for {workload}") from exc
+        if not nodes:
+            raise UpReadyError(
+                f"No node satisfies {workload} labels: {selector or '(none)'}"
+            )
+    if requirements:
+        step("S01", f"node_labels: {len(requirements)} requirement(s) satisfied")
 
 
 def check_storage_classes(ctx: UpReadyContext, required: list[str]) -> None:
@@ -256,51 +295,14 @@ def check_service_accounts(ctx: UpReadyContext, required: list[str]) -> None:
 
 
 def check_host_devices(ctx: UpReadyContext, devices: list[str]) -> None:
-    """Verify required host devices exist on sensor nodes."""
+    """Reject legacy device probes; device health is a sensor readiness gate."""
     if not devices:
         return
 
-    result = shell.kubectl(
-        "get", "nodes",
-        "-l", "wiretrap.io/sensor=true",
-        "-o", "json",
-        context=ctx.settings.kube_context,
-        check=False,
-        capture=True,
+    raise UpReadyError(
+        "host_devices preflight probes are unsupported; declare node labels or "
+        "advertised resources and use sensor readiness for final device health"
     )
-    if result.returncode != 0:
-        warn("could not query sensor nodes for device check")
-        return
-
-    try:
-        payload = json.loads(result.stdout or "{}")
-        nodes = payload.get("items", [])
-    except json.JSONDecodeError:
-        warn("could not parse node list for device check")
-        return
-
-    if not nodes:
-        warn("no nodes with wiretrap.io/sensor=true label found")
-        return
-
-    for node in nodes:
-        node_name = (node.get("metadata") or {}).get("name", "unknown")
-        for device in devices:
-            result = shell.kubectl(
-                "debug", f"node/{node_name}",
-                "--image=busybox:1.37.0",
-                "--",
-                "test", "-e", device,
-                context=ctx.settings.kube_context,
-                check=False,
-                capture=True,
-            )
-            if result.returncode != 0:
-                raise UpReadyError(
-                    f"Node {node_name} missing required device: {device}"
-                )
-
-    step("S01", f"host_devices: {len(devices)} device(s) verified on sensor nodes")
 
 
 def check_crds(ctx: UpReadyContext, required: list[str]) -> None:
@@ -339,13 +341,13 @@ def check_crds(ctx: UpReadyContext, required: list[str]) -> None:
 
 
 def check_disk_space(ctx: UpReadyContext, min_gb: int | None) -> None:
-    """Check available disk space on nodes where practical."""
+    """Validate advertised ephemeral-storage capacity without debug pods."""
     if min_gb is None:
         return
 
     result = shell.kubectl(
         "get", "nodes",
-        "-o", "jsonpath={.items[*].metadata.name}",
+        "-o", "json",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,
@@ -354,33 +356,20 @@ def check_disk_space(ctx: UpReadyContext, min_gb: int | None) -> None:
         warn("could not query nodes for disk space check")
         return
 
-    nodes = (result.stdout or "").split()
-    for node_name in nodes:
-        result = shell.kubectl(
-            "debug", f"node/{node_name}",
-            "--image=busybox:1.37.0",
-            "--",
-            "df", "-BG", "/var/lib",
-            context=ctx.settings.kube_context,
-            check=False,
-            capture=True,
-        )
-        if result.returncode == 0:
-            for line in (result.stdout or "").splitlines()[1:]:
-                parts = line.split()
-                if len(parts) >= 4:
-                    avail_str = parts[3].rstrip("G")
-                    try:
-                        avail_gb = int(avail_str)
-                        if avail_gb < min_gb:
-                            raise UpReadyError(
-                                f"Node {node_name} has insufficient disk space: "
-                                f"{avail_gb}GB available, {min_gb}GB required"
-                            )
-                    except ValueError:
-                        continue
-
-    step("S01", f"disk_space: {min_gb}GB minimum verified")
+    try:
+        nodes = json.loads(result.stdout or "{}").get("items", [])
+    except json.JSONDecodeError as exc:
+        raise UpReadyError("Failed to parse node capacity") from exc
+    minimum_kib = min_gb * 1024 * 1024
+    for node in nodes:
+        node_name = (node.get("metadata") or {}).get("name", "unknown")
+        raw = (node.get("status") or {}).get("capacity", {}).get("ephemeral-storage", "0")
+        match = re.fullmatch(r"(\d+)Ki", str(raw))
+        if not match or int(match.group(1)) < minimum_kib:
+            raise UpReadyError(
+                f"Node {node_name} advertises insufficient ephemeral-storage: {raw}"
+            )
+    step("S01", f"disk_capacity: {min_gb}Gi advertised minimum verified")
 
 
 def check_conflicting_release(ctx: UpReadyContext, check_enabled: bool) -> None:
@@ -408,18 +397,19 @@ def check_conflicting_release(ctx: UpReadyContext, check_enabled: bool) -> None:
     if not releases:
         return
 
-    release = releases[0]
+    release = next(
+        (item for item in releases if item.get("name") == ctx.settings.helm_release),
+        None,
+    )
+    if release is None:
+        return
     status = release.get("status", "")
 
     if status == "deployed":
-        migration_mode = getattr(ctx.settings, "migration_mode", "deploy")
-        if migration_mode != "migrate":
-            raise UpReadyError(
-                f"Helm release {ctx.settings.helm_release!r} already exists "
-                f"with status={status}. To deploy a split release, set "
-                f"UP_READY_MIGRATION_MODE=migrate."
-            )
-        step("S01", "conflicting_release: release exists, migration mode enabled")
+        raise UpReadyError(
+            f"Helm release {ctx.settings.helm_release!r} already exists with "
+            f"status={status}; use an approved stack cutover plan for ownership migration"
+        )
 
 
 def cluster_preflight(ctx: UpReadyContext) -> None:
@@ -427,6 +417,7 @@ def cluster_preflight(ctx: UpReadyContext) -> None:
     spec = _load_preflight_spec()
     check_api_connectivity(ctx)
     check_nodes_ready(ctx, spec.cluster.minimum_ready_nodes)
+    check_node_requirements(ctx, spec.node_requirements)
     check_storage_classes(ctx, spec.storage_classes)
     check_secrets(ctx, spec.secrets)
     check_service_accounts(ctx, spec.service_accounts)

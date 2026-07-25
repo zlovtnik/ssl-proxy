@@ -21,7 +21,7 @@ from sslproxy_ops.commands.up_ready.checks import (
     write_credential_handoff,
 )
 from sslproxy_ops.commands.up_ready.kubernetes import (
-    helm_upgrade,
+    deploy_kubernetes_release,
     kubernetes_up,
     resolve_kube_context,
     sync_kubernetes_secrets,
@@ -157,13 +157,16 @@ def auto_fix(ctx: UpReadyContext, failure_class: str, text: str = "") -> bool:
             match failure_class:
                 case "profile_obfuscation_mismatch":
                     apply_profile_runtime_env(ctx)
-                    if not helm_upgrade(ctx):
+                    if not deploy_kubernetes_release(ctx):
                         return False
                     ctx.auto_fixed_classes.add(failure_class)
                     return True
                 case "wg_peer_material_missing":
                     ensure_local_peer_material(ctx)
-                    if not sync_kubernetes_secrets(ctx) or not helm_upgrade(ctx):
+                    if (
+                        not sync_kubernetes_secrets(ctx)
+                        or not deploy_kubernetes_release(ctx)
+                    ):
                         return False
                     ctx.auto_fixed_classes.add(failure_class)
                     return True
@@ -270,7 +273,8 @@ def preflight(ctx: UpReadyContext) -> None:
             raise UpReadyError(f"Missing required command: {command}")
     if ctx.settings.deployment_target == "kubernetes":
         resolve_kube_context(ctx)
-        cluster_preflight(ctx)
+        if ctx.settings.stack_mode == "umbrella":
+            cluster_preflight(ctx)
         warn_unhealthy_nodes(ctx)
     if needs_docker:
         docker_info = shell.run(["docker", "info"], check=False, capture=True)

@@ -9,8 +9,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Add the parent directory (stackctl/) to sys.path so that
-# "from stackctl import ..." works when deploy.py is imported.
-_stackctl_dir = Path(__file__).resolve().parent.parent
-if str(_stackctl_dir) not in sys.path:
-    sys.path.insert(0, str(_stackctl_dir))
+_root = Path(__file__).resolve().parents[2]
+_ops_src = _root / "ops" / "src"
+if str(_ops_src) not in sys.path:
+    sys.path.insert(0, str(_ops_src))
+
+# Preserve historical test imports while exercising the canonical modules.
+from sslproxy_ops.stack import core as _core
+from sslproxy_ops.stack import deploy as _deploy
+from sslproxy_ops.stack import gates as _gates
+from sslproxy_ops.stack import shell as _shell
+
+sys.modules["stackctl"] = _core
+sys.modules["deploy"] = _deploy
+sys.modules["gates"] = _gates
+sys.modules["shell"] = _shell

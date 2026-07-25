@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries runtime-datastore-policy tidb-schema-contract cutover-evidence-test bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test dependency-boundaries runtime-datastore-policy tidb-schema-contract cutover-evidence-test bench docker lint clean deploy deploy-ready up-ready up-ready-stackctl diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars stackctl-plan stackctl-validate stackctl-render stackctl-compare stackctl-preflight stackctl-dry-run stackctl-deploy stackctl-status stackctl-smoke
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -37,6 +37,8 @@ KUBE_NAMESPACE ?= default
 KUBE_CONTEXT ?=
 KUBE_RELEASE ?= ssl-proxy
 KUBECTL ?= kubectl
+STACKCTL_FILE ?= stackctl/stack.yaml
+STACKCTL_ARGS ?=
 REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema
 REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
 REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 busybox:1.37.0 pingcap/tidb:v8.5.0
@@ -212,6 +214,14 @@ clean:
 # Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
 up-ready: $(OPS_BOOTSTRAP)
 	$(OPS) up-ready
+
+# Opt-in split-release path. The compatibility umbrella remains the default
+# until test-cluster acceptance and cutover rehearsal are complete.
+up-ready-stackctl: $(OPS_BOOTSTRAP)
+	UP_READY_STACK_MODE=split $(OPS) up-ready
+
+stackctl-plan stackctl-validate stackctl-render stackctl-compare stackctl-preflight stackctl-dry-run stackctl-deploy stackctl-status stackctl-smoke: $(OPS_BOOTSTRAP)
+	$(OPS) stack $(patsubst stackctl-%,%,$@) --file $(STACKCTL_FILE) $(STACKCTL_ARGS)
 
 # Non-mutating diagnosis and signature classification.
 # Example: make diagnose PROFILE_MODE=linux-shim SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68

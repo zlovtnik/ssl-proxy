@@ -1,4 +1,7 @@
 global:
+  nameOverride: ""
+  fullnameOverride: ""
+  instanceOverride: ""
   rolloutRevision: ""
   serviceAccount: {name: ssl-proxy}
 enabled: true

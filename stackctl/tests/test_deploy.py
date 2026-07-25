@@ -195,20 +195,20 @@ class TestPrepareChart:
 # ===========================================================================
 
 
-class TestDeleteJobIfExists:
-    """Test job deletion for helm-job rerun."""
+class TestReplaceJob:
+    """Test UID-aware managed Job replacement."""
 
     def test_job_exists_deletes_it(self):
         with patch("deploy.kubectl") as mock_kubectl:
             mock_kubectl.side_effect = [
                 subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="job.batch/test-job\n", stderr=""
+                    args=[], returncode=0, stdout="uid-1", stderr=""
                 ),
                 subprocess.CompletedProcess(
                     args=[], returncode=0, stdout="job deleted\n", stderr=""
                 ),
             ]
-            _delete_job_if_exists("test-job", "default", None, None)
+            assert _replace_job("test-job", "default", None, None) == "uid-1"
             assert mock_kubectl.call_count == 2
             # First call is get, second is delete
             get_args = mock_kubectl.call_args_list[0][0]
@@ -223,7 +223,7 @@ class TestDeleteJobIfExists:
             mock_kubectl.return_value = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout="", stderr=""
             )
-            _delete_job_if_exists("test-job", "default", None, None)
+            assert _replace_job("test-job", "default", None, None) is None
             mock_kubectl.assert_called_once()
             # Only get was called, not delete
 
@@ -232,7 +232,7 @@ class TestDeleteJobIfExists:
             mock_kubectl.return_value = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout="", stderr=""
             )
-            _delete_job_if_exists("test-job", "default", context="prod", kubeconfig=None)
+            _replace_job("test-job", "default", context="prod", kubeconfig=None)
             assert mock_kubectl.call_args[1]["context"] == "prod"
 
 
@@ -289,11 +289,11 @@ class TestHelmUpgrade:
             mock_status.return_value = None  # not deployed yet
             _helm_upgrade(component, {}, Path("/tmp/values.yaml"), "default", None, None)
             args = mock_helm.call_args[0]
-            assert "install" in args
+            assert args[:2] == ("upgrade", "--install")
             assert "test-release" in args
             assert "./charts/test" in args
             assert "--create-namespace" in args
-            assert "--wait" in args
+            assert "--wait=watcher" in args
             assert "--wait-for-jobs" in args
             assert "--timeout" in args
 
@@ -317,7 +317,7 @@ class TestHelmUpgrade:
                 component, {}, Path("/tmp/values.yaml"), "default", None, None, dry_run=True
             )
             args = mock_helm.call_args[0]
-            assert "--dry-run" in args
+            assert "--dry-run=server" in args
 
     def test_rollback_on_failure_adds_history_max(self):
         component = _make_component(rollback_on_failure=True)
@@ -365,14 +365,14 @@ class TestHelmUpgrade:
             timeout_idx = args.index("--timeout")
             assert args[timeout_idx + 1] == "30m"
 
-    def test_stream_mode_used(self):
+    def test_output_is_captured_for_component_log(self):
         component = _make_component()
         with patch("deploy._helm_release_status") as mock_status, patch(
             "deploy.helm"
         ) as mock_helm:
             mock_status.return_value = None
             _helm_upgrade(component, {}, Path("/tmp/v.yaml"), "default", None, None)
-            assert mock_helm.call_args[1]["stream"] is True
+            assert mock_helm.call_args[1].get("stream") is not True
 
 
 class TestHelmRollback:
@@ -509,7 +509,7 @@ class TestDeployComponent:
             assert result.component == "test-app"
             assert result.error is None
             assert result.duration > 0
-            mock_prepare.assert_called_once()
+            mock_prepare.assert_not_called()
             mock_upgrade.assert_called_once()
             mock_gates.assert_called_once()
 
@@ -527,18 +527,24 @@ class TestDeployComponent:
 
         with patch("deploy.prepare_chart") as mock_prepare, patch(
             "deploy.generate_effective_values"
-        ) as mock_gen_values, patch("deploy._delete_job_if_exists") as mock_delete, patch(
+        ) as mock_gen_values, patch("deploy._replace_job") as mock_delete, patch(
             "deploy._helm_upgrade"
         ) as mock_upgrade, patch(
             "deploy.wait_for_gates"
-        ) as mock_gates:
+        ) as mock_gates, patch(
+            "deploy._wait_for_job_with_new_uid"
+        ), patch("deploy._wait_for_job_complete_or_fail"):
             mock_gen_values.return_value = {}
 
             result = deploy_component("test-job", config, options, tmp_path)
 
             assert result.success is True
             mock_delete.assert_called_once_with(
-                "test-job-release", "default", None, None
+                "test-job-release",
+                "default",
+                None,
+                None,
+                expected_release="test-job-release",
             )
             mock_upgrade.assert_called_once()
             mock_gates.assert_called_once()
@@ -602,8 +608,8 @@ class TestDeployComponent:
             assert result.success is False
             mock_rollback.assert_not_called()
 
-    def test_unsupported_component_type_raises(self, tmp_path: Path):
-        """Unsupported component type returns failure."""
+    def test_manifest_without_paths_fails(self, tmp_path: Path):
+        """Manifest deployment requires at least one repository YAML path."""
         component = _make_component(
             name="test-manifest", type_="manifest", chart=None
         )
@@ -613,7 +619,7 @@ class TestDeployComponent:
         result = deploy_component("test-manifest", config, options, tmp_path)
 
         assert result.success is False
-        assert "unsupported type" in result.error
+        assert "has no paths" in result.error
 
     def test_missing_chart_returns_failure(self, tmp_path: Path):
         """Component without chart path returns failure."""
@@ -654,7 +660,7 @@ class TestDeployComponent:
 
             deploy_component("test-app", config, options, tmp_path)
 
-            values_file = tmp_path / "effective-values" / "test-app.yaml"
+            values_file = tmp_path / "effective-values" / "test-app.redacted.yaml"
             assert values_file.exists()
             with open(values_file) as f:
                 data = yaml.safe_load(f)
@@ -712,14 +718,14 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path))
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave:
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
             ]
 
-            result = deploy_stack(config, options)
+            result = asyncio.run(deploy_stack(config, options))
 
             assert result.success is True
             assert result.waves_completed == 2
@@ -733,7 +739,7 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path))
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave:
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.side_effect = [
@@ -742,7 +748,7 @@ class TestDeployStack:
                 ],
             ]
 
-            result = deploy_stack(config, options)
+            result = asyncio.run(deploy_stack(config, options))
 
             assert result.success is False
             assert result.waves_completed == 0
@@ -756,18 +762,21 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path), from_wave=2)
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave:
             mock_resolve.return_value = [["b"]]
             mock_wave.return_value = [
                 ComponentResult(component="b", success=True, duration=1.0),
             ]
 
-            result = deploy_stack(config, options)
+            result = asyncio.run(deploy_stack(config, options))
 
             assert result.success is True
             mock_resolve.assert_called_once_with(
-                config, target_component=None, from_wave=2
+                config,
+                target_component=None,
+                from_wave=2,
+                include_descendants=False,
             )
 
     def test_target_component_filtering(self, tmp_path: Path):
@@ -778,18 +787,21 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path), target_component="b")
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave:
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
             ]
 
-            result = deploy_stack(config, options)
+            result = asyncio.run(deploy_stack(config, options))
 
             assert result.success is True
             mock_resolve.assert_called_once_with(
-                config, target_component="b", from_wave=None
+                config,
+                target_component="b",
+                from_wave=None,
+                include_descendants=False,
             )
 
     def test_run_dir_cleanup_on_success(self, tmp_path: Path):
@@ -799,15 +811,15 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path), keep_artifacts=False)
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave, patch("deploy._cleanup_run_dir") as mock_cleanup:
             mock_resolve.return_value = [["a"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
             ]
 
-            deploy_stack(config, options)
-            mock_cleanup.assert_called_once()
+            asyncio.run(deploy_stack(config, options))
+            mock_cleanup.assert_not_called()
 
     def test_run_dir_retained_on_failure(self, tmp_path: Path):
         """Run directory is retained when deployment fails."""
@@ -816,14 +828,14 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path), keep_artifacts=False)
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave, patch("deploy._cleanup_run_dir") as mock_cleanup:
             mock_resolve.return_value = [["a"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=False, error="failed"),
             ]
 
-            deploy_stack(config, options)
+            asyncio.run(deploy_stack(config, options))
             mock_cleanup.assert_not_called()
 
     def test_keep_artifacts_retains_run_dir(self, tmp_path: Path):
@@ -833,14 +845,14 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path), keep_artifacts=True)
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave, patch("deploy._cleanup_run_dir") as mock_cleanup:
             mock_resolve.return_value = [["a"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
             ]
 
-            deploy_stack(config, options)
+            asyncio.run(deploy_stack(config, options))
             mock_cleanup.assert_not_called()
 
     def test_deploy_result_contains_all_component_results(self, tmp_path: Path):
@@ -851,7 +863,7 @@ class TestDeployStack:
         options = _make_options(work_dir=str(tmp_path))
 
         with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave_sync"
+            "deploy._deploy_wave", new_callable=AsyncMock
         ) as mock_wave:
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.side_effect = [
@@ -859,7 +871,7 @@ class TestDeployStack:
                 [ComponentResult(component="b", success=True, duration=2.0)],
             ]
 
-            result = deploy_stack(config, options)
+            result = asyncio.run(deploy_stack(config, options))
 
             assert len(result.component_results) == 2
             assert result.component_results[0].component == "a"

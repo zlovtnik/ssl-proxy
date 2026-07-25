@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import hashlib
 import json
 import os
@@ -1002,6 +1003,128 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     return True
 
 
+def _stack_runtime_overrides(ctx: UpReadyContext) -> dict:
+    """Build the umbrella-shaped runtime override tree shared by split releases."""
+
+    from sslproxy_ops.stack.core import parse_overrides
+
+    registry = (ctx.settings.registry or "").strip().rstrip("/")
+    image_tag = (ctx.settings.image_tag or "").strip()
+    public_hostname = (ctx.settings.schema_migrator_public_hostname or "").strip()
+    acme_email = (ctx.settings.acme_email or "").strip()
+    if not registry or not image_tag or not public_hostname or not acme_email:
+        raise UpReadyError(
+            "REGISTRY, IMAGE_TAG, SCHEMA_MIGRATOR_PUBLIC_HOSTNAME, and ACME_EMAIL "
+            "are required for split deployment"
+        )
+    embedding_backend = (
+        ctx.settings.atheros_search_embedding_backend
+        or f"http://{ctx.settings.server_ip}:8083"
+    ).strip()
+    peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
+    literal_values = {
+        "global.image.registry": registry,
+        "global.rolloutRevision": ctx.run_ts,
+        "proxy.image.tag": image_tag,
+        "javaCoordinator.image.tag": image_tag,
+        "schemaMigrator.backend.image.tag": image_tag,
+        "schemaMigrator.ui.image.tag": image_tag,
+        "schemaMigrator.ui.browserOrigin": f"http://{ctx.settings.server_ip}:8081",
+        "schemaMigrator.publicHostname": public_hostname,
+        "schemaMigrator.traefik.acme.email": acme_email,
+        "schemaMigrator.keycloak.browserOrigin": f"http://{ctx.settings.server_ip}:8180",
+        "schemaMigrator.keycloak.adminHostname": f"http://{ctx.settings.server_ip}:8180",
+        "global.shared.keycloak.issuer": (
+            f"http://{ctx.settings.server_ip}:8180/realms/middleware"
+        ),
+        "atherosSensor.image.tag": image_tag,
+        "atherosSearch.image.tag": image_tag,
+        "atherosSearch.ui.image.tag": image_tag,
+        "atherosSearch.embeddingBackend": embedding_backend,
+        "proxy.wireguard.peerNames": peers,
+    }
+    if ctx.tidb_tls_cert_checksum:
+        literal_values["tidb.tlsCertChecksum"] = ctx.tidb_tls_cert_checksum
+    typed_values = {
+        "proxy.wireguard.port": str(ctx.settings.wg_port),
+        "proxy.wireguard.internalPort": str(ctx.settings.wg_internal_port),
+        "proxy.wireguard.obfuscation.enabled": str(
+            ctx.settings.wg_obfuscation_enabled
+        ).lower(),
+    }
+    dashboards = repo_root() / "docker" / "observability" / "grafana" / "dashboards"
+    for key, filename in {
+        "dbCalls": "db-calls.json",
+        "infraSaturation": "infra-saturation.json",
+        "serviceRedMetrics": "service-red-metrics.json",
+        "stackHealthOverview": "stack-health-overview.json",
+        "syncPipelineLatency": "sync-pipeline-latency.json",
+    }.items():
+        literal_values[f"telemetry.grafana.dashboards.{key}"] = (
+            dashboards / filename
+        ).read_text()
+    literal_values["telemetry.prometheus.alertRules"] = (
+        repo_root() / "docker" / "observability" / "alerts.yml"
+    ).read_text()
+    return parse_overrides(
+        [f"{key}={value}" for key, value in typed_values.items()],
+        [],
+        [f"{key}={value}" for key, value in literal_values.items()],
+    )
+
+
+def stackctl_preflight(ctx: UpReadyContext) -> None:
+    """Run stack preflight after namespace, TLS, and Secret synchronization."""
+
+    from sslproxy_ops.stack.cluster import preflight as stack_preflight
+    from sslproxy_ops.stack.core import load_config
+
+    root = repo_root()
+    config = load_config(root / "stackctl" / "stack.yaml")
+    step("S02", "stackctl_preflight: validating split-release prerequisites")
+    stack_preflight(
+        config,
+        root,
+        ctx.settings.kube_namespace,
+        ctx.settings.kube_context or None,
+        None,
+    )
+
+
+def stackctl_deploy(ctx: UpReadyContext) -> bool:
+    """Deploy the canonical split stack with the up-ready runtime values."""
+
+    from sslproxy_ops.stack.core import load_config, load_umbrella_values
+    from sslproxy_ops.stack.deploy import DeployOptions, deploy_stack
+
+    preflight_required_secrets(ctx)
+    root = repo_root()
+    config = load_config(root / "stackctl" / "stack.yaml")
+    options = DeployOptions(
+        namespace=ctx.settings.kube_namespace,
+        context=ctx.settings.kube_context or None,
+        root_dir=root,
+        umbrella_values=load_umbrella_values(config, root),
+        max_parallel=config.defaults.max_parallel,
+        runtime_overrides=_stack_runtime_overrides(ctx),
+        artifact_dir=root / config.defaults.artifact_dir,
+    )
+    step("S03", "stackctl_deploy: bootstrap plus five split-release waves")
+    result = asyncio.run(deploy_stack(config, options))
+    if not result.success:
+        failed = [
+            item.component for item in result.component_results if not item.success
+        ]
+        raise UpReadyError("stackctl deployment failed: " + ", ".join(failed))
+    return True
+
+
+def deploy_kubernetes_release(ctx: UpReadyContext) -> bool:
+    """Select the compatibility umbrella or canonical split deployment."""
+
+    return stackctl_deploy(ctx) if ctx.settings.stack_mode == "split" else helm_upgrade(ctx)
+
+
 def release_workloads(ctx: UpReadyContext) -> list[str]:
     """Deployments and daemonsets owned by the Helm release.
 
@@ -1088,11 +1211,13 @@ def kubernetes_up(ctx: UpReadyContext) -> bool:
         sync_kubernetes_secrets(ctx)
         sync_tidb_secrets(ctx)
         ensure_tidb_ready(ctx)
+        if ctx.settings.stack_mode == "split":
+            stackctl_preflight(ctx)
         publish_registry_images(ctx)
         verify_kubernetes_registry_pull(ctx)
-        helm_upgrade(ctx)
+        deploy_kubernetes_release(ctx)
         rollout_restart_release_workloads(ctx)
-    except (shell.ShellCommandError, UpReadyError) as exc:
+    except (shell.ShellCommandError, UpReadyError, RuntimeError) as exc:
         ctx.classify(str(exc))
         return False
     return True

@@ -66,12 +66,13 @@ def _full_stack_config() -> StackConfig:
                 release="ssl-proxy-telemetry",
                 chart="./helm/ssl-proxy/charts/telemetry",
             ),
-            "tidb-schema-executor": Component(
-                type="helm-job",
-                release="ssl-proxy-tidb-schema",
-                chart="./helm/ssl-proxy/charts/tidb-schema-executor",
-                depends_on=["tidb"],
-            ),
+        "tidb-schema-executor": Component(
+            type="helm-job",
+            release="ssl-proxy-tidb-schema",
+            chart="./helm/ssl-proxy/charts/tidb-schema-executor",
+            depends_on=["tidb"],
+            job={"rerun": "replace"},
+        ),
             "schema-migrator": Component(
                 type="helm",
                 release="ssl-proxy-schema-migrator",

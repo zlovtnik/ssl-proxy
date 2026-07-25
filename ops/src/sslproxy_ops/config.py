@@ -10,6 +10,7 @@ from sslproxy_ops.paths import repo_root
 
 ProfileMode = Literal["iphone", "linux-shim", "linux-direct", "mac"]
 DeploymentTarget = Literal["compose", "kubernetes"]
+StackMode = Literal["umbrella", "split"]
 
 
 class Settings(BaseSettings):
@@ -47,6 +48,9 @@ class Settings(BaseSettings):
     )
     deployment_target: DeploymentTarget = Field(
         default="kubernetes", validation_alias="UP_READY_DEPLOYMENT_TARGET"
+    )
+    stack_mode: StackMode = Field(
+        default="umbrella", validation_alias="UP_READY_STACK_MODE"
     )
     build_registry_images: bool = Field(
         default=True, validation_alias="UP_READY_BUILD_REGISTRY_IMAGES"

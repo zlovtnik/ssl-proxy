@@ -148,7 +148,10 @@ class TestGenerateEffectiveValues:
     def test_multiple_values_files_merged_in_order(self):
         config = self._make_config()
         umbrella_values = [
-            {"tidb": {"setting1": "from-first", "setting2": "from-first"}},
+            {
+                "global": {},
+                "tidb": {"setting1": "from-first", "setting2": "from-first"},
+            },
             {"tidb": {"setting2": "from-second", "setting3": "from-second"}},
         ]
 
@@ -160,8 +163,10 @@ class TestGenerateEffectiveValues:
 
     def test_runtime_overrides_applied(self):
         config = self._make_config()
-        umbrella_values = [{"tidb": {"setting": "original"}}]
-        runtime = {"setting": "runtime-override", "extra": "value"}
+        umbrella_values = [{"global": {}, "tidb": {"setting": "original"}}]
+        runtime = {
+            "tidb": {"setting": "runtime-override", "extra": "value"},
+        }
 
         effective = generate_effective_values(
             config, "tidb", umbrella_values, runtime_overrides=runtime
@@ -172,7 +177,7 @@ class TestGenerateEffectiveValues:
 
     def test_component_set_overrides_applied(self):
         config = self._make_config()
-        umbrella_values = [{"tidb": {"external": True}}]
+        umbrella_values = [{"global": {}, "tidb": {"external": True}}]
 
         effective = generate_effective_values(config, "tidb", umbrella_values)
 
@@ -183,20 +188,15 @@ class TestGenerateEffectiveValues:
         config = self._make_config()
         umbrella_values = [{}]
 
-        effective = generate_effective_values(config, "tidb", umbrella_values)
+        with pytest.raises(ValueError, match="values_key"):
+            generate_effective_values(config, "tidb", umbrella_values)
 
-        # Only component set overrides
-        assert effective["external"] is False
-
-    def test_missing_values_key_returns_minimal(self):
+    def test_missing_values_key_is_an_error(self):
         config = self._make_config()
         umbrella_values = [{"global": {"shared": {"tidb": {}}}}]
 
-        effective = generate_effective_values(config, "tidb", umbrella_values)
-
-        # values_key "tidb" doesn't exist in umbrella, but global is included
-        assert "global" in effective
-        assert "external" in effective  # from set override
+        with pytest.raises(ValueError, match="values_key"):
+            generate_effective_values(config, "tidb", umbrella_values)
 
 
 # ---------------------------------------------------------------------------
@@ -387,20 +387,18 @@ class TestEffectiveValuesFromSpec:
             config, "tidb", umbrella_values, root_dir=stack_root,
         )
 
-        # Umbrella tidb values merged on top of subchart defaults
+        # Effective files contain only umbrella overlays; Helm loads chart defaults.
         assert effective["external"] is False  # umbrella + set override
         assert effective["minimumVersion"] == "8.5.0"
-
-        # Subchart defaults preserved (not present in umbrella)
-        assert effective["egress"]["enabled"] is True
-        assert effective["replicas"] == 1
+        assert "egress" not in effective
+        assert "replicas" not in effective
 
         # Global block from umbrella
         assert "global" in effective
         assert effective["global"]["shared"]["tidb"]["host"] == "example"
 
-    def test_tidb_subchart_defaults_as_base(self, stack_root: Path):
-        """Subchart defaults form the base layer; umbrella overrides them."""
+    def test_tidb_effective_file_is_overlay_only(self, stack_root: Path):
+        """Chart defaults are left to Helm rather than copied into overlays."""
         config = _full_config()
         umbrella_values = [
             {
@@ -421,14 +419,10 @@ class TestEffectiveValuesFromSpec:
             config, "tidb", umbrella_values, root_dir=stack_root,
         )
 
-        # Subchart defaults present
-        assert effective["replicas"] == 1
-        assert effective["image"]["repository"] == "pingcap/tidb"
-
-        # Umbrella overrides subchart defaults
+        assert "replicas" not in effective
+        assert "image" not in effective
         assert effective["external"] is False
-        assert effective["egress"]["enabled"] is False  # overridden
-        assert effective["egress"]["cidrs"] == []  # from subchart, not overridden
+        assert effective["egress"] == {"enabled": False}
 
         # Global block
         assert effective["global"]["shared"]["tidb"]["host"] == "tidb.local"
@@ -612,8 +606,8 @@ class TestCriticalComponentRules:
         assert effective["global"]["shared"]["tidb"]["host"] == "tidb.local"
         assert effective["global"]["shared"]["minio"]["endpoint"] == "http://minio.local:9000"
 
-        # Subchart defaults present (sslMode from java-coordinator chart)
-        assert effective["tidb"]["sslMode"] == "VERIFY_IDENTITY"
+        # Chart defaults remain Helm's responsibility.
+        assert "tidb" not in effective
 
     def test_tidb_schema_executor_needs_global_tidb_tls(self, stack_root: Path):
         """TiDB schema executor requires global.shared.tidb.tls.caSecret
@@ -658,6 +652,7 @@ class TestCriticalComponentRules:
                 "global": {
                     "migration": {"mode": "activate"},
                 },
+                "javaCoordinator": {},
             }
         ]
 
@@ -765,7 +760,7 @@ class TestCriticalComponentRules:
         # Every component should produce valid effective values without error
         for name in config.components:
             effective = generate_effective_values(
-                config, name, umbrella_values, root_dir=stack_root,
+                config, name, umbrella_values,
             )
             assert isinstance(effective, dict), f"{name}: effective values is not a dict"
             # Global block present when include_global=True

@@ -3,69 +3,107 @@ version: 1
 defaults:
   namespace: default
   timeout: 10m
+  artifact_dir: stackctl-artifacts
+  max_parallel: 4
+  global_overrides:
+    fullnameOverride: ssl-proxy
+    instanceOverride: ssl-proxy
   values:
     - ./helm/ssl-proxy/values.yaml
     - ./helm/ssl-proxy/values-k8s.yaml
 
 components:
+  platform-config:
+    type: helm
+    stage: bootstrap
+    release: ssl-proxy-platform-config
+    chart: ./helm/ssl-proxy/charts/platform-config
+    values_key: platformConfig
+    include_global: true
+    gates:
+      - resource: serviceaccount/ssl-proxy
+
   tidb:
     type: helm
+    stage: infrastructure
     release: ssl-proxy-tidb
     chart: ./helm/ssl-proxy/charts/tidb
     values_key: tidb
     include_global: true
     set:
       external: false
+    depends_on: [platform-config]
     timeout: 15m
     gates:
       - resource: statefulset/ssl-proxy-tidb
 
   redpanda:
     type: helm
+    stage: infrastructure
     release: ssl-proxy-redpanda
     chart: ./helm/ssl-proxy/charts/redpanda
     values_key: redpanda
     include_global: true
+    set:
+      external: false
+    depends_on: [platform-config]
     timeout: 15m
     gates:
-      - discover:
-          kind: StatefulSet
+      - resource: statefulset/ssl-proxy-redpanda
 
   minio:
     type: helm
+    stage: infrastructure
     release: ssl-proxy-minio
     chart: ./helm/ssl-proxy/charts/minio
     values_key: minio
     include_global: true
+    set:
+      external: false
+    depends_on: [platform-config]
     timeout: 15m
     gates:
-      - discover:
-          kind: StatefulSet
+      - resource: statefulset/ssl-proxy-minio
 
   redis:
     type: helm
-    release: ssl-proxy-redis
+    stage: infrastructure
+    release: ssl-proxy-redis-runtime
     chart: ./helm/ssl-proxy/charts/redis-runtime
     values_key: redisRuntime
     include_global: true
+    depends_on: [platform-config]
     gates:
-      - discover:
-          kind: Deployment
+      - resource: deployment/ssl-proxy-redis-runtime
 
   telemetry:
     type: helm
+    stage: infrastructure
     release: ssl-proxy-telemetry
     chart: ./helm/ssl-proxy/charts/telemetry
     values_key: telemetry
     include_global: true
+    depends_on: [platform-config]
     timeout: 15m
     gates:
-      - discover:
-          kind: Deployment
+      - resource: statefulset/ssl-proxy-prometheus
+      - resource: statefulset/ssl-proxy-loki
+      - resource: statefulset/ssl-proxy-grafana
+      - resource: deployment/ssl-proxy-otel-collector
+    checks:
+      - type: http
+        target: service/ssl-proxy-prometheus
+        port: 9090
+        path: /-/ready
+      - type: http
+        target: service/ssl-proxy-grafana
+        port: 3004
+        path: /api/health
 
   tidb-schema-executor:
     type: helm-job
-    release: ssl-proxy-tidb-schema
+    stage: schema-executor
+    release: ssl-proxy-tidb-schema-executor
     chart: ./helm/ssl-proxy/charts/tidb-schema-executor
     values_key: tidbSchemaExecutor
     include_global: true
@@ -74,13 +112,17 @@ components:
     timeout: 10m
     job:
       rerun: replace
+      name: ssl-proxy-tidb-schema-executor
+    set:
+      lifecycle:
+        mode: managed
     gates:
-      - discover:
-          kind: Job
+      - resource: job/ssl-proxy-tidb-schema-executor
         condition: complete
 
   schema-migrator:
     type: helm
+    stage: schema-migrator
     release: ssl-proxy-schema-migrator
     chart: ./helm/ssl-proxy/charts/schema-migrator
     values_key: schemaMigrator
@@ -90,11 +132,14 @@ components:
       - tidb-schema-executor
     timeout: 15m
     gates:
-      - discover:
-          kind: Deployment
+      - resource: deployment/ssl-proxy-schema-migrator-backend
+      - resource: deployment/ssl-proxy-schema-migrator-ui
+      - resource: deployment/ssl-proxy-schema-migrator-keycloak
+      - resource: deployment/ssl-proxy-schema-migrator-edge
 
   java-coordinator:
     type: helm
+    stage: applications
     release: ssl-proxy-coordinator
     chart: ./helm/ssl-proxy/charts/java-coordinator
     values_key: javaCoordinator
@@ -105,11 +150,15 @@ components:
       - minio
       - schema-migrator
     gates:
-      - discover:
-          kind: Deployment
+      - resource: deployment/ssl-proxy-coordinator
+    checks:
+      - type: tcp
+        target: service/ssl-proxy-coordinator
+        port: 8080
 
   atheros-search:
     type: helm
+    stage: applications
     release: ssl-proxy-atheros-search
     chart: ./helm/ssl-proxy/charts/atheros-search
     values_key: atherosSearch
@@ -119,23 +168,27 @@ components:
       - redpanda
       - schema-migrator
     gates:
-      - discover:
-          kind: Deployment
+      - resource: deployment/ssl-proxy-atheros-search
+      - resource: deployment/ssl-proxy-atheros-search-ui
+    checks:
+      - type: http
+        target: service/ssl-proxy-atheros-search
+        port: 8080
+        path: /readyz
 
   atheros-sensor:
     type: helm
+    stage: applications
     release: ssl-proxy-atheros-sensor
     chart: ./helm/ssl-proxy/charts/atheros-sensor
     values_key: atherosSensor
     include_global: true
-    depends_on:
-      - redpanda
     gates:
-      - discover:
-          kind: DaemonSet
+      - resource: daemonset/ssl-proxy-atheros-sensor
 
   proxy:
     type: helm
+    stage: proxy
     release: ssl-proxy-proxy
     chart: ./helm/ssl-proxy/charts/proxy
     values_key: proxy
@@ -145,5 +198,9 @@ components:
       - java-coordinator
       - atheros-search
     gates:
-      - discover:
-          kind: Deployment
+      - resource: deployment/ssl-proxy-proxy
+    checks:
+      - type: http
+        target: service/ssl-proxy-proxy-admin
+        port: 3002
+        path: /ready
