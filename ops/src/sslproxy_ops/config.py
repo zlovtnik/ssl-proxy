@@ -95,6 +95,15 @@ class Settings(BaseSettings):
         default="redpandadata/redpanda:latest", validation_alias="REDPANDA_IMAGE"
     )
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
+    migration_mode: str = Field(default="deploy", validation_alias="UP_READY_MIGRATION_MODE")
+
+    @field_validator("migration_mode")
+    @classmethod
+    def migration_mode_allowed(cls, value: str) -> str:
+        allowed = {"deploy", "migrate"}
+        if value not in allowed:
+            raise ValueError("must be one of deploy, migrate")
+        return value
 
     @field_validator("stack_health_services")
     @classmethod
