@@ -152,7 +152,7 @@ tidb:
   egress:
     enabled: false
     cidrs: []
-observability:
+telemetry:
   enabled: true
 
 # The standalone vec-worker was retired; Atheros Search owns its embedding worker.

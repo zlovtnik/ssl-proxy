@@ -49,8 +49,8 @@ dependencies:
   - name: telemetry
     version: 0.1.2
     repository: "file://charts/telemetry"
-    alias: observability
-    condition: observability.enabled
+    alias: telemetry
+    condition: telemetry.enabled
   - name: vec-worker
     version: 0.1.0
     repository: "file://charts/vec-worker"

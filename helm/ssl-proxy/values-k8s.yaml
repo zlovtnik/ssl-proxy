@@ -215,7 +215,7 @@ atherosSearch:
       pullPolicy: Always
     service:
       hostPort: 3007
-observability:
+telemetry:
   enabled: true
   keda:
     enabled: false

@@ -11,7 +11,7 @@
 | atheros-search | atherosSearch | `atherosSearch.enabled` | no | Go HTTP/gRPC search & vector ETL |
 | redis-runtime | redisRuntime | `redisRuntime.enabled` | no | Ephemeral cache & ActionCable fan-out |
 | tidb-schema-executor | tidbSchemaExecutor | `tidbSchemaExecutor.enabled` | no | Sole runtime TiDB DDL owner |
-| telemetry | observability | `observability.enabled` | no | Monitoring, logging, tracing stack |
+| telemetry | telemetry | `telemetry.enabled` | no | Monitoring, logging, tracing stack |
 | vec-worker | vecWorker | `vecWorker.enabled` | no | Placeholder (retired — Atheros Search owns embedding) |
 | redpanda | — | *none* | **yes** | Redpanda event store |
 | minio | — | *none* | **yes** | S3-compatible object storage |

@@ -302,40 +302,73 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _load_yaml(path: Path) -> dict[str, Any]:
+    """Load a YAML file and return its contents as a dict."""
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    return data if isinstance(data, dict) else {}
+
+
 def generate_effective_values(
     config: StackConfig,
     component_name: str,
     umbrella_values: list[dict[str, Any]],
     runtime_overrides: dict[str, Any] | None = None,
+    root_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Generate effective values for a component.
 
-    1. Merge umbrella values files in order
-    2. Extract component's values_key section
-    3. Optionally include global block
-    4. Apply runtime overrides
+    1. Load the subchart's own defaults through Helm normally.
+    2. Load each umbrella values file in declared order.
+    3. Extract the component's values_key section.
+    4. Copy the umbrella global block.
+    5. Deep-merge runtime overrides.
+    6. Write a temporary effective-values file.
+    7. Pass that file to Helm.
+
+    Conceptually:
+        effective_values = deep_merge(
+            subchart_defaults,
+            umbrella_values.get(values_key, {}),
+            {"global": umbrella_values.get("global", {})},
+            component.set,
+            runtime_overrides,
+        )
+
+    Later sources override earlier sources.
     """
     component = config.components[component_name]
 
-    # Merge all umbrella values files in order
+    # Step 1: Load subchart defaults (the chart's own values.yaml)
+    effective: dict[str, Any] = {}
+    if root_dir and component.chart:
+        chart_path = Path(root_dir) / component.chart
+        values_file = chart_path / "values.yaml"
+        if values_file.exists():
+            effective = _load_yaml(values_file)
+
+    # Step 2: Merge all umbrella values files in order
     merged: dict[str, Any] = {}
     for values_file in umbrella_values:
         merged = deep_merge(merged, values_file)
 
-    # Extract component-specific values
-    effective: dict[str, Any] = {}
+    # Step 3: Extract component-specific values from merged umbrella
+    umbrella_component: dict[str, Any] = {}
     if component.values_key and component.values_key in merged:
-        effective = merged[component.values_key].copy()
+        umbrella_component = merged[component.values_key].copy()
 
-    # Include global block if requested
+    # Deep-merge umbrella component values on top of subchart defaults
+    effective = deep_merge(effective, umbrella_component)
+
+    # Step 4: Include global block if requested
     if component.include_global and "global" in merged:
         effective["global"] = merged["global"].copy()
 
-    # Apply component-level set overrides
+    # Step 5: Apply component-level set overrides
     if component.set:
         effective = deep_merge(effective, component.set)
 
-    # Apply runtime overrides
+    # Step 6: Apply runtime overrides
     if runtime_overrides:
         effective = deep_merge(effective, runtime_overrides)
 
