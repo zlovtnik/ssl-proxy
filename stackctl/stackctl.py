@@ -458,9 +458,76 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
-    """Deploy components (Phase 6 placeholder)."""
-    print("deploy is not yet implemented (Phase 6)")
-    return 0
+    """Deploy components wave-by-wave with concurrent execution."""
+    import asyncio
+
+    from deploy import DeployOptions, deploy_stack
+
+    config = load_config(args.file)
+    errors = validate_config(config)
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+
+    cycles = detect_cycles(build_adjacency(config))
+    if cycles:
+        for cycle in cycles:
+            print(
+                f"ERROR: Dependency cycle detected: {' -> '.join(cycle)} -> {cycle[0]}",
+                file=sys.stderr,
+            )
+        return 1
+
+    # Reject unsupported component types early
+    for name, component in config.components.items():
+        if component.type not in ("helm", "helm-job"):
+            print(
+                f"ERROR: Component {name!r} uses unsupported type {component.type!r}. "
+                "Only 'helm' and 'helm-job' are implemented.",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Load umbrella values files
+    umbrella_values: list[dict[str, Any]] = []
+    for values_path in config.defaults.values:
+        p = Path(values_path)
+        if p.exists():
+            with open(p) as f:
+                data = yaml.safe_load(f)
+                if isinstance(data, dict):
+                    umbrella_values.append(data)
+
+    namespace = args.namespace or config.defaults.namespace
+
+    options = DeployOptions(
+        namespace=namespace,
+        context=args.kube_context,
+        kubeconfig=args.kubeconfig,
+        root_dir=str(Path(args.file).resolve().parent.parent),
+        umbrella_values=umbrella_values,
+        target_component=args.component,
+        from_wave=args.from_wave,
+        dry_run=False,
+        verbose=args.verbose,
+        keep_artifacts=args.keep_artifacts,
+        work_dir=args.work_dir,
+    )
+
+    result = asyncio.run(deploy_stack(config, options))
+
+    print(f"\n{'=' * 50}")
+    print(f"Deployment {'SUCCEEDED' if result.success else 'FAILED'}")
+    print(f"Waves completed: {result.waves_completed}/{result.total_waves}")
+    print()
+    for cr in result.component_results:
+        status = "OK" if cr.success else "FAILED"
+        duration_str = f" ({cr.duration:.1f}s)" if cr.duration else ""
+        error_str = f" — {cr.error}" if cr.error else ""
+        print(f"  {cr.component}: {status}{duration_str}{error_str}")
+
+    return 0 if result.success else 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -538,10 +605,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable verbose output",
     )
 
-    subparsers.add_parser("plan", parents=[common], help="Print the deployment plan")
+    plan_parser = subparsers.add_parser("plan", parents=[common], help="Print the deployment plan")
     subparsers.add_parser("validate", parents=[common], help="Validate configuration")
     subparsers.add_parser("dry-run", parents=[common], help="Dry-run deployment")
-    subparsers.add_parser("deploy", parents=[common], help="Deploy components")
+
+    deploy_parser = subparsers.add_parser("deploy", parents=[common], help="Deploy components")
+    deploy_parser.add_argument(
+        "--keep-artifacts",
+        action="store_true",
+        help="Retain effective-values and diagnostic files even on success",
+    )
+    deploy_parser.add_argument(
+        "--work-dir",
+        help="Explicit working directory for artifacts (overrides auto-generated run dir)",
+    )
+
     subparsers.add_parser("status", parents=[common], help="Show deployment status")
 
     return parser
