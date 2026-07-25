@@ -18,6 +18,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     apply_secret_value,
     apply_secret_values,
     dashboard_set_file_args,
+    helm_pending_recovery_command,
     helm_release_status,
     helm_upgrade,
     kubernetes_diagnostics,
@@ -479,6 +480,39 @@ class UpReadyKubernetesTest(unittest.TestCase):
             ),
         ):
             prepare_helm_release(ctx)
+
+    def test_pending_recovery_history_guidance_includes_context_without_candidate(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        histories = (
+            subprocess.CompletedProcess(
+                args=["helm"],
+                returncode=1,
+                stdout="",
+                stderr="history unavailable",
+            ),
+            subprocess.CompletedProcess(
+                args=["helm"],
+                returncode=0,
+                stdout=json.dumps([{"revision": 24, "status": "failed"}]),
+                stderr="",
+            ),
+        )
+
+        for history in histories:
+            with (
+                self.subTest(returncode=history.returncode),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                    return_value=history,
+                ),
+            ):
+                self.assertEqual(
+                    helm_pending_recovery_command(ctx),
+                    "helm --kube-context server-k8s history ssl-proxy "
+                    "--namespace ssl-proxy",
+                )
 
     def test_recent_kubernetes_warnings_ignore_events_before_run(self):
         settings = Settings()

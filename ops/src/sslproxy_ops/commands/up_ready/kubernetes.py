@@ -831,10 +831,13 @@ def helm_pending_recovery_command(ctx: UpReadyContext) -> str:
         if item.get("status") in {"deployed", "superseded"}
         and isinstance(item.get("revision"), int)
     ]
-    if not candidates:
-        return f"helm history {ctx.settings.helm_release} --namespace {ctx.settings.kube_namespace}"
-    revision = max(candidates, key=lambda item: int(item["revision"]))["revision"]
     context = f" --kube-context {ctx.settings.kube_context}" if ctx.settings.kube_context else ""
+    if not candidates:
+        return (
+            f"helm{context} history {ctx.settings.helm_release} "
+            f"--namespace {ctx.settings.kube_namespace}"
+        )
+    revision = max(candidates, key=lambda item: int(item["revision"]))["revision"]
     return (
         f"helm{context} rollback {ctx.settings.helm_release} {revision} "
         f"--namespace {ctx.settings.kube_namespace} --no-hooks --wait=watcher "

@@ -371,6 +371,14 @@ def _tree_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _redact_parity_resource(resource: dict[str, Any], redactor: Any) -> dict[str, Any]:
+    safe = copy.deepcopy(resource)
+    if safe.get("kind") == "Secret":
+        safe.pop("data", None)
+        safe.pop("stringData", None)
+    return redactor(safe)
+
+
 def write_parity_artifacts(
     directory: Path,
     config: StackConfig,
@@ -391,13 +399,6 @@ def write_parity_artifacts(
         ("split.normalized.yaml", normalized_split),
     ):
         path = directory / name
-def _redact_parity_resource(resource: dict[str, Any], redactor: Any) -> dict[str, Any]:
-    safe = copy.deepcopy(resource)
-    if safe.get("kind") == "Secret":
-        safe.pop("data", None)
-        safe.pop("stringData", None)
-    return redactor(safe)
-
         path.write_text(
             yaml.safe_dump_all(
                 (_redact_parity_resource(item, redactor) for item in resources),
