@@ -10,9 +10,8 @@ import argparse
 import json
 import re
 import sys
-from collections import defaultdict
 from pathlib import Path
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import (
@@ -23,7 +22,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
 
 # ---------------------------------------------------------------------------
 # Supported component types
@@ -113,14 +111,17 @@ class ComponentBase(StrictModel):
 
     type: str
     depends_on: list[str] = Field(default_factory=list)
-    stage: Literal[
-        "bootstrap",
-        "infrastructure",
-        "schema-executor",
-        "schema-migrator",
-        "applications",
-        "proxy",
-    ] | None = None
+    stage: (
+        Literal[
+            "bootstrap",
+            "infrastructure",
+            "schema-executor",
+            "schema-migrator",
+            "applications",
+            "proxy",
+        ]
+        | None
+    ) = None
     gates: list[Gate] = Field(default_factory=list)
     checks: list[Check] = Field(default_factory=list)
     timeout: str | None = None
@@ -180,12 +181,7 @@ class ExternalCheckComponent(ComponentBase):
 
 
 ComponentModel = Annotated[
-    Union[
-        HelmComponent,
-        HelmJobComponent,
-        ManifestComponent,
-        ExternalCheckComponent,
-    ],
+    HelmComponent | HelmJobComponent | ManifestComponent | ExternalCheckComponent,
     Field(discriminator="type"),
 ]
 _COMPONENT_ADAPTER = TypeAdapter(ComponentModel)
@@ -280,9 +276,7 @@ def validate_config(config: StackConfig) -> list[str]:
         # Check that all dependencies exist
         for dep in component.depends_on:
             if dep not in known_components:
-                errors.append(
-                    f"Component '{name}' depends on unknown component '{dep}'"
-                )
+                errors.append(f"Component '{name}' depends on unknown component '{dep}'")
                 continue
 
             if component.stage and config.components[dep].stage:
@@ -294,9 +288,7 @@ def validate_config(config: StackConfig) -> list[str]:
                     )
 
         if component.type in ("helm", "helm-job") and not component.chart:
-            errors.append(
-                f"Component '{name}' of type '{component.type}' requires a chart"
-            )
+            errors.append(f"Component '{name}' of type '{component.type}' requires a chart")
         if component.type == "helm-job" and not component.job:
             errors.append(f"Component '{name}' of type 'helm-job' requires job configuration")
         if component.type == "manifest" and not component.paths:
@@ -379,15 +371,11 @@ def topological_sort_waves(config: StackConfig) -> list[list[str]]:
 
     while remaining:
         # Find all nodes with zero in-degree
-        ready = sorted(
-            [n for n in remaining if in_degree[n] == 0]
-        )
+        ready = sorted([n for n in remaining if in_degree[n] == 0])
         if not ready:
             # All remaining nodes have unsatisfied deps — shouldn't happen
             # if cycles were detected earlier
-            raise ValueError(
-                f"Circular dependency detected among: {sorted(remaining)}"
-            )
+            raise ValueError(f"Circular dependency detected among: {sorted(remaining)}")
         waves.append(ready)
         for node in ready:
             remaining.remove(node)
@@ -412,9 +400,7 @@ def staged_waves(config: StackConfig) -> tuple[list[str], list[list[str]]]:
     for name, component in config.components.items():
         assert component.stage is not None
         by_stage[component.stage].append(name)
-    return sorted(by_stage["bootstrap"]), [
-        sorted(by_stage[stage]) for stage in NUMBERED_STAGES
-    ]
+    return sorted(by_stage["bootstrap"]), [sorted(by_stage[stage]) for stage in NUMBERED_STAGES]
 
 
 def resolve_dependencies(
@@ -467,9 +453,7 @@ def resolve_dependencies(
     if from_wave is not None:
         numbered_waves = numbered if bootstrap else all_waves
         if from_wave < 1 or from_wave > len(numbered_waves):
-            raise ValueError(
-                f"Invalid from_wave {from_wave}. Valid range: 1-{len(numbered_waves)}"
-            )
+            raise ValueError(f"Invalid from_wave {from_wave}. Valid range: 1-{len(numbered_waves)}")
         return numbered_waves[from_wave - 1 :]
 
     return all_waves
@@ -484,11 +468,7 @@ def deep_merge(base: dict, override: dict) -> dict:
     """Deep merge two dictionaries. Override values take precedence."""
     result = base.copy()
     for key, value in override.items():
-        if (
-            key in result
-            and isinstance(result[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = deep_merge(result[key], value)
         else:
             result[key] = value
@@ -532,9 +512,7 @@ def generate_effective_values(
     if runtime_overrides:
         unknown = set(runtime_overrides) - set(merged)
         if unknown:
-            raise ValueError(
-                f"Unknown top-level override keys: {', '.join(sorted(unknown))}"
-            )
+            raise ValueError(f"Unknown top-level override keys: {', '.join(sorted(unknown))}")
         merged = deep_merge(merged, runtime_overrides)
 
     if component.values_key not in merged:
@@ -544,18 +522,14 @@ def generate_effective_values(
         )
     component_values = merged[component.values_key]
     if not isinstance(component_values, dict):
-        raise ValueError(
-            f"Component {component_name!r} values_key must map to an object"
-        )
+        raise ValueError(f"Component {component_name!r} values_key must map to an object")
     effective = component_values.copy()
 
     if component.include_global:
         global_values = merged.get("global")
         if not isinstance(global_values, dict):
             raise ValueError("Merged umbrella values must contain a global object")
-        effective["global"] = deep_merge(
-            global_values, config.defaults.global_overrides
-        )
+        effective["global"] = deep_merge(global_values, config.defaults.global_overrides)
 
     if component.set:
         effective = deep_merge(effective, component.set)
@@ -643,21 +617,15 @@ def cmd_plan(args: argparse.Namespace) -> int:
     bootstrap_names = {
         name for name, component in config.components.items() if component.stage == "bootstrap"
     }
-    bootstrap = next(
-        (wave for wave in waves if wave and set(wave) <= bootstrap_names), []
-    )
+    bootstrap = next((wave for wave in waves if wave and set(wave) <= bootstrap_names), [])
     numbered = [wave for wave in waves if wave is not bootstrap]
     wave_items = []
     for wave in numbered:
         stage = (
-            config.components[wave[0]].stage
-            if wave and config.components[wave[0]].stage
-            else None
+            config.components[wave[0]].stage if wave and config.components[wave[0]].stage else None
         )
         number = (
-            NUMBERED_STAGES.index(stage) + 1
-            if stage in NUMBERED_STAGES
-            else len(wave_items) + 1
+            NUMBERED_STAGES.index(stage) + 1 if stage in NUMBERED_STAGES else len(wave_items) + 1
         )
         wave_items.append(
             {
@@ -741,7 +709,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if args.output == "json":
         print(
             json.dumps(
-                {"valid": True, "components": len(config.components), "resources": sum(len(item.resources) for item in rendered)},
+                {
+                    "valid": True,
+                    "components": len(config.components),
+                    "resources": sum(len(item.resources) for item in rendered),
+                },
                 indent=2,
                 sort_keys=True,
             )
@@ -801,8 +773,7 @@ def cmd_render(args: argparse.Namespace) -> int:
                 {
                     "artifact_dir": str(artifact),
                     "components": [
-                        {"name": item.name, "resources": len(item.resources)}
-                        for item in rendered
+                        {"name": item.name, "resources": len(item.resources)} for item in rendered
                     ],
                 },
                 indent=2,
@@ -816,7 +787,14 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     """Compare normalized umbrella and split-release manifests."""
-    from .rendering import parity_diff, render_component, render_umbrella
+    from .deploy import _redact_dict
+    from .rendering import (
+        parity_diff,
+        render_component,
+        render_umbrella,
+        safe_artifact_dir,
+        write_parity_artifacts,
+    )
 
     config = load_config(args.file)
     root_dir = _repo_root(Path(args.file))
@@ -828,14 +806,32 @@ def cmd_compare(args: argparse.Namespace) -> int:
         for name, component in config.components.items()
         if component.type in ("helm", "helm-job")
     ]
-    umbrella = render_umbrella(
-        root_dir / "helm" / "ssl-proxy", values, overrides, namespace
+    umbrella = render_umbrella(root_dir / "helm" / "ssl-proxy", values, overrides, namespace)
+    differences = parity_diff(umbrella, [resource for item in split for resource in item.resources])
+    artifact = safe_artifact_dir(
+        root_dir,
+        args.artifact_dir or f"{config.defaults.artifact_dir}/compare",
     )
-    differences = parity_diff(
-        umbrella, [resource for item in split for resource in item.resources]
+    write_parity_artifacts(
+        artifact,
+        config,
+        root_dir,
+        umbrella,
+        split,
+        differences,
+        _redact_dict,
     )
     if args.output == "json":
-        print(json.dumps({"parity": not differences, "differences": differences}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "parity": not differences,
+                    "differences": differences,
+                    "artifact_dir": str(artifact),
+                },
+                indent=2,
+            )
+        )
     elif differences:
         _print_errors(differences, "text")
     else:
@@ -878,9 +874,7 @@ def _run_deploy(args: argparse.Namespace, dry_run: bool) -> int:
     umbrella_values = load_umbrella_values(config, root_dir)
     namespace = args.namespace or config.defaults.namespace
     configured_artifact = (
-        args.artifact_dir
-        or getattr(args, "work_dir", None)
-        or config.defaults.artifact_dir
+        args.artifact_dir or getattr(args, "work_dir", None) or config.defaults.artifact_dir
     )
     from .rendering import safe_artifact_dir
 
@@ -1167,7 +1161,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum sibling deployments (default from stack config)",
     )
     common.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose output",
     )

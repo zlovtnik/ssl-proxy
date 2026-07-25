@@ -15,10 +15,10 @@ if str(_ops_src) not in sys.path:
     sys.path.insert(0, str(_ops_src))
 
 # Preserve historical test imports while exercising the canonical modules.
-from sslproxy_ops.stack import core as _core
-from sslproxy_ops.stack import deploy as _deploy
-from sslproxy_ops.stack import gates as _gates
-from sslproxy_ops.stack import shell as _shell
+from sslproxy_ops.stack import core as _core  # noqa: E402
+from sslproxy_ops.stack import deploy as _deploy  # noqa: E402
+from sslproxy_ops.stack import gates as _gates  # noqa: E402
+from sslproxy_ops.stack import shell as _shell  # noqa: E402
 
 sys.modules["stackctl"] = _core
 sys.modules["deploy"] = _deploy

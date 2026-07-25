@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import base64
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -365,7 +365,7 @@ def sync_kubernetes_secrets(ctx: UpReadyContext) -> bool:
 def _generate_password(length: int = 32) -> str:
     """Generate a secure random password."""
     alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def _compute_tls_checksum(cert_path: Path, key_path: Path) -> str:
@@ -379,8 +379,11 @@ def _compute_tls_checksum(cert_path: Path, key_path: Path) -> str:
 def _secret_exists(name: str, namespace: str, context: str | None) -> bool:
     """Check if a Kubernetes secret exists."""
     result = shell.kubectl(
-        "get", "secret", name,
-        "--namespace", namespace,
+        "get",
+        "secret",
+        name,
+        "--namespace",
+        namespace,
         "--ignore-not-found",
         context=context,
         check=False,
@@ -396,9 +399,15 @@ def _create_secret_from_literals(
 ) -> None:
     """Create a secret from literal values using kubectl."""
     command = [
-        "create", "secret", "generic", name,
-        "--namespace", ctx.settings.kube_namespace,
-        "--dry-run=client", "-o", "yaml",
+        "create",
+        "secret",
+        "generic",
+        name,
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--dry-run=client",
+        "-o",
+        "yaml",
     ]
     for key, value in literals.items():
         command.append(f"--from-literal={key}={value}")
@@ -460,9 +469,11 @@ def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
         cert_path = Path(cert_dir)
 
         # Generate CA
-        shell.run([
-            "openssl", "genrsa", "-out", str(cert_path / "ca.key"), "2048"
-        ], check=True, capture=True)
+        shell.run(
+            ["openssl", "genrsa", "-out", str(cert_path / "ca.key"), "2048"],
+            check=True,
+            capture=True,
+        )
 
         # Create CA config
         ca_config = cert_path / "ca.cnf"
@@ -481,13 +492,26 @@ subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer
 """)
 
-        shell.run([
-            "openssl", "req", "-new", "-x509", "-days", "3650",
-            "-key", str(cert_path / "ca.key"),
-            "-out", str(cert_path / "ca.crt"),
-            "-config", str(ca_config),
-            "-extensions", "v3_ca"
-        ], check=True, capture=True)
+        shell.run(
+            [
+                "openssl",
+                "req",
+                "-new",
+                "-x509",
+                "-days",
+                "3650",
+                "-key",
+                str(cert_path / "ca.key"),
+                "-out",
+                str(cert_path / "ca.crt"),
+                "-config",
+                str(ca_config),
+                "-extensions",
+                "v3_ca",
+            ],
+            check=True,
+            capture=True,
+        )
 
         # Create server config
         server_config = cert_path / "tidb-server.cnf"
@@ -516,31 +540,62 @@ DNS.2 = ssl-proxy-tidb
 """)
 
         # Generate server key and CSR
-        shell.run([
-            "openssl", "req", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", str(cert_path / "tidb-server.key"),
-            "-out", str(cert_path / "tidb-server.csr"),
-            "-config", str(server_config)
-        ], check=True, capture=True)
+        shell.run(
+            [
+                "openssl",
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                str(cert_path / "tidb-server.key"),
+                "-out",
+                str(cert_path / "tidb-server.csr"),
+                "-config",
+                str(server_config),
+            ],
+            check=True,
+            capture=True,
+        )
 
         # Sign server cert with CA
-        shell.run([
-            "openssl", "x509", "-req", "-days", "3650",
-            "-in", str(cert_path / "tidb-server.csr"),
-            "-CA", str(cert_path / "ca.crt"),
-            "-CAkey", str(cert_path / "ca.key"),
-            "-CAcreateserial",
-            "-out", str(cert_path / "tidb-server.crt"),
-            "-extfile", str(server_config),
-            "-extensions", "v3_server"
-        ], check=True, capture=True)
+        shell.run(
+            [
+                "openssl",
+                "x509",
+                "-req",
+                "-days",
+                "3650",
+                "-in",
+                str(cert_path / "tidb-server.csr"),
+                "-CA",
+                str(cert_path / "ca.crt"),
+                "-CAkey",
+                str(cert_path / "ca.key"),
+                "-CAcreateserial",
+                "-out",
+                str(cert_path / "tidb-server.crt"),
+                "-extfile",
+                str(server_config),
+                "-extensions",
+                "v3_server",
+            ],
+            check=True,
+            capture=True,
+        )
 
         # Create tidb-client-ca secret
         ca_manifest = shell.kubectl(
-            "create", "secret", "generic", "tidb-client-ca",
-            "--namespace", namespace,
+            "create",
+            "secret",
+            "generic",
+            "tidb-client-ca",
+            "--namespace",
+            namespace,
             f"--from-file=ca.crt={cert_path / 'ca.crt'}",
-            "--dry-run=client", "-o", "yaml",
+            "--dry-run=client",
+            "-o",
+            "yaml",
             context=context,
             capture=True,
         ).stdout
@@ -548,11 +603,17 @@ DNS.2 = ssl-proxy-tidb
 
         # Create tidb-server-tls secret
         tls_manifest = shell.kubectl(
-            "create", "secret", "tls", "tidb-server-tls",
-            "--namespace", namespace,
+            "create",
+            "secret",
+            "tls",
+            "tidb-server-tls",
+            "--namespace",
+            namespace,
             f"--cert={cert_path / 'tidb-server.crt'}",
             f"--key={cert_path / 'tidb-server.key'}",
-            "--dry-run=client", "-o", "yaml",
+            "--dry-run=client",
+            "-o",
+            "yaml",
             context=context,
             capture=True,
         ).stdout
@@ -566,9 +627,7 @@ DNS.2 = ssl-proxy-tidb
 
 
 def publish_registry_images(ctx: UpReadyContext) -> None:
-    if not (
-        ctx.settings.build_registry_images or ctx.settings.mirror_registry_images
-    ):
+    if not (ctx.settings.build_registry_images or ctx.settings.mirror_registry_images):
         return
 
     registry = (ctx.settings.registry or "").strip().rstrip("/")
@@ -697,6 +756,7 @@ def dashboard_set_file_args() -> list[str]:
     names = {
         "dbCalls": "db-calls.json",
         "infraSaturation": "infra-saturation.json",
+        "logsExplorer": "logs-explorer.json",
         "serviceRedMetrics": "service-red-metrics.json",
         "stackHealthOverview": "stack-health-overview.json",
         "syncPipelineLatency": "sync-pipeline-latency.json",
@@ -772,14 +832,9 @@ def helm_pending_recovery_command(ctx: UpReadyContext) -> str:
         and isinstance(item.get("revision"), int)
     ]
     if not candidates:
-        return (
-            f"helm history {ctx.settings.helm_release} "
-            f"--namespace {ctx.settings.kube_namespace}"
-        )
+        return f"helm history {ctx.settings.helm_release} --namespace {ctx.settings.kube_namespace}"
     revision = max(candidates, key=lambda item: int(item["revision"]))["revision"]
-    context = (
-        f" --kube-context {ctx.settings.kube_context}" if ctx.settings.kube_context else ""
-    )
+    context = f" --kube-context {ctx.settings.kube_context}" if ctx.settings.kube_context else ""
     return (
         f"helm{context} rollback {ctx.settings.helm_release} {revision} "
         f"--namespace {ctx.settings.kube_namespace} --no-hooks --wait=watcher "
@@ -802,35 +857,11 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
             if status is None or not status.startswith("pending-"):
                 break
         if status and status.startswith("pending-"):
-            step(
-                "S03",
-                f"helm_recover: removing stuck {status} release={ctx.settings.helm_release}",
+            recovery = helm_pending_recovery_command(ctx)
+            raise UpReadyError(
+                f"Helm release {ctx.settings.helm_release!r} remains {status}; "
+                f"inspect the operation and recover explicitly with: {recovery}"
             )
-            shell.helm(
-                "uninstall",
-                ctx.settings.helm_release,
-                "--namespace",
-                ctx.settings.kube_namespace,
-                "--ignore-not-found",
-                "--no-hooks",
-                "--cascade",
-                "foreground",
-                "--wait=watcher",
-                "--timeout",
-                ctx.settings.helm_timeout,
-                context=ctx.settings.kube_context,
-                capture=True,
-            )
-            for attempt in range(60):
-                if helm_release_status(ctx) is None:
-                    break
-                if attempt < 59:
-                    time.sleep(1)
-            else:
-                raise UpReadyError(
-                    f"Helm release {ctx.settings.helm_release!r} still exists after cleanup"
-                )
-            return False
     if status is None:
         return False
     if status == "deployed":
@@ -857,9 +888,7 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
                 return False
             if attempt < 59:
                 time.sleep(1)
-        raise UpReadyError(
-            f"Helm release {ctx.settings.helm_release!r} still exists after cleanup"
-        )
+        raise UpReadyError(f"Helm release {ctx.settings.helm_release!r} still exists after cleanup")
     raise UpReadyError(
         f"Helm release {ctx.settings.helm_release!r} is {status}; "
         "another Helm operation may still be active"
@@ -882,9 +911,13 @@ def preflight_required_secrets(ctx: UpReadyContext) -> None:
     missing: list[str] = []
     for name, key in PREFLIGHT_REQUIRED_SECRETS.items():
         result = shell.kubectl(
-            "get", "secret", name,
-            "--namespace", ctx.settings.kube_namespace,
-            "-o", "json",
+            "get",
+            "secret",
+            name,
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "-o",
+            "json",
             context=ctx.settings.kube_context,
             check=False,
             capture=True,
@@ -922,8 +955,7 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     if not acme_email:
         raise UpReadyError("ACME_EMAIL is required for Helm deployment")
     embedding_backend = (
-        ctx.settings.atheros_search_embedding_backend
-        or f"http://{ctx.settings.server_ip}:8083"
+        ctx.settings.atheros_search_embedding_backend or f"http://{ctx.settings.server_ip}:8083"
     ).strip()
     release = ctx.settings.helm_release
     namespace = ctx.settings.kube_namespace
@@ -966,9 +998,7 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     typed_values = {
         "proxy.wireguard.port": ctx.settings.wg_port,
         "proxy.wireguard.internalPort": ctx.settings.wg_internal_port,
-        "proxy.wireguard.obfuscation.enabled": str(
-            ctx.settings.wg_obfuscation_enabled
-        ).lower(),
+        "proxy.wireguard.obfuscation.enabled": str(ctx.settings.wg_obfuscation_enabled).lower(),
     }
     args = [
         "upgrade" if is_upgrade else "install",
@@ -1018,8 +1048,7 @@ def _stack_runtime_overrides(ctx: UpReadyContext) -> dict:
             "are required for split deployment"
         )
     embedding_backend = (
-        ctx.settings.atheros_search_embedding_backend
-        or f"http://{ctx.settings.server_ip}:8083"
+        ctx.settings.atheros_search_embedding_backend or f"http://{ctx.settings.server_ip}:8083"
     ).strip()
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
     literal_values = {
@@ -1048,21 +1077,18 @@ def _stack_runtime_overrides(ctx: UpReadyContext) -> dict:
     typed_values = {
         "proxy.wireguard.port": str(ctx.settings.wg_port),
         "proxy.wireguard.internalPort": str(ctx.settings.wg_internal_port),
-        "proxy.wireguard.obfuscation.enabled": str(
-            ctx.settings.wg_obfuscation_enabled
-        ).lower(),
+        "proxy.wireguard.obfuscation.enabled": str(ctx.settings.wg_obfuscation_enabled).lower(),
     }
     dashboards = repo_root() / "docker" / "observability" / "grafana" / "dashboards"
     for key, filename in {
         "dbCalls": "db-calls.json",
         "infraSaturation": "infra-saturation.json",
+        "logsExplorer": "logs-explorer.json",
         "serviceRedMetrics": "service-red-metrics.json",
         "stackHealthOverview": "stack-health-overview.json",
         "syncPipelineLatency": "sync-pipeline-latency.json",
     }.items():
-        literal_values[f"telemetry.grafana.dashboards.{key}"] = (
-            dashboards / filename
-        ).read_text()
+        literal_values[f"telemetry.grafana.dashboards.{key}"] = (dashboards / filename).read_text()
     literal_values["telemetry.prometheus.alertRules"] = (
         repo_root() / "docker" / "observability" / "alerts.yml"
     ).read_text()
@@ -1112,9 +1138,7 @@ def stackctl_deploy(ctx: UpReadyContext) -> bool:
     step("S03", "stackctl_deploy: bootstrap plus five split-release waves")
     result = asyncio.run(deploy_stack(config, options))
     if not result.success:
-        failed = [
-            item.component for item in result.component_results if not item.success
-        ]
+        failed = [item.component for item in result.component_results if not item.success]
         raise UpReadyError("stackctl deployment failed: " + ", ".join(failed))
     return True
 
@@ -1183,8 +1207,11 @@ def rollout_restart_release_workloads(ctx: UpReadyContext) -> None:
 
 def _statefulset_exists(ctx: UpReadyContext, name: str) -> bool:
     result = shell.kubectl(
-        "get", "statefulset", name,
-        "--namespace", ctx.settings.kube_namespace,
+        "get",
+        "statefulset",
+        name,
+        "--namespace",
+        ctx.settings.kube_namespace,
         "--ignore-not-found",
         context=ctx.settings.kube_context,
         capture=True,

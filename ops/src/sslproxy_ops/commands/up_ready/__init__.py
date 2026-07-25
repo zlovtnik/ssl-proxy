@@ -21,13 +21,14 @@ from sslproxy_ops.commands.up_ready.checks import (
     write_credential_handoff,
 )
 from sslproxy_ops.commands.up_ready.kubernetes import (
-    deploy_kubernetes_release,
+    deploy_kubernetes_release as helm_upgrade,
+)
+from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_up,
     resolve_kube_context,
     sync_kubernetes_secrets,
     warn_unhealthy_nodes,
 )
-from sslproxy_ops.commands.up_ready.preflight import cluster_preflight
 from sslproxy_ops.commands.up_ready.model import (
     UpReadyContext,
     UpReadyError,
@@ -36,6 +37,7 @@ from sslproxy_ops.commands.up_ready.model import (
     warn,
 )
 from sslproxy_ops.commands.up_ready.peers import ensure_local_peer_material
+from sslproxy_ops.commands.up_ready.preflight import cluster_preflight
 from sslproxy_ops.commands.up_ready.secrets import (
     activate_obfuscation_key_env_fallback,
     ensure_admin_api_key_file,
@@ -157,16 +159,13 @@ def auto_fix(ctx: UpReadyContext, failure_class: str, text: str = "") -> bool:
             match failure_class:
                 case "profile_obfuscation_mismatch":
                     apply_profile_runtime_env(ctx)
-                    if not deploy_kubernetes_release(ctx):
+                    if not helm_upgrade(ctx):
                         return False
                     ctx.auto_fixed_classes.add(failure_class)
                     return True
                 case "wg_peer_material_missing":
                     ensure_local_peer_material(ctx)
-                    if (
-                        not sync_kubernetes_secrets(ctx)
-                        or not deploy_kubernetes_release(ctx)
-                    ):
+                    if not sync_kubernetes_secrets(ctx) or not helm_upgrade(ctx):
                         return False
                     ctx.auto_fixed_classes.add(failure_class)
                     return True

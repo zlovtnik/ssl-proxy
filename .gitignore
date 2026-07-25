@@ -84,6 +84,10 @@ services/octopus/.settings/
 **/docgen_tmp/
 /lib/
 /wallet/
+
+# Local stackctl renders, live-cluster snapshots, and cutover backups
+/stackctl-artifacts/
+
 services/octopus/.gradle/9.5.1/executionHistory/executionHistory.bin
 services/octopus/.gradle/9.5.1/executionHistory/executionHistory.lock
 services/octopus/.gradle/9.5.1/fileHashes/fileHashes.bin

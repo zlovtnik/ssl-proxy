@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import contextlib
+import copy
 import json
 import os
 import re
@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,6 @@ import yaml
 
 from .core import (
     Component,
-    Gate,
     StackConfig,
     generate_effective_values,
     resolve_dependencies,
@@ -28,7 +27,6 @@ from .core import (
 )
 from .gates import parse_timeout_seconds, wait_for_gates
 from .shell import ShellError, helm, kubectl
-
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -83,11 +81,8 @@ class DeployResult:
 
 def _create_run_dir(base: str | Path | None = None) -> Path:
     """Create a timestamped run directory for artifacts."""
-    if base:
-        run_base = Path(base)
-    else:
-        run_base = Path("stackctl-artifacts")
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    run_base = Path(base) if base else Path("stackctl-artifacts")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     run_id = os.urandom(4).hex()
     run_dir = run_base / f"{ts}-{run_id}"
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -137,15 +132,14 @@ def _redact_manifest(value: str) -> str:
     return "\n---\n".join(documents) + ("\n" if documents else "")
 
 
-def _save_effective_values(
-    run_dir: Path, component_name: str, values: dict[str, Any]
-) -> None:
+def _save_effective_values(run_dir: Path, component_name: str, values: dict[str, Any]) -> None:
     """Save effective values to the run directory."""
     values_file = run_dir / "effective-values" / f"{component_name}.redacted.yaml"
     values_file.parent.mkdir(parents=True, exist_ok=True)
     with open(values_file, "w") as f:
         yaml.safe_dump(_redact_dict(values), f, default_flow_style=False)
     os.chmod(values_file, 0o600)
+
 
 def _cleanup_run_dir(run_dir: Path) -> None:
     """Remove the run directory."""
@@ -302,8 +296,7 @@ def _wait_for_job_with_new_uid(
             return new_uid
         time.sleep(1)
     raise RuntimeError(
-        f"Timed out waiting for Job {name!r} to appear with a new UID "
-        f"(old_uid={old_uid})"
+        f"Timed out waiting for Job {name!r} to appear with a new UID (old_uid={old_uid})"
     )
 
 
@@ -327,7 +320,7 @@ def _wait_for_job_complete_or_fail(
             "-n",
             namespace,
             "-o",
-            "jsonpath={.status.conditions[?(@.type==\"Complete\"||@.type==\"Failed\")].type}",
+            'jsonpath={.status.conditions[?(@.type=="Complete"||@.type=="Failed")].type}',
             context=context,
             kubeconfig=kubeconfig,
             check=False,
@@ -644,19 +637,16 @@ def _repository_manifest_paths(
         candidate = raw if raw.is_absolute() else root / raw
         if candidate.is_symlink():
             raise ValueError(
-                f"Manifest component {component_name!r} path cannot be a symlink: "
-                f"{configured}"
+                f"Manifest component {component_name!r} path cannot be a symlink: {configured}"
             )
         path = candidate.resolve()
         if root not in (path, *path.parents):
             raise ValueError(
-                f"Manifest component {component_name!r} path leaves repository root: "
-                f"{configured}"
+                f"Manifest component {component_name!r} path leaves repository root: {configured}"
             )
         if not path.is_file() or path.suffix.lower() not in {".yaml", ".yml"}:
             raise ValueError(
-                f"Manifest component {component_name!r} path is not a YAML file: "
-                f"{configured}"
+                f"Manifest component {component_name!r} path is not a YAML file: {configured}"
             )
         resolved.append(path)
     return resolved
@@ -759,11 +749,7 @@ def deploy_component(
                 duration=time.monotonic() - start,
             )
 
-        chart_path = (
-            Path(options.root_dir or ".") / component.chart
-            if component.chart
-            else None
-        )
+        chart_path = Path(options.root_dir or ".") / component.chart if component.chart else None
         if not chart_path:
             raise ValueError(f"Component {component_name!r} has no chart path")
 
@@ -820,9 +806,7 @@ def deploy_component(
             log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""
             stderr = helm_result.stderr if isinstance(helm_result.stderr, str) else ""
-            log_path.write_text(
-                stdout + stderr
-            )
+            log_path.write_text(stdout + stderr)
             os.chmod(log_path, 0o600)
 
         # 6. For helm-job: wait for new UID, then wait for Complete/Fail
@@ -881,15 +865,13 @@ def deploy_component(
             and component.rollback_on_failure
             and not options.dry_run
         ):
-            try:
+            with contextlib.suppress(ShellError):
                 _helm_rollback(
                     component.release,
                     options.namespace,
                     options.context,
                     options.kubeconfig,
                 )
-            except ShellError:
-                pass
 
         return ComponentResult(
             component=component_name,
@@ -948,11 +930,9 @@ async def deploy_stack(
     - Successful sibling upgrades are retained
     - No stateful data is deleted on failure
     """
-    run_started = datetime.now(timezone.utc)
+    run_started = datetime.now(UTC)
     dry_run_baseline = (
-        await asyncio.to_thread(_cluster_mutation_snapshot, options)
-        if options.dry_run
-        else None
+        await asyncio.to_thread(_cluster_mutation_snapshot, options) if options.dry_run else None
     )
     waves = resolve_dependencies(
         config,
@@ -1080,10 +1060,7 @@ async def deploy_stack(
                     ComponentResult(
                         component="dry-run-mutation-proof",
                         success=False,
-                        error=(
-                            "server dry-run changed Helm releases or Kubernetes "
-                            "resource UIDs"
-                        ),
+                        error=("server dry-run changed Helm releases or Kubernetes resource UIDs"),
                     )
                 )
         return DeployResult(

@@ -192,9 +192,7 @@ class TestDiscoverResource:
                 stdout="statefulset.apps/ssl-proxy-tidb\n",
                 stderr="",
             )
-            result = _discover_resource(
-                gate, "ssl-proxy-tidb", "default", None, None
-            )
+            result = _discover_resource(gate, "ssl-proxy-tidb", "default", None, None)
             assert result == "statefulset.apps/ssl-proxy-tidb"
 
     def test_kubectl_error_returns_none(self):
@@ -206,9 +204,7 @@ class TestDiscoverResource:
                 stdout="",
                 stderr="Error",
             )
-            result = _discover_resource(
-                gate, "ssl-proxy-tidb", "default", None, None
-            )
+            result = _discover_resource(gate, "ssl-proxy-tidb", "default", None, None)
             assert result is None
 
     def test_empty_output_returns_none(self):
@@ -220,9 +216,7 @@ class TestDiscoverResource:
                 stdout="",
                 stderr="",
             )
-            result = _discover_resource(
-                gate, "ssl-proxy-tidb", "default", None, None
-            )
+            result = _discover_resource(gate, "ssl-proxy-tidb", "default", None, None)
             assert result is None
 
     def test_context_and_kubeconfig_propagated(self):
@@ -266,12 +260,16 @@ class TestWaitForGate:
             # First call is discover, second is wait
             mock_kubectl.side_effect = [
                 subprocess.CompletedProcess(
-                    args=[], returncode=0,
-                    stdout="statefulset.apps/ssl-proxy-tidb\n", stderr="",
+                    args=[],
+                    returncode=0,
+                    stdout="statefulset.apps/ssl-proxy-tidb\n",
+                    stderr="",
                 ),
                 subprocess.CompletedProcess(
-                    args=[], returncode=0,
-                    stdout="statefulset.apps/ssl-proxy-tidb condition met\n", stderr="",
+                    args=[],
+                    returncode=0,
+                    stdout="statefulset.apps/ssl-proxy-tidb condition met\n",
+                    stderr="",
                 ),
             ]
             wait_for_gate(gate, "ssl-proxy-tidb", "default", timeout="10m")
@@ -281,7 +279,10 @@ class TestWaitForGate:
         gate = _make_gate(discover={"kind": "Deployment"})
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr="",
+                args=[],
+                returncode=0,
+                stdout="",
+                stderr="",
             )
             with pytest.raises(RuntimeError) as exc_info:
                 wait_for_gate(gate, "my-app", "default")
@@ -291,7 +292,12 @@ class TestWaitForGate:
         gate = _make_gate(resource="deployment/my-app")
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.side_effect = ShellError(
-                command=("kubectl", "wait", "deployment/my-app", "--for=condition=Available"),
+                command=(
+                    "kubectl",
+                    "wait",
+                    "deployment/my-app",
+                    "--for=condition=Available",
+                ),
                 returncode=1,
                 stdout="",
                 stderr="timed out waiting for the condition",
@@ -304,8 +310,10 @@ class TestWaitForGate:
         gate = _make_gate(resource="deployment/my-app")
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout="condition met\n", stderr="",
+                args=[],
+                returncode=0,
+                stdout="condition met\n",
+                stderr="",
             )
             wait_for_gate(gate, "my-app", "default", timeout=None)
             args_str = " ".join(mock_kubectl.call_args[0])
@@ -315,8 +323,10 @@ class TestWaitForGate:
         gate = _make_gate(resource="statefulset/ssl-proxy-tidb")
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout="condition met\n", stderr="",
+                args=[],
+                returncode=0,
+                stdout="condition met\n",
+                stderr="",
             )
             wait_for_gate(gate, "ssl-proxy-tidb", "default")
             args_str = " ".join(mock_kubectl.call_args[0])
@@ -328,12 +338,16 @@ class TestWaitForGate:
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.side_effect = [
                 subprocess.CompletedProcess(
-                    args=[], returncode=0,
-                    stdout="job.batch/ssl-proxy-tidb-schema\n", stderr="",
+                    args=[],
+                    returncode=0,
+                    stdout="job.batch/ssl-proxy-tidb-schema\n",
+                    stderr="",
                 ),
                 subprocess.CompletedProcess(
-                    args=[], returncode=0,
-                    stdout="condition met\n", stderr="",
+                    args=[],
+                    returncode=0,
+                    stdout="condition met\n",
+                    stderr="",
                 ),
             ]
             wait_for_gate(gate, "ssl-proxy-tidb-schema", "default")
@@ -351,8 +365,10 @@ class TestWaitForGates:
         ]
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout="condition met\n", stderr="",
+                args=[],
+                returncode=0,
+                stdout="condition met\n",
+                stderr="",
             )
             wait_for_gates(gates, "release", "default")
             assert mock_kubectl.call_count == 2
@@ -386,8 +402,10 @@ class TestWaitForGates:
         ]
         with patch("gates.kubectl") as mock_kubectl:
             mock_kubectl.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout="condition met\n", stderr="",
+                args=[],
+                returncode=0,
+                stdout="condition met\n",
+                stderr="",
             )
             wait_for_gates(gates, "release", "default", context="prod")
             for call_args in mock_kubectl.call_args_list:

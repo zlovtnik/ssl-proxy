@@ -110,8 +110,7 @@ def wait_for_gate(
     resource = _resolve_gate_resource(gate, release, namespace, context, kubeconfig)
     if resource is None:
         raise RuntimeError(
-            f"Gate for release {release!r}: could not discover resource "
-            f"(discover={gate.discover})"
+            f"Gate for release {release!r}: could not discover resource (discover={gate.discover})"
         )
 
     timeout_seconds = parse_timeout_seconds(timeout or DEFAULT_GATE_TIMEOUT)

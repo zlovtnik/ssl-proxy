@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,10 +94,7 @@ def create_plan(
         raise RuntimeError(f"current context {current!r} does not match {context!r}")
     base = safe_artifact_dir(root_dir, artifact_dir)
     run_dir = base / (
-        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        + "-"
-        + os.urandom(4).hex()
-        + "-cutover"
+        datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + os.urandom(4).hex() + "-cutover"
     )
     run_dir.mkdir(mode=0o700)
 
@@ -114,9 +111,7 @@ def create_plan(
         for name, component in config.components.items()
         if component.type in ("helm", "helm-job")
     ]
-    split_resources = [
-        resource for item in rendered for resource in item.resources
-    ]
+    split_resources = [resource for item in rendered for resource in item.resources]
     umbrella_resources = render_umbrella(
         root_dir / "helm" / "ssl-proxy",
         values,
@@ -141,9 +136,7 @@ def create_plan(
             continue
         uid, owner = _live_uid(identity, namespace, context, kubeconfig)
         if owner != umbrella_release:
-            raise RuntimeError(
-                f"{identity} is owned by {owner!r}, expected {umbrella_release!r}"
-            )
+            raise RuntimeError(f"{identity} is owned by {owner!r}, expected {umbrella_release!r}")
         matrix.append(
             {
                 "group": identity[0],
@@ -192,7 +185,9 @@ def create_plan(
     parsed_values = yaml.safe_load(release_values.stdout) or {}
     redacted = _redact_dict(parsed_values)
     if "[REDACTED]" in yaml.safe_dump(redacted):
-        raise RuntimeError("umbrella values contain inline sensitive fields; refusing unsafe backup")
+        raise RuntimeError(
+            "umbrella values contain inline sensitive fields; refusing unsafe backup"
+        )
     _write_private(backups / "values.yaml", yaml.safe_dump(parsed_values, sort_keys=True))
     _write_private(backups / "manifest.redacted.yaml", _redact_manifest(manifest.stdout))
     pvcs = kubectl(
@@ -209,7 +204,7 @@ def create_plan(
 
     payload: dict[str, Any] = {
         "version": 1,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "context": context,
         "namespace": namespace,
         "umbrella_release": umbrella_release,
@@ -255,9 +250,7 @@ def _verify_confirmations(
         raise RuntimeError("--traffic-drained is required")
 
 
-def _verify_uids(
-    plan: dict[str, Any], context: str, kubeconfig: str | None
-) -> None:
+def _verify_uids(plan: dict[str, Any], context: str, kubeconfig: str | None) -> None:
     for item in plan["matrix"]:
         identity = (item["group"], item["kind"], item["namespace"], item["name"])
         uid, owner = _live_uid(identity, item["namespace"], context, kubeconfig)
@@ -287,14 +280,10 @@ def apply_plan(
         "pvcs.json",
     )
     missing_backups = [
-        name
-        for name in required_backups
-        if not (plan_path.parent / "backups" / name).is_file()
+        name for name in required_backups if not (plan_path.parent / "backups" / name).is_file()
     ]
     if missing_backups:
-        raise RuntimeError(
-            "cutover backups are incomplete: " + ", ".join(missing_backups)
-        )
+        raise RuntimeError("cutover backups are incomplete: " + ", ".join(missing_backups))
     _verify_uids(plan, context, kubeconfig)
     values = load_umbrella_values(config, root_dir)
     bootstrap, waves = staged_waves(config)
@@ -337,7 +326,9 @@ def apply_plan(
     checks.extend(smoke(config, plan["namespace"], context, kubeconfig))
     degraded = [item for item in checks if not item.healthy]
     if degraded:
-        raise RuntimeError("post-adoption status degraded: " + ", ".join(item.subject for item in degraded))
+        raise RuntimeError(
+            "post-adoption status degraded: " + ", ".join(item.subject for item in degraded)
+        )
 
 
 def _helm_storage_records(
@@ -384,7 +375,9 @@ def finalize_plan(
         uid, owner = _live_uid(identity, item["namespace"], context, kubeconfig)
         if uid != item["uid"] or owner not in planned_releases:
             raise RuntimeError(f"split ownership proof failed: {identity}")
-    degraded = [item for item in status(config, plan["namespace"], context, kubeconfig) if not item.healthy]
+    degraded = [
+        item for item in status(config, plan["namespace"], context, kubeconfig) if not item.healthy
+    ]
     if degraded:
         raise RuntimeError("cannot finalize degraded split releases")
     records = _helm_storage_records(release, plan["namespace"], context, kubeconfig)
@@ -438,9 +431,7 @@ def rollback_plan(
         )
     split_releases = sorted({item["to_release"] for item in plan["matrix"]})
     for split_release in split_releases:
-        for record in _helm_storage_records(
-            split_release, plan["namespace"], context, kubeconfig
-        ):
+        for record in _helm_storage_records(split_release, plan["namespace"], context, kubeconfig):
             kubectl(
                 "delete",
                 "secret",

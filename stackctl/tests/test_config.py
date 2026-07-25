@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
-from textwrap import dedent
 
 import pytest
 import yaml
 
 from stackctl import (
+    Check,
     Component,
     Gate,
     JobConfig,
@@ -54,6 +53,23 @@ class TestComponentTypes:
     def test_invalid_type_not_in_set(self):
         with pytest.raises(Exception):
             Component(type="statefulset", release="test-release")
+
+    def test_unknown_fields_are_rejected(self):
+        with pytest.raises(Exception, match="extra"):
+            Component(
+                type="helm",
+                release="test",
+                chart="./charts/test",
+                misspelled_timeout="5m",
+            )
+
+    def test_http_check_requires_port(self):
+        with pytest.raises(Exception, match="port"):
+            Check(type="http", target="service/example")
+
+    def test_exec_check_requires_command(self):
+        with pytest.raises(Exception, match="command"):
+            Check(type="exec", target="deployment/example")
 
 
 class TestGate:
@@ -206,9 +222,7 @@ class TestLoadConfig:
                 }
             },
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump(config_data, f)
             f.flush()
 
@@ -222,9 +236,7 @@ class TestLoadConfig:
             load_config("/nonexistent/path.yaml")
 
     def test_load_empty_file(self):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("")
             f.flush()
 

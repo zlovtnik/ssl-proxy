@@ -66,13 +66,13 @@ def _full_stack_config() -> StackConfig:
                 release="ssl-proxy-telemetry",
                 chart="./helm/ssl-proxy/charts/telemetry",
             ),
-        "tidb-schema-executor": Component(
-            type="helm-job",
-            release="ssl-proxy-tidb-schema",
-            chart="./helm/ssl-proxy/charts/tidb-schema-executor",
-            depends_on=["tidb"],
-            job={"rerun": "replace"},
-        ),
+            "tidb-schema-executor": Component(
+                type="helm-job",
+                release="ssl-proxy-tidb-schema",
+                chart="./helm/ssl-proxy/charts/tidb-schema-executor",
+                depends_on=["tidb"],
+                job={"rerun": "replace"},
+            ),
             "schema-migrator": Component(
                 type="helm",
                 release="ssl-proxy-schema-migrator",
@@ -280,6 +280,7 @@ def test_detects_unknown_dependency():
         },
     )
     from stackctl import validate_config
+
     errors = validate_config(config)
     assert len(errors) == 1
     assert "nonexistent" in errors[0]

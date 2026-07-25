@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 
@@ -202,7 +204,9 @@ def validate_rendered(
             selector = resource.get("spec", {}).get("selector", {}).get("matchLabels")
             if selector and template:
                 labels = template.get("metadata", {}).get("labels", {})
-                missing = {key: value for key, value in selector.items() if labels.get(key) != value}
+                missing = {
+                    key: value for key, value in selector.items() if labels.get(key) != value
+                }
                 if missing:
                     errors.append(
                         f"{item.name} {resource['kind']}/{resource['metadata']['name']} "
@@ -354,3 +358,87 @@ def write_render_artifacts(
             json.dumps(redactor(item.effective_values), indent=2, sort_keys=True) + "\n"
         )
         os.chmod(values_path, 0o600)
+
+
+def _tree_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    files = [path] if path.is_file() else sorted(item for item in path.rglob("*") if item.is_file())
+    for item in files:
+        digest.update(str(item.relative_to(path.parent if path.is_file() else path)).encode())
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def write_parity_artifacts(
+    directory: Path,
+    config: StackConfig,
+    root_dir: Path,
+    umbrella: list[dict[str, Any]],
+    split: list[RenderedComponent],
+    differences: list[str],
+    redactor: Any,
+) -> None:
+    """Capture the normalized parity baseline, hashes, and resource inventory."""
+
+    normalized_umbrella = [normalize_resource(item) for item in umbrella]
+    normalized_split = [
+        normalize_resource(resource) for component in split for resource in component.resources
+    ]
+    for name, resources in (
+        ("umbrella.normalized.yaml", normalized_umbrella),
+        ("split.normalized.yaml", normalized_split),
+    ):
+        path = directory / name
+def _redact_parity_resource(resource: dict[str, Any], redactor: Any) -> dict[str, Any]:
+    safe = copy.deepcopy(resource)
+    if safe.get("kind") == "Secret":
+        safe.pop("data", None)
+        safe.pop("stringData", None)
+    return redactor(safe)
+
+        path.write_text(
+            yaml.safe_dump_all(
+                (_redact_parity_resource(item, redactor) for item in resources),
+                sort_keys=True,
+            )
+        )
+        os.chmod(path, 0o600)
+
+    charts = {
+        "umbrella": _tree_digest(root_dir / "helm" / "ssl-proxy"),
+        **{
+            name: _tree_digest(root_dir / component.chart)
+            for name, component in config.components.items()
+            if component.type in ("helm", "helm-job")
+        },
+    }
+    values = {
+        configured: _tree_digest(
+            Path(configured) if Path(configured).is_absolute() else root_dir / configured
+        )
+        for configured in config.defaults.values
+    }
+    payload = {
+        "parity": not differences,
+        "differences": differences,
+        "mode_decision": {
+            "redpanda": "in-cluster",
+            "minio": "in-cluster",
+        },
+        "chart_hashes": charts,
+        "value_hashes": values,
+        "resources": [
+            {
+                "group": identity[0],
+                "kind": identity[1],
+                "namespace": identity[2],
+                "name": identity[3],
+            }
+            for identity in sorted(resource_identity(item) for item in umbrella)
+        ],
+    }
+    path = directory / "baseline.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    os.chmod(path, 0o600)

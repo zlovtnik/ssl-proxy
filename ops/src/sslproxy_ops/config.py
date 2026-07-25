@@ -49,9 +49,7 @@ class Settings(BaseSettings):
     deployment_target: DeploymentTarget = Field(
         default="kubernetes", validation_alias="UP_READY_DEPLOYMENT_TARGET"
     )
-    stack_mode: StackMode = Field(
-        default="umbrella", validation_alias="UP_READY_STACK_MODE"
-    )
+    stack_mode: StackMode = Field(default="umbrella", validation_alias="UP_READY_STACK_MODE")
     build_registry_images: bool = Field(
         default=True, validation_alias="UP_READY_BUILD_REGISTRY_IMAGES"
     )
@@ -83,14 +81,10 @@ class Settings(BaseSettings):
     wg_internal_port: int = Field(
         default=51820, ge=1, le=65535, validation_alias="WG_INTERNAL_PORT"
     )
-    wg_obfuscation_enabled: bool = Field(
-        default=False, validation_alias="WG_OBFUSCATION_ENABLED"
-    )
+    wg_obfuscation_enabled: bool = Field(default=False, validation_alias="WG_OBFUSCATION_ENABLED")
 
     sync_scan_topic: str = Field(default="sync.scan.request", validation_alias="SYNC_SCAN_TOPIC")
-    sync_scan_consumer: str = Field(
-        default="octopus-scan", validation_alias="SYNC_SCAN_CONSUMER"
-    )
+    sync_scan_consumer: str = Field(default="octopus-scan", validation_alias="SYNC_SCAN_CONSUMER")
     sync_redpanda_bootstrap_servers: str = Field(
         default="redpanda:9092", validation_alias="SYNC_REDPANDA_BOOTSTRAP_SERVERS"
     )
@@ -126,9 +120,7 @@ class Settings(BaseSettings):
 
     @field_validator("schema_migrator_public_hostname")
     @classmethod
-    def schema_migrator_hostname_must_not_include_scheme(
-        cls, value: str | None
-    ) -> str | None:
+    def schema_migrator_hostname_must_not_include_scheme(cls, value: str | None) -> str | None:
         if value and "://" in value:
             raise ValueError("must be a hostname without a URL scheme")
         return value

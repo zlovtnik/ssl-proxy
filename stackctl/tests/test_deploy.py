@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
@@ -17,18 +16,17 @@ from deploy import (
     ComponentResult,
     DeployOptions,
     DeployResult,
-    _capture_job_logs,
     _cleanup_run_dir,
     _create_run_dir,
-    _get_job_uid,
     _helm_release_status,
     _helm_rollback,
     _helm_upgrade,
     _redact_dict,
+    _redact_manifest,
+    _redact_text,
     _redact_value,
+    _repository_manifest_paths,
     _replace_job,
-    _wait_for_job_complete_or_fail,
-    _wait_for_job_with_new_uid,
     deploy_component,
     deploy_stack,
     prepare_chart,
@@ -283,11 +281,14 @@ class TestHelmUpgrade:
 
     def test_new_install(self):
         component = _make_component()
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = None  # not deployed yet
-            _helm_upgrade(component, {}, Path("/tmp/values.yaml"), "default", None, None)
+            _helm_upgrade(
+                component, {}, Path("/tmp/values.yaml"), "default", None, None
+            )
             args = mock_helm.call_args[0]
             assert args[:2] == ("upgrade", "--install")
             assert "test-release" in args
@@ -299,52 +300,69 @@ class TestHelmUpgrade:
 
     def test_upgrade_existing(self):
         component = _make_component()
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = "deployed"
-            _helm_upgrade(component, {}, Path("/tmp/values.yaml"), "default", None, None)
+            _helm_upgrade(
+                component, {}, Path("/tmp/values.yaml"), "default", None, None
+            )
             args = mock_helm.call_args[0]
             assert "upgrade" in args
 
     def test_dry_run_flag(self):
         component = _make_component()
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = None
             _helm_upgrade(
-                component, {}, Path("/tmp/values.yaml"), "default", None, None, dry_run=True
+                component,
+                {},
+                Path("/tmp/values.yaml"),
+                "default",
+                None,
+                None,
+                dry_run=True,
             )
             args = mock_helm.call_args[0]
             assert "--dry-run=server" in args
 
     def test_rollback_on_failure_adds_history_max(self):
         component = _make_component(rollback_on_failure=True)
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = "deployed"
-            _helm_upgrade(component, {}, Path("/tmp/values.yaml"), "default", None, None)
+            _helm_upgrade(
+                component, {}, Path("/tmp/values.yaml"), "default", None, None
+            )
             args = mock_helm.call_args[0]
             assert "--history-max" in args
             assert "5" in args
 
     def test_no_history_max_without_rollback(self):
         component = _make_component(rollback_on_failure=False)
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = "deployed"
-            _helm_upgrade(component, {}, Path("/tmp/values.yaml"), "default", None, None)
+            _helm_upgrade(
+                component, {}, Path("/tmp/values.yaml"), "default", None, None
+            )
             args = mock_helm.call_args[0]
             assert "--history-max" not in args
 
     def test_values_file_passed(self):
         component = _make_component()
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = None
             _helm_upgrade(
                 component, {}, Path("/custom/path/values.yaml"), "default", None, None
@@ -356,9 +374,10 @@ class TestHelmUpgrade:
 
     def test_timeout_from_component(self):
         component = _make_component(timeout="30m")
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = None
             _helm_upgrade(component, {}, Path("/tmp/v.yaml"), "default", None, None)
             args = mock_helm.call_args[0]
@@ -367,9 +386,10 @@ class TestHelmUpgrade:
 
     def test_output_is_captured_for_component_log(self):
         component = _make_component()
-        with patch("deploy._helm_release_status") as mock_status, patch(
-            "deploy.helm"
-        ) as mock_helm:
+        with (
+            patch("deploy._helm_release_status") as mock_status,
+            patch("deploy.helm") as mock_helm,
+        ):
             mock_status.return_value = None
             _helm_upgrade(component, {}, Path("/tmp/v.yaml"), "default", None, None)
             assert mock_helm.call_args[1].get("stream") is not True
@@ -481,6 +501,23 @@ class TestRedact:
         assert _redact_value("PASSWORD", "secret") == "[REDACTED]"
         assert _redact_value("Secret", "secret") == "[REDACTED]"
 
+    def test_diagnostic_lines_with_sensitive_keys_are_removed(self):
+        output = "healthy=true\napi_token=do-not-retain\n"
+        assert _redact_text(output) == "healthy=true\n[REDACTED LINE]\n"
+
+    def test_secret_manifest_body_is_removed(self):
+        manifest = """
+apiVersion: v1
+kind: Secret
+metadata:
+  name: credentials
+data:
+  password: c2VjcmV0
+"""
+        redacted = _redact_manifest(manifest)
+        assert "c2VjcmV0" not in redacted
+        assert "[REDACTED]" in redacted
+
 
 # ===========================================================================
 # Per-component deployment
@@ -496,11 +533,12 @@ class TestDeployComponent:
         config = _make_config(components={"test-app": component})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.prepare_chart") as mock_prepare, patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen_values, patch("deploy._helm_upgrade") as mock_upgrade, patch(
-            "deploy.wait_for_gates"
-        ) as mock_gates:
+        with (
+            patch("deploy.prepare_chart") as mock_prepare,
+            patch("deploy.generate_effective_values") as mock_gen_values,
+            patch("deploy._helm_upgrade") as mock_upgrade,
+            patch("deploy.wait_for_gates") as mock_gates,
+        ):
             mock_gen_values.return_value = {"replicas": 3}
 
             result = deploy_component("test-app", config, options, tmp_path)
@@ -525,15 +563,15 @@ class TestDeployComponent:
         config = _make_config(components={"test-job": component})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.prepare_chart") as mock_prepare, patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen_values, patch("deploy._replace_job") as mock_delete, patch(
-            "deploy._helm_upgrade"
-        ) as mock_upgrade, patch(
-            "deploy.wait_for_gates"
-        ) as mock_gates, patch(
-            "deploy._wait_for_job_with_new_uid"
-        ), patch("deploy._wait_for_job_complete_or_fail"):
+        with (
+            patch("deploy.prepare_chart"),
+            patch("deploy.generate_effective_values") as mock_gen_values,
+            patch("deploy._replace_job") as mock_delete,
+            patch("deploy._helm_upgrade") as mock_upgrade,
+            patch("deploy.wait_for_gates") as mock_gates,
+            patch("deploy._wait_for_job_with_new_uid"),
+            patch("deploy._wait_for_job_complete_or_fail"),
+        ):
             mock_gen_values.return_value = {}
 
             result = deploy_component("test-job", config, options, tmp_path)
@@ -559,11 +597,12 @@ class TestDeployComponent:
         config = _make_config(components={"test-app": component})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.prepare_chart"), patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen, patch("deploy._helm_upgrade") as mock_upgrade, patch(
-            "deploy._helm_rollback"
-        ) as mock_rollback:
+        with (
+            patch("deploy.prepare_chart"),
+            patch("deploy.generate_effective_values") as mock_gen,
+            patch("deploy._helm_upgrade") as mock_upgrade,
+            patch("deploy._helm_rollback") as mock_rollback,
+        ):
             mock_gen.return_value = {"replicas": 3}
             mock_upgrade.side_effect = ShellError(
                 command=("helm", "upgrade", "test-release"),
@@ -576,9 +615,7 @@ class TestDeployComponent:
 
             assert result.success is False
             assert "upgrade failed" in result.error
-            mock_rollback.assert_called_once_with(
-                "test-release", "default", None, None
-            )
+            mock_rollback.assert_called_once_with("test-release", "default", None, None)
 
     def test_failure_does_not_rollback_when_not_configured(self, tmp_path: Path):
         """rollback_on_failure=False skips helm rollback on failure."""
@@ -590,11 +627,12 @@ class TestDeployComponent:
         config = _make_config(components={"test-app": component})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.prepare_chart"), patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen, patch("deploy._helm_upgrade") as mock_upgrade, patch(
-            "deploy._helm_rollback"
-        ) as mock_rollback:
+        with (
+            patch("deploy.prepare_chart"),
+            patch("deploy.generate_effective_values") as mock_gen,
+            patch("deploy._helm_upgrade") as mock_upgrade,
+            patch("deploy._helm_rollback") as mock_rollback,
+        ):
             mock_gen.return_value = {"replicas": 3}
             mock_upgrade.side_effect = ShellError(
                 command=("helm", "upgrade", "test-release"),
@@ -610,9 +648,7 @@ class TestDeployComponent:
 
     def test_manifest_without_paths_fails(self, tmp_path: Path):
         """Manifest deployment requires at least one repository YAML path."""
-        component = _make_component(
-            name="test-manifest", type_="manifest", chart=None
-        )
+        component = _make_component(name="test-manifest", type_="manifest", chart=None)
         config = _make_config(components={"test-manifest": component})
         options = _make_options(work_dir=str(tmp_path))
 
@@ -620,6 +656,12 @@ class TestDeployComponent:
 
         assert result.success is False
         assert "has no paths" in result.error
+
+    def test_manifest_path_cannot_leave_repository(self, tmp_path: Path):
+        outside = tmp_path.parent / "outside.yaml"
+        outside.write_text("apiVersion: v1\nkind: ConfigMap\n")
+        with pytest.raises(ValueError, match="leaves repository root"):
+            _repository_manifest_paths("manifest", [str(outside)], tmp_path)
 
     def test_missing_chart_returns_failure(self, tmp_path: Path):
         """Component without chart path returns failure."""
@@ -638,11 +680,12 @@ class TestDeployComponent:
         config = _make_config(components={"test-app": component})
         options = _make_options(work_dir=str(tmp_path), dry_run=True)
 
-        with patch("deploy.prepare_chart"), patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen, patch("deploy._helm_upgrade"), patch(
-            "deploy.wait_for_gates"
-        ) as mock_gates:
+        with (
+            patch("deploy.prepare_chart"),
+            patch("deploy.generate_effective_values") as mock_gen,
+            patch("deploy._helm_upgrade"),
+            patch("deploy.wait_for_gates") as mock_gates,
+        ):
             mock_gen.return_value = {"replicas": 3}
             deploy_component("test-app", config, options, tmp_path)
             mock_gates.assert_not_called()
@@ -653,9 +696,12 @@ class TestDeployComponent:
         config = _make_config(components={"test-app": component})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.prepare_chart"), patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen, patch("deploy._helm_upgrade"), patch("deploy.wait_for_gates"):
+        with (
+            patch("deploy.prepare_chart"),
+            patch("deploy.generate_effective_values") as mock_gen,
+            patch("deploy._helm_upgrade"),
+            patch("deploy.wait_for_gates"),
+        ):
             mock_gen.return_value = {"replicas": 3, "name": "test"}
 
             deploy_component("test-app", config, options, tmp_path)
@@ -677,11 +723,12 @@ class TestDeployComponent:
         config = _make_config(components={"test-app": component})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.prepare_chart"), patch(
-            "deploy.generate_effective_values"
-        ) as mock_gen, patch("deploy._helm_upgrade") as mock_upgrade, patch(
-            "deploy._helm_rollback"
-        ) as mock_rollback:
+        with (
+            patch("deploy.prepare_chart"),
+            patch("deploy.generate_effective_values") as mock_gen,
+            patch("deploy._helm_upgrade") as mock_upgrade,
+            patch("deploy._helm_rollback") as mock_rollback,
+        ):
             mock_gen.return_value = {"replicas": 3}
             mock_upgrade.side_effect = ShellError(
                 command=("helm", "upgrade", "test-release"),
@@ -717,9 +764,10 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a, "b": comp_b})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
@@ -738,13 +786,16 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a, "b": comp_b})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.side_effect = [
                 [
-                    ComponentResult(component="a", success=False, error="wave 1 failed"),
+                    ComponentResult(
+                        component="a", success=False, error="wave 1 failed"
+                    ),
                 ],
             ]
 
@@ -761,9 +812,10 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a, "b": comp_b})
         options = _make_options(work_dir=str(tmp_path), from_wave=2)
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
             mock_resolve.return_value = [["b"]]
             mock_wave.return_value = [
                 ComponentResult(component="b", success=True, duration=1.0),
@@ -786,9 +838,10 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a, "b": comp_b})
         options = _make_options(work_dir=str(tmp_path), target_component="b")
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
@@ -804,15 +857,55 @@ class TestDeployStack:
                 include_descendants=False,
             )
 
+    def test_target_skips_healthy_dependencies(self, tmp_path: Path):
+        from stackctl import Component, StackConfig
+
+        config = StackConfig(
+            version=1,
+            components={
+                "config": Component(
+                    type="helm",
+                    stage="bootstrap",
+                    release="config",
+                    chart="./charts/config",
+                ),
+                "app": Component(
+                    type="helm",
+                    stage="applications",
+                    release="app",
+                    chart="./charts/app",
+                    depends_on=["config"],
+                ),
+            },
+        )
+        options = _make_options(work_dir=str(tmp_path), target_component="app")
+        with (
+            patch(
+                "sslproxy_ops.stack.cluster.component_health",
+                return_value={"config": True},
+            ),
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
+            mock_wave.return_value = [
+                ComponentResult(component="app", success=True, duration=1.0)
+            ]
+            result = asyncio.run(deploy_stack(config, options))
+
+        assert result.success is True
+        mock_wave.assert_awaited_once()
+        assert mock_wave.call_args.args[0] == ["app"]
+
     def test_run_dir_cleanup_on_success(self, tmp_path: Path):
         """Run directory is cleaned up on successful deployment."""
         comp_a = _make_component(name="a", chart="./charts/a")
         config = _make_config(components={"a": comp_a})
         options = _make_options(work_dir=str(tmp_path), keep_artifacts=False)
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave, patch("deploy._cleanup_run_dir") as mock_cleanup:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+            patch("deploy._cleanup_run_dir") as mock_cleanup,
+        ):
             mock_resolve.return_value = [["a"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
@@ -827,9 +920,11 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a})
         options = _make_options(work_dir=str(tmp_path), keep_artifacts=False)
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave, patch("deploy._cleanup_run_dir") as mock_cleanup:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+            patch("deploy._cleanup_run_dir") as mock_cleanup,
+        ):
             mock_resolve.return_value = [["a"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=False, error="failed"),
@@ -844,9 +939,11 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a})
         options = _make_options(work_dir=str(tmp_path), keep_artifacts=True)
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave, patch("deploy._cleanup_run_dir") as mock_cleanup:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+            patch("deploy._cleanup_run_dir") as mock_cleanup,
+        ):
             mock_resolve.return_value = [["a"]]
             mock_wave.return_value = [
                 ComponentResult(component="a", success=True, duration=1.0),
@@ -862,9 +959,10 @@ class TestDeployStack:
         config = _make_config(components={"a": comp_a, "b": comp_b})
         options = _make_options(work_dir=str(tmp_path))
 
-        with patch("deploy.resolve_dependencies") as mock_resolve, patch(
-            "deploy._deploy_wave", new_callable=AsyncMock
-        ) as mock_wave:
+        with (
+            patch("deploy.resolve_dependencies") as mock_resolve,
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
             mock_resolve.return_value = [["a"], ["b"]]
             mock_wave.side_effect = [
                 [ComponentResult(component="a", success=True, duration=1.0)],

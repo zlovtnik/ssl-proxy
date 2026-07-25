@@ -106,7 +106,7 @@ class TestKubectl:
                 args=["kubectl", "get", "nonexistent"],
                 returncode=1,
                 stdout="",
-                stderr='Error from server: not found',
+                stderr="Error from server: not found",
             )
             result = kubectl("get", "nonexistent", check=False)
             assert result.returncode == 1
@@ -119,7 +119,7 @@ class TestKubectl:
                 args=["kubectl", "get", "nonexistent"],
                 returncode=1,
                 stdout="",
-                stderr='Error from server: not found',
+                stderr="Error from server: not found",
             )
             with pytest.raises(ShellError) as exc_info:
                 kubectl("get", "nonexistent")

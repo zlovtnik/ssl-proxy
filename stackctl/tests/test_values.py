@@ -9,7 +9,6 @@ import yaml
 
 from stackctl import (
     Component,
-    Defaults,
     StackConfig,
     deep_merge,
     generate_effective_values,
@@ -225,45 +224,63 @@ def stack_root(tmp_path: Path) -> Path:
     """
     charts = tmp_path / "helm" / "ssl-proxy" / "charts"
 
-    _write_yaml(charts / "tidb" / "values.yaml", {
-        "external": True,
-        "minimumVersion": "8.5.0",
-        "egress": {"enabled": True, "cidrs": []},
-        "image": {"repository": "pingcap/tidb", "tag": "v8.5.0"},
-        "replicas": 1,
-    })
+    _write_yaml(
+        charts / "tidb" / "values.yaml",
+        {
+            "external": True,
+            "minimumVersion": "8.5.0",
+            "egress": {"enabled": True, "cidrs": []},
+            "image": {"repository": "pingcap/tidb", "tag": "v8.5.0"},
+            "replicas": 1,
+        },
+    )
 
-    _write_yaml(charts / "redis-runtime" / "values.yaml", {
-        "enabled": True,
-        "image": {"repository": "redis", "tag": "7.4.3-alpine"},
-    })
+    _write_yaml(
+        charts / "redis-runtime" / "values.yaml",
+        {
+            "enabled": True,
+            "image": {"repository": "redis", "tag": "7.4.3-alpine"},
+        },
+    )
 
-    _write_yaml(charts / "telemetry" / "values.yaml", {
-        "enabled": False,
-        "monitoring": {"enabled": True},
-    })
+    _write_yaml(
+        charts / "telemetry" / "values.yaml",
+        {
+            "enabled": False,
+            "monitoring": {"enabled": True},
+        },
+    )
 
-    _write_yaml(charts / "schema-migrator" / "values.yaml", {
-        "enabled": False,
-        "publicHostname": "",
-        "traefik": {"acme": {"email": ""}},
-    })
+    _write_yaml(
+        charts / "schema-migrator" / "values.yaml",
+        {
+            "enabled": False,
+            "publicHostname": "",
+            "traefik": {"acme": {"email": ""}},
+        },
+    )
 
-    _write_yaml(charts / "java-coordinator" / "values.yaml", {
-        "enabled": True,
-        "tidb": {"sslMode": "VERIFY_IDENTITY"},
-        "global": {
-            "shared": {
-                "minio": {
-                    "endpoint": "http://minio.minio.svc.cluster.local:9000",
+    _write_yaml(
+        charts / "java-coordinator" / "values.yaml",
+        {
+            "enabled": True,
+            "tidb": {"sslMode": "VERIFY_IDENTITY"},
+            "global": {
+                "shared": {
+                    "minio": {
+                        "endpoint": "http://minio.minio.svc.cluster.local:9000",
+                    },
                 },
             },
         },
-    })
+    )
 
-    _write_yaml(charts / "tidb-schema-executor" / "values.yaml", {
-        "enabled": False,
-    })
+    _write_yaml(
+        charts / "tidb-schema-executor" / "values.yaml",
+        {
+            "enabled": False,
+        },
+    )
 
     return tmp_path
 
@@ -384,7 +401,10 @@ class TestEffectiveValuesFromSpec:
         ]
 
         effective = generate_effective_values(
-            config, "tidb", umbrella_values, root_dir=stack_root,
+            config,
+            "tidb",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         # Effective files contain only umbrella overlays; Helm loads chart defaults.
@@ -416,7 +436,10 @@ class TestEffectiveValuesFromSpec:
         ]
 
         effective = generate_effective_values(
-            config, "tidb", umbrella_values, root_dir=stack_root,
+            config,
+            "tidb",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         assert "replicas" not in effective
@@ -495,7 +518,10 @@ class TestCriticalComponentRules:
         ]
 
         effective = generate_effective_values(
-            config, "tidb", umbrella_values, root_dir=stack_root,
+            config,
+            "tidb",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         # Required parent-scoped settings present
@@ -505,7 +531,10 @@ class TestCriticalComponentRules:
 
         # Global shared tidb block present
         assert effective["global"]["shared"]["tidb"]["host"] == "tidb.example.internal"
-        assert effective["global"]["shared"]["tidb"]["tls"]["caSecret"]["name"] == "tidb-client-ca"
+        assert (
+            effective["global"]["shared"]["tidb"]["tls"]["caSecret"]["name"]
+            == "tidb-client-ca"
+        )
 
     def test_schema_migrator_needs_global_tidb_and_keycloak(self, stack_root: Path):
         """Schema migrator requires global.shared.tidb.* and
@@ -542,7 +571,10 @@ class TestCriticalComponentRules:
         ]
 
         effective = generate_effective_values(
-            config, "schema-migrator", umbrella_values, root_dir=stack_root,
+            config,
+            "schema-migrator",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         # Schema migrator values from umbrella
@@ -552,8 +584,14 @@ class TestCriticalComponentRules:
 
         # Global shared blocks present
         assert effective["global"]["shared"]["tidb"]["host"] == "tidb.local"
-        assert effective["global"]["shared"]["keycloak"]["issuer"] == "https://keycloak.local/realms/middleware"
-        assert effective["global"]["shared"]["keycloak"]["schemaMigratorClientId"] == "bedrock-ui"
+        assert (
+            effective["global"]["shared"]["keycloak"]["issuer"]
+            == "https://keycloak.local/realms/middleware"
+        )
+        assert (
+            effective["global"]["shared"]["keycloak"]["schemaMigratorClientId"]
+            == "bedrock-ui"
+        )
 
     def test_java_coordinator_needs_minio_and_tidb_shared(self, stack_root: Path):
         """Java coordinator needs the umbrella's TiDB and MinIO shared
@@ -599,12 +637,18 @@ class TestCriticalComponentRules:
         ]
 
         effective = generate_effective_values(
-            config, "java-coordinator", umbrella_values, root_dir=stack_root,
+            config,
+            "java-coordinator",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         # Global shared blocks present
         assert effective["global"]["shared"]["tidb"]["host"] == "tidb.local"
-        assert effective["global"]["shared"]["minio"]["endpoint"] == "http://minio.local:9000"
+        assert (
+            effective["global"]["shared"]["minio"]["endpoint"]
+            == "http://minio.local:9000"
+        )
 
         # Chart defaults remain Helm's responsibility.
         assert "tidb" not in effective
@@ -634,11 +678,17 @@ class TestCriticalComponentRules:
         ]
 
         effective = generate_effective_values(
-            config, "tidb-schema-executor", umbrella_values, root_dir=stack_root,
+            config,
+            "tidb-schema-executor",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         # Global shared tidb tls block present
-        assert effective["global"]["shared"]["tidb"]["tls"]["caSecret"]["name"] == "tidb-client-ca"
+        assert (
+            effective["global"]["shared"]["tidb"]["tls"]["caSecret"]["name"]
+            == "tidb-client-ca"
+        )
 
         # Component values from umbrella
         assert effective["enabled"] is True
@@ -657,7 +707,10 @@ class TestCriticalComponentRules:
         ]
 
         effective = generate_effective_values(
-            config, "java-coordinator", umbrella_values, root_dir=stack_root,
+            config,
+            "java-coordinator",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         assert effective["global"]["migration"]["mode"] == "activate"
@@ -682,7 +735,10 @@ class TestCriticalComponentRules:
         ]
 
         effective = generate_effective_values(
-            config, "telemetry", umbrella_values, root_dir=stack_root,
+            config,
+            "telemetry",
+            umbrella_values,
+            root_dir=stack_root,
         )
 
         assert effective["enabled"] is True
@@ -736,7 +792,10 @@ class TestCriticalComponentRules:
                         "redis": {"urlSecret": {"name": "r", "key": "u"}},
                         "javaCoordinator": {"service": {"port": 8080}},
                         "atherosSensor": {"metricsPort": 9097},
-                        "atherosSearch": {"metricsPort": 9090, "workerMetricsPort": 9090},
+                        "atherosSearch": {
+                            "metricsPort": 9090,
+                            "workerMetricsPort": 9090,
+                        },
                     },
                 },
                 "tidb": {"external": False, "minimumVersion": "8.5.0"},
@@ -760,9 +819,13 @@ class TestCriticalComponentRules:
         # Every component should produce valid effective values without error
         for name in config.components:
             effective = generate_effective_values(
-                config, name, umbrella_values,
+                config,
+                name,
+                umbrella_values,
             )
-            assert isinstance(effective, dict), f"{name}: effective values is not a dict"
+            assert isinstance(effective, dict), (
+                f"{name}: effective values is not a dict"
+            )
             # Global block present when include_global=True
             if config.components[name].include_global:
                 assert "global" in effective, f"{name}: missing global block"

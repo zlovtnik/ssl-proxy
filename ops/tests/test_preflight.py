@@ -1,22 +1,19 @@
 import json
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError
 from sslproxy_ops.commands.up_ready.preflight import (
-    PreflightSpec,
     SecretSpec,
     check_api_connectivity,
     check_conflicting_release,
     check_crds,
-    check_disk_space,
-    check_host_devices,
     check_nodes_ready,
     check_secrets,
     check_service_accounts,
     check_storage_classes,
-    cluster_preflight,
 )
 from sslproxy_ops.config import Settings
 
@@ -58,18 +55,20 @@ class PreflightNodesReadyTest(unittest.TestCase):
     def test_check_nodes_ready_passes_when_enough_nodes(self):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
-        payload = json.dumps({
-            "items": [
-                {
-                    "metadata": {"name": "node-1"},
-                    "status": {"conditions": [{"type": "Ready", "status": "True"}]},
-                },
-                {
-                    "metadata": {"name": "node-2"},
-                    "status": {"conditions": [{"type": "Ready", "status": "True"}]},
-                },
-            ]
-        })
+        payload = json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "node-1"},
+                        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                    },
+                    {
+                        "metadata": {"name": "node-2"},
+                        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                    },
+                ]
+            }
+        )
 
         with patch(
             "sslproxy_ops.commands.up_ready.preflight.shell.kubectl",
@@ -80,14 +79,16 @@ class PreflightNodesReadyTest(unittest.TestCase):
     def test_check_nodes_ready_fails_when_insufficient(self):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
-        payload = json.dumps({
-            "items": [
-                {
-                    "metadata": {"name": "node-1"},
-                    "status": {"conditions": [{"type": "Ready", "status": "False"}]},
-                },
-            ]
-        })
+        payload = json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "node-1"},
+                        "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+                    },
+                ]
+            }
+        )
 
         with (
             patch(
@@ -116,12 +117,14 @@ class PreflightStorageClassesTest(unittest.TestCase):
     def test_check_storage_classes_passes_when_present(self):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
-        payload = json.dumps({
-            "items": [
-                {"metadata": {"name": "local-path"}},
-                {"metadata": {"name": "standard"}},
-            ]
-        })
+        payload = json.dumps(
+            {
+                "items": [
+                    {"metadata": {"name": "local-path"}},
+                    {"metadata": {"name": "standard"}},
+                ]
+            }
+        )
 
         with patch(
             "sslproxy_ops.commands.up_ready.preflight.shell.kubectl",
@@ -159,11 +162,13 @@ class PreflightSecretsTest(unittest.TestCase):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
         secret = SecretSpec(namespace="default", name="my-secret", key="password")
-        payload = json.dumps({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "data": {"password": "cGFzc3dvcmQ="},
-        })
+        payload = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {"password": "cGFzc3dvcmQ="},
+            }
+        )
 
         with patch(
             "sslproxy_ops.commands.up_ready.preflight.shell.kubectl",
@@ -189,11 +194,13 @@ class PreflightSecretsTest(unittest.TestCase):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
         secret = SecretSpec(namespace="default", name="my-secret", key="missing")
-        payload = json.dumps({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "data": {"password": "cGFzc3dvcmQ="},
-        })
+        payload = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {"password": "cGFzc3dvcmQ="},
+            }
+        )
 
         with (
             patch(
@@ -254,12 +261,14 @@ class PreflightCRDsTest(unittest.TestCase):
     def test_check_crds_passes_when_present(self):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
-        payload = json.dumps({
-            "items": [
-                {"metadata": {"name": "certificates.cert-manager.io"}},
-                {"metadata": {"name": "ingresses.networking.k8s.io"}},
-            ]
-        })
+        payload = json.dumps(
+            {
+                "items": [
+                    {"metadata": {"name": "certificates.cert-manager.io"}},
+                    {"metadata": {"name": "ingresses.networking.k8s.io"}},
+                ]
+            }
+        )
 
         with patch(
             "sslproxy_ops.commands.up_ready.preflight.shell.kubectl",
@@ -317,15 +326,18 @@ class PreflightConflictingReleaseTest(unittest.TestCase):
         ):
             check_conflicting_release(ctx, True)
 
-    def test_check_conflicting_release_passes_when_migration_mode_enabled(self):
+    def test_migration_mode_does_not_bypass_ownership_conflict(self):
         settings = Settings()
         settings.migration_mode = "migrate"
         ctx = UpReadyContext(settings=settings)
         releases = json.dumps([{"name": "ssl-proxy", "status": "deployed"}])
 
-        with patch(
-            "sslproxy_ops.commands.up_ready.preflight.shell.helm",
-            return_value=_ok(releases),
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.preflight.shell.helm",
+                return_value=_ok(releases),
+            ),
+            self.assertRaisesRegex(UpReadyError, "cutover plan"),
         ):
             check_conflicting_release(ctx, True)
 
@@ -345,8 +357,8 @@ class PreflightSpecLoadingTest(unittest.TestCase):
         from sslproxy_ops.commands.up_ready.preflight import _load_preflight_spec
 
         with patch(
-            "sslproxy_ops.commands.up_ready.preflight.Path",
-            return_value=type("FakePath", (), {"exists": staticmethod(lambda: False)})(),
+            "sslproxy_ops.commands.up_ready.preflight.repo_root",
+            return_value=Path("/nonexistent/ssl-proxy"),
         ):
             spec = _load_preflight_spec()
             self.assertEqual(spec.cluster.minimum_ready_nodes, 1)

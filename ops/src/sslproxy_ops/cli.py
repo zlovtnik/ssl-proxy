@@ -30,7 +30,11 @@ app.add_typer(host.app, name="host")
 
 @app.command(
     "stack",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        "help_option_names": [],
+    },
 )
 def stack_command(ctx: typer.Context) -> None:
     """Plan, validate, deploy, inspect, and cut over split Helm releases."""

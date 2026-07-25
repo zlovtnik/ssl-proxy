@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-import socket
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -139,13 +139,7 @@ def preflight(
     results.append(CheckResult("nodes", True, f"{ready} Ready"))
 
     spec_path = (
-        root_dir
-        / "ops"
-        / "src"
-        / "sslproxy_ops"
-        / "commands"
-        / "up_ready"
-        / "preflight_spec.yaml"
+        root_dir / "ops" / "src" / "sslproxy_ops" / "commands" / "up_ready" / "preflight_spec.yaml"
     )
     spec = yaml.safe_load(spec_path.read_text()).get("preflight", {})
     minimum_disk_gb = spec.get("min_disk_space_gb")
@@ -153,15 +147,10 @@ def preflight(
         minimum_bytes = int(minimum_disk_gb) * 1024**3
         for node in nodes:
             node_name = node.get("metadata", {}).get("name", "unknown")
-            advertised = (
-                node.get("status", {})
-                .get("capacity", {})
-                .get("ephemeral-storage", "0")
-            )
+            advertised = node.get("status", {}).get("capacity", {}).get("ephemeral-storage", "0")
             if _storage_bytes(advertised) < minimum_bytes:
                 raise RuntimeError(
-                    f"node/{node_name} advertises less than {minimum_disk_gb}Gi "
-                    "ephemeral-storage"
+                    f"node/{node_name} advertises less than {minimum_disk_gb}Gi ephemeral-storage"
                 )
         results.append(
             CheckResult(
@@ -196,9 +185,7 @@ def preflight(
         ),
         "storageclasses",
     )
-    available_storage = {
-        item.get("metadata", {}).get("name") for item in storage.get("items", [])
-    }
+    available_storage = {item.get("metadata", {}).get("name") for item in storage.get("items", [])}
     for required in spec.get("storage_classes", []):
         if required not in available_storage:
             raise RuntimeError(f"missing StorageClass/{required}")
@@ -268,9 +255,7 @@ def preflight(
                     f"{item.get('kind')}/{item.get('metadata', {}).get('name')} owner={owner}"
                 )
         if conflicts:
-            raise RuntimeError(
-                "ownership conflicts require cutover plan: " + ", ".join(conflicts)
-            )
+            raise RuntimeError("ownership conflicts require cutover plan: " + ", ".join(conflicts))
     results.append(CheckResult("ownership", True, "no unplanned owners"))
     return results
 
@@ -292,10 +277,7 @@ def _resource_ready(resource: dict[str, Any]) -> tuple[bool, str]:
         ready = status.get("numberReady", 0)
         return desired > 0 and ready >= desired, f"{ready}/{desired} ready"
     if kind == "Job":
-        conditions = {
-            item.get("type"): item.get("status")
-            for item in status.get("conditions", [])
-        }
+        conditions = {item.get("type"): item.get("status") for item in status.get("conditions", [])}
         return conditions.get("Complete") == "True", str(conditions)
     return True, "exists"
 
@@ -482,9 +464,10 @@ def smoke(
                 elif check.type == "http":
                     if check.port is None:
                         raise RuntimeError("http check requires port")
+                    check_path = check.path or "/"
 
-                    def http_callback(local_port: int) -> None:
-                        url = f"http://127.0.0.1:{local_port}{check.path or '/'}"
+                    def http_callback(local_port: int, path: str = check_path) -> None:
+                        url = f"http://127.0.0.1:{local_port}{path}"
                         with urllib.request.urlopen(url, timeout=2) as response:
                             if response.status < 200 or response.status >= 400:
                                 raise RuntimeError(f"HTTP {response.status}")

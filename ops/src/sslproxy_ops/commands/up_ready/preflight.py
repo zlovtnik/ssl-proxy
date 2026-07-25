@@ -3,12 +3,12 @@
 Non-mutating verification of Kubernetes prerequisites before deployment.
 Checks fail fast in seconds, before Wave 1 begins.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import yaml
 
@@ -49,7 +49,15 @@ class PreflightSpec:
 
 def _load_preflight_spec() -> PreflightSpec:
     """Load preflight spec from YAML file."""
-    spec_path = repo_root() / "ops" / "src" / "sslproxy_ops" / "commands" / "up_ready" / "preflight_spec.yaml"
+    spec_path = (
+        repo_root()
+        / "ops"
+        / "src"
+        / "sslproxy_ops"
+        / "commands"
+        / "up_ready"
+        / "preflight_spec.yaml"
+    )
     if not spec_path.exists():
         return PreflightSpec()
 
@@ -59,9 +67,7 @@ def _load_preflight_spec() -> PreflightSpec:
     preflight = raw.get("preflight", {})
 
     cluster_raw = preflight.get("cluster", {})
-    cluster = ClusterSpec(
-        minimum_ready_nodes=cluster_raw.get("minimum_ready_nodes", 1)
-    )
+    cluster = ClusterSpec(minimum_ready_nodes=cluster_raw.get("minimum_ready_nodes", 1))
 
     storage_classes = preflight.get("storage_classes", [])
 
@@ -74,19 +80,19 @@ def _load_preflight_spec() -> PreflightSpec:
             else:
                 secrets.append(SecretSpec(namespace="default", name=s))
         elif isinstance(s, dict):
-            secrets.append(SecretSpec(
-                namespace=s.get("namespace", "default"),
-                name=s["name"],
-                key=s.get("key"),
-            ))
+            secrets.append(
+                SecretSpec(
+                    namespace=s.get("namespace", "default"),
+                    name=s["name"],
+                    key=s.get("key"),
+                )
+            )
 
     service_accounts = preflight.get("service_accounts", [])
 
     node_requirements = {}
     for name, req in preflight.get("node_requirements", {}).items():
-        node_requirements[name] = NodeRequirement(
-            labels=req.get("labels", {})
-        )
+        node_requirements[name] = NodeRequirement(labels=req.get("labels", {}))
 
     host_devices = preflight.get("host_devices", [])
     crds = preflight.get("crds", [])
@@ -124,16 +130,16 @@ def check_api_connectivity(ctx: UpReadyContext) -> None:
 def check_nodes_ready(ctx: UpReadyContext, minimum_ready: int) -> None:
     """Verify Ready nodes and reject DiskPressure."""
     result = shell.kubectl(
-        "get", "nodes",
-        "-o", "json",
+        "get",
+        "nodes",
+        "-o",
+        "json",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,
     )
     if result.returncode != 0:
-        raise UpReadyError(
-            f"Failed to query nodes: {(result.stderr or '').strip()}"
-        )
+        raise UpReadyError(f"Failed to query nodes: {(result.stderr or '').strip()}")
 
     try:
         payload = json.loads(result.stdout or "{}")
@@ -141,9 +147,7 @@ def check_nodes_ready(ctx: UpReadyContext, minimum_ready: int) -> None:
         ready_count = 0
         for node in nodes:
             conditions = (node.get("status") or {}).get("conditions", [])
-            disk_pressure = next(
-                (c for c in conditions if c.get("type") == "DiskPressure"), None
-            )
+            disk_pressure = next((c for c in conditions if c.get("type") == "DiskPressure"), None)
             if disk_pressure and disk_pressure.get("status") != "False":
                 node_name = (node.get("metadata") or {}).get("name", "unknown")
                 raise UpReadyError(f"Node {node_name} reports DiskPressure")
@@ -151,20 +155,17 @@ def check_nodes_ready(ctx: UpReadyContext, minimum_ready: int) -> None:
                 if c.get("type") == "Ready" and c.get("status") == "True":
                     ready_count += 1
                     break
-    except json.JSONDecodeError:
-        raise UpReadyError("Failed to parse node status")
+    except json.JSONDecodeError as exc:
+        raise UpReadyError("Failed to parse node status") from exc
 
     if ready_count < minimum_ready:
         raise UpReadyError(
-            f"Insufficient Ready nodes: {ready_count} found, "
-            f"{minimum_ready} required"
+            f"Insufficient Ready nodes: {ready_count} found, {minimum_ready} required"
         )
     step("S01", f"nodes_ready: {ready_count} node(s) Ready (minimum={minimum_ready})")
 
 
-def check_node_requirements(
-    ctx: UpReadyContext, requirements: dict[str, NodeRequirement]
-) -> None:
+def check_node_requirements(ctx: UpReadyContext, requirements: dict[str, NodeRequirement]) -> None:
     """Verify at least one Ready node satisfies each declared label contract."""
 
     for workload, requirement in requirements.items():
@@ -187,9 +188,7 @@ def check_node_requirements(
         except json.JSONDecodeError as exc:
             raise UpReadyError(f"Failed to parse nodes for {workload}") from exc
         if not nodes:
-            raise UpReadyError(
-                f"No node satisfies {workload} labels: {selector or '(none)'}"
-            )
+            raise UpReadyError(f"No node satisfies {workload} labels: {selector or '(none)'}")
     if requirements:
         step("S01", f"node_labels: {len(requirements)} requirement(s) satisfied")
 
@@ -200,16 +199,16 @@ def check_storage_classes(ctx: UpReadyContext, required: list[str]) -> None:
         return
 
     result = shell.kubectl(
-        "get", "storageclasses",
-        "-o", "json",
+        "get",
+        "storageclasses",
+        "-o",
+        "json",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,
     )
     if result.returncode != 0:
-        raise UpReadyError(
-            f"Failed to query StorageClasses: {(result.stderr or '').strip()}"
-        )
+        raise UpReadyError(f"Failed to query StorageClasses: {(result.stderr or '').strip()}")
 
     try:
         payload = json.loads(result.stdout or "{}")
@@ -218,8 +217,8 @@ def check_storage_classes(ctx: UpReadyContext, required: list[str]) -> None:
             name = (sc.get("metadata") or {}).get("name")
             if name:
                 available.add(name)
-    except json.JSONDecodeError:
-        raise UpReadyError("Failed to parse StorageClasses")
+    except json.JSONDecodeError as exc:
+        raise UpReadyError("Failed to parse StorageClasses") from exc
 
     missing = [name for name in required if name not in available]
     if missing:
@@ -238,9 +237,13 @@ def check_secrets(ctx: UpReadyContext, required: list[SecretSpec]) -> None:
     missing: list[str] = []
     for secret in required:
         result = shell.kubectl(
-            "get", "secret", secret.name,
-            "--namespace", secret.namespace,
-            "-o", "json",
+            "get",
+            "secret",
+            secret.name,
+            "--namespace",
+            secret.namespace,
+            "-o",
+            "json",
             context=ctx.settings.kube_context,
             check=False,
             capture=True,
@@ -253,16 +256,12 @@ def check_secrets(ctx: UpReadyContext, required: list[SecretSpec]) -> None:
             try:
                 data = json.loads(result.stdout).get("data", {})
                 if secret.key not in data or not data[secret.key]:
-                    missing.append(
-                        f"{secret.namespace}/{secret.name} (key={secret.key})"
-                    )
+                    missing.append(f"{secret.namespace}/{secret.name} (key={secret.key})")
             except (json.JSONDecodeError, TypeError):
                 missing.append(f"{secret.namespace}/{secret.name}")
 
     if missing:
-        raise UpReadyError(
-            f"Missing {len(missing)} required Secret(s): {', '.join(missing)}"
-        )
+        raise UpReadyError(f"Missing {len(missing)} required Secret(s): {', '.join(missing)}")
     step("S01", f"secrets: {len(required)} required secret(s) present")
 
 
@@ -278,8 +277,11 @@ def check_service_accounts(ctx: UpReadyContext, required: list[str]) -> None:
         sa_name = parts[-1]
 
         result = shell.kubectl(
-            "get", "serviceaccount", sa_name,
-            "--namespace", namespace,
+            "get",
+            "serviceaccount",
+            sa_name,
+            "--namespace",
+            namespace,
             context=ctx.settings.kube_context,
             check=False,
             capture=True,
@@ -288,9 +290,7 @@ def check_service_accounts(ctx: UpReadyContext, required: list[str]) -> None:
             missing.append(name)
 
     if missing:
-        raise UpReadyError(
-            f"Missing required ServiceAccount(s): {', '.join(missing)}"
-        )
+        raise UpReadyError(f"Missing required ServiceAccount(s): {', '.join(missing)}")
     step("S01", f"service_accounts: {len(required)} required SA(s) present")
 
 
@@ -311,16 +311,16 @@ def check_crds(ctx: UpReadyContext, required: list[str]) -> None:
         return
 
     result = shell.kubectl(
-        "get", "crds",
-        "-o", "json",
+        "get",
+        "crds",
+        "-o",
+        "json",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,
     )
     if result.returncode != 0:
-        raise UpReadyError(
-            f"Failed to query CRDs: {(result.stderr or '').strip()}"
-        )
+        raise UpReadyError(f"Failed to query CRDs: {(result.stderr or '').strip()}")
 
     try:
         payload = json.loads(result.stdout or "{}")
@@ -329,14 +329,12 @@ def check_crds(ctx: UpReadyContext, required: list[str]) -> None:
             name = (crd.get("metadata") or {}).get("name")
             if name:
                 available.add(name)
-    except json.JSONDecodeError:
-        raise UpReadyError("Failed to parse CRDs")
+    except json.JSONDecodeError as exc:
+        raise UpReadyError("Failed to parse CRDs") from exc
 
     missing = [name for name in required if name not in available]
     if missing:
-        raise UpReadyError(
-            f"Missing required CRD(s): {', '.join(missing)}"
-        )
+        raise UpReadyError(f"Missing required CRD(s): {', '.join(missing)}")
     step("S01", f"crds: {len(required)} required CRD(s) present")
 
 
@@ -346,8 +344,10 @@ def check_disk_space(ctx: UpReadyContext, min_gb: int | None) -> None:
         return
 
     result = shell.kubectl(
-        "get", "nodes",
-        "-o", "json",
+        "get",
+        "nodes",
+        "-o",
+        "json",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,
@@ -366,9 +366,7 @@ def check_disk_space(ctx: UpReadyContext, min_gb: int | None) -> None:
         raw = (node.get("status") or {}).get("capacity", {}).get("ephemeral-storage", "0")
         match = re.fullmatch(r"(\d+)Ki", str(raw))
         if not match or int(match.group(1)) < minimum_kib:
-            raise UpReadyError(
-                f"Node {node_name} advertises insufficient ephemeral-storage: {raw}"
-            )
+            raise UpReadyError(f"Node {node_name} advertises insufficient ephemeral-storage: {raw}")
     step("S01", f"disk_capacity: {min_gb}Gi advertised minimum verified")
 
 
@@ -379,9 +377,12 @@ def check_conflicting_release(ctx: UpReadyContext, check_enabled: bool) -> None:
 
     result = shell.helm(
         "list",
-        "--namespace", ctx.settings.kube_namespace,
-        "--filter", ctx.settings.helm_release,
-        "-o", "json",
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--filter",
+        ctx.settings.helm_release,
+        "-o",
+        "json",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,

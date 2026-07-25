@@ -23,8 +23,8 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_diagnostics,
     kubernetes_up,
     node_condition_problems,
-    prepare_helm_release,
     preflight_required_secrets,
+    prepare_helm_release,
     proxy_workload,
     publish_registry_images,
     recent_kubernetes_warning_lines,
@@ -195,9 +195,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             stdout='{"info":{"status":"deployed"}}',
             stderr="",
         )
-        upgraded = subprocess.CompletedProcess(
-            args=["helm"], returncode=0, stdout="", stderr=""
-        )
+        upgraded = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
@@ -224,25 +222,17 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
         self.assertIn("schemaMigrator.backend.image.tag=latest", args)
         self.assertIn("schemaMigrator.ui.image.tag=latest", args)
-        self.assertIn(
-            "schemaMigrator.ui.browserOrigin=http://192.168.1.221:8081", args
-        )
+        self.assertIn("schemaMigrator.ui.browserOrigin=http://192.168.1.221:8081", args)
         self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
         self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
-        self.assertIn(
-            "schemaMigrator.keycloak.browserOrigin=http://192.168.1.221:8180", args
-        )
-        self.assertIn(
-            "schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args
-        )
+        self.assertIn("schemaMigrator.keycloak.browserOrigin=http://192.168.1.221:8180", args)
+        self.assertIn("schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args)
         self.assertIn(
             "global.shared.keycloak.issuer=http://192.168.1.221:8180/realms/middleware",
             args,
         )
         self.assertIn("atherosSearch.ui.image.tag=latest", args)
-        self.assertIn(
-            "atherosSearch.embeddingBackend=http://192.168.1.221:8083", args
-        )
+        self.assertIn("atherosSearch.embeddingBackend=http://192.168.1.221:8083", args)
         self.assertEqual(args.count("--set-literal"), 17)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
@@ -290,9 +280,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         missing = subprocess.CompletedProcess(
             args=["helm"], returncode=1, stdout="", stderr="release not found"
         )
-        installed = subprocess.CompletedProcess(
-            args=["helm"], returncode=0, stdout="", stderr=""
-        )
+        installed = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
@@ -339,9 +327,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             stdout='{"info":{"status":"uninstalling"}}',
             stderr="",
         )
-        completed = subprocess.CompletedProcess(
-            args=["helm"], returncode=0, stdout="", stderr=""
-        )
+        completed = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
@@ -371,15 +357,17 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
-        present_stdout = json.dumps({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "data": {
-                "password": "cGFzc3dvcmQ=",
-                "ca.crt": "Y2EuY3J0",
-                "dsn": "ZHNu",
-            },
-        })
+        present_stdout = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {
+                    "password": "cGFzc3dvcmQ=",
+                    "ca.crt": "Y2EuY3J0",
+                    "dsn": "ZHNu",
+                },
+            }
+        )
         present = subprocess.CompletedProcess(
             args=["kubectl"], returncode=0, stdout=present_stdout, stderr=""
         )
@@ -406,15 +394,17 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
-        present_stdout = json.dumps({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "data": {
-                "password": "cGFzc3dvcmQ=",
-                "ca.crt": "Y2EuY3J0",
-                "dsn": "ZHNu",
-            },
-        })
+        present_stdout = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {
+                    "password": "cGFzc3dvcmQ=",
+                    "ca.crt": "Y2EuY3J0",
+                    "dsn": "ZHNu",
+                },
+            }
+        )
         present = subprocess.CompletedProcess(
             args=["kubectl"], returncode=0, stdout=present_stdout, stderr=""
         )
@@ -596,9 +586,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             ),
             stderr="",
         )
-        completed = subprocess.CompletedProcess(
-            args=["tool"], returncode=0, stdout="", stderr=""
-        )
+        completed = subprocess.CompletedProcess(args=["tool"], returncode=0, stdout="", stderr="")
         missing = subprocess.CompletedProcess(
             args=["kubectl"], returncode=1, stdout="", stderr="not found"
         )
@@ -675,8 +663,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             sync_kubernetes_secrets(ctx)
 
         groups = {
-            call.args[1]: [key for key, _path in call.args[2]]
-            for call in values.call_args_list
+            call.args[1]: [key for key, _path in call.args[2]] for call in values.call_args_list
         }
         self.assertEqual(
             groups["schema-migrator-backend"],
@@ -705,17 +692,12 @@ class UpReadyKubernetesTest(unittest.TestCase):
         pinned_images = {
             "quay.io/keycloak/keycloak:26.2.5",
             "traefik:v3.6.2",
-            "postgres:16.9-alpine3.21",
             "busybox:1.37.0",
         }
         for image in pinned_images:
             self.assertIn(image, makefile)
 
-        self.assertEqual(
-            f"{chart_values['stateStore']['bootstrapImage']['repository']}:"
-            f"{chart_values['stateStore']['bootstrapImage']['tag']}",
-            "postgres:16.9-alpine3.21",
-        )
+        self.assertNotIn("bootstrapImage", chart_values["stateStore"])
         self.assertEqual(
             f"{chart_values['keycloak']['image']['repository']}:"
             f"{chart_values['keycloak']['image']['tag']}",
@@ -742,9 +724,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         )
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[0].args[0])
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[1].args[0])
-        self.assertIn(
-            "ATHEROS_SEARCH_UI_API_BASE=", mocked_run.call_args_list[0].args[0]
-        )
+        self.assertIn("ATHEROS_SEARCH_UI_API_BASE=", mocked_run.call_args_list[0].args[0])
 
     def test_registry_publish_requires_validated_settings(self):
         settings = Settings()
@@ -775,9 +755,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         ctx = UpReadyContext(settings=settings)
 
         with (
-            patch(
-                "sslproxy_ops.commands.up_ready.apply_profile_runtime_env"
-            ) as mocked_profile,
+            patch("sslproxy_ops.commands.up_ready.apply_profile_runtime_env") as mocked_profile,
             patch("sslproxy_ops.commands.up_ready.helm_upgrade") as mocked_upgrade,
         ):
             self.assertTrue(auto_fix(ctx, "profile_obfuscation_mismatch"))
@@ -892,9 +870,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
                         {
                             "metadata": {"name": "node-bad"},
                             "spec": {},
-                            "status": {
-                                "conditions": [{"type": "Ready", "status": "False"}]
-                            },
+                            "status": {"conditions": [{"type": "Ready", "status": "False"}]},
                         }
                     ]
                 }
@@ -970,6 +946,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         for status_args, workload in zip(
             statuses,
             ["deployment.apps/ssl-proxy-proxy", "daemonset.apps/ssl-proxy-atheros-sensor"],
+            strict=True,
         ):
             self.assertEqual(status_args[2:4], ("rollout", "status"))
             self.assertIn(workload, status_args)
