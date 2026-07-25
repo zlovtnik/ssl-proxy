@@ -473,6 +473,7 @@ def _write_tidb_tls_material(
 def _openssl_ok(*args: str) -> subprocess.CompletedProcess[str]:
     return shell.run(
         ["openssl", *args],
+        cwd=repo_root(),
         check=False,
         capture=True,
     )
@@ -565,6 +566,7 @@ def _generate_tidb_tls_material(
     """Generate a new CA and TiDB server keypair in a private directory."""
     shell.run(
         ["openssl", "genrsa", "-out", str(cert_path / "ca.key"), "2048"],
+        cwd=repo_root(),
         check=True,
         capture=True,
     )
@@ -602,6 +604,7 @@ authorityKeyIdentifier = keyid:always,issuer
             "-extensions",
             "v3_ca",
         ],
+        cwd=repo_root(),
         check=True,
         capture=True,
     )
@@ -645,6 +648,7 @@ DNS.2 = ssl-proxy-tidb
             "-config",
             str(server_config),
         ],
+        cwd=repo_root(),
         check=True,
         capture=True,
     )
@@ -669,6 +673,7 @@ DNS.2 = ssl-proxy-tidb
             "-extensions",
             "v3_server",
         ],
+        cwd=repo_root(),
         check=True,
         capture=True,
     )

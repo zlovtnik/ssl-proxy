@@ -415,6 +415,10 @@ Before Helm starts, it verifies that containerd can pull a mirrored image from
 `REGISTRY`; `UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT` controls the default 45-second
 probe timeout. Helm upgrades use server-side apply, rollback on failure, bounded
 history, Job waiting, and an explicit readiness timeout.
+Existing valid TiDB TLS Secrets are reused. Set
+`UP_READY_ROTATE_TIDB_TLS=true` only when intentionally rotating the TiDB CA and
+server pair; the operator validates and rolls the trust boundary in TiDB-first
+order with rollback to the previous pair on failure.
 Use `UP_READY_DEPLOYMENT_TARGET=compose` to retain the previous Compose
 workflow.
 

@@ -185,6 +185,13 @@ During `make up-ready` the Kubernetes flow now also:
 
 - warns on unhealthy cluster nodes in preflight (NotReady, memory/disk/PID
   pressure, cordoned) without blocking the deploy;
+- schedules the Atheros sensor DaemonSet on every eligible node without
+  requiring a `wiretrap.io/sensor` label;
+- reuses the existing valid TiDB CA/server certificate pair by default. It
+  validates the key match, CA signature, service DNS SANs, and a 30-day
+  renewal window. Set `UP_READY_ROTATE_TIDB_TLS=true` only for an intentional
+  rotation; an existing deployment is restarted and verified in TiDB-first
+  order, with the previous Secret pair restored if rollout fails;
 - after `helm upgrade`, explicitly runs `kubectl rollout restart` and waits on
   `rollout status` for every release Deployment and DaemonSet (StatefulSets
   such as redpanda/minio are intentionally left to the rollout-revision
@@ -192,3 +199,11 @@ During `make up-ready` the Kubernetes flow now also:
 - verifies the coordinator (`/actuator/health`), schema-migrator backend
   (`/api/health`), and keycloak (`/health/ready`) endpoints before finishing.
   Override the per-workload wait with `UP_READY_ROLLOUT_STATUS_TIMEOUT`.
+
+The split-release path never adopts resources implicitly. If the compatibility
+umbrella owns the live stack, `make up-ready-stackctl` stops before TLS mutation
+and prints the `ops stack cutover plan` command. Create and inspect that
+UID-bound plan, drain traffic, then run guarded `cutover apply` with the plan
+digest and exact context/release confirmations. Finalize only after status and
+smoke checks pass; use `cutover rollback` if a gate fails. Do not uninstall the
+umbrella release or delete TiDB PVCs during this migration.

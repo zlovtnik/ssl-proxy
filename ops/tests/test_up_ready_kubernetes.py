@@ -15,11 +15,12 @@ from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
     PREFLIGHT_REQUIRED_SECRETS,
+    _generate_tidb_tls_material,
+    _validate_tidb_tls_material,
     apply_secret_value,
     apply_secret_values,
     dashboard_set_file_args,
     ensure_tidb_ready,
-    _generate_tidb_tls_material,
     helm_pending_recovery_command,
     helm_release_status,
     helm_upgrade,
@@ -102,6 +103,56 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
         apply_tls.assert_not_called()
         self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+
+    def test_tidb_tls_validation_rejects_wrong_key_and_missing_san(self):
+        with (
+            tempfile.TemporaryDirectory() as first,
+            tempfile.TemporaryDirectory() as second,
+        ):
+            ca, cert, key = _generate_tidb_tls_material(
+                Path(first),
+                "ssl-proxy-tidb.default.svc.cluster.local",
+            )
+            _other_ca, _other_cert, other_key = _generate_tidb_tls_material(
+                Path(second),
+                "ssl-proxy-tidb.default.svc.cluster.local",
+            )
+            valid, detail = _validate_tidb_tls_material(
+                ca,
+                cert,
+                other_key,
+                ("ssl-proxy-tidb.default.svc.cluster.local",),
+            )
+            self.assertFalse(valid)
+            self.assertIn("do not match", detail)
+
+            valid, detail = _validate_tidb_tls_material(
+                ca,
+                cert,
+                key,
+                ("tidb.other.svc.cluster.local",),
+            )
+            self.assertFalse(valid)
+            self.assertIn("lacks DNS SAN", detail)
+
+    def test_tidb_tls_validation_rejects_near_expiry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ca, cert, key = _generate_tidb_tls_material(
+                Path(directory),
+                "ssl-proxy-tidb.default.svc.cluster.local",
+            )
+            with patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.TIDB_TLS_RENEWAL_SECONDS",
+                20 * 365 * 24 * 60 * 60,
+            ):
+                valid, detail = _validate_tidb_tls_material(
+                    ca,
+                    cert,
+                    key,
+                    ("ssl-proxy-tidb.default.svc.cluster.local",),
+                )
+        self.assertFalse(valid)
+        self.assertIn("expires within 30 days", detail)
 
     def test_sync_tidb_tls_forced_rotation_applies_new_pair(self):
         settings = Settings()
