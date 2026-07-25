@@ -264,3 +264,36 @@ class TestResolveDependencies:
         config = _minimal_config()
         waves = resolve_dependencies(config)
         assert len(waves) == 3
+
+
+def test_detects_unknown_dependency():
+    config = StackConfig(
+        version=1,
+        components={
+            "a": Component(
+                type="helm",
+                release="a",
+                chart="./charts/a",
+                depends_on=["nonexistent"],
+            ),
+        },
+    )
+    from stackctl import validate_config
+    errors = validate_config(config)
+    assert len(errors) == 1
+    assert "nonexistent" in errors[0]
+    assert "unknown" in errors[0].lower()
+
+
+def test_detects_cycle():
+    graph = {"a": ["b"], "b": ["c"], "c": ["a"]}
+    cycles = detect_cycles(graph)
+    assert len(cycles) >= 1
+    cycle_nodes = set(cycles[0])
+    assert cycle_nodes == {"a", "b", "c"}
+
+
+def test_calculates_expected_five_waves():
+    config = _full_stack_config()
+    waves = topological_sort_waves(config)
+    assert len(waves) == 5

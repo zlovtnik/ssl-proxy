@@ -447,66 +447,69 @@ def build_parser() -> argparse.ArgumentParser:
         prog="stackctl",
         description="Stack deployment orchestrator",
     )
-    parser.add_argument(
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+
+    # Shared flags available on every subcommand
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--file",
         default="stackctl/stack.yaml",
         help="Path to stack configuration file (default: stackctl/stack.yaml)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--kube-context",
         help="Kubernetes context to use",
     )
-    parser.add_argument(
+    common.add_argument(
         "--kubeconfig",
         help="Path to kubeconfig file",
     )
-    parser.add_argument(
+    common.add_argument(
         "--namespace",
         help="Override default namespace",
     )
-    parser.add_argument(
+    common.add_argument(
         "--set",
         action="append",
         default=[],
         metavar="KEY=VALUE",
         help="Set a value (can be repeated)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--set-string",
         action="append",
         default=[],
         metavar="KEY=VALUE",
         help="Set a string value (can be repeated)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--set-literal",
         action="append",
         default=[],
         metavar="KEY=VALUE",
         help="Set a literal value (can be repeated)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--component",
         help="Target a specific component (includes its dependencies)",
     )
-    parser.add_argument(
+    common.add_argument(
         "--from-wave",
         type=int,
         help="Start deployment from a specific wave number",
     )
-    parser.add_argument(
+    common.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose output",
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-
-    subparsers.add_parser("plan", help="Print the deployment plan")
-    subparsers.add_parser("validate", help="Validate configuration")
-    subparsers.add_parser("dry-run", help="Dry-run deployment")
-    subparsers.add_parser("deploy", help="Deploy components")
-    subparsers.add_parser("status", help="Show deployment status")
+    subparsers.add_parser("plan", parents=[common], help="Print the deployment plan")
+    subparsers.add_parser("validate", parents=[common], help="Validate configuration")
+    subparsers.add_parser("dry-run", parents=[common], help="Dry-run deployment")
+    subparsers.add_parser("deploy", parents=[common], help="Deploy components")
+    subparsers.add_parser("status", parents=[common], help="Show deployment status")
 
     return parser
 
