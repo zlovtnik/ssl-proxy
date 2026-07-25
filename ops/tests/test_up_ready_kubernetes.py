@@ -484,6 +484,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_pending_recovery_history_guidance_includes_context_without_candidate(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
+        settings.kube_namespace = "ssl-proxy"
         ctx = UpReadyContext(settings=settings)
         histories = (
             subprocess.CompletedProcess(
