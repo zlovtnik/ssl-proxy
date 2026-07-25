@@ -6,13 +6,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ .Release.Name }}-tidb-schema-{{ .Values.global.rolloutRevision | default (.Release.Revision | toString) | sha256sum | trunc 10 }}
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   labels: {app.kubernetes.io/name: tidb-schema-executor, app.kubernetes.io/instance: {{ .Release.Name }}, ssl-proxy.io/tidb-client: "true"}
-  annotations:
-    helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "-10"
-    helm.sh/hook-delete-policy: before-hook-creation
 spec:
   backoffLimit: {{ .Values.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}

@@ -177,32 +177,134 @@ def reset_prepared_charts() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _delete_job_if_exists(
-    release: str, namespace: str, context: str | None, kubeconfig: str | None
-) -> None:
-    """Delete a Job by release name before helm upgrade (for helm-job rerun=replace)."""
+def _get_job_uid(
+    name: str, namespace: str, context: str | None, kubeconfig: str | None
+) -> str | None:
+    """Get the UID of a Job, or None if it does not exist."""
     result = kubectl(
         "get",
         "job",
-        release,
+        name,
         "-n",
         namespace,
+        "-o",
+        "jsonpath={.metadata.uid}",
         "--ignore-not-found",
         context=context,
         kubeconfig=kubeconfig,
         check=False,
     )
     if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return None
+
+
+def _replace_job(
+    name: str, namespace: str, context: str | None, kubeconfig: str | None
+) -> str | None:
+    """Replace a Job by recording its UID, deleting it, and returning the old UID.
+
+    Returns the old UID if the Job existed, or None if it did not.
+    """
+    old_uid = _get_job_uid(name, namespace, context, kubeconfig)
+    if old_uid is not None:
         kubectl(
             "delete",
             "job",
-            release,
+            name,
             "-n",
             namespace,
             "--wait=true",
             context=context,
             kubeconfig=kubeconfig,
         )
+    return old_uid
+
+
+def _wait_for_job_with_new_uid(
+    name: str,
+    namespace: str,
+    old_uid: str | None,
+    timeout_seconds: int,
+    context: str | None,
+    kubeconfig: str | None,
+) -> str:
+    """Poll until a Job exists with a UID different from old_uid.
+
+    Returns the new UID.
+    Raises RuntimeError on timeout.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        new_uid = _get_job_uid(name, namespace, context, kubeconfig)
+        if new_uid is not None and new_uid != old_uid:
+            return new_uid
+        time.sleep(1)
+    raise RuntimeError(
+        f"Timed out waiting for Job {name!r} to appear with a new UID "
+        f"(old_uid={old_uid})"
+    )
+
+
+def _wait_for_job_complete_or_fail(
+    name: str,
+    namespace: str,
+    timeout_seconds: int,
+    context: str | None,
+    kubeconfig: str | None,
+) -> None:
+    """Wait for a Job to reach Complete or Failed condition.
+
+    Raises RuntimeError on Failed condition or timeout.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        result = kubectl(
+            "get",
+            "job",
+            name,
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.status.conditions[?(@.type==\"Complete\"||@.type==\"Failed\")].type}",
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            conditions = result.stdout.strip().split()
+            if "Failed" in conditions:
+                raise RuntimeError(f"Job {name!r} reached Failed condition")
+            if "Complete" in conditions:
+                return
+        time.sleep(2)
+    raise RuntimeError(f"Timed out waiting for Job {name!r} to complete")
+
+
+def _capture_job_logs(
+    name: str,
+    namespace: str,
+    run_dir: Path,
+    context: str | None,
+    kubeconfig: str | None,
+) -> None:
+    """Capture Job logs to the run directory on failure."""
+    log_file = run_dir / f"{name}.log"
+    try:
+        result = kubectl(
+            "logs",
+            "job/" + name,
+            "-n",
+            namespace,
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if result.stdout:
+            log_file.write_text(result.stdout)
+            os.chmod(log_file, 0o600)
+    except Exception:
+        pass
 
 
 def _helm_release_status(
@@ -237,6 +339,7 @@ def _helm_upgrade(
     context: str | None,
     kubeconfig: str | None,
     dry_run: bool = False,
+    wait_for_jobs: bool = True,
 ) -> None:
     """Run helm upgrade --install for a component."""
     release = component.release
@@ -251,7 +354,9 @@ def _helm_upgrade(
     args: list[str] = [operation, release, chart]
     args.extend(["-n", namespace, "--create-namespace"])
     args.extend(["-f", str(values_file)])
-    args.extend(["--wait", "--wait-for-jobs"])
+    args.extend(["--wait"])
+    if wait_for_jobs:
+        args.append("--wait-for-jobs")
 
     timeout = component.timeout or "10m"
     args.extend(["--timeout", timeout])
@@ -332,10 +437,11 @@ def deploy_component(
             yaml.dump(effective, f, default_flow_style=False)
         os.chmod(values_file, 0o600)
 
-        # 4. Delete existing Job for helm-job rerun=replace
+        # 4. Replace existing Job for helm-job rerun=replace (record old UID)
+        old_job_uid: str | None = None
         if component.type == "helm-job" and component.job:
             if component.job.rerun == "replace":
-                _delete_job_if_exists(
+                old_job_uid = _replace_job(
                     component.release,
                     options.namespace,
                     options.context,
@@ -343,6 +449,8 @@ def deploy_component(
                 )
 
         # 5. Helm upgrade --install
+        # For helm-job, skip --wait-for-jobs since we do our own UID-aware wait
+        is_helm_job = component.type == "helm-job"
         _helm_upgrade(
             component,
             effective,
@@ -351,9 +459,39 @@ def deploy_component(
             options.context,
             options.kubeconfig,
             dry_run=options.dry_run,
+            wait_for_jobs=not is_helm_job,
         )
 
-        # 6. Wait for gates (skip in dry-run)
+        # 6. For helm-job: wait for new UID, then wait for Complete/Fail
+        if is_helm_job and not options.dry_run:
+            timeout_seconds = int(parse_timeout_seconds(component.timeout or "10m").rstrip("s"))
+            _wait_for_job_with_new_uid(
+                component.release,
+                options.namespace,
+                old_job_uid,
+                timeout_seconds,
+                options.context,
+                options.kubeconfig,
+            )
+            try:
+                _wait_for_job_complete_or_fail(
+                    component.release,
+                    options.namespace,
+                    timeout_seconds,
+                    options.context,
+                    options.kubeconfig,
+                )
+            except RuntimeError:
+                _capture_job_logs(
+                    component.release,
+                    options.namespace,
+                    run_dir,
+                    options.context,
+                    options.kubeconfig,
+                )
+                raise
+
+        # 7. Wait for gates (skip in dry-run)
         if not options.dry_run:
             wait_for_gates(
                 component.gates,
