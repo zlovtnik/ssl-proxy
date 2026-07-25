@@ -18,6 +18,8 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     apply_secret_value,
     apply_secret_values,
     dashboard_set_file_args,
+    ensure_tidb_ready,
+    _generate_tidb_tls_material,
     helm_pending_recovery_command,
     helm_release_status,
     helm_upgrade,
@@ -32,6 +34,8 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     release_workloads,
     resolve_kube_context,
     rollout_restart_release_workloads,
+    stackctl_preflight,
+    sync_tidb_secrets,
     sync_kubernetes_secrets,
     verify_kubernetes_registry_pull,
     warn_unhealthy_nodes,
@@ -44,6 +48,161 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_kubernetes_is_the_default_deployment_target(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(Settings().deployment_target, "kubernetes")
+
+    def test_tidb_tls_rotation_is_opt_in(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(Settings().rotate_tidb_tls)
+        with patch.dict(
+            os.environ,
+            {"UP_READY_ROTATE_TIDB_TLS": "true"},
+            clear=True,
+        ):
+            self.assertTrue(Settings().rotate_tidb_tls)
+
+    @staticmethod
+    def _tidb_tls_secret_payloads(directory: Path) -> tuple[dict, dict]:
+        ca, cert, key = _generate_tidb_tls_material(
+            directory,
+            "ssl-proxy-tidb.default.svc.cluster.local",
+        )
+        return (
+            {
+                "metadata": {"name": "tidb-client-ca"},
+                "type": "Opaque",
+                "data": {"ca.crt": base64.b64encode(ca.read_bytes()).decode()},
+            },
+            {
+                "metadata": {"name": "tidb-server-tls"},
+                "type": "kubernetes.io/tls",
+                "data": {
+                    "tls.crt": base64.b64encode(cert.read_bytes()).decode(),
+                    "tls.key": base64.b64encode(key.read_bytes()).decode(),
+                },
+            },
+        )
+
+    def test_sync_tidb_tls_reuses_valid_existing_pair(self):
+        ctx = UpReadyContext(settings=Settings())
+        with tempfile.TemporaryDirectory() as directory:
+            ca_payload, tls_payload = self._tidb_tls_secret_payloads(Path(directory))
+            with (
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
+                    side_effect=[ca_payload, tls_payload],
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+                ) as apply_tls,
+            ):
+                self.assertTrue(sync_tidb_secrets(ctx))
+
+        apply_tls.assert_not_called()
+        self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+
+    def test_sync_tidb_tls_forced_rotation_applies_new_pair(self):
+        settings = Settings()
+        settings.rotate_tidb_tls = True
+        ctx = UpReadyContext(settings=settings)
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
+                return_value=None,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+            ) as apply_tls,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=False,
+            ),
+        ):
+            self.assertTrue(sync_tidb_secrets(ctx))
+
+        apply_tls.assert_called_once()
+        self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+
+    def test_sync_tidb_tls_restores_previous_pair_when_rollout_fails(self):
+        settings = Settings()
+        settings.rotate_tidb_tls = True
+        ctx = UpReadyContext(settings=settings)
+        with tempfile.TemporaryDirectory() as directory:
+            ca_payload, tls_payload = self._tidb_tls_secret_payloads(Path(directory))
+            with (
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
+                    side_effect=[ca_payload, tls_payload],
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._restart_tidb_tls_consumers",
+                    side_effect=[UpReadyError("rollout failed"), None],
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._apply_secret_payload"
+                ) as restore,
+                self.assertRaisesRegex(UpReadyError, "previous pair was restored"),
+            ):
+                sync_tidb_secrets(ctx)
+
+        self.assertEqual(restore.call_count, 2)
+
+    def test_ensure_tidb_ready_recovers_stale_checksum(self):
+        ctx = UpReadyContext(settings=Settings())
+        ctx.tidb_tls_cert_checksum = "current"
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._tidb_statefulset_tls_checksum",
+                return_value="stale",
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._restart_tidb_tls_consumers"
+            ) as restart,
+        ):
+            ensure_tidb_ready(ctx)
+
+        restart.assert_called_once_with(ctx)
+        self.assertTrue(ctx.tidb_tls_rollout_complete)
+
+    def test_stackctl_ownership_conflict_requires_explicit_cutover(self):
+        settings = Settings()
+        settings.kube_context = "default"
+        ctx = UpReadyContext(settings=settings)
+        with (
+            patch("sslproxy_ops.stack.core.load_config"),
+            patch(
+                "sslproxy_ops.stack.cluster.preflight",
+                side_effect=RuntimeError(
+                    "ownership conflicts require cutover plan: Deployment/coordinator"
+                ),
+            ),
+            self.assertRaisesRegex(
+                UpReadyError,
+                r"cutover plan.*--kube-context default.*will not take ownership automatically",
+            ),
+        ):
+            stackctl_preflight(ctx)
 
     def test_dashboard_files_cover_the_compose_observability_assets(self):
         args = dashboard_set_file_args()
@@ -1032,6 +1191,10 @@ class UpReadyKubernetesTest(unittest.TestCase):
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.sync_tidb_secrets",
                 return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=False,
             ),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.ensure_tidb_ready",

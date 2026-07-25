@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     rollout_status_timeout: str = Field(
         default="10m", validation_alias="UP_READY_ROLLOUT_STATUS_TIMEOUT"
     )
+    rotate_tidb_tls: bool = Field(
+        default=False, validation_alias="UP_READY_ROTATE_TIDB_TLS"
+    )
 
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")

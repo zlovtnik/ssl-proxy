@@ -37,10 +37,9 @@ preflight:
       name: minio-credentials
       key: secret-key
 
-  node_requirements:
-    atheros-sensor:
-      labels:
-        wiretrap.io/sensor: "true"
+  # The Atheros sensor is a DaemonSet and intentionally runs on every
+  # schedulable node. No opt-in node label is required.
+  node_requirements: {}
 
   host_devices: []
 

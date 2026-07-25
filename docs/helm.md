@@ -594,10 +594,8 @@ preflight:
   service_accounts:
     - default/ssl-proxy
 
-  node_requirements:
-    atheros-sensor:
-      labels:
-        wiretrap.io/sensor: "true"
+  # atheros-sensor is a DaemonSet scheduled on every eligible node.
+  node_requirements: {}
 ```
 
 Add checks for:

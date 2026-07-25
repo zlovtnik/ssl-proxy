@@ -21,6 +21,13 @@ from sslproxy_ops.util.ini import peer_names, trim_key_value
 
 HELM_PENDING_SETTLE_ATTEMPTS = 5
 ROLLOUT_RESTART_KINDS = "deployments,daemonsets"
+TIDB_TLS_RENEWAL_SECONDS = 30 * 24 * 60 * 60
+TIDB_TLS_CLIENT_DEPLOYMENTS = (
+    "ssl-proxy-coordinator",
+    "ssl-proxy-atheros-search",
+    "ssl-proxy-schema-migrator-backend",
+    "ssl-proxy-schema-migrator-keycloak",
+)
 
 
 def release_fullname(ctx: UpReadyContext) -> str:
@@ -392,6 +399,138 @@ def _secret_exists(name: str, namespace: str, context: str | None) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def _secret_payload(
+    name: str,
+    namespace: str,
+    context: str | None,
+) -> dict | None:
+    """Return a Secret as JSON, or None when it does not exist."""
+    result = shell.kubectl(
+        "get",
+        "secret",
+        name,
+        "--namespace",
+        namespace,
+        "-o",
+        "json",
+        context=context,
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise UpReadyError(f"Could not parse Kubernetes Secret/{name}") from exc
+    return payload if payload.get("metadata", {}).get("name") else None
+
+
+def _secret_bytes(payload: dict, name: str, key: str) -> bytes:
+    encoded = (payload.get("data") or {}).get(key)
+    if not encoded:
+        raise UpReadyError(f"Kubernetes Secret/{name} lacks key {key!r}")
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise UpReadyError(
+            f"Kubernetes Secret/{name} has invalid base64 for key {key!r}"
+        ) from exc
+
+
+def _apply_secret_payload(ctx: UpReadyContext, payload: dict) -> None:
+    """Restore a previously captured Secret without logging its data."""
+    metadata = payload.get("metadata") or {}
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": metadata["name"],
+            "namespace": ctx.settings.kube_namespace,
+        },
+        "type": payload.get("type", "Opaque"),
+        "data": payload.get("data") or {},
+    }
+    _apply_rendered_resource(ctx, json.dumps(manifest))
+
+
+def _write_tidb_tls_material(
+    directory: Path,
+    ca: bytes,
+    cert: bytes,
+    key: bytes,
+) -> tuple[Path, Path, Path]:
+    ca_path = directory / "ca.crt"
+    cert_path = directory / "tidb-server.crt"
+    key_path = directory / "tidb-server.key"
+    ca_path.write_bytes(ca)
+    cert_path.write_bytes(cert)
+    key_path.write_bytes(key)
+    key_path.chmod(0o600)
+    return ca_path, cert_path, key_path
+
+
+def _openssl_ok(*args: str) -> subprocess.CompletedProcess[str]:
+    return shell.run(
+        ["openssl", *args],
+        check=False,
+        capture=True,
+    )
+
+
+def _validate_tidb_tls_material(
+    ca_path: Path,
+    cert_path: Path,
+    key_path: Path,
+    expected_hosts: tuple[str, ...],
+) -> tuple[bool, str]:
+    """Validate parsing, expiry, trust, key matching, and required SANs."""
+    for subject, path in (("CA", ca_path), ("server certificate", cert_path)):
+        parsed = _openssl_ok("x509", "-in", str(path), "-noout")
+        if parsed.returncode != 0:
+            return False, f"{subject} is not a valid X.509 certificate"
+        current = _openssl_ok(
+            "x509",
+            "-in",
+            str(path),
+            "-checkend",
+            str(TIDB_TLS_RENEWAL_SECONDS),
+            "-noout",
+        )
+        if current.returncode != 0:
+            return False, f"{subject} expires within 30 days"
+
+    ca_text = _openssl_ok("x509", "-in", str(ca_path), "-noout", "-text")
+    if ca_text.returncode != 0 or "CA:TRUE" not in (ca_text.stdout or ""):
+        return False, "CA certificate lacks CA:TRUE"
+
+    trusted = _openssl_ok("verify", "-CAfile", str(ca_path), str(cert_path))
+    if trusted.returncode != 0:
+        return False, "server certificate is not signed by the client CA"
+
+    cert_public = _openssl_ok("x509", "-in", str(cert_path), "-pubkey", "-noout")
+    key_public = _openssl_ok("pkey", "-in", str(key_path), "-pubout")
+    if (
+        cert_public.returncode != 0
+        or key_public.returncode != 0
+        or cert_public.stdout.strip() != key_public.stdout.strip()
+    ):
+        return False, "server certificate and private key do not match"
+
+    for hostname in expected_hosts:
+        host_check = _openssl_ok(
+            "x509",
+            "-in",
+            str(cert_path),
+            "-noout",
+            "-checkhost",
+            hostname,
+        )
+        if host_check.returncode != 0:
+            return False, f"server certificate lacks DNS SAN {hostname!r}"
+    return True, "valid"
+
+
 def _create_secret_from_literals(
     ctx: UpReadyContext,
     name: str,
@@ -419,65 +558,19 @@ def _create_secret_from_literals(
     _apply_rendered_resource(ctx, manifest)
 
 
-def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
-    """Generate TiDB runtime and TLS secrets if they don't exist.
+def _generate_tidb_tls_material(
+    cert_path: Path,
+    tidb_host: str,
+) -> tuple[Path, Path, Path]:
+    """Generate a new CA and TiDB server keypair in a private directory."""
+    shell.run(
+        ["openssl", "genrsa", "-out", str(cert_path / "ca.key"), "2048"],
+        check=True,
+        capture=True,
+    )
 
-    This function ensures all TiDB-related Kubernetes secrets exist before
-    Helm upgrade. Runtime secrets (passwords) are only created if missing
-    to preserve existing TiDB accounts. TLS secrets are always regenerated
-    to support certificate rotation.
-    """
-    namespace = ctx.settings.kube_namespace
-    context = ctx.settings.kube_context
-    tidb_host = f"ssl-proxy-tidb.{namespace}.svc.cluster.local"
-
-    # TiDB runtime secrets (only create if missing)
-    if not _secret_exists("tidb-octopus", namespace, context):
-        step("S02", "tidb_secrets: creating tidb-octopus")
-        password = _generate_password()
-        _create_secret_from_literals(ctx, "tidb-octopus", {"password": password})
-
-    if not _secret_exists("tidb-atheros-search", namespace, context):
-        step("S02", "tidb_secrets: creating tidb-atheros-search")
-        password = _generate_password()
-        dsn = f"atheros_search_runtime:{password}@tcp({tidb_host}:4000)/atheros_search"
-        _create_secret_from_literals(ctx, "tidb-atheros-search", {"password": password, "dsn": dsn})
-
-    if not _secret_exists("tidb-schema-migrator", namespace, context):
-        step("S02", "tidb_secrets: creating tidb-schema-migrator")
-        password = _generate_password()
-        _create_secret_from_literals(ctx, "tidb-schema-migrator", {"password": password})
-
-    if not _secret_exists("tidb-keycloak", namespace, context):
-        step("S02", "tidb_secrets: creating tidb-keycloak")
-        password = _generate_password()
-        _create_secret_from_literals(ctx, "tidb-keycloak", {"password": password})
-
-    if not _secret_exists("tidb-schema-owner", namespace, context):
-        step("S02", "tidb_secrets: creating tidb-schema-owner")
-        dsn = f"mysql://root@{tidb_host}:4000/"
-        _create_secret_from_literals(ctx, "tidb-schema-owner", {"dsn": dsn})
-
-    if not _secret_exists("redis-runtime", namespace, context):
-        step("S02", "tidb_secrets: creating redis-runtime")
-        password = _generate_password()
-        _create_secret_from_literals(ctx, "redis-runtime", {"password": password})
-
-    # TiDB TLS secrets (always regenerate)
-    step("S02", "tidb_secrets: generating TiDB TLS certificates")
-    with tempfile.TemporaryDirectory() as cert_dir:
-        cert_path = Path(cert_dir)
-
-        # Generate CA
-        shell.run(
-            ["openssl", "genrsa", "-out", str(cert_path / "ca.key"), "2048"],
-            check=True,
-            capture=True,
-        )
-
-        # Create CA config
-        ca_config = cert_path / "ca.cnf"
-        ca_config.write_text("""[req]
+    ca_config = cert_path / "ca.cnf"
+    ca_config.write_text("""[req]
 distinguished_name = req_distinguished_name
 x509_extensions = v3_ca
 prompt = no
@@ -492,30 +585,29 @@ subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer
 """)
 
-        shell.run(
-            [
-                "openssl",
-                "req",
-                "-new",
-                "-x509",
-                "-days",
-                "3650",
-                "-key",
-                str(cert_path / "ca.key"),
-                "-out",
-                str(cert_path / "ca.crt"),
-                "-config",
-                str(ca_config),
-                "-extensions",
-                "v3_ca",
-            ],
-            check=True,
-            capture=True,
-        )
+    shell.run(
+        [
+            "openssl",
+            "req",
+            "-new",
+            "-x509",
+            "-days",
+            "3650",
+            "-key",
+            str(cert_path / "ca.key"),
+            "-out",
+            str(cert_path / "ca.crt"),
+            "-config",
+            str(ca_config),
+            "-extensions",
+            "v3_ca",
+        ],
+        check=True,
+        capture=True,
+    )
 
-        # Create server config
-        server_config = cert_path / "tidb-server.cnf"
-        server_config.write_text(f"""[req]
+    server_config = cert_path / "tidb-server.cnf"
+    server_config.write_text(f"""[req]
 distinguished_name = req_distinguished_name
 req_extensions = req_ext
 prompt = no
@@ -539,90 +631,263 @@ DNS.1 = {tidb_host}
 DNS.2 = ssl-proxy-tidb
 """)
 
-        # Generate server key and CSR
-        shell.run(
-            [
-                "openssl",
-                "req",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-keyout",
-                str(cert_path / "tidb-server.key"),
-                "-out",
-                str(cert_path / "tidb-server.csr"),
-                "-config",
-                str(server_config),
-            ],
-            check=True,
-            capture=True,
+    shell.run(
+        [
+            "openssl",
+            "req",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(cert_path / "tidb-server.key"),
+            "-out",
+            str(cert_path / "tidb-server.csr"),
+            "-config",
+            str(server_config),
+        ],
+        check=True,
+        capture=True,
+    )
+    shell.run(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-days",
+            "3650",
+            "-in",
+            str(cert_path / "tidb-server.csr"),
+            "-CA",
+            str(cert_path / "ca.crt"),
+            "-CAkey",
+            str(cert_path / "ca.key"),
+            "-CAcreateserial",
+            "-out",
+            str(cert_path / "tidb-server.crt"),
+            "-extfile",
+            str(server_config),
+            "-extensions",
+            "v3_server",
+        ],
+        check=True,
+        capture=True,
+    )
+    return (
+        cert_path / "ca.crt",
+        cert_path / "tidb-server.crt",
+        cert_path / "tidb-server.key",
+    )
+
+
+def _apply_tidb_tls_material(
+    ctx: UpReadyContext,
+    ca_path: Path,
+    cert_path: Path,
+    key_path: Path,
+) -> None:
+    namespace = ctx.settings.kube_namespace
+    context = ctx.settings.kube_context
+    ca_manifest = shell.kubectl(
+        "create",
+        "secret",
+        "generic",
+        "tidb-client-ca",
+        "--namespace",
+        namespace,
+        f"--from-file=ca.crt={ca_path}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+        context=context,
+        capture=True,
+    ).stdout
+    tls_manifest = shell.kubectl(
+        "create",
+        "secret",
+        "tls",
+        "tidb-server-tls",
+        "--namespace",
+        namespace,
+        f"--cert={cert_path}",
+        f"--key={key_path}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+        context=context,
+        capture=True,
+    ).stdout
+    _apply_rendered_resource(ctx, ca_manifest)
+    _apply_rendered_resource(ctx, tls_manifest)
+
+
+def _resource_exists(ctx: UpReadyContext, kind: str, name: str) -> bool:
+    result = shell.kubectl(
+        "get",
+        kind,
+        name,
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--ignore-not-found",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    return result.returncode == 0 and bool((result.stdout or "").strip())
+
+
+def _restart_and_wait(ctx: UpReadyContext, resource: str) -> None:
+    shell.kubectl(
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "rollout",
+        "restart",
+        resource,
+        context=ctx.settings.kube_context,
+    )
+    shell.kubectl(
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "rollout",
+        "status",
+        resource,
+        f"--timeout={ctx.settings.rollout_status_timeout}",
+        context=ctx.settings.kube_context,
+    )
+
+
+def _restart_tidb_tls_consumers(ctx: UpReadyContext) -> None:
+    _restart_and_wait(ctx, "statefulset/ssl-proxy-tidb")
+    for deployment in TIDB_TLS_CLIENT_DEPLOYMENTS:
+        if _resource_exists(ctx, "deployment", deployment):
+            _restart_and_wait(ctx, f"deployment/{deployment}")
+
+
+def _restore_tidb_tls_secrets(
+    ctx: UpReadyContext,
+    previous_ca: dict | None,
+    previous_tls: dict | None,
+) -> None:
+    if previous_ca is None or previous_tls is None:
+        raise UpReadyError("the previous TiDB TLS pair was incomplete and cannot be restored")
+    _apply_secret_payload(ctx, previous_ca)
+    _apply_secret_payload(ctx, previous_tls)
+    if _statefulset_exists(ctx, "ssl-proxy-tidb"):
+        _restart_tidb_tls_consumers(ctx)
+
+
+def sync_tidb_secrets(ctx: UpReadyContext) -> bool:
+    """Create missing runtime secrets and safely reuse or rotate TiDB TLS."""
+    namespace = ctx.settings.kube_namespace
+    context = ctx.settings.kube_context
+    tidb_host = f"ssl-proxy-tidb.{namespace}.svc.cluster.local"
+
+    if not _secret_exists("tidb-octopus", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-octopus")
+        _create_secret_from_literals(ctx, "tidb-octopus", {"password": _generate_password()})
+
+    if not _secret_exists("tidb-atheros-search", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-atheros-search")
+        password = _generate_password()
+        dsn = f"atheros_search_runtime:{password}@tcp({tidb_host}:4000)/atheros_search"
+        _create_secret_from_literals(
+            ctx,
+            "tidb-atheros-search",
+            {"password": password, "dsn": dsn},
         )
 
-        # Sign server cert with CA
-        shell.run(
-            [
-                "openssl",
-                "x509",
-                "-req",
-                "-days",
-                "3650",
-                "-in",
-                str(cert_path / "tidb-server.csr"),
-                "-CA",
-                str(cert_path / "ca.crt"),
-                "-CAkey",
-                str(cert_path / "ca.key"),
-                "-CAcreateserial",
-                "-out",
-                str(cert_path / "tidb-server.crt"),
-                "-extfile",
-                str(server_config),
-                "-extensions",
-                "v3_server",
-            ],
-            check=True,
-            capture=True,
+    if not _secret_exists("tidb-schema-migrator", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-schema-migrator")
+        _create_secret_from_literals(
+            ctx,
+            "tidb-schema-migrator",
+            {"password": _generate_password()},
         )
 
-        # Create tidb-client-ca secret
-        ca_manifest = shell.kubectl(
-            "create",
-            "secret",
-            "generic",
-            "tidb-client-ca",
-            "--namespace",
-            namespace,
-            f"--from-file=ca.crt={cert_path / 'ca.crt'}",
-            "--dry-run=client",
-            "-o",
-            "yaml",
-            context=context,
-            capture=True,
-        ).stdout
-        _apply_rendered_resource(ctx, ca_manifest)
+    if not _secret_exists("tidb-keycloak", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-keycloak")
+        _create_secret_from_literals(ctx, "tidb-keycloak", {"password": _generate_password()})
 
-        # Create tidb-server-tls secret
-        tls_manifest = shell.kubectl(
-            "create",
-            "secret",
-            "tls",
-            "tidb-server-tls",
-            "--namespace",
-            namespace,
-            f"--cert={cert_path / 'tidb-server.crt'}",
-            f"--key={cert_path / 'tidb-server.key'}",
-            "--dry-run=client",
-            "-o",
-            "yaml",
-            context=context,
-            capture=True,
-        ).stdout
-        _apply_rendered_resource(ctx, tls_manifest)
+    if not _secret_exists("tidb-schema-owner", namespace, context):
+        step("S02", "tidb_secrets: creating tidb-schema-owner")
+        _create_secret_from_literals(
+            ctx,
+            "tidb-schema-owner",
+            {"dsn": f"mysql://root@{tidb_host}:4000/"},
+        )
 
+    if not _secret_exists("redis-runtime", namespace, context):
+        step("S02", "tidb_secrets: creating redis-runtime")
+        _create_secret_from_literals(ctx, "redis-runtime", {"password": _generate_password()})
+
+    previous_ca = _secret_payload("tidb-client-ca", namespace, context)
+    previous_tls = _secret_payload("tidb-server-tls", namespace, context)
+    expected_hosts = (tidb_host, "ssl-proxy-tidb")
+    rotate_reason = "explicit operator request" if ctx.settings.rotate_tidb_tls else ""
+
+    with tempfile.TemporaryDirectory(prefix="ssl-proxy-tidb-tls-") as cert_dir:
+        cert_path = Path(cert_dir)
+        if not rotate_reason and previous_ca is not None and previous_tls is not None:
+            try:
+                ca_path, server_cert_path, server_key_path = _write_tidb_tls_material(
+                    cert_path,
+                    _secret_bytes(previous_ca, "tidb-client-ca", "ca.crt"),
+                    _secret_bytes(previous_tls, "tidb-server-tls", "tls.crt"),
+                    _secret_bytes(previous_tls, "tidb-server-tls", "tls.key"),
+                )
+                valid, detail = _validate_tidb_tls_material(
+                    ca_path,
+                    server_cert_path,
+                    server_key_path,
+                    expected_hosts,
+                )
+                if valid:
+                    ctx.tidb_tls_cert_checksum = _compute_tls_checksum(
+                        server_cert_path,
+                        server_key_path,
+                    )
+                    step("S02", "tidb_tls: reusing valid existing certificate pair")
+                    return True
+                rotate_reason = detail
+            except UpReadyError as exc:
+                rotate_reason = str(exc)
+        elif not rotate_reason:
+            rotate_reason = "certificate pair is missing"
+
+        step("S02", f"tidb_tls: rotating certificate pair ({rotate_reason})")
+        ca_path, server_cert_path, server_key_path = _generate_tidb_tls_material(
+            cert_path,
+            tidb_host,
+        )
+        valid, detail = _validate_tidb_tls_material(
+            ca_path,
+            server_cert_path,
+            server_key_path,
+            expected_hosts,
+        )
+        if not valid:
+            raise UpReadyError(f"Generated TiDB TLS material failed validation: {detail}")
+        _apply_tidb_tls_material(ctx, ca_path, server_cert_path, server_key_path)
         ctx.tidb_tls_cert_checksum = _compute_tls_checksum(
-            cert_path / "tidb-server.crt",
-            cert_path / "tidb-server.key",
+            server_cert_path,
+            server_key_path,
         )
+
+        if _statefulset_exists(ctx, "ssl-proxy-tidb"):
+            try:
+                _restart_tidb_tls_consumers(ctx)
+                ctx.tidb_tls_rollout_complete = True
+            except (shell.ShellCommandError, UpReadyError) as exc:
+                warn(f"TiDB TLS rollout failed; restoring previous certificate pair: {exc}")
+                try:
+                    _restore_tidb_tls_secrets(ctx, previous_ca, previous_tls)
+                except (shell.ShellCommandError, UpReadyError) as rollback_exc:
+                    raise UpReadyError(
+                        f"TiDB TLS rotation failed ({exc}); rollback also failed "
+                        f"({rollback_exc})"
+                    ) from rollback_exc
+                raise UpReadyError(
+                    f"TiDB TLS rotation failed and the previous pair was restored: {exc}"
+                ) from exc
     return True
 
 
@@ -1103,7 +1368,7 @@ def _stack_runtime_overrides(ctx: UpReadyContext) -> dict:
 
 
 def stackctl_preflight(ctx: UpReadyContext) -> None:
-    """Run stack preflight after namespace, TLS, and Secret synchronization."""
+    """Run split-stack checks and point ownership conflicts at guarded cutover."""
 
     from sslproxy_ops.stack.cluster import preflight as stack_preflight
     from sslproxy_ops.stack.core import load_config
@@ -1111,13 +1376,29 @@ def stackctl_preflight(ctx: UpReadyContext) -> None:
     root = repo_root()
     config = load_config(root / "stackctl" / "stack.yaml")
     step("S02", "stackctl_preflight: validating split-release prerequisites")
-    stack_preflight(
-        config,
-        root,
-        ctx.settings.kube_namespace,
-        ctx.settings.kube_context or None,
-        None,
-    )
+    try:
+        stack_preflight(
+            config,
+            root,
+            ctx.settings.kube_namespace,
+            ctx.settings.kube_context or None,
+            None,
+        )
+    except RuntimeError as exc:
+        if "ownership conflicts require cutover plan" not in str(exc):
+            raise
+        context_arg = (
+            f" --kube-context {ctx.settings.kube_context}"
+            if ctx.settings.kube_context
+            else ""
+        )
+        raise UpReadyError(
+            f"{exc}. Create and inspect an explicit UID-bound plan before adoption: "
+            "ops stack cutover plan --file stackctl/stack.yaml"
+            f" --namespace {ctx.settings.kube_namespace}{context_arg}"
+            f" --umbrella-release {ctx.settings.helm_release}. "
+            "up-ready will not take ownership automatically."
+        ) from exc
 
 
 def stackctl_deploy(ctx: UpReadyContext) -> bool:
@@ -1222,26 +1503,62 @@ def _statefulset_exists(ctx: UpReadyContext, name: str) -> bool:
     return bool((result.stdout or "").strip())
 
 
-def ensure_tidb_ready(ctx: UpReadyContext) -> None:
-    """Prepare for TiDB deployment.
+def _tidb_statefulset_tls_checksum(ctx: UpReadyContext) -> str:
+    result = shell.kubectl(
+        "get",
+        "statefulset",
+        "ssl-proxy-tidb",
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "-o",
+        "json",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        return ""
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return ""
+    return (
+        payload.get("spec", {})
+        .get("template", {})
+        .get("metadata", {})
+        .get("annotations", {})
+        .get("ssl-proxy.io/tidb-tls-checksum", "")
+    )
 
-    TLS secrets are generated by sync_tidb_secrets before this runs. The
-    cert checksum is stored on the context so helm_upgrade can pass it as a
-    pod-template annotation, making Kubernetes roll the StatefulSet whenever
-    certificates rotate.
-    """
-    if _statefulset_exists(ctx, "ssl-proxy-tidb"):
-        step("S02", "tidb_tls_rotation: cert checksum will trigger StatefulSet rollout via Helm")
-    else:
+
+def ensure_tidb_ready(ctx: UpReadyContext) -> None:
+    """Recover stale TLS consumers before Helm records the current checksum."""
+    if not _statefulset_exists(ctx, "ssl-proxy-tidb"):
         step("S02", "tidb_fresh_install: cert checksum prepared for new StatefulSet")
+        return
+    if ctx.tidb_tls_rollout_complete:
+        step("S02", "tidb_tls: rotated certificate pair is active")
+        return
+    active_checksum = _tidb_statefulset_tls_checksum(ctx)
+    if active_checksum == ctx.tidb_tls_cert_checksum:
+        step("S02", "tidb_tls: StatefulSet already uses the current certificate pair")
+        return
+    step("S02", "tidb_tls_recovery: restarting TiDB and TLS clients for current Secret pair")
+    _restart_tidb_tls_consumers(ctx)
+    ctx.tidb_tls_rollout_complete = True
 
 
 def kubernetes_up(ctx: UpReadyContext) -> bool:
     try:
         sync_kubernetes_secrets(ctx)
+        tidb_exists = _statefulset_exists(ctx, "ssl-proxy-tidb")
+        if ctx.settings.stack_mode == "split" and tidb_exists:
+            # Existing clusters must prove prerequisites and ownership before
+            # any TLS secret rotation can mutate the trust boundary.
+            stackctl_preflight(ctx)
         sync_tidb_secrets(ctx)
         ensure_tidb_ready(ctx)
-        if ctx.settings.stack_mode == "split":
+        if ctx.settings.stack_mode == "split" and not tidb_exists:
             stackctl_preflight(ctx)
         publish_registry_images(ctx)
         verify_kubernetes_registry_pull(ctx)
