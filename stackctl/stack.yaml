@@ -1,0 +1,149 @@
+version: 1
+
+defaults:
+  namespace: default
+  timeout: 10m
+  values:
+    - ./helm/ssl-proxy/values.yaml
+    - ./helm/ssl-proxy/values-k8s.yaml
+
+components:
+  tidb:
+    type: helm
+    release: ssl-proxy-tidb
+    chart: ./helm/ssl-proxy/charts/tidb
+    values_key: tidb
+    include_global: true
+    set:
+      external: false
+    timeout: 15m
+    gates:
+      - resource: statefulset/ssl-proxy-tidb
+
+  redpanda:
+    type: helm
+    release: ssl-proxy-redpanda
+    chart: ./helm/ssl-proxy/charts/redpanda
+    values_key: redpanda
+    include_global: true
+    timeout: 15m
+    gates:
+      - discover:
+          kind: StatefulSet
+
+  minio:
+    type: helm
+    release: ssl-proxy-minio
+    chart: ./helm/ssl-proxy/charts/minio
+    values_key: minio
+    include_global: true
+    timeout: 15m
+    gates:
+      - discover:
+          kind: StatefulSet
+
+  redis:
+    type: helm
+    release: ssl-proxy-redis
+    chart: ./helm/ssl-proxy/charts/redis-runtime
+    values_key: redisRuntime
+    include_global: true
+    gates:
+      - discover:
+          kind: Deployment
+
+  telemetry:
+    type: helm
+    release: ssl-proxy-telemetry
+    chart: ./helm/ssl-proxy/charts/telemetry
+    values_key: telemetry
+    include_global: true
+    timeout: 15m
+    gates:
+      - discover:
+          kind: Deployment
+
+  tidb-schema-executor:
+    type: helm-job
+    release: ssl-proxy-tidb-schema
+    chart: ./helm/ssl-proxy/charts/tidb-schema-executor
+    values_key: tidbSchemaExecutor
+    include_global: true
+    depends_on:
+      - tidb
+    timeout: 10m
+    job:
+      rerun: replace
+    gates:
+      - discover:
+          kind: Job
+        condition: complete
+
+  schema-migrator:
+    type: helm
+    release: ssl-proxy-schema-migrator
+    chart: ./helm/ssl-proxy/charts/schema-migrator
+    values_key: schemaMigrator
+    include_global: true
+    depends_on:
+      - tidb
+      - tidb-schema-executor
+    timeout: 15m
+    gates:
+      - discover:
+          kind: Deployment
+
+  java-coordinator:
+    type: helm
+    release: ssl-proxy-coordinator
+    chart: ./helm/ssl-proxy/charts/java-coordinator
+    values_key: javaCoordinator
+    include_global: true
+    depends_on:
+      - tidb
+      - redpanda
+      - minio
+      - schema-migrator
+    gates:
+      - discover:
+          kind: Deployment
+
+  atheros-search:
+    type: helm
+    release: ssl-proxy-atheros-search
+    chart: ./helm/ssl-proxy/charts/atheros-search
+    values_key: atherosSearch
+    include_global: true
+    depends_on:
+      - tidb
+      - redpanda
+      - schema-migrator
+    gates:
+      - discover:
+          kind: Deployment
+
+  atheros-sensor:
+    type: helm
+    release: ssl-proxy-atheros-sensor
+    chart: ./helm/ssl-proxy/charts/atheros-sensor
+    values_key: atherosSensor
+    include_global: true
+    depends_on:
+      - redpanda
+    gates:
+      - discover:
+          kind: DaemonSet
+
+  proxy:
+    type: helm
+    release: ssl-proxy-proxy
+    chart: ./helm/ssl-proxy/charts/proxy
+    values_key: proxy
+    include_global: true
+    depends_on:
+      - redpanda
+      - java-coordinator
+      - atheros-search
+    gates:
+      - discover:
+          kind: Deployment
