@@ -36,8 +36,8 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     resolve_kube_context,
     rollout_restart_release_workloads,
     stackctl_preflight,
-    sync_tidb_secrets,
     sync_kubernetes_secrets,
+    sync_tidb_secrets,
     verify_kubernetes_registry_pull,
     warn_unhealthy_nodes,
 )
@@ -59,6 +59,16 @@ class UpReadyKubernetesTest(unittest.TestCase):
             clear=True,
         ):
             self.assertTrue(Settings().rotate_tidb_tls)
+
+    def test_sensor_preflight_matches_all_node_daemonset_contract(self):
+        root = Path(__file__).resolve().parents[2]
+        spec = yaml.safe_load(
+            (
+                root
+                / "ops/src/sslproxy_ops/commands/up_ready/preflight_spec.yaml"
+            ).read_text()
+        )
+        self.assertEqual(spec["preflight"]["node_requirements"], {})
 
     @staticmethod
     def _tidb_tls_secret_payloads(directory: Path) -> tuple[dict, dict]:
@@ -1265,6 +1275,41 @@ class UpReadyKubernetesTest(unittest.TestCase):
             self.assertFalse(kubernetes_up(ctx))
 
         self.assertIn("rollout status timed out", ctx.last_failure_text)
+
+    def test_existing_split_preflight_runs_before_tidb_tls_sync(self):
+        settings = Settings()
+        settings.stack_mode = "split"
+        ctx = UpReadyContext(settings=settings)
+        calls: list[str] = []
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_kubernetes_secrets",
+                side_effect=lambda _ctx: calls.append("secrets"),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.stackctl_preflight",
+                side_effect=lambda _ctx: calls.append("preflight"),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_tidb_secrets",
+                side_effect=lambda _ctx: calls.append("tidb_tls"),
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.ensure_tidb_ready"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.publish_registry_images"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.verify_kubernetes_registry_pull"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.deploy_kubernetes_release",
+                return_value=True,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.rollout_restart_release_workloads"),
+        ):
+            self.assertTrue(kubernetes_up(ctx))
+
+        self.assertLess(calls.index("preflight"), calls.index("tidb_tls"))
 
 
 if __name__ == "__main__":

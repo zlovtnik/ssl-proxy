@@ -982,7 +982,11 @@ async def deploy_stack(
                 name
                 for wave in waves
                 for name in wave
-                if name not in dependencies or not health.get(name, False)
+                if (
+                    name not in dependencies
+                    or config.components[name].type == "helm-job"
+                    or not health.get(name, False)
+                )
             }
             waves = [[name for name in wave if name in selected] for wave in waves]
             waves = [wave for wave in waves if wave]

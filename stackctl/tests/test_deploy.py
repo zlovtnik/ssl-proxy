@@ -895,6 +895,47 @@ class TestDeployStack:
         mock_wave.assert_awaited_once()
         assert mock_wave.call_args.args[0] == ["app"]
 
+    def test_target_reruns_healthy_job_dependencies(self, tmp_path: Path):
+        from stackctl import Component, StackConfig
+
+        config = StackConfig(
+            version=1,
+            components={
+                "schema": Component(
+                    type="helm-job",
+                    stage="schema-executor",
+                    release="schema",
+                    chart="./charts/schema",
+                    job={"rerun": "replace"},
+                ),
+                "app": Component(
+                    type="helm",
+                    stage="applications",
+                    release="app",
+                    chart="./charts/app",
+                    depends_on=["schema"],
+                ),
+            },
+        )
+        options = _make_options(work_dir=str(tmp_path), target_component="app")
+        with (
+            patch(
+                "sslproxy_ops.stack.cluster.component_health",
+                return_value={"schema": True},
+            ),
+            patch("deploy._deploy_wave", new_callable=AsyncMock) as mock_wave,
+        ):
+            mock_wave.side_effect = [
+                [ComponentResult(component="schema", success=True, duration=1.0)],
+                [ComponentResult(component="app", success=True, duration=1.0)],
+            ]
+            result = asyncio.run(deploy_stack(config, options))
+
+        assert result.success is True
+        assert mock_wave.await_count == 2
+        assert mock_wave.await_args_list[0].args[0] == ["schema"]
+        assert mock_wave.await_args_list[1].args[0] == ["app"]
+
     def test_run_dir_cleanup_on_success(self, tmp_path: Path):
         """Run directory is cleaned up on successful deployment."""
         comp_a = _make_component(name="a", chart="./charts/a")
