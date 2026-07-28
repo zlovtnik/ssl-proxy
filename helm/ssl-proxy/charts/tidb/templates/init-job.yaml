@@ -39,8 +39,8 @@ spec:
                 sleep 3
               done
               echo "TiDB is ready."
-              STATS_CACHE_QUOTA_BYTES={{ .Values.memoryTuning.statsCacheQuotaBytes }}
-              SCHEMA_CACHE_SIZE_BYTES={{ .Values.memoryTuning.schemaCacheSizeBytes }}
+              STATS_CACHE_QUOTA_BYTES={{ .Values.memoryTuning.statsCacheQuotaBytes | int64 }}
+              SCHEMA_CACHE_SIZE_BYTES={{ .Values.memoryTuning.schemaCacheSizeBytes | int64 }}
               echo "Applying TiDB cache quotas..."
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
                 "SET GLOBAL tidb_stats_cache_mem_quota = ${STATS_CACHE_QUOTA_BYTES}; SET GLOBAL tidb_schema_cache_size = ${SCHEMA_CACHE_SIZE_BYTES};"
