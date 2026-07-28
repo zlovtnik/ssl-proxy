@@ -39,6 +39,19 @@ spec:
                 sleep 3
               done
               echo "TiDB is ready."
+              STATS_CACHE_QUOTA_BYTES={{ .Values.memoryTuning.statsCacheQuotaBytes }}
+              SCHEMA_CACHE_SIZE_BYTES={{ .Values.memoryTuning.schemaCacheSizeBytes }}
+              echo "Applying TiDB cache quotas..."
+              mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
+                "SET GLOBAL tidb_stats_cache_mem_quota = ${STATS_CACHE_QUOTA_BYTES}; SET GLOBAL tidb_schema_cache_size = ${SCHEMA_CACHE_SIZE_BYTES};"
+              ACTUAL_CACHE_QUOTAS="$(mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} --batch --skip-column-names -e \
+                "SELECT CONCAT(@@GLOBAL.tidb_stats_cache_mem_quota, ':', @@GLOBAL.tidb_schema_cache_size);")"
+              EXPECTED_CACHE_QUOTAS="${STATS_CACHE_QUOTA_BYTES}:${SCHEMA_CACHE_SIZE_BYTES}"
+              if [ "${ACTUAL_CACHE_QUOTAS}" != "${EXPECTED_CACHE_QUOTAS}" ]; then
+                echo "TiDB cache quota verification failed: expected ${EXPECTED_CACHE_QUOTAS}, got ${ACTUAL_CACHE_QUOTAS}" >&2
+                exit 1
+              fi
+              echo "TiDB cache quotas verified: ${ACTUAL_CACHE_QUOTAS}"
               echo "Creating databases..."
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
                 "CREATE DATABASE IF NOT EXISTS octopus_core CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"

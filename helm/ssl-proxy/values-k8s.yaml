@@ -114,12 +114,24 @@ javaCoordinator:
       memory: 1Gi
   tidb:
     host: "ssl-proxy-tidb.default.svc.cluster.local"
+    poolSize: 4
 
 tidb:
   external: false
   image:
-    tag: v8.5.0
+    tag: v8.5.7
     pullPolicy: Always
+  resources:
+    requests:
+      cpu: 500m
+      memory: 8Gi
+    limits:
+      cpu: "2"
+      memory: 8Gi
+  memoryTuning:
+    statsCacheQuotaBytes: 536870912
+    schemaCacheSizeBytes: 268435456
+    coprocessorCacheCapacityMB: 128
   persistence:
     enabled: true
     size: 10Gi

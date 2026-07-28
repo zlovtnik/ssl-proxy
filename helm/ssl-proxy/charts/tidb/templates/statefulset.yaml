@@ -19,8 +19,9 @@ spec:
       labels:
         {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "tidb") | nindent 8 }}
         app.kubernetes.io/component: tidb
-      {{- if .Values.tlsCertChecksum }}
       annotations:
+        checksum/tidb-config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      {{- if .Values.tlsCertChecksum }}
         ssl-proxy.io/tidb-tls-checksum: {{ .Values.tlsCertChecksum | quote }}
       {{- end }}
     spec:

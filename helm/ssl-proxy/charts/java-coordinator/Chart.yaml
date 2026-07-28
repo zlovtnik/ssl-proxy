@@ -2,7 +2,7 @@ apiVersion: v2
 name: java-coordinator
 description: Octopus Redpanda-to-TiDB coordinator
 type: application
-version: 0.1.1
+version: 0.1.2
 appVersion: "1.0.0"
 dependencies:
   - name: ssl-proxy-common

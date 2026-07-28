@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: tidb
-          image: pingcap/tidb:v8.5.0
+          image: pingcap/tidb:v8.5.7
           ports:
             - containerPort: 4000
               hostPort: 4000
@@ -43,10 +43,10 @@ spec:
           resources:
             requests:
               cpu: 500m
-              memory: 1Gi
+              memory: 8Gi
             limits:
               cpu: "2"
-              memory: 4Gi
+              memory: 8Gi
           livenessProbe:
             httpGet:
               path: /status

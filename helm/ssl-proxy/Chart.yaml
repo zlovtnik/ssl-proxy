@@ -2,7 +2,7 @@ apiVersion: v2
 name: ssl-proxy
 description: Umbrella chart for the SSL Proxy platform
 type: application
-version: 0.3.0
+version: 0.3.1
 appVersion: "1.0.0"
 kubeVersion: ">=1.28.0-0"
 keywords:
@@ -23,7 +23,7 @@ dependencies:
     repository: "file://charts/proxy"
     condition: proxy.enabled
   - name: java-coordinator
-    version: 0.1.1
+    version: 0.1.2
     repository: "file://charts/java-coordinator"
     alias: javaCoordinator
     condition: javaCoordinator.enabled
@@ -47,7 +47,7 @@ dependencies:
     repository: "file://charts/minio"
   # mandatory - no enabled toggle by design; these are always required
   - name: tidb
-    version: 0.2.1
+    version: 0.2.2
     repository: "file://charts/tidb"
   - name: telemetry
     version: 0.1.2

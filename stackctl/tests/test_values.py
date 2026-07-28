@@ -230,7 +230,16 @@ def stack_root(tmp_path: Path) -> Path:
             "external": True,
             "minimumVersion": "8.5.0",
             "egress": {"enabled": True, "cidrs": []},
-            "image": {"repository": "pingcap/tidb", "tag": "v8.5.0"},
+            "image": {"repository": "pingcap/tidb", "tag": "v8.5.7"},
+            "resources": {
+                "requests": {"cpu": "500m", "memory": "8Gi"},
+                "limits": {"cpu": "2", "memory": "8Gi"},
+            },
+            "memoryTuning": {
+                "statsCacheQuotaBytes": 536870912,
+                "schemaCacheSizeBytes": 268435456,
+                "coprocessorCacheCapacityMB": 128,
+            },
             "replicas": 1,
         },
     )

@@ -96,7 +96,7 @@ metrics:
   heartbeatLogIntervalMs: 15000
 tidb:
   enabled: true
-  poolSize: 10
+  poolSize: 4
   connectionTimeoutMs: 5000
   statementTimeoutSecs: 30
   warnOnly: false

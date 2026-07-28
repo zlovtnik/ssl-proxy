@@ -26,16 +26,20 @@ egress:
 # In-cluster TiDB deployment (active when external=false).
 image:
   repository: pingcap/tidb
-  tag: v8.5.0
+  tag: v8.5.7
   pullPolicy: IfNotPresent
 replicas: 1
 resources:
   requests:
     cpu: 500m
-    memory: 1Gi
+    memory: 8Gi
   limits:
     cpu: "2"
-    memory: 4Gi
+    memory: 8Gi
+memoryTuning:
+  statsCacheQuotaBytes: 536870912
+  schemaCacheSizeBytes: 268435456
+  coprocessorCacheCapacityMB: 128
 persistence:
   enabled: true
   size: 10Gi
