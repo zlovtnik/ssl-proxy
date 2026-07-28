@@ -109,7 +109,9 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.name }}
-                  key: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.key }}
+                  # Atheros Search consumes a full DSN at runtime, while
+                  # account provisioning needs the raw password stored beside it.
+                  key: password
             - name: SCHEMA_MIGRATOR_PASSWORD
               valueFrom:
                 secretKeyRef:
