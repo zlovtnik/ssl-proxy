@@ -1,14 +1,20 @@
 # ERED DEPLOYMENT REFACTORING WORKMAP
+
+> **Status: Historical / superseded.** This document preserves an earlier
+> Schema Migrator refactoring plan. Current internal state is TiDB-only; use
+> [System Architecture](architecture.md) and
+> [TiDB Runtime and Cutover](tidb-runtime-cutover.md).
+
 ## Actionable Step-by-Step Guide (No Code Required)
 
 **Version:** 1.0  
 **Source:** ered deployment document  
 **Date:** 2026-07-18  
-**Status:** Superseded by the PostgreSQL state-store implementation
+**Status:** Superseded by the TiDB state-store implementation
 
 > Historical reference only. MongoDB-specific tasks in this document must not be
-> implemented; Schema Migrator persistence now belongs to its dedicated
-> PostgreSQL role and `schema_migrator` schema.
+> implemented; Schema Migrator persistence now belongs to its dedicated TiDB
+> account and `schema_migrator` database.
 
 ---
 
@@ -19,7 +25,7 @@
 3. [Phase 1: Establish Clean Safety Baseline](#3-phase-1-establish-clean-safety-baseline)
 4. [Phase 2: Collapse Scala Core to Concrete Effects](#4-phase-2-collapse-scala-core-to-concrete-effects)
 5. [Phase 3: Unify Execution and Persistence](#5-phase-3-unify-execution-and-persistence)
-6. [Phase 4: Compact SQL Without Losing State](#6-phase-4-compact-sql-without-losing-state)
+6. [Phase 4: Compact SQL Without Losing State](#6-phase-4-compact-sql-without-losing-existing-state)
 7. [Phase 5: Simplify Web UI and Documentation](#7-phase-5-simplify-web-ui-and-documentation)
 8. [Phase 6: Public Interfaces and Compatibility](#8-phase-6-public-interfaces-and-compatibility)
 9. [Phase 7: Test and Acceptance](#9-phase-7-test-and-acceptance)

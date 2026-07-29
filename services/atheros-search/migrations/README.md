@@ -1,6 +1,11 @@
-The canonical Atheros Search runtime schema is managed in the repository-level
-TiDB domain under `sql/tidb/atheros_search/`.
+# Atheros Search service-local migrations
 
-Keep service-local migrations here only if this module gains schema objects that
-are not part of the shared runtime database. The service verifies the canonical
-manifest checksum at startup and never applies DDL itself.
+This directory does not own the shared runtime schema. Canonical Atheros Search
+DDL and its checksummed apply order live in
+[`sql/tidb/atheros_search`](../../../sql/tidb/atheros_search/).
+
+Add a migration here only for a future object that is truly private to this Go
+module and independent of the repository runtime contract. Atheros Search
+verifies the canonical manifest at startup and never applies DDL.
+
+See [TiDB Runtime and Cutover](../../../docs/tidb-runtime-cutover.md).

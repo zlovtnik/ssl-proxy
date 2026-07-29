@@ -1,5 +1,10 @@
 # Observability Workmap (Non-Vector Services)
 
+> **Status: Historical workmap.** Preserve this rollout record for provenance.
+> The current signal topology and known instrumentation gaps are documented in
+> [Observability Architecture](observability-architecture-jaeger.md) and
+> [System Architecture](architecture.md).
+
 ## Scope
 
 This rollout adds Grafana + Loki + Jaeger + Prometheus across all non-vector services in `docker-compose.yaml`.

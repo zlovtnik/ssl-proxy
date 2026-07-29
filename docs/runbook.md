@@ -1,209 +1,153 @@
-# Operator Runbook
+# Operations Runbook
 
-This runbook covers the current external-TiDB runtime. Historical PostgreSQL,
-MongoDB, embedded Keycloak, local mock-TiDB, and vector-worker procedures have
-been retired. Use Git history if an old-release incident requires them; do not
-apply them to the current runtime.
+Use this runbook with the canonical [system architecture](architecture.md).
+Deployment-specific commands live in the [Helm](../helm/ssl-proxy/README.md),
+[stackctl](../stackctl/README.md) and
+[local registry](local-registry-workflow.md) guides.
 
-The authoritative fresh-start sequence and evidence requirements are in
-[Fresh TiDB Runtime Cutover](tidb-runtime-cutover.md).
+## Before deployment
 
-## Safety boundary
+1. Initialize nested repositories with `git submodule update --init --recursive`.
+2. Run `make docs-check` and the targeted tests for the images being deployed.
+3. Confirm the image registry is reachable from the build host and every
+   Kubernetes node.
+4. Materialize secrets outside Git and verify file permissions.
+5. Render the exact Helm values or run `make stackctl-render`.
+6. Record the TiDB schema manifest hashes, runtime grants and signed Redpanda
+   cutover offsets.
+7. Confirm the selected WireGuard profile:
+   - `iphone` uses the direct frontdoor path;
+   - `linux-shim` uses the local obfuscation shim;
+   - Compose declares public UDP `443` and `51820` concurrently.
 
-Repository checks, Helm renders, dry runs, and local tests are safe preparation.
-Provisioning accounts, changing Redpanda consumer offsets, upgrading a live
-release, pruning resources, and deleting the old database host path require the
-approved change window and named operator approval.
+## Deploy
 
-The three deployment modes are:
-
-| Mode | New clients | New consumers | Legacy compatibility |
-|---|---|---|---|
-| `stage` | Deployed for version/schema/TLS readiness | Disabled | Active |
-| `activate` | Ready Services receive traffic | Enabled at signed offsets | Present but quiesced |
-| `prune` | Active | Active | Absent |
-
-Never jump from `stage` to `prune`.
-
-## External prerequisites
-
-Before rendering an activation release, supply:
-
-- an external TiDB v8.5+ endpoint with TiFlash capacity;
-- `octopus_core`, `atheros_search`, and
-  `schema_migrator` databases;
-- one dedicated least-privilege runtime account per database plus a separate
-  DDL/provisioning account;
-- TLS CA/server-name configuration and account Secrets;
-- a fresh external Keycloak realm and clients (no realm/user/client import);
-- the signed cutover artifact, detached signature, and pinned Ed25519 public
-  key for the exact Redpanda cluster.
-
-The database grants are documented as templates under each
-`sql/tidb/<domain>/grants/` directory. Applications verify schemas; only the
-schema executor applies DDL.
-
-## Repository qualification
-
-Run the deterministic policy and evidence checks:
+The umbrella release remains the default:
 
 ```bash
-make runtime-datastore-policy
-make tidb-schema-contract
-make cutover-evidence-test
-helm lint helm/ssl-proxy
+make up-ready \
+  PROFILE_MODE=iphone \
+  SERVER_IP=192.0.2.10 \
+  REGISTRY=192.0.2.10:5000
 ```
 
-Then run the client suites:
+The split-release path is opt in:
 
 ```bash
-cd services/octopus && sbt test
-cd ../../services/atheros-search && go test ./...
-cd ../../apps/schema-migrator && sbt test
+make up-ready-stackctl \
+  PROFILE_MODE=iphone \
+  SERVER_IP=192.0.2.10 \
+  REGISTRY=192.0.2.10:5000
 ```
 
-Unit tests cannot qualify TiFlash/HNSW, TLS identity, transaction conflicts, or
-consumer offsets. Record those results against the exact external environment.
+Replace documentation addresses with real deployment values. Review generated
+artifacts before applying them to a production cluster.
 
-## Schema provisioning
+## Health and readiness
 
-Use the repository schema executor in verify/dry-run mode first. It validates
-the ordered manifests and checksums for all four domains. The Atheros Search
-post-TiFlash phase is separate: it sets replicas, proves all four vector tables
-report available, and only then applies the four cosine HNSW indexes.
+| Component | Check | Interpretation |
+|---|---|---|
+| Proxy | `GET /health` on admin port `3002` | Process and tunnel health |
+| Proxy | `GET /ready` on admin port `3002` | Required runtime dependencies are ready |
+| UDP frontdoor | `GET /health` on host-local `3003` | Frontdoor process and backend status |
+| Octopus | `GET /health` or `/actuator/health` on `8081` | TiDB health only |
+| Atheros Search | `GET /healthz` on `8080` | Process liveness |
+| Atheros Search | `GET /readyz` on `8080` | TiDB, schema, vector and embedding readiness |
+| Atheros Search | `GET /v1/etl/health` | Worker/job ETL snapshot |
+| Prometheus | `GET /-/ready` on `9090` | Prometheus ready |
+| Grafana | `GET /api/health` on `3004` | Grafana process ready |
 
-Runtime accounts must not have DDL privileges. After apply, run executor verify
-with each runtime identity and capture the manifest/version/readiness output.
+Octopus does not currently expose `/actuator/prometheus`; its Prometheus target
+will be down even when `/health` is green. Atheros Search tracing hooks also do
+not currently initialize an exporter.
 
-## Stage
-
-1. Render the `stage` inventory and confirm no Service selector moves.
-2. Deploy new images with Octopus processors and consumers disabled.
-3. Prove TiDB v8.5+, TLS identity, database/account ownership, canonical
-   manifest checksums, TiFlash availability, Redis degradation behavior, and a
-   token from the fresh Keycloak client.
-4. Confirm legacy writers remain the only authoritative writers.
-
-Abort if any client accepts loopback, a root account, the wrong database, an
-unverified TLS connection, or a mismatched schema checksum.
-
-## Activate
-
-1. Quiesce legacy PostgreSQL-backed Rails/Go/coordinator writers while
-   Redpanda producers continue.
-2. Capture every new consumer-group/topic/partition next offset, canonicalize
-   the artifact, and sign it offline.
-3. Review the generated `rpk group seek` plan. Apply it only with the exact
-   signed SHA-256 and confirmed cluster identity.
-4. Enable Octopus processors/consumers and wait for durable readiness.
-5. Switch Rails and Atheros Search Services only after their schema and smoke
-   checks pass. Enable schema-migrator against its TiDB control database.
-
-Commands and artifact shapes are in
-[Signed offset artifacts](tidb-runtime-cutover.md#signed-offset-artifacts).
-
-## Thirty-minute observation
-
-Capture evidence for at least 30 clean minutes:
-
-- no application PostgreSQL or MongoDB connections;
-- no consumed offsets below the signed cutoff;
-- no unexplained gap or duplicate in the bounded ingestion ledger;
-- no `retrying` or `parked` record at audit end;
-- stable/growing-free consumer lag, lease backlog, and outbox backlog;
-- successful vector queries with correct cosine ordering and bounded filtering;
-- Redis loss affects cache/cable delivery only and loses no durable records;
-- Rails routes/channels, Atheros Search HTTP/gRPC/NDJSON, and schema-migrator
-  public APIs remain compatible.
-
-Sign the exclusive `audit_end` offsets and run the coverage command before
-accepting the observation window.
-
-## Prune and irreversible cleanup
-
-Apply the atomic `prune` revision only after observation acceptance. Confirm
-the rendered inventory has no PostgreSQL/MongoDB workload, Service, PVC,
-Secret, ConfigMap, NetworkPolicy, exporter, scrape, alert, dashboard, or legacy
-worker object. Delete orphaned failed-revision resources only by exact name and
-release labels.
-
-The repository intentionally does not automate the destructive host deletion.
-During the approved window, an operator must:
-
-1. Resolve the exact expected path
-   `/var/lib/docker/volumes/ssl-proxy_postgres-data/_data` on the intended host.
-2. Prove no process, mount, container, or Kubernetes object uses it.
-3. Reconfirm the accepted audit evidence, successful `prune` revision, host,
-   path, and irreversible-deletion approval.
-4. Delete that exact directory with the approved host procedure and verify it
-   is absent.
-
-Do not broaden the target with variables, globs, parent directories, or a
-recursive workspace/volume-root command.
-
-## Abort and recovery
-
-Abort activation for a signature/checksum/cluster mismatch, pre-cutoff replay,
-schema drift, TLS downgrade, growing lag, stuck leases/outbox, vector failure,
-public contract regression, or unexpected retired-datastore connection.
-
-Before TiDB-only writes begin, restore the staged legacy release. After
-TiDB-only writes begin, do not copy records back to PostgreSQL and do not replay
-old history; stop new consumers, preserve signed evidence, and diagnose forward.
-
-## WireGuard and proxy operations
-
-Database migration does not change the network-path controls:
+## Read-only diagnostics
 
 ```bash
-make dependency-boundaries
-make diagnose PROFILE_MODE=linux-shim SERVER_IP=<server> CLIENT_IP=<client>
-make k8s-status KUBE_NAMESPACE=default
+make diagnose
+make db-check-connections
+make pipeline-health
+make k8s-status
+make stackctl-status
 ```
 
-Keep admin endpoints host-local, protect secrets with the existing rotator,
-and preserve the locked Redpanda topic payload contracts.
+Use `KUBE_CONTEXT`, `KUBE_NAMESPACE` and `KUBE_RELEASE` when the defaults do
+not select the intended cluster. Capture the output with incident timestamps;
+do not paste secret values into tickets.
 
-## Single-node Kubernetes dev stack
+## Data-plane checks
 
-The `helm/ssl-proxy/values-k8s.yaml` profile is the LAN development deployment
-driven by `make up-ready`. It differs from the external-IdP cutover shape in
-one way: the schema-migrator subchart deploys an in-cluster Keycloak (realm
-`middleware`, imported from the chart ConfigMap) for the Schema Migrator UI.
-This is a development convenience, not the production identity model.
+1. Confirm the frontdoor sees packets and pins clients to a healthy backend.
+2. Confirm the proxy publishes to Redpanda and its local outbox is not growing.
+3. Confirm `sync.scan.request` consumer lag is moving.
+4. Confirm Octopus writes topic/partition/offset ingestion evidence in
+   `octopus_core`.
+5. Confirm `sync.oracle.load` and `sync.oracle.result` progress as TiDB work and
+   results; the names do not indicate Oracle.
+6. For wireless audit, confirm the sensor publishes `wireless.audit` and the
+   matching `sync.scan.request`. The sensor should not have database
+   credentials.
+7. For embeddings, confirm `search_documents` and `embedding_jobs` exist before
+   enabling workers, then check leases, failures, DLQ state and vector counts.
 
-Keycloak owns and migrates its own TiDB database. Provision its account the
-same way as the application accounts:
+The pinned Octopus runtime does not currently wire search-document/job
+preparation, so an idle Search worker may reflect a known producer gap rather
+than worker failure.
 
-```bash
-k8s/tidb/bootstrap-runtime-secrets.sh  # fresh-cluster credentials only
-k8s/tidb/generate-tls-secrets.sh       # TLS-only rotation; preserves credentials
-kubectl apply -f k8s/tidb/init-job.yaml  # creates the keycloak database/user/grants
-```
+## Common incidents
 
-During `make up-ready` the Kubernetes flow now also:
+### WireGuard handshake fails
 
-- warns on unhealthy cluster nodes in preflight (NotReady, memory/disk/PID
-  pressure, cordoned) without blocking the deploy;
-- schedules the Atheros sensor DaemonSet on every eligible node without
-  requiring a `wiretrap.io/sensor` label;
-- reuses the existing valid TiDB CA/server certificate pair by default. It
-  validates the key match, CA signature, service DNS SANs, and a 30-day
-  renewal window. Set `UP_READY_ROTATE_TIDB_TLS=true` only for an intentional
-  rotation; an existing deployment is restarted and verified in TiDB-first
-  order, with the previous Secret pair restored if rollout fails;
-- after `helm upgrade`, explicitly runs `kubectl rollout restart` and waits on
-  `rollout status` for every release Deployment and DaemonSet (StatefulSets
-  such as redpanda/minio are intentionally left to the rollout-revision
-  annotation);
-- verifies the coordinator (`/actuator/health`), schema-migrator backend
-  (`/api/health`), and keycloak (`/health/ready`) endpoints before finishing.
-  Override the per-workload wait with `UP_READY_ROLLOUT_STATUS_TIMEOUT`.
+- Verify the client profile matches the direct or shim endpoint.
+- Check public UDP `443`/`51820`, frontdoor health and backend configuration.
+- Confirm server, peer and preshared keys match the staged generation.
+- Check MTU: direct defaults to `1420`; obfuscated framing requires room for
+  its overhead.
 
-The split-release path never adopts resources implicitly. If the compatibility
-umbrella owns the live stack, `make up-ready-stackctl` stops before TLS mutation
-and prints the `ops stack cutover plan` command. Create and inspect that
-UID-bound plan, drain traffic, then run guarded `cutover apply` with the plan
-digest and exact context/release confirmations. Finalize only after status and
-smoke checks pass; use `cutover rollback` if a gate fails. Do not uninstall the
-umbrella release or delete TiDB PVCs during this migration.
+### Proxy healthy but no audit data
+
+- Check `SYNC_REDPANDA_BOOTSTRAP_SERVERS`.
+- Inspect proxy outbox growth and publisher health.
+- Verify Redpanda topic bootstrap and ACLs.
+- Inspect Octopus consumer group offsets and signed cutover gate.
+
+### Sensor has no events
+
+- Confirm Linux monitor mode, interface name, regulatory domain and channel.
+- Verify `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS` and the host-reachable Redpanda
+  bootstrap address.
+- Inspect the sensor local backlog before restarting or deleting anything.
+
+### Octopus health fails
+
+- Verify `TIDB_HOST`, `TIDB_PORT`, `TIDB_DATABASE=octopus_core`, credentials,
+  SSL mode, CA path and server name.
+- Confirm the canonical manifest and signed cutover artifact.
+- Do not fall back to PostgreSQL.
+
+### Search readiness fails
+
+- Validate the native MySQL DSN format, TLS files/server name and manifest hash.
+- Confirm the Search account grants.
+- Check whether the embedding backend is required for the selected mode.
+- In Helm, inspect the rendered Deployment: worker values currently are not
+  passed as worker environment variables.
+
+### Missing traces
+
+- Verify that the service actually initializes an exporter, not only that
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- Check collector receiver/exporter health and Jaeger availability.
+- Atheros Search currently has hooks but no exporter initialization.
+
+## Rollback and recovery
+
+Do not delete TiDB schemas, consumer evidence, outboxes or sensor backlogs
+during diagnosis. Stop or scale down producers/consumers at a documented
+boundary, capture offsets and leases, then roll back only the affected
+deployment. Any consumer offset change requires a new signed cutover artifact
+and duplicate-delivery review.
+
+For key rotation, use the staged rotator flow in the
+[WireGuard key rotator README](../apps/wg-key-rotator/README.md); do not replace
+active keys without a candidate health and handshake window.

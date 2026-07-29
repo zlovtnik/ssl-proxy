@@ -1,163 +1,149 @@
 # Atheros Search
 
-Atheros Search is the read/query facade for wireless audit intelligence. It
-serves the existing HTTP, gRPC, protobuf, and NDJSON contracts while using the
-external `atheros_search` TiDB database as its only runtime database.
+Atheros Search is the Go HTTP/gRPC search, vector and ETL control-plane service
+for wireless audit data. It queries the `atheros_search` TiDB domain and owns
+embedding job processing through an opt-in worker pool. Octopus owns durable
+ingestion, search-document/job preparation, maintained projections and alert
+derivation.
 
-Octopus owns ingestion, embedding preparation/completion, alerts, sequence and
-graph projections, inventory projections, and retention. This service owns
-query execution plus query logs, feedback, and merge decisions. It does not
-run background database workers or consume Redpanda topics.
+The Integration Console is the SolidJS UI in
+[`apps/integration-console/atheros-search-ui`](../../apps/integration-console/atheros-search-ui/);
+there is no Rails Search console.
 
-## Search design
+## Runtime responsibilities
 
-- Dense search queries one fixed `VECTOR(768)` table per public search kind.
-  The inner query performs an unfiltered, bounded ANN lookup ordered by
-  `VEC_COSINE_DISTANCE`; model and request filters are applied afterward so
-  TiFlash can use the vector index.
-- Sparse search queries normalized `search_document_tokens` postings. It does
-  not depend on database full-text extensions or stored routines.
-- Hybrid search preserves weighted reciprocal-rank fusion, deterministic
-  tie-breaking, threat boosts, and sparse fallback when query embedding fails.
-- Graph and inventory endpoints read coordinator-maintained projections.
-- Query text, result keys, and session IDs are hashed before persistence.
-- Merge decisions are durable TiDB writes, including undo decisions.
+- dense `VECTOR(768)`, sparse and hybrid search
+- graph, inventory, explain, filter-suggestion and merge-decision APIs
+- query analytics using hashed query/session/result identifiers
+- readiness and ETL health/stream APIs
+- lease-based claiming of `embedding_jobs`
+- batched embedding calls, `search_vectors_*` writes and job completion/failure
+- worker heartbeat and DLQ inspection/repair support
 
-The public protobuf schema and field numbers are unchanged. The streaming HTTP
-endpoint still emits one protobuf-JSON `SearchResult` per line followed by
-`{"type":"done"}`.
+The service does not apply DDL. Canonical schema lives in
+[`sql/tidb/atheros_search`](../../sql/tidb/atheros_search/).
 
 ## Database and readiness
 
-`ATHSEARCH_TIDB_DSN` is mandatory and must be a native MySQL driver DSN that:
+Database settings:
 
-- uses TCP and an external, non-loopback endpoint;
-- selects exactly `atheros_search`;
-- uses a dedicated non-root account.
+An explicit, valid `ATHSEARCH_*` value takes precedence over the shared
+fallback shown below. `None` means that no shared-variable fallback exists.
+In particular, `DATABASE_URL` and `SYNC_DATABASE_URL` are not fallbacks for
+`ATHSEARCH_TIDB_DSN` and are ignored.
 
-The client always enables `parseTime`, UTC session time, strict SQL mode,
-bounded pooling, and identity-verified TLS. DSN parameters cannot turn those
-requirements off. Startup checks the selected database, UTC, strict mode, TiDB
-v8.5 or newer, the expected schema manifest checksum, and vector readiness.
+| Variable | Shared fallback | Purpose |
+|---|---|---|
+| `ATHSEARCH_TIDB_DSN` | None | Native Go MySQL DSN selecting `atheros_search`; URL-style `mysql://` values are rejected |
+| `ATHSEARCH_TIDB_TLS_CA_FILE` | None | PEM CA used to verify TiDB |
+| `ATHSEARCH_TIDB_TLS_CERT_FILE` | None | Optional PEM client certificate; must be supplied with the key |
+| `ATHSEARCH_TIDB_TLS_KEY_FILE` | None | Optional PEM client private key; must be supplied with the certificate |
+| `ATHSEARCH_TIDB_TLS_SERVER_NAME` | None | Expected certificate DNS name |
+| `ATHSEARCH_SCHEMA_MANIFEST_SHA256` | None | Exact 64-character canonical manifest checksum |
 
-Required database settings:
+Startup verifies the selected database, UTC/strict SQL session, TiDB version,
+manifest checksum and vector readiness. Pool/search controls include:
 
-| Variable | Purpose |
-|---|---|
-| `ATHSEARCH_TIDB_DSN` | Native DSN such as `user:password@tcp(tidb.example:4000)/atheros_search` |
-| `ATHSEARCH_TIDB_TLS_CA_FILE` | PEM CA bundle used to verify the TiDB server |
-| `ATHSEARCH_TIDB_TLS_SERVER_NAME` | Expected certificate DNS name |
-| `ATHSEARCH_SCHEMA_MANIFEST_SHA256` | Exact 64-character canonical schema manifest checksum |
-
-Optional client-certificate settings must be supplied as a pair:
-
-| Variable | Purpose |
-|---|---|
-| `ATHSEARCH_TIDB_TLS_CERT_FILE` | PEM client certificate |
-| `ATHSEARCH_TIDB_TLS_KEY_FILE` | PEM client private key |
-
-Pool and search controls:
-
-| Variable | Default | Purpose |
+| Variable | Default | Shared fallback |
 |---|---:|---|
-| `ATHSEARCH_TIDB_MAX_OPEN_CONNS` | `32` | Maximum open database connections |
-| `ATHSEARCH_TIDB_MAX_IDLE_CONNS` | `8` | Maximum idle database connections |
-| `ATHSEARCH_TIDB_CONN_MAX_LIFETIME_MS` | `300000` | Maximum connection lifetime |
-| `ATHSEARCH_TIDB_CONN_MAX_IDLE_TIME_MS` | `60000` | Maximum idle duration |
-| `ATHSEARCH_DENSE_OVERFETCH_FACTOR` | `8` | ANN candidates fetched before filtering |
-| `ATHSEARCH_SEARCH_TIMEOUT_MS` | `10000` | Per-search deadline |
-| `ATHSEARCH_HYBRID_ALPHA` | `0.5` | Dense-versus-sparse fusion weight |
-| `ATHSEARCH_SCHEMA_READY_REQUIRED` | `true` | Gate startup and readiness on schema/vector state |
-| `ATHSEARCH_SCHEMA_READY_TIMEOUT_MS` | `60000` | Startup schema wait timeout |
-| `ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS` | `1000` | Schema wait poll interval |
+| `ATHSEARCH_TIDB_MAX_OPEN_CONNS` | `32` | None |
+| `ATHSEARCH_TIDB_MAX_IDLE_CONNS` | `8` | None |
+| `ATHSEARCH_TIDB_CONN_MAX_LIFETIME_MS` | `300000` | None |
+| `ATHSEARCH_TIDB_CONN_MAX_IDLE_TIME_MS` | `60000` | None |
+| `ATHSEARCH_SEARCH_TIMEOUT_MS` | `10000` | None |
+| `ATHSEARCH_HYBRID_ALPHA` | `0.5` | None |
+| `ATHSEARCH_DENSE_OVERFETCH_FACTOR` | `8` | None |
+| `ATHSEARCH_SCHEMA_READY_REQUIRED` | `true` | None |
+| `ATHSEARCH_SCHEMA_READY_TIMEOUT_MS` | `60000` | None |
+| `ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS` | `1000` | None |
 
-## Embedding backend
+## Embedding workers
 
-Meaningful dense and hybrid search requires an external embedding backend that
-returns 768-dimensional vectors for the same model used by Octopus. The client
-accepts the existing OpenAI-compatible `/v1/embeddings` and Ollama-style
-`/api/embed` response shapes.
+Workers are disabled by default in the binary:
 
-| Variable | Default | Purpose |
+| Variable | Default | Shared fallback | Purpose |
+|---|---:|---|---|
+| `ATHSEARCH_WORKER_ENABLED` | `false` | None | Start the worker pool |
+| `ATHSEARCH_WORKER_COUNT` | `4` | None | Concurrent claim loops |
+| `ATHSEARCH_EMBEDDING_BATCH_SIZE` | `64` | None | Jobs claimed and embedded per batch |
+| `ATHSEARCH_LEASE_SECONDS` | `1800` | None | Claim lease duration |
+| `ATHSEARCH_POLL_INTERVAL_MS` | `1000` | None | Poll interval |
+| `ATHSEARCH_WORKER_ID` | `worker-1` | None | Heartbeat/lease identity prefix |
+| `ATHSEARCH_DLQ_ENABLED` | `true` | None | Expose DLQ health state |
+
+Embedding settings use these shared fallbacks only when their corresponding
+`ATHSEARCH_*` value is empty:
+
+| Variable | Default | Shared fallback |
 |---|---:|---|
-| `ATHSEARCH_EMBEDDING_BACKEND` | `VECTOR_EMBEDDING_URL` fallback | Embedding API base URL |
-| `ATHSEARCH_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | Query embedding model |
-| `ATHSEARCH_EMBEDDING_DIMENSIONS` | `768` | Required dimensions; other values fail startup |
+| `ATHSEARCH_EMBEDDING_BACKEND` | empty | `VECTOR_EMBEDDING_URL` |
+| `ATHSEARCH_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | `VECTOR_EMBEDDING_MODEL` |
+| `ATHSEARCH_EMBEDDING_DIMENSIONS` | `768` | `VECTOR_EMBEDDING_DIMENSIONS` |
 
-If the backend is unset, the no-op client remains available for API wiring
-tests. It is not suitable for meaningful dense ranking.
+Embedding dimensions must resolve to `768`. The client accepts supported
+OpenAI-compatible and Ollama response shapes. With no backend configured, the
+server uses a zero-vector client suitable only for wiring tests.
 
-## Network and API configuration
+The umbrella Helm values declare worker settings, but its current Deployment
+template does not pass them to the container. Inspect rendered environment
+variables before expecting Kubernetes workers to run. The pinned Octopus
+runtime also lacks the wired search-document/job producer, so an empty queue
+can be a producer gap.
 
-| Variable | Default | Purpose |
+## Network and API
+
+| Variable | Default | Shared fallback |
 |---|---:|---|
-| `ATHSEARCH_GRPC_PORT` | `50051` | gRPC listen port |
-| `ATHSEARCH_HTTP_PORT` | `8080` | HTTP listen port |
-| `ATHSEARCH_METRICS_PORT` | `9090` | Prometheus listen port |
-| `ATHSEARCH_LOG_LEVEL` | `info` | Structured log level |
-| `ATHSEARCH_API_TOKEN_SHA256` | empty | Optional bearer-token SHA-256 digest |
-| `ATHSEARCH_CORS_ALLOWED_ORIGINS` | `http://127.0.0.1:5173` | Comma-separated origin allow-list |
+| `ATHSEARCH_HTTP_PORT` | `8080` | None |
+| `ATHSEARCH_GRPC_PORT` | `50051` | None |
+| `ATHSEARCH_METRICS_PORT` | `9090` | None |
+| `ATHSEARCH_LOG_LEVEL` | `info` | None |
+| `ATHSEARCH_API_TOKEN_SHA256` | empty | None |
+| `ATHSEARCH_CORS_ALLOWED_ORIGINS` | `http://127.0.0.1:5173` | None |
+| `ATHSEARCH_WS_ENABLED` | `false` | None |
 
-HTTP request bodies remain capped at 1 MiB. Raw queries, source keys, session
-IDs, tokens, and MACs are not written to logs.
-
-## API surface
+Key routes:
 
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/search` | Protobuf-JSON search |
-| `POST` | `/v1/search/stream` | NDJSON result stream with final done marker |
-| `GET` | `/v1/explain/{source_key}` | Explain ranking contributions |
-| `GET` | `/v1/suggest/filters` | Suggest SSIDs, locations, sensors, and frame subtypes |
-| `POST` | `/v1/graph` | Query the maintained graph projection |
-| `POST` | `/v1/inventory` | Query registry, CMDB, or similarity inventory views |
+| `POST` | `/v1/search/stream` | NDJSON results followed by `{"type":"done"}` |
+| `GET` | `/v1/explain/{source_key}` | Ranking explanation |
+| `GET` | `/v1/suggest/filters` | Filter suggestions |
+| `POST` | `/v1/graph` | Graph projection query |
+| `POST` | `/v1/inventory` | Inventory query |
 | `POST` | `/v1/inventory/merge-candidates/{candidate_id}/decision` | Persist merge workflow decisions |
-| `GET` | `/healthz` | Process liveness |
-| `GET` | `/readyz` | TiDB, schema, vector, and embedding-backend readiness |
+| `GET` | `/v1/etl/health` | ETL summary |
+| `GET` | `/v1/etl/embedding/jobs` | Embedding job state |
+| `GET` | `/v1/etl/workers` | Worker heartbeat state |
+| `GET` | `/v1/etl/stream` | NDJSON ETL snapshots when WebSockets are enabled |
+| `GET` | `/healthz` | Liveness |
+| `GET` | `/readyz` | TiDB/schema/vector/embedding readiness |
 
-The gRPC service is defined by
-`proto/atheros/search/v1/search.proto`. Regenerate generated code only when that
-source contract changes:
+The public protobuf contract is
+[`proto/atheros/search/v1/search.proto`](proto/atheros/search/v1/search.proto).
+HTTP bodies are capped at 1 MiB. Preserve CORS, token auth, deadlines and the
+NDJSON completion marker.
 
-```bash
-make atheros-search-proto
-```
+## Observability and privacy
 
-## Layout
+The service exposes Prometheus metrics on its dedicated metrics port. HTTP and
+gRPC tracing hooks exist, but server startup does not currently initialize an
+OTLP exporter/provider; `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export
+spans.
 
-| Path | Purpose |
-|---|---|
-| `cmd/server/` | HTTP, gRPC, metrics, readiness, and graceful shutdown |
-| `internal/api/` | Public routes, request bounds, auth, CORS, NDJSON, gRPC gateway |
-| `internal/auth/` | Constant-time bearer-token digest verification |
-| `internal/config/` | Required TiDB/TLS and search configuration validation |
-| `internal/db/` | `database/sql` MySQL driver, TLS, pooling, TiDB and schema checks |
-| `internal/embed/` | Query embedding client, cache, and circuit breaker |
-| `internal/search/` | Dense, sparse, hybrid, filter, rerank, graph, inventory, logging, suggest |
-| `internal/metrics/` | Search and embedding-query Prometheus metrics |
-| `proto/` | Stable protobuf source and generated Go API |
-
-The canonical runtime schema is under `../../sql/tidb/atheros_search/`; this
-service never applies DDL.
+Do not log raw queries, source keys, session IDs, tokens or full MACs. See
+[Atheros Search Privacy](../../docs/atheros-search-privacy.md).
 
 ## Development
 
 ```bash
 go test ./...
 go build ./cmd/server
+make atheros-search-proto
+go run ./cmd/embedding-job-repair -action=status
 ```
 
-For a direct process, mount real TLS files and provide the externally supplied
-credential without committing it:
-
-```bash
-ATHSEARCH_TIDB_DSN='atheros_search_app:REDACTED@tcp(tidb.example.net:4000)/atheros_search' \
-ATHSEARCH_TIDB_TLS_CA_FILE='/run/secrets/tidb/ca.crt' \
-ATHSEARCH_TIDB_TLS_SERVER_NAME='tidb.example.net' \
-ATHSEARCH_SCHEMA_MANIFEST_SHA256='REPLACE_WITH_64_HEX_CHARACTERS' \
-ATHSEARCH_EMBEDDING_BACKEND='http://127.0.0.1:8083' \
-go run ./cmd/server
-```
-
-The repository Helm and Compose paths provide the deployment wiring. They do
-not start an application-owned TiDB instance.
+Run protobuf generation only after changing the source `.proto`. Repair
+commands and deployment cautions are documented in
+[`scripts/README.md`](scripts/README.md).

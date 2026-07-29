@@ -1,62 +1,84 @@
 # ssl-proxy umbrella chart
 
-## Sub-charts (12)
+This is the compatibility single-release Kubernetes deployment. The canonical
+runtime ownership model is in
+[System Architecture](../../docs/architecture.md). The opt-in split-release
+orchestrator is documented in the [stackctl README](../../stackctl/README.md).
 
-| Chart | Alias | Condition | Mandatory | Purpose |
-|---|---|---|---|---|
-| proxy | — | `proxy.enabled` | no | WireGuard transparent proxy |
-| java-coordinator | javaCoordinator | `javaCoordinator.enabled` | no | Octopus Redpanda-to-TiDB coordinator |
-| schema-migrator | schemaMigrator | `schemaMigrator.enabled` | no | Scala Cats Effect schema runner |
-| atheros-sensor | atherosSensor | `atherosSensor.enabled` | no | Monitor-mode wireless sensor |
-| atheros-search | atherosSearch | `atherosSearch.enabled` | no | Go HTTP/gRPC search & vector ETL |
-| redis-runtime | redisRuntime | `redisRuntime.enabled` | no | Ephemeral cache & ActionCable fan-out |
-| tidb-schema-executor | tidbSchemaExecutor | `tidbSchemaExecutor.enabled` | no | Sole runtime TiDB DDL owner |
-| telemetry | telemetry | `telemetry.enabled` | no | Monitoring, logging, tracing stack |
-| vec-worker | vecWorker | `vecWorker.enabled` | no | Placeholder (retired — Atheros Search owns embedding) |
-| redpanda | — | *none* | **yes** | Redpanda event store |
-| minio | — | *none* | **yes** | S3-compatible object storage |
-| tidb | — | *none* | **yes** | External TiDB contract validation |
+## Dependencies
 
-Mandatory charts have no `condition:` in `Chart.yaml` — they always render.
-Optional charts are gated by their `enabled` field (defaults in `values.yaml`).
+`Chart.yaml` declares 13 subcharts:
 
-## `global.shared` contract
+| Chart | Alias | Condition | Role |
+|---|---|---|---|
+| `platform-config` | - | Always | Shared service account and configuration |
+| `proxy` | - | `proxy.enabled` | WireGuard and transparent proxy |
+| `java-coordinator` | `javaCoordinator` | `javaCoordinator.enabled` | Scala Octopus under its legacy deployment name |
+| `schema-migrator` | `schemaMigrator` | `schemaMigrator.enabled` | Schema Migrator, UI, Keycloak and edge |
+| `atheros-sensor` | `atherosSensor` | `atherosSensor.enabled` | Monitor-mode wireless sensor |
+| `redpanda` | - | Always | Event backbone |
+| `minio` | - | Always | Object storage |
+| `tidb` | - | Always | TiDB/UniStore or external TiDB contract |
+| `telemetry` | `telemetry` | `telemetry.enabled` | Prometheus, Loki, OTel, Jaeger and Grafana |
+| `vec-worker` | `vecWorker` | `vecWorker.enabled` | Retired compatibility placeholder |
+| `atheros-search` | `atherosSearch` | `atherosSearch.enabled` | Search API, embedding workers and SolidJS UI |
+| `redis-runtime` | `redisRuntime` | `redisRuntime.enabled` | Reconstructible cache/runtime coordination |
+| `tidb-schema-executor` | `tidbSchemaExecutor` | `tidbSchemaExecutor.enabled` | Sole canonical TiDB DDL executor |
 
-Values consumed by more than one sub-chart live under `global.shared.*`.
-Do not add per-chart configuration there — sub-chart values go under the
-dependency alias key (e.g., `proxy.*`, `javaCoordinator.*`).
+The retired `vec-worker` must remain disabled; Atheros Search owns embedding
+job processing. All workload subcharts depend on the
+[`_common`](charts/_common/) library chart for names, labels, images and service
+accounts.
 
-Current shared blocks:
-- `global.shared.keycloak` — OIDC issuer, JWKS URI, client ID
-- `global.shared.redis` — Redis URL secret ref
-- `global.shared.redpanda` — bootstrap servers, admin port, topic replication
-- `global.shared.tidb` — host, port, TLS, accounts (octopus, atherosSearch,
-  schemaMigrator, keycloak)
-- `global.shared.minio` — endpoint, bucket, access/secret key secret refs
-- `global.shared.proxy` — admin port
-- `global.shared.javaCoordinator` — topics, consumers, streams, wireless
-  topics/consumers/reply-topics, tracing
-- `global.shared.atherosSensor` — metrics port
-- `global.shared.atherosSearch` — metrics ports
+## Values contracts
 
-## `values.yaml` vs `values-k8s.yaml`
+Values shared across subcharts belong under `global.shared`:
 
-- `values.yaml` — default values for the umbrella chart. Workload defaults
-  live with their sub-charts. This file defines what an external deployment
-  (e.g., cloud with managed Redpanda/Minio/TiDB) would override.
-- `values-k8s.yaml` — single-node Kubernetes overlay. Sets in-cluster service
-  names, hostPath persistence, host ports, and per-chart image repo/tag.
-  Apply with `-f values.yaml -f values-k8s.yaml` to render a cluster manifest.
+- `keycloak`: issuer, JWKS URI and client ID
+- `redis`: URL Secret reference
+- `redpanda`: bootstrap servers, admin port and replication factor
+- `tidb`: host, port, TLS and isolated account definitions
+- `minio`: endpoint, bucket and credential Secret references
+- `proxy`: shared admin-service settings
+- `javaCoordinator`: topics, consumers, streams and tracing
+- `atherosSensor`: metrics port
+- `atherosSearch`: API and worker metrics ports
 
-In general: edit `values.yaml` to add/change shared defaults; edit
-`values-k8s.yaml` to override for single-node dev/staging clusters. Both
-files must stay in sync for `global.shared.*` keys — CI enforces drift
-detection.
+Chart-local values stay under their dependency alias. Every TiDB environment
+variable consumed by an application must be sourced from the matching chart
+value; update the application defaults, `global.shared.tidb` and deployment
+template together.
 
-## Dependencies file
+[`values.yaml`](values.yaml) holds umbrella defaults. [`values-k8s.yaml`](values-k8s.yaml)
+is the single-node overlay: it enables bundled infrastructure, the schema
+executor, Schema Migrator, Atheros Search/UI and selected host ports. Render
+the exact pair used in production; do not infer ports or readiness from one
+file alone.
 
-- `Chart.lock` — generated by `helm dependency update`. Re-generate when
-  adding or removing a sub-chart dependency.
-- `charts/_common/` — library chart consumed by all 12 sub-charts for shared
-  `name`/`fullname`/`labels`/`selectorLabels`/`image`/`serviceAccountName`
-  templates. See its own chart for usage.
+## Render and validate
+
+```bash
+helm dependency update helm/ssl-proxy
+helm lint helm/ssl-proxy
+helm template ssl-proxy helm/ssl-proxy \
+  -f helm/ssl-proxy/values.yaml \
+  -f helm/ssl-proxy/values-k8s.yaml
+scripts/check-helm-values-drift.sh helm/ssl-proxy
+```
+
+`Chart.lock` is generated by `helm dependency update` and must change when the
+dependency set or versions change.
+
+## Current deployment caveats
+
+- The Atheros Search values enable workers, but the deployment template does
+  not pass worker enablement/count/batch/lease/poll variables or the embedding
+  backend to the container.
+- The legacy standalone `k8s/tidb/init-job.yaml` is not equivalent to the Helm
+  TiDB init job; it grants the Search account only `SELECT`.
+- Single-node TiDB/UniStore does not demonstrate production TiFlash/vector
+  readiness or distributed failover.
+- `java-coordinator` is Octopus, not a Java implementation.
+
+These are documented gaps, not chart guarantees. See
+[Architecture known gaps](../../docs/architecture.md#known-gaps).

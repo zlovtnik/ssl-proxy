@@ -1,236 +1,134 @@
-# Fresh TiDB Runtime Cutover
+# TiDB Runtime and Cutover
 
-This runbook replaces application-owned PostgreSQL and MongoDB runtime state
-with four empty databases on an externally managed TiDB 8.5 or newer cluster:
+This is the operational contract for application-owned durable state. The
+canonical component and flow model is in [System Architecture](architecture.md).
 
-- `octopus_core`
-- `atheros_search`
-- `integration_console`
-- `schema_migrator`
+## Policy
 
-It is intentionally a fresh start. Do not copy PostgreSQL rows, configuration,
-vectors, jobs, users, or consumer positions. Do not replay Redpanda records
-which precede the signed cutover offsets.
+TiDB is the only internal application datastore. PostgreSQL is supported only
+as an explicit external target of Schema Migrator. Oracle is deprecated
+compatibility or historical material and is not a current runtime dependency.
+Redis and MinIO may hold reconstructible cache, coordination or exported
+objects, but neither replaces TiDB as authoritative application state.
 
-## Completion states
+## Canonical domains
 
-The migration has three separate completion claims:
+Only the checksummed manifests under [`sql/tidb/`](../sql/tidb/) define runtime
+DDL:
 
-1. **Repository-ready** means source, schemas, manifests, tests, and guarded
-   tooling are complete.
-2. **Environment-qualified** means the exact external TiDB/TiFlash cluster,
-   credentials, TLS identities, grants, schemas, seeds, vector indexes, and
-   external identity provider passed their integration checks.
-3. **Cutover-accepted** means activation, bounded offset evidence, the 30-minute
-   observation, legacy resource pruning, and the separately approved host-path
-   deletion completed successfully.
+| Domain | Account | Required ownership |
+|---|---|---|
+| `octopus_core` | `octopus_runtime` | Octopus read/write |
+| `atheros_search` | `atheros_search_runtime` and `octopus_runtime` | Search reads and worker writes; Octopus projection/document preparation |
+| `integration_console` | no current runtime account | Schema reserved; no application owner today |
+| `schema_migrator` | `schema_migrator_runtime` | Schema Migrator internal CRUD and execution state |
+| `contracts` | schema executor | Shared manifest and contract recording |
 
-Never describe repository-ready work as environment-qualified or
-cutover-accepted.
+Helm creates a separate `keycloak` database and `keycloak` account for the
+in-cluster identity provider. It is deployment-owned and is not a fifth
+application manifest.
 
-## Ownership and credentials
+## Provisioning authority
 
-The provisioning identity is the only account allowed to create databases,
-tables, indexes, migrations, or grants. The `scripts/tidb-runtime-schema`
-executor allowlists the four canonical roots under `sql/tidb/`; it must reject
-the retired `sql/tidb/core` baseline. HNSW DDL is a separate post-TiFlash step.
+The `tidb-runtime-schema` image runs
+[`k8s/tidb-schema-executor/entrypoint.sh`](../k8s/tidb-schema-executor/entrypoint.sh).
+It:
 
-Runtime accounts have these boundaries:
+1. verifies each domain's ordered file checksums;
+2. applies the four application manifests over TLS as the schema owner; and
+3. records the Atheros Search manifest readiness state.
 
-| Account | Writes | Reads |
-| --- | --- | --- |
-| Octopus | Core, maintained Search projections, Console acknowledgements | Its processor inputs and readiness metadata |
-| Rails | Console configuration, runs, windows, and command rows | Approved Core and Search projections |
-| Atheros Search | Queries, results, feedback, and merge decisions | Approved Core and Search projections |
-| Schema Migrator | Its control state only | Its control state only |
+Application runtimes must not apply canonical DDL. They connect with dedicated
+accounts, check TiDB version/TLS/server identity and verify the expected
+manifest checksum before serving traffic.
 
-External migration-target credentials are separate encrypted inputs. A
-PostgreSQL target credential must never be accepted as schema-migrator control
-state or as a global application database URL.
+Active migrations and ordered additions are append only. Do not recreate the
+retired `sql/tidb/core/` baseline or introduce PostgreSQL runtime aggregates.
 
-Keycloak remains a supported JWT/JWKS issuer, but is external to this release.
-There is no realm/user/client backfill. Qualify a fresh realm, client, roles,
-admin identity, issuer/audience, discovery endpoint, JWKS endpoint, and smoke
-token for a newly created test principal. (The single-node dev stack rendered
-from `helm/ssl-proxy/values-k8s.yaml` is the one exception: it runs an
-in-cluster Keycloak from the schema-migrator subchart with its own TiDB
-account; see the runbook's single-node section.)
+## Grant matrix
 
-## Required qualification evidence
+The intended least-privilege matrix is:
 
-Before staging, capture all of the following in the change record:
+| Account | `octopus_core` | `atheros_search` | `schema_migrator` | `keycloak` |
+|---|---|---|---|---|
+| `octopus_runtime` | Read/write | Read/write for owned projection preparation | None | None |
+| `atheros_search_runtime` | Read-only where cross-domain queries require it | Read/write for query analytics, job leases and vectors | None | None |
+| `schema_migrator_runtime` | None | None | Read/write | None |
+| `keycloak` | None | None | None | Read/write |
 
-- exact TiDB patch version and SQL mode;
-- verified server name, CA chain, and optional client certificate identity for
-  each of the four accounts;
-- positive and negative grant results;
-- four empty-domain proofs, except explicitly allowlisted system seeds;
-- manifest checksums from all four `schema_migrations` tables;
-- TiFlash replica availability for every vector table;
-- HNSW build state and an `EXPLAIN` plan demonstrating ANN use;
-- external Keycloak discovery/JWKS and smoke-token results;
-- the pre-migration contract test report;
-- rendered `stage`, `activate`, and `prune` Helm inventories.
+The umbrella TiDB chart implements these Search write grants. The older
+standalone [`k8s/tidb/init-job.yaml`](../k8s/tidb/init-job.yaml) still grants
+`atheros_search_runtime` only `SELECT`; do not treat that manifest as a
+production worker grant model.
 
-Vector qualification must use the exact target cluster. TiDB vector indexing
-depends on TiFlash and has version/configuration restrictions that a unit test
-or mock SQL server cannot establish.
+## Locked topics and delivery
 
-## Signed offset artifacts
+The cutover does not rename topics:
 
-The cutover artifact is canonical JSON with:
+- `sync.scan.request` is producer-to-Octopus work discovery.
+- `sync.oracle.load` is Octopus-owned TiDB load dispatch.
+- `sync.oracle.result` is the matching TiDB load outcome.
 
-- `schema_version: 1` and `kind: cutover`;
-- the Redpanda cluster identity and UTC capture time;
-- the new group version;
-- every consumer-group/topic/partition and its next offset.
+The two `sync.oracle.*` names are legacy compatibility labels. No Oracle
+connection is implied.
 
-Sign it with a detached Ed25519 signature. Keep the private key offline; mount
-only the public verification key into consumers. To canonicalize, sign, and
-verify an artifact:
+Delivery remains at least once after the signed cutover offset. Octopus records
+topic, partition and offset evidence, uses durable dedupe keys, and advances
+cursors only at the durable boundary. A cutover must never skip an unsigned
+range or reuse consumer identities without proving the intended offset.
 
-```bash
-scripts/tidb-cutover-artifact.py canonicalize cutover.json --output cutover.canonical.json
-scripts/tidb-cutover-artifact.py sign cutover.json --private-key cutover-ed25519.pem --signature cutover.sig
-scripts/tidb-cutover-artifact.py verify cutover.json --public-key cutover-ed25519.pub.pem --signature cutover.sig
-scripts/tidb-cutover-artifact.py checksum cutover.json
-```
+## Required connection configuration
 
-Each partition entry carries its exact `group_id`; this prevents independent
-consumers of the same topic/partition from sharing evidence accidentally. The
-capture must enumerate every partition for every new group. Missing partitions,
-an invalid
-signature, an unexpected broker identity, or a group mismatch must fail
-readiness. Group initialization is a separate mutating action: review its dry
-run and require the live cutover approval before applying it. The generated
-offset files use Redpanda's `<topic> <partition> <offset>` seek-file format:
+Octopus uses the `TIDB_*` family, including host, port, database, user,
+password, pool size, SSL mode, CA path and server name. Atheros Search uses a
+native Go MySQL DSN in `ATHSEARCH_TIDB_DSN` plus
+`ATHSEARCH_TIDB_TLS_CA_FILE`, `ATHSEARCH_TIDB_TLS_SERVER_NAME` and the expected
+manifest hash. Schema Migrator uses its `BEDROCK_STATE_DB_*` settings for the
+TiDB internal store.
 
-```bash
-scripts/tidb-cutover-artifact.py group-plan cutover.json \
-  --signature cutover.sig --public-key cutover-ed25519.pub.pem \
-  --output-dir evidence/group-offsets --output evidence/group-plan.json
+Every connection parameter consumed by an application must have a matching
+Helm value and deployment environment variable. Keep application defaults,
+`global.shared.tidb` and subchart templates aligned.
 
-# Mutating: run only inside the approved change window after reviewing the plan.
-cutover_sha256="$(scripts/tidb-cutover-artifact.py checksum cutover.json)"
-scripts/tidb-cutover-artifact.py group-apply cutover.json \
-  --signature cutover.sig --public-key cutover-ed25519.pub.pem \
-  --output-dir evidence/group-offsets --rpk-config production-rpk.yaml \
-  --approval-sha256 "$cutover_sha256" \
-  --confirm-cluster-id redpanda-production-a
-```
+## Cutover procedure
 
-At the end of observation, capture and sign an `audit_end` artifact with the
-exclusive end offset for every partition and the canonical cutover SHA-256.
-Export the durable Octopus ingestion ledger as JSON Lines with one row per
-offset and these fields:
+1. Back up existing evidence and record the source consumer-group offsets.
+2. Provision fresh TLS identities and dedicated accounts.
+3. Apply the four canonical manifests with the schema executor and retain its
+   checksum evidence.
+4. Verify database names, account grants, TiDB version, CA chain and server
+   name from each workload network.
+5. Produce and sign the cutover artifact containing cluster identity, schema
+   version, required consumer groups and starting offsets.
+6. Start Octopus with consumers/processors gated off; verify `/health` against
+   TiDB.
+7. Activate consumers at the signed boundary and confirm ingestion evidence,
+   dedupe and cursor movement.
+8. Enable projection/processor lanes only after their dependencies are ready.
+9. Enable Atheros Search query traffic; enable workers only when document/job
+   production, write grants and embedding backend readiness have been proven.
+10. Retain rollback evidence until the compatibility window closes.
 
-```json
-{"group_id":"octopus-wireless-tidb-v1","topic":"wireless.audit","partition":0,"offset":42,"group_version":"tidb-v1","artifact_sha256":"...","status":"processed"}
-```
+## Acceptance evidence
 
-Then prove the complete bounded interval:
+A cutover is accepted only when operators can show:
 
-```bash
-scripts/tidb-cutover-artifact.py coverage \
-  --cutover cutover.json \
-  --cutover-signature cutover.sig \
-  --audit-end audit-end.json \
-  --audit-end-signature audit-end.sig \
-  --public-key cutover-ed25519.pub.pem \
-  --ledger ingestion-ledger.jsonl \
-  --output coverage-report.json
-```
+- schema-executor success and all manifest hashes;
+- TLS verification from each direct client;
+- exact grant output for every runtime account;
+- signed topic/partition/offset boundary;
+- duplicate-delivery and restart tests without duplicate effects;
+- Atheros Search `/readyz` results for database, schema, vector and embedding
+  dependencies;
+- no application connection to an internal PostgreSQL store.
 
-The gate fails for a consumed pre-cutoff record, an unexplained offset gap, a
-duplicate ledger row, a bad artifact checksum, or any `retrying`/`parked`
-record. Only `processed` and durably `deduplicated` rows are clean.
+Single-node TiDB/UniStore in Compose and `values-k8s.yaml` is suitable for
+development and compatibility testing. It does not prove TiFlash placement,
+distributed failover or production vector-index readiness.
 
-## Rollout sequence
+## Rollback
 
-### 1. Provision and qualify
-
-Provision the external databases, accounts, TLS, grants, canonical schemas,
-system seeds, TiFlash replicas, and HNSW indexes. Provision the fresh external
-identity realm/client. Do not use runtime accounts for DDL.
-
-### 2. Stage
-
-Render and apply the explicit `stage` profile. It retains the current legacy
-resources and writers, adds new TiDB-connected images with every new consumer
-disabled, and does not switch Services. Prove schema, version, TLS, grants, and
-readiness. Transitional images must use the captured immutable digests.
-
-### 3. Establish the rollback boundary
-
-Record the last Helm revision which can restore the PostgreSQL-backed runtime.
-After any TiDB-only write is externally visible there is no database rollback:
-recovery becomes quiesce and forward-fix. Confirm the on-call owner and abort
-criteria before continuing.
-
-### 4. Quiesce and capture
-
-Quiesce PostgreSQL writers and the old Rails, Go, and coordinator workers while
-Redpanda producers continue. Prove the old consumers stopped advancing. Capture
-and sign the exact next offset for every consumed topic/partition, then create
-the new versioned groups at exactly those offsets. No `earliest` or implicit
-`latest` fallback is allowed.
-
-### 5. Activate
-
-Apply the `activate` profile. It keeps legacy resources present but quiesced,
-enables Octopus processors, starts Rails/Search/schema-migrator against TiDB,
-and switches Services only after readiness and smoke tests pass.
-
-### 6. Observe for 30 minutes
-
-Continuously record:
-
-- zero application PostgreSQL and MongoDB connections;
-- no processing gap or pre-cutoff record;
-- stable or shrinking consumer lag and outbox backlog;
-- no unrecovered expired lease or transaction retry exhaustion;
-- no vector-index/build/query failure;
-- no Redis-authoritative dependency;
-- successful Rails routes/channels, Search HTTP/gRPC, schema-migrator API, and
-  locked Redpanda payload smoke tests.
-
-Capture the signed audit-end offsets and require a clean bounded coverage
-report. Any retrying or parked record blocks the next step.
-
-### 7. Prune
-
-Apply the atomic `prune` profile. It removes the compatibility PostgreSQL,
-MongoDB, exporter, secret, policy, and legacy-worker objects. Compare the
-rendered and live inventories. Delete failed-revision orphans only by exact
-resource name plus release label, and only after reviewing the resolved list.
-
-### 8. Irreversible host-path deletion
-
-This repository does not automate this step. During the approved change window:
-
-1. Resolve the literal path
-   `/var/lib/docker/volumes/ssl-proxy_postgres-data/_data` on the intended host.
-2. Prove the hostname, mount namespace, Docker volume identity, Kubernetes
-   context/release, and current process/mount users.
-3. Prove no snapshot, backup, PVC, or retained copy is required under the
-   selected meaning of "unrecoverable."
-4. Present the exact resolved deletion command and get the separate destructive
-   approval.
-5. Delete only that literal path, then verify it and every legacy database
-   process/resource are absent.
-
-Never use a glob, environment-variable expansion, `$HOME`, `~`, or a recursive
-parent directory for this operation.
-
-## Abort conditions
-
-Abort activation or pruning when any required schema checksum, signature,
-partition, grant, TLS identity, TiFlash replica, HNSW readiness result, smoke
-test, or processor readiness result is missing. Also abort for growing lag,
-unexplained offsets, retries beyond budget, parked work, lease buildup,
-PostgreSQL/MongoDB connections, or failed Service switching.
-
-Before activation, rollback may restore the captured old Helm revision. After
-TiDB-only writes begin, do not write them back to PostgreSQL and do not replay
-old data. Quiesce affected processors, repair forward, reconcile, and resume
-from the durable TiDB/outbox state.
+Stop new consumers before changing offsets. Preserve the signed artifact,
+ingestion evidence and TiDB state. Roll back deployment code without deleting
+canonical schemas or rewinding evidence tables. Any offset change requires a
+new signed boundary and an explicit duplicate/replay analysis.

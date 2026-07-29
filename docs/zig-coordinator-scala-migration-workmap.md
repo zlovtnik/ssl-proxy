@@ -1,8 +1,13 @@
 # Zig Coordinator Java-to-Scala Migration Workmap
 
+> **Status: Superseded / completed directionally.** The coordinator now lives
+> in `services/octopus` as Scala 3/Cats Effect/FS2. This document is retained
+> as migration provenance; its PostgreSQL and Oracle target state is obsolete.
+> Use [System Architecture](architecture.md) for current ownership.
+
 **Version:** 1.0  
 **Date:** 2026-07-19  
-**Status:** Proposed  
+**Status:** Superseded
 **Scope:** Migrate `services/zig-coordinator` from Java 21, Spring Boot, and Apache Camel to Scala 3 using the architectural conventions established by `apps/schema-migrator`.
 
 ## 1. Outcome

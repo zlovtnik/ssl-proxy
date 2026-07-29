@@ -1,54 +1,70 @@
 # stackctl
 
-Stack deployment orchestrator for the ssl-proxy project.
+stackctl is the opt-in split-release Kubernetes orchestrator for ssl-proxy. It
+resolves component dependencies, renders Helm releases, runs gates and checks,
+and blocks descendants after a failure. It does not build images, create
+secrets, generate TLS or prepare nodes.
 
-## Overview
+The umbrella Helm release remains the compatibility default. See
+[System Architecture](../docs/architecture.md#opt-in-stackctl-split-releases).
 
-`stackctl` manages the deployment of multiple Kubernetes components with dependency resolution, readiness gates, and wave-based execution ordering.
+## Stages
 
-## Usage
+[`stack.yaml`](stack.yaml) declares this order:
+
+1. `bootstrap`: `platform-config`
+2. `infrastructure`: TiDB, Redpanda, MinIO, Redis and telemetry
+3. `schema-executor`: the canonical TiDB DDL job
+4. `schema-migrator`: Schema Migrator, UI, Keycloak and edge
+5. `applications`: Octopus, Atheros Search/UI and the sensor
+6. `proxy`: WireGuard and transparent proxy
+
+Component dependencies, Kubernetes resource gates and HTTP/TCP checks are
+explicit in the stack file. A gate proves only its declared condition; current
+runtime gaps remain documented in
+[Architecture known gaps](../docs/architecture.md#known-gaps).
+
+## Make targets
 
 ```bash
-# Print the deployment plan
+make stackctl-plan
+make stackctl-validate
+make stackctl-render
+make stackctl-compare
+make stackctl-preflight
+make stackctl-dry-run
+make stackctl-deploy
+make stackctl-status
+make stackctl-smoke
+```
+
+Override the manifest with `STACKCTL_FILE` and pass additional CLI options
+through `STACKCTL_ARGS`.
+
+The full opt-in operations workflow is:
+
+```bash
+make up-ready-stackctl \
+  PROFILE_MODE=iphone \
+  SERVER_IP=192.0.2.10 \
+  REGISTRY=192.0.2.10:5000
+```
+
+## Direct CLI
+
+```bash
 python3 stackctl/stackctl.py plan
-
-# Validate configuration
 python3 stackctl/stackctl.py validate
-
-# Deploy all components
 python3 stackctl/stackctl.py deploy
-
-# Deploy a specific component (and its dependencies)
 python3 stackctl/stackctl.py deploy --component atheros-search
-
-# Deploy starting from a specific wave
-python3 stackctl/stackctl.py deploy --from-wave 4
 ```
 
-## Configuration
-
-The stack configuration lives in `stackctl/stack.yaml`. It defines:
-
-- **Component types**: `helm`, `helm-job`, `manifest`, `external-check`
-- **Dependencies**: Which components must be deployed first
-- **Gates**: Kubernetes resources to wait for before proceeding
-- **Values**: Helm values files and overrides
-
-## Component Types
-
-| Type | Purpose |
-|------|---------|
-| `helm` | Deploy long-running workloads |
-| `helm-job` | Deploy a Job that must execute for this deployment |
-| `manifest` | Apply raw Kubernetes manifests |
-| `external-check` | Verify an externally managed dependency |
-
-## Development
+Install the Python requirements only for direct use:
 
 ```bash
-# Install dependencies
-pip install -r stackctl/requirements.txt
-
-# Run tests
-pytest stackctl/tests/
+python3 -m pip install -r stackctl/requirements.txt
+python3 -m pytest stackctl/tests
 ```
+
+Prefer the Make/ops wrappers in normal repository workflows because they share
+artifact paths, environment validation and deployment diagnostics.

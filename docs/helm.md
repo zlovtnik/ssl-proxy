@@ -1,5 +1,10 @@
 # Actionable workmap: `stackctl`
 
+> **Status: Historical implementation workmap.** stackctl now exists as an
+> opt-in split-release path. Use the [stackctl README](../stackctl/README.md)
+> and [System Architecture](architecture.md) for current commands, stages and
+> deployment caveats.
+
 The safest path is to implement this as several small PRs, with the existing umbrella deployment remaining available until the split-release output and test deployment are proven equivalent.
 
 ## Target end state

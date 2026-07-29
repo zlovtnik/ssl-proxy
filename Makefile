@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries runtime-datastore-policy tidb-schema-contract cutover-evidence-test bench docker lint clean deploy deploy-ready up-ready up-ready-stackctl diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars stackctl-plan stackctl-validate stackctl-render stackctl-compare stackctl-preflight stackctl-dry-run stackctl-deploy stackctl-status stackctl-smoke
+.PHONY: build test docs-check dependency-boundaries runtime-datastore-policy tidb-schema-contract cutover-evidence-test bench docker lint clean deploy deploy-ready up-ready up-ready-stackctl diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars stackctl-plan stackctl-validate stackctl-render stackctl-compare stackctl-preflight stackctl-dry-run stackctl-deploy stackctl-status stackctl-smoke
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -66,6 +66,9 @@ test:
 	$(MAKE) schema-migrator-test
 	$(MAKE) dependency-boundaries
 	cd services/octopus && sbt test
+
+docs-check:
+	python3 scripts/check-docs.py
 
 runtime-datastore-policy:
 	scripts/check-runtime-datastores.py

@@ -1,47 +1,64 @@
 # sslproxy-ops
 
-Typed Python operator CLI for the host-side `ssl-proxy` scripts.
+`sslproxy-ops` is the typed Python operator CLI behind the root Make targets
+and compatibility shell wrappers. It coordinates builds, registry checks,
+Helm/stackctl deployment, diagnostics and operational evidence; it does not own
+application runtime behavior.
 
-Run from the repository root through the Makefile or script wrappers. They use
-`uv` when available and otherwise bootstrap `ops/.venv`:
+Run it from the repository root. The Makefile uses `uv` when available and
+otherwise bootstraps `ops/.venv`.
 
-```sh
+```bash
 make ops-test
-./scripts/diagnose.sh --help
+make diagnose
+make pipeline-health
+make up-ready
 ```
 
-`make up-ready` defaults to the registry-backed Kubernetes/Helm deployment.
-It uses standard `kubectl` and `helm` with `UP_READY_KUBE_CONTEXT` when set,
-or the current kubeconfig context otherwise. Set
-`UP_READY_DEPLOYMENT_TARGET=compose` for the compatibility Compose path.
-Kubernetes deployments first probe a real containerd pull from the canonical
-`REGISTRY`. Configure a plain-HTTP registry once on each node with
-`make configure-containerd-registry REGISTRY=<host>:5000`.
+Direct module execution:
 
-For direct module execution, install the ops package first or use `uv`:
-
-```sh
+```bash
 cd ops
 uv run python -m sslproxy_ops --help
 ```
 
-## Initial command mapping
+## Deployment modes
 
-| Legacy entrypoint | Python command |
-| --- | --- |
-| `scripts/memo-show.sh` | `ops memo show` |
-| `scripts/memo-log.sh` | `ops memo log` |
-| `scripts/check-db-connections.sh` | `ops db check-connections` |
-| `scripts/sync-status.sh` | `ops pipeline status` |
-| `scripts/bench-wg-path.sh` | `ops bench wg-path` |
-| `tests/smoke.sh` | `ops smoke` |
-| `scripts/smoke_test.sh` | `ops schema-migrator smoke` |
-| `scripts/prep_ath.sh` | `ops host prep-ath` |
-| `setup-ubuntu.sh` | `ops host setup-ubuntu` |
-| `scripts/up-ready.sh` | `ops up-ready` |
-| `scripts/diagnose.sh` | `ops diagnose` |
+`make up-ready` uses the registry-backed umbrella Helm workflow by default.
+Set `UP_READY_KUBE_CONTEXT` when the current kubeconfig context is not the
+target. The workflow performs a real node-runtime pull probe before Helm.
 
-Container PID 1 and init-container scripts remain shell by design. Validate them
-with `ops host shellcheck-tier-b`; do not add Python to the minimal runtime image
-only to replace those boot scripts. New Python code must pass `cwd=` explicitly
-through `sslproxy_ops.shell.run()` instead of calling `os.chdir()`.
+Use `make up-ready-stackctl` for the opt-in split-release deployment. Set
+`UP_READY_DEPLOYMENT_TARGET=compose` only for the compatibility Compose path.
+Architecture and deployment limits are documented in
+[System Architecture](../docs/architecture.md).
+
+For a plain-HTTP node registry:
+
+```bash
+make configure-containerd-registry REGISTRY=192.0.2.10:5000
+```
+
+## Make target map
+
+| Operator task | Make target |
+|---|---|
+| Deploy umbrella chart | `make up-ready` |
+| Deploy split releases | `make up-ready-stackctl` |
+| Non-mutating diagnosis | `make diagnose` |
+| Check direct database connections | `make db-check-connections` |
+| Inspect pipeline state | `make pipeline-health` |
+| Kubernetes snapshot | `make k8s-status` |
+| Smoke tests | `make smoke` |
+| WireGuard path benchmark | `make bench-wg-path` |
+| Prepare Atheros host | `make prep-ath` |
+| Show/append operational memory | `make memo-show` / `make memo-log` |
+
+Compatibility wrappers such as `scripts/diagnose.sh`, `scripts/up-ready.sh`,
+`scripts/sync-status.sh` and `scripts/check-db-connections.sh` delegate to the
+same Python command surface.
+
+Container PID 1 and init-container scripts remain shell by design. Validate
+them with `make shellcheck-tier-b`; do not add Python to minimal runtime images
+only to replace boot scripts. New Python code must pass `cwd=` through
+`sslproxy_ops.shell.run()` instead of changing global process state.
