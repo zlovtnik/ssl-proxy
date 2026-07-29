@@ -7,3 +7,6 @@
 [submodule "apps/schema-migrator"]
 	path = apps/schema-migrator
 	url = https://github.com/zlovtnik/schema-migrator.git
+[submodule "services/octopus"]
+	path = services/octopus
+	url = https://github.com/zlovtnik/octopus
