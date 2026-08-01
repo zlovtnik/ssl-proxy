@@ -114,7 +114,7 @@ javaCoordinator:
       memory: 1Gi
   tidb:
     host: "ssl-proxy-tidb.default.svc.cluster.local"
-    poolSize: 4
+    poolSize: 20
 
 tidb:
   external: false

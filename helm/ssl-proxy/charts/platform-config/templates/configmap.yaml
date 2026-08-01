@@ -65,7 +65,7 @@ metadata:
 data:
   topics.manifest: |
     # topic|partitions|replicas|retention.ms|retention.bytes
-    # NOTE: Partition count set to {{ .Values.global.shared.javaCoordinator.topicPartitions }} to support up to 5 replicas
+    # Partition count supports coordinator scale-out and per-partition consumer fan-out.
     sync.scan.request|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
     sync.scan.request.dlq|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1
     sync.oracle.load|{{ .Values.global.shared.javaCoordinator.topicPartitions }}|{{ $replicas }}|2592000000|-1

@@ -55,6 +55,16 @@ spec:
                   key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
             - name: SYNC_REDPANDA_TOPIC_MANIFEST
               value: "/app/docker/redpanda/topics.manifest"
+            - name: SYNC_REDPANDA_TOPIC_PARTITIONS
+              value: {{ .Values.global.shared.javaCoordinator.topicPartitions | quote }}
+            - name: COORDINATOR_SCAN_FETCH_COUNT
+              value: {{ .Values.consumerBatch.maxPollRecords | quote }}
+            - name: COORDINATOR_POLL_TIMEOUT_MS
+              value: {{ .Values.consumerBatch.pollTimeoutMs | quote }}
+            - name: COORDINATOR_LOCKED_BATCH_SIZE
+              value: {{ .Values.consumerBatch.size | quote }}
+            - name: COORDINATOR_LOCKED_BATCH_WINDOW_MS
+              value: {{ .Values.consumerBatch.windowMs | quote }}
             # Topics
             - name: SYNC_SCAN_TOPIC
               valueFrom:
@@ -295,6 +305,8 @@ spec:
                   key: {{ .Values.global.shared.tidb.accounts.octopus.passwordSecret.key }}
             - name: TIDB_POOL_SIZE
               value: {{ .Values.tidb.poolSize | quote }}
+            - name: TIDB_HEALTHCHECK_RESERVE
+              value: {{ .Values.tidb.healthcheckReserve | quote }}
             - name: TIDB_CONNECTION_TIMEOUT_MS
               value: {{ .Values.tidb.connectionTimeoutMs | quote }}
             - name: TIDB_STATEMENT_TIMEOUT_SECS

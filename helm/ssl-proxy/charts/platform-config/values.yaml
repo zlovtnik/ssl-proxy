@@ -54,4 +54,4 @@ global:
         backlogPruneReplyTopic: "wireless.backlog.prune.reply"
         macLookupReplyTopic: "wireless.mac.lookup.reply"
         networksAuthorizedReplyTopic: "wireless.networks.authorized.reply"
-      topicPartitions: 5
+      topicPartitions: 24

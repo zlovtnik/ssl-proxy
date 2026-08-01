@@ -28,7 +28,7 @@ global:
         key: "secret-key"
 
 enabled: true
-replicas: 1
+replicas: 2
 image:
   repository: java-coordinator
   tag: latest
@@ -45,6 +45,11 @@ consumerConcurrency:
   result: 1
   wireless: 1
   wirelessMaxPollRecords: 1
+consumerBatch:
+  maxPollRecords: 500
+  pollTimeoutMs: 3000
+  size: 500
+  windowMs: 250
 retention:
   wirelessRawPayloadHotDays: 7
   syncEventRowRetentionDays: 30
@@ -96,7 +101,8 @@ metrics:
   heartbeatLogIntervalMs: 15000
 tidb:
   enabled: true
-  poolSize: 4
+  poolSize: 20
+  healthcheckReserve: 2
   connectionTimeoutMs: 5000
   statementTimeoutSecs: 30
   warnOnly: false
