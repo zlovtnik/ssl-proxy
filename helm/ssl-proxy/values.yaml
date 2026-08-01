@@ -11,7 +11,7 @@ global:
   instanceOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   # Changed by `ops up-ready` so mutable local-registry tags are actually pulled.
   rolloutRevision: ""
   labels: {}

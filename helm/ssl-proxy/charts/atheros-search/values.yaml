@@ -4,7 +4,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   serviceAccount:
@@ -25,7 +25,7 @@ replicas: 1
 image:
   repository: atheros-search
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 service:
   type: ClusterIP
   httpPort: 8080
@@ -66,7 +66,7 @@ ui:
   image:
     repository: atheros-search-ui
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     type: ClusterIP
     port: 8080

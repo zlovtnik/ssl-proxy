@@ -4,7 +4,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -40,7 +40,7 @@ prometheus:
   image:
     repository: prom/prometheus
     tag: v2.54.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 9090
     hostPort: null
@@ -57,7 +57,7 @@ loki:
   image:
     repository: grafana/loki
     tag: 3.1.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 3100
   persistence:
@@ -72,7 +72,7 @@ promtail:
   image:
     repository: grafana/promtail
     tag: 3.1.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   positionsHostPath: "/var/lib/ssl-proxy/promtail"
   resources:
     requests: {cpu: 50m, memory: 64Mi}
@@ -81,7 +81,7 @@ jaeger:
   image:
     repository: jaegertracing/all-in-one
     tag: 1.62.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 16686
     hostPort: null
@@ -94,7 +94,7 @@ otelCollector:
   image:
     repository: otel/opentelemetry-collector-contrib
     tag: 0.107.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
@@ -102,7 +102,7 @@ grafana:
   image:
     repository: grafana/grafana
     tag: 11.1.4
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 3004
     targetPort: 3000
@@ -129,7 +129,7 @@ nodeExporter:
   image:
     repository: prom/node-exporter
     tag: v1.8.2
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}
@@ -137,7 +137,7 @@ cadvisor:
   image:
     repository: gcr.io/cadvisor/cadvisor
     tag: v0.49.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   containerdHostPath: "/var/lib/containerd"
   resources:
     requests: {cpu: 50m, memory: 128Mi}
@@ -146,7 +146,7 @@ pushgateway:
   image:
     repository: prom/pushgateway
     tag: v1.8.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {cpu: 250m, memory: 256Mi}

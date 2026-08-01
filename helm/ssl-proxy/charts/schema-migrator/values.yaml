@@ -3,7 +3,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   serviceAccount:
@@ -16,7 +16,7 @@ backend:
   image:
     repository: schema-migrator-backend
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   replicas: 1
   service:
     port: 8080
@@ -50,7 +50,7 @@ ui:
   image:
     repository: schema-migrator-ui
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   replicas: 1
   service:
     port: 80
@@ -69,7 +69,7 @@ keycloak:
   image:
     repository: quay.io/keycloak/keycloak
     tag: 26.2.5
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   realm: middleware
   clientId: bedrock-ui
   adminRole: admin
@@ -118,7 +118,7 @@ traefik:
   image:
     repository: traefik
     tag: v3.6.2
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   hostPorts:
     http: 80
     https: 443
@@ -141,4 +141,4 @@ bootstrapImages:
   busybox:
     repository: busybox
     tag: 1.37.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always

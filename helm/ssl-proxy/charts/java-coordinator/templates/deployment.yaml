@@ -323,6 +323,10 @@ spec:
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
             - name: OCTOPUS_CONSUMERS_ENABLED
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
+            - name: OCTOPUS_ENVIRONMENT
+              value: {{ .Values.runtime.environment | quote }}
+            - name: OCTOPUS_CUTOVER_DEV_BYPASS
+              value: {{ .Values.cutover.devBypass | quote }}
 
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.tracing.samplingProbability | quote }}

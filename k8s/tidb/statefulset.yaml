@@ -19,6 +19,7 @@ spec:
       containers:
         - name: tidb
           image: pingcap/tidb:v8.5.7
+          imagePullPolicy: Always
           ports:
             - containerPort: 4000
               hostPort: 4000

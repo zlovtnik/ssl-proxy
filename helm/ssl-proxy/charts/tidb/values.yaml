@@ -3,7 +3,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -27,7 +27,7 @@ egress:
 image:
   repository: pingcap/tidb
   tag: v8.5.7
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 replicas: 1
 resources:
   requests:
@@ -52,7 +52,7 @@ initJob:
   image:
     repository: tidb-runtime-schema
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   backoffLimit: 5
   activeDeadlineSeconds: 600
 # Set dynamically by ops up-ready to force StatefulSet rollout on TLS rotation.

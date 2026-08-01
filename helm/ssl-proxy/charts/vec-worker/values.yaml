@@ -5,7 +5,7 @@ replicas: 1
 image:
   repository: vec-worker
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 service:
   port: 9092
   type: ClusterIP

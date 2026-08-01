@@ -4,7 +4,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -32,7 +32,7 @@ replicas: 2
 image:
   repository: java-coordinator
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 service:
   port: 8080
   type: ClusterIP
@@ -45,6 +45,10 @@ consumerConcurrency:
   result: 1
   wireless: 1
   wirelessMaxPollRecords: 1
+runtime:
+  environment: "production"
+cutover:
+  devBypass: false
 consumerBatch:
   maxPollRecords: 500
   pollTimeoutMs: 3000

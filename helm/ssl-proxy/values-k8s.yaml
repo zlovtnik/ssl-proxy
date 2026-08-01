@@ -105,6 +105,10 @@ javaCoordinator:
     repository: "java-coordinator"
     tag: latest
     pullPolicy: Always
+  runtime:
+    environment: "development"
+  cutover:
+    devBypass: true
   resources:
     limits:
       cpu: "2"

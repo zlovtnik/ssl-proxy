@@ -5,7 +5,7 @@ global:
   rolloutRevision: ""
   serviceAccount: {name: ssl-proxy}
 enabled: true
-image: {repository: redis, tag: 7.4.3-alpine, pullPolicy: IfNotPresent}
+image: {repository: redis, tag: 7.4.3-alpine, pullPolicy: Always}
 credentialsSecret: {name: redis-runtime, passwordKey: password}
 resources:
   requests: {cpu: 50m, memory: 64Mi}
