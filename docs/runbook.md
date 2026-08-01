@@ -151,3 +151,23 @@ and duplicate-delivery review.
 For key rotation, use the staged rotator flow in the
 [WireGuard key rotator README](../apps/wg-key-rotator/README.md); do not replace
 active keys without a candidate health and handshake window.
+
+### Locked-topic partition expansion
+
+The locked sync topics are configured for 24 partitions. An upgrade may add
+partitions to an existing topic, but it must not activate consumers against an
+artifact that covers only the old partition set.
+
+1. Stage Octopus with its consumer lane disabled.
+2. Apply the topic manifest and verify all of `sync.scan.request`,
+   `sync.oracle.load`, and `sync.oracle.result` have 24 partitions.
+3. Capture and sign a new cutover artifact that covers every partition for all
+   configured consumer groups. New partitions normally begin at offset zero.
+4. Activate the two coordinator replicas and confirm each signed partition is
+   assigned and advancing.
+5. Watch lag per partition with `rpk group describe`; uneven new traffic should
+   be investigated at the producer key/distribution boundary.
+
+Partition expansion does not redistribute records that were already stored.
+Do not decrease a manifest partition count: the bootstrap reconciliation fails
+closed because Kafka topic partitions cannot be removed in place.
