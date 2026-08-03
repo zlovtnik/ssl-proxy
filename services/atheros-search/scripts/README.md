@@ -14,7 +14,6 @@ Embedding-job repair is implemented by `cmd/embedding-job-repair`:
 go run ./cmd/embedding-job-repair -action=status
 go run ./cmd/embedding-job-repair -action=reset-stale -stale-minutes=60
 go run ./cmd/embedding-job-repair -action=retry-failed
-go run ./cmd/embedding-job-repair -action=cleanup-dlq -dlq-evict-hours=168
 ```
 
 Run repair commands with the same TiDB DSN, CA and server-name verification as

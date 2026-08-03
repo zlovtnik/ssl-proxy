@@ -45,6 +45,9 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ .Values.ownerSecret.name }}, key: {{ .Values.ownerSecret.dsnKey }}}}
             - {name: TIDB_TLS_CA_FILE, value: /etc/tidb-tls/ca.crt}
             - {name: TIDB_SCHEMA_APPLY_POST_TIFLASH, value: {{ .Values.applyPostTiFlash | quote }}}
+            - {name: TIDB_OCTOPUS_ACCOUNT, value: {{ .Values.global.shared.tidb.accounts.octopus.user | quote }}}
+            - {name: TIDB_ATHEROS_SEARCH_ACCOUNT, value: {{ .Values.global.shared.tidb.accounts.atherosSearch.user | quote }}}
+            - {name: TIDB_SCHEMA_MIGRATOR_ACCOUNT, value: {{ .Values.global.shared.tidb.accounts.schemaMigrator.user | quote }}}
           volumeMounts: [{name: tidb-tls, mountPath: /etc/tidb-tls, readOnly: true}]
           resources: {{- toYaml .Values.resources | nindent 12 }}
           securityContext:

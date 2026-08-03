@@ -292,7 +292,7 @@ func (p *Pool) runHeartbeat(ctx context.Context) {
 			log.Info().Msg("heartbeat goroutine shutting down")
 			return
 		case <-ticker.C:
-			if err := upsertHeartbeat(context.Background(), p.db, workerID, "pool", nil); err != nil {
+			if err := upsertHeartbeat(ctx, p.db, workerID, "pool", nil); err != nil && ctx.Err() == nil {
 				log.Error().Err(err).Msg("heartbeat update failed")
 			}
 		}

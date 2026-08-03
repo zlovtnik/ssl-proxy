@@ -1,16 +1,42 @@
 -- Provision accounts and credentials outside schema migration. Replace the
 -- account tokens with pre-existing TLS-authenticated TiDB identities.
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.*
-  TO '{{OCTOPUS_ACCOUNT}}';
-
+-- Both runtimes verify schema state and read the rows they own or consume.
 GRANT SELECT ON atheros_search.*
-  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
-GRANT INSERT, UPDATE ON atheros_search.search_queries
-  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
-GRANT INSERT, UPDATE ON atheros_search.search_query_results
-  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
-GRANT INSERT, UPDATE ON atheros_search.search_feedback
-  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
-GRANT INSERT ON atheros_search.merge_decisions
-  TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+  TO '{{OCTOPUS_ACCOUNT}}', '{{ATHEROS_SEARCH_ACCOUNT}}';
+
+-- Octopus owns deterministic document preparation and maintained projections.
+GRANT INSERT, UPDATE, DELETE ON atheros_search.search_documents TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tokens TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tags TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.search_filter_values TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.embedding_jobs TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.behaviour_snapshots TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.baseline_profiles TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.frame_sequences TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_transitions TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.timing_profiles TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.similarity_pairs TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.threat_signals TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.ap_risk_scores TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.graph_nodes TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.graph_edges TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.inventory_devices TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.identity_clusters TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.identity_cluster_members TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.merge_candidates TO '{{OCTOPUS_ACCOUNT}}';
+
+-- Atheros Search exclusively owns embedding claims, vector writes, and worker
+-- heartbeat state. External embedding calls occur after claim commit.
+GRANT UPDATE ON atheros_search.embedding_jobs TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_vectors_event TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_vectors_device TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_vectors_behaviour TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_vectors_sequence TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.worker_heartbeat TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+
+-- Search API analytics and operator decisions.
+GRANT INSERT, UPDATE ON atheros_search.search_queries TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_query_results TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT, UPDATE ON atheros_search.search_feedback TO '{{ATHEROS_SEARCH_ACCOUNT}}';
+GRANT INSERT ON atheros_search.merge_decisions TO '{{ATHEROS_SEARCH_ACCOUNT}}';

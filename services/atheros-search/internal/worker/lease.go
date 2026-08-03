@@ -29,6 +29,9 @@ WHERE job_id IN (
     LIMIT ?
   ) AS candidates
 )
+  AND status = 'pending'
+  AND next_attempt_at <= NOW(6)
+  AND attempt_count < max_attempts
 RETURNING job_id, document_id, embedding_kind, embedding_model, content_sha256, priority, lease_token, lease_fence
 `, ownerID, leaseExpiresAt, limit)
 	if err != nil {
@@ -69,7 +72,11 @@ SET status = 'completed',
     lease_expires_at = NULL,
     completed_at = CURRENT_TIMESTAMP(6),
     updated_at = CURRENT_TIMESTAMP(6)
-WHERE job_id = ? AND lease_token = ? AND lease_fence = ? AND lease_expires_at > NOW(6)
+WHERE job_id = ?
+  AND status = 'leased'
+  AND lease_token = ?
+  AND lease_fence = ?
+  AND lease_expires_at > NOW(6)
 `, jobID, leaseToken, leaseFence)
 	if err != nil {
 		return err
@@ -98,7 +105,11 @@ SET status = CASE
     lease_expires_at = NULL,
     next_attempt_at = DATE_ADD(NOW(6), INTERVAL LEAST(POW(2, attempt_count), ?) SECOND),
     updated_at = CURRENT_TIMESTAMP(6)
-WHERE job_id = ? AND lease_token = ? AND lease_fence = ? AND lease_expires_at > NOW(6)
+WHERE job_id = ?
+  AND status = 'leased'
+  AND lease_token = ?
+  AND lease_fence = ?
+  AND lease_expires_at > NOW(6)
 `, errMsg, int(maxBackoff.Seconds()), jobID, leaseToken, leaseFence)
 	if err != nil {
 		return err

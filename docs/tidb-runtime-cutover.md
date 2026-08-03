@@ -51,12 +51,15 @@ The intended least-privilege matrix is:
 
 | Account | `octopus_core` | `atheros_search` | `schema_migrator` | `keycloak` |
 |---|---|---|---|---|
-| `octopus_runtime` | Read/write | Read/write for owned projection preparation | None | None |
-| `atheros_search_runtime` | Read-only where cross-domain queries require it | Read/write for query analytics, job leases and vectors | None | None |
+| `octopus_runtime` | Read/write | Read plus table-level writes for document preparation and Octopus-owned projections | None | None |
+| `atheros_search_runtime` | Table-level reads required by search | Read plus table-level writes for query analytics, fenced job leases, vectors and worker heartbeat | None | None |
 | `schema_migrator_runtime` | None | None | Read/write | None |
 | `keycloak` | None | None | None | Read/write |
 
-The umbrella TiDB chart implements these Search write grants. The older
+The TiDB bootstrap job temporarily grants database-wide access because runtime
+accounts are created before tables exist. After applying canonical DDL, the
+schema executor revokes those bootstrap grants and applies the checked-in
+table-level grant fixtures. The older
 standalone [`k8s/tidb/init-job.yaml`](../k8s/tidb/init-job.yaml) still grants
 `atheros_search_runtime` only `SELECT`; do not treat that manifest as a
 production worker grant model.

@@ -24,9 +24,8 @@ func main() {
 	tlsKey := flag.String("tls-key", envOr("ATHSEARCH_TIDB_TLS_KEY_FILE", ""), "TiDB TLS key file")
 	tlsServer := flag.String("tls-server", envOr("ATHSEARCH_TIDB_TLS_SERVER_NAME", ""), "TiDB TLS server name")
 	schemaManifestSHA256 := flag.String("schema-manifest-sha256", envOr("ATHSEARCH_SCHEMA_MANIFEST_SHA256", ""), "Expected schema manifest SHA-256 (required)")
-	action := flag.String("action", "status", "Action: status, reset-stale, retry-failed, cleanup-dlq")
+	action := flag.String("action", "status", "Action: status, reset-stale, retry-failed")
 	staleMinutes := flag.Int("stale-minutes", 60, "Minutes after which a leased job is considered stale")
-	dlqEvictHours := flag.Int("dlq-evict-hours", 168, "Hours after which failed DLQ entries are evicted")
 	flag.Parse()
 
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
@@ -65,8 +64,6 @@ func main() {
 		err = resetStaleJobs(ctx, db, logger, time.Duration(*staleMinutes)*time.Minute)
 	case "retry-failed":
 		err = retryFailedJobs(ctx, db, logger)
-	case "cleanup-dlq":
-		err = cleanupDLQ(ctx, db, logger, time.Duration(*dlqEvictHours)*time.Hour)
 	default:
 		logger.Fatal().Str("action", *action).Msg("unknown action")
 	}
@@ -161,10 +158,6 @@ ORDER BY status
 	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM embedding_jobs").Scan(&total)
 	logger.Info().Int64("total", total).Msg("")
 
-	var dlqCount int64
-	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sync_backlog WHERE status IN ('pending', 'sync_failed', 'failed')").Scan(&dlqCount)
-	logger.Info().Int64("dlq_entries", dlqCount).Msg("DLQ backlog")
-
 	var workerCount int64
 	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM worker_heartbeat").Scan(&workerCount)
 	logger.Info().Int64("heartbeat_rows", workerCount).Msg("Worker heartbeats")
@@ -211,23 +204,6 @@ WHERE status = 'failed'
 	affected, _ := result.RowsAffected()
 	logger.Info().Int64("retried", affected).Msg("failed jobs reset to pending")
 	return nil
-}
-
-func cleanupDLQ(ctx context.Context, db *sql.DB, logger zerolog.Logger, olderThan time.Duration) error {
-	result, err := db.ExecContext(ctx, `
-DELETE FROM sync_backlog
-WHERE status IN ('sync_failed', 'failed')
-  AND updated_at < DATE_SUB(NOW(6), INTERVAL ? SECOND)
-`, int(olderThan.Seconds()))
-	if err != nil {
-		return fmt.Errorf("cleanup DLQ: %w", err)
-	}
-	affected, _ := result.RowsAffected()
-	logger.Info().Int64("evicted", affected).Dur("older_than", olderThan).Msg("DLQ entries evicted")
-	return nil
-}
-
-func init() {
 }
 
 func verifySchemaGate(ctx context.Context, database *sql.DB, expectedSHA256 string, logger zerolog.Logger) error {

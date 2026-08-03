@@ -7,16 +7,16 @@ This file governs `services/atheros-search` relative to the repository root.
 - Go module: `github.com/zlovtnik/ssl-proxy/services/atheros-search`.
 - `cmd/server/` starts the HTTP/gRPC service with optional embedding worker
   pool and ETL health monitor.
-- `cmd/embedding-job-repair/` is a CLI tool for repairing stuck/failed
-  embedding jobs and cleaning up the DLQ.
+- `cmd/embedding-job-repair/` is a CLI tool for inspecting and repairing
+  stuck or failed embedding jobs.
 - `internal/api/` owns HTTP routes, CORS, auth wiring, NDJSON streaming,
   gRPC gateway behavior, and ETL health/WebSocket endpoints.
 - `internal/search/` owns dense/sparse/hybrid search, graph, inventory,
   explain, and suggest logic.
 - `internal/embed/` owns query embedding, caching, and backend circuit
   breaking.
-- `internal/worker/` owns the embedding job worker pool with lease-based
-  claiming, ETL health monitoring, and DLQ management. Workers claim
+- `internal/worker/` owns the embedding job worker pool with fenced lease-based
+  claiming and ETL health monitoring. Workers claim
   pending jobs from `embedding_jobs`, call the embedding backend, and
   write vectors to `search_vectors_*` tables.
 - `internal/health/` owns readiness checks and schema gate logic.
@@ -55,7 +55,6 @@ This file governs `services/atheros-search` relative to the repository root.
 - Repair embedding jobs: `go run ./cmd/embedding-job-repair -action=status`.
 - Reset stale jobs: `go run ./cmd/embedding-job-repair -action=reset-stale -stale-minutes=60`.
 - Retry failed jobs: `go run ./cmd/embedding-job-repair -action=retry-failed`.
-- Cleanup DLQ: `go run ./cmd/embedding-job-repair -action=cleanup-dlq -dlq-evict-hours=168`.
 
 ## Verification
 - Run package-targeted `go test` for changed packages, then `go test ./...`

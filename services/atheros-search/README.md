@@ -20,7 +20,7 @@ there is no Rails Search console.
 - mixed-kind batched embedding calls outside database transactions
 - atomic `search_vectors_*` writes and fenced job completion/failure
 - periodic renewal of long-running leases and continuous bounded expired-lease recovery
-- worker heartbeat and DLQ inspection/repair support
+- worker heartbeat and failed-job inspection/repair support
 
 The service does not apply DDL. Canonical schema lives in
 [`sql/tidb/atheros_search`](../../sql/tidb/atheros_search/).
