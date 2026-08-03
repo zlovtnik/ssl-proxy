@@ -20,7 +20,8 @@ there is no Rails Search console.
 - mixed-kind batched embedding calls outside database transactions
 - atomic `search_vectors_*` writes and fenced job completion/failure
 - periodic renewal of long-running leases and continuous bounded expired-lease recovery
-- worker heartbeat and failed-job inspection/repair support
+- worker heartbeat and durable terminal failed-job inspection/repair support; failed
+  `embedding_jobs` are the bounded-retry dead-letter queue
 
 The service does not apply DDL. Canonical schema lives in
 [`sql/tidb/atheros_search`](../../sql/tidb/atheros_search/).
@@ -71,7 +72,6 @@ Workers are disabled by default in the binary:
 | `ATHSEARCH_LEASE_SECONDS` | `1800` | None | Claim lease duration |
 | `ATHSEARCH_POLL_INTERVAL_MS` | `1000` | None | Poll interval |
 | `ATHSEARCH_WORKER_ID` | `worker-1` | None | Heartbeat/lease identity prefix |
-| `ATHSEARCH_DLQ_ENABLED` | `true` | None | Expose DLQ health state |
 
 Embedding settings use these shared fallbacks only when their corresponding
 `ATHSEARCH_*` value is empty:
@@ -83,14 +83,14 @@ Embedding settings use these shared fallbacks only when their corresponding
 | `ATHSEARCH_EMBEDDING_DIMENSIONS` | `768` | `VECTOR_EMBEDDING_DIMENSIONS` |
 
 Embedding dimensions must resolve to `768`. The client accepts supported
-OpenAI-compatible and Ollama response shapes. With no backend configured, the
-server uses a zero-vector client suitable only for wiring tests.
+OpenAI-compatible and Ollama response shapes. Enabling workers requires a
+non-empty backend URL and fails startup otherwise. With workers disabled, an
+empty backend selects the zero-vector client for search wiring tests only.
 
-The umbrella Helm values declare worker settings, but its current Deployment
-template does not pass them to the container. Inspect rendered environment
-variables before expecting Kubernetes workers to run. The pinned Octopus
-runtime also lacks the wired search-document/job producer, so an empty queue
-can be a producer gap.
+The `vec-worker` Helm deployment passes the worker, embedding, TiDB TLS, and
+manifest settings to the container. Octopus produces search documents and
+embedding jobs only when `embedding-text-builder` and `embedding-preparer` are
+enabled after their dependencies; both remain disabled by default.
 
 ## Network and API
 

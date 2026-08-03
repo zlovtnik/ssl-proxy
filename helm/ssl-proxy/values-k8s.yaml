@@ -208,7 +208,7 @@ atherosSensor:
     pullPolicy: Always
 atherosSearch:
   enabled: true
-  schemaManifestSHA256: "432b3debd58b6f046ce716736ea2e570cfcadb86349546a9151d2a1135034c85"
+  schemaManifestSHA256: "94a4cbc7acee1226a6db1d54bd9acd0522b221d82466c28ede1a97d73df2e071"
   image:
     repository: atheros-search
     tag: latest

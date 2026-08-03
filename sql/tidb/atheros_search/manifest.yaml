@@ -4,7 +4,7 @@ database: atheros_search
 schema_version: 001
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 432b3debd58b6f046ce716736ea2e570cfcadb86349546a9151d2a1135034c85
+manifest_sha256: 94a4cbc7acee1226a6db1d54bd9acd0522b221d82466c28ede1a97d73df2e071
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 post_tiflash_manifest: post_tiflash/manifest.yaml
@@ -17,4 +17,5 @@ apply_order:
   - 01_tables/005_graph_inventory_identity.sql
   - 01_tables/006_query_feedback.sql
   - 01_tables/007_worker_heartbeat.sql
+  - 01_tables/008_projection_maintenance.sql
 retired: []

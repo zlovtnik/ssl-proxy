@@ -117,6 +117,38 @@ func TestStoreCompletionHonorsCancellationBeforeTransaction(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestRenewJobLeaseUsesTokenFenceAndReportsLeaseLoss(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	job := testJob()
+	expiresAt := time.Now().Add(time.Minute)
+	mock.ExpectExec("UPDATE embedding_jobs").
+		WithArgs(expiresAt, job.JobID, job.LeaseToken, job.LeaseFence).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	renewed, err := renewJobLease(context.Background(), db, job, expiresAt)
+	require.NoError(t, err)
+	require.False(t, renewed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRecoverExpiredLeasesIsBounded(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectExec("UPDATE embedding_jobs").
+		WithArgs(25).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	recovered, err := recoverExpiredLeases(context.Background(), db, 25)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), recovered)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPoolStopCancelsWorkersAndRecovery(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

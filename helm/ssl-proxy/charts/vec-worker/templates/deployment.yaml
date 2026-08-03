@@ -66,8 +66,6 @@ spec:
               value: {{ .Values.embedding.leaseSeconds | default 1800 | quote }}
             - name: ATHSEARCH_POLL_INTERVAL_MS
               value: {{ (mul (.Values.pollIntervalSeconds | default 1) 1000) | quote }}
-            - name: ATHSEARCH_DLQ_ENABLED
-              value: "true"
             - name: ATHSEARCH_HTTP_PORT
               value: {{ .Values.service.port | default 9092 | quote }}
             - name: ATHSEARCH_METRICS_PORT

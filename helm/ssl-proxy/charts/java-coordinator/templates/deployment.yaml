@@ -294,6 +294,8 @@ spec:
               value: {{ .Values.metrics.heartbeatLogIntervalMs | quote }}
             - name: TIDB_ENABLED
               value: {{ .Values.tidb.enabled | quote }}
+            - name: TIDB_SCHEMA_MANIFEST_SHA256
+              value: {{ required "javaCoordinator.tidb.schemaManifestSHA256 is required" .Values.tidb.schemaManifestSHA256 | quote }}
             - name: TIDB_HOST
               value: {{ .Values.global.shared.tidb.host | quote }}
             - name: TIDB_PORT

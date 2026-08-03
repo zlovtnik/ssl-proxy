@@ -98,6 +98,8 @@ spec:
                  GRANT INSERT, UPDATE, DELETE ON atheros_search.baseline_profiles TO 'octopus_runtime';
                  GRANT INSERT, UPDATE, DELETE ON atheros_search.frame_sequences TO 'octopus_runtime';
                  GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_transitions TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_transition_contributions TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_previous_totals TO 'octopus_runtime';
                  GRANT INSERT, UPDATE, DELETE ON atheros_search.timing_profiles TO 'octopus_runtime';
                  GRANT INSERT, UPDATE, DELETE ON atheros_search.similarity_pairs TO 'octopus_runtime';
                  GRANT INSERT, UPDATE, DELETE ON atheros_search.threat_signals TO 'octopus_runtime';

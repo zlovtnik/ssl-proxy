@@ -50,10 +50,32 @@ mysql_run() {
     "$@"
 }
 
+manifest_digest() {
+  domain="$1"
+  manifest="${schema_root}/${domain}/manifest.yaml"
+  (
+    awk '
+      /^apply_order:$/ { active = 1; next }
+      active && /^  - / { print substr($0, 5); next }
+      active && /^[^ ]/ { exit }
+    ' "${manifest}" | while IFS= read -r relative; do
+      printf '%s\0' "${relative}"
+      cat "${schema_root}/${domain}/${relative}"
+      printf '\0'
+    done
+  ) | sha256sum | awk '{ print $1 }'
+}
+
 apply_domain() {
   domain="$1"
   manifest="${schema_root}/${domain}/manifest.yaml"
   checksums="${schema_root}/${domain}/checksums.sha256"
+  expected_manifest="$(awk '/^manifest_sha256:/{ print $2; exit }' "${manifest}")"
+  actual_manifest="$(manifest_digest "${domain}")"
+  if [ "${expected_manifest}" != "${actual_manifest}" ]; then
+    echo "manifest checksum mismatch: ${domain}" >&2
+    exit 1
+  fi
 
   awk '
     /^apply_order:$/ { active = 1; next }
@@ -98,4 +120,9 @@ apply_grant_fixture "${schema_root}/schema_migrator/grants/least_privilege.sql.t
 atheros_manifest_sha="$(awk '/^manifest_sha256:/{ print $2; exit }' "${schema_root}/atheros_search/manifest.yaml")"
 mysql_run -e "UPDATE atheros_search.schema_manifest SET manifest_sha256='${atheros_manifest_sha}', schema_ready=1, vector_ready=1, applied_at=UTC_TIMESTAMP(6), details=JSON_OBJECT('state', 'ready', 'executor', 'tidb-runtime-schema') WHERE component='atheros-search';"
 
-echo "canonical TiDB schemas applied and Atheros Search readiness recorded"
+octopus_manifest="${schema_root}/octopus_core/manifest.yaml"
+octopus_manifest_version="$(awk '/^schema_version:/{ print $2; exit }' "${octopus_manifest}")"
+octopus_manifest_sha="$(awk '/^manifest_sha256:/{ print $2; exit }' "${octopus_manifest}")"
+mysql_run -e "UPDATE octopus_core.schema_readiness SET required_version='${octopus_manifest_version}', applied_version='${octopus_manifest_version}', required_checksum='${octopus_manifest_sha}', applied_checksum='${octopus_manifest_sha}', ready=1, checked_at=UTC_TIMESTAMP(6), details=JSON_OBJECT('state', 'ready', 'executor', 'tidb-runtime-schema') WHERE domain='octopus_core';"
+
+echo "canonical TiDB schemas applied and runtime readiness recorded"

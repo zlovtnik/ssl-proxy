@@ -98,6 +98,22 @@ def validate_checksums(
             if recorded.get(relative) != actual:
                 failures.append(f"{path.relative_to(REPO)}: checksum mismatch")
 
+    recorded_manifest = scalar(manifest, "manifest_sha256")
+    if not recorded_manifest or not re.fullmatch(r"[0-9a-f]{64}", recorded_manifest):
+        failures.append(f"{manifest.relative_to(REPO)}: invalid manifest_sha256")
+    else:
+        digest = hashlib.sha256()
+        for relative in ordered:
+            path = directory / relative
+            if not path.is_file():
+                continue
+            digest.update(relative.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        if digest.hexdigest() != recorded_manifest:
+            failures.append(f"{manifest.relative_to(REPO)}: manifest_sha256 mismatch")
+
 
 def validate_grant_fixture(
     manifest: Path, directory: Path, domain: str, failures: list[str]

@@ -52,7 +52,6 @@ type Config struct {
 	LeaseSeconds             int
 	WorkerPollInterval       time.Duration
 	WorkerID                 string
-	DLQEnabled               bool
 	WSEnabled                bool
 }
 
@@ -91,7 +90,6 @@ func Load() (Config, error) {
 		LeaseSeconds:             envInt("ATHSEARCH_LEASE_SECONDS", 1800),
 		WorkerPollInterval:       time.Duration(envInt("ATHSEARCH_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
 		WorkerID:                 envString("ATHSEARCH_WORKER_ID", "worker-1"),
-		DLQEnabled:               envBool("ATHSEARCH_DLQ_ENABLED", true),
 		WSEnabled:                envBool("ATHSEARCH_WS_ENABLED", false),
 	}
 

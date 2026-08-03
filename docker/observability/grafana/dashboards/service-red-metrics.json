@@ -33,11 +33,6 @@
           "refId": "A"
         },
         {
-          "expr": "sum by (controller, action) (rate(integration_console_http_requests_total[5m]))",
-          "legendFormat": "rails {{controller}}#{{action}}",
-          "refId": "B"
-        },
-        {
           "expr": "sum by (service_name, messaging_destination_name, messaging_operation) (rate(traces_spanmetrics_calls_total{messaging_system!=\"\"}[5m]))",
           "legendFormat": "{{service_name}} {{messaging_destination_name}} {{messaging_operation}}",
           "refId": "C"
@@ -71,11 +66,6 @@
           "refId": "A"
         },
         {
-          "expr": "sum(rate(integration_console_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(integration_console_http_requests_total[5m])), 0.001)",
-          "legendFormat": "rails",
-          "refId": "B"
-        },
-        {
           "expr": "sum(rate(ssl_proxy_sync_publish_enqueue_timeouts_total[5m])) / clamp_min(sum(rate(ssl_proxy_tunnels_opened_total[5m])), 0.001)",
           "legendFormat": "ssl-proxy publish timeout ratio",
           "refId": "C"
@@ -107,11 +97,6 @@
           "expr": "histogram_quantile(0.95, sum by (job, le) (rate(http_server_requests_seconds_bucket[5m])))",
           "legendFormat": "spring {{job}}",
           "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (controller, action, le) (rate(integration_console_http_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "rails {{controller}}#{{action}}",
-          "refId": "B"
         }
       ],
       "title": "HTTP Latency p95",
