@@ -81,7 +81,6 @@ assurance:
   init job lacks worker write grants.
 - Search tracing hooks do not initialize an exporter, reducing request-flow
   visibility.
-- Octopus lacks the metrics endpoint scraped by Prometheus.
 - No current runtime owns `integration_console` tables.
 - Single-node TiDB/UniStore does not provide production-grade failure
   tolerance or TiFlash readiness.

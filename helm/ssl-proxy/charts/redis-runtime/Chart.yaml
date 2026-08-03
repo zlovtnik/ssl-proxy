@@ -1,6 +1,6 @@
 apiVersion: v2
 name: redis-runtime
-description: Ephemeral cache and ActionCable fan-out only
+description: Shared ephemeral cache for non-authoritative runtime data
 type: application
 version: 0.1.0
 appVersion: "7.4.3"

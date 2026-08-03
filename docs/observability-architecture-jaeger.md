@@ -58,10 +58,8 @@ Declared scrape targets include:
 - span metrics exported by the OTel Collector
 
 The configuration also scrapes Octopus under its legacy
-`java-coordinator` service identity. That target currently requests
-`/actuator/prometheus`, but the Scala http4s service exposes only `/health` and
-`/actuator/health`. This target is expected to remain down until Octopus adds a
-metrics route or the scrape configuration changes.
+`java-coordinator` service identity. Both `/metrics` and the compatibility
+route `/actuator/prometheus` expose its Micrometer measurements.
 
 Compose endpoints:
 

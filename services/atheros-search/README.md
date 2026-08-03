@@ -16,8 +16,10 @@ there is no Rails Search console.
 - graph, inventory, explain, filter-suggestion and merge-decision APIs
 - query analytics using hashed query/session/result identifiers
 - readiness and ETL health/stream APIs
-- lease-based claiming of `embedding_jobs`
-- batched embedding calls, `search_vectors_*` writes and job completion/failure
+- token-and-fence lease claiming of `embedding_jobs`, committed before external I/O
+- mixed-kind batched embedding calls outside database transactions
+- atomic `search_vectors_*` writes and fenced job completion/failure
+- periodic renewal of long-running leases and continuous bounded expired-lease recovery
 - worker heartbeat and DLQ inspection/repair support
 
 The service does not apply DDL. Canonical schema lives in

@@ -50,16 +50,16 @@ artifacts before applying them to a production cluster.
 | Proxy | `GET /health` on admin port `3002` | Process and tunnel health |
 | Proxy | `GET /ready` on admin port `3002` | Required runtime dependencies are ready |
 | UDP frontdoor | `GET /health` on host-local `3003` | Frontdoor process and backend status |
-| Octopus | `GET /health` or `/actuator/health` on `8081` | TiDB health only |
+| Octopus | `GET /live` on `8081` | HTTP process liveness |
+| Octopus | `GET /ready`, `/health`, or `/actuator/health` on `8081` | TiDB readiness after startup manifest verification |
+| Octopus | `GET /metrics` or `/actuator/prometheus` on `8081` | Micrometer measurements in Prometheus text format |
 | Atheros Search | `GET /healthz` on `8080` | Process liveness |
 | Atheros Search | `GET /readyz` on `8080` | TiDB, schema, vector and embedding readiness |
 | Atheros Search | `GET /v1/etl/health` | Worker/job ETL snapshot |
 | Prometheus | `GET /-/ready` on `9090` | Prometheus ready |
 | Grafana | `GET /api/health` on `3004` | Grafana process ready |
 
-Octopus does not currently expose `/actuator/prometheus`; its Prometheus target
-will be down even when `/health` is green. Atheros Search tracing hooks also do
-not currently initialize an exporter.
+Atheros Search tracing hooks do not currently initialize an exporter.
 
 ## Read-only diagnostics
 

@@ -14,6 +14,7 @@ UPDATE embedding_jobs
 SET status = 'leased',
     owner_id = ?,
     lease_token = UUID(),
+    lease_fence = lease_fence + 1,
     lease_expires_at = ?,
     attempt_count = attempt_count + 1,
     updated_at = CURRENT_TIMESTAMP(6)
@@ -28,7 +29,7 @@ WHERE job_id IN (
     LIMIT ?
   ) AS candidates
 )
-RETURNING job_id, document_id, embedding_kind, embedding_model, content_sha256, priority, lease_token
+RETURNING job_id, document_id, embedding_kind, embedding_model, content_sha256, priority, lease_token, lease_fence
 `, ownerID, leaseExpiresAt, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claim embedding jobs: %w", err)
@@ -38,7 +39,7 @@ RETURNING job_id, document_id, embedding_kind, embedding_model, content_sha256, 
 	var jobs []Job
 	for rows.Next() {
 		var j Job
-		if err := rows.Scan(&j.JobID, &j.DocumentID, &j.EmbeddingKind, &j.EmbeddingModel, &j.ContentSHA256, &j.Priority, &j.LeaseToken); err != nil {
+		if err := rows.Scan(&j.JobID, &j.DocumentID, &j.EmbeddingKind, &j.EmbeddingModel, &j.ContentSHA256, &j.Priority, &j.LeaseToken, &j.LeaseFence); err != nil {
 			return nil, fmt.Errorf("scan claimed job: %w", err)
 		}
 		jobs = append(jobs, j)
@@ -47,28 +48,29 @@ RETURNING job_id, document_id, embedding_kind, embedding_model, content_sha256, 
 		return nil, fmt.Errorf("iterate claimed jobs: %w", err)
 	}
 
-	for _, j := range jobs {
+	for i := range jobs {
 		err := tx.QueryRowContext(ctx, `
 SELECT normalized_text FROM search_documents WHERE document_id = ?
-`, j.DocumentID).Scan(&j.NormalizedText)
+`, jobs[i].DocumentID).Scan(&jobs[i].NormalizedText)
 		if err != nil {
-			return nil, fmt.Errorf("fetch document text for %s: %w", j.DocumentID, err)
+			return nil, fmt.Errorf("fetch document text for %s: %w", jobs[i].DocumentID, err)
 		}
 	}
 
 	return jobs, nil
 }
 
-func completeJob(ctx context.Context, tx *sql.Tx, jobID, leaseToken string) error {
+func completeJob(ctx context.Context, tx *sql.Tx, jobID, leaseToken string, leaseFence int64) error {
 	result, err := tx.ExecContext(ctx, `
 UPDATE embedding_jobs
 SET status = 'completed',
+    owner_id = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
     completed_at = CURRENT_TIMESTAMP(6),
     updated_at = CURRENT_TIMESTAMP(6)
-WHERE job_id = ? AND lease_token = ? AND lease_expires_at > NOW(6)
-`, jobID, leaseToken)
+WHERE job_id = ? AND lease_token = ? AND lease_fence = ? AND lease_expires_at > NOW(6)
+`, jobID, leaseToken, leaseFence)
 	if err != nil {
 		return err
 	}
@@ -82,7 +84,7 @@ WHERE job_id = ? AND lease_token = ? AND lease_expires_at > NOW(6)
 	return nil
 }
 
-func failJob(ctx context.Context, tx *sql.Tx, jobID, leaseToken, errMsg string) error {
+func failJob(ctx context.Context, tx *sql.Tx, jobID, leaseToken string, leaseFence int64, errMsg string) error {
 	maxBackoff := 300 * time.Second
 	result, err := tx.ExecContext(ctx, `
 UPDATE embedding_jobs
@@ -91,12 +93,13 @@ SET status = CASE
         ELSE 'pending'
     END,
     last_error = ?,
+    owner_id = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
     next_attempt_at = DATE_ADD(NOW(6), INTERVAL LEAST(POW(2, attempt_count), ?) SECOND),
     updated_at = CURRENT_TIMESTAMP(6)
-WHERE job_id = ? AND lease_token = ? AND lease_expires_at > NOW(6)
-`, errMsg, int(maxBackoff.Seconds()), jobID, leaseToken)
+WHERE job_id = ? AND lease_token = ? AND lease_fence = ? AND lease_expires_at > NOW(6)
+`, errMsg, int(maxBackoff.Seconds()), jobID, leaseToken, leaseFence)
 	if err != nil {
 		return err
 	}
@@ -108,6 +111,52 @@ WHERE job_id = ? AND lease_token = ? AND lease_expires_at > NOW(6)
 		return fmt.Errorf("lease lost for job %s: no matching lease token or lease expired", jobID)
 	}
 	return nil
+}
+
+func renewJobLease(ctx context.Context, db *sql.DB, job Job, leaseExpiresAt time.Time) (bool, error) {
+	result, err := db.ExecContext(ctx, `
+UPDATE embedding_jobs
+SET lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP(6)
+WHERE job_id = ?
+  AND status = 'leased'
+  AND lease_token = ?
+  AND lease_fence = ?
+  AND lease_expires_at > NOW(6)
+`, leaseExpiresAt, job.JobID, job.LeaseToken, job.LeaseFence)
+	if err != nil {
+		return false, fmt.Errorf("renew embedding lease: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	return affected == 1, err
+}
+
+func recoverExpiredLeases(ctx context.Context, db *sql.DB, limit int) (int64, error) {
+	result, err := db.ExecContext(ctx, `
+UPDATE embedding_jobs
+SET status = CASE WHEN attempt_count >= max_attempts THEN 'failed' ELSE 'pending' END,
+    owner_id = NULL,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    last_error = CASE
+      WHEN attempt_count >= max_attempts THEN 'embedding lease expired; retries exhausted'
+      ELSE 'embedding lease expired; returned to pending'
+    END,
+    next_attempt_at = DATE_ADD(NOW(6), INTERVAL LEAST(POW(2, attempt_count), 300) SECOND),
+    updated_at = CURRENT_TIMESTAMP(6)
+WHERE job_id IN (
+  SELECT job_id FROM (
+    SELECT job_id
+    FROM embedding_jobs
+    WHERE status = 'leased' AND lease_expires_at <= NOW(6)
+    ORDER BY lease_expires_at, job_id
+    LIMIT ?
+  ) AS expired
+)
+`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("recover expired embedding leases: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func vectorTableForKind(kind string) (string, error) {

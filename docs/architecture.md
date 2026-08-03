@@ -109,10 +109,10 @@ sequenceDiagram
     participant U as SolidJS UI
 
     O-->>D: Intended: prepare search_documents and embedding_jobs
-    W->>D: Claim pending jobs with leases
+    W->>D: Claim pending jobs; commit token and fence
     W->>E: Embed normalized text in batches
     E-->>W: 768-dimension vectors
-    W->>D: Write search_vectors_* and complete jobs
+    W->>D: Atomically write vector and complete matching fenced job
     U->>A: Search, graph, inventory, ETL health
     A->>D: Dense, sparse or hybrid query
     D-->>A: Ranked results
@@ -243,10 +243,7 @@ These are documentation of current limitations, not hidden future behavior:
 4. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
    initialize an OTLP exporter or SDK tracer provider. Setting
    `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
-5. Octopus records Micrometer metrics internally but its http4s server exposes
-   only `/health` and `/actuator/health`. The Prometheus configuration still
-   scrapes `/actuator/prometheus`, which the service does not provide.
-6. Compose and the default single-node Kubernetes overlay run TiDB with
+5. Compose and the default single-node Kubernetes overlay run TiDB with
    UniStore. That topology does not demonstrate production TiFlash placement,
    distributed failure tolerance or vector-index readiness. Production claims
    require a real TiDB/TiFlash cluster and an explicit readiness rehearsal.
