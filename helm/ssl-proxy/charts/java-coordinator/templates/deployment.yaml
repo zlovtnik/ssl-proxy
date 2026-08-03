@@ -321,6 +321,8 @@ spec:
               value: {{ .Values.global.shared.tidb.tls.serverName | quote }}
             - name: OCTOPUS_PROCESSORS_ENABLED
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
+            - name: OCTOPUS_ENABLED_PROCESSORS
+              value: {{ join "," .Values.processors.enabled | quote }}
             - name: OCTOPUS_CONSUMERS_ENABLED
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
             - name: OCTOPUS_ENVIRONMENT

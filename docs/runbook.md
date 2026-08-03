@@ -51,7 +51,7 @@ artifacts before applying them to a production cluster.
 | Proxy | `GET /ready` on admin port `3002` | Required runtime dependencies are ready |
 | UDP frontdoor | `GET /health` on host-local `3003` | Frontdoor process and backend status |
 | Octopus | `GET /live` on `8081` | HTTP process liveness |
-| Octopus | `GET /ready`, `/health`, or `/actuator/health` on `8081` | TiDB readiness after startup manifest verification |
+| Octopus | `GET /ready`, `/health`, or `/actuator/health` on `8081` | TiDB readiness plus persisted state for every enabled processor after startup manifest verification |
 | Octopus | `GET /metrics` or `/actuator/prometheus` on `8081` | Micrometer measurements in Prometheus text format |
 | Atheros Search | `GET /healthz` on `8080` | Process liveness |
 | Atheros Search | `GET /readyz` on `8080` | TiDB, schema, vector and embedding readiness |
