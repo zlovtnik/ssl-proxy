@@ -98,7 +98,7 @@ default; `GRAFANA_ADMIN_PASSWORD` is required.
 |---|---|---|---|
 | Rust proxy/frontdoor | Container logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
 | Atheros Sensor | Container logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
-| Octopus | Structured logs | Micrometer registry exists, but no scrape endpoint is exposed | OTLP environment is declared by deployment |
+| Octopus | Structured logs | Micrometer exposition on `/metrics` and `/actuator/prometheus` | OTLP SDK spans around Kafka and TiDB durable boundaries |
 | Atheros Search | Structured logs | Dedicated Prometheus server | HTTP/gRPC hooks exist, but no SDK exporter/provider is initialized |
 | Redpanda, MinIO and host | Platform logs | Native endpoints/exporters | Not expected |
 

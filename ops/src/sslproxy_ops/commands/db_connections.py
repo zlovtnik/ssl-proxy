@@ -59,9 +59,14 @@ def print_json_endpoint(label: str, url: str) -> bool:
 
 def redact_connection_log(line: str) -> str:
     redacted = re.sub(
+        r"(?i)\b(?:mysql|tidb)://[^\s,;]+",
+        "[REDACTED_DATABASE_URL]",
+        line,
+    )
+    redacted = re.sub(
         r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key)(\s*[=:]\s*)([^\s,;]+)",
         r"\1\2[REDACTED]",
-        line,
+        redacted,
     )
     redacted = re.sub(r"(?i)\b(host|hostname|server)(\s*[=:]\s*)([^\s,;]+)", r"\1\2[REDACTED]", redacted)
     return redacted
@@ -72,7 +77,10 @@ def print_recent_connection_errors(container: str) -> None:
     shell.run(["docker", "inspect", container], check=True, capture=True)
     logs = shell.run(["docker", "logs", container], check=False, capture=True)
     text = "\n".join(part for part in [logs.stdout, logs.stderr] if part)
-    pattern = re.compile(r"FATAL|CannotGetJdbc|PSQLException|ORA-|HikariPool")
+    pattern = re.compile(
+        r"FATAL|CannotGetJdbc|SQL(?:NonTransient|Transient)?Exception|"
+        r"Communications link failure|HikariPool"
+    )
     matches = [line for line in text.splitlines() if pattern.search(line)]
     for line in matches[-20:]:
         typer.echo(redact_connection_log(line))

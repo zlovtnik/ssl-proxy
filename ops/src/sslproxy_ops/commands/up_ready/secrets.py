@@ -16,7 +16,6 @@ from sslproxy_ops.util.ini import contains_unresolved_placeholder, is_placeholde
 REQUIRED_DOTENV_KEYS = [
     "REGISTRY",
     "IMAGE_TAG",
-    "POSTGRES_PASSWORD",
     "MINIO_ACCESS_KEY_ID",
     "MINIO_SECRET_ACCESS_KEY",
     "GRAFANA_ADMIN_PASSWORD",

@@ -90,9 +90,10 @@ do not paste secret values into tickets.
 7. For embeddings, confirm `search_documents` and `embedding_jobs` exist before
    enabling workers, then check leases, failures, DLQ state and vector counts.
 
-The pinned Octopus runtime does not currently wire search-document/job
-preparation, so an idle Search worker may reflect a known producer gap rather
-than worker failure.
+Search-document and embedding-job preparation are Octopus processors. If a
+Search worker is idle, verify `embedding-text-builder` and
+`embedding-preparer` are enabled and ready, then inspect terminal failed jobs
+and expired leases before treating the worker as unhealthy.
 
 ## Common incidents
 

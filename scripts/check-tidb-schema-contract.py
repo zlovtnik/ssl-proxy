@@ -111,8 +111,12 @@ def validate_checksums(
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
-        if digest.hexdigest() != recorded_manifest:
-            failures.append(f"{manifest.relative_to(REPO)}: manifest_sha256 mismatch")
+        computed_manifest = digest.hexdigest()
+        if computed_manifest != recorded_manifest:
+            failures.append(
+                f"{manifest.relative_to(REPO)}: manifest_sha256 mismatch "
+                f"(recorded={recorded_manifest}, computed={computed_manifest})"
+            )
 
 
 def validate_grant_fixture(

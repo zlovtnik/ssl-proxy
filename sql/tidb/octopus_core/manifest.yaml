@@ -4,7 +4,7 @@ database: octopus_core
 schema_version: 2026080301
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 2d956c8cd7dd4d10526a18b75490622f591f65a5db1dc4ba43480367e96f6ffd
+manifest_sha256: d20afef6f057890de8626e8d1984fba837899c866f8bdb2e3ca0cdfdac037048
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:

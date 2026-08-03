@@ -4,7 +4,7 @@ database: schema_migrator
 schema_version: 001
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 9a060b2bfc6adb1656edd316ae7491894f98194b8d58bbc3e4fa085b0c3792fd
+manifest_sha256: 10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:

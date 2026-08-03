@@ -1,17 +1,17 @@
 import unittest
+from unittest.mock import patch
 
-from sslproxy_ops.commands.pipeline import parse_database_url, postgres_env, psql_command
+from sslproxy_ops.commands.pipeline import run_allow_fail
 
 
 class PipelineTest(unittest.TestCase):
-    def test_psql_command_does_not_include_password(self):
-        connection = parse_database_url("postgres://sync:p%40ssw0rd@postgres:5432/sync")
-        command = psql_command("select 1;")
+    @patch("sslproxy_ops.commands.pipeline.shell.run")
+    def test_status_diagnostics_are_non_fatal(self, run):
+        command = ["rpk", "cluster", "info"]
 
-        self.assertEqual(connection.password, "p@ssw0rd")
-        self.assertEqual(postgres_env(connection)["PGPASSWORD"], "p@ssw0rd")
-        self.assertNotIn("p@ssw0rd", command)
-        self.assertNotIn("postgres://sync", command)
+        run_allow_fail(command)
+
+        run.assert_called_once_with(command, check=False, capture=False)
 
 
 if __name__ == "__main__":

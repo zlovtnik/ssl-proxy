@@ -5,7 +5,7 @@ phase: post_tiflash
 schema_version: 001
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 59f98786f70b0e3d808afd1ae8cf210c5a5f217f4bb1f2525ec7c70e03c70630
+manifest_sha256: 3d8a35e5441c0d8b8b8441e13fc9b5891fa5ccba06363ed7e2880c2a69da9e03
 checksums_file: checksums.sha256
 gate_contract: gates/001_search_vector_tiflash_ready.sql
 apply_order:

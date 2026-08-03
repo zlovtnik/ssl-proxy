@@ -33,11 +33,12 @@ flowchart LR
     search -->|claims jobs and writes vectors| tidb
     ui[SolidJS Integration Console] -->|HTTP and gRPC gateway APIs| search
 
-    octopus -.->|intended search documents and embedding jobs| search
+    octopus -->|search documents and embedding jobs| tidb
 ```
 
-Solid edges are implemented flows. Dashed edges are intended ownership or
-deployment wiring that is not complete; see [Known gaps](#known-gaps).
+Solid edges are implemented flows. New Octopus processors and Atheros Search
+workers remain disabled until their dependency-ordered rollout gates are
+explicitly enabled.
 
 ## Component ownership
 
@@ -108,7 +109,7 @@ sequenceDiagram
     participant A as Search API
     participant U as SolidJS UI
 
-    O-->>D: Intended: prepare search_documents and embedding_jobs
+    O->>D: Prepare search_documents and embedding_jobs
     W->>D: Claim pending jobs; commit token and fence
     W->>E: Embed normalized text in batches
     E-->>W: 768-dimension vectors
@@ -228,26 +229,16 @@ complete topology and current instrumentation limits are in
 
 These are documentation of current limitations, not hidden future behavior:
 
-1. The Atheros Search Helm values expose worker settings, but the deployment
-   template does not pass the worker enablement, count, batch, lease, poll or
-   embedding-backend variables to the container. The older standalone
-   [`k8s/tidb/init-job.yaml`](../k8s/tidb/init-job.yaml) grants the Search
-   account only `SELECT`; the umbrella TiDB chart grants Search writes.
-2. Octopus owns search-document and embedding-job preparation by architecture,
-   but the pinned runtime has no wired processor that populates
-   `atheros_search.search_documents` and `embedding_jobs`. The dashed flow in
-   the diagrams remains incomplete.
-3. No current application runtime owns the `integration_console` tables. The
+1. No current application runtime owns the `integration_console` tables. The
    Integration Console is the SolidJS Atheros Search UI and reads through the
    Search API.
-4. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
+2. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
    initialize an OTLP exporter or SDK tracer provider. Setting
    `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
-5. Compose and the default single-node Kubernetes overlay run TiDB with
+3. Compose and the default single-node Kubernetes overlay run TiDB with
    UniStore. That topology does not demonstrate production TiFlash placement,
    distributed failure tolerance or vector-index readiness. Production claims
    require a real TiDB/TiFlash cluster and an explicit readiness rehearsal.
 
 Until these gaps are closed, deployment success means the declared health
-gates passed; it does not prove end-to-end embedding production or
-production-grade TiFlash/vector capacity.
+gates passed; it does not prove production-grade TiFlash/vector capacity.

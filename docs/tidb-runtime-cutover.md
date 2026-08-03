@@ -35,8 +35,10 @@ The `tidb-runtime-schema` image runs
 It:
 
 1. verifies each domain's ordered file checksums;
-2. applies the four application manifests over TLS as the schema owner; and
-3. records the Atheros Search manifest readiness state.
+2. applies the four application manifests over TLS as the schema owner;
+3. replaces bootstrap privileges with the checked-in least-privilege grants;
+   and
+4. records the Atheros Search and Octopus manifest readiness states.
 
 Application runtimes must not apply canonical DDL. They connect with dedicated
 accounts, check TiDB version/TLS/server identity and verify the expected
