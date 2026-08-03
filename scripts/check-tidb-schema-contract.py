@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import sys
 import hashlib
+import tarfile
 from pathlib import Path
 
 
@@ -21,6 +22,21 @@ UNSUPPORTED = {
     "materialized view": re.compile(r"\bMATERIALIZED\s+VIEW\b", re.IGNORECASE),
     "PostgreSQL JSONB": re.compile(r"\bJSONB\b", re.IGNORECASE),
     "PostgreSQL timestamp": re.compile(r"\bTIMESTAMPTZ\b", re.IGNORECASE),
+}
+
+FORBIDDEN_RUNTIME_GRANTS = {
+    "Octopus wildcard writes to Atheros Search": re.compile(
+        r"GRANT\s+[^;]*(?:INSERT|UPDATE|DELETE)[^;]*ON\s+atheros_search\.\*\s+TO\s+'octopus_runtime'",
+        re.IGNORECASE,
+    ),
+    "Atheros Search wildcard writes to its database": re.compile(
+        r"GRANT\s+[^;]*(?:INSERT|UPDATE|DELETE)[^;]*ON\s+atheros_search\.\*\s+TO\s+'atheros_search_runtime'",
+        re.IGNORECASE,
+    ),
+    "Atheros Search wildcard reads from Octopus": re.compile(
+        r"GRANT\s+SELECT\s+ON\s+octopus_core\.\*\s+TO\s+'atheros_search_runtime'",
+        re.IGNORECASE,
+    ),
 }
 
 
@@ -141,8 +157,57 @@ def validate_grant_fixture(
             )
 
 
+def validate_runtime_grants(label: str, text: str, failures: list[str]) -> None:
+    for description, pattern in FORBIDDEN_RUNTIME_GRANTS.items():
+        if pattern.search(text):
+            failures.append(f"{label}: forbidden grant: {description}")
+
+
+def validate_helm_runtime_grants(failures: list[str]) -> None:
+    source = REPO / "helm" / "ssl-proxy" / "charts" / "tidb" / "templates" / "init-job.yaml"
+    if not source.is_file():
+        failures.append(f"{source.relative_to(REPO)}: missing TiDB init template")
+        return
+    validate_runtime_grants(
+        source.relative_to(REPO).as_posix(),
+        source.read_text(encoding="utf-8"),
+        failures,
+    )
+
+    chart_directory = REPO / "helm" / "ssl-proxy" / "charts"
+    packages = sorted(chart_directory.glob("tidb-[0-9]*.tgz"))
+    if len(packages) != 1:
+        failures.append(
+            f"{chart_directory.relative_to(REPO)}: expected one packaged TiDB chart, found {len(packages)}"
+        )
+        return
+    packaged = packages[0]
+    with tarfile.open(packaged, "r:gz") as archive:
+        member = next(
+            (
+                candidate
+                for candidate in archive.getmembers()
+                if candidate.name.endswith("/templates/init-job.yaml")
+            ),
+            None,
+        )
+        if member is None:
+            failures.append(f"{packaged.relative_to(REPO)}: missing init-job template")
+            return
+        extracted = archive.extractfile(member)
+        if extracted is None:
+            failures.append(f"{packaged.relative_to(REPO)}: unreadable init-job template")
+            return
+        validate_runtime_grants(
+            packaged.relative_to(REPO).as_posix(),
+            extracted.read().decode("utf-8"),
+            failures,
+        )
+
+
 def main() -> int:
     failures: list[str] = []
+    validate_helm_runtime_grants(failures)
     actual = {path.name for path in ROOT.iterdir() if path.is_dir()}
     active = actual - {"contracts"}
     if active != DOMAINS:

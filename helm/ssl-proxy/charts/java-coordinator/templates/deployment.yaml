@@ -119,6 +119,8 @@ spec:
               value: {{ .Values.retention.wirelessRawPayloadHotDays | quote }}
             - name: SYNC_EVENT_ROW_RETENTION_DAYS
               value: {{ .Values.retention.syncEventRowRetentionDays | quote }}
+            - name: SEARCH_RETENTION_DAYS
+              value: {{ .Values.retention.searchRetentionDays | quote }}
             - name: SYNC_EVENT_TOMBSTONE_RETENTION_DAYS
               value: {{ .Values.retention.syncEventTombstoneRetentionDays | quote }}
             - name: WIRELESS_RAW_ARCHIVE_BUCKET
@@ -129,6 +131,8 @@ spec:
               value: {{ .Values.retention.wirelessRawArchiveIntervalMs | quote }}
             - name: RETENTION_MAINTENANCE_INTERVAL_MS
               value: {{ .Values.retention.maintenanceIntervalMs | quote }}
+            - name: OCTOPUS_ARCHIVE_ENABLED
+              value: {{ .Values.retention.archiveEnabled | quote }}
             - name: MINIO_ENDPOINT
               value: {{ .Values.global.shared.minio.endpoint | quote }}
             - name: MINIO_ACCESS_KEY_ID
@@ -323,6 +327,18 @@ spec:
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
             - name: OCTOPUS_ENABLED_PROCESSORS
               value: {{ join "," .Values.processors.enabled | quote }}
+            - name: OCTOPUS_PROCESSOR_BATCH_SIZE
+              value: {{ .Values.processors.batchSize | quote }}
+            - name: OCTOPUS_PROCESSOR_INTERVAL_SECONDS
+              value: {{ .Values.processors.intervalSeconds | quote }}
+            - name: OCTOPUS_EMBEDDING_MODEL
+              value: {{ .Values.processors.embeddingModel | quote }}
+            - name: OCTOPUS_EVENT_DUPLICATE_DISTANCE
+              value: {{ .Values.processors.eventDuplicateDistance | quote }}
+            - name: OCTOPUS_BEHAVIOR_SIMILARITY_THRESHOLD
+              value: {{ .Values.processors.behaviorSimilarityThreshold | quote }}
+            - name: OCTOPUS_SEQUENCE_DISTANCE_THRESHOLD
+              value: {{ .Values.processors.sequenceDistanceThreshold | quote }}
             - name: OCTOPUS_CONSUMERS_ENABLED
               value: {{ ne .Values.global.migration.mode "stage" | quote }}
             - name: OCTOPUS_ENVIRONMENT
@@ -336,6 +352,10 @@ spec:
               value: {{ .Values.tracing.otlpEndpoint | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: "grpc"
+            - name: OTEL_TRACES_SAMPLER
+              value: "traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_SERVICE_NAME
               value: "java-coordinator"
           ports:

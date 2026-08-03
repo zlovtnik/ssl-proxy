@@ -84,11 +84,57 @@ spec:
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.* TO 'octopus_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.* TO 'octopus_runtime';"
+                "GRANT SELECT ON atheros_search.* TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_documents TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tokens TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tags TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_filter_values TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_event TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_device TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_behaviour TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_sequence TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.behaviour_snapshots TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.baseline_profiles TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.frame_sequences TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_transitions TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.timing_profiles TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.similarity_pairs TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.threat_signals TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.ap_risk_scores TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.graph_nodes TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.graph_edges TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.inventory_devices TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.identity_clusters TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.identity_cluster_members TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.merge_candidates TO 'octopus_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.* TO 'atheros_search_runtime';"
+                "GRANT SELECT ON atheros_search.* TO 'atheros_search_runtime';
+                 GRANT UPDATE ON atheros_search.embedding_jobs TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_event TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_device TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_behaviour TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_sequence TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.worker_heartbeat TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_queries TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_query_results TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_feedback TO 'atheros_search_runtime';
+                 GRANT INSERT ON atheros_search.merge_decisions TO 'atheros_search_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
-                "GRANT SELECT ON octopus_core.* TO 'atheros_search_runtime';"
+                "GRANT SELECT ON octopus_core.schema_readiness TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.sync_events TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.devices TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_authorized_networks TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_clients TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frames TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_radio TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_qos TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_network TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_app_signals TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_identity TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_security TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_shadow_alerts TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.v_wireless_device_inventory TO 'atheros_search_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON schema_migrator.* TO 'schema_migrator_runtime';"
               mysql -h {{ $tidbHost }} -P 4000 -u root ${MYSQL_OPTS} -e \

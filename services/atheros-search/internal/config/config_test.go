@@ -116,6 +116,21 @@ func TestLoadValidatesPoolAndOverfetchBounds(t *testing.T) {
 	require.ErrorContains(t, err, "ATHSEARCH_DENSE_OVERFETCH_FACTOR")
 }
 
+func TestLoadRequiresEmbeddingBackendWhenWorkersAreEnabled(t *testing.T) {
+	setRequiredTiDBEnv(t)
+	t.Setenv("ATHSEARCH_WORKER_ENABLED", "true")
+	t.Setenv("ATHSEARCH_EMBEDDING_BACKEND", "")
+	t.Setenv("VECTOR_EMBEDDING_URL", "")
+
+	_, err := Load()
+	require.ErrorContains(t, err, "ATHSEARCH_EMBEDDING_BACKEND is required")
+
+	t.Setenv("ATHSEARCH_EMBEDDING_BACKEND", "https://embedding.example.test/v1/embeddings")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.WorkerEnabled)
+}
+
 func TestClampTopK(t *testing.T) {
 	require.Equal(t, 10, ClampTopK(0))
 	require.Equal(t, 42, ClampTopK(42))

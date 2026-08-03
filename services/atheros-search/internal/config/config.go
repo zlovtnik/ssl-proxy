@@ -99,6 +99,9 @@ func Load() (Config, error) {
 		return cfg, errors.New("ATHSEARCH_TIDB_DSN is required")
 	}
 	if cfg.WorkerEnabled {
+		if cfg.EmbeddingBackend == "" {
+			return cfg, errors.New("ATHSEARCH_EMBEDDING_BACKEND is required when workers are enabled")
+		}
 		if cfg.WorkerCount <= 0 {
 			return cfg, errors.New("ATHSEARCH_WORKER_COUNT must be positive when workers are enabled")
 		}

@@ -10,7 +10,13 @@ GRANT INSERT, UPDATE, DELETE ON atheros_search.search_documents TO '{{OCTOPUS_AC
 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tokens TO '{{OCTOPUS_ACCOUNT}}';
 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tags TO '{{OCTOPUS_ACCOUNT}}';
 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_filter_values TO '{{OCTOPUS_ACCOUNT}}';
-GRANT INSERT, UPDATE ON atheros_search.embedding_jobs TO '{{OCTOPUS_ACCOUNT}}';
+GRANT INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO '{{OCTOPUS_ACCOUNT}}';
+-- Octopus may remove vectors only as part of fenced search retention. It does
+-- not insert or update vector values.
+GRANT DELETE ON atheros_search.search_vectors_event TO '{{OCTOPUS_ACCOUNT}}';
+GRANT DELETE ON atheros_search.search_vectors_device TO '{{OCTOPUS_ACCOUNT}}';
+GRANT DELETE ON atheros_search.search_vectors_behaviour TO '{{OCTOPUS_ACCOUNT}}';
+GRANT DELETE ON atheros_search.search_vectors_sequence TO '{{OCTOPUS_ACCOUNT}}';
 GRANT INSERT, UPDATE, DELETE ON atheros_search.behaviour_snapshots TO '{{OCTOPUS_ACCOUNT}}';
 GRANT INSERT, UPDATE, DELETE ON atheros_search.baseline_profiles TO '{{OCTOPUS_ACCOUNT}}';
 GRANT INSERT, UPDATE, DELETE ON atheros_search.frame_sequences TO '{{OCTOPUS_ACCOUNT}}';

@@ -51,6 +51,12 @@ processors:
   # Empty preserves the legacy processor lane. New catalog workloads are
   # selected explicitly and remain disabled by default.
   enabled: []
+  batchSize: 250
+  intervalSeconds: 10
+  embeddingModel: "sentence-transformers/all-MiniLM-L6-v2"
+  eventDuplicateDistance: 0.05
+  behaviorSimilarityThreshold: 0.88
+  sequenceDistanceThreshold: 0.10
 cutover:
   devBypass: false
 consumerBatch:
@@ -59,8 +65,10 @@ consumerBatch:
   size: 500
   windowMs: 250
 retention:
+  archiveEnabled: false
   wirelessRawPayloadHotDays: 7
   syncEventRowRetentionDays: 30
+  searchRetentionDays: 30
   syncEventTombstoneRetentionDays: 45
   wirelessRawArchiveBucket: "ssl-proxy-wireless-raw-archive"
   wirelessRawArchiveBatchSize: 100
