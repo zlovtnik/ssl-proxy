@@ -1,5 +1,10 @@
 # Proxy to Coordinator Cutover
 
+> **Status: Historical / superseded.** This workmap records the proxy cutover
+> sequence and is not current deployment guidance. Use
+> [System Architecture](architecture.md) for the implemented Rust proxy,
+> Octopus and TiDB ownership model.
+
 ## Completed in this repo
 - Removed the `oracle-db` build dependency path from the Rust proxy build.
 - Added sync-plane contracts for:
@@ -39,4 +44,4 @@
 
 ## Ownership boundary
 - The proxy produces work signals and metadata.
-- `services/zig-coordinator` owns orchestration, batching, dedupe, cursor advancement, and Oracle sink behavior.
+- `services/octopus` owns orchestration, batching, dedupe, cursor advancement, and TiDB sink behavior.

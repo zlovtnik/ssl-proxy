@@ -3,338 +3,232 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"database/sql"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
+	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/db"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/textbuilder"
+	"github.com/go-sql-driver/mysql"
+	"github.com/rs/zerolog"
 )
 
-var supportedKinds = []string{
-	"event",
-	"device",
-	"behaviour_window",
-	"baseline_profile",
-	"frame_sequence",
-	"infrastructure_subgraph",
-	"timing_profile",
-}
-
-type candidate struct {
-	db.EmbeddingJob
-	EmbeddingContentSHA256 string `db:"embedding_content_sha256"`
-}
-
-type stats struct {
-	scanned  int
-	matched  int
-	repaired int64
-	changed  int
-	missing  int
-	errors   int
-}
-
 func main() {
-	var (
-		dsn            string
-		kindsArg       string
-		batchSize      int
-		limit          int
-		maxInputTokens int
-		apply          bool
-	)
-	flag.StringVar(&dsn, "dsn", firstEnv("ATHSEARCH_POSTGRES_DSN", "DATABASE_URL", "SYNC_DATABASE_URL"), "Postgres DSN")
-	flag.StringVar(&kindsArg, "kinds", strings.Join(supportedKinds, ","), "Comma-separated embedding kinds")
-	flag.IntVar(&batchSize, "batch-size", 500, "Rows to inspect per batch and kind")
-	flag.IntVar(&limit, "limit", 0, "Maximum rows to inspect across all kinds; 0 means no limit")
-	flag.IntVar(&maxInputTokens, "max-input-tokens", 512, "Worker input-token limit used before hashing")
-	flag.BoolVar(&apply, "apply", false, "Update matched pending jobs to completed")
+	dsn := flag.String("dsn", envOr("ATHSEARCH_TIDB_DSN", ""), "TiDB DSN (required)")
+	tlsCA := flag.String("tls-ca", envOr("ATHSEARCH_TIDB_TLS_CA_FILE", ""), "TiDB TLS CA file (required)")
+	tlsCert := flag.String("tls-cert", envOr("ATHSEARCH_TIDB_TLS_CERT_FILE", ""), "TiDB TLS cert file")
+	tlsKey := flag.String("tls-key", envOr("ATHSEARCH_TIDB_TLS_KEY_FILE", ""), "TiDB TLS key file")
+	tlsServer := flag.String("tls-server", envOr("ATHSEARCH_TIDB_TLS_SERVER_NAME", ""), "TiDB TLS server name")
+	schemaManifestSHA256 := flag.String("schema-manifest-sha256", envOr("ATHSEARCH_SCHEMA_MANIFEST_SHA256", ""), "Expected schema manifest SHA-256 (required)")
+	action := flag.String("action", "status", "Action: status, reset-stale, retry-failed")
+	staleMinutes := flag.Int("stale-minutes", 60, "Minutes after which a leased job is considered stale")
 	flag.Parse()
 
-	if strings.TrimSpace(dsn) == "" {
-		fatalf("missing DSN: set -dsn, ATHSEARCH_POSTGRES_DSN, DATABASE_URL, or SYNC_DATABASE_URL")
+	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+
+	if *dsn == "" {
+		logger.Fatal().Msg("ATHSEARCH_TIDB_DSN is required")
 	}
-	if batchSize < 1 {
-		fatalf("-batch-size must be >= 1")
+	if *tlsCA == "" {
+		logger.Fatal().Msg("ATHSEARCH_TIDB_TLS_CA_FILE is required")
 	}
-	if maxInputTokens < 1 {
-		fatalf("-max-input-tokens must be >= 1")
+	manifestSHA256 := strings.ToLower(strings.TrimSpace(*schemaManifestSHA256))
+	if len(manifestSHA256) != sha256.Size*2 {
+		logger.Fatal().Msg("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")
+	}
+	if _, err := hex.DecodeString(manifestSHA256); err != nil {
+		logger.Fatal().Msg("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")
 	}
 
-	kinds, err := parseKinds(kindsArg)
+	db, err := openDB(*dsn, *tlsCA, *tlsCert, *tlsKey, *tlsServer)
 	if err != nil {
-		fatalf("%v", err)
+		logger.Fatal().Err(err).Msg("connect to TiDB")
 	}
+	defer db.Close()
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+
+	if err := verifySchemaGate(ctx, db, manifestSHA256, logger); err != nil {
+		logger.Fatal().Err(err).Msg("schema readiness verification failed")
+	}
+	logger.Info().Msg("schema readiness gate passed")
+
+	switch *action {
+	case "status":
+		err = showStatus(ctx, db, logger)
+	case "reset-stale":
+		err = resetStaleJobs(ctx, db, logger, time.Duration(*staleMinutes)*time.Minute)
+	case "retry-failed":
+		err = retryFailedJobs(ctx, db, logger)
+	default:
+		logger.Fatal().Str("action", *action).Msg("unknown action")
+	}
+
 	if err != nil {
-		fatalf("connect: %v", err)
+		logger.Fatal().Err(err).Str("action", *action).Msg("action failed")
 	}
-	defer pool.Close()
-
-	total := stats{}
-	for _, kind := range kinds {
-		remaining := remainingLimit(limit, total.scanned)
-		if limit > 0 && remaining == 0 {
-			break
-		}
-		kindStats, err := repairKind(ctx, pool, kind, batchSize, remaining, maxInputTokens, apply)
-		if err != nil {
-			fatalf("repair %s: %v", kind, err)
-		}
-		total.add(kindStats)
-		fmt.Printf(
-			"kind=%s scanned=%d matched=%d repaired=%d changed=%d missing=%d errors=%d\n",
-			kind,
-			kindStats.scanned,
-			kindStats.matched,
-			kindStats.repaired,
-			kindStats.changed,
-			kindStats.missing,
-			kindStats.errors,
-		)
-	}
-
-	mode := "dry_run"
-	if apply {
-		mode = "apply"
-	}
-	fmt.Printf(
-		"mode=%s scanned=%d matched=%d repaired=%d changed=%d missing=%d errors=%d\n",
-		mode,
-		total.scanned,
-		total.matched,
-		total.repaired,
-		total.changed,
-		total.missing,
-		total.errors,
-	)
 }
 
-func repairKind(ctx context.Context, pool *pgxpool.Pool, kind string, batchSize int, limit int, maxInputTokens int, apply bool) (stats, error) {
-	out := stats{}
-	var lastJobID int64
-	for {
-		if limit > 0 && out.scanned >= limit {
-			return out, nil
-		}
-		currentBatchSize := batchSize
-		if limit > 0 && limit-out.scanned < currentBatchSize {
-			currentBatchSize = limit - out.scanned
-		}
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
-		rows, err := loadCandidates(ctx, pool, kind, lastJobID, currentBatchSize)
+func openDB(dsn, tlsCA, tlsCert, tlsKey, tlsServer string) (*sql.DB, error) {
+	driverConfig, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse DSN: %w", err)
+	}
+
+	if tlsCA != "" {
+		caPEM, err := os.ReadFile(tlsCA)
 		if err != nil {
-			return out, err
+			return nil, fmt.Errorf("read CA file: %w", err)
 		}
-		if len(rows) == 0 {
-			return out, nil
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("no valid certs in CA file")
 		}
-		out.scanned += len(rows)
-		lastJobID = rows[len(rows)-1].JobID
-
-		jobs := make([]db.EmbeddingJob, 0, len(rows))
-		byID := make(map[int64]candidate, len(rows))
-		for _, row := range rows {
-			jobs = append(jobs, row.EmbeddingJob)
-			byID[row.JobID] = row
+		tlsCfg := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+			ServerName: tlsServer,
 		}
-
-		inputs, err := textbuilder.BuildBatch(ctx, pool, jobs)
-		if err != nil {
-			out.errors += len(rows)
-			return out, err
-		}
-
-		matchedIDs := make([]int64, 0, len(rows))
-		for _, job := range jobs {
-			row := byID[job.JobID]
-			input, ok := inputs[job.SourceKey]
-			if !ok {
-				out.missing++
-				continue
-			}
-			currentHash := contentSHA256(truncateInputText(input.Text, maxInputTokens))
-			if strings.EqualFold(currentHash, row.EmbeddingContentSHA256) {
-				out.matched++
-				matchedIDs = append(matchedIDs, job.JobID)
-			} else {
-				out.changed++
-			}
-		}
-
-		if apply && len(matchedIDs) > 0 {
-			repaired, err := markCompleted(ctx, pool, matchedIDs)
+		if tlsCert != "" && tlsKey != "" {
+			cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
 			if err != nil {
-				return out, err
+				return nil, fmt.Errorf("load client cert: %w", err)
 			}
-			out.repaired += repaired
+			tlsCfg.Certificates = []tls.Certificate{cert}
 		}
+		digest := sha256.Sum256([]byte(tlsCA))
+		tlsName := "repair-" + hex.EncodeToString(digest[:8])
+		if err := mysql.RegisterTLSConfig(tlsName, tlsCfg); err != nil {
+			return nil, err
+		}
+		driverConfig.TLSConfig = tlsName
 	}
+
+	driverConfig.ParseTime = true
+	driverConfig.Loc = time.UTC
+
+	db, err := sql.Open("mysql", driverConfig.FormatDSN())
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
-func loadCandidates(ctx context.Context, pool *pgxpool.Pool, kind string, afterJobID int64, limit int) ([]candidate, error) {
-	rows, err := pool.Query(ctx, `
-SELECT
-  j.job_id,
-  j.source_table,
-  j.source_key,
-  j.embedding_model,
-  j.embedding_kind,
-  j.status,
-  j.priority,
-  j.attempts,
-  j.max_attempts,
-  j.lease_token,
-  j.leased_at,
-  j.locked_by,
-  j.due_at,
-  j.content_sha256,
-  j.last_error,
-  j.completed_at,
-  j.created_at,
-  j.updated_at,
-  e.content_sha256 AS embedding_content_sha256
-FROM vec_embedding_jobs j
-JOIN vec_embeddings e
-  ON e.source_table = j.source_table
- AND e.source_key = j.source_key
- AND e.embedding_model = j.embedding_model
- AND e.embedding_kind = j.embedding_kind
-WHERE j.status = 'pending'
-  AND j.embedding_kind = $1
-  AND j.job_id > $2
-ORDER BY j.job_id ASC
-LIMIT $3
-`, kind, afterJobID, limit)
+func showStatus(ctx context.Context, db *sql.DB, logger zerolog.Logger) error {
+	type statusRow struct {
+		Status string
+		Count  int64
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT status, COUNT(*) AS count
+FROM embedding_jobs
+GROUP BY status
+ORDER BY status
+`)
 	if err != nil {
-		return nil, fmt.Errorf("query candidates: %w", err)
+		return err
 	}
 	defer rows.Close()
 
-	return pgx.CollectRows(rows, pgx.RowToStructByName[candidate])
+	logger.Info().Msg("=== Embedding Job Status ===")
+	for rows.Next() {
+		var r statusRow
+		if err := rows.Scan(&r.Status, &r.Count); err != nil {
+			return err
+		}
+		logger.Info().Str("status", r.Status).Int64("count", r.Count).Msg("")
+	}
+
+	var total int64
+	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM embedding_jobs").Scan(&total)
+	logger.Info().Int64("total", total).Msg("")
+
+	var workerCount int64
+	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM worker_heartbeat").Scan(&workerCount)
+	logger.Info().Int64("heartbeat_rows", workerCount).Msg("Worker heartbeats")
+
+	return nil
 }
 
-func markCompleted(ctx context.Context, pool *pgxpool.Pool, jobIDs []int64) (int64, error) {
-	tag, err := pool.Exec(ctx, `
-UPDATE vec_embedding_jobs j
-SET status = 'completed',
-    content_sha256 = e.content_sha256,
-    completed_at = now(),
+func resetStaleJobs(ctx context.Context, db *sql.DB, logger zerolog.Logger, staleThreshold time.Duration) error {
+	result, err := db.ExecContext(ctx, `
+UPDATE embedding_jobs
+SET status = 'pending',
+    owner_id = NULL,
     lease_token = NULL,
-    leased_at = NULL,
-    locked_by = NULL,
-    last_error = NULL,
-    updated_at = now()
-FROM vec_embeddings e
-WHERE j.job_id = ANY($1::bigint[])
-  AND j.status = 'pending'
-  AND e.source_table = j.source_table
-  AND e.source_key = j.source_key
-  AND e.embedding_model = j.embedding_model
-  AND e.embedding_kind = j.embedding_kind
-`, jobIDs)
+    lease_expires_at = NULL,
+    next_attempt_at = NOW(6),
+    updated_at = CURRENT_TIMESTAMP(6)
+WHERE status = 'leased'
+  AND lease_expires_at < ?
+`, time.Now().Add(-staleThreshold))
 	if err != nil {
-		return 0, fmt.Errorf("mark completed: %w", err)
+		return fmt.Errorf("reset stale jobs: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	affected, _ := result.RowsAffected()
+	logger.Info().Int64("reset", affected).Dur("stale_threshold", staleThreshold).Msg("stale jobs reset to pending")
+	return nil
 }
 
-func parseKinds(raw string) ([]string, error) {
-	allowed := map[string]struct{}{}
-	for _, kind := range supportedKinds {
-		allowed[kind] = struct{}{}
+func retryFailedJobs(ctx context.Context, db *sql.DB, logger zerolog.Logger) error {
+	result, err := db.ExecContext(ctx, `
+UPDATE embedding_jobs
+SET status = 'pending',
+    owner_id = NULL,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    attempt_count = 0,
+    next_attempt_at = NOW(6),
+    last_error = NULL,
+    updated_at = CURRENT_TIMESTAMP(6)
+WHERE status = 'failed'
+`)
+	if err != nil {
+		return fmt.Errorf("retry failed jobs: %w", err)
 	}
-
-	seen := map[string]struct{}{}
-	kinds := []string{}
-	for _, item := range strings.Split(raw, ",") {
-		kind := strings.ToLower(strings.TrimSpace(item))
-		if kind == "" {
-			continue
-		}
-		if _, ok := allowed[kind]; !ok {
-			return nil, fmt.Errorf("unsupported embedding kind %q", kind)
-		}
-		if _, ok := seen[kind]; ok {
-			continue
-		}
-		seen[kind] = struct{}{}
-		kinds = append(kinds, kind)
-	}
-	if len(kinds) == 0 {
-		return nil, fmt.Errorf("no embedding kinds selected")
-	}
-	sort.Slice(kinds, func(i, j int) bool {
-		return kindRank(kinds[i]) < kindRank(kinds[j])
-	})
-	return kinds, nil
+	affected, _ := result.RowsAffected()
+	logger.Info().Int64("retried", affected).Msg("failed jobs reset to pending")
+	return nil
 }
 
-func kindRank(kind string) int {
-	for i, supported := range supportedKinds {
-		if supported == kind {
-			return i
-		}
+func verifySchemaGate(ctx context.Context, database *sql.DB, expectedSHA256 string, logger zerolog.Logger) error {
+	var manifestSHA256 string
+	var ready, vectorReady bool
+	err := database.QueryRowContext(ctx, `
+SELECT manifest_sha256, schema_ready, vector_ready
+FROM schema_manifest
+WHERE component = 'atheros-search'
+LIMIT 1
+`).Scan(&manifestSHA256, &ready, &vectorReady)
+	if err != nil {
+		return fmt.Errorf("schema readiness query: %w", err)
 	}
-	return len(supportedKinds)
-}
-
-func truncateInputText(text string, maxInputTokens int) string {
-	maxChars := maxInputTokens * 3 / 2
-	if maxChars <= 0 || len(text) <= maxChars {
-		return text
+	manifestSHA256 = strings.ToLower(manifestSHA256)
+	if manifestSHA256 != expectedSHA256 {
+		return fmt.Errorf("schema manifest mismatch: got %s, expected %s", manifestSHA256, expectedSHA256)
 	}
-	cut := strings.LastIndex(text[:maxChars], "\n")
-	if cut <= 0 {
-		cut = maxChars
+	if !ready || !vectorReady {
+		return fmt.Errorf("schema not ready: ready=%t vector_ready=%t", ready, vectorReady)
 	}
-	return text[:cut] + "\n[truncated]"
-}
-
-func contentSHA256(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
-}
-
-func remainingLimit(limit int, scanned int) int {
-	if limit <= 0 {
-		return 0
-	}
-	remaining := limit - scanned
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
-}
-
-func (s *stats) add(other stats) {
-	s.scanned += other.scanned
-	s.matched += other.matched
-	s.repaired += other.repaired
-	s.changed += other.changed
-	s.missing += other.missing
-	s.errors += other.errors
-}
-
-func firstEnv(names ...string) string {
-	for _, name := range names {
-		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	logger.Info().
+		Str("manifest_sha256", manifestSHA256).
+		Bool("ready", ready).
+		Bool("vector_ready", vectorReady).
+		Msg("schema gate passed")
+	return nil
 }

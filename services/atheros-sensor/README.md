@@ -1,134 +1,110 @@
 # Atheros Sensor
 
-`atheros-sensor` is a Linux host-side Wi-Fi monitor that captures monitor-mode
-management and data frames (AR9271/`ath9k_htc` preferred), enriches them with sensor metadata and identity hints, and publishes them into the existing
-sync-plane used by this repository.
+`atheros-sensor` is a Linux monitor-mode Wi-Fi sensor, preferably used with an
+AR9271/`ath9k_htc` adapter. It captures 802.11 frames, constructs
+schema-versioned audit and alert events, publishes them through Redpanda and
+keeps a bounded local backlog. It never writes TiDB directly.
 
-## Runtime Model
+## Topic direction
 
-- Runs on a Linux host with direct access to a monitor-capable Wi-Fi interface (AR9271 preferred).
-- Uses Redpanda through `SYNC_REDPANDA_BOOTSTRAP_SERVERS`; the zig-coordinator owns all Postgres access.
-- Publishes the raw audit payload on topic `wireless.audit`.
-- Publishes a matching `sync.scan.request` message with `stream_name=wireless.audit`.
-- Asks the coordinator to persist `sync_backlog` rows when Redpanda publish paths fail.
+Published topics include:
 
-## Environment
-
-- `ATH_SENSOR_DEVICE`
-- `ATH_SENSOR_LOCATION_ID`
-- `ATH_SENSOR_CHANNEL`
-- `ATH_SENSOR_CHANNEL_HOP_ENABLED`
-- `ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS`
-- `ATH_SENSOR_REG_DOMAIN`
-- `ATH_SENSOR_BPF`
-- `ATH_SENSOR_SNAPLEN`
-- `ATH_SENSOR_PCAP_TIMEOUT_MS`
-- `ATH_SENSOR_LOG_IDLE_SECS`
-- `ATH_SENSOR_CLIENT_INVENTORY_FLUSH_SECS`
-- `ATH_SENSOR_SIGNAL_ANOMALY_DBM_DELTA`
-- `ATH_SENSOR_DEAUTH_FLOOD_THRESHOLD`
-- `ATH_SENSOR_DEAUTH_FLOOD_WINDOW_SECS`
-- `ATH_SENSOR_DEAUTH_FLOOD_COOLDOWN_SECS`
-- `ATH_SENSOR_EXPORT_HANDSHAKES`
-- `ATH_SENSOR_AUTHORIZED_NETWORK_CACHE_TTL_SECS`
-- `ATH_SENSOR_REDPANDA_REQUEST_TIMEOUT_MS`
-- `ATH_SENSOR_MAC_DEVICE_LOOKUP_ENABLED`
-- `ATH_SENSOR_MAC_LOOKUP_ERROR_TTL_SECS`
-- `ATH_SENSOR_MAC_STATE_CAPACITY`
-- `ATH_SENSOR_SSID_STATE_CAPACITY`
-- `ATH_SENSOR_SESSION_STATE_CAPACITY`
-- `ATH_SENSOR_CLOCK_SKEW_ANOMALY_US` (integer, microseconds; default: `250000`) - clock skew anomaly threshold used for sensor time synchronization alerts.
-- `ATH_SENSOR_CLIENT_PROBE_SSID_CAPACITY`
-- `ATH_SENSOR_PIPELINE_WORKERS`
-- `ATH_SENSOR_PIPELINE_QUEUE_CAPACITY`
-- `ATH_SENSOR_METRICS_PORT`
-- `ATH_SENSOR_SHUTDOWN_GRACE_SECS`
-- `ATH_SENSOR_AUDIT_LAYER_STREAM`
-- `AUDIT_WINDOW_TZ`
-- `AUDIT_WINDOW_DAYS`
-- `AUDIT_WINDOW_START`
-- `AUDIT_WINDOW_END`
-- `SYNC_REDPANDA_BOOTSTRAP_SERVERS`
-- `SYNC_REDPANDA_SECURITY_PROTOCOL`
-- `SYNC_REDPANDA_SASL_MECHANISMS`
-- `SYNC_REDPANDA_SASL_USERNAME`
-- `SYNC_REDPANDA_SASL_PASSWORD` or `SYNC_REDPANDA_SASL_PASSWORD_FILE`
-- `SYNC_REDPANDA_SSL_CA_LOCATION`
-- `SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION`
-- `SYNC_REDPANDA_SSL_KEY_LOCATION`
-- `SYNC_INLINE_PAYLOAD_MAX_BYTES`
-- `SYNC_OUTBOX_DIR`
-- `RUST_LOG`
-
-## Logging
-
-The sensor writes JSON logs to stdout/stderr for Docker and systemd collection.
-If `RUST_LOG` is missing or invalid, it falls back to:
-
-```text
-warn,atheros_sensor=info
-```
-
-When running through Docker Compose, override the sensor log filter with
-`ATH_SENSOR_RUST_LOG`; compose maps it to the container's `RUST_LOG`. Direct
-binary and systemd runs should set `RUST_LOG` directly.
-
-`AUDIT_WINDOW_TZ` defaults to `America/New_York`.
-
-`ATH_SENSOR_LOG_IDLE_SECS` controls the capture heartbeat interval. The default
-is `30`, which emits periodic logs with packet, decoded-frame, drop, and error
-counters while capture is open. Set it to `0` to disable the heartbeat.
-
-`ATH_SENSOR_CHANNEL_HOP_ENABLED` defaults to `true` and cycles capture across
-2.4 GHz channels `1`, `6`, and `11`. `ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS` controls the dwell
-time and the sensor reapplies the active BPF filter after each channel switch.
-5 GHz and 6 GHz are parsed from radiotap metadata when present, but are not in
-the default hop list.
-
-`ATH_SENSOR_METRICS_PORT` enables an OpenMetrics endpoint at `/metrics`.
-Counters include packet, decode, capture, pipeline, and MAC lookup failure
-counts.
-
-`ATH_SENSOR_AUDIT_LAYER_STREAM` defaults to `off`. Set it to `stdout` or
-`stderr` only when you want the legacy audit-trace mirror in addition to the
-normal JSON tracing logs.
-
-Published event schemas use explicit `schema_version` fields where payloads can
-evolve independently. Current versions are `AuditEntry.schema_version=2` and
-`WirelessBandwidthEvent`/`HandshakeAlert` `schema_version=1`.
-
-Additional topics emitted by this sensor:
-
+- `wireless.audit`, paired with a `sync.scan.request` whose stream is
+  `wireless.audit`
 - `wireless.client.inventory`
 - `wireless.alert.rogue_ap`
 - `wireless.alert.deauth_flood`
 - `wireless.alert.attack_sequence`
+- `wireless.alert.sequence`
+- `wireless.alert.signal_anomaly`
+- `wireless.alert.pmf_attack`
+- `wireless.sensor.heartbeat`
+- wireless backlog/request topics used by Octopus request/reply flows
+
+The sensor subscribes to, rather than publishes:
+
+- the audit-window configuration topic
 - `wireless.config.authorized_networks`
 - `wireless.config.sensor`
 
-## Host Setup
+Live config subscribers support only the repository's plain raw
+`redpanda://` transport. They are disabled for Kafka listeners and TLS-enabled
+Redpanda connections. Publishing still uses the configured sync-plane
+producer.
 
-1. Put the capture interface into monitor mode with [`scripts/prep_ath.sh`](/Users/rcs/git/ssl-proxy/scripts/prep_ath.sh).
-2. Point the sensor at the compose stack:
-   - `SYNC_REDPANDA_BOOTSTRAP_SERVERS=redpanda://127.0.0.1:19092`
-3. Start the service directly or install the provided `systemd` unit template.
+## Runtime configuration
 
-Kafka listeners such as `redpanda://127.0.0.1:19092` are publish-only for this
-sensor. Inline coordinator request/reply enrichments, including MAC device
-lookup and authorized-network refresh, are skipped automatically on those
-listeners.
+Core capture settings:
 
-When running the compose service, override the sensor endpoint with
-`ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS`; the stack-wide
-`SYNC_REDPANDA_BOOTSTRAP_SERVERS` default remains container-to-container for the
-coordinator and workers.
+| Variable | Purpose |
+|---|---|
+| `ATH_SENSOR_DEVICE` | Monitor-mode interface; auto-detected when empty |
+| `ATH_SENSOR_LOCATION_ID` | Stable deployment location |
+| `ATH_SENSOR_CHANNEL` | Initial channel |
+| `ATH_SENSOR_CHANNEL_HOP_ENABLED` | Enable the default 1/6/11 hop loop |
+| `ATH_SENSOR_CHANNEL_HOP_INTERVAL_MS` | Channel dwell time |
+| `ATH_SENSOR_REG_DOMAIN` | Regulatory domain |
+| `ATH_SENSOR_BPF` | Capture filter |
+| `ATH_SENSOR_SNAPLEN` | Capture length |
+| `ATH_SENSOR_PCAP_TIMEOUT_MS` | pcap read timeout |
+| `ATH_SENSOR_PIPELINE_WORKERS` | Bounded processing concurrency |
+| `ATH_SENSOR_PIPELINE_QUEUE_CAPACITY` | Pipeline queue bound |
+| `ATH_SENSOR_METRICS_PORT` | OpenMetrics listener |
+| `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS` | Reject container-only endpoints in host mode |
 
-Default capture filter is `type mgt or type data`. Override `ATH_SENSOR_BPF` when
-you need a narrower packet profile.
+Detection and persistence settings include the `ATH_SENSOR_CLIENT_*`,
+`ATH_SENSOR_SIGNAL_*`, `ATH_SENSOR_DEAUTH_*`, `ATH_SENSOR_BACKLOG_*`,
+`ATH_SENSOR_MAC_*` and `AUDIT_WINDOW_*` families.
 
-## systemd
+Redpanda uses `SYNC_REDPANDA_BOOTSTRAP_SERVERS` plus the existing
+`SYNC_REDPANDA_*` security settings. Secrets use the plain environment variable
+first and its `_FILE` fallback second. `SYNC_OUTBOX_DIR` controls local JSON
+durability.
 
-The unit template lives at [atheros-sensor.service](/Users/rcs/git/ssl-proxy/services/atheros-sensor/atheros-sensor.service).
+Only BPF, channel and audit-window settings are live mutable. Other changes
+require a restart.
 
-Update `ExecStart`, the interface environment, and any TLS credential paths before
-installing it on a host.
+## Host setup
+
+```bash
+make prep-ath
+```
+
+Then point the host-mode sensor at a host-reachable listener, for example:
+
+```bash
+export SYNC_REDPANDA_BOOTSTRAP_SERVERS=redpanda://127.0.0.1:19092
+cargo run -p atheros-sensor
+```
+
+Compose uses `ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS` to override the stack-wide
+container-to-container bootstrap address. Monitor-mode capture requires Linux,
+`NET_ADMIN`/`NET_RAW` and access to the wireless device.
+
+## Logging, metrics and schemas
+
+Logs are JSON on stdout/stderr. Invalid or missing `RUST_LOG` falls back to
+`warn,atheros_sensor=info`. `ATH_SENSOR_LOG_IDLE_SECS` controls capture
+heartbeat logs; `0` disables them. `ATH_SENSOR_AUDIT_LAYER_STREAM` is `off` by
+default and should be enabled only for an intentional legacy audit mirror.
+
+`ATH_SENSOR_METRICS_PORT` exposes `/metrics`. Do not log secrets, raw
+handshakes or full identifiers beyond existing audited behavior.
+
+Current published schema versions include `AuditEntry` version 2 and wireless
+bandwidth/handshake alert version 1. Topic names and schema versions are
+cross-service contracts.
+
+## Build and verify
+
+```bash
+cargo test -p atheros-sensor
+cargo clippy -p atheros-sensor -- -D warnings
+cargo build -p atheros-sensor
+make dependency-boundaries
+```
+
+The systemd template is [`atheros-sensor.service`](atheros-sensor.service).
+Update paths, interface settings and TLS credential locations before
+installation. Hardware capture still requires validation on the target Linux
+host.

@@ -3,14 +3,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: grafana
 spec:
   selector:
-    {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: grafana
   ports:
     - name: http
@@ -20,22 +20,22 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: grafana
 spec:
-  serviceName: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana
+  serviceName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana
   replicas: 1
   selector:
     matchLabels:
-      {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 6 }}
       app.kubernetes.io/component: grafana
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.telemetry.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "telemetry") | nindent 8 }}
         app.kubernetes.io/component: grafana
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
@@ -47,14 +47,14 @@ spec:
         {{- end }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.telemetry.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "telemetry") }}
       automountServiceAccountToken: false
       {{- $podSecurityContext := mergeOverwrite (deepCopy (default (dict) .Values.global.podSecurityContext)) (dict "fsGroup" 472) }}
       securityContext:
         {{- toYaml $podSecurityContext | nindent 8 }}
       containers:
         - name: grafana
-          image: {{ include "ssl-proxy.telemetry.image" (dict "root" . "image" .Values.grafana.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.grafana.image) }}
           imagePullPolicy: {{ .Values.grafana.image.pullPolicy }}
           env:
             - name: GF_SECURITY_ADMIN_USER
@@ -97,10 +97,10 @@ spec:
       volumes:
         - name: provisioning
           configMap:
-            name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-provisioning
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana-provisioning
         - name: dashboards
           configMap:
-            name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-dashboards
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana-dashboards
         - name: data
           {{- if .Values.grafana.persistence.hostPath }}
           hostPath:
@@ -108,7 +108,7 @@ spec:
             type: DirectoryOrCreate
           {{- else if .Values.grafana.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-data
+            claimName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana-data
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -129,10 +129,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-grafana-data
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-grafana-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: grafana
 spec:
   accessModes: ["ReadWriteOnce"]

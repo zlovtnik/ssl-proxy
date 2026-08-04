@@ -84,11 +84,11 @@
       "id": 3,
       "targets": [
         {
-          "expr": "{service=~\"ssl-proxy|java-coordinator|integration-console-web|integration-console-worker|atheros-sensor\"}",
+          "expr": "{service=~\"ssl-proxy|java-coordinator|atheros-search|atheros-sensor\"}",
           "refId": "A"
         }
       ],
-      "title": "Application Logs (Non-Vector)",
+      "title": "Application Logs",
       "type": "logs"
     },
     {

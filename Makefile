@@ -1,4 +1,4 @@
-.PHONY: build test dependency-boundaries bench docker lint clean deploy deploy-ready up-ready diagnose memo-show memo-log db-check-connections pipeline-health audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars
+.PHONY: build test docs-check dependency-boundaries runtime-datastore-policy tidb-schema-contract cutover-evidence-test bench docker lint clean deploy deploy-ready up-ready up-ready-stackctl diagnose memo-show memo-log db-check-connections pipeline-health k8s-status audit-threats ops-test smoke bench-wg-path prep-ath setup-ubuntu configure-containerd-registry schema-migrator-smoke shellcheck-tier-b atheros-search-build atheros-search-test atheros-search-proto schema-migrator-test schema-migrator-ui-test registry-buildx registry-build-all registry-build-stack registry-mirror-all registry-build-vec-worker require-registry require-deploy-vars stackctl-plan stackctl-validate stackctl-render stackctl-compare stackctl-preflight stackctl-dry-run stackctl-deploy stackctl-status stackctl-smoke
 
 ZIG_GLOBAL_CACHE_DIR := $(CURDIR)/.zig-cache/global
 ZIG_LOCAL_CACHE_DIR := $(CURDIR)/.zig-cache/local
@@ -33,9 +33,15 @@ PLATFORM ?= linux/amd64
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 ATHEROS_SEARCH_UI_API_BASE ?= http://localhost:8080
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
-REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator integration-console atheros-sensor atheros-search wg-key-rotator postgres atheros-search-ui
+KUBE_NAMESPACE ?= default
+KUBE_CONTEXT ?=
+KUBE_RELEASE ?= ssl-proxy
+KUBECTL ?= kubectl
+STACKCTL_FILE ?= stackctl/stack.yaml
+STACKCTL_ARGS ?=
+REGISTRY_BUILD_NAMES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema
 REGISTRY_BUILD_TARGETS := $(addprefix registry-build-,$(REGISTRY_BUILD_NAMES))
-REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest redis:7-alpine minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 quay.io/prometheuscommunity/postgres-exporter:v0.19.1 oliver006/redis_exporter:v1.61.0 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0
+REGISTRY_MIRROR_IMAGES := redpandadata/redpanda:latest minio/minio:RELEASE.2025-09-07T16-13-09Z minio/mc:RELEASE.2025-08-13T08-35-41Z prom/prometheus:v2.54.1 grafana/loki:3.1.1 grafana/promtail:3.1.1 jaegertracing/all-in-one:1.62.0 otel/opentelemetry-collector-contrib:0.107.0 grafana/grafana:11.1.4 prom/node-exporter:v1.8.2 gcr.io/cadvisor/cadvisor:v0.49.1 prom/pushgateway:v1.8.0 quay.io/keycloak/keycloak:26.2.5 traefik:v3.6.2 busybox:1.37.0 pingcap/tidb:v8.5.7
 
 ifeq ($(ENABLE_LEGACY_TARGETS),1)
 include Makefile.legacy
@@ -46,17 +52,32 @@ build:
 	cargo build --release -p sync-plane
 	cargo build --release -p ssl-proxy
 	cargo build --release -p atheros-sensor
-	cd services/schema-migrator && sbt compile
-	cd services/zig-coordinator && gradle build
+	cd apps/schema-migrator && sbt compile
+	cd services/octopus && sbt assembly
 
 # Run tests
 test:
+	$(MAKE) runtime-datastore-policy
+	$(MAKE) tidb-schema-contract
+	$(MAKE) cutover-evidence-test
 	cargo test -p sync-plane
 	cargo test -p ssl-proxy
 	cargo test -p atheros-sensor
 	$(MAKE) schema-migrator-test
 	$(MAKE) dependency-boundaries
-	cd services/zig-coordinator && gradle test
+	cd services/octopus && sbt test
+
+docs-check:
+	python3 scripts/check-docs.py
+
+runtime-datastore-policy:
+	scripts/check-runtime-datastores.py
+
+tidb-schema-contract:
+	scripts/check-tidb-schema-contract.py
+
+cutover-evidence-test:
+	python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 
 dependency-boundaries:
 	@command -v rg >/dev/null
@@ -70,7 +91,7 @@ bench:
 
 # Build Docker images used by the compose stack.
 docker:
-	REGISTRY=local IMAGE_TAG=dev docker compose -f docker-compose.yaml -f docker-compose.build.yaml build ssl-proxy java-coordinator postgres
+	REGISTRY=local IMAGE_TAG=dev docker compose -f docker-compose.yaml -f docker-compose.build.yaml build ssl-proxy java-coordinator
 
 require-registry:
 	@test -n "$(REGISTRY)" || (echo "REGISTRY is required, for example REGISTRY=192.168.1.221:5000" >&2; exit 2)
@@ -114,11 +135,6 @@ registry-buildx:
 	fi
 
 registry-build-all: $(REGISTRY_BUILD_TARGETS)
-	@if [ -f services/vec-worker/Dockerfile ]; then \
-		"$${MAKE:-make}" registry-build-vec-worker REGISTRY="$(REGISTRY)" TAG="$(TAG)" PLATFORM="$(PLATFORM)"; \
-	else \
-		echo "[registry-build-all] skipping vec-worker: services/vec-worker/Dockerfile not found"; \
-	fi
 
 registry-mirror-all: require-registry
 	@set -e; \
@@ -135,32 +151,35 @@ registry-build-stack: registry-build-all registry-mirror-all
 define registry_build_target
 .PHONY: registry-build-$(1)
 registry-build-$(1): registry-buildx require-registry
-	docker buildx build --platform $(PLATFORM) \
-		--file $(2) $(3) \
-		--tag $(REGISTRY)/$(4):$(TAG) \
-		--tag $(REGISTRY)/$(4):latest \
-		--push $(5)
+	@set -e; \
+	for _r in 1 2 3; do \
+		if docker buildx build --platform $(PLATFORM) \
+			--file $(2) $(3) \
+			--tag $(REGISTRY)/$(4):$(TAG) \
+			--tag $(REGISTRY)/$(4):latest \
+			--push $(5); then \
+			exit 0; \
+		fi; \
+		echo "[registry-build-$(1)] attempt $$$${_r} failed, retrying in 3s..." >&2; \
+		sleep 3; \
+	done; \
+	echo "[registry-build-$(1)] failed after 3 attempts" >&2; \
+	exit 1
 endef
 
 $(eval $(call registry_build_target,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))
-$(eval $(call registry_build_target,java-coordinator,services/zig-coordinator/Dockerfile,,java-coordinator,.))
-$(eval $(call registry_build_target,integration-console,apps/integration-console/Dockerfile,,integration-console,.))
+$(eval $(call registry_build_target,java-coordinator,services/octopus/Dockerfile,,java-coordinator,.))
 $(eval $(call registry_build_target,atheros-sensor,Dockerfile,--target atheros-sensor --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),atheros-sensor,.))
 $(eval $(call registry_build_target,atheros-search,services/atheros-search/Dockerfile,,atheros-search,.))
 $(eval $(call registry_build_target,wg-key-rotator,apps/wg-key-rotator/Dockerfile,,wg-key-rotator,./apps/wg-key-rotator))
-$(eval $(call registry_build_target,postgres,docker/postgres/Dockerfile,,ssl-proxy-postgres,.))
 $(eval $(call registry_build_target,atheros-search-ui,apps/integration-console/atheros-search-ui/Dockerfile,--build-arg VITE_API_BASE="$(ATHEROS_SEARCH_UI_API_BASE)" --build-arg VITE_APP_TITLE="$(ATHEROS_SEARCH_UI_TITLE)",atheros-search-ui,./apps/integration-console/atheros-search-ui))
+$(eval $(call registry_build_target,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,./apps/schema-migrator))
+$(eval $(call registry_build_target,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,./apps/schema-migrator))
+$(eval $(call registry_build_target,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
 
-registry-build-vec-worker: registry-buildx require-registry
-	@if [ ! -f services/vec-worker/Dockerfile ]; then \
-		echo "vec-worker image cannot be built: services/vec-worker/Dockerfile not found" >&2; \
-		exit 1; \
-	fi
-	docker buildx build --platform $(PLATFORM) \
-		--file services/vec-worker/Dockerfile \
-		--tag $(REGISTRY)/vec-worker:$(TAG) \
-		--tag $(REGISTRY)/vec-worker:latest \
-		--push .
+registry-build-vec-worker:
+	@echo "[registry-build-vec-worker] vec-worker is consolidated into atheros-search"
+	@"$${MAKE:-make}" registry-build-atheros-search REGISTRY="$(REGISTRY)" TAG="$(TAG)" PLATFORM="$(PLATFORM)"
 
 deploy: require-deploy-vars
 	ssh "$(DEPLOY_HOST)" "cd '$(DEPLOY_PATH)' && docker compose pull && docker compose up -d"
@@ -175,7 +194,12 @@ atheros-search-test:
 	cd services/atheros-search && go test ./...
 
 schema-migrator-test:
-	cd services/schema-migrator && sbt test
+	cd apps/schema-migrator && sbt test
+	$(MAKE) schema-migrator-ui-test
+
+schema-migrator-ui-test:
+	cd apps/schema-migrator/schema-migrator-ui && bun run test
+	cd apps/schema-migrator/schema-migrator-ui && bun run build
 $(OPS_VENV)/.installed: ops/pyproject.toml ops/uv.lock scripts/lib/ops-python.sh
 	@bash -lc 'source scripts/lib/ops-python.sh; sslproxy_ensure_ops_venv "$$PWD"'
 
@@ -193,6 +217,14 @@ clean:
 # Example: make up-ready PROFILE_MODE=iphone SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
 up-ready: $(OPS_BOOTSTRAP)
 	$(OPS) up-ready
+
+# Opt-in split-release path. The compatibility umbrella remains the default
+# until test-cluster acceptance and cutover rehearsal are complete.
+up-ready-stackctl: $(OPS_BOOTSTRAP)
+	UP_READY_STACK_MODE=split $(OPS) up-ready
+
+stackctl-plan stackctl-validate stackctl-render stackctl-compare stackctl-preflight stackctl-dry-run stackctl-deploy stackctl-status stackctl-smoke: $(OPS_BOOTSTRAP)
+	$(OPS) stack $(patsubst stackctl-%,%,$@) --file $(STACKCTL_FILE) $(STACKCTL_ARGS)
 
 # Non-mutating diagnosis and signature classification.
 # Example: make diagnose PROFILE_MODE=linux-shim SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.68
@@ -213,6 +245,11 @@ db-check-connections: $(OPS_BOOTSTRAP)
 
 pipeline-health: $(OPS_BOOTSTRAP)
 	$(OPS) pipeline status
+
+# Print a read-only Kubernetes diagnostic snapshot for the ssl-proxy namespace.
+# Override the defaults with KUBE_NAMESPACE, KUBE_CONTEXT, KUBE_RELEASE, or KUBECTL.
+k8s-status:
+	KUBECTL="$(KUBECTL)" KUBE_CONTEXT="$(KUBE_CONTEXT)" KUBE_RELEASE="$(KUBE_RELEASE)" scripts/k8s-namespace-status.sh "$(KUBE_NAMESPACE)"
 
 smoke: $(OPS_BOOTSTRAP)
 	$(OPS) smoke
@@ -262,9 +299,7 @@ ops-test: $(OPS_BOOTSTRAP)
 	$(OPS_TEST)
 
 audit-threats:
-	docker compose exec -T postgres psql "$${DATABASE_URL:-postgres://sync:sync@127.0.0.1:5432/sync}" \
-	  -c "SELECT * FROM v_wireless_threats LIMIT 50;" 2>/dev/null || \
-	  echo "[audit-threats] Run 'make pipeline-health' first to verify DB is up"
+	$(OPS) pipeline status
 
 # Backward-compatible alias with deprecation warning.
 deploy-ready: up-ready

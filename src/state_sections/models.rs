@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
-use tracing::{error, warn};
+use tracing::{debug, warn};
 
 use crate::blocklist::SEED;
 

@@ -54,15 +54,6 @@ scrape_configs:
         labels:
           compose_service: java-coordinator-3
 
-  - job_name: integration-console-web
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["integration-console-web:3000"]
-
-  # integration-console-worker, integration-console-heatmap-refresh,
-  # integration-console-heartbeat, integration-console-db-setup, minio-init,
-  # and redpanda-init are tracked via Pushgateway job metrics.
-
   - job_name: atheros-sensor
     metrics_path: /metrics
     # network_mode: host means Prometheus reaches the sensor via host-gateway.
@@ -74,10 +65,6 @@ scrape_configs:
     static_configs:
       - targets: ["redpanda:9644"]
 
-  - job_name: postgres-exporter
-    static_configs:
-      - targets: ["postgres-exporter:9187"]
-
   - job_name: node-exporter
     static_configs:
       - targets: ["node-exporter:9100"]
@@ -85,10 +72,6 @@ scrape_configs:
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]
-
-  - job_name: redis-exporter
-    static_configs:
-      - targets: ["redis-exporter:9121"]
 
   - job_name: minio
     metrics_path: /minio/v2/metrics/cluster

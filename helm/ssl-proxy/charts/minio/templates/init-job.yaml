@@ -3,10 +3,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "ssl-proxy.minio.fullname" . }}-minio-init
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "minio") }}-minio-init
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.minio.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "minio") | nindent 4 }}
     app.kubernetes.io/component: minio-init
   annotations:
     helm.sh/hook: post-install,post-upgrade
@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.minio.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "minio") | nindent 8 }}
         app.kubernetes.io/component: minio-init
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
@@ -30,7 +30,7 @@ spec:
         {{- end }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.minio.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "minio") }}
       automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
@@ -39,12 +39,12 @@ spec:
       restartPolicy: Never
       containers:
         - name: minio-init
-          image: {{ include "ssl-proxy.minio.image" (dict "root" . "image" .Values.clientImage) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.clientImage) }}
           imagePullPolicy: {{ .Values.clientImage.pullPolicy }}
           command: ["/bin/sh", "-ec"]
           args:
             - |
-              until mc alias set local http://{{ include "ssl-proxy.minio.fullname" . }}-minio:9000 "$MINIO_ACCESS_KEY_ID" "$MINIO_SECRET_ACCESS_KEY"; do sleep 2; done
+              until mc alias set local http://{{ include "ssl-proxy-common.fullname" (dict "root" . "component" "minio") }}-minio:9000 "$MINIO_ACCESS_KEY_ID" "$MINIO_SECRET_ACCESS_KEY"; do sleep 2; done
               for bucket in {{ .Values.bucket }} {{ join " " .Values.extraBuckets }}; do
                 mc mb --ignore-existing "local/$bucket"
               done

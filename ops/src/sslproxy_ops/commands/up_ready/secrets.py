@@ -16,7 +16,6 @@ from sslproxy_ops.util.ini import contains_unresolved_placeholder, is_placeholde
 REQUIRED_DOTENV_KEYS = [
     "REGISTRY",
     "IMAGE_TAG",
-    "POSTGRES_PASSWORD",
     "MINIO_ACCESS_KEY_ID",
     "MINIO_SECRET_ACCESS_KEY",
     "GRAFANA_ADMIN_PASSWORD",
@@ -195,6 +194,10 @@ def ensure_secret_bootstrap(ctx: UpReadyContext) -> None:
         materialize_secret_env(ctx)
         step("S00", "secret_bootstrap: repaired generated secrets")
         return
+    if (repo_root() / "secrets" / "ONE_TIME_TOKENS").is_file():
+        raise UpReadyError(
+            "Consume secrets/ONE_TIME_TOKENS, delete it, then rerun up-ready"
+        )
 
     step("S00", "secret_bootstrap: generating missing secrets")
     shell.run([repo_root() / "scripts" / "gen-secrets", "generate"], check=True)

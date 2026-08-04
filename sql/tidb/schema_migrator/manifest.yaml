@@ -1,0 +1,16 @@
+engine: tidb
+layer: schema_migrator
+database: schema_migrator
+schema_version: 001
+checksum_algorithm: sha256
+manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
+manifest_sha256: 10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
+checksums_file: checksums.sha256
+grant_fixture: grants/least_privilege.sql.tmpl
+apply_order:
+  - 00_schemas/001_schema_migrator_database.sql
+  - 01_tables/001_schema_control.sql
+  - 01_tables/002_repository_state.sql
+  - 01_tables/003_run_state.sql
+  - 01_tables/004_control_leases.sql
+retired: []

@@ -3,15 +3,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.atherosSensor.fullname" . }}-atheros-sensor
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSensor") }}-atheros-sensor
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.atherosSensor.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSensor") | nindent 4 }}
     app.kubernetes.io/component: atheros-sensor
 spec:
   clusterIP: None
   selector:
-    {{- include "ssl-proxy.atherosSensor.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSensor") | nindent 4 }}
     app.kubernetes.io/component: atheros-sensor
   ports:
     - name: metrics

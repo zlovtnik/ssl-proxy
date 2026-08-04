@@ -2,61 +2,39 @@ package search
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
-func TestBuildWirelessFiltersUsesParameters(t *testing.T) {
-	filter := BuildWirelessFilters(&searchv1.SearchFilters{
-		LocationIds:       []string{"lab"},
-		SourceMac:         "aa:bb:cc:dd:ee:ff",
-		FrameSubtypes:     []string{"probe_request"},
-		SecurityFlagsMask: 4,
-		ThreatOnly:        true,
-		Tags:              []string{"threat:test"},
-	}, 3)
-	sql := WhereSQL(nil, filter.Clauses)
-	require.Contains(t, sql, "$3::text[]")
-	require.Contains(t, sql, "$4")
-	require.Contains(t, sql, "$5::text[]")
-	require.Contains(t, sql, "$6")
-	require.Contains(t, sql, "$7")
-	require.NotContains(t, sql, "aa:bb:cc:dd:ee:ff")
-	require.Len(t, filter.Args, 5)
+func TestResultMatchesFilters(t *testing.T) {
+	observed := time.Unix(100, 0).UTC()
+	result := RawResult{
+		SourceMAC: "aa:bb", LocationID: "lab", SensorID: "sensor-a",
+		SSID: "Lab Network", FrameSubtype: "probe_request", ObservedAt: &observed,
+		Tags: []string{"threat:rogue", "wireless"}, securityFlags: 4, handshakeCaptured: true,
+	}
+	require.True(t, resultMatchesFilters(result, &searchv1.SearchFilters{
+		LocationIds: []string{"lab"}, SensorIds: []string{"sensor-a"}, Ssid: "network",
+		SourceMacs: []string{"AA:BB"}, FrameSubtypes: []string{"probe_request"},
+		ObservedAfter: timestamppb.New(observed.Add(-time.Second)), ObservedBefore: timestamppb.New(observed.Add(time.Second)),
+		ThreatOnly: true, HandshakeOnly: true, SecurityFlagsMask: 4, Tags: []string{"WIRELESS"},
+	}))
 }
 
-func TestBuildWirelessFiltersCombinesSourceMacList(t *testing.T) {
-	filter := BuildWirelessFilters(&searchv1.SearchFilters{
-		SourceMac:  "AA:BB:CC:DD:EE:FF",
-		SourceMacs: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"},
-	}, 1)
-	sql := WhereSQL(nil, filter.Clauses)
-	require.Contains(t, sql, "lower(se.source_mac) = any($1::text[])")
-	require.Equal(t, []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}, filter.Args[0])
+func TestResultMatchesFiltersRejectsMissingRequirements(t *testing.T) {
+	result := RawResult{SourceMAC: "aa:bb", Tags: []string{"normal"}}
+	require.False(t, resultMatchesFilters(result, &searchv1.SearchFilters{SourceMac: "cc:dd"}))
+	require.False(t, resultMatchesFilters(result, &searchv1.SearchFilters{ThreatOnly: true}))
+	require.False(t, resultMatchesFilters(result, &searchv1.SearchFilters{SecurityFlagsMask: 2}))
 }
 
-func TestBuildSourceFiltersUsesParameters(t *testing.T) {
-	filter := BuildSourceFilters(&searchv1.SearchFilters{
-		LocationIds: []string{"lab"},
-		SensorIds:   []string{"sensor-a"},
-		SourceMac:   "aa:bb:cc:dd:ee:ff",
-	}, 4, "b.source_mac", "b.location_id", "b.sensor_id", "b.window_start")
-	sql := WhereSQL(nil, filter.Clauses)
-	require.Contains(t, sql, "$4::text[]")
-	require.Contains(t, sql, "$5::text[]")
-	require.Contains(t, sql, "$6")
-	require.NotContains(t, sql, "aa:bb:cc:dd:ee:ff")
-	require.Len(t, filter.Args, 3)
-}
-
-func TestGraphFocusMACsDeduplicatesSourceAndExpandedMACs(t *testing.T) {
-	got := graphFocusMACs(GraphFilters{
-		SourceMAC: "AA:BB:CC:DD:EE:FF",
-		focusMACs: []string{
-			"aa:bb:cc:dd:ee:ff",
-			"11:22:33:44:55:66",
-		},
+func TestFilterSourceMACsNormalizesAndDeduplicates(t *testing.T) {
+	got := filterSourceMACs(&searchv1.SearchFilters{
+		SourceMac: "AA:BB", SourceMacs: []string{"aa:bb", "CC:DD"},
 	})
-	require.Equal(t, []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}, got)
+	require.Equal(t, []string{"aa:bb", "cc:dd"}, got)
 }

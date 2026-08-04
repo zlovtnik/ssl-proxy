@@ -7,10 +7,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestVectorLiteralSanitizesNonFiniteValues(t *testing.T) {
-	got := VectorLiteral([]float32{1, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))})
+func TestValidateVectorRejectsNonFiniteAndWrongDimension(t *testing.T) {
+	vector := make([]float32, embeddingDimensions)
+	vector[7] = float32(math.NaN())
+	require.ErrorContains(t, validateVector(vector), "non-finite")
 
-	require.Equal(t, "[1,0,0,0]", got)
+	require.ErrorContains(t, validateVector(make([]float32, 3)), "expected 768")
 }
 
 func TestVectorLiteralFormatsEmptyAndFractionalValues(t *testing.T) {

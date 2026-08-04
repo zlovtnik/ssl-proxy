@@ -1,0 +1,14 @@
+README.md
+apps/schema-migrator/README.md
+apps/schema-migrator/deploy/k8s/README.md
+apps/wg-key-rotator/README.md
+docs/schema-archive/README.md
+helm/ssl-proxy/README.md
+ops/README.md
+services/atheros-search/README.md
+services/atheros-search/migrations/README.md
+services/atheros-search/scripts/README.md
+services/atheros-sensor/README.md
+services/octopus/README.md
+services/octopus/tidb/README.md
+stackctl/README.md

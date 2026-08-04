@@ -30,6 +30,8 @@ class UpReadyContext:
     auto_fixed_classes: set[str] = field(default_factory=set)
     peer_configs: dict[str, str] = field(default_factory=dict)
     peer_key_helper_ready: bool = False
+    tidb_tls_cert_checksum: str = ""
+    tidb_tls_rollout_complete: bool = False
 
     def classify(self, text: str) -> FailureClassification:
         self.last_failure_text = text

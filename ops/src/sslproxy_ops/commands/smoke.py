@@ -85,22 +85,7 @@ def wait_for_health(timeout: int = 60) -> None:
 
 
 def expected_ready_status() -> str:
-    alias = os.getenv("ORACLE_CONN", "mainerc_high").lower()
-    wallet = repo_root() / "wallet"
-    tns = wallet / "tnsnames.ora"
-    sqlnet = wallet / "sqlnet.ora"
-    cwallet = wallet / "cwallet.sso"
-    found_alias = False
-    if tns.is_file():
-        for raw_line in tns.read_text(errors="ignore").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            lhs = line.split("=", 1)[0].strip().lower()
-            if lhs == alias:
-                found_alias = True
-                break
-    return "200" if found_alias and sqlnet.is_file() and cwallet.is_file() else "503"
+    return "200"
 
 
 def container_ready_response() -> tuple[str, str]:

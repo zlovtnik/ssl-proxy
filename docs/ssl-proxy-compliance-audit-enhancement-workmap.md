@@ -1,8 +1,18 @@
 # SSL Proxy — Compliance & Audit Enhancement Workmap
 
+> **Status: Historical workmap.** The body records earlier implementation
+> assumptions and is not current runtime guidance. Use
+> [System Architecture](architecture.md), [Threat Model](threat-model.md), and
+> [TiDB Runtime and Cutover](tidb-runtime-cutover.md) for current policy.
+
 > **Branch:** `develop`
 > **Project:** `ssl-proxy`
 > **Scope:** Compliance-grade audit persistence, intelligent blocklist infrastructure, transaction-level user data capture, and bandwidth/performance hardening.
+
+> **State-store policy update:** Redis-specific and PostgreSQL-runtime tasks
+> below are superseded and must not be implemented. Application-owned durable
+> state uses the isolated TiDB domains; process-local acceleration may remain
+> in memory.
 
 ---
 
@@ -46,7 +56,8 @@ For threat-centric review and control-gap tracking, use the companion [Threat Mo
 - `sync.oracle.result` is the worker-to-coordinator result topic. The coordinator consumes it from `ORACLE_RESULT_STREAM` and updates `sync_batches`, `sync_jobs`, and `sync_errors`.
 - `sync-publish` refers to the proxy-side publish path that prepares payload references and emits `sync.scan.request`; it must never call Oracle directly.
 
-## Execution Mode (How We’ll Run This) {#execution-mode}
+<a id="execution-mode"></a>
+## Execution Mode (How We’ll Run This)
 
 To make this workmap operational (not just aspirational), execute in these lanes:
 
@@ -66,7 +77,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 ---
 
-## Epic 1 — Transaction-Level Audit & User Session Tracking {#epic-1}
+<a id="epic-1"></a>
+## Epic 1 — Transaction-Level Audit & User Session Tracking
 
 **Goal:** Identify individual users behind the proxy, correlate all their TCP sessions into logical "user sessions", and detect transaction-class operations (financial APIs, auth flows, data-submission endpoints).
 
@@ -106,7 +118,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 ---
 
-## Epic 2 — Intelligent Blocklist Infrastructure {#epic-2}
+<a id="epic-2"></a>
+## Epic 2 — Intelligent Blocklist Infrastructure
 
 **Goal:** Replace the single-URL blocklist with a multi-source, Redis-cached, Oracle-synchronized pipeline that is source-attributed and enriched with threat intelligence metadata.
 
@@ -156,7 +169,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 ---
 
-## Epic 3 — Compliance Data Capture & Scraping Audit {#epic-3}
+<a id="epic-3"></a>
+## Epic 3 — Compliance Data Capture & Scraping Audit
 
 **Goal:** Capture user-attributable traffic metadata sufficient for compliance and legal hold, including cache-worthy response signals and data-scraping behavioral detection.
 
@@ -195,7 +209,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 ---
 
-## Epic 4 — Bandwidth & Performance Hardening {#epic-4}
+<a id="epic-4"></a>
+## Epic 4 — Bandwidth & Performance Hardening
 
 **Goal:** Maximize tunnel throughput, reduce allocations on the hot path, and ensure the DB write pipeline never creates back-pressure on request handling.
 
@@ -253,7 +268,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 ---
 
-## Epic 5 — Observability & Alerting {#epic-5}
+<a id="epic-5"></a>
+## Epic 5 — Observability & Alerting
 
 ### 5.1 — Structured Metrics
 
@@ -289,7 +305,8 @@ To make this workmap operational (not just aspirational), execute in these lanes
 
 ---
 
-## Cross-Cutting Concerns {#cross-cutting}
+<a id="cross-cutting"></a>
+## Cross-Cutting Concerns
 
 ### Security
 
@@ -326,7 +343,8 @@ All migrations follow the existing idempotent PL/SQL `DECLARE / IF v_count = 0 T
 
 ---
 
-## Milestone Schedule {#milestones}
+<a id="milestones"></a>
+## Milestone Schedule
 
 ```text
 M1 — Performance baseline (Epic 4)          2 weeks
@@ -349,7 +367,8 @@ M6 — QA, load testing, security review       1 week
 
 **Total estimated: 11 weeks** (team of 2 engineers)
 
-## First Sprint Backlog (Let’s Rock) {#first-sprint}
+<a id="first-sprint"></a>
+## First Sprint Backlog (Let’s Rock)
 
 The first sprint should front-load performance headroom and unblock later compliance capture.
 
@@ -372,7 +391,8 @@ The first sprint should front-load performance headroom and unblock later compli
 
 ---
 
-## Architecture Decisions Record (ADR) {#adr}
+<a id="adr"></a>
+## Architecture Decisions Record (ADR)
 
 ### ADR-001 — Redis over Memcached for blocklist cache
 

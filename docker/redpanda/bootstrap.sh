@@ -78,8 +78,30 @@ while IFS='|' read -r topic partitions replicas retention_ms retention_bytes; do
   topic_retention_ms="${retention_ms:-2592000000}"
   topic_retention_bytes="${retention_bytes:--1}"
 
-  if rpk topic describe "${topic}" --brokers "${BOOTSTRAP_SERVERS}" >/dev/null 2>&1; then
-    log_line "info" "topic_exists" "Topic already exists: ${topic}"
+  if topic_description="$(rpk topic describe "${topic}" --brokers "${BOOTSTRAP_SERVERS}" --print-summary 2>/dev/null)"; then
+    current_partitions="$(printf '%s\n' "${topic_description}" | awk '
+      $1 == "PARTITIONS" { print $2; exit }
+      $1 == "NAME" && $2 == "PARTITIONS" { getline; print $2; exit }
+    ')"
+    case "${current_partitions}" in
+      ''|*[!0-9]*)
+        log_line "error" "topic_partition_parse_failed" "Could not read partition count for ${topic}" "${topic_description}"
+        exit 1
+        ;;
+    esac
+    if [ "${current_partitions}" -lt "${topic_partitions}" ]; then
+      additional_partitions="$((topic_partitions - current_partitions))"
+      log_line "info" "topic_expand" "Adding ${additional_partitions} partitions to ${topic}"
+      rpk topic add-partitions "${topic}" \
+        --brokers "${BOOTSTRAP_SERVERS}" \
+        --num "${additional_partitions}"
+    elif [ "${current_partitions}" -gt "${topic_partitions}" ]; then
+      log_line "error" "topic_partition_mismatch" \
+        "Topic ${topic} has ${current_partitions} partitions, above desired ${topic_partitions}"
+      exit 1
+    else
+      log_line "info" "topic_exists" "Topic already has ${topic_partitions} partitions: ${topic}"
+    fi
   else
     log_line "info" "topic_create" "Creating topic ${topic}"
     rpk topic create "${topic}" \

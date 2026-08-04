@@ -1,8 +1,13 @@
 # vec-worker: Intelligence Workmap
 
+> **Status: Historical / superseded.** The standalone vec-worker was retired;
+> Atheros Search owns embedding jobs and vector writes, while Octopus owns
+> projection preparation and alert derivation. Use
+> [System Architecture](architecture.md) for current ownership.
+
 ## From Noisy Deduplication → Actionable Device Intelligence
 
-**Status as of 2026-05-26**
+**Historical status as of 2026-05-26**
 
 > This is a historical planning document. It was moved from
 > `services/vec-worker/README.md` to keep the README focused on

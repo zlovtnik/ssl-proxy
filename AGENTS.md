@@ -12,50 +12,63 @@ overrides a rule for its subtree.
 - Keep changes ASCII unless a file already uses Unicode for a clear reason.
 - Do not revert, overwrite, or tidy edits you did not make.
 - Assume the workspace may be dirty; stay inside the requested assignment.
-- Check both root and submodule git status when touching `apps/integration-console/`.
 
 ## Repo Anatomy
 - `src/` is the Rust `ssl-proxy` service: WireGuard ingress, transparent proxy,
   tunnel transport, admin/readiness surfaces, and proxy-side sync publishing.
 - `crates/sync-plane/` contains shared Rust Redpanda publisher/config/contract
   code used by producers.
-- `services/schema-migrator/` is the Scala Cats Effect runner for ordered
-  split Postgres and Oracle schema files under `sql/`.
+- `apps/schema-migrator/` is the Scala Cats Effect runner whose control state
+  lives in TiDB; PostgreSQL remains supported only as an external target dialect.
 - `services/atheros-sensor/` is the Rust Linux monitor-mode wireless sensor.
-- `services/atheros-search/` is the Go HTTP/gRPC search and vector service for
-  wireless audit data.
-- `services/zig-coordinator/` is a legacy path name for the current Java 21
-  Spring Boot/Camel coordinator and Oracle sink.
+- `services/atheros-search/` is the Go HTTP/gRPC search, vector, and ETL
+  control plane service for wireless audit data. It owns embedding job
+  processing via a worker pool and exposes ETL health monitoring.
+- `services/octopus/` is the Scala 3 Cats Effect/FS2 coordinator and owner of
+  durable ingestion, leases, outbox, and maintained TiDB projections, built via sbt.
 - `services/` has local `AGENTS.md` files for shared service rules and
   service-specific conventions.
-- `apps/integration-console/` is a git submodule containing the Rails 7
-  management console. It has its own local `AGENTS.md`.
+- `apps/wg-key-rotator/` is an Elixir WireGuard key rotation tool.
 - `apps/integration-console/atheros-search-ui/` is a standalone SolidJS/Bun UI.
   It has its own local `AGENTS.md`.
-- `sql/` contains split Postgres schema objects plus the canonical Oracle
-  baseline schema.
+- `sql/tidb/` is the canonical runtime schema source for the four isolated
+  databases (`octopus_core`, `atheros_search`, `schema_migrator`,
+  `integration_console`) and the shared `contracts/` layer. PostgreSQL SQL
+  belongs only to the historical archive or schema-migrator external-target
+  fixtures.
 - `helm/ssl-proxy/` is the umbrella chart; deployable units live under
   `helm/ssl-proxy/charts/`, while only shared ConfigMaps and the shared service
-  account remain in the umbrella templates.
+  account remain in the umbrella templates. All subcharts depend on the
+  `_common` library chart at `helm/ssl-proxy/charts/_common/`.
 - `docker/`, `scripts/`, and `docs/` hold deployment, operational, and design
   material.
 
 ## Architecture Guardrails
-- Treat the Rust proxy and wireless sensor as producers of sync-plane work, not
-  as Oracle clients.
-- Keep Oracle ownership in `services/zig-coordinator/`; do not add direct Oracle
-  wiring, wallet dependencies, or an `oracle-db` feature gate back into `src/`,
+- Keep coordinator concerns in `services/octopus/`: cursoring, dedupe,
+  job state, batching, backlog handling, and TiDB load/result behavior.
+- Atheros Search owns embedding job processing (claim, embed, write vectors)
+  via its worker pool. Projection maintenance and alert derivation remain
+  Octopus concerns.
+- Direct TiDB clients are intentional for Octopus, Atheros Search, and
+  schema-migrator. Keep them on isolated databases/accounts and
+  enforce the table-level grant matrix documented in
+  `docs/tidb-runtime-cutover.md`. Do not add direct database wiring to `src/`,
   `crates/sync-plane/`, or `services/atheros-sensor/`.
-- Keep coordinator concerns in `services/zig-coordinator/`: cursoring, dedupe,
-  job state, batching, backlog handling, result handling, and Oracle wallet
-  preflight/load behavior.
+- Keep TiDB connection configuration consistent between application config
+  (`AppConfig.scala` TiDbConfig fields) and the Helm chart values. Every TiDB
+  env var consumed by a service must have a corresponding Helm value source in
+  the chart's deployment template. When changing TiDB connection parameters
+  (host, port, sslMode, sslCaPath, sslServerName), update both the application
+  config defaults and the chart's `global.shared.tidb` values and per-chart env
+  vars in parallel.
 - Preserve the locked sync topic meanings:
   - `sync.scan.request` for producer-to-coordinator work discovery
-  - `sync.oracle.load` for coordinator-owned Oracle load dispatch
-  - `sync.oracle.result` for coordinator-owned Oracle load outcomes
-- Keep delivery semantics at-least-once with dedupe in Postgres.
+  - `sync.oracle.load` for coordinator-owned TiDB load dispatch (legacy name)
+  - `sync.oracle.result` for coordinator-owned TiDB load outcomes (legacy name)
+- Keep delivery semantics at-least-once after the signed cutover offset, with
+  durable TiDB dedupe and per-topic/partition/offset ingestion evidence.
 - Keep wireless sensor persistence indirect: publish `wireless.audit` and the
-  matching `sync.scan.request`; do not give the sensor direct Postgres ownership.
+  matching `sync.scan.request`; do not give the sensor direct database ownership.
 - Keep `atheros-search` schema changes in repository-level `sql/` unless a
   change is truly service-local and independent.
 - Keep proxy classification aligned to the current taxonomy:
@@ -69,12 +82,17 @@ overrides a rule for its subtree.
 ## Change Rules
 - Keep Rust changes localized and deliberate; preserve the sensor/proxy
   dependency boundary enforced by `make dependency-boundaries`.
-- Treat SQL migrations and ordered schema additions as append-only unless a task
-  explicitly asks for a replacement. When split `sql/*` objects change, keep
-  `sql/postgres.sql` and `sql/postgres.source.sql` aligned with the ordered
-  object list.
-- Treat `sql/oracle.sql` as the fresh canonical Oracle baseline. Do not append
-  migration-style ALTER blocks there casually.
+- Treat active TiDB migrations and ordered schema additions as append-only unless
+  a task explicitly asks for a replacement. Do not revive the retired
+  `sql/tidb/core/` baseline or PostgreSQL runtime aggregates.
+- Treat the four domain manifests under `sql/tidb/` (and the shared
+  `contracts/` layer) as authoritative. Only the provisioning schema executor
+  may apply DDL; application runtimes verify the recorded manifest checksums
+  and fail closed.
+- Keep PostgreSQL libraries/configuration limited to schema-migrator's explicit
+  external-target implementation and tests. Runtime Helm, Compose, monitoring,
+  secrets, and application fallbacks must remain PostgreSQL/MongoDB-free outside
+  the one-release `helm/ssl-proxy/cutover-compat/` stage/activate assets.
 - Preserve API contracts, Redpanda payload shapes, schema-versioned wireless
   events, and UI data contracts unless the user asks for a contract change.
 - Avoid introducing new dependencies unless they clearly earn their keep.
@@ -90,10 +108,11 @@ overrides a rule for its subtree.
   - `cargo test -p ssl-proxy`
   - `cargo test -p sync-plane`
   - `cargo test -p atheros-sensor`
-  - `cd services/schema-migrator && sbt test`
+  - `cd apps/schema-migrator && sbt test`
+  - `cd services/octopus && sbt test`
   - `make dependency-boundaries`
   - `make atheros-search-test`
-  - `cd services/zig-coordinator && ./gradlew test`
+  - `python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v`
   - `make lint`
   - `make test` for a broad repository pass
 - If a check cannot be run, state the blocker and the risk.

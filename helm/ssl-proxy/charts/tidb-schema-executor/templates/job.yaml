@@ -1,0 +1,65 @@
+{{- if .Values.enabled }}
+{{- $image := .Values.image.repository }}
+{{- with .Values.global.image.registry }}
+{{- $image = printf "%s/%s" (trimSuffix "/" .) $image }}
+{{- end }}
+{{- $instance := default .Release.Name .Values.global.instanceOverride }}
+{{- $managed := eq .Values.lifecycle.mode "managed" }}
+{{- if and (ne .Values.lifecycle.mode "hook") (not $managed) }}
+{{- fail "tidb-schema-executor.lifecycle.mode must be hook or managed" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  {{- if $managed }}
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "tidb-schema-executor") }}-tidb-schema-executor
+  {{- else }}
+  name: {{ .Release.Name }}-tidb-schema-{{ .Values.global.rolloutRevision | default (.Release.Revision | toString) | sha256sum | trunc 10 }}
+  {{- end }}
+  namespace: {{ .Release.Namespace }}
+  labels: {app.kubernetes.io/name: tidb-schema-executor, app.kubernetes.io/instance: {{ $instance }}, ssl-proxy.io/tidb-client: "true"}
+  {{- if not $managed }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: tidb-schema-executor, app.kubernetes.io/instance: {{ $instance }}, ssl-proxy.io/tidb-client: "true"}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ .Values.global.serviceAccount.name }}
+      automountServiceAccountToken: false
+      securityContext: {seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: schema
+          image: {{ printf "%s:%s" $image .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: TIDB_SCHEMA_OWNER_DSN
+              valueFrom: {secretKeyRef: {name: {{ .Values.ownerSecret.name }}, key: {{ .Values.ownerSecret.dsnKey }}}}
+            - {name: TIDB_TLS_CA_FILE, value: /etc/tidb-tls/ca.crt}
+            - {name: TIDB_SCHEMA_APPLY_POST_TIFLASH, value: {{ .Values.applyPostTiFlash | quote }}}
+            - {name: TIDB_OCTOPUS_ACCOUNT, value: {{ .Values.global.shared.tidb.accounts.octopus.user | quote }}}
+            - {name: TIDB_ATHEROS_SEARCH_ACCOUNT, value: {{ .Values.global.shared.tidb.accounts.atherosSearch.user | quote }}}
+            - {name: TIDB_SCHEMA_MIGRATOR_ACCOUNT, value: {{ .Values.global.shared.tidb.accounts.schemaMigrator.user | quote }}}
+          volumeMounts: [{name: tidb-tls, mountPath: /etc/tidb-tls, readOnly: true}]
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      volumes:
+        - name: tidb-tls
+          secret:
+            secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
+            items: [{key: {{ .Values.global.shared.tidb.tls.caSecret.key }}, path: ca.crt}]
+{{- end }}

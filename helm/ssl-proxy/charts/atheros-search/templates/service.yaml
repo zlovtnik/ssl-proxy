@@ -1,0 +1,25 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
+    app.kubernetes.io/component: atheros-search
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
+    app.kubernetes.io/component: atheros-search
+  ports:
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+    - name: grpc
+      port: {{ .Values.service.grpcPort }}
+      targetPort: grpc
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+{{- end }}

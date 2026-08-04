@@ -4,10 +4,10 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "ssl-proxy.redpanda.fullname" . }}-redpanda-data
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "redpanda") }}-redpanda-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.redpanda.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "redpanda") | nindent 4 }}
     app.kubernetes.io/component: redpanda
 spec:
   accessModes: ["ReadWriteOnce"]

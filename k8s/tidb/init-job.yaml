@@ -1,0 +1,127 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-tidb-init
+  namespace: default
+  labels:
+    app: ssl-proxy-tidb
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: ssl-proxy-tidb-init
+    spec:
+      containers:
+        - name: tidb-init
+          image: mysql:8.0
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+
+              MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
+
+              echo "Waiting for TiDB to be ready..."
+              until mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" 2>/dev/null; do
+                sleep 3
+              done
+              echo "TiDB is ready."
+
+              STATS_CACHE_QUOTA_BYTES=536870912
+              SCHEMA_CACHE_SIZE_BYTES=268435456
+              echo "Applying TiDB cache quotas..."
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "SET GLOBAL tidb_stats_cache_mem_quota = ${STATS_CACHE_QUOTA_BYTES}; SET GLOBAL tidb_schema_cache_size = ${SCHEMA_CACHE_SIZE_BYTES};"
+              ACTUAL_CACHE_QUOTAS="$(mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} --batch --skip-column-names -e \
+                "SELECT CONCAT(@@GLOBAL.tidb_stats_cache_mem_quota, ':', @@GLOBAL.tidb_schema_cache_size);")"
+              EXPECTED_CACHE_QUOTAS="${STATS_CACHE_QUOTA_BYTES}:${SCHEMA_CACHE_SIZE_BYTES}"
+              if [ "${ACTUAL_CACHE_QUOTAS}" != "${EXPECTED_CACHE_QUOTAS}" ]; then
+                echo "TiDB cache quota verification failed: expected ${EXPECTED_CACHE_QUOTAS}, got ${ACTUAL_CACHE_QUOTAS}" >&2
+                exit 1
+              fi
+              echo "TiDB cache quotas verified: ${ACTUAL_CACHE_QUOTAS}"
+
+              echo "Creating databases..."
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS octopus_core CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS atheros_search CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS schema_migrator CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS keycloak CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+              echo "Creating accounts..."
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE USER IF NOT EXISTS 'octopus_runtime' IDENTIFIED BY '${OCTOPUS_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "ALTER USER 'octopus_runtime' IDENTIFIED BY '${OCTOPUS_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE USER IF NOT EXISTS 'atheros_search_runtime' IDENTIFIED BY '${ATHEROS_SEARCH_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "ALTER USER 'atheros_search_runtime' IDENTIFIED BY '${ATHEROS_SEARCH_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE USER IF NOT EXISTS 'schema_migrator_runtime' IDENTIFIED BY '${SCHEMA_MIGRATOR_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "ALTER USER 'schema_migrator_runtime' IDENTIFIED BY '${SCHEMA_MIGRATOR_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE USER IF NOT EXISTS 'keycloak' IDENTIFIED BY '${KEYCLOAK_PASSWORD}';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "ALTER USER 'keycloak' IDENTIFIED BY '${KEYCLOAK_PASSWORD}';"
+
+              echo "Granting permissions..."
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.* TO 'octopus_runtime';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON atheros_search.* TO 'octopus_runtime';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT SELECT ON atheros_search.* TO 'atheros_search_runtime';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT SELECT ON octopus_core.* TO 'atheros_search_runtime';"
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON schema_migrator.* TO 'schema_migrator_runtime';"
+              # Keycloak owns and migrates its own schema, so it needs DDL on its database only.
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT ALL PRIVILEGES ON keycloak.* TO 'keycloak';"
+
+              echo "Flushing privileges..."
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e "FLUSH PRIVILEGES;"
+
+              echo "Verifying accounts..."
+              mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e \
+                "SELECT User, Host FROM mysql.user WHERE User IN ('octopus_runtime','atheros_search_runtime','schema_migrator_runtime','keycloak');"
+
+              echo "TiDB initialization complete."
+          env:
+            - name: OCTOPUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-octopus
+                  key: password
+            - name: ATHEROS_SEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-atheros-search
+                  key: password
+            - name: SCHEMA_MIGRATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-schema-migrator
+                  key: password
+            - name: KEYCLOAK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-keycloak
+                  key: password
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+      volumes:
+        - name: tidb-tls
+          secret:
+            secretName: tidb-client-ca
+      restartPolicy: OnFailure

@@ -4,7 +4,18 @@
   "properties": {
     "global": {
       "type": "object",
+      "required": ["migration", "shared"],
       "properties": {
+        "nameOverride": {"type": "string"},
+        "fullnameOverride": {"type": "string"},
+        "instanceOverride": {"type": "string"},
+        "migration": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {"type": "string", "enum": ["stage", "activate", "prune"]}
+          }
+        },
         "image": {
           "type": "object",
           "properties": {
@@ -23,6 +34,69 @@
             "name": { "type": "string", "minLength": 1 },
             "automountServiceAccountToken": { "type": "boolean" }
           }
+        },
+        "shared": {
+          "type": "object",
+          "required": ["tidb", "keycloak", "redis"],
+          "properties": {
+            "tidb": {
+              "type": "object",
+              "required": ["host", "port", "minimumVersion", "tls", "accounts"],
+              "properties": {
+                "host": {"type": "string", "minLength": 1},
+                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                "minimumVersion": {"type": "string", "pattern": "^8\\.(?:[5-9]|[1-9][0-9])(?:\\.[0-9]+)?$"},
+                "tls": {
+                  "type": "object",
+                  "required": ["serverName", "caSecret"],
+                  "properties": {
+                    "serverName": {"type": "string", "minLength": 1},
+                    "caSecret": {
+                      "type": "object",
+                      "required": ["name", "key"],
+                      "properties": {
+                        "name": {"type": "string", "minLength": 1},
+                        "key": {"type": "string", "minLength": 1}
+                      }
+                    }
+                  }
+                },
+                "accounts": {
+                  "type": "object",
+                  "required": ["octopus", "atherosSearch", "schemaMigrator"],
+                  "properties": {
+                    "octopus": {"$ref": "#/definitions/tidbAccount"},
+                    "atherosSearch": {"$ref": "#/definitions/tidbAccount"},
+                    "schemaMigrator": {"$ref": "#/definitions/tidbAccount"},
+                    "keycloak": {"$ref": "#/definitions/keycloakTidbAccount"}
+                  }
+                }
+              }
+            },
+            "keycloak": {
+              "type": "object",
+              "required": ["issuer", "jwksUri", "schemaMigratorClientId"],
+              "properties": {
+                "issuer": {"type": "string", "format": "uri", "pattern": "^https?://"},
+                "jwksUri": {"type": "string", "format": "uri", "pattern": "^https?://"},
+                "schemaMigratorClientId": {"type": "string", "minLength": 1}
+              }
+            },
+            "redis": {
+              "type": "object",
+              "required": ["urlSecret"],
+              "properties": {
+                "urlSecret": {
+                  "type": "object",
+                  "required": ["name", "key"],
+                  "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "key": {"type": "string", "minLength": 1}
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -38,42 +112,201 @@
         }
       }
     },
-    "postgres": {
-      "type": "object",
-      "properties": {
-        "hostPort": {
-          "type": ["integer", "null"],
-          "minimum": 1,
-          "maximum": 65535
-        }
-      }
-    },
-    "integrationConsole": {
+    "schemaMigrator": {
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "web": {
+        "publicHostname": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$"
+        },
+        "backend": {
           "type": "object",
           "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": { "type": "string", "minLength": 1 },
+                "tag": { "type": "string", "minLength": 1 }
+              }
+            },
+            "resources": { "type": "object" }
+          }
+        },
+        "ui": {
+          "type": "object",
+          "properties": {
+            "browserOrigin": {
+              "type": "string",
+              "pattern": "^$|^https?://[^/]+$"
+            },
+            "image": {
+              "type": "object",
+              "properties": {
+                "repository": { "type": "string", "minLength": 1 },
+                "tag": { "type": "string", "minLength": 1 }
+              }
+            },
             "service": {
               "type": "object",
               "properties": {
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "targetPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
                 "hostPort": {
                   "type": ["integer", "null"],
                   "minimum": 1,
                   "maximum": 65535
                 }
               }
+            },
+            "resources": { "type": "object" }
+          }
+        },
+        "stateStore": {
+          "type": "object",
+          "properties": {
+            "host": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "databaseName": { "type": "string", "minLength": 1 },
+            "user": { "type": "string", "minLength": 1 },
+            "poolSize": { "type": "integer", "minimum": 1 },
+            "credentialsSecret": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "passwordKey": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        "keycloak": {
+          "type": "object",
+          "properties": {
+            "realm": { "type": "string", "minLength": 1 },
+            "clientId": { "type": "string", "minLength": 1 }
+          }
+        },
+        "traefik": {
+          "type": "object",
+          "properties": {
+            "hostPorts": {
+              "type": "object",
+              "properties": {
+                "http": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "https": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "lan": {
+                  "type": ["integer", "null"],
+                  "minimum": 1,
+                  "maximum": 65535
+                }
+              }
+            },
+            "acme": {
+              "type": "object",
+              "properties": {
+                "email": { "type": "string" },
+                "server": { "type": "string", "format": "uri" }
+              }
             }
           }
         }
       }
     },
-    "observability": {
+    "tidb": {
+      "type": "object",
+      "required": ["external", "minimumVersion", "egress"],
+      "properties": {
+        "external": { "type": "boolean" },
+        "minimumVersion": {"type": "string", "pattern": "^8\\.(?:[5-9]|[1-9][0-9])(?:\\.[0-9]+)?$"},
+        "egress": {
+          "type": "object",
+          "required": ["enabled", "cidrs"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "cidrs": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[0-9a-fA-F:.]+/[0-9]+$"}
+            }
+          }
+        }
+      }
+    },
+    "telemetry": {
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" }
       }
     }
-  }
+  },
+  "definitions": {
+    "tidbAccount": {
+      "type": "object",
+      "required": ["database", "user", "passwordSecret"],
+      "properties": {
+        "database": {"type": "string", "enum": ["octopus_core", "atheros_search", "schema_migrator"]},
+        "user": {"type": "string", "minLength": 1},
+        "passwordSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "key": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "keycloakTidbAccount": {
+      "type": "object",
+      "required": ["database", "user", "passwordSecret"],
+      "properties": {
+        "database": {"type": "string", "enum": ["keycloak"]},
+        "user": {"type": "string", "minLength": 1},
+        "passwordSecret": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "key": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaMigrator": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["schemaMigrator"]
+      },
+      "then": {
+        "properties": {
+          "schemaMigrator": {
+            "required": ["publicHostname", "traefik"],
+            "properties": {
+              "publicHostname": { "minLength": 1 },
+              "traefik": {
+                "required": ["acme"],
+                "properties": {
+                  "acme": {
+                    "required": ["email"],
+                    "properties": {
+                      "email": {
+                        "minLength": 3,
+                        "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

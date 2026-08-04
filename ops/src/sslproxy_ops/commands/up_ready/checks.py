@@ -15,6 +15,7 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_diagnostics,
     kubernetes_exec,
     kubernetes_logs,
+    release_fullname,
 )
 from sslproxy_ops.commands.up_ready.model import (
     UpReadyContext,
@@ -24,7 +25,7 @@ from sslproxy_ops.commands.up_ready.model import (
     warn,
 )
 from sslproxy_ops.paths import repo_root
-from sslproxy_ops.util.ini import peer_names, trim_key_value, uri_encode
+from sslproxy_ops.util.ini import peer_names, trim_key_value
 from sslproxy_ops.util.qr import render_qr_file, render_qr_text
 
 
@@ -128,13 +129,83 @@ def wait_for_container_healthy(ctx: UpReadyContext, service: str) -> bool:
     return False
 
 
+def kubernetes_service_exists(ctx: UpReadyContext, service: str) -> bool:
+    return (
+        shell.kubectl(
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "get",
+            "service",
+            service,
+            context=ctx.settings.kube_context,
+            check=False,
+            capture=True,
+        ).returncode
+        == 0
+    )
+
+
+def check_cluster_http(ctx: UpReadyContext, url: str) -> bool:
+    """HTTP GET an in-cluster Service URL via curl in the proxy pod."""
+    return (
+        kubernetes_exec(
+            ctx,
+            "curl",
+            "-fsS",
+            "--max-time",
+            "5",
+            url,
+            check=False,
+            capture=True,
+        ).returncode
+        == 0
+    )
+
+
+def kubernetes_component_health_endpoints(ctx: UpReadyContext) -> list[tuple[str, str, str]]:
+    """(label, service, health URL) tuples for first-party HTTP health checks."""
+    fullname = release_fullname(ctx)
+    return [
+        (
+            "java_coordinator_health",
+            f"{fullname}-coordinator",
+            f"http://{fullname}-coordinator:8080/actuator/health",
+        ),
+        (
+            "schema_migrator_backend_health",
+            f"{fullname}-schema-migrator-backend",
+            f"http://{fullname}-schema-migrator-backend:8080/api/health",
+        ),
+        (
+            "schema_migrator_keycloak_health",
+            f"{fullname}-schema-migrator-keycloak",
+            f"http://{fullname}-schema-migrator-keycloak:8080/health/ready",
+        ),
+    ]
+
+
+def verify_component_health(ctx: UpReadyContext) -> bool:
+    """Verify schema-migrator backend, coordinator, and keycloak health endpoints.
+
+    Components whose Service is absent (for example a disabled subchart) are
+    skipped; present components must answer their health endpoint.
+    """
+    for label, service, url in kubernetes_component_health_endpoints(ctx):
+        if not kubernetes_service_exists(ctx, service):
+            step("S04", f"{label}: service {service} absent; skipping")
+            continue
+        if not run_check_with_retry(ctx, label, lambda url=url: check_cluster_http(ctx, url)):
+            ctx.classify(f"{label} failed: {url} did not return a successful response")
+            return False
+    return True
+
+
 def classify_service_failure(ctx: UpReadyContext, service: str) -> None:
     logs = shell.compose(
         "logs", "--tail", str(ctx.settings.log_tail_lines), service, check=False, capture=True
     )
     suffix = {
         "java-coordinator": "java-coordinator unhealthy",
-        "postgres": "postgres unhealthy",
         "redpanda": "redpanda unhealthy",
     }.get(service, f"{service} unhealthy")
     ctx.classify(f"{logs.stdout}\n{logs.stderr}\n{suffix}")
@@ -183,6 +254,8 @@ def health_checks(ctx: UpReadyContext) -> bool:
         if not wait_for_kubernetes_stack(ctx):
             ctx.last_failed_check = "kubernetes_stack_health"
             ctx.classify("Kubernetes stack did not become Ready before the health timeout")
+            return False
+        if not verify_component_health(ctx):
             return False
     else:
         for service in ctx.settings.stack_health_service_names:
@@ -507,10 +580,12 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f"{output.name}.", dir=output.parent)
     os.close(fd)
     tmp = Path(tmp_name)
-    postgres_password = read_handoff_secret(repo_root() / "secrets" / "postgres.key")
     grafana_password = read_handoff_secret(repo_root() / "secrets" / "grafana_admin_password.key")
     admin_api_key = read_handoff_secret(repo_root() / "secrets" / "admin_api_key")
     wg_obfuscation_key = read_handoff_secret(repo_root() / "secrets" / "wg_obfuscation_key")
+    schema_admin_password = read_handoff_secret(
+        repo_root() / "secrets" / "schema-migrator" / "application_admin_password.key"
+    )
     with tmp.open("w") as handle:
         handle.write("# ssl-proxy credential handoff\n")
         handle.write(f"generated_at={ctx.run_ts}\n")
@@ -536,14 +611,27 @@ def write_credential_handoff(ctx: UpReadyContext) -> None:
                 "WG_OBFUSCATION_SESSION_IDLE_SECS="
                 f"{os.getenv('WG_OBFUSCATION_SESSION_IDLE_SECS', '300')}\n"
             )
-        handle.write("\n## Postgres\n")
-        handle.write("host=127.0.0.1\nport=5432\ndatabase=sync\nusername=sync\n")
-        handle.write(f"password={postgres_password}\n")
-        handle.write(f"url=postgres://sync:{uri_encode(postgres_password)}@127.0.0.1:5432/sync\n")
         handle.write("\n## Grafana\n")
-        handle.write("url=http://127.0.0.1:3004\n")
+        handle.write(f"url=http://{ctx.settings.server_ip}:3004\n")
         handle.write(f"username={os.getenv('GRAFANA_ADMIN_USER', 'admin')}\n")
         handle.write(f"password={grafana_password}\n")
+        if ctx.settings.deployment_target == "kubernetes":
+            handle.write("\n## Integration Console\n")
+            handle.write(f"url=http://{ctx.settings.server_ip}:3005\n")
+            handle.write("\n## Atheros Search\n")
+            handle.write(f"url=http://{ctx.settings.server_ip}:3007\n")
+            handle.write("worker=ssl-proxy-vec-worker\n")
+            handle.write("\n## Keycloak admin\n")
+            handle.write(
+                f"url=http://{ctx.settings.server_ip}:8180/admin/middleware/console/\n"
+            )
+            handle.write("\n## Schema Migrator first login\n")
+            handle.write(
+                f"url=https://{ctx.settings.schema_migrator_public_hostname or ''}\n"
+            )
+            handle.write("username=schema-admin\n")
+            handle.write(f"temporary_password={schema_admin_password}\n")
+            handle.write("password_change_required=true\n")
 
     for peer_id in peer_names(os.getenv("WG_PEERS", ctx.settings.wg_peers)):
         peer_dir = repo_root() / "config" / peer_id

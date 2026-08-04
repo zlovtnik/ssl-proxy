@@ -1,36 +1,42 @@
 dependencies:
+- name: platform-config
+  repository: file://charts/platform-config
+  version: 0.1.0
 - name: proxy
   repository: file://charts/proxy
-  version: 0.1.2
+  version: 0.1.3
 - name: java-coordinator
   repository: file://charts/java-coordinator
-  version: 0.1.1
-- name: integration-console
-  repository: file://charts/integration-console
-  version: 0.1.1
+  version: 0.1.2
+- name: schema-migrator
+  repository: file://charts/schema-migrator
+  version: 0.1.3
 - name: atheros-sensor
   repository: file://charts/atheros-sensor
   version: 0.1.1
-- name: postgres
-  repository: file://charts/postgres
-  version: 0.1.2
 - name: redpanda
   repository: file://charts/redpanda
   version: 0.1.1
 - name: minio
   repository: file://charts/minio
   version: 0.1.1
-- name: redis
-  repository: file://charts/redis
-  version: 0.1.1
+- name: tidb
+  repository: file://charts/tidb
+  version: 0.2.2
 - name: telemetry
   repository: file://charts/telemetry
-  version: 0.1.1
+  version: 0.1.2
 - name: vec-worker
   repository: file://charts/vec-worker
   version: 0.1.0
 - name: atheros-search
   repository: file://charts/atheros-search
+  version: 0.1.1
+- name: redis-runtime
+  repository: file://charts/redis-runtime
   version: 0.1.0
-digest: sha256:d0896d6f7ba55da3ea9bff452c0d393125dced8d76175b4a85cacfd9e7ee2d8a
-generated: "2026-07-15T20:11:04.288519-04:00"
+- name: tidb-schema-executor
+  repository: file://charts/tidb-schema-executor
+  version: 0.1.0
+digest: sha256:9685de200ca1262c13a9e4ebab3e4211628217a31f2a4994f23bf2c9fb128ef8
+generated: "2026-07-27T20:38:16.390286-04:00"

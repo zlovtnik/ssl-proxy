@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ssl-proxy-tidb
+  namespace: default
+  labels:
+    app: ssl-proxy-tidb
+spec:
+  serviceName: ssl-proxy-tidb-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ssl-proxy-tidb
+  template:
+    metadata:
+      labels:
+        app: ssl-proxy-tidb
+    spec:
+      containers:
+        - name: tidb
+          image: pingcap/tidb:v8.5.7
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4000
+              hostPort: 4000
+              name: mysql
+            - containerPort: 10080
+              name: metrics
+          args:
+            - --store=unistore
+            - --path=/tidb-data
+            - --log-file=
+            - --advertise-address=ssl-proxy-tidb.default.svc.cluster.local
+            - --status=10080
+            - --config=/etc/tidb/config/tidb.toml
+          volumeMounts:
+            - name: tidb-data
+              mountPath: /tidb-data
+            - name: tidb-server-tls
+              mountPath: /etc/tidb-tls-server
+              readOnly: true
+            - name: tidb-config
+              mountPath: /etc/tidb/config
+          resources:
+            requests:
+              cpu: 500m
+              memory: 8Gi
+            limits:
+              cpu: "2"
+              memory: 8Gi
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: 10080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 10080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: tidb-data
+          hostPath:
+            path: /var/lib/docker/volumes/ssl-proxy_tidb-data/_data
+        - name: tidb-server-tls
+          secret:
+            secretName: tidb-server-tls
+        - name: tidb-config
+          configMap:
+            name: ssl-proxy-tidb-config

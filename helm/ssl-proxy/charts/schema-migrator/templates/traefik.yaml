@@ -1,0 +1,176 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "edge") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-edge
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 6 }}
+      app.kubernetes.io/component: schema-migrator-edge
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
+        app.kubernetes.io/component: schema-migrator-edge
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
+        checksum/traefik-config: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: prepare-acme-state
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.bootstrapImages.busybox) }}
+          imagePullPolicy: {{ .Values.bootstrapImages.busybox.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              mkdir -p /data
+              chown 65532:65532 /data
+              chmod 0700 /data
+              touch {{ .Values.traefik.acme.storagePath | quote }}
+              chown 65532:65532 {{ .Values.traefik.acme.storagePath | quote }}
+              chmod 0600 {{ .Values.traefik.acme.storagePath | quote }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+            readOnlyRootFilesystem: true
+            runAsUser: 0
+          volumeMounts:
+            - name: acme
+              mountPath: /data
+      containers:
+        - name: traefik
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.traefik.image) }}
+          imagePullPolicy: {{ .Values.traefik.image.pullPolicy }}
+          args:
+            - --api.dashboard=false
+            - --providers.file.filename=/etc/traefik/dynamic.yaml
+            - --providers.file.watch=true
+            - --entrypoints.web.address=:8000
+            - --entrypoints.web.http.redirections.entrypoint.to=websecure
+            - --entrypoints.web.http.redirections.entrypoint.scheme=https
+            - --entrypoints.websecure.address=:8443
+            - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
+            - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0s
+            - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=3600s
+            {{- with .Values.traefik.hostPorts.lan }}
+            - --entrypoints.lan.address=:8081
+            {{- end }}
+            - --certificatesresolvers.letsencrypt.acme.email={{ .Values.traefik.acme.email }}
+            - --certificatesresolvers.letsencrypt.acme.storage={{ .Values.traefik.acme.storagePath }}
+            - --certificatesresolvers.letsencrypt.acme.caserver={{ .Values.traefik.acme.server }}
+            - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+            - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+            - --ping=true
+            - --ping.entrypoint=web
+          ports:
+            - name: web
+              containerPort: 8000
+              hostPort: {{ .Values.traefik.hostPorts.http }}
+              protocol: TCP
+            - name: websecure
+              containerPort: 8443
+              hostPort: {{ .Values.traefik.hostPorts.https }}
+              protocol: TCP
+            {{- with .Values.traefik.hostPorts.lan }}
+            - name: lan
+              containerPort: 8081
+              hostPort: {{ . }}
+              protocol: TCP
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: web
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: web
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: web
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.traefik.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik/dynamic.yaml
+              subPath: dynamic.yaml
+              readOnly: true
+            - name: acme
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "traefik") }}
+        - name: acme
+          hostPath:
+            path: {{ .Values.traefik.acme.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "edge") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-edge
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-edge
+  ports:
+    - name: http
+      port: 80
+      targetPort: web
+    - name: https
+      port: 443
+      targetPort: websecure
+{{- end }}

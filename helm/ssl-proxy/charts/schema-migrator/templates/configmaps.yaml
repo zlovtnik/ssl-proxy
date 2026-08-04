@@ -1,0 +1,138 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "ui-config") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-ui
+data:
+  runtime-config.js: |
+    window.__SCHEMA_MIGRATOR_CONFIG__ = {
+      VITE_API_BASE_URL: "/api",
+      VITE_KEYCLOAK_URL: {{ include "ssl-proxy.schemaMigrator.keycloakOrigin" . | quote }},
+      VITE_KEYCLOAK_REALM: {{ .Values.keycloak.realm | quote }},
+      VITE_KEYCLOAK_CLIENT_ID: {{ .Values.keycloak.clientId | quote }},
+      VITE_KEYCLOAK_REDIRECT_URI: {{ printf "%s/callback" (include "ssl-proxy.schemaMigrator.uiOrigin" .) | quote }},
+      VITE_KEYCLOAK_DIRECT_ACCESS_GRANTS: "false"
+    };
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak-realm") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-keycloak
+data:
+  realm.json: |
+    {
+      "realm": {{ .Values.keycloak.realm | toJson }},
+      "enabled": true,
+      "registrationAllowed": false,
+      "resetPasswordAllowed": true,
+      "loginWithEmailAllowed": true,
+      "roles": {
+        "realm": [
+          { "name": "admin" },
+          { "name": "operator" },
+          { "name": "viewer" }
+        ],
+        "client": {
+          {{ .Values.keycloak.clientId | toJson }}: [
+            { "name": "admin" },
+            { "name": "operator" },
+            { "name": "viewer" }
+          ]
+        }
+      },
+      "clients": [
+        {
+          "clientId": {{ .Values.keycloak.clientId | toJson }},
+          "name": "Schema Migrator UI",
+          "enabled": true,
+          "publicClient": true,
+          "protocol": "openid-connect",
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "implicitFlowEnabled": false,
+          "serviceAccountsEnabled": false,
+          "redirectUris": [
+            {{- printf "%s/*" (include "ssl-proxy.schemaMigrator.publicOrigin" .) | toJson }}
+            {{- if and .Values.ui.browserOrigin (ne (include "ssl-proxy.schemaMigrator.uiOrigin" .) (include "ssl-proxy.schemaMigrator.publicOrigin" .)) }},
+            {{- printf "%s/*" (include "ssl-proxy.schemaMigrator.uiOrigin" .) | toJson }}
+            {{- end }}
+          ],
+          "webOrigins": [
+            {{- include "ssl-proxy.schemaMigrator.publicOrigin" . | toJson }}
+            {{- if and .Values.ui.browserOrigin (ne (include "ssl-proxy.schemaMigrator.uiOrigin" .) (include "ssl-proxy.schemaMigrator.publicOrigin" .)) }},
+            {{- include "ssl-proxy.schemaMigrator.uiOrigin" . | toJson }}
+            {{- end }}
+          ],
+          "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+          "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "traefik") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-edge
+data:
+  dynamic.yaml: |
+    http:
+      routers:
+        {{- with .Values.traefik.hostPorts.lan }}
+        lan-backend:
+          rule: "PathPrefix(`/api`)"
+          entryPoints: [lan]
+          priority: 20
+          service: backend
+        lan-ui:
+          rule: "PathPrefix(`/`)"
+          entryPoints: [lan]
+          priority: 10
+          service: ui
+        {{- end }}
+        keycloak:
+          rule: {{ printf "Host(`%s`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`) || PathPrefix(`/admin`))" .Values.publicHostname | quote }}
+          entryPoints: [websecure]
+          priority: 30
+          service: keycloak
+          tls:
+            certResolver: letsencrypt
+        backend:
+          rule: {{ printf "Host(`%s`) && PathPrefix(`/api`)" .Values.publicHostname | quote }}
+          entryPoints: [websecure]
+          priority: 20
+          service: backend
+          tls:
+            certResolver: letsencrypt
+        ui:
+          rule: {{ printf "Host(`%s`) && PathPrefix(`/`)" .Values.publicHostname | quote }}
+          entryPoints: [websecure]
+          priority: 10
+          service: ui
+          tls:
+            certResolver: letsencrypt
+      services:
+        backend:
+          loadBalancer:
+            servers:
+              - url: {{ printf "http://%s:%v" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "backend")) .Values.backend.service.port | quote }}
+        keycloak:
+          loadBalancer:
+            servers:
+              - url: {{ printf "http://%s:8080" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak")) | quote }}
+        ui:
+          loadBalancer:
+            servers:
+              - url: {{ printf "http://%s:%v" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "ui")) .Values.ui.service.port | quote }}
+{{- end }}

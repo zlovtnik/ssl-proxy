@@ -4,7 +4,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -27,7 +27,7 @@ adminPort: 9644
 image:
   repository: redpandadata/redpanda
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 # The bundled StatefulSet intentionally supports one broker. Use an external
 # Redpanda cluster for multi-broker deployments.
 replicas: 1
@@ -54,5 +54,3 @@ resources:
   requests:
     cpu: 500m
     memory: 1Gi
-
-# Postgres connection settings

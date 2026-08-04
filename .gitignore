@@ -23,12 +23,12 @@ Thumbs.db
 *.bak
 
 # Java / Gradle
-services/zig-coordinator/.gradle/
-services/zig-coordinator/bin/
-services/zig-coordinator/out/
-services/zig-coordinator/.classpath
-services/zig-coordinator/.project
-services/zig-coordinator/.settings/
+services/octopus/.gradle/
+services/octopus/bin/
+services/octopus/out/
+services/octopus/.classpath
+services/octopus/.project
+services/octopus/.settings/
 
 # Environment overrides
 .env
@@ -84,9 +84,13 @@ services/zig-coordinator/.settings/
 **/docgen_tmp/
 /lib/
 /wallet/
-services/zig-coordinator/.gradle/9.5.1/executionHistory/executionHistory.bin
-services/zig-coordinator/.gradle/9.5.1/executionHistory/executionHistory.lock
-services/zig-coordinator/.gradle/9.5.1/fileHashes/fileHashes.bin
-services/zig-coordinator/.gradle/9.5.1/fileHashes/fileHashes.lock
-services/zig-coordinator/.gradle/9.5.1/fileHashes/resourceHashesCache.bin
-services/zig-coordinator/.gradle/buildOutputCleanup/buildOutputCleanup.lock
+
+# Local stackctl renders, live-cluster snapshots, and cutover backups
+/stackctl-artifacts/
+
+services/octopus/.gradle/9.5.1/executionHistory/executionHistory.bin
+services/octopus/.gradle/9.5.1/executionHistory/executionHistory.lock
+services/octopus/.gradle/9.5.1/fileHashes/fileHashes.bin
+services/octopus/.gradle/9.5.1/fileHashes/fileHashes.lock
+services/octopus/.gradle/9.5.1/fileHashes/resourceHashesCache.bin
+services/octopus/.gradle/buildOutputCleanup/buildOutputCleanup.lock

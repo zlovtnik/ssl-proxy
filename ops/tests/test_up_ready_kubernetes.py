@@ -4,19 +4,42 @@ import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
+from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready import auto_fix
 from sslproxy_ops.commands.up_ready.kubernetes import (
+    PREFLIGHT_REQUIRED_SECRETS,
+    _generate_tidb_tls_material,
+    _validate_tidb_tls_material,
     apply_secret_value,
+    apply_secret_values,
     dashboard_set_file_args,
-    helm_upgrade,
+    ensure_tidb_ready,
+    helm_pending_recovery_command,
     helm_release_status,
+    helm_upgrade,
+    kubernetes_diagnostics,
+    kubernetes_up,
+    node_condition_problems,
+    preflight_required_secrets,
+    prepare_helm_release,
     proxy_workload,
     publish_registry_images,
+    recent_kubernetes_warning_lines,
+    release_workloads,
     resolve_kube_context,
+    rollout_restart_release_workloads,
+    stackctl_preflight,
+    sync_kubernetes_secrets,
+    sync_tidb_secrets,
     verify_kubernetes_registry_pull,
+    warn_unhealthy_nodes,
 )
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError
 from sslproxy_ops.config import Settings
@@ -27,13 +50,227 @@ class UpReadyKubernetesTest(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(Settings().deployment_target, "kubernetes")
 
+    def test_tidb_tls_rotation_is_opt_in(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(Settings().rotate_tidb_tls)
+        with patch.dict(
+            os.environ,
+            {"UP_READY_ROTATE_TIDB_TLS": "true"},
+            clear=True,
+        ):
+            self.assertTrue(Settings().rotate_tidb_tls)
+
+    def test_sensor_preflight_matches_all_node_daemonset_contract(self):
+        root = Path(__file__).resolve().parents[2]
+        spec = yaml.safe_load(
+            (
+                root
+                / "ops/src/sslproxy_ops/commands/up_ready/preflight_spec.yaml"
+            ).read_text()
+        )
+        self.assertEqual(spec["preflight"]["node_requirements"], {})
+
+    @staticmethod
+    def _tidb_tls_secret_payloads(directory: Path) -> tuple[dict, dict]:
+        ca, cert, key = _generate_tidb_tls_material(
+            directory,
+            "ssl-proxy-tidb.default.svc.cluster.local",
+        )
+        return (
+            {
+                "metadata": {"name": "tidb-client-ca"},
+                "type": "Opaque",
+                "data": {"ca.crt": base64.b64encode(ca.read_bytes()).decode()},
+            },
+            {
+                "metadata": {"name": "tidb-server-tls"},
+                "type": "kubernetes.io/tls",
+                "data": {
+                    "tls.crt": base64.b64encode(cert.read_bytes()).decode(),
+                    "tls.key": base64.b64encode(key.read_bytes()).decode(),
+                },
+            },
+        )
+
+    def test_sync_tidb_tls_reuses_valid_existing_pair(self):
+        ctx = UpReadyContext(settings=Settings())
+        with tempfile.TemporaryDirectory() as directory:
+            ca_payload, tls_payload = self._tidb_tls_secret_payloads(Path(directory))
+            with (
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
+                    side_effect=[ca_payload, tls_payload],
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+                ) as apply_tls,
+            ):
+                self.assertTrue(sync_tidb_secrets(ctx))
+
+        apply_tls.assert_not_called()
+        self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+
+    def test_tidb_tls_validation_rejects_wrong_key_and_missing_san(self):
+        with (
+            tempfile.TemporaryDirectory() as first,
+            tempfile.TemporaryDirectory() as second,
+        ):
+            ca, cert, key = _generate_tidb_tls_material(
+                Path(first),
+                "ssl-proxy-tidb.default.svc.cluster.local",
+            )
+            _other_ca, _other_cert, other_key = _generate_tidb_tls_material(
+                Path(second),
+                "ssl-proxy-tidb.default.svc.cluster.local",
+            )
+            valid, detail = _validate_tidb_tls_material(
+                ca,
+                cert,
+                other_key,
+                ("ssl-proxy-tidb.default.svc.cluster.local",),
+            )
+            self.assertFalse(valid)
+            self.assertIn("do not match", detail)
+
+            valid, detail = _validate_tidb_tls_material(
+                ca,
+                cert,
+                key,
+                ("tidb.other.svc.cluster.local",),
+            )
+            self.assertFalse(valid)
+            self.assertIn("lacks DNS SAN", detail)
+
+    def test_tidb_tls_validation_rejects_near_expiry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ca, cert, key = _generate_tidb_tls_material(
+                Path(directory),
+                "ssl-proxy-tidb.default.svc.cluster.local",
+            )
+            with patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.TIDB_TLS_RENEWAL_SECONDS",
+                20 * 365 * 24 * 60 * 60,
+            ):
+                valid, detail = _validate_tidb_tls_material(
+                    ca,
+                    cert,
+                    key,
+                    ("ssl-proxy-tidb.default.svc.cluster.local",),
+                )
+        self.assertFalse(valid)
+        self.assertIn("expires within 30 days", detail)
+
+    def test_sync_tidb_tls_forced_rotation_applies_new_pair(self):
+        settings = Settings()
+        settings.rotate_tidb_tls = True
+        ctx = UpReadyContext(settings=settings)
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
+                return_value=None,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+            ) as apply_tls,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=False,
+            ),
+        ):
+            self.assertTrue(sync_tidb_secrets(ctx))
+
+        apply_tls.assert_called_once()
+        self.assertEqual(len(ctx.tidb_tls_cert_checksum), 64)
+
+    def test_sync_tidb_tls_restores_previous_pair_when_rollout_fails(self):
+        settings = Settings()
+        settings.rotate_tidb_tls = True
+        ctx = UpReadyContext(settings=settings)
+        with tempfile.TemporaryDirectory() as directory:
+            ca_payload, tls_payload = self._tidb_tls_secret_payloads(Path(directory))
+            with (
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._secret_payload",
+                    side_effect=[ca_payload, tls_payload],
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._apply_tidb_tls_material"
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                    return_value=True,
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._restart_tidb_tls_consumers",
+                    side_effect=[UpReadyError("rollout failed"), None],
+                ),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes._apply_secret_payload"
+                ) as restore,
+                self.assertRaisesRegex(UpReadyError, "previous pair was restored"),
+            ):
+                sync_tidb_secrets(ctx)
+
+        self.assertEqual(restore.call_count, 2)
+
+    def test_ensure_tidb_ready_recovers_stale_checksum(self):
+        ctx = UpReadyContext(settings=Settings())
+        ctx.tidb_tls_cert_checksum = "current"
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._tidb_statefulset_tls_checksum",
+                return_value="stale",
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._restart_tidb_tls_consumers"
+            ) as restart,
+        ):
+            ensure_tidb_ready(ctx)
+
+        restart.assert_called_once_with(ctx)
+        self.assertTrue(ctx.tidb_tls_rollout_complete)
+
+    def test_stackctl_ownership_conflict_requires_explicit_cutover(self):
+        settings = Settings()
+        settings.kube_context = "default"
+        ctx = UpReadyContext(settings=settings)
+        with (
+            patch("sslproxy_ops.stack.core.load_config"),
+            patch(
+                "sslproxy_ops.stack.cluster.preflight",
+                side_effect=RuntimeError(
+                    "ownership conflicts require cutover plan: Deployment/coordinator"
+                ),
+            ),
+            self.assertRaisesRegex(
+                UpReadyError,
+                r"cutover plan.*--kube-context default.*will not take ownership automatically",
+            ),
+        ):
+            stackctl_preflight(ctx)
+
     def test_dashboard_files_cover_the_compose_observability_assets(self):
         args = dashboard_set_file_args()
 
-        self.assertEqual(args.count("--set-file"), 8)
+        self.assertEqual(args.count("--set-file"), 7)
         self.assertTrue(any("stackHealthOverview=" in arg for arg in args))
         self.assertTrue(any("prometheus.alertRules=" in arg for arg in args))
-        self.assertTrue(any("postgresExporter.queries=" in arg for arg in args))
 
     def test_postgres_secret_value_is_trimmed_and_immutable(self):
         settings = Settings()
@@ -62,6 +299,39 @@ class UpReadyKubernetesTest(unittest.TestCase):
             b"correct-password",
         )
 
+    def test_minio_secret_values_are_trimmed_together(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        ctx = UpReadyContext(settings=settings)
+
+        with tempfile.TemporaryDirectory() as directory:
+            access_key = Path(directory) / "minio_access_key.key"
+            secret_key = Path(directory) / "minio_secret_key.key"
+            access_key.write_text("access-key\n")
+            secret_key.write_text("secret-key\r\n")
+            with patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._apply_rendered_resource"
+            ) as mocked_apply:
+                apply_secret_values(
+                    ctx,
+                    "minio-credentials",
+                    [
+                        ("access-key", access_key),
+                        ("secret-key", secret_key),
+                    ],
+                )
+
+        manifest = json.loads(mocked_apply.call_args.args[1])
+        self.assertFalse(manifest["immutable"])
+        self.assertEqual(
+            base64.b64decode(manifest["data"]["access-key"]),
+            b"access-key",
+        )
+        self.assertEqual(
+            base64.b64decode(manifest["data"]["secret-key"]),
+            b"secret-key",
+        )
+
     def test_proxy_workload_matches_chart_fullname_for_custom_releases(self):
         cases = {
             "ssl-proxy": "deployment/ssl-proxy-proxy",
@@ -86,7 +356,10 @@ class UpReadyKubernetesTest(unittest.TestCase):
         )
 
         with (
-            patch("sslproxy_ops.commands.up_ready.kubernetes.shutil.which", return_value="/bin/tool"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shutil.which",
+                return_value="/bin/tool",
+            ),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.run",
                 side_effect=[contexts, current],
@@ -123,6 +396,8 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:32000/"
         settings.image_tag = "latest"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = "ops@example.com"
         settings.wg_port = 51820
         settings.wg_internal_port = 443
         settings.wg_obfuscation_enabled = True
@@ -141,9 +416,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             stdout='{"info":{"status":"deployed"}}',
             stderr="",
         )
-        upgraded = subprocess.CompletedProcess(
-            args=["helm"], returncode=0, stdout="", stderr=""
-        )
+        upgraded = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
@@ -154,6 +427,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
                 side_effect=[dependencies_updated, deployed, upgraded],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
         ):
             helm_upgrade(ctx)
 
@@ -165,24 +441,43 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("global.image.registry=192.168.1.221:32000", args)
         self.assertIn("global.rolloutRevision=2026-07-14T12:00:00-0400", args)
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
-        self.assertEqual(args.count("--set-literal"), 10)
+        self.assertIn("schemaMigrator.backend.image.tag=latest", args)
+        self.assertIn("schemaMigrator.ui.image.tag=latest", args)
+        self.assertIn("schemaMigrator.ui.browserOrigin=http://192.168.1.221:8081", args)
+        self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
+        self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
+        self.assertIn("schemaMigrator.keycloak.browserOrigin=http://192.168.1.221:8180", args)
+        self.assertIn("schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args)
+        self.assertIn(
+            "global.shared.keycloak.issuer=http://192.168.1.221:8180/realms/middleware",
+            args,
+        )
+        self.assertIn("atherosSearch.ui.image.tag=latest", args)
+        self.assertIn("atherosSearch.embeddingBackend=http://192.168.1.221:8083", args)
+        self.assertEqual(args.count("--set-literal"), 17)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
         self.assertNotIn("--set-string", args)
         self.assertIn("--server-side=true", args)
         self.assertIn("--wait=watcher", args)
         self.assertIn("--wait-for-jobs", args)
+        self.assertEqual(args[args.index("--timeout") + 1], "30m")
         self.assertIn("--history-max", args)
         self.assertIn("--rollback-on-failure", args)
         self.assertEqual(mocked_helm.call_args_list[-1].kwargs["context"], "server-k8s")
-        self.assertTrue(mocked_helm.call_args_list[-1].kwargs["capture"])
+        self.assertTrue(mocked_helm.call_args_list[-1].kwargs["stream"])
 
     def test_helm_upgrade_requires_validated_settings(self):
         settings = Settings()
         settings.registry = None
         settings.image_tag = None
 
-        with self.assertRaisesRegex(UpReadyError, "REGISTRY"):
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
+            self.assertRaisesRegex(UpReadyError, "REGISTRY"),
+        ):
             helm_upgrade(UpReadyContext(settings=settings))
 
     def test_helm_first_install_does_not_request_rollback(self):
@@ -190,6 +485,8 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:5000"
         settings.image_tag = "latest"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = "ops@example.com"
         settings.wg_port = 51820
         settings.wg_internal_port = 443
         settings.wg_obfuscation_enabled = True
@@ -204,9 +501,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         missing = subprocess.CompletedProcess(
             args=["helm"], returncode=1, stdout="", stderr="release not found"
         )
-        installed = subprocess.CompletedProcess(
-            args=["helm"], returncode=0, stdout="", stderr=""
-        )
+        installed = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
@@ -217,6 +512,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
                 side_effect=[dependencies_updated, missing, installed],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
         ):
             helm_upgrade(ctx)
 
@@ -231,6 +529,8 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:5000"
         settings.image_tag = "latest"
+        settings.schema_migrator_public_hostname = "schema.example.com"
+        settings.acme_email = "ops@example.com"
         settings.wg_port = 51820
         settings.wg_internal_port = 443
         settings.wg_obfuscation_enabled = True
@@ -248,9 +548,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             stdout='{"info":{"status":"uninstalling"}}',
             stderr="",
         )
-        completed = subprocess.CompletedProcess(
-            args=["helm"], returncode=0, stdout="", stderr=""
-        )
+        completed = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
             args=["helm"], returncode=0, stdout="", stderr=""
         )
@@ -264,6 +562,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
                 side_effect=[dependencies_updated, uninstalling, completed, missing, completed],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
+            ),
         ):
             helm_upgrade(ctx)
 
@@ -272,6 +573,80 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertEqual(cleanup[0], "uninstall")
         self.assertIn("--no-hooks", cleanup)
         self.assertEqual(install[0], "install")
+
+    def test_preflight_required_secrets_raises_on_missing(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        present_stdout = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {
+                    "password": "cGFzc3dvcmQ=",
+                    "ca.crt": "Y2EuY3J0",
+                    "dsn": "ZHNu",
+                },
+            }
+        )
+        present = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout=present_stdout, stderr=""
+        )
+        missing = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="not found"
+        )
+        side_effects = []
+        for name in PREFLIGHT_REQUIRED_SECRETS:
+            side_effects.append(present if name != "tidb-client-ca" else missing)
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=side_effects,
+            ) as mocked,
+            self.assertRaisesRegex(UpReadyError, "tidb-client-ca"),
+        ):
+            preflight_required_secrets(ctx)
+
+        expected_calls = len(PREFLIGHT_REQUIRED_SECRETS)
+        self.assertEqual(len(mocked.call_args_list), expected_calls)
+
+    def test_preflight_required_secrets_passes_when_all_present(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        present_stdout = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "data": {
+                    "password": "cGFzc3dvcmQ=",
+                    "ca.crt": "Y2EuY3J0",
+                    "dsn": "ZHNu",
+                },
+            }
+        )
+        present = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout=present_stdout, stderr=""
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=present,
+        ):
+            preflight_required_secrets(ctx)  # should not raise
+
+    def test_preflight_required_secrets_constant_covers_all_chart_references(self):
+        expected = {
+            "redis-runtime",
+            "tidb-client-ca",
+            "tidb-octopus",
+            "tidb-atheros-search",
+            "tidb-schema-migrator",
+            "tidb-keycloak",
+            "tidb-schema-owner",
+        }
+        self.assertEqual(set(PREFLIGHT_REQUIRED_SECRETS.keys()), expected)
 
     def test_helm_release_status_rejects_malformed_json(self):
         settings = Settings()
@@ -289,12 +664,223 @@ class UpReadyKubernetesTest(unittest.TestCase):
         ):
             helm_release_status(ctx)
 
+    def test_pending_rollback_reports_latest_stable_revision(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        ctx = UpReadyContext(settings=settings)
+        pending = subprocess.CompletedProcess(
+            args=["helm"],
+            returncode=0,
+            stdout='{"info":{"status":"pending-rollback"}}',
+            stderr="",
+        )
+        history = subprocess.CompletedProcess(
+            args=["helm"],
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {"revision": 22, "status": "failed"},
+                    {"revision": 23, "status": "deployed"},
+                    {"revision": 24, "status": "failed"},
+                    {"revision": 25, "status": "pending-rollback"},
+                ]
+            ),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                side_effect=[pending, pending, pending, pending, pending, pending, history],
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.time.sleep"),
+            self.assertRaisesRegex(
+                UpReadyError,
+                r"pending-rollback.*helm --kube-context server-k8s rollback ssl-proxy 23",
+            ),
+        ):
+            prepare_helm_release(ctx)
+
+    def test_pending_recovery_history_guidance_includes_context_without_candidate(self):
+        settings = Settings()
+        settings.kube_context = "server-k8s"
+        settings.kube_namespace = "ssl-proxy"
+        ctx = UpReadyContext(settings=settings)
+        histories = (
+            subprocess.CompletedProcess(
+                args=["helm"],
+                returncode=1,
+                stdout="",
+                stderr="history unavailable",
+            ),
+            subprocess.CompletedProcess(
+                args=["helm"],
+                returncode=0,
+                stdout=json.dumps([{"revision": 24, "status": "failed"}]),
+                stderr="",
+            ),
+        )
+
+        for history in histories:
+            with (
+                self.subTest(returncode=history.returncode),
+                patch(
+                    "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                    return_value=history,
+                ),
+            ):
+                self.assertEqual(
+                    helm_pending_recovery_command(ctx),
+                    "helm --kube-context server-k8s history ssl-proxy "
+                    "--namespace ssl-proxy",
+                )
+
+    def test_recent_kubernetes_warnings_ignore_events_before_run(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings, run_ts="2026-07-18T16:00:00-04:00")
+        events = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "lastTimestamp": "2026-07-18T19:59:59Z",
+                            "reason": "OldWarning",
+                            "message": "historical failure",
+                            "involvedObject": {"kind": "Pod", "name": "old"},
+                        },
+                        {
+                            "lastTimestamp": "2026-07-18T20:00:01Z",
+                            "reason": "FailedCreatePodSandBox",
+                            "message": "flannel could not load subnet.env",
+                            "involvedObject": {"kind": "Pod", "name": "current"},
+                        },
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=events,
+        ):
+            lines = recent_kubernetes_warning_lines(ctx)
+
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Pod/current", lines[0])
+        self.assertNotIn("historical failure", lines[0])
+
+    def test_kubernetes_diagnostics_prints_root_cause_before_bulk_output(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        ctx.classify("Helm release ssl-proxy remains pending-rollback")
+        empty_events = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout='{"items":[]}', stderr=""
+        )
+        completed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="", stderr=""
+        )
+        missing = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="not found"
+        )
+
+        def kubectl_side_effect(*args, **_kwargs):
+            if "events" in args:
+                return empty_events
+            if "pods" in args:
+                print("BULK POD OUTPUT")
+                return completed
+            return missing
+
+        output = StringIO()
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                return_value=subprocess.CompletedProcess(
+                    args=["helm"],
+                    returncode=0,
+                    stdout='{"info":{"status":"pending-rollback"}}',
+                    stderr="",
+                ),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=kubectl_side_effect,
+            ),
+            redirect_stdout(output),
+        ):
+            kubernetes_diagnostics(ctx)
+
+        rendered = output.getvalue()
+        self.assertIn("helm_release_status=pending-rollback", rendered)
+        self.assertLess(
+            rendered.index("class=helm_pending_operation"),
+            rendered.index("BULK POD OUTPUT"),
+        )
+
+    def test_kubernetes_diagnostics_classifies_current_cni_event(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings, run_ts="2026-07-18T16:00:00-04:00")
+        ctx.classify("helm upgrade failed: context canceled")
+        events = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "lastTimestamp": "2026-07-18T20:00:01Z",
+                            "reason": "FailedCreatePodSandBox",
+                            "message": "flannel failed to load /run/flannel/subnet.env",
+                            "involvedObject": {"kind": "Pod", "name": "proxy"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+        completed = subprocess.CompletedProcess(args=["tool"], returncode=0, stdout="", stderr="")
+        missing = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="not found"
+        )
+
+        def kubectl_side_effect(*args, **_kwargs):
+            if "events" in args:
+                return events
+            if "pods" in args:
+                return completed
+            return missing
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
+                return_value=subprocess.CompletedProcess(
+                    args=["helm"],
+                    returncode=0,
+                    stdout='{"info":{"status":"failed"}}',
+                    stderr="",
+                ),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=kubectl_side_effect,
+            ),
+            redirect_stdout(StringIO()),
+        ):
+            kubernetes_diagnostics(ctx)
+
+        self.assertEqual(ctx.last_failure.name, "kubernetes_cni_unavailable")
+
     def test_registry_pull_probe_uses_canonical_registry_and_cleans_up(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
         environment = {"REGISTRY": "192.168.1.221:5000"}
-        completed = subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout="", stderr="")
+        completed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="", stderr=""
+        )
 
         with (
             patch.dict(os.environ, environment, clear=False),
@@ -311,9 +897,72 @@ class UpReadyKubernetesTest(unittest.TestCase):
         manifest = json.loads(mocked_apply.call_args.args[1])
         self.assertEqual(
             manifest["spec"]["containers"][0]["image"],
-            "192.168.1.221:5000/redis:7-alpine",
+            "192.168.1.221:5000/busybox:1.37.0",
         )
         self.assertEqual(mocked_kubectl.call_count, 3)
+
+    def test_schema_migrator_secret_groups_are_synchronized(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch("sslproxy_ops.commands.up_ready.kubernetes.ensure_namespace"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.apply_secret_value"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.apply_secret_values") as values,
+            patch("sslproxy_ops.commands.up_ready.kubernetes.apply_secret"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.peer_names",
+                return_value=[],
+            ),
+        ):
+            sync_kubernetes_secrets(ctx)
+
+        groups = {
+            call.args[1]: [key for key, _path in call.args[2]] for call in values.call_args_list
+        }
+        self.assertEqual(
+            groups["schema-migrator-backend"],
+            ["encrypt-key", "jwt-secret", "api-bearer-token"],
+        )
+        self.assertEqual(groups["schema-migrator-state-db"], ["password"])
+        self.assertEqual(
+            groups["schema-migrator-keycloak"],
+            ["database-password", "bootstrap-admin-password"],
+        )
+        self.assertEqual(
+            groups["schema-migrator-bootstrap"],
+            ["application-admin-password"],
+        )
+
+    def test_schema_migrator_image_pipeline_is_complete_and_pinned(self):
+        root = Path(__file__).resolve().parents[2]
+        makefile = (root / "Makefile").read_text()
+        chart_values = yaml.safe_load(
+            (root / "helm/ssl-proxy/charts/schema-migrator/values.yaml").read_text()
+        )
+
+        for image in ("schema-migrator-backend", "schema-migrator-ui"):
+            self.assertIn(image, makefile)
+
+        pinned_images = {
+            "quay.io/keycloak/keycloak:26.2.5",
+            "traefik:v3.6.2",
+            "busybox:1.37.0",
+        }
+        for image in pinned_images:
+            self.assertIn(image, makefile)
+
+        self.assertNotIn("bootstrapImage", chart_values["stateStore"])
+        self.assertEqual(
+            f"{chart_values['keycloak']['image']['repository']}:"
+            f"{chart_values['keycloak']['image']['tag']}",
+            "quay.io/keycloak/keycloak:26.2.5",
+        )
+        self.assertEqual(
+            f"{chart_values['traefik']['image']['repository']}:"
+            f"{chart_values['traefik']['image']['tag']}",
+            "traefik:v3.6.2",
+        )
 
     def test_registry_publish_builds_and_mirrors(self):
         settings = Settings()
@@ -330,6 +979,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         )
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[0].args[0])
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[1].args[0])
+        self.assertIn("ATHEROS_SEARCH_UI_API_BASE=", mocked_run.call_args_list[0].args[0])
 
     def test_registry_publish_requires_validated_settings(self):
         settings = Settings()
@@ -360,9 +1010,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         ctx = UpReadyContext(settings=settings)
 
         with (
-            patch(
-                "sslproxy_ops.commands.up_ready.apply_profile_runtime_env"
-            ) as mocked_profile,
+            patch("sslproxy_ops.commands.up_ready.apply_profile_runtime_env") as mocked_profile,
             patch("sslproxy_ops.commands.up_ready.helm_upgrade") as mocked_upgrade,
         ):
             self.assertTrue(auto_fix(ctx, "profile_obfuscation_mismatch"))
@@ -402,6 +1050,266 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
         mocked_upgrade.assert_not_called()
         self.assertNotIn("wg_peer_material_missing", ctx.auto_fixed_classes)
+
+    def test_node_condition_problems_reports_unhealthy_states(self):
+        node = {
+            "metadata": {"name": "node-1"},
+            "spec": {"unschedulable": True},
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "False"},
+                    {"type": "MemoryPressure", "status": "True"},
+                    {"type": "DiskPressure", "status": "False"},
+                    {"type": "PIDPressure", "status": "True"},
+                    {"type": "NetworkUnavailable", "status": "True"},
+                ]
+            },
+        }
+
+        self.assertEqual(
+            node_condition_problems(node),
+            [
+                "node-1: Ready=False",
+                "node-1: MemoryPressure=True",
+                "node-1: PIDPressure=True",
+                "node-1: NetworkUnavailable=True",
+                "node-1: unschedulable (cordoned)",
+            ],
+        )
+
+    def test_node_condition_problems_empty_for_ready_node(self):
+        node = {
+            "metadata": {"name": "node-1"},
+            "spec": {},
+            "status": {
+                "conditions": [
+                    {"type": "Ready", "status": "True"},
+                    {"type": "MemoryPressure", "status": "False"},
+                    {"type": "DiskPressure", "status": "False"},
+                    {"type": "PIDPressure", "status": "False"},
+                    {"type": "NetworkUnavailable", "status": "False"},
+                ]
+            },
+        }
+
+        self.assertEqual(node_condition_problems(node), [])
+
+    def test_warn_unhealthy_nodes_never_blocks_on_kubectl_failure(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        failed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=1, stdout="", stderr="connection refused"
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                return_value=failed,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.warn") as mocked_warn,
+        ):
+            warn_unhealthy_nodes(ctx)
+
+        mocked_warn.assert_called_once()
+        self.assertIn("connection refused", mocked_warn.call_args.args[0])
+
+    def test_warn_unhealthy_nodes_reports_problem_nodes(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        payload = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {"name": "node-bad"},
+                            "spec": {},
+                            "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                return_value=payload,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.warn") as mocked_warn,
+        ):
+            warn_unhealthy_nodes(ctx)
+
+        mocked_warn.assert_called_once_with("node health: node-bad: Ready=False")
+
+    def test_release_workloads_selects_deployments_and_daemonsets(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        settings.kube_context = "server-k8s"
+        settings.helm_release = "ssl-proxy"
+        ctx = UpReadyContext(settings=settings)
+        listed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="deployment.apps/ssl-proxy-proxy\ndaemonset.apps/ssl-proxy-atheros-sensor\n",
+            stderr="",
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=listed,
+        ) as mocked_kubectl:
+            workloads = release_workloads(ctx)
+
+        self.assertEqual(
+            workloads,
+            ["deployment.apps/ssl-proxy-proxy", "daemonset.apps/ssl-proxy-atheros-sensor"],
+        )
+        args = mocked_kubectl.call_args.args
+        self.assertIn("deployments,daemonsets", args)
+        self.assertIn("app.kubernetes.io/instance=ssl-proxy", args)
+
+    def test_rollout_restart_restarts_and_verifies_each_workload(self):
+        settings = Settings()
+        settings.kube_namespace = "ssl-proxy"
+        settings.kube_context = "server-k8s"
+        settings.helm_release = "ssl-proxy"
+        settings.rollout_status_timeout = "7m"
+        ctx = UpReadyContext(settings=settings)
+        listed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="deployment.apps/ssl-proxy-proxy\ndaemonset.apps/ssl-proxy-atheros-sensor\n",
+            stderr="",
+        )
+        ok = subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout="", stderr="")
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            side_effect=[listed, ok, ok, ok],
+        ) as mocked_kubectl:
+            rollout_restart_release_workloads(ctx)
+
+        restart = mocked_kubectl.call_args_list[1].args
+        self.assertEqual(restart[:4], ("--namespace", "ssl-proxy", "rollout", "restart"))
+        self.assertIn("deployment.apps/ssl-proxy-proxy", restart)
+        self.assertIn("daemonset.apps/ssl-proxy-atheros-sensor", restart)
+        statuses = [call.args for call in mocked_kubectl.call_args_list[2:]]
+        self.assertEqual(len(statuses), 2)
+        for status_args, workload in zip(
+            statuses,
+            ["deployment.apps/ssl-proxy-proxy", "daemonset.apps/ssl-proxy-atheros-sensor"],
+            strict=True,
+        ):
+            self.assertEqual(status_args[2:4], ("rollout", "status"))
+            self.assertIn(workload, status_args)
+            self.assertIn("--timeout=7m", status_args)
+
+    def test_rollout_restart_raises_when_status_fails(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        listed = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout="deployment.apps/ssl-proxy-proxy\n",
+            stderr="",
+        )
+        ok = subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout="", stderr="")
+
+        def kubectl_side_effect(*args, **kwargs):
+            if "status" in args:
+                raise shell.ShellCommandError(
+                    command=tuple(args),
+                    cwd=Path("."),
+                    returncode=1,
+                    stdout="",
+                    stderr="timed out waiting for the condition",
+                )
+            if "restart" in args:
+                return ok
+            return listed
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=kubectl_side_effect,
+            ),
+            self.assertRaises(shell.ShellCommandError),
+        ):
+            rollout_restart_release_workloads(ctx)
+
+    def test_kubernetes_up_returns_false_when_rollout_restart_fails(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_kubernetes_secrets",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_tidb_secrets",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=False,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.ensure_tidb_ready",
+                return_value=None,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.publish_registry_images"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.verify_kubernetes_registry_pull"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.helm_upgrade",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.rollout_restart_release_workloads",
+                side_effect=UpReadyError("rollout status timed out"),
+            ),
+        ):
+            self.assertFalse(kubernetes_up(ctx))
+
+        self.assertIn("rollout status timed out", ctx.last_failure_text)
+
+    def test_existing_split_preflight_runs_before_tidb_tls_sync(self):
+        settings = Settings()
+        settings.stack_mode = "split"
+        ctx = UpReadyContext(settings=settings)
+        calls: list[str] = []
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_kubernetes_secrets",
+                side_effect=lambda _ctx: calls.append("secrets"),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._statefulset_exists",
+                return_value=True,
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.stackctl_preflight",
+                side_effect=lambda _ctx: calls.append("preflight"),
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.sync_tidb_secrets",
+                side_effect=lambda _ctx: calls.append("tidb_tls"),
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.ensure_tidb_ready"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.publish_registry_images"),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.verify_kubernetes_registry_pull"),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.deploy_kubernetes_release",
+                return_value=True,
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.rollout_restart_release_workloads"),
+        ):
+            self.assertTrue(kubernetes_up(ctx))
+
+        self.assertLess(calls.index("preflight"), calls.index("tidb_tls"))
 
 
 if __name__ == "__main__":

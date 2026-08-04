@@ -1,20 +1,81 @@
-# Values local to the atheros-search subchart.
-# TODO: no Kubernetes workload template exists yet; this chart intentionally renders nothing.
+# Values local to the TiDB query-only Atheros Search subchart.
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: Always
+  rolloutRevision: ""
+  labels: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+  podSecurityContext:
+    fsGroup: 65532
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  shared:
+    redpanda:
+      bootstrapServers: "redpanda-0.redpanda.redpanda.svc.cluster.local:9092"
+
 enabled: false
+replicas: 1
 image:
   repository: atheros-search
   tag: latest
-  pullPolicy: IfNotPresent
-httpPort: 8080
-grpcPort: 50051
-metricsPort: 9090
-embeddingBackend: "http://host.docker.internal:8083"
+  pullPolicy: Always
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 50051
+  metricsPort: 9090
+embeddingBackend: ""
+# Leave the API backend empty to permit sparse/inventory operation when the
+# external embedding server is temporarily unavailable.
+apiEmbeddingBackend: ""
 embeddingModel: "nomic-embed-text-v2-moe"
 embeddingDimensions: 768
+eventEmbeddingScope: "high_signal"
+logLevel: "info"
+corsAllowedOrigins: ""
+schemaReadyRequired: true
+schemaManifestSHA256: "0000000000000000000000000000000000000000000000000000000000000000"
 apiTokenSecret:
   name: atheros-credentials
   key: api-token-sha256
+apiTokenEnabled: true
 otlpEndpoint: "http://ssl-proxy-otel-collector:4317"
+worker:
+  enabled: false
+  batchSize: 256
+  requestBatchSize: 64
+  requestBatchMax: 128
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
 
-# Compose-equivalent in-cluster observability stack.
-
+ui:
+  enabled: true
+  replicas: 1
+  image:
+    repository: atheros-search-ui
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    hostPort: null
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

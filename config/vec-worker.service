@@ -1,9 +1,9 @@
 [Unit]
 Description=Vector Embedding Worker (Ollama)
 Documentation=https://github.com/zlovtnik/ssl-proxy
-After=network-online.target postgresql.service ollama.service
+After=network-online.target ollama.service
 Wants=network-online.target
-BindsTo=postgresql.service ollama.service
+BindsTo=ollama.service
 
 [Service]
 Type=simple

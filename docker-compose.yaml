@@ -1,6 +1,5 @@
 x-ath-sensor-env: &ath_sensor_env
   SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda://127.0.0.1:19092
-  DATABASE_URL: postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync
 
 services:
   registry:
@@ -15,8 +14,6 @@ services:
   ssl-proxy:
     depends_on:
       redpanda:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -135,8 +132,6 @@ services:
     profiles: ["rotation"]
     depends_on:
       redpanda:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -259,38 +254,76 @@ services:
         target: "${ROTATOR_REPO_ROOT:-${PWD}}"
       - /var/run/docker.sock:/var/run/docker.sock
 
+  tidb:
+    image: pingcap/tidb:v8.5.7
+    container_name: tidb
+    hostname: tidb
+    restart: unless-stopped
+    environment:
+      TIDB_ARGS: >
+        --store=unistore
+        --path=/tmp/tidb
+        --log-file=
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - tidb-data:/tmp/tidb
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-P", "4000", "-u", "root", "-e", "SELECT 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  tidb-init:
+    image: pingcap/tidb:v8.5.7
+    container_name: tidb-init
+    depends_on:
+      tidb:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS coordinator;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS octopus_core;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS atheros_search;'
+      && mysql -h tidb -P 4000 -u root -e 'CREATE DATABASE IF NOT EXISTS schema_migrator;'
+      && mysql -h tidb -P 4000 -u root coordinator < /docker-entrypoint-initdb.d/001_schema.sql"
+    volumes:
+      - type: bind
+        source: ./services/octopus/tidb/init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+
   java-coordinator:
     depends_on:
       redpanda:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
-      postgres:
+      tidb:
         condition: service_healthy
+      tidb-init:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     image: ${REGISTRY:?REGISTRY is required}/java-coordinator:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - DATABASE_URL=${DATABASE_URL:-jdbc:postgresql://postgres:5432/sync}
-      - POSTGRES_USER=${POSTGRES_USER:-sync}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:--XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75}
-      - COORDINATOR_DB_POOL=${COORDINATOR_DB_POOL:-35}
-      - COORDINATOR_DB_POOL_MIN_IDLE=${COORDINATOR_DB_POOL_MIN_IDLE:-10}
       - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
       - SYNC_REDPANDA_TOPIC_MANIFEST=/app/docker/redpanda/topics.manifest
       - SYNC_STREAM_NAME=proxy.events
       - SYNC_STREAM_NAMES=${SYNC_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
-      - SYNC_ORACLE_STREAM_NAMES=${SYNC_ORACLE_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
+      - COORDINATOR_LOAD_STREAM_NAMES=${COORDINATOR_LOAD_STREAM_NAMES:-proxy.events,wireless.audit,audit.wireless.bandwidth,wireless.alert.rogue_ap,wireless.alert.deauth_flood,wireless.alert.signal_anomaly,wireless.alert.pmf_attack,wireless.client.inventory,wireless.probe.flush,proxy.payload_audit}
       - AUDIT_STREAM_NAME=${AUDIT_STREAM_NAME:-AUDIT_STREAM}
       - SYNC_RESULT_STREAM_NAME=${SYNC_RESULT_STREAM_NAME:-ORACLE_RESULT_STREAM}
       - SYNC_SCAN_TOPIC=${SYNC_SCAN_TOPIC:-sync.scan.request}
       - SYNC_LOAD_TOPIC=${SYNC_LOAD_TOPIC:-sync.oracle.load}
       - SYNC_RESULT_TOPIC=${SYNC_RESULT_TOPIC:-sync.oracle.result}
-      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-zig-coordinator-scan}
+      - SYNC_SCAN_CONSUMER=${SYNC_SCAN_CONSUMER:-octopus-scan}
       - SYNC_LOAD_CONSUMER=${SYNC_LOAD_CONSUMER:-oracle-worker-load}
-      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-zig-coordinator-result}
+      - SYNC_RESULT_CONSUMER=${SYNC_RESULT_CONSUMER:-octopus-result}
       - SYNC_SCAN_CONSUMERS_COUNT=${SYNC_SCAN_CONSUMERS_COUNT:-1}
       - SYNC_RESULT_CONSUMERS_COUNT=${SYNC_RESULT_CONSUMERS_COUNT:-1}
       - WIRELESS_CONSUMERS_COUNT=${WIRELESS_CONSUMERS_COUNT:-1}
@@ -310,19 +343,18 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=java-coordinator
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=java-coordinator
-      - MANAGEMENT_TRACING_SAMPLING_PROBABILITY=${MANAGEMENT_TRACING_SAMPLING_PROBABILITY:-0.05}
       - SYNC_REDPANDA_LAG_METRICS_ENABLED=${SYNC_REDPANDA_LAG_METRICS_ENABLED:-true}
       - SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS=${SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS:-10000}
       - SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS=${SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS:-5000}
       - SYNC_HEARTBEAT_LOG_INTERVAL_MS=${SYNC_HEARTBEAT_LOG_INTERVAL_MS:-15000}
-      - ORACLE_SINK_ENABLED=${ORACLE_SINK_ENABLED:-true}
-      - ORACLE_SINK_WIRELESS_ENABLED=${ORACLE_SINK_WIRELESS_ENABLED:-true}
-      - ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY=${ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY:-false}
-      - ORACLE_LOAD_MAX_RETRIES=${ORACLE_LOAD_MAX_RETRIES:-3}
-      - TNS_ADMIN=/app/wallet
-      - ORACLE_CONN=${ORACLE_CONN:-mainerc_high}
-      - ORACLE_USER=${ORACLE_USER:-USCIS_APP}
-      - ORACLE_PASS_FILE=${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}
+      - TIDB_HOST=tidb
+      - TIDB_PORT=4000
+      - TIDB_DATABASE=coordinator
+      - TIDB_USER=root
+      - TIDB_PASSWORD=
+      - TIDB_ENABLED=true
+      - TIDB_POOL_SIZE=4
+      - TIDB_SSL_MODE=${TIDB_SSL_MODE:-VERIFY_IDENTITY}
     volumes:
       - sync-outbox:/sync-outbox
       - type: bind
@@ -331,186 +363,21 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - type: bind
-        source: ./wallet
-        target: /app/wallet
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./secrets
-        target: /run/secrets
-        read_only: true
-        bind:
-          create_host_path: false
     ports:
       - "127.0.0.1:8081:8081"
-    # ORACLE_SINK_ENABLED is intentionally fail-fast by default here: unless it
-    # is explicitly "false", the healthcheck verifies tnsnames.ora, sqlnet.ora,
-    # cwallet.sso, and ORACLE_PASS_FILE before probing Actuator.
     healthcheck:
-      test: ["CMD-SHELL", "if [ \"${ORACLE_SINK_ENABLED:-true}\" != \"false\" ]; then test -r /app/wallet/tnsnames.ora && test -r /app/wallet/sqlnet.ora && test -r /app/wallet/cwallet.sso && test -s \"${ORACLE_PASS_FILE:-/run/secrets/oracle_password.txt}\"; fi && wget -qO- http://localhost:8081/actuator/health >/dev/null"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
 
-  integration-console-web:
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-      integration-console-db-setup:
-        condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
-    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    command: ["bin/rails", "server", "-b", "0.0.0.0"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
-      - INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY=${INTEGRATION_CONSOLE_CACHE_TTL_INVENTORY:-60}
-      - INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT=${INTEGRATION_CONSOLE_CACHE_TTL_AUDIT_RECENT:-10}
-      - INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD=${INTEGRATION_CONSOLE_CACHE_TTL_DASHBOARD:-15}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ACCESS_KEY_ID=${MINIO_ACCESS_KEY_ID:?MINIO_ACCESS_KEY_ID is required}
-      - MINIO_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:?MINIO_SECRET_ACCESS_KEY is required}
-      - MINIO_BUCKET=${MINIO_BUCKET:-integration-console-exports}
-      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=integration-console-web
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-web
-    ports:
-      - "3005:3000"
-
-  integration-console-worker:
-    depends_on:
-      redpanda:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      integration-console-db-setup:
-        condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
-    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    command: ["bin/rails", "runner", "Observability::WorkerRunner.run_forever"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - SYNC_REDPANDA_BOOTSTRAP_SERVERS=${SYNC_REDPANDA_BOOTSTRAP_SERVERS:-redpanda:9092}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
-      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
-      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=integration-console-worker
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-worker
-    healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/wireless-worker-health && find /tmp/wireless-worker-health -mmin -2 | grep -q ."]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  integration-console-db-setup:
-    depends_on:
-      postgres:
-        condition: service_healthy
-      otel-collector:
-        condition: service_started
-    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
-    restart: "no"
-    command: ["sh", "bin/observability-db-setup.sh"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
-      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=integration-console-db-setup
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-db-setup
-
-  integration-console-heatmap-refresh:
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      integration-console-db-setup:
-        condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
-    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    command: ["bin/rails", "runner", "Observability::HeatmapRefreshLoop.run_forever"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
-      - HEATMAP_REFRESH_INTERVAL_SECONDS=${HEATMAP_REFRESH_INTERVAL_SECONDS:-300}
-      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
-      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=integration-console-heatmap-refresh
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-heatmap-refresh
-
-  integration-console-heartbeat:
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      integration-console-db-setup:
-        condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
-    image: ${REGISTRY:?REGISTRY is required}/integration-console:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    command: ["bin/rails", "runner", "Observability::SensorHeartbeatLoop.run_forever"]
-    environment:
-      - RAILS_ENV=development
-      - DATABASE_URL=${INTEGRATION_CONSOLE_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DATABASE_URL=${SYNC_DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
-      - SYNC_DB_POOL=${SYNC_DB_POOL:-3}
-      - INTEGRATION_CONSOLE_REDIS_URL=${INTEGRATION_CONSOLE_REDIS_URL:-redis://redis:6379/1}
-      - SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS=${SENSOR_HEARTBEAT_MONITOR_INTERVAL_SECONDS:-60}
-      - PUSHGATEWAY_URL=${PUSHGATEWAY_URL:-http://pushgateway:9091}
-      - LOG_FORMAT=${INTEGRATION_CONSOLE_LOG_FORMAT:-json}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_SERVICE_NAME=integration-console-heartbeat
-      - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=integration-console-heartbeat
   atheros-sensor:
     depends_on:
       redpanda:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       java-coordinator:
         condition: service_healthy
     image: ${REGISTRY:?REGISTRY is required}/atheros-sensor:${IMAGE_TAG:-latest}
@@ -529,7 +396,6 @@ services:
       # The sensor runs in host networking for capture, so Docker service DNS
       # names such as redpanda are not reachable from this container.
       SYNC_REDPANDA_BOOTSTRAP_SERVERS: ${ATH_SENSOR_REDPANDA_BOOTSTRAP_SERVERS:-redpanda://127.0.0.1:19092}
-      DATABASE_URL: ${DATABASE_URL:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@127.0.0.1:5432/sync}
       ATH_SENSOR_REQUIRE_HOST_ENDPOINTS: ${ATH_SENSOR_REQUIRE_HOST_ENDPOINTS:-true}
       ATH_SENSOR_DEVICE: ${ATH_SENSOR_DEVICE:-}
       ATH_SENSOR_LOCATION_ID: ${ATH_SENSOR_LOCATION_ID:-default}
@@ -579,7 +445,7 @@ services:
     image: ${REGISTRY:?REGISTRY is required}/atheros-search:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      - ATHSEARCH_POSTGRES_DSN=${ATHSEARCH_POSTGRES_DSN:-postgres://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync}
+      - ATHSEARCH_TIDB_DSN=mysql://root@tidb:4000/coordinator
       - ATHSEARCH_REDPANDA_BOOTSTRAP=${ATHSEARCH_REDPANDA_BOOTSTRAP:-redpanda:9092}
       - ATHSEARCH_EMBEDDING_BACKEND=${ATHSEARCH_EMBEDDING_BACKEND:-http://host.docker.internal:8083}
       - ATHSEARCH_EMBEDDING_MODEL=${ATHSEARCH_EMBEDDING_MODEL:-nomic-embed-text-v2-moe}
@@ -610,7 +476,6 @@ services:
       - OTEL_SERVICE_NAME=atheros-search
       - OTEL_RESOURCE_ATTRIBUTES=service.version=${VCS_REF:-unknown},deployment.environment=${DEPLOYMENT_ENVIRONMENT:-dev},compose.service=atheros-search
     ports:
-      - "127.0.0.1:50051:50051"
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:19090:9090"
     extra_hosts:
@@ -653,17 +518,6 @@ services:
       - "9644:9644"
     volumes:
       - redpanda-data:/data
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    sysctls:
-      - net.core.somaxconn=1024
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   minio:
     image: minio/minio:latest
@@ -730,46 +584,6 @@ services:
     entrypoint: ["sh"]
     command: ["/config/bootstrap.sh"]
 
-  postgres:
-    image: ${REGISTRY:?REGISTRY is required}/ssl-proxy-postgres:${IMAGE_TAG:-latest}
-    command:
-      - postgres
-      - -c
-      - config_file=/etc/postgresql/postgresql.conf
-      - -c
-      - shared_preload_libraries=pg_cron,pg_stat_statements
-      - -c
-      - cron.database_name=sync
-      - -c
-      - listen_addresses=*
-      - -c
-      - track_io_timing=on
-    restart: unless-stopped
-    shm_size: ${POSTGRES_SHM_SIZE:-256m}
-    deploy:
-      resources:
-        limits:
-          cpus: ${POSTGRES_CPUS:-16.0}
-          memory: ${POSTGRES_MEMORY:-32G}
-        reservations:
-          cpus: ${POSTGRES_RESERVED_CPUS:-4.0}
-          memory: ${POSTGRES_RESERVED_MEMORY:-16G}
-    environment:
-      POSTGRES_DB: sync
-      POSTGRES_USER: sync
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sync -d sync"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      # /docker-entrypoint-initdb.d is intentionally unused; schema changes are
-      # applied by services/schema-migrator against the split sql/* tree.
-      - postgres-data:/var/lib/postgresql/data
-
   prometheus:
     image: prom/prometheus:v2.54.1
     restart: unless-stopped
@@ -785,8 +599,6 @@ services:
       - "127.0.0.1:9090:9090"
     depends_on:
       - pushgateway
-      - postgres-exporter
-      - redis-exporter
       - node-exporter
       - cadvisor
       - otel-collector
@@ -858,31 +670,6 @@ services:
       - loki
       - jaeger
 
-  postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:v0.19.1
-    restart: unless-stopped
-    environment:
-      - DATA_SOURCE_NAME=postgresql://sync:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/sync?sslmode=disable
-      - PG_EXPORTER_EXTEND_QUERY_PATH=/etc/postgres-exporter/queries.yml
-    volumes:
-      - ./docker/observability/postgres-exporter-queries.yml:/etc/postgres-exporter/queries.yml:ro
-    ports:
-      - "9187:9187"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  redis-exporter:
-    image: oliver006/redis_exporter:v1.61.0
-    restart: unless-stopped
-    command:
-      - --redis.addr=redis://redis:6379
-    ports:
-      - "127.0.0.1:9121:9121"
-    depends_on:
-      redis:
-        condition: service_healthy
-
   node-exporter:
     image: prom/node-exporter:v1.8.2
     restart: unless-stopped
@@ -923,8 +710,8 @@ services:
 
 volumes:
   redpanda-data:
-  postgres-data:
   sync-outbox:
+  tidb-data:
   minio-data:
   ollama-data:
   waha-sessions:

@@ -63,6 +63,8 @@ Operational note: recurrence means the mount change was not made durable. The re
 - Running full-tunnel client profiles on the VPN server host can break host DNS/egress and cause misleading build/connectivity failures.
 
 ## Incident Timeline
+- 2026-07-16T19:16:48-0400 | result=pass | mode=mac | server=192.168.1.221 | client=192.168.1.53 | arch=arm64 | signature=none | action=up-ready completed
+- 2026-07-16T17:09:49-0400 | result=fail | mode=mac | server=192.168.1.221 | client=192.168.1.53 | arch=arm64 | signature=unknown | action=Inspect diagnostics bundle
 - 2026-04-17T00:00:00Z | result=fail | mode=linux-shim | signature=magic_byte_mismatch | action=switched server runtime for direct client test | context=server 192.168.1.221 amd64; client 192.168.1.68 iPhone | event=iPhone traffic reached obfuscated ingress and was dropped
 - 2026-04-17T00:00:00Z | result=fail | mode=linux-shim | signature=wg_client_listenport_conflict | action=removed ListenPort from client profile | context=linux test client 192.168.1.68 | event=local client interface failed to come up with Address already in use
 - 2026-04-17T00:00:00Z | result=fail | mode=linux-shim | signature=wg_client_ipv6_route_failure | action=removed ::/0 for ipv4-only verification | context=linux test client 192.168.1.68 | event=wg-quick failed adding ipv6 default route

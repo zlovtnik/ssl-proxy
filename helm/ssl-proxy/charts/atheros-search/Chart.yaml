@@ -1,7 +1,10 @@
 apiVersion: v2
 name: atheros-search
-description: Placeholder for the planned Atheros search deployment
+description: Atheros Search API, embedding worker, and operator UI
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "1.0.0"
-
+dependencies:
+  - name: ssl-proxy-common
+    version: 0.1.0
+    repository: "file://../_common"

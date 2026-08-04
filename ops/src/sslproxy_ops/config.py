@@ -10,6 +10,7 @@ from sslproxy_ops.paths import repo_root
 
 ProfileMode = Literal["iphone", "linux-shim", "linux-direct", "mac"]
 DeploymentTarget = Literal["compose", "kubernetes"]
+StackMode = Literal["umbrella", "split"]
 
 
 class Settings(BaseSettings):
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     deployment_target: DeploymentTarget = Field(
         default="kubernetes", validation_alias="UP_READY_DEPLOYMENT_TARGET"
     )
+    stack_mode: StackMode = Field(default="umbrella", validation_alias="UP_READY_STACK_MODE")
     build_registry_images: bool = Field(
         default=True, validation_alias="UP_READY_BUILD_REGISTRY_IMAGES"
     )
@@ -55,28 +57,37 @@ class Settings(BaseSettings):
         default=True, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
     )
     kube_context: str = Field(default="", validation_alias="UP_READY_KUBE_CONTEXT")
-    kube_namespace: str = Field(default="ssl-proxy", validation_alias="UP_READY_KUBE_NAMESPACE")
+    kube_namespace: str = Field(default="default", validation_alias="UP_READY_KUBE_NAMESPACE")
     helm_release: str = Field(default="ssl-proxy", validation_alias="UP_READY_HELM_RELEASE")
-    helm_timeout: str = Field(default="15m", validation_alias="UP_READY_HELM_TIMEOUT")
+    helm_timeout: str = Field(default="30m", validation_alias="UP_READY_HELM_TIMEOUT")
     kube_registry_probe_timeout: str = Field(
         default="45s", validation_alias="UP_READY_KUBE_REGISTRY_PROBE_TIMEOUT"
+    )
+    rollout_status_timeout: str = Field(
+        default="10m", validation_alias="UP_READY_ROLLOUT_STATUS_TIMEOUT"
+    )
+    rotate_tidb_tls: bool = Field(
+        default=False, validation_alias="UP_READY_ROTATE_TIDB_TLS"
     )
 
     registry: str | None = Field(default=None, validation_alias="REGISTRY")
     registry_plain_http: str = Field(default="auto", validation_alias="REGISTRY_PLAIN_HTTP")
     image_tag: str | None = Field(default=None, validation_alias="IMAGE_TAG")
+    schema_migrator_public_hostname: str | None = Field(
+        default=None, validation_alias="SCHEMA_MIGRATOR_PUBLIC_HOSTNAME"
+    )
+    atheros_search_embedding_backend: str | None = Field(
+        default=None, validation_alias="ATHSEARCH_EMBEDDING_BACKEND"
+    )
+    acme_email: str | None = Field(default=None, validation_alias="ACME_EMAIL")
     wg_port: int = Field(default=443, ge=1, le=65535, validation_alias="WG_PORT")
     wg_internal_port: int = Field(
         default=51820, ge=1, le=65535, validation_alias="WG_INTERNAL_PORT"
     )
-    wg_obfuscation_enabled: bool = Field(
-        default=False, validation_alias="WG_OBFUSCATION_ENABLED"
-    )
+    wg_obfuscation_enabled: bool = Field(default=False, validation_alias="WG_OBFUSCATION_ENABLED")
 
     sync_scan_topic: str = Field(default="sync.scan.request", validation_alias="SYNC_SCAN_TOPIC")
-    sync_scan_consumer: str = Field(
-        default="zig-coordinator-scan", validation_alias="SYNC_SCAN_CONSUMER"
-    )
+    sync_scan_consumer: str = Field(default="octopus-scan", validation_alias="SYNC_SCAN_CONSUMER")
     sync_redpanda_bootstrap_servers: str = Field(
         default="redpanda:9092", validation_alias="SYNC_REDPANDA_BOOTSTRAP_SERVERS"
     )
@@ -85,7 +96,15 @@ class Settings(BaseSettings):
         default="redpandadata/redpanda:latest", validation_alias="REDPANDA_IMAGE"
     )
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
-    postgres_password: str | None = Field(default=None, validation_alias="POSTGRES_PASSWORD")
+    migration_mode: str = Field(default="deploy", validation_alias="UP_READY_MIGRATION_MODE")
+
+    @field_validator("migration_mode")
+    @classmethod
+    def migration_mode_allowed(cls, value: str) -> str:
+        allowed = {"deploy", "migrate"}
+        if value not in allowed:
+            raise ValueError("must be one of deploy, migrate")
+        return value
 
     @field_validator("stack_health_services")
     @classmethod
@@ -100,6 +119,13 @@ class Settings(BaseSettings):
         allowed = {"auto", "1", "0", "true", "false", "yes", "no"}
         if value not in allowed:
             raise ValueError("must be one of auto, 1, 0, true, false, yes, no")
+        return value
+
+    @field_validator("schema_migrator_public_hostname")
+    @classmethod
+    def schema_migrator_hostname_must_not_include_scheme(cls, value: str | None) -> str | None:
+        if value and "://" in value:
+            raise ValueError("must be a hostname without a URL scheme")
         return value
 
     @property

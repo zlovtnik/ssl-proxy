@@ -1,3 +1,23 @@
+- name: kubernetes_cni_unavailable
+  pattern: 'FailedCreatePodSandBox|failed to setup network for sandbox|flannel.*subnet\.env'
+  cause: 'Kubernetes CNI networking is unavailable, so Pods cannot create network sandboxes'
+  fix: 'Restore the node CNI/Flannel service and verify the node is Ready before retrying up-ready'
+  retry: manual
+- name: kubernetes_node_not_ready
+  pattern: 'NodeNotReady|Node is not ready'
+  cause: 'The Kubernetes node became unavailable during deployment'
+  fix: 'Restore node readiness and verify kubelet and CNI health before retrying up-ready'
+  retry: manual
+- name: helm_pending_operation
+  pattern: 'pending-(install|upgrade|rollback)|another (install/upgrade/rollback )?operation.*in progress'
+  cause: 'The Helm release is locked by an incomplete operation'
+  fix: 'Use the rollback command reported by up-ready, then rerun after Helm reports deployed'
+  retry: manual
+- name: helm_context_canceled
+  pattern: 'Upgrade .* failed: context canceled|command failed.*helm.*context canceled'
+  cause: 'The Helm operation was canceled before it completed'
+  fix: 'Inspect Helm history and current cluster health, recover any pending release, then retry'
+  retry: manual
 - name: profile_obfuscation_mismatch
   pattern: 'magic_byte_mismatch'
   cause: 'Mode/runtime mismatch: direct client sent raw packets to obfuscated endpoint'
@@ -40,23 +60,18 @@
   retry: auto
 - name: coordinator_unhealthy
   pattern: 'java-coordinator unhealthy'
-  cause: 'Coordinator failed health, Redpanda, Postgres, or Oracle checks'
-  fix: 'Inspect java-coordinator logs and DATABASE_URL/SYNC_REDPANDA_BOOTSTRAP_SERVERS/Oracle wallet settings'
-  retry: manual
-- name: postgres_unavailable
-  pattern: 'postgres unhealthy|Postgres unavailable'
-  cause: 'Postgres dependency unavailable'
-  fix: 'Ensure postgres is healthy and DATABASE_URL points to postgres:5432'
+  cause: 'Coordinator failed health, Redpanda, or TiDB checks'
+  fix: 'Inspect java-coordinator logs, TIDB_HOST/TIDB_PORT, and SYNC_REDPANDA_BOOTSTRAP_SERVERS'
   retry: manual
 - name: redpanda_unavailable
   pattern: 'redpanda unhealthy|Redpanda unavailable'
   cause: 'Redpanda dependency unavailable'
   fix: 'Ensure redpanda is healthy and SYNC_REDPANDA_BOOTSTRAP_SERVERS points to redpanda:9092'
   retry: manual
-- name: coordinator_wallet_missing
-  pattern: 'missing Oracle wallet artifact|wallet directory missing|missing Oracle password file'
-  cause: 'Coordinator Oracle assets are missing'
-  fix: 'Mount wallet and secrets into java-coordinator'
+- name: tidb_unavailable
+  pattern: 'TiDB sink schema objects unavailable|tidb health check failed'
+  cause: 'TiDB or its schema is unavailable'
+  fix: 'Ensure TiDB is healthy, TIDB_HOST/TIDB_PORT are correct, and the schema is applied'
   retry: manual
 - name: rust_toolchain_mismatch
   pattern: 'rustc [0-9]+\.[0-9]+\.[0-9]+ is not supported by the following packages'

@@ -17,120 +17,128 @@ import (
 const (
 	DefaultEmbeddingModel      = "nomic-embed-text-v2-moe"
 	DefaultEmbeddingDimensions = 768
-	DefaultAuditTopic          = "wireless.audit"
-	DefaultBandwidthTopic      = "audit.wireless.bandwidth"
 	DefaultCORSAllowedOrigin   = "http://127.0.0.1:5173"
 )
 
 type Config struct {
-	PostgresDSN             string
-	RedpandaBootstrap       string
-	EmbeddingModel          string
-	EmbeddingDimensions     int
-	EmbeddingBackend        string
-	EventEmbeddingScope     string
-	GRPCPort                int
-	HTTPPort                int
-	MetricsPort             int
-	LogLevel                string
-	AuditTopic              string
-	BandwidthTopic          string
-	ConsumerGroup           string
-	SearchTimeout           time.Duration
-	HybridAlpha             float64
-	APIKeySHA256            string
-	EmbedderEnabled         bool
-	IngestEnabled           bool
-	EmbeddingBatchSize      int
-	EmbeddingPollInterval   time.Duration
-	ReadyLagThreshold       int64
-	SchemaReadyRequired     bool
-	SchemaReadyTimeout      time.Duration
-	SchemaReadyPollInterval time.Duration
-	CORSAllowedOrigins      []string
-
-	WorkerEnabled               bool
-	WorkerName                  string
-	WorkerBatchSize             int
-	WorkerRequestBatchSize      int
-	WorkerRequestBatchMax       int
-	WorkerLeaseSeconds          int
-	WorkerPollInterval          time.Duration
-	WorkerMaxDrainBatches       int
-	WorkerMaxInputTokens        int
-	WorkerDBCallTimeout         time.Duration
-	WorkerMaxConcurrentEmbed    int
-	WorkerMaxConcurrentComplete int
-
-	AlertEnabled            bool
-	AlertSweepInterval      int
-	AlertNearDupThreshold   int64
-	AlertAPRiskThreshold    float64
-	AlertGraphMaxDepth      int
-	AlertSeqThreshold       float64
-	AlertTravelMaxSpeedMPS  float64
-	AlertDNSLookbackMinutes int
+	TiDBDSN                  string
+	TiDBTLSCAFile            string
+	TiDBTLSCertFile          string
+	TiDBTLSKeyFile           string
+	TiDBTLSServerName        string
+	TiDBSchemaManifestSHA256 string
+	TiDBMaxOpenConns         int
+	TiDBMaxIdleConns         int
+	TiDBConnMaxLifetime      time.Duration
+	TiDBConnMaxIdleTime      time.Duration
+	EmbeddingModel           string
+	EmbeddingDimensions      int
+	EmbeddingBackend         string
+	GRPCPort                 int
+	HTTPPort                 int
+	MetricsPort              int
+	LogLevel                 string
+	SearchTimeout            time.Duration
+	HybridAlpha              float64
+	DenseOverfetchFactor     int
+	APIKeySHA256             string
+	SchemaReadyRequired      bool
+	SchemaReadyTimeout       time.Duration
+	SchemaReadyPollInterval  time.Duration
+	CORSAllowedOrigins       []string
+	WorkerEnabled            bool
+	WorkerCount              int
+	EmbeddingBatchSize       int
+	LeaseSeconds             int
+	WorkerPollInterval       time.Duration
+	WorkerID                 string
+	WSEnabled                bool
 }
 
 func Load() (Config, error) {
 	env := viper.New()
 	env.AutomaticEnv()
-	workerBatchSize := envInt("ATHSEARCH_WORKER_BATCH_SIZE", 64)
-	workerRequestBatchMax := envInt("ATHSEARCH_WORKER_REQUEST_BATCH_MAX", 128)
-	workerRequestBatchSize := envInt("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE", minInt(workerBatchSize, workerRequestBatchMax))
-	if err := validateWorkerBatchSettings(workerBatchSize, workerRequestBatchMax, workerRequestBatchSize); err != nil {
-		return Config{}, err
-	}
 	cfg := Config{
-		PostgresDSN:                 firstEnv("ATHSEARCH_POSTGRES_DSN", "DATABASE_URL", "SYNC_DATABASE_URL"),
-		RedpandaBootstrap:           firstEnv("ATHSEARCH_REDPANDA_BOOTSTRAP", "SYNC_REDPANDA_BOOTSTRAP_SERVERS"),
-		EmbeddingModel:              envString("ATHSEARCH_EMBEDDING_MODEL", envString("VECTOR_EMBEDDING_MODEL", DefaultEmbeddingModel)),
-		EmbeddingDimensions:         envInt("ATHSEARCH_EMBEDDING_DIMENSIONS", envInt("VECTOR_EMBEDDING_DIMENSIONS", DefaultEmbeddingDimensions)),
-		EmbeddingBackend:            firstEnv("ATHSEARCH_EMBEDDING_BACKEND", "VECTOR_EMBEDDING_URL"),
-		EventEmbeddingScope:         envString("ATHSEARCH_EVENT_EMBEDDING_SCOPE", "high_signal"),
-		GRPCPort:                    envInt("ATHSEARCH_GRPC_PORT", 50051),
-		HTTPPort:                    envInt("ATHSEARCH_HTTP_PORT", 8080),
-		MetricsPort:                 envInt("ATHSEARCH_METRICS_PORT", 9090),
-		LogLevel:                    envStringViper(env, "ATHSEARCH_LOG_LEVEL", "info"),
-		AuditTopic:                  envString("ATHSEARCH_AUDIT_TOPIC", DefaultAuditTopic),
-		BandwidthTopic:              envString("ATHSEARCH_BANDWIDTH_TOPIC", DefaultBandwidthTopic),
-		ConsumerGroup:               envString("ATHSEARCH_CONSUMER_GROUP", "atheros-search-ingest"),
-		SearchTimeout:               time.Duration(envInt("ATHSEARCH_SEARCH_TIMEOUT_MS", 10000)) * time.Millisecond,
-		HybridAlpha:                 envFloat("ATHSEARCH_HYBRID_ALPHA", 0.5),
-		APIKeySHA256:                strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_API_TOKEN_SHA256"))),
-		EmbedderEnabled:             envBool("ATHSEARCH_EMBEDDER_ENABLED", false),
-		IngestEnabled:               envBool("ATHSEARCH_INGEST_ENABLED", false),
-		EmbeddingBatchSize:          envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 32),
-		EmbeddingPollInterval:       time.Duration(envInt("ATHSEARCH_EMBEDDING_POLL_INTERVAL_MS", 500)) * time.Millisecond,
-		ReadyLagThreshold:           int64(envInt("ATHSEARCH_READY_LAG_THRESHOLD", 10000)),
-		SchemaReadyRequired:         envBool("ATHSEARCH_SCHEMA_READY_REQUIRED", true),
-		SchemaReadyTimeout:          time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
-		SchemaReadyPollInterval:     time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
-		CORSAllowedOrigins:          envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
-		WorkerEnabled:               envBool("ATHSEARCH_WORKER_ENABLED", false),
-		WorkerName:                  envString("ATHSEARCH_WORKER_NAME", defaultWorkerName()),
-		WorkerBatchSize:             workerBatchSize,
-		WorkerRequestBatchSize:      workerRequestBatchSize,
-		WorkerRequestBatchMax:       workerRequestBatchMax,
-		WorkerLeaseSeconds:          envInt("ATHSEARCH_WORKER_LEASE_SECONDS", 1800),
-		WorkerPollInterval:          time.Duration(envInt("ATHSEARCH_WORKER_POLL_INTERVAL_MS", 5000)) * time.Millisecond,
-		WorkerMaxDrainBatches:       envInt("ATHSEARCH_WORKER_MAX_DRAIN_BATCHES", 0),
-		WorkerMaxInputTokens:        envInt("ATHSEARCH_WORKER_MAX_INPUT_TOKENS", 512),
-		WorkerDBCallTimeout:         time.Duration(envInt("ATHSEARCH_WORKER_DB_CALL_TIMEOUT_MS", 30000)) * time.Millisecond,
-		WorkerMaxConcurrentEmbed:    envInt("ATHSEARCH_WORKER_MAX_CONCURRENT_EMBED", 4),
-		WorkerMaxConcurrentComplete: envInt("ATHSEARCH_WORKER_MAX_CONCURRENT_COMPLETE", 16),
-		AlertEnabled:                envBool("ATHSEARCH_ALERT_ENABLED", false),
-		AlertSweepInterval:          envInt("ATHSEARCH_ALERT_SWEEP_INTERVAL", 10),
-		AlertNearDupThreshold:       int64(envInt("ATHSEARCH_ALERT_NEAR_DUP_THRESHOLD", 10)),
-		AlertAPRiskThreshold:        envFloat("ATHSEARCH_ALERT_AP_RISK_THRESHOLD", 0.75),
-		AlertGraphMaxDepth:          envInt("ATHSEARCH_ALERT_GRAPH_MAX_DEPTH", 3),
-		AlertSeqThreshold:           envFloat("ATHSEARCH_ALERT_SEQ_THRESHOLD", -15.0),
-		AlertTravelMaxSpeedMPS:      envFloat("ATHSEARCH_ALERT_TRAVEL_MAX_SPEED_MPS", 50.0),
-		AlertDNSLookbackMinutes:     envInt("ATHSEARCH_ALERT_DNS_LOOKBACK_MINUTES", 15),
+		TiDBDSN:                  strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_DSN")),
+		TiDBTLSCAFile:            strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_CA_FILE")),
+		TiDBTLSCertFile:          strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_CERT_FILE")),
+		TiDBTLSKeyFile:           strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_KEY_FILE")),
+		TiDBTLSServerName:        strings.TrimSpace(os.Getenv("ATHSEARCH_TIDB_TLS_SERVER_NAME")),
+		TiDBSchemaManifestSHA256: strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_SCHEMA_MANIFEST_SHA256"))),
+		TiDBMaxOpenConns:         envInt("ATHSEARCH_TIDB_MAX_OPEN_CONNS", 32),
+		TiDBMaxIdleConns:         envInt("ATHSEARCH_TIDB_MAX_IDLE_CONNS", 8),
+		TiDBConnMaxLifetime:      time.Duration(envInt("ATHSEARCH_TIDB_CONN_MAX_LIFETIME_MS", 300000)) * time.Millisecond,
+		TiDBConnMaxIdleTime:      time.Duration(envInt("ATHSEARCH_TIDB_CONN_MAX_IDLE_TIME_MS", 60000)) * time.Millisecond,
+		EmbeddingModel:           envString("ATHSEARCH_EMBEDDING_MODEL", envString("VECTOR_EMBEDDING_MODEL", DefaultEmbeddingModel)),
+		EmbeddingDimensions:      envInt("ATHSEARCH_EMBEDDING_DIMENSIONS", envInt("VECTOR_EMBEDDING_DIMENSIONS", DefaultEmbeddingDimensions)),
+		EmbeddingBackend:         firstEnv("ATHSEARCH_EMBEDDING_BACKEND", "VECTOR_EMBEDDING_URL"),
+		GRPCPort:                 envInt("ATHSEARCH_GRPC_PORT", 50051),
+		HTTPPort:                 envInt("ATHSEARCH_HTTP_PORT", 8080),
+		MetricsPort:              envInt("ATHSEARCH_METRICS_PORT", 9090),
+		LogLevel:                 envStringViper(env, "ATHSEARCH_LOG_LEVEL", "info"),
+		SearchTimeout:            time.Duration(envInt("ATHSEARCH_SEARCH_TIMEOUT_MS", 10000)) * time.Millisecond,
+		HybridAlpha:              envFloat("ATHSEARCH_HYBRID_ALPHA", 0.5),
+		DenseOverfetchFactor:     envInt("ATHSEARCH_DENSE_OVERFETCH_FACTOR", 8),
+		APIKeySHA256:             strings.ToLower(strings.TrimSpace(os.Getenv("ATHSEARCH_API_TOKEN_SHA256"))),
+		SchemaReadyRequired:      envBool("ATHSEARCH_SCHEMA_READY_REQUIRED", true),
+		SchemaReadyTimeout:       time.Duration(envInt("ATHSEARCH_SCHEMA_READY_TIMEOUT_MS", 60000)) * time.Millisecond,
+		SchemaReadyPollInterval:  time.Duration(envInt("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
+		CORSAllowedOrigins:       envCSV("ATHSEARCH_CORS_ALLOWED_ORIGINS", []string{DefaultCORSAllowedOrigin}),
+		WorkerEnabled:            envBool("ATHSEARCH_WORKER_ENABLED", false),
+		WorkerCount:              envInt("ATHSEARCH_WORKER_COUNT", 4),
+		EmbeddingBatchSize:       envInt("ATHSEARCH_EMBEDDING_BATCH_SIZE", 64),
+		LeaseSeconds:             envInt("ATHSEARCH_LEASE_SECONDS", 1800),
+		WorkerPollInterval:       time.Duration(envInt("ATHSEARCH_POLL_INTERVAL_MS", 1000)) * time.Millisecond,
+		WorkerID:                 envString("ATHSEARCH_WORKER_ID", "worker-1"),
+		WSEnabled:                envBool("ATHSEARCH_WS_ENABLED", false),
 	}
 
-	if cfg.PostgresDSN == "" {
-		return cfg, errors.New("ATHSEARCH_POSTGRES_DSN or DATABASE_URL is required")
+	if cfg.TiDBDSN == "" {
+		return cfg, errors.New("ATHSEARCH_TIDB_DSN is required")
+	}
+	if cfg.WorkerEnabled {
+		if cfg.EmbeddingBackend == "" {
+			return cfg, errors.New("ATHSEARCH_EMBEDDING_BACKEND is required when workers are enabled")
+		}
+		if cfg.WorkerCount <= 0 {
+			return cfg, errors.New("ATHSEARCH_WORKER_COUNT must be positive when workers are enabled")
+		}
+		if cfg.EmbeddingBatchSize <= 0 {
+			return cfg, errors.New("ATHSEARCH_EMBEDDING_BATCH_SIZE must be positive when workers are enabled")
+		}
+		if cfg.LeaseSeconds <= 0 {
+			return cfg, errors.New("ATHSEARCH_LEASE_SECONDS must be positive when workers are enabled")
+		}
+		if cfg.WorkerPollInterval <= 0 {
+			return cfg, errors.New("ATHSEARCH_POLL_INTERVAL_MS must be positive when workers are enabled")
+		}
+	}
+	if strings.Contains(cfg.TiDBDSN, "://") {
+		return cfg, errors.New("ATHSEARCH_TIDB_DSN must be a native MySQL DSN")
+	}
+	if cfg.TiDBTLSCAFile == "" {
+		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CA_FILE is required")
+	}
+	if (cfg.TiDBTLSCertFile == "") != (cfg.TiDBTLSKeyFile == "") {
+		return cfg, errors.New("ATHSEARCH_TIDB_TLS_CERT_FILE and ATHSEARCH_TIDB_TLS_KEY_FILE must be configured together")
+	}
+	if cfg.TiDBTLSServerName == "" {
+		return cfg, errors.New("ATHSEARCH_TIDB_TLS_SERVER_NAME is required")
+	}
+	if len(cfg.TiDBSchemaManifestSHA256) != sha256.Size*2 {
+		return cfg, errors.New("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")
+	}
+	if _, err := hex.DecodeString(cfg.TiDBSchemaManifestSHA256); err != nil {
+		return cfg, errors.New("ATHSEARCH_SCHEMA_MANIFEST_SHA256 must be a 64-character hex SHA-256 digest")
+	}
+	if cfg.TiDBMaxOpenConns < 1 || cfg.TiDBMaxOpenConns > 512 {
+		return cfg, errors.New("ATHSEARCH_TIDB_MAX_OPEN_CONNS must be between 1 and 512")
+	}
+	if cfg.TiDBMaxIdleConns < 0 || cfg.TiDBMaxIdleConns > cfg.TiDBMaxOpenConns {
+		return cfg, errors.New("ATHSEARCH_TIDB_MAX_IDLE_CONNS must be between 0 and ATHSEARCH_TIDB_MAX_OPEN_CONNS")
+	}
+	if cfg.TiDBConnMaxLifetime <= 0 || cfg.TiDBConnMaxIdleTime <= 0 {
+		return cfg, errors.New("TiDB connection lifetime and idle time must be positive")
 	}
 	if cfg.EmbeddingDimensions != DefaultEmbeddingDimensions {
 		return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_DIMENSIONS must be %d, got %d", DefaultEmbeddingDimensions, cfg.EmbeddingDimensions)
@@ -148,10 +156,6 @@ func Load() (Config, error) {
 			return cfg, fmt.Errorf("ATHSEARCH_EMBEDDING_BACKEND must be a valid URL: %w", err)
 		}
 	}
-	cfg.EventEmbeddingScope = strings.ToLower(strings.TrimSpace(cfg.EventEmbeddingScope))
-	if cfg.EventEmbeddingScope != "high_signal" && cfg.EventEmbeddingScope != "all" {
-		return cfg, errors.New("ATHSEARCH_EVENT_EMBEDDING_SCOPE must be high_signal or all")
-	}
 	if cfg.SearchTimeout <= 0 {
 		return cfg, errors.New("ATHSEARCH_SEARCH_TIMEOUT_MS must be positive")
 	}
@@ -161,14 +165,8 @@ func Load() (Config, error) {
 	if cfg.SchemaReadyPollInterval <= 0 {
 		return cfg, errors.New("ATHSEARCH_SCHEMA_READY_POLL_INTERVAL_MS must be positive")
 	}
-	if cfg.EmbeddingBatchSize < 1 || cfg.EmbeddingBatchSize > 512 {
-		return cfg, errors.New("ATHSEARCH_EMBEDDING_BATCH_SIZE must be between 1 and 512")
-	}
-	if cfg.WorkerMaxInputTokens < 1 {
-		return cfg, errors.New("ATHSEARCH_WORKER_MAX_INPUT_TOKENS must be >= 1")
-	}
-	if cfg.WorkerDBCallTimeout <= 0 {
-		return cfg, errors.New("ATHSEARCH_WORKER_DB_CALL_TIMEOUT_MS must be positive")
+	if cfg.DenseOverfetchFactor < 1 || cfg.DenseOverfetchFactor > 100 {
+		return cfg, errors.New("ATHSEARCH_DENSE_OVERFETCH_FACTOR must be between 1 and 100")
 	}
 	return cfg, nil
 }
@@ -204,32 +202,6 @@ func DBKind(kind string) (string, bool) {
 
 func SupportedDBKinds() []string {
 	return []string{"event", "behaviour_window", "frame_sequence", "device"}
-}
-
-func defaultWorkerName() string {
-	if hostname, err := os.Hostname(); err == nil && strings.TrimSpace(hostname) != "" {
-		return strings.TrimSpace(hostname)
-	}
-	return "atheros-search-worker"
-}
-
-func validateWorkerBatchSettings(workerBatchSize, workerRequestBatchMax, workerRequestBatchSize int) error {
-	if workerBatchSize < 1 || workerBatchSize > 1024 {
-		return errors.New("ATHSEARCH_WORKER_BATCH_SIZE must be 1-1024")
-	}
-	if workerRequestBatchMax < 1 {
-		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_MAX must be >= 1")
-	}
-	if workerRequestBatchSize < 1 {
-		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE must be >= 1")
-	}
-	if workerRequestBatchSize > workerRequestBatchMax {
-		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE must be <= ATHSEARCH_WORKER_REQUEST_BATCH_MAX")
-	}
-	if workerRequestBatchSize > workerBatchSize {
-		return errors.New("ATHSEARCH_WORKER_REQUEST_BATCH_SIZE must be <= ATHSEARCH_WORKER_BATCH_SIZE")
-	}
-	return nil
 }
 
 func firstEnv(keys ...string) string {
@@ -310,11 +282,4 @@ func envFloat(key string, fallback float64) float64 {
 		return fallback
 	}
 	return parsed
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

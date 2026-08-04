@@ -4,10 +4,10 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "ssl-proxy.minio.fullname" . }}-minio-data
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "minio") }}-minio-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.minio.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "minio") | nindent 4 }}
     app.kubernetes.io/component: minio
 spec:
   accessModes: ["ReadWriteOnce"]

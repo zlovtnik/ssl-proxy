@@ -1,229 +1,244 @@
 # System Architecture
 
-## Runtime Data Plane
+This document is the canonical description of the current runtime. The
+repository [README](../README.md) is the onboarding entry point; subsystem
+READMEs describe only their local code and operations.
+
+## Runtime at a glance
+
+ssl-proxy is a WireGuard-first transparent proxy with a Redpanda-backed audit
+and processing plane. The Rust proxy and Atheros Sensor publish events and work
+discovery messages. Octopus durably ingests those messages into TiDB, records
+per-topic/partition/offset evidence, manages leases and batches, publishes
+outbox work, and maintains projections. Atheros Search serves the search API
+and, when enabled, claims embedding jobs and writes vectors. The SolidJS
+Atheros Search UI is the Integration Console.
 
 ```mermaid
 flowchart LR
-    subgraph CLIENT
-        CI
-        CP
-        CA
-        CI --> CP --> CA
-    end
+    client[WireGuard client] --> frontdoor[UDP frontdoor]
+    frontdoor --> proxy[Rust proxy]
+    proxy --> origin[Origin services]
 
-    subgraph HOST
-        HE
-        HP
-    end
+    proxy -->|events and sync.scan.request| redpanda[Redpanda]
+    sensor[Atheros Sensor] -->|wireless.audit and sync.scan.request| redpanda
+    redpanda --> octopus[Octopus]
+    octopus -->|durable ingestion, evidence, projections| tidb[(TiDB)]
+    octopus -->|sync.oracle.load| redpanda
+    redpanda -->|sync.oracle.load| octopus
+    octopus -->|sync.oracle.result| redpanda
+    redpanda -->|sync.oracle.result| octopus
 
-    subgraph CONTAINER
-        subgraph BOOT
-            BT
-            BR
-            BQ
-            BT --> BR --> BQ
-        end
+    search[Atheros Search] -->|queries| tidb
+    search -->|claims jobs and writes vectors| tidb
+    ui[SolidJS Integration Console] -->|HTTP and gRPC gateway APIs| search
 
-        subgraph WG
-            WGI
-            WGN
-            WGM
-            WGI --> WGN
-            WGI --> WGM
-        end
-
-        subgraph DNS
-            CD
-            CU
-            CD --> CU
-        end
-
-        subgraph TP
-            TPL
-            TPT
-            TPR
-            TPO
-            TPL --> TPT --> TPR --> TPO
-        end
-
-        subgraph ADMIN
-            AH
-        end
-
-        subgraph LEGACY
-            LX
-            LP
-            LQ
-            LN
-            LX --> LP
-            LX --> LQ
-            LP --> LN
-        end
-    end
-
-    subgraph ORIGIN
-        O1
-    end
-
-    CP -->|"UDP 443 tunnel"| HE -->|"into container"| BQ
-    WGI -->|"VPN client DNS queries"| CD
-    CA -->|"All client traffic enters tunnel"| WGI
-    WGN -->|"Redirect TCP 80/443"| TPL
-    TPO -->|"Egress to origins"| O1
-    WGM -->|"SNAT / return path"| O1
-    HP --> AH
-
-    style CLIENT fill:#e8f1ff,stroke:#4f46e5,stroke-width:2px
-    style HOST fill:#eefbf2,stroke:#15803d,stroke-width:2px
-    style CONTAINER fill:#fff7ed,stroke:#c2410c,stroke-width:2px
-    style ORIGIN fill:#f5f3ff,stroke:#7c3aed,stroke-width:2px
+    octopus -->|search documents and embedding jobs| tidb
 ```
 
-### Legend
+Solid edges are implemented flows. New Octopus processors and Atheros Search
+workers remain disabled until their dependency-ordered rollout gates are
+explicitly enabled.
 
-#### CLIENT
-- `CI`: Client Interface
-- `CP`: Client Protocol
-- `CA`: Client Application
+## Component ownership
 
-#### HOST
-- `HE`: Host Endpoint
-- `HP`: Host Port
+| Component | Implementation | Owns | Does not own |
+|---|---|---|---|
+| Proxy | Rust in [`src/`](../src/) | WireGuard ingress, transparent proxying, classification, admin/readiness surface, proxy-side sync publishing | Durable application state or database connections |
+| Sync Plane | Rust in [`crates/sync-plane/`](../crates/sync-plane/) | Shared Redpanda producer configuration and message contracts | Ingestion state or projections |
+| Atheros Sensor | Rust in [`services/atheros-sensor/`](../services/atheros-sensor/) | Monitor-mode capture, wireless event construction, Redpanda publishing, local backlog | Direct TiDB persistence |
+| Octopus | Scala 3 in [`services/octopus/`](../services/octopus/) | Durable ingestion, dedupe, evidence, cursoring, leases, batching, outbox, TiDB load/results, maintained projections and alert derivation | Embedding execution or public search APIs |
+| Atheros Search | Go in [`services/atheros-search/`](../services/atheros-search/) | HTTP/gRPC search, ETL health APIs, embedding-job claims, embedding calls, vector writes | Projection maintenance or alert derivation |
+| Integration Console | SolidJS in [`apps/integration-console/atheros-search-ui/`](../apps/integration-console/atheros-search-ui/) | Browser UI for search, graph, inventory and ETL health | Rails runtime or direct database access |
+| Schema Migrator | Scala 3 in [`apps/schema-migrator/`](../apps/schema-migrator/) | Migration definitions, validation, execution history and target connection CRUD | Provisioning the four application schemas at runtime |
+| TiDB schema executor | Shell/container in [`k8s/tidb-schema-executor/`](../k8s/tidb-schema-executor/) | Applying the checksummed canonical manifests | Application data processing |
+| WireGuard key rotator | Elixir in [`apps/wg-key-rotator/`](../apps/wg-key-rotator/) | Staged peer and server key rotation | Proxy traffic handling |
 
-#### CONTAINER
+The Helm and Compose service identity `java-coordinator` is a legacy deployment
+name for the Scala Octopus service.
 
-##### BOOT
-- `BT`: Bootstrap Task
-- `BR`: Bootstrap Runner
-- `BQ`: Bootstrap Queue
+## Durable state and database boundaries
 
-##### WG
-- `WGI`: WireGuard Ingress
-- `WGN`: WireGuard NAT
-- `WGM`: WireGuard Masquerade
+The canonical schema source is [`sql/tidb/`](../sql/tidb/). It defines four
+application domains and a shared contract layer:
 
-##### DNS
-- `CD`: CoreDNS
-- `CU`: CoreDNS Upstream
+| Database | Runtime owner | Purpose |
+|---|---|---|
+| `octopus_core` | Octopus | Ingestion evidence, dedupe, jobs, batches, cursors, leases, outbox and core projections |
+| `atheros_search` | Octopus and Atheros Search with table-level grants | Search documents, embedding jobs, vectors and search-facing projections |
+| `integration_console` | No current application runtime | Reserved console-domain tables; see [Known gaps](#known-gaps) |
+| `schema_migrator` | Schema Migrator | Internal connection, execution and migration-control state |
 
-##### TP
-- `TPL`: Transparent Proxy Listener
-- `TPT`: Transparent Proxy Transit
-- `TPR`: Transparent Proxy Relay
-- `TPO`: Transparent Proxy Origin
+The shared [`contracts`](../sql/tidb/contracts/) manifest records cross-domain
+schema contracts. Helm also creates a separate `keycloak` database for the
+in-cluster Keycloak deployment. It is not one of the four application
+manifests.
 
-##### ADMIN
-- `AH`: Admin Handler
+Only the provisioning schema executor may apply canonical DDL. Application
+runtimes verify the recorded manifest checksum and fail closed when the schema
+contract is not ready. PostgreSQL is not an internal runtime store. Schema
+Migrator supports it only as an explicitly configured external migration
+target. Oracle material is deprecated or historical.
 
-##### LEGACY
-- `LX`: Legacy Entry
-- `LP`: Legacy Proxy Listener
-- `LQ`: Legacy Queue
-- `LN`: Legacy Network Path
+## Topic contracts
 
-#### ORIGIN
-- `O1`: Origin Server
+The sync topic names are compatibility surfaces and are intentionally locked:
 
-## Client Expectations
+| Topic | Direction | Meaning |
+|---|---|---|
+| `sync.scan.request` | Proxy or sensor to Octopus | Work discovery with stream, dedupe and payload-reference metadata |
+| `sync.oracle.load` | Octopus dispatch to Octopus TiDB load consumer | Coordinator-owned TiDB load work; `oracle` is a legacy name |
+| `sync.oracle.result` | Octopus TiDB load consumer to Octopus result consumer | TiDB load outcomes; `oracle` is a legacy name |
+| `wireless.audit` | Sensor to Redpanda/Octopus | Schema-versioned wireless audit events |
+
+Delivery is at least once after the signed cutover offset. TiDB uniqueness,
+dedupe keys and topic/partition/offset evidence make replay and duplicate
+delivery observable and retry safe.
+
+Small payloads may use `inline://json/` references. Filesystem-spooled payloads
+use `outbox://` references and must resolve to JSON in the shared outbox.
+
+## Search and embedding flow
 
 ```mermaid
----
-config:
-  theme: neo
-  themeVariables:
-    fontSize: 14px
----
-flowchart TD
-    START(["🚀 Client Setup"]) --> IMPORT["📥 Import WireGuard Config\n<code>config/peer1/peer1-obfuscated.conf.example</code>"]
-    IMPORT --> PROFILE["⚙️ Profile Configuration\n• Address: <code>10.13.13.2/32</code>\n• DNS: <code>10.13.13.1</code>\n• Endpoint: <code>127.0.0.1:51821</code>\n• AllowedIPs: <code>0.0.0.0/0, ::/0</code>"]
-    PROFILE --> SHIM["🪄 Local `wg-obfs-shim`\nApplies XOR + optional magic byte\nForwards to server <code>:443</code>"]
-    SHIM --> CONNECT["🔐 Establish Tunnel\nObfuscated UDP 443 → Docker host"]
-    CONNECT --> ROUTE{"✅ Expected Behavior"}
-    ROUTE --> DNS["🌐 DNS Resolution\nQueries route via VPN <code>10.13.13.1</code>\n(bypasses local ISP resolver)"]
-    ROUTE --> WEB["🌍 Web Traffic\nTCP 80/443 intercepted at <code>wg0</code>\nProcessed by transparent proxy <code>:3001</code>\nUDP 443 dropped when strict enforcement is enabled"]
-    ROUTE --> ADMIN["🔧 Admin Dashboard\nRemains host-local at <code>127.0.0.1:3002</code>\n(not exposed through tunnel)"]
-    IMPORT --> NOHTTP["⚠️ No Manual HTTP Proxy"]
-    NOHTTP --> WHY["ℹ️ Why?\nWireGuard is the primary client path\nExplicit proxy mode is optional"]
-    WHY --> DEBUG["🐛 Debug Mode Only\n<code>EXPLICIT_PROXY_ENABLED=true</code>\nenables alternate proxy listeners"]
+sequenceDiagram
+    participant O as Octopus
+    participant D as TiDB atheros_search
+    participant W as Atheros Search workers
+    participant E as Embedding backend
+    participant A as Search API
+    participant U as SolidJS UI
 
-    classDef startNode fill:#3b82f6,stroke:#1e40af,stroke-width:3px,color:#fff
-    classDef configNode fill:#10b981,stroke:#047857,stroke-width:2px,color:#fff
-    classDef routeNode fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#000
-    classDef warningNode fill:#ef4444,stroke:#b91c1c,stroke-width:2px,color:#fff
-    classDef infoNode fill:#8b5cf6,stroke:#6d28d9,stroke-width:2px,color:#fff
-
-    class START startNode
-    class PROFILE,CONNECT configNode
-    class ROUTE,DNS,WEB,ADMIN routeNode
-    class NOHTTP,DEBUG warningNode
-    class WHY infoNode
+    O->>D: Prepare search_documents and embedding_jobs
+    W->>D: Claim pending jobs; commit token and fence
+    W->>E: Embed normalized text in batches
+    E-->>W: 768-dimension vectors
+    W->>D: Atomically write vector and complete matching fenced job
+    U->>A: Search, graph, inventory, ETL health
+    A->>D: Dense, sparse or hybrid query
+    D-->>A: Ranked results
+    A-->>U: HTTP, NDJSON or WebSocket response
 ```
 
-## Port Assignments
+Atheros Search workers are enabled with `ATHSEARCH_WORKER_ENABLED=true`.
+Worker count, batch size, lease duration and poll interval are configured with
+the `ATHSEARCH_WORKER_*`, `ATHSEARCH_EMBEDDING_BATCH_SIZE`,
+`ATHSEARCH_LEASE_SECONDS` and `ATHSEARCH_POLL_INTERVAL_MS` variables documented
+in the [Atheros Search README](../services/atheros-search/README.md).
 
-| Service | Port | Protocol | Purpose |
-|---------|------|----------|---------|
-| WireGuard VPN | 443 | UDP | Plain iPhone/direct tunnel endpoint |
-| WireGuard Relay | 51820 | UDP | Obfuscated Mac/shim tunnel endpoint |
-| Transparent Proxy | 3001 | TCP | Internal listener for redirected WireGuard traffic |
-| Admin API + Dashboard | 3002 | TCP | Internal health, dashboard, and stats surface |
-| Explicit Proxy | 3000 | TCP | Legacy opt-in listener, disabled by default |
+## Deployment models
 
-`tunnel_blocked` indicates a denied network flow, not a guarantee that the entire site or app failed. Independent allowed flows can still complete.
+Ports below describe the declared configuration, not a promise that every
+profile is production ready. Use the deployment-specific README before
+operating a stack.
 
-## Component Startup Order
+### Compose compatibility stack
 
-1. **CoreDNS** - Initializes the VPN DNS resolver and forwards upstream over DNS-over-TLS
-2. **BoringTun** - Creates `wg0` as a userspace WireGuard-compatible TUN interface and establishes the encrypted client path
-3. **ssl-proxy** - Starts transparent interception, obfuscation, and audit logging for tunneled traffic
+[`docker-compose.yaml`](../docker-compose.yaml) is a compatibility and local
+development topology. It bundles single-process TiDB/UniStore, Redpanda, MinIO
+and observability services. The `vector` profile adds Atheros Search.
 
-## Obfuscation Profiles
+```mermaid
+flowchart TB
+    host443[Host UDP 443 and 51820] --> fd[wg-udp-frontdoor]
+    fd --> proxy[ssl-proxy]
+    proxy --> rp[Redpanda]
+    sensor[Atheros Sensor, host network] --> rp
+    rp --> oct[Octopus as java-coordinator]
+    oct --> tidb[Single-process TiDB/UniStore]
+    search[Atheros Search, vector profile] --> tidb
+    obs[Promtail, Loki, Prometheus, OTel, Jaeger, Grafana] --> view[Host-local observability UIs]
+```
 
-Traffic is normalized per domain classification to prevent fingerprinting.
+The frontdoor owns UDP `443` and `51820`. Proxy ports `3001` and `3002`,
+frontdoor health `3003`, TiDB `4000`, search `8080`, and most observability
+ports are host-local. Grafana is declared on `3004` and Jaeger on `16686`.
+Profile-dependent ports are documented in the [root README](../README.md) and
+[runbook](runbook.md).
 
-### Active Profiles
+### Umbrella Helm release
 
-- **fox-news**: Fox News domain family
-- **fox-sports**: Fox Sports domain family
+[`helm/ssl-proxy/`](../helm/ssl-proxy/) is the compatibility Kubernetes
+deployment. The umbrella chart declares 13 dependencies: `platform-config`,
+`proxy`, `java-coordinator`, `schema-migrator`, `atheros-sensor`, `redpanda`,
+`minio`, `tidb`, `telemetry`, `vec-worker`, `atheros-search`,
+`redis-runtime`, and `tidb-schema-executor`. `vec-worker` is disabled and
+retained only as a compatibility chart; its runtime responsibility moved into
+Atheros Search.
 
-### Applied Modifications
+```mermaid
+flowchart TB
+    umbrella[ssl-proxy umbrella release] --> shared[platform-config]
+    umbrella --> infra[TiDB, Redpanda, MinIO, Redis, telemetry]
+    umbrella --> schema[TiDB schema executor]
+    umbrella --> migrator[Schema Migrator and Keycloak]
+    umbrella --> apps[Octopus, Atheros Search/UI, sensor]
+    umbrella --> edge[Proxy]
+    schema --> apps
+    infra --> apps
+```
 
-**Request Headers**
-✅ Removes `X-Forwarded-For`, `Via`, `Forwarded` proxy headers
-✅ Strips `DNT`, `Sec-GPC` privacy signals
-✅ Normalizes User-Agent to configured standard value
+The single-node `values-k8s.yaml` overlay enables the schema executor, Schema
+Migrator, Search and UI, and exposes selected host ports. Default values and
+the overlay have different operational assumptions; always render the exact
+values used for a deployment.
 
-**Response Headers**
-✅ Removes `X-Cache`, `X-Edge-IP`, `X-Served-By` CDN leak headers
-✅ Preserves security headers (CSP, HSTS)
+### Opt-in stackctl split releases
 
-Domain matching supports wildcard subdomains and is case-insensitive.
+[`stackctl/stack.yaml`](../stackctl/stack.yaml) deploys the same subcharts as
+separate releases with dependency gates. It is opt in through
+`make up-ready-stackctl` or the `make stackctl-*` targets.
 
----
+```mermaid
+flowchart LR
+    bootstrap[platform-config] --> infra[TiDB, Redpanda, MinIO, Redis, telemetry]
+    infra --> executor[TiDB schema executor]
+    executor --> migrator[Schema Migrator]
+    migrator --> apps[Octopus and Atheros Search]
+    apps --> proxy[Proxy]
+    sensor[Atheros Sensor] --> apps
+```
 
-## Quick Start
+stackctl owns release ordering, gates, checks and failure diagnostics. Image
+builds, secrets, TLS generation and node preparation stay in the surrounding
+operations workflow. See the [stackctl README](../stackctl/README.md).
 
-1. **Setup secrets:**
-   ```bash
-   scripts/gen-secrets generate
-   SERVER_IP=<server-local-ip> scripts/gen-secrets env
-   ```
+## Observability
 
-2. **Start stack:**
-   ```bash
-   docker compose up -d
-   ```
+Container logs flow through Promtail to Loki. Prometheus scrapes application
+and infrastructure metrics. OTLP traces flow through the OpenTelemetry
+Collector to Jaeger; the collector also exposes span-derived Prometheus
+metrics. Grafana provisions Prometheus, Loki and Jaeger data sources. The
+complete topology and current instrumentation limits are in
+[Observability Architecture](observability-architecture-jaeger.md).
 
-3. **WireGuard Client Configuration:**
-   Build and run the bundled Linux `wg-obfs-shim`, then import `config/peer1/peer1-obfuscated.conf.example` into the WireGuard client. The profile endpoint `127.0.0.1:51821` is local to the client machine; configure the real remote server endpoint separately in `config/client/wg-obfs-shim.env.example`. Do not combine this with a separate manual HTTP proxy on the client.
+## Security boundaries
 
-   For the Mac profile, import `config/peer2/peer2-obfuscated.conf.example` instead. It uses the same local shim contract, but the server relay listens on UDP `51820` while the plain iPhone path remains on UDP `443`.
+- WireGuard UDP entrypoints are public; admin, database and observability
+  surfaces should remain host-local or cluster-internal.
+- The proxy and sensor have elevated network capabilities. They do not receive
+  database credentials.
+- TiDB clients use separate accounts and databases, verified TLS and the
+  table-level grant matrix in [TiDB Runtime Cutover](tidb-runtime-cutover.md).
+- Secrets are materialized outside Git and mounted or referenced through
+  Kubernetes Secrets. See [Secret Management](secret-management.md).
+- Search analytics store hashes instead of raw queries or session identifiers
+  by default. See [Atheros Search Privacy](atheros-search-privacy.md).
 
-   Verify the service locally:
-   ```bash
-   curl -i http://127.0.0.1:3002/health
-   ```
+## Known gaps
 
-## Legacy Explicit Proxy Mode
+These are documentation of current limitations, not hidden future behavior:
 
-The explicit HTTP/HTTPS proxy path is retained only for controlled debugging. It must be enabled explicitly with `EXPLICIT_PROXY_ENABLED=true`, and plaintext HTTP proxy mode still exposes `CONNECT host:443` metadata on the client-to-proxy leg.
+1. No current application runtime owns the `integration_console` tables. The
+   Integration Console is the SolidJS Atheros Search UI and reads through the
+   Search API.
+2. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
+   initialize an OTLP exporter or SDK tracer provider. Setting
+   `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
+3. Compose and the default single-node Kubernetes overlay run TiDB with
+   UniStore. That topology does not demonstrate production TiFlash placement,
+   distributed failure tolerance or vector-index readiness. Production claims
+   require a real TiDB/TiFlash cluster and an explicit readiness rehearsal.
+
+Until these gaps are closed, deployment success means the declared health
+gates passed; it does not prove production-grade TiFlash/vector capacity.

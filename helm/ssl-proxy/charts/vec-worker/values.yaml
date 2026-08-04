@@ -5,7 +5,7 @@ replicas: 1
 image:
   repository: vec-worker
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 service:
   port: 9092
   type: ClusterIP
@@ -32,6 +32,8 @@ embedding:
   leaseSeconds: 1800
   maxConcurrentCompletes: 16
 # Worker pool configuration
+worker:
+  count: 4
 workerName: "worker-1"
 pollIntervalSeconds: 1
 # Database pool
@@ -50,7 +52,7 @@ healthcheck:
 # Metrics endpoint
 metrics:
   enabled: true
-  port: 9092
+  port: 9091
 
 
 

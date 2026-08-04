@@ -1,0 +1,16 @@
+engine: tidb
+layer: integration_console
+database: integration_console
+schema_version: 001
+checksum_algorithm: sha256
+manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
+manifest_sha256: 3b9225ec60b1c2a298d4dc2f6c17a10486860c3f65d92627eb914e97c6f0804d
+checksums_file: checksums.sha256
+grant_fixture: grants/least_privilege.sql.tmpl
+apply_order:
+  - 00_schemas/001_integration_console_database.sql
+  - 01_tables/001_schema_control.sql
+  - 01_tables/002_console_records.sql
+  - 01_tables/003_console_commands.sql
+  - 01_tables/004_ui_state.sql
+retired: []

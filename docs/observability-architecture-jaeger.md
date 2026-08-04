@@ -1,168 +1,134 @@
-# Observability Architecture with Jaeger
+# Observability Architecture
 
-> Scope note: the compose rollout tracked in `docs/observability-workmap-non-vector.md` excludes Vector-profile services (`vec-worker*`, `ollama`) even though this target-state diagram includes a Zig/embedding path.
+This document describes the observability topology declared by
+[`docker-compose.yaml`](../docker-compose.yaml) and the telemetry Helm
+subchart. It supplements the canonical [system architecture](architecture.md).
 
-## What changed with Jaeger
-
-New trace path in the stack:
-
-`workers -> OTLP gRPC -> OTel Collector -> Jaeger -> Grafana`
-
-Rust and Zig workers now emit OTLP traces over gRPC. The OpenTelemetry Collector receives and forwards spans to Jaeger. Grafana reads Jaeger as a trace datasource and correlates traces with Loki logs and Prometheus metrics.
-
-## Instrumentation first pass
-
-| Signal type | Rust crate | Zig approach |
-|---|---|---|
-| Logs -> stdout | `tracing` + `tracing-subscriber` (JSON fmt) | custom JSON line writer or `zlog` |
-| Metrics -> `/metrics` | `metrics` + `metrics-exporter-prometheus` | expose via simple HTTP handler |
-| Traces -> OTLP | `opentelemetry` + `opentelemetry-otlp` | `opentelemetry-zig` or HTTP OTLP |
-
-## Clickable architecture diagram
-
-```mermaid
-flowchart TB
-    subgraph APP["Your application layer"]
-        direction LR
-        RW["Rust worker<br/>oracle-sync, ETL, CDC"]
-        ZW["Zig worker<br/>fingerprint, embedding"]
-        CJ["Cron jobs<br/>scheduled pipelines"]
-    end
-
-    subgraph COLLECT["Collection and transport layer"]
-        direction LR
-        GA["Grafana Alloy<br/>log collector"]
-        PR["Prometheus<br/>scrapes /metrics"]
-        OC["OTel Collector<br/>receives OTLP, exports to Jaeger"]
-    end
-
-    subgraph STORE["Storage backends"]
-        direction LR
-        LK["Grafana Loki<br/>log storage + LogQL"]
-        PT["Prometheus TSDB<br/>metrics storage + PromQL"]
-        JG["Jaeger<br/>trace storage + span search"]
-    end
-
-    subgraph VIZ["Visualization and correlation"]
-        GF["Grafana<br/>dashboards, alerts, trace-log-metric correlation"]
-    end
-
-    RW -->|"stdout JSON"| GA
-    ZW -->|"stdout JSON"| GA
-    CJ -->|"stdout JSON"| GA
-
-    RW -->|"/metrics"| PR
-    ZW -->|"/metrics"| PR
-    CJ -->|"/metrics"| PR
-
-    RW -->|"OTLP gRPC"| OC
-    ZW -->|"OTLP gRPC"| OC
-    CJ -->|"OTLP gRPC"| OC
-
-    GA --> LK
-    PR --> PT
-    OC --> JG
-
-    LK --> GF
-    PT --> GF
-    JG --> GF
-
-    click RW href "#q-rust-worker" "Follow-up question"
-    click ZW href "#q-zig-worker" "Follow-up question"
-    click CJ href "#q-cron-jobs" "Follow-up question"
-    click GA href "#q-grafana-alloy" "Follow-up question"
-    click PR href "#q-prometheus-scrape" "Follow-up question"
-    click OC href "#q-otel-collector" "Follow-up question"
-    click LK href "#q-loki" "Follow-up question"
-    click PT href "#q-prometheus-tsdb" "Follow-up question"
-    click JG href "#q-jaeger" "Follow-up question"
-    click GF href "#q-grafana" "Follow-up question"
-```
-
-## Cron trace waterfall
+## Signal topology
 
 ```mermaid
 flowchart LR
-    R0["cron: fingerprint-pipeline<br/>trace_id=abc123<br/>27 s total"]
-    S1["load_raw_events<br/>2 s"]
-    S2["calculate_fingerprints<br/>3 s"]
-    S3["pgvector_embedding<br/>18 s (bottleneck)"]
-    S4["postgres_commit<br/>200 ms"]
-    S5["oracle_sync<br/>3 s"]
-    S6["publish_notification<br/>20 ms"]
+    containers[Container stdout and stderr] --> promtail[Promtail]
+    promtail --> loki[Loki]
 
-    R0 --> S1 --> S2 --> S3 --> S4 --> S5 --> S6
+    apps[Application and infrastructure metrics] --> prometheus[Prometheus]
+    exporters[Node Exporter, cAdvisor and service exporters] --> prometheus
 
-    classDef bottleneck fill:#fde2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
-    class S3 bottleneck;
+    instrumented[Instrumented services] -->|OTLP gRPC or HTTP| collector[OpenTelemetry Collector]
+    collector -->|OTLP| jaeger[Jaeger]
+    collector -->|span metrics| prometheus
 
-    click R0 href "#q-trace-root" "Follow-up question"
-    click S1 href "#q-trace-load-raw-events" "Follow-up question"
-    click S2 href "#q-trace-calculate-fingerprints" "Follow-up question"
-    click S3 href "#q-trace-pgvector-embedding" "Follow-up question"
-    click S4 href "#q-trace-postgres-commit" "Follow-up question"
-    click S5 href "#q-trace-oracle-sync" "Follow-up question"
-    click S6 href "#q-trace-publish-notification" "Follow-up question"
+    prometheus --> grafana[Grafana]
+    loki --> grafana
+    jaeger --> grafana
 ```
 
-`pgvector_embedding` is the visible bottleneck. Without Jaeger, you see only the 27 s total and lose phase-level latency attribution.
+All edges above are configured platform paths. Whether a service emits a
+particular signal depends on its instrumentation; see
+[Instrumentation status](#instrumentation-status).
 
-## Quick Grafana wiring
+## Logs: Promtail to Loki
 
-1. Add Jaeger as a Grafana datasource.
-2. Include `trace_id` in structured JSON logs sent to Loki.
-3. From a Loki log line, pivot to the matching Jaeger trace by `trace_id`.
-4. Use Grafana dashboards to correlate trace spans with Prometheus metrics and Loki logs.
+Promtail discovers Docker containers through the Docker socket and forwards
+their logs to Loki. Loki is the durable query target for logs, and Grafana is
+provisioned with a Loki data source.
 
-## Follow-up questions by node
+Treat the Docker socket mount as privileged infrastructure access. Promtail
+must stay on a trusted node. Applications should emit structured logs and must
+not include API tokens, database credentials, raw search queries, session IDs,
+full MAC addresses or captured payloads outside an explicitly audited path.
 
-### <a id="q-rust-worker"></a>Rust worker
-What span boundaries and attributes must be emitted for Oracle sync, ETL, and CDC so failures are actionable?
+Compose endpoints:
 
-### <a id="q-zig-worker"></a>Zig worker
-Which fingerprint and embedding phases need child spans, and which dimensions should be tags versus logs?
+- Loki: host-local `127.0.0.1:3100`
+- Promtail status: container port `9080`, scraped inside the Compose network
 
-### <a id="q-cron-jobs"></a>Cron jobs
-Which scheduled pipelines must always create one root trace per execution, and what timeout alert should fire if the root span exceeds budget?
+## Metrics: Prometheus
 
-### <a id="q-grafana-alloy"></a>Grafana Alloy
-Which JSON fields from stdout logs are mandatory for routing, parsing, and cross-linking with `trace_id`?
+Prometheus loads [`docker/observability/prometheus.yml`](../docker/observability/prometheus.yml)
+and the alert rules in
+[`docker/observability/alerts.yml`](../docker/observability/alerts.yml).
+Declared scrape targets include:
 
-### <a id="q-prometheus-scrape"></a>Prometheus (scrape)
-What scrape interval and timeout keep metric freshness high without overloading workers?
+- Prometheus, Loki, Promtail, Jaeger and the OTel Collector
+- the proxy `/metrics` endpoint
+- Atheros Sensor metrics through the host gateway
+- Redpanda, MinIO, Node Exporter and cAdvisor
+- the Pushgateway
+- span metrics exported by the OTel Collector
 
-### <a id="q-otel-collector"></a>OTel Collector
-What retry, batching, and backpressure settings prevent span loss during downstream outages?
+The configuration also scrapes Octopus under its legacy
+`java-coordinator` service identity. Both `/metrics` and the compatibility
+route `/actuator/prometheus` expose its Micrometer measurements.
 
-### <a id="q-loki"></a>Loki
-Which labels are required for query speed, and which fields must stay in log body to avoid cardinality explosions?
+Compose endpoints:
 
-### <a id="q-prometheus-tsdb"></a>Prometheus TSDB
-Which SLO and saturation metrics should be retained at high resolution for incident triage?
+- Prometheus: host-local `127.0.0.1:9090`
+- Pushgateway: host-local `127.0.0.1:9091`
+- Node Exporter: container port `9100`
+- cAdvisor: host-local `127.0.0.1:8082`
 
-### <a id="q-jaeger"></a>Jaeger
-What retention window and sampling policy preserve enough traces to diagnose intermittent bottlenecks?
+## Traces: OTel Collector to Jaeger
 
-### <a id="q-grafana"></a>Grafana
-Which dashboard panels must support one-click pivot across trace, log, and metric views during incident response?
+The collector accepts OTLP on container ports `4317` (gRPC) and `4318` (HTTP).
+Compose maps those to host-local `127.0.0.1:4317` and
+`127.0.0.1:4320`. It batches traces, exports them to Jaeger over OTLP and sends
+the same trace stream through a span-metrics connector. Prometheus scrapes the
+span-metrics exporter on `9464`.
 
-### <a id="q-trace-root"></a>Trace root (`fingerprint-pipeline`)
-What run-level metadata (job id, schedule id, input size) is required on the root span for filtering and incident grouping?
+Jaeger is the trace store and query UI. Compose exposes its UI on host port
+`16686`. Grafana is provisioned with Jaeger as a trace data source.
 
-### <a id="q-trace-load-raw-events"></a>`load_raw_events`
-Which source latency and row-count attributes are needed to separate input slowness from compute slowness?
+## Grafana
 
-### <a id="q-trace-calculate-fingerprints"></a>`calculate_fingerprints`
-What CPU and batch-size dimensions should be captured to detect algorithmic regression?
+Grafana unifies the three query surfaces:
 
-### <a id="q-trace-pgvector-embedding"></a>`pgvector_embedding`
-What queue depth, model latency, and retry metadata must be attached to explain the 18 s bottleneck?
+| Signal | Source |
+|---|---|
+| Metrics and alerts | Prometheus |
+| Logs | Loki |
+| Traces | Jaeger |
 
-### <a id="q-trace-postgres-commit"></a>`postgres_commit`
-Which commit latency and lock-wait fields are needed to detect transactional contention?
+Compose exposes Grafana on host port `3004`. Anonymous access is disabled by
+default; `GRAFANA_ADMIN_PASSWORD` is required.
 
-### <a id="q-trace-oracle-sync"></a>`oracle_sync`
-What remote-call and payload attributes are needed to isolate Oracle-side latency from local pipeline latency?
+## Instrumentation status
 
-### <a id="q-trace-publish-notification"></a>`publish_notification`
-What broker ack and publish retry fields should be captured to detect delivery degradation early?
+| Component | Logs | Metrics | Traces |
+|---|---|---|---|
+| Rust proxy/frontdoor | Container logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
+| Atheros Sensor | Container logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
+| Octopus | Structured logs | Micrometer exposition on `/metrics` and `/actuator/prometheus` | OTLP SDK spans around Kafka and TiDB durable boundaries |
+| Atheros Search | Structured logs | Dedicated Prometheus server | HTTP/gRPC hooks exist, but no SDK exporter/provider is initialized |
+| Redpanda, MinIO and host | Platform logs | Native endpoints/exporters | Not expected |
+
+For Atheros Search, setting `OTEL_EXPORTER_OTLP_ENDPOINT` does not currently
+create an exporter. The gRPC stats handler and HTTP trace-context logging use
+the default no-op provider until server initialization installs an OTel SDK.
+
+## Operating checks
+
+```bash
+curl -fsS http://127.0.0.1:9090/-/ready
+curl -fsS http://127.0.0.1:3100/ready
+curl -fsS http://127.0.0.1:3004/api/health
+curl -fsS http://127.0.0.1:16686/
+curl -fsS http://127.0.0.1:8888/metrics
+```
+
+If traces are absent, check the service instrumentation first, then collector
+receiver health, collector logs and Jaeger reachability. If metrics are absent,
+inspect Prometheus **Status -> Targets** and verify the path actually exists on
+the service. If logs are absent, check Promtail discovery and Loki readiness.
+
+## Security and retention
+
+- Keep Grafana, Prometheus, Loki, collector diagnostics and service metrics
+  bound to loopback or cluster-internal networks.
+- Protect Grafana with a non-default password and the deployment identity
+  provider where available.
+- Treat labels as potentially sensitive; do not use raw user, query, session or
+  full device identifiers as unbounded metric labels.
+- Define Loki, Prometheus and Jaeger retention from the deployment's evidence
+  and privacy requirements. Compose defaults are development settings, not a
+  compliance retention policy.

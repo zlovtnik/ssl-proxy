@@ -2,13 +2,13 @@ package search
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -21,7 +21,7 @@ import (
 type Service struct {
 	searchv1.UnimplementedSearchServiceServer
 
-	Pool                  *pgxpool.Pool
+	Pool                  *sql.DB
 	Embedder              embed.Client
 	Config                config.Config
 	Metrics               *metrics.Metrics
@@ -30,10 +30,9 @@ type Service struct {
 	suggMu                sync.Mutex
 	graphCache            sync.Map
 	graphCacheJanitorOnce sync.Once
-	inventoryDecisions    sync.Map
 }
 
-func NewService(pool *pgxpool.Pool, embedder embed.Client, cfg config.Config, m *metrics.Metrics, logger zerolog.Logger) *Service {
+func NewService(pool *sql.DB, embedder embed.Client, cfg config.Config, m *metrics.Metrics, logger zerolog.Logger) *Service {
 	s := &Service{Pool: pool, Embedder: embedder, Config: cfg, Metrics: m, Logger: logger}
 	s.startGraphCacheJanitor()
 	return s
@@ -61,7 +60,7 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*sea
 	searchCtx, cancel := context.WithTimeout(ctx, s.Config.SearchTimeout)
 	defer cancel()
 
-	opts := Options{TopK: topK, MinSimilarity: req.MinSimilarity, Kinds: kinds, Filters: req.Filters}
+	opts := Options{TopK: topK, MinSimilarity: req.MinSimilarity, Kinds: kinds, Filters: req.Filters, OverfetchFactor: s.Config.DenseOverfetchFactor}
 	var denseResults, sparseResults []RawResult
 	var qvec []float32
 	var modeUsed = mode
@@ -86,6 +85,7 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*sea
 				}
 				modeUsed = searchv1.SearchMode_SEARCH_MODE_SPARSE
 				fallbackReason = err.Error()
+				qvec = nil
 			}
 		}
 	}

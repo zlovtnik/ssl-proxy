@@ -21,10 +21,13 @@ from sslproxy_ops.commands.up_ready.checks import (
     write_credential_handoff,
 )
 from sslproxy_ops.commands.up_ready.kubernetes import (
-    helm_upgrade,
+    deploy_kubernetes_release as helm_upgrade,
+)
+from sslproxy_ops.commands.up_ready.kubernetes import (
     kubernetes_up,
     resolve_kube_context,
     sync_kubernetes_secrets,
+    warn_unhealthy_nodes,
 )
 from sslproxy_ops.commands.up_ready.model import (
     UpReadyContext,
@@ -34,6 +37,7 @@ from sslproxy_ops.commands.up_ready.model import (
     warn,
 )
 from sslproxy_ops.commands.up_ready.peers import ensure_local_peer_material
+from sslproxy_ops.commands.up_ready.preflight import cluster_preflight
 from sslproxy_ops.commands.up_ready.secrets import (
     activate_obfuscation_key_env_fallback,
     ensure_admin_api_key_file,
@@ -50,6 +54,18 @@ def require_concrete_endpoint_values(settings: Settings) -> None:
         raise UpReadyError("SERVER_IP must be concrete, for example SERVER_IP=192.168.1.221")
     if not settings.client_ip or "<" in settings.client_ip or ">" in settings.client_ip:
         raise UpReadyError("CLIENT_IP must be concrete, for example CLIENT_IP=192.168.1.53")
+
+
+def require_schema_migrator_deployment_values(settings: Settings) -> None:
+    hostname = (settings.schema_migrator_public_hostname or "").strip()
+    if not hostname or "<" in hostname or ">" in hostname or "://" in hostname:
+        raise UpReadyError(
+            "SCHEMA_MIGRATOR_PUBLIC_HOSTNAME is required and must be a concrete hostname "
+            "without a URL scheme"
+        )
+    email = (settings.acme_email or "").strip()
+    if not email or "<" in email or ">" in email or "@" not in email:
+        raise UpReadyError("ACME_EMAIL is required and must be a concrete email address")
 
 
 def apply_profile_runtime_env(ctx: UpReadyContext) -> None:
@@ -238,6 +254,11 @@ def compose_up(ctx: UpReadyContext) -> bool:
 
 def preflight(ctx: UpReadyContext) -> None:
     step("S01", "preflight")
+    if ctx.settings.deployment_target == "kubernetes":
+        # These values affect every public route and ACME registration. Validate
+        # them before secret generation, namespace creation, image publication,
+        # or any other mutation.
+        require_schema_migrator_deployment_values(ctx.settings)
     needs_docker = ctx.settings.deployment_target == "compose" or (
         ctx.settings.build_registry_images or ctx.settings.mirror_registry_images
     )
@@ -251,6 +272,9 @@ def preflight(ctx: UpReadyContext) -> None:
             raise UpReadyError(f"Missing required command: {command}")
     if ctx.settings.deployment_target == "kubernetes":
         resolve_kube_context(ctx)
+        if ctx.settings.stack_mode == "umbrella":
+            cluster_preflight(ctx)
+        warn_unhealthy_nodes(ctx)
     if needs_docker:
         docker_info = shell.run(["docker", "info"], check=False, capture=True)
         if docker_info.returncode != 0:

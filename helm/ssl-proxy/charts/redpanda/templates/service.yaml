@@ -3,14 +3,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ssl-proxy.redpanda.fullname" . }}-redpanda
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "redpanda") }}-redpanda
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.redpanda.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "redpanda") | nindent 4 }}
     app.kubernetes.io/component: redpanda
 spec:
   selector:
-    {{- include "ssl-proxy.redpanda.selectorLabels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "redpanda") | nindent 4 }}
     app.kubernetes.io/component: redpanda
   ports:
     - name: kafka

@@ -1,0 +1,129 @@
+{{- if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "bootstrap") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "schemaMigrator") | nindent 4 }}
+    app.kubernetes.io/component: schema-migrator-bootstrap
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.keycloak.bootstrapJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.keycloak.bootstrapJob.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "schemaMigrator") | nindent 8 }}
+        app.kubernetes.io/component: schema-migrator-bootstrap
+    spec:
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "schemaMigrator") }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.keycloak.image) }}
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              KCADM=/opt/keycloak/bin/kcadm.sh
+              CONFIG=/tmp/kcadm.config
+              authenticated=false
+              for attempt in $(seq 1 90); do
+                if "$KCADM" config credentials \
+                  --config "$CONFIG" \
+                  --server "$KEYCLOAK_URL" \
+                  --realm master \
+                  --user "$KEYCLOAK_ADMIN" \
+                  --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  authenticated=true
+                  break
+                fi
+                sleep 2
+              done
+              if [ "$authenticated" != true ]; then
+                echo "Keycloak did not accept bootstrap administrator credentials" >&2
+                exit 1
+              fi
+
+              user_id="$($KCADM get users --config "$CONFIG" -r "$REALM" \
+                -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
+                | grep -v '^id$' | head -n 1)"
+              if [ -z "$user_id" ]; then
+                "$KCADM" create users --config "$CONFIG" -r "$REALM" \
+                  -s "username=$APP_USERNAME" -s enabled=true -s emailVerified=true >/dev/null
+                "$KCADM" set-password --config "$CONFIG" -r "$REALM" \
+                  --username "$APP_USERNAME" --new-password "$APP_PASSWORD" --temporary >/dev/null
+              fi
+
+              client_uuid="$($KCADM get clients --config "$CONFIG" -r "$REALM" \
+                -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes \
+                | grep -v '^id$' | head -n 1)"
+              if [ -z "$client_uuid" ]; then
+                echo "Keycloak client $CLIENT_ID was not found" >&2
+                exit 1
+              fi
+              if [ "$PUBLIC_ORIGIN" = "$UI_ORIGIN" ]; then
+                redirect_uris="[\"$PUBLIC_ORIGIN/*\"]"
+                web_origins="[\"$PUBLIC_ORIGIN\"]"
+              else
+                redirect_uris="[\"$PUBLIC_ORIGIN/*\",\"$UI_ORIGIN/*\"]"
+                web_origins="[\"$PUBLIC_ORIGIN\",\"$UI_ORIGIN\"]"
+              fi
+              "$KCADM" update "clients/$client_uuid" --config "$CONFIG" -r "$REALM" \
+                -s "redirectUris=$redirect_uris" -s "webOrigins=$web_origins" >/dev/null
+
+              "$KCADM" add-roles --config "$CONFIG" -r "$REALM" \
+                --uusername "$APP_USERNAME" --cclientid "$CLIENT_ID" --rolename "$ADMIN_ROLE"
+          env:
+            - name: KEYCLOAK_URL
+              value: {{ printf "http://%s:8080" (include "ssl-proxy.schemaMigrator.componentName" (dict "root" . "component" "keycloak")) | quote }}
+            - name: KEYCLOAK_ADMIN
+              value: {{ .Values.keycloak.bootstrapAdminUsername | quote }}
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.credentialsSecret.name }}
+                  key: {{ .Values.keycloak.credentialsSecret.bootstrapAdminPasswordKey }}
+            - name: REALM
+              value: {{ .Values.keycloak.realm | quote }}
+            - name: CLIENT_ID
+              value: {{ .Values.keycloak.clientId | quote }}
+            - name: PUBLIC_ORIGIN
+              value: {{ include "ssl-proxy.schemaMigrator.publicOrigin" . | quote }}
+            - name: UI_ORIGIN
+              value: {{ include "ssl-proxy.schemaMigrator.uiOrigin" . | quote }}
+            - name: ADMIN_ROLE
+              value: {{ .Values.keycloak.adminRole | quote }}
+            - name: APP_USERNAME
+              value: {{ .Values.keycloak.applicationAdmin.username | quote }}
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.applicationAdmin.credentialsSecret.name }}
+                  key: {{ .Values.keycloak.applicationAdmin.credentialsSecret.passwordKey }}
+          resources:
+            {{- toYaml .Values.keycloak.bootstrapJob.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

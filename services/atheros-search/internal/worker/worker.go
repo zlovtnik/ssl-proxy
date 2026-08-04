@@ -2,574 +2,299 @@ package worker
 
 import (
 	"context"
-	"errors"
+	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
-	"golang.org/x/sync/semaphore"
-
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/alerts"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/db"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/embed"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
-	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/seqscore"
 )
 
-type Worker struct {
-	Pool      *pgxpool.Pool
-	AlertPool *pgxpool.Pool
-	Embedder  embed.Client
-	Config    config.Config
-	Metrics   *metrics.Metrics
-	Logger    zerolog.Logger
+type Pool struct {
+	db       *sql.DB
+	logger   zerolog.Logger
+	cfg      PoolConfig
+	embedder Embedder
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
-type RunOnceResult struct {
-	Processed            int
-	PermanentFailures    int
-	RowsLeased           int
-	DrainBatches         int
-	DrainedToEmpty       bool
-	MaxDrainBatchReached bool
-	DrainMS              int64
-	PrepareMS            int64
-	EmbedMS              int64
-	CompleteMS           int64
-	ChunksPrepared       int
-	ChunksEmbedded       int
-	ChunksCompleted      int
-	KindStats            map[string]KindRunStats
+type PoolConfig struct {
+	WorkerCount       int
+	LeaseSeconds      int
+	PollInterval      time.Duration
+	BatchSize         int
+	WorkerID          string
+	HealthPollEnabled bool
 }
 
-type KindRunStats struct {
-	Leased          int
-	Completed       int
-	Failed          int
-	PermanentFailed int
+type Embedder interface {
+	Embed(ctx context.Context, texts []string, kind string) ([][]float32, error)
 }
 
-func (w *Worker) Start(ctx context.Context) error {
-	poll := w.Config.WorkerPollInterval
-	if poll <= 0 {
-		poll = 5 * time.Second
+type Job struct {
+	JobID          string
+	DocumentID     string
+	EmbeddingKind  string
+	EmbeddingModel string
+	ContentSHA256  string
+	NormalizedText string
+	Priority       int
+	LeaseToken     string
+	LeaseFence     int64
+}
+
+func NewPool(db *sql.DB, embedder Embedder, cfg PoolConfig, logger zerolog.Logger) *Pool {
+	if cfg.WorkerCount < 1 {
+		cfg.WorkerCount = 1
 	}
-	ticker := time.NewTicker(poll)
+	if cfg.LeaseSeconds < 1 {
+		cfg.LeaseSeconds = 1800
+	}
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = time.Second
+	}
+	if cfg.BatchSize < 1 {
+		cfg.BatchSize = 64
+	}
+	return &Pool{
+		db:       db,
+		logger:   logger.With().Str("component", "worker-pool").Logger(),
+		cfg:      cfg,
+		embedder: embedder,
+	}
+}
+
+func (p *Pool) Start(ctx context.Context) {
+	ctx, p.cancel = context.WithCancel(ctx)
+	for i := 0; i < p.cfg.WorkerCount; i++ {
+		p.wg.Add(1)
+		go p.runWorker(ctx, i)
+	}
+	if p.cfg.HealthPollEnabled {
+		p.wg.Add(1)
+		go p.runHeartbeat(ctx)
+	}
+	p.wg.Add(1)
+	go p.runLeaseRecovery(ctx)
+	p.logger.Info().
+		Int("worker_count", p.cfg.WorkerCount).
+		Int("lease_seconds", p.cfg.LeaseSeconds).
+		Dur("poll_interval", p.cfg.PollInterval).
+		Bool("health_poll", p.cfg.HealthPollEnabled).
+		Msg("worker pool started")
+}
+
+func (p *Pool) Stop() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.wg.Wait()
+	p.logger.Info().Msg("worker pool stopped")
+}
+
+func (p *Pool) runWorker(ctx context.Context, id int) {
+	defer p.wg.Done()
+	workerID := fmt.Sprintf("%s-embed-%d", p.cfg.WorkerID, id)
+	log := p.logger.With().Str("worker_id", workerID).Int("worker_index", id).Logger()
+	log.Info().Msg("embedding worker started")
+
+	ticker := time.NewTicker(p.cfg.PollInterval)
 	defer ticker.Stop()
 
-	iteration := 0
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		iteration++
-		result, err := w.RunOnce(ctx)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			w.Logger.Warn().Err(err).Msg("worker drain iteration failed")
-		}
-
-		if iteration%10 == 0 {
-			if released, err := db.ReleaseExpiredLeases(ctx, w.Pool); err == nil && released > 0 {
-				w.Logger.Info().Int32("released", released).Msg("released expired embedding leases")
-			} else if err != nil {
-				w.Logger.Warn().Err(err).Msg("release expired embedding leases failed")
-			}
-		}
-		if w.Config.AlertEnabled && shouldRunAlertSweep(iteration, w.Config.AlertSweepInterval) {
-			w.startAlertSweep(ctx)
-		}
-
-		// Only ticker-sleep when the queue was genuinely drained. Under
-		// sustained load, immediately start the next drain cycle.
-		if shouldPollImmediately(result, err) {
-			w.Logger.Debug().
-				Int("processed", result.Processed).
-				Int("drain_batches", result.DrainBatches).
-				Msg("backlog detected; polling immediately")
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
+			log.Info().Msg("embedding worker shutting down")
+			return
 		case <-ticker.C:
+			p.processBatch(ctx, workerID, log)
 		}
 	}
 }
 
-func (w *Worker) RunOnce(ctx context.Context) (RunOnceResult, error) {
-	started := time.Now()
-	result := RunOnceResult{KindStats: map[string]KindRunStats{}}
-	runStarted := time.Now()
-	_ = db.MarkWorkerState(ctx, w.Pool, db.WorkerStateParams{
-		WorkerName:       w.Config.WorkerName,
-		Status:           "running",
-		LastRunStartedAt: &runStarted,
-	})
-
-	batchWorkers := effectiveBatchWorkerCount(w.Config)
-	batchCh := make(chan []db.EmbeddingJob, batchWorkers)
-	processCh := make(chan processResult, batchWorkers)
-	leaseSummaryCh := make(chan leaseRunSummary, 1)
-	embedSem := semaphore.NewWeighted(int64(effectiveEmbedWorkerCount(w.Config)))
-
-	go func() {
-		leaseSummaryCh <- w.leaseBatches(ctx, batchCh)
-	}()
-
-	var processWG sync.WaitGroup
-	for i := 0; i < batchWorkers; i++ {
-		processWG.Add(1)
-		go func() {
-			defer processWG.Done()
-			for jobs := range batchCh {
-				process := w.processJobs(ctx, jobs, embedSem)
-				if !sendWithContext(ctx, processCh, process) {
-					return
-				}
-			}
-		}()
-	}
-	go func() {
-		processWG.Wait()
-		close(processCh)
-	}()
-
-	var processErr error
-	for process := range processCh {
-		processErr = errors.Join(processErr, process.Err)
-		result.Processed += process.Completed
-		result.PermanentFailures += process.PermanentFailed
-		result.PrepareMS += process.PrepareMS
-		result.EmbedMS += process.EmbedMS
-		result.CompleteMS += process.CompleteMS
-		result.ChunksPrepared += process.ChunksPrepared
-		result.ChunksEmbedded += process.ChunksEmbedded
-		result.ChunksCompleted += process.ChunksCompleted
-		mergeKindStats(result.KindStats, process.KindStats)
-	}
-
-	leaseSummary := <-leaseSummaryCh
-	result.RowsLeased = leaseSummary.RowsLeased
-	result.DrainBatches = leaseSummary.DrainBatches
-	result.DrainedToEmpty = leaseSummary.DrainedToEmpty
-	result.MaxDrainBatchReached = leaseSummary.MaxDrainBatchReached
-	mergeKindStats(result.KindStats, leaseSummary.KindStats)
-
-	finished := time.Now()
-	runErr := errors.Join(leaseSummary.Err, processErr)
-	var lastErr *string
-	if runErr != nil {
-		msg := runErr.Error()
-		lastErr = &msg
-	}
-	timeout := w.Config.WorkerDBCallTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	stateCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	result.DrainMS = time.Since(started).Milliseconds()
-	_ = db.MarkWorkerState(stateCtx, w.Pool, db.WorkerStateParams{
-		WorkerName:        w.Config.WorkerName,
-		Status:            finishedWorkerStatus(runErr),
-		LastRunFinishedAt: &finished,
-		RowsProcessed:     int64(result.Processed),
-		LastRunStartedAt:  nil,
-		LastCursor:        nil,
-		LastError:         lastErr,
-	})
-	if w.Metrics != nil {
-		if depth, err := db.CountWorkerQueueDepth(ctx, w.Pool); err == nil {
-			w.Metrics.SetWorkerQueueDepth(depth)
-		}
-	}
-	w.Logger.Info().
-		Int("processed", result.Processed).
-		Int("permanent_failures", result.PermanentFailures).
-		Int("rows_leased", result.RowsLeased).
-		Int("drain_batches", result.DrainBatches).
-		Bool("drained_to_empty", result.DrainedToEmpty).
-		Bool("max_drain_batch_reached", result.MaxDrainBatchReached).
-		Int64("drain_ms", result.DrainMS).
-		Int64("prepare_ms", result.PrepareMS).
-		Int64("embed_ms", result.EmbedMS).
-		Int64("complete_ms", result.CompleteMS).
-		Int("chunks_prepared", result.ChunksPrepared).
-		Int("chunks_embedded", result.ChunksEmbedded).
-		Int("chunks_completed", result.ChunksCompleted).
-		Interface("kind_stats", result.KindStats).
-		Msg("worker drain cycle finished")
-	return result, runErr
-}
-
-type processResult struct {
-	Completed       int
-	Failed          int
-	PermanentFailed int
-	Err             error
-	PrepareMS       int64
-	EmbedMS         int64
-	CompleteMS      int64
-	ChunksPrepared  int
-	ChunksEmbedded  int
-	ChunksCompleted int
-	KindStats       map[string]KindRunStats
-}
-
-type leaseRunSummary struct {
-	RowsLeased           int
-	DrainBatches         int
-	DrainedToEmpty       bool
-	MaxDrainBatchReached bool
-	KindStats            map[string]KindRunStats
-	Err                  error
-}
-
-type indexedJobChunk struct {
-	Index int
-	Jobs  []db.EmbeddingJob
-}
-
-func (w *Worker) leaseBatches(ctx context.Context, batchCh chan<- []db.EmbeddingJob) leaseRunSummary {
-	defer close(batchCh)
-	summary := leaseRunSummary{KindStats: map[string]KindRunStats{}}
-	for {
-		if reachedMaxDrain(summary.DrainBatches, w.Config.WorkerMaxDrainBatches) {
-			summary.MaxDrainBatchReached = true
-			return summary
-		}
-		callCtx, cancel := context.WithTimeout(ctx, w.Config.WorkerDBCallTimeout)
-		jobs, err := db.LeaseJobs(callCtx, w.Pool, w.Config.WorkerBatchSize, w.Config.WorkerName, w.Config.WorkerLeaseSeconds)
-		cancel()
-		if err != nil {
-			summary.Err = err
-			return summary
-		}
-		summary.DrainBatches++
-		summary.RowsLeased += len(jobs)
-		if len(jobs) == 0 {
-			summary.DrainedToEmpty = true
-			return summary
-		}
-		for _, job := range jobs {
-			stats := summary.KindStats[job.EmbeddingKind]
-			stats.Leased++
-			summary.KindStats[job.EmbeddingKind] = stats
-			if w.Metrics != nil {
-				w.Metrics.WorkerJobsLeased.WithLabelValues(job.EmbeddingKind).Inc()
-			}
-		}
-		if w.Metrics != nil {
-			w.Metrics.WorkerBatchSize.Observe(float64(len(jobs)))
-		}
-		if !sendWithContext(ctx, batchCh, jobs) {
-			summary.Err = ctx.Err()
-			return summary
-		}
-	}
-}
-
-func (w *Worker) processJobs(ctx context.Context, jobs []db.EmbeddingJob, embedSem *semaphore.Weighted) processResult {
-	chunks := makeJobChunks(jobs, effectiveRequestBatchSize(w.Config))
-	result := processResult{KindStats: map[string]KindRunStats{}}
-	if len(chunks) == 0 {
-		return result
-	}
-
-	chunkCh := make(chan indexedJobChunk)
-	prepCh := make(chan PrepareChunkResult, stageWorkerCount(len(chunks), effectivePrepareWorkerCount(w.Config)))
-	embedCh := make(chan EmbeddedChunkResult, stageWorkerCount(len(chunks), effectiveEmbedWorkerCount(w.Config)))
-	completeCh := make(chan CompleteChunkResult, len(chunks))
-
-	var prepWG sync.WaitGroup
-	for i := 0; i < stageWorkerCount(len(chunks), effectivePrepareWorkerCount(w.Config)); i++ {
-		prepWG.Add(1)
-		go func() {
-			defer prepWG.Done()
-			for chunk := range chunkCh {
-				prep := PrepareChunk(ctx, w.Config, w.Pool, chunk.Index, chunk.Jobs)
-				if w.Metrics != nil {
-					w.Metrics.WorkerPrepareLatency.Observe(float64(prep.PrepareMS))
-				}
-				if !sendWithContext(ctx, prepCh, prep) {
-					return
-				}
-			}
-		}()
-	}
-	go func() {
-		defer close(chunkCh)
-		for i, chunk := range chunks {
-			if !sendWithContext(ctx, chunkCh, indexedJobChunk{Index: i, Jobs: chunk}) {
-				return
-			}
-		}
-	}()
-	go func() {
-		prepWG.Wait()
-		close(prepCh)
-	}()
-
-	var embedWG sync.WaitGroup
-	for i := 0; i < stageWorkerCount(len(chunks), effectiveEmbedWorkerCount(w.Config)); i++ {
-		embedWG.Add(1)
-		go func() {
-			defer embedWG.Done()
-			for prep := range prepCh {
-				embedded := EmbedChunk(ctx, w.Config, w.Pool, w.Embedder, embedSem, prep)
-				if w.Metrics != nil {
-					w.Metrics.WorkerEmbedLatency.Observe(float64(embedded.EmbedMS))
-				}
-				if !sendWithContext(ctx, embedCh, embedded) {
-					return
-				}
-			}
-		}()
-	}
-	go func() {
-		embedWG.Wait()
-		close(embedCh)
-	}()
-
-	var completeWG sync.WaitGroup
-	for i := 0; i < stageWorkerCount(len(chunks), effectiveCompleteWorkerCount(w.Config)); i++ {
-		completeWG.Add(1)
-		go func() {
-			defer completeWG.Done()
-			for embedded := range embedCh {
-				complete := CompleteChunk(ctx, w.Config, w.Pool, embedded)
-				if w.Metrics != nil {
-					w.Metrics.WorkerCompleteLatency.Observe(float64(complete.CompleteMS))
-				}
-				if !sendWithContext(ctx, completeCh, complete) {
-					return
-				}
-			}
-		}()
-	}
-	go func() {
-		completeWG.Wait()
-		close(completeCh)
-	}()
-
-	for complete := range completeCh {
-		result.Err = errors.Join(result.Err, complete.Err)
-		result.Completed += complete.Succeeded
-		result.Failed += complete.Failed
-		result.PermanentFailed += complete.PermanentFailed
-		result.PrepareMS += complete.PrepareMS
-		result.EmbedMS += complete.EmbedMS
-		result.CompleteMS += complete.CompleteMS
-		result.ChunksPrepared++
-		result.ChunksEmbedded++
-		result.ChunksCompleted++
-		for kind, count := range complete.SucceededByKind {
-			stats := result.KindStats[kind]
-			stats.Completed += count
-			result.KindStats[kind] = stats
-			if w.Metrics != nil {
-				w.Metrics.WorkerJobsCompleted.WithLabelValues(kind).Add(float64(count))
-			}
-		}
-		for kind, count := range complete.FailedByKind {
-			stats := result.KindStats[kind]
-			stats.Failed += count
-			result.KindStats[kind] = stats
-			if w.Metrics != nil {
-				w.Metrics.WorkerJobsFailed.WithLabelValues(kind, "complete").Add(float64(count))
-			}
-		}
-		for kind, count := range complete.PermanentFailedByKind {
-			stats := result.KindStats[kind]
-			stats.PermanentFailed += count
-			result.KindStats[kind] = stats
-			if w.Metrics != nil {
-				w.Metrics.WorkerJobsPermanent.WithLabelValues(kind).Add(float64(count))
-			}
-		}
-	}
-	return result
-}
-
-func (w *Worker) startAlertSweep(ctx context.Context) {
-	if w.AlertPool == nil {
-		return
-	}
-	acquired, err := db.TryBeginAlertSweep(ctx, w.AlertPool)
+func (p *Pool) processBatch(ctx context.Context, workerID string, logger zerolog.Logger) {
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		w.Logger.Warn().Err(err).Msg("alert sweep lock failed")
+		logger.Error().Err(err).Msg("failed to begin transaction")
 		return
 	}
-	if !acquired {
-		return
-	}
-	go func() {
-		defer func() {
-			if err := db.FinishAlertSweep(context.Background(), w.AlertPool); err != nil {
-				w.Logger.Warn().Err(err).Msg("alert sweep unlock failed")
-			}
-		}()
-		scorer, err := seqscore.Load(ctx, w.AlertPool)
-		if err != nil {
-			w.Logger.Warn().Err(err).Msg("sequence scorer unavailable for alert sweep")
-			scorer = seqscore.Empty()
-		}
-		cfg := alerts.ConfigFromSearchConfig(w.Config)
-		if err := alerts.RunSweepWithMetrics(ctx, w.AlertPool, scorer, cfg, w.Logger, w.Metrics); err != nil {
-			w.Logger.Warn().Err(err).Msg("alert sweep failed")
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			logger.Error().Err(err).Msg("failed to rollback transaction")
 		}
 	}()
-}
 
-func makeJobChunks(jobs []db.EmbeddingJob, size int) [][]db.EmbeddingJob {
-	if size < 1 {
-		size = 1
+	leaseDeadline := time.Now().Add(time.Duration(p.cfg.LeaseSeconds) * time.Second)
+
+	jobs, err := claimJobs(ctx, tx, workerID, p.cfg.BatchSize, leaseDeadline)
+	if err != nil {
+		logger.Error().Err(err).Msg("failed to claim jobs")
+		return
 	}
 	if len(jobs) == 0 {
-		return nil
-	}
-	firstKind := jobs[0].EmbeddingKind
-	sameKind := true
-	for _, job := range jobs[1:] {
-		if job.EmbeddingKind != firstKind {
-			sameKind = false
-			break
+		if err := tx.Commit(); err != nil {
+			logger.Error().Err(err).Msg("failed to commit empty claim transaction")
 		}
+		return
 	}
-	if sameKind {
-		return splitJobGroup(jobs, size)
+	if err := tx.Commit(); err != nil {
+		logger.Error().Err(err).Msg("failed to commit job claims")
+		return
 	}
 
-	byKind := map[string][]db.EmbeddingJob{}
-	kinds := []string{}
-	for _, job := range jobs {
-		if _, ok := byKind[job.EmbeddingKind]; !ok {
-			kinds = append(kinds, job.EmbeddingKind)
+	logger.Info().Int("claimed", len(jobs)).Msg("jobs claimed")
+	renewCtx, cancelRenewal := context.WithCancel(ctx)
+	defer cancelRenewal()
+	go p.renewLeases(renewCtx, jobs, logger)
+
+	completed := 0
+	for kind, kindJobs := range groupJobsByKind(jobs) {
+		texts := make([]string, len(kindJobs))
+		for i := range kindJobs {
+			texts[i] = kindJobs[i].NormalizedText
 		}
-		byKind[job.EmbeddingKind] = append(byKind[job.EmbeddingKind], job)
-	}
-	chunks := [][]db.EmbeddingJob{}
-	for _, kind := range kinds {
-		group := byKind[kind]
-		for len(group) > 0 {
-			n := size
-			if len(group) < n {
-				n = len(group)
+		vectors, embedErr := p.embedder.Embed(ctx, texts, kind)
+		if embedErr != nil {
+			logger.Error().Err(embedErr).Int("job_count", len(kindJobs)).Str("kind", kind).Msg("embedding batch failed")
+			for _, job := range kindJobs {
+				p.failClaimedJob(ctx, job, embedErr, logger)
 			}
-			chunks = append(chunks, group[:n])
-			group = group[n:]
+			continue
+		}
+		if len(vectors) != len(kindJobs) {
+			mismatch := fmt.Errorf("embedding count mismatch: expected %d, got %d", len(kindJobs), len(vectors))
+			for _, job := range kindJobs {
+				p.failClaimedJob(ctx, job, mismatch, logger)
+			}
+			continue
+		}
+		for i, job := range kindJobs {
+			if err := p.storeCompletion(ctx, job, vectors[i]); err != nil {
+				logger.Error().Err(err).Str("job_id", job.JobID).Msg("embedding completion failed")
+				p.failClaimedJob(ctx, job, err, logger)
+				continue
+			}
+			completed++
 		}
 	}
-	return chunks
+
+	logger.Info().Int("completed", completed).Int("claimed", len(jobs)).Msg("embedding batch completed")
 }
 
-func splitJobGroup(group []db.EmbeddingJob, size int) [][]db.EmbeddingJob {
-	chunks := [][]db.EmbeddingJob{}
-	for len(group) > 0 {
-		n := size
-		if len(group) < n {
-			n = len(group)
+func groupJobsByKind(jobs []Job) map[string][]Job {
+	grouped := make(map[string][]Job)
+	for _, job := range jobs {
+		grouped[job.EmbeddingKind] = append(grouped[job.EmbeddingKind], job)
+	}
+	return grouped
+}
+
+func (p *Pool) storeCompletion(ctx context.Context, job Job, vector []float32) error {
+	table, err := vectorTableForKind(job.EmbeddingKind)
+	if err != nil {
+		return err
+	}
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := insertVector(ctx, tx, table, job.DocumentID, job.EmbeddingModel, job.ContentSHA256, vector); err != nil {
+		return err
+	}
+	if err := completeJob(ctx, tx, job.JobID, job.LeaseToken, job.LeaseFence); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (p *Pool) failClaimedJob(ctx context.Context, job Job, cause error, logger zerolog.Logger) {
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to begin job failure transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := failJob(ctx, tx, job.JobID, job.LeaseToken, job.LeaseFence, cause.Error()); err != nil {
+		logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to persist embedding failure")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		logger.Error().Err(err).Str("job_id", job.JobID).Msg("failed to commit embedding failure")
+	}
+}
+
+func (p *Pool) renewLeases(ctx context.Context, jobs []Job, logger zerolog.Logger) {
+	interval := time.Duration(p.cfg.LeaseSeconds) * time.Second / 3
+	if interval < time.Second {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			expiresAt := time.Now().Add(time.Duration(p.cfg.LeaseSeconds) * time.Second)
+			for _, job := range jobs {
+				renewed, err := renewJobLease(ctx, p.db, job, expiresAt)
+				if err != nil {
+					logger.Error().Err(err).Str("job_id", job.JobID).Msg("embedding lease renewal failed")
+				} else if !renewed {
+					logger.Warn().Str("job_id", job.JobID).Msg("embedding lease no longer owned")
+				}
+			}
 		}
-		chunks = append(chunks, group[:n])
-		group = group[n:]
-	}
-	return chunks
-}
-
-func effectiveRequestBatchSize(cfg config.Config) int {
-	size := cfg.WorkerRequestBatchSize
-	if size <= 0 {
-		size = cfg.WorkerBatchSize
-	}
-	if cfg.WorkerRequestBatchMax > 0 && size > cfg.WorkerRequestBatchMax {
-		size = cfg.WorkerRequestBatchMax
-	}
-	if size <= 0 {
-		size = 1
-	}
-	return size
-}
-
-func effectivePrepareWorkerCount(cfg config.Config) int {
-	return maxInt(cfg.WorkerMaxConcurrentEmbed, 1)
-}
-
-func effectiveEmbedWorkerCount(cfg config.Config) int {
-	return maxInt(cfg.WorkerMaxConcurrentEmbed, 1)
-}
-
-func effectiveCompleteWorkerCount(cfg config.Config) int {
-	return maxInt(cfg.WorkerMaxConcurrentComplete, 1)
-}
-
-func effectiveBatchWorkerCount(cfg config.Config) int {
-	return maxInt(cfg.WorkerMaxConcurrentEmbed, 1)
-}
-
-func stageWorkerCount(workItems, configured int) int {
-	if workItems <= 0 {
-		return 0
-	}
-	if configured < 1 {
-		configured = 1
-	}
-	if configured > workItems {
-		return workItems
-	}
-	return configured
-}
-
-func sendWithContext[T any](ctx context.Context, ch chan<- T, value T) bool {
-	select {
-	case ch <- value:
-		return true
-	case <-ctx.Done():
-		return false
 	}
 }
 
-func reachedMaxDrain(completedBatches, maxBatches int) bool {
-	return maxBatches > 0 && completedBatches >= maxBatches
-}
-
-func shouldPollImmediately(result RunOnceResult, err error) bool {
-	return err == nil && !result.DrainedToEmpty
-}
-
-func shouldRunAlertSweep(iteration, interval int) bool {
-	if interval <= 0 {
-		interval = 10
+func (p *Pool) runLeaseRecovery(ctx context.Context) {
+	defer p.wg.Done()
+	interval := p.cfg.PollInterval * 10
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
 	}
-	return iteration > 0 && iteration%interval == 0
-}
-
-func finishedWorkerStatus(err error) string {
-	if err == nil || errors.Is(err, context.Canceled) {
-		return "idle"
-	}
-	return "failed"
-}
-
-func mergeKindStats(dst map[string]KindRunStats, src map[string]KindRunStats) {
-	for kind, item := range src {
-		stats := dst[kind]
-		stats.Leased += item.Leased
-		stats.Completed += item.Completed
-		stats.Failed += item.Failed
-		stats.PermanentFailed += item.PermanentFailed
-		dst[kind] = stats
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			recovered, err := recoverExpiredLeases(ctx, p.db, p.cfg.BatchSize)
+			if err != nil {
+				p.logger.Error().Err(err).Msg("embedding lease recovery failed")
+			} else if recovered > 0 {
+				p.logger.Info().Int64("recovered", recovered).Msg("expired embedding leases recovered")
+			}
+		}
 	}
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
+func (p *Pool) runHeartbeat(ctx context.Context) {
+	defer p.wg.Done()
+	workerID := p.cfg.WorkerID
+	log := p.logger.With().Str("worker_id", workerID).Logger()
+	log.Info().Msg("heartbeat goroutine started")
+
+	interval := p.cfg.PollInterval * 10
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
 	}
-	return b
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Msg("heartbeat goroutine shutting down")
+			return
+		case <-ticker.C:
+			if err := upsertHeartbeat(ctx, p.db, workerID, "pool", nil); err != nil && ctx.Err() == nil {
+				log.Error().Err(err).Msg("heartbeat update failed")
+			}
+		}
+	}
 }

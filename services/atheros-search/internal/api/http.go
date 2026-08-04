@@ -14,14 +14,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/auth"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/health"
 	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/search"
+	"github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/worker"
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
@@ -71,12 +74,16 @@ func corsMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 	})
 }
 
-func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *search.Service, readiness *health.Readiness, tokenAuth *auth.TokenAuth, logger zerolog.Logger) (*http.Server, error) {
+type HealthMonitor interface {
+	Snapshot(ctx context.Context) (worker.ETLHealth, error)
+}
+
+func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *search.Service, readiness *health.Readiness, tokenAuth *auth.TokenAuth, healthMonitor HealthMonitor, wsEnabled bool, logger zerolog.Logger) (*http.Server, error) {
 	mux := runtime.NewServeMux()
 	registerJSON(mux, "POST", "/v1/search", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/search").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/search").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("search request started")
 
 		body, ok := readRequestBody(w, r)
@@ -123,7 +130,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/search/stream", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/search/stream").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/search/stream").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("search stream request started")
 
 		body, ok := readRequestBody(w, r)
@@ -192,7 +199,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "GET", "/v1/explain/{source_key}", tokenAuth, func(w http.ResponseWriter, r *http.Request, params map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/explain").Str("method", "GET").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/explain").Str("method", "GET").Str("req_id", reqID).Logger(), r.Context())
 
 		sourceKey := params["source_key"]
 		query := r.URL.Query().Get("query")
@@ -228,13 +235,13 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		start := time.Now()
 		reqID := requestID()
 		prefix := r.URL.Query().Get("prefix")
-		log := logger.With().
+		log := loggerWithTrace(logger.With().
 			Str("endpoint", "/v1/suggest/filters").
 			Str("method", "GET").
 			Str("req_id", reqID).
 			Bool("has_prefix", strings.TrimSpace(prefix) != "").
 			Str("prefix_hash", shortHash(prefix)).
-			Logger()
+			Logger(), r.Context())
 		log.Info().Msg("suggest filters request started")
 
 		resp, err := svc.SuggestFilters(r.Context(), &searchv1.SuggestFiltersRequest{Prefix: prefix})
@@ -255,7 +262,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/graph", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/graph").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/graph").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("graph request started")
 
 		body, ok := readRequestBody(w, r)
@@ -309,7 +316,7 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 	registerJSON(mux, "POST", "/v1/inventory", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
 		start := time.Now()
 		reqID := requestID()
-		log := logger.With().Str("endpoint", "/v1/inventory").Str("method", "POST").Str("req_id", reqID).Logger()
+		log := loggerWithTrace(logger.With().Str("endpoint", "/v1/inventory").Str("method", "POST").Str("req_id", reqID).Logger(), r.Context())
 		log.Info().Msg("inventory request started")
 
 		body, ok := readRequestBody(w, r)
@@ -352,12 +359,12 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		start := time.Now()
 		reqID := requestID()
 		candidateID := params["candidate_id"]
-		log := logger.With().
+		log := loggerWithTrace(logger.With().
 			Str("endpoint", "/v1/inventory/merge-candidates/:id/decision").
 			Str("method", "POST").
 			Str("req_id", reqID).
 			Str("candidate_hash", shortHash(candidateID)).
-			Logger()
+			Logger(), r.Context())
 		log.Info().Msg("merge decision request started")
 
 		body, ok := readRequestBody(w, r)
@@ -397,6 +404,169 @@ func StartHTTP(ctx context.Context, port int, allowedOrigins []string, svc *sear
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
+
+	if healthMonitor != nil {
+		registerJSON(mux, "GET", "/v1/etl/health", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+			start := time.Now()
+			log := loggerWithTrace(logger.With().Str("endpoint", "/v1/etl/health").Str("method", "GET").Logger(), r.Context())
+			log.Info().Msg("etl health request started")
+
+			snapshot, err := healthMonitor.Snapshot(r.Context())
+			if err != nil {
+				log.Error().Err(err).Dur("latency", time.Since(start)).Msg("etl health failed")
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			log.Info().
+				Dur("latency", time.Since(start)).
+				Int64("embedding_pending", snapshot.EmbeddingPending).
+				Int64("embedding_completed", snapshot.EmbeddingCompleted).
+				Int64("batch_pending", snapshot.BatchPending).
+				Int("workers", len(snapshot.Workers)).
+				Msg("etl health completed")
+			writeJSON(w, http.StatusOK, snapshot)
+		})
+
+		registerJSON(mux, "GET", "/v1/etl/embedding/jobs", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+			start := time.Now()
+			log := loggerWithTrace(logger.With().Str("endpoint", "/v1/etl/embedding/jobs").Str("method", "GET").Logger(), r.Context())
+			log.Info().Msg("etl embedding jobs request started")
+
+			snapshot, err := healthMonitor.Snapshot(r.Context())
+			if err != nil {
+				log.Error().Err(err).Dur("latency", time.Since(start)).Msg("etl embedding jobs failed")
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			result := map[string]int64{
+				"pending":   snapshot.EmbeddingPending,
+				"leased":    snapshot.EmbeddingLeased,
+				"completed": snapshot.EmbeddingCompleted,
+				"failed":    snapshot.EmbeddingFailed,
+			}
+			log.Info().
+				Dur("latency", time.Since(start)).
+				Int64("pending", snapshot.EmbeddingPending).
+				Int64("failed", snapshot.EmbeddingFailed).
+				Msg("etl embedding jobs completed")
+			writeJSON(w, http.StatusOK, result)
+		})
+
+		registerJSON(mux, "GET", "/v1/etl/workers", tokenAuth, func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+			start := time.Now()
+			log := loggerWithTrace(logger.With().Str("endpoint", "/v1/etl/workers").Str("method", "GET").Logger(), r.Context())
+			log.Info().Msg("etl workers request started")
+
+			snapshot, err := healthMonitor.Snapshot(r.Context())
+			if err != nil {
+				log.Error().Err(err).Dur("latency", time.Since(start)).Msg("etl workers failed")
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			log.Info().
+				Dur("latency", time.Since(start)).
+				Int("worker_count", len(snapshot.Workers)).
+				Msg("etl workers completed")
+			writeJSON(w, http.StatusOK, map[string]any{"workers": snapshot.Workers})
+		})
+
+		if wsEnabled {
+			upgrader := websocket.Upgrader{
+				ReadBufferSize:  1024,
+				WriteBufferSize: 1024,
+				CheckOrigin: func(r *http.Request) bool {
+					if len(allowedOrigins) == 0 {
+						return true
+					}
+					origin := r.Header.Get("Origin")
+					for _, o := range allowedOrigins {
+						if o == origin {
+							return true
+						}
+					}
+					return false
+				},
+			}
+
+			mux.HandlePath("GET", "/v1/etl/stream", func(w http.ResponseWriter, r *http.Request, _ map[string]string) {
+				if tokenAuth != nil && tokenAuth.Enabled() && !tokenAuth.VerifyAuthorization(r.Header.Get("Authorization")) {
+					writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+					return
+				}
+				start := time.Now()
+				log := loggerWithTrace(logger.With().Str("endpoint", "/v1/etl/stream").Str("method", "GET").Logger(), r.Context())
+				log.Info().Msg("etl stream request started")
+
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					log.Error().Err(err).Msg("websocket upgrade failed")
+					return
+				}
+				defer conn.Close()
+
+				log.Info().Dur("latency", time.Since(start)).Msg("etl stream connected")
+
+				done := make(chan struct{})
+				defer close(done)
+
+				conn.SetPongHandler(func(string) error {
+					conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+					return nil
+				})
+
+				go func() {
+					defer func() {
+						select {
+						case <-done:
+						default:
+							conn.Close()
+						}
+					}()
+					for {
+						_, _, err := conn.ReadMessage()
+						if err != nil {
+							return
+						}
+					}
+				}()
+
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+
+				pingTicker := time.NewTicker(30 * time.Second)
+				defer pingTicker.Stop()
+
+				for {
+					select {
+					case <-r.Context().Done():
+						log.Info().Msg("etl stream client disconnected")
+						conn.WriteMessage(websocket.CloseMessage,
+							websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+						return
+					case <-ticker.C:
+						snapshot, err := healthMonitor.Snapshot(r.Context())
+						if err != nil {
+							log.Error().Err(err).Msg("etl stream snapshot failed")
+							continue
+						}
+						data, err := json.Marshal(snapshot)
+						if err != nil {
+							continue
+						}
+						if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+							log.Info().Err(err).Msg("etl stream write failed")
+							return
+						}
+					case <-pingTicker.C:
+						if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+							log.Info().Err(err).Msg("etl stream ping failed")
+							return
+						}
+					}
+				}
+			})
+		}
+	}
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
@@ -493,4 +663,18 @@ func requestID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+func loggerWithTrace(logger zerolog.Logger, ctx context.Context) zerolog.Logger {
+	span := trace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		sc := span.SpanContext()
+		if sc.HasTraceID() {
+			logger = logger.With().Str("trace_id", sc.TraceID().String()).Logger()
+		}
+		if sc.HasSpanID() {
+			logger = logger.With().Str("span_id", sc.SpanID().String()).Logger()
+		}
+	}
+	return logger
 }

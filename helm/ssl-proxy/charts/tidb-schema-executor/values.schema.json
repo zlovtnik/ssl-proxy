@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["enabled", "image", "ownerSecret"],
+  "properties": {
+    "enabled": {"type": "boolean"},
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "minLength": 1},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "ownerSecret": {
+      "type": "object",
+      "required": ["name", "dsnKey"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "dsnKey": {"type": "string", "minLength": 1}
+      }
+    },
+    "applyPostTiFlash": {"type": "boolean"},
+    "backoffLimit": {"type": "integer", "minimum": 0},
+    "activeDeadlineSeconds": {"type": "integer", "minimum": 1},
+    "resources": {"type": "object"}
+  }
+}

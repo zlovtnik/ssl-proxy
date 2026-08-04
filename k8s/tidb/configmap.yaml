@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-tidb-config
+  namespace: default
+data:
+  tidb.toml: |
+    [log]
+    level = "info"
+
+    [performance]
+    max-procs = 0
+
+    [tikv-client.copr-cache]
+    capacity-mb = 128
+
+    [security]
+    ssl-cert = "/etc/tidb-tls-server/tls.crt"
+    ssl-key = "/etc/tidb-tls-server/tls.key"

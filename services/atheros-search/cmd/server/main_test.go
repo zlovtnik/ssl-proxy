@@ -13,7 +13,7 @@ import (
 
 func TestRunHealthcheckUsesConfiguredHTTPPort(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/healthz", r.URL.Path)
+		require.Equal(t, "/readyz", r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

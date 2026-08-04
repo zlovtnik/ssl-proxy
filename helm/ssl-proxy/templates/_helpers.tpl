@@ -41,7 +41,7 @@ Selector labels
 */}}
 {{- define "ssl-proxy.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "ssl-proxy.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/instance: {{ default .Release.Name .Values.global.instanceOverride }}
 {{- end }}
 
 {{/*
@@ -49,13 +49,6 @@ Redpanda bootstrap servers connection string
 */}}
 {{- define "ssl-proxy.redpandaBootstrapServers" -}}
 {{- .Values.global.shared.redpanda.bootstrapServers }}
-{{- end }}
-
-{{/*
-Postgres connection URL
-*/}}
-{{- define "ssl-proxy.postgresUrl" -}}
-jdbc:postgresql://{{ .Values.global.shared.postgres.host }}:{{ .Values.global.shared.postgres.port }}/{{ .Values.global.shared.postgres.database }}
 {{- end }}
 
 {{/*

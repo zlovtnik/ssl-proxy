@@ -14,6 +14,7 @@ from sslproxy_ops.commands import (
     smoke,
     up_ready,
 )
+from sslproxy_ops.stack import core as stack
 
 app = typer.Typer(no_args_is_help=True, help="ssl-proxy host operations CLI.")
 app.add_typer(memo.app, name="memo")
@@ -25,6 +26,20 @@ app.add_typer(bench.app, name="bench")
 app.add_typer(smoke.app, name="smoke")
 app.add_typer(schema_migrator.app, name="schema-migrator")
 app.add_typer(host.app, name="host")
+
+
+@app.command(
+    "stack",
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        "help_option_names": [],
+    },
+)
+def stack_command(ctx: typer.Context) -> None:
+    """Plan, validate, deploy, inspect, and cut over split Helm releases."""
+
+    raise typer.Exit(stack.main(list(ctx.args)))
 
 
 @app.command("secrets", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

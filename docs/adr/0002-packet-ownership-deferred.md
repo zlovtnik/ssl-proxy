@@ -1,7 +1,11 @@
 # ADR-0002: Defer Embedded Packet Ownership During Cutover Core
 
 ## Status
-Accepted
+Superseded.
+
+This cutover-era decision is retained for provenance. Use
+[System Architecture](../architecture.md) for the implemented proxy,
+Redpanda, Octopus and TiDB boundaries.
 
 ## Context
 

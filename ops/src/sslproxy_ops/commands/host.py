@@ -37,6 +37,17 @@ def containerd_registry_hosts_toml(registry: str, *, plain_http: bool) -> str:
     )
 
 
+def k3s_registries_yaml(registry: str, *, plain_http: bool) -> str:
+    scheme = "http" if plain_http else "https"
+    endpoint = f"{scheme}://{registry}"
+    return (
+        f'mirrors:\n'
+        f'  "{registry}":\n'
+        f'    endpoint:\n'
+        f'      - "{endpoint}"\n'
+    )
+
+
 def containerd_config_version(config_text: str) -> int | None:
     try:
         config = tomllib.loads(config_text)
@@ -109,7 +120,7 @@ def configure_containerd_registry(
     probe_image: Annotated[
         str,
         typer.Option("--probe-image", help="Repository:tag to pull with crictl after restart."),
-    ] = "redis:7-alpine",
+    ] = "busybox:1.37.0",
 ) -> None:
     """Configure containerd CRI pulls from the canonical local registry."""
     if os.geteuid() != 0:
@@ -177,14 +188,33 @@ def configure_containerd_registry(
         or changed
     )
 
+    k3s_active = (
+        shell.run(["systemctl", "is-active", "--quiet", "k3s"], check=False).returncode == 0
+    )
+    k3s_changed = False
+    if k3s_active:
+        registries_path = Path("/etc/rancher/k3s/registries.yaml")
+        k3s_changed = write_host_config(
+            registries_path,
+            k3s_registries_yaml(authority, plain_http=plain_http),
+        )
+        changed = changed or k3s_changed
+
     if changed:
         shell.run(["systemctl", "restart", "containerd"])
     shell.run(["systemctl", "is-active", "--quiet", "containerd"])
+
+    if k3s_active:
+        if k3s_changed:
+            shell.run(["systemctl", "restart", "k3s"])
+        shell.run(["systemctl", "is-active", "--quiet", "k3s"])
+
     if probe_image:
         shell.run(["crictl", "pull", f"{authority}/{probe_image}"])
     typer.echo(
         f"containerd registry ready: {authority} "
         f"({'plain HTTP' if plain_http else 'TLS'})"
+        f"{' (K3s configured)' if k3s_active else ''}"
     )
 
 
@@ -197,7 +227,7 @@ def shellcheck_tier_b() -> None:
         ],
         "sh": [
             repo_root() / "docker" / "redpanda" / "bootstrap.sh",
-            repo_root() / "services" / "zig-coordinator" / "setup-wireless-redpanda.sh",
+            repo_root() / "services" / "octopus" / "setup-wireless-redpanda.sh",
         ],
     }
     failed = False

@@ -1,0 +1,59 @@
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  image:
+    registry: ""
+    pullPolicy: Always
+  rolloutRevision: ""
+  labels: {}
+  annotations: {}
+  serviceAccount:
+    create: true
+    name: "ssl-proxy"
+    annotations: {}
+  podSecurityContext: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+external: true
+minimumVersion: "8.5.0"
+egress:
+  enabled: true
+  cidrs: []
+
+# In-cluster TiDB deployment (active when external=false).
+image:
+  repository: pingcap/tidb
+  tag: v8.5.7
+  pullPolicy: Always
+replicas: 1
+resources:
+  requests:
+    cpu: 500m
+    memory: 8Gi
+  limits:
+    cpu: "2"
+    memory: 8Gi
+memoryTuning:
+  statsCacheQuotaBytes: 536870912
+  schemaCacheSizeBytes: 268435456
+  coprocessorCacheCapacityMB: 128
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+service:
+  type: ClusterIP
+  hostPort: 4000
+metricsPort: 10080
+initJob:
+  image:
+    repository: tidb-runtime-schema
+    tag: latest
+    pullPolicy: Always
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+# Set dynamically by ops up-ready to force StatefulSet rollout on TLS rotation.
+tlsCertChecksum: ""

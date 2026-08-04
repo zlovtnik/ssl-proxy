@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["enabled", "image", "credentialsSecret"],
+  "properties": {
+    "enabled": {"type": "boolean"},
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "minLength": 1},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "credentialsSecret": {
+      "type": "object",
+      "required": ["name", "passwordKey"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "passwordKey": {"type": "string", "minLength": 1}
+      }
+    },
+    "resources": {"type": "object"}
+  }
+}

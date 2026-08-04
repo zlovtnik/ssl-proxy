@@ -103,11 +103,19 @@ impl AppState {
         let mut queue = self.dashboard_event_queue.lock().unwrap();
         if queue.len() >= DASHBOARD_EVENT_QUEUE_CAPACITY {
             if let Some(dropped) = queue.pop_front() {
-                warn!(
-                    dropped_event_name = %dropped.event_name,
-                    dropped_host = %dropped.host,
-                    "dashboard event retry queue full; dropping oldest queued event"
-                );
+                if self.events_tx.receiver_count() > 0 {
+                    warn!(
+                        dropped_event_name = %dropped.event_name,
+                        dropped_host = %dropped.host,
+                        "dashboard event retry queue full; dropping oldest queued event"
+                    );
+                } else {
+                    debug!(
+                        dropped_event_name = %dropped.event_name,
+                        dropped_host = %dropped.host,
+                        "dashboard event retry queue full with no active subscribers; dropping oldest"
+                    );
+                }
             }
         }
 
@@ -118,11 +126,11 @@ impl AppState {
             attempt_count: 0,
         });
 
-        warn!(
+        debug!(
             event_name = event_name,
             %host,
             queue_len = queue.len(),
-            "dashboard event broadcast failed; queued for retry"
+            "dashboard has no active subscriber; event queued for retry"
         );
     }
 
@@ -140,11 +148,11 @@ impl AppState {
 
             event.attempt_count = event.attempt_count.saturating_add(1);
             if event.attempt_count >= DASHBOARD_EVENT_MAX_RETRY_ATTEMPTS {
-                error!(
+                debug!(
                     event_name = %event.event_name,
                     host = %event.host,
                     attempt_count = event.attempt_count,
-                    "dashboard event delivery failed after retry limit; event dropped"
+                    "dashboard event retry limit reached with no active subscriber; event dropped"
                 );
             } else {
                 remaining.push_back(event);

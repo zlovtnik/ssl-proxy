@@ -292,7 +292,7 @@
       "id": 9,
       "targets": [
         {
-          "expr": "up{job=~\"node-exporter|cadvisor|postgres-exporter|redis-exporter|redpanda|minio\"}",
+          "expr": "up{job=~\"node-exporter|cadvisor|redpanda|minio\"}",
           "legendFormat": "{{job}} {{instance}}",
           "refId": "A"
         }

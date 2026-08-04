@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssl-proxy.invalid/contracts/cutover/cutover.schema.json",
+  "title": "Fresh TiDB cutover offsets",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "cluster_id", "captured_at", "group_version", "partitions"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "cutover"},
+    "cluster_id": {"type": "string", "minLength": 1},
+    "captured_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "group_version": {"type": "string", "minLength": 1},
+    "partitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/partition"}
+    }
+  },
+  "$defs": {
+    "partition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group_id", "topic", "partition", "next_offset"],
+      "properties": {
+        "group_id": {"type": "string", "minLength": 1},
+        "topic": {"type": "string", "minLength": 1},
+        "partition": {"type": "integer", "minimum": 0},
+        "next_offset": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

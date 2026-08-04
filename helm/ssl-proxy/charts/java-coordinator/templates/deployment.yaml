@@ -1,24 +1,29 @@
 {{- if .Values.enabled }}
+{{- if and .Values.tidb.enabled (ne .Values.tidb.sslMode "VERIFY_IDENTITY") -}}
+{{- fail "tidb.sslMode must be VERIFY_IDENTITY when tidb is enabled" -}}
+{{- end -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-coordinator
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "javaCoordinator") }}-coordinator
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.javaCoordinator.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "java-coordinator") | nindent 4 }}
     app.kubernetes.io/component: java-coordinator
 spec:
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
-      {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "java-coordinator") | nindent 6 }}
       app.kubernetes.io/component: java-coordinator
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.javaCoordinator.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "java-coordinator") | nindent 8 }}
         app.kubernetes.io/component: java-coordinator
+        app.kubernetes.io/name-alias: octopus
+        ssl-proxy.io/tidb-client: "true"
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
         {{- with .Values.global.rolloutRevision }}
@@ -29,7 +34,7 @@ spec:
         {{- end }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.javaCoordinator.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "java-coordinator") }}
       automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
@@ -37,74 +42,70 @@ spec:
       {{- end }}
       containers:
         - name: java-coordinator
-          image: {{ include "ssl-proxy.javaCoordinator.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            # Postgres
-            - name: DATABASE_URL
-              value: {{ include "ssl-proxy.javaCoordinator.postgresUrl" . }}
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.global.shared.postgres.passwordSecret.name }}
-                  key: {{ .Values.global.shared.postgres.passwordSecret.key }}
-            - name: POSTGRES_USER
-              value: {{ .Values.global.shared.postgres.user | quote }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .Values.jvmOptions | quote }}
-            - name: COORDINATOR_DB_POOL
-              value: {{ .Values.datasource.maximumPoolSize | quote }}
-            - name: COORDINATOR_DB_POOL_MIN_IDLE
-              value: {{ .Values.datasource.minimumIdle | quote }}
             # Redpanda
             - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
             - name: SYNC_REDPANDA_TOPIC_MANIFEST
               value: "/app/docker/redpanda/topics.manifest"
+            - name: SYNC_REDPANDA_TOPIC_PARTITIONS
+              value: {{ .Values.global.shared.javaCoordinator.topicPartitions | quote }}
+            - name: COORDINATOR_SCAN_FETCH_COUNT
+              value: {{ .Values.consumerBatch.maxPollRecords | quote }}
+            - name: COORDINATOR_POLL_TIMEOUT_MS
+              value: {{ .Values.consumerBatch.pollTimeoutMs | quote }}
+            - name: COORDINATOR_LOCKED_BATCH_SIZE
+              value: {{ .Values.consumerBatch.size | quote }}
+            - name: COORDINATOR_LOCKED_BATCH_WINDOW_MS
+              value: {{ .Values.consumerBatch.windowMs | quote }}
             # Topics
             - name: SYNC_SCAN_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_SCAN_TOPIC
             - name: SYNC_LOAD_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_LOAD_TOPIC
             - name: SYNC_RESULT_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_RESULT_TOPIC
             - name: SYNC_PAYLOAD_AUDIT_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_PAYLOAD_AUDIT_TOPIC
             # Consumer groups
             - name: SYNC_SCAN_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_SCAN_CONSUMER
             - name: SYNC_LOAD_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_LOAD_CONSUMER
             - name: SYNC_RESULT_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_RESULT_CONSUMER
             - name: SYNC_PAYLOAD_AUDIT_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_PAYLOAD_AUDIT_CONSUMER
             - name: SYNC_SCAN_CONSUMERS_COUNT
               value: {{ .Values.consumerConcurrency.scan | quote }}
@@ -118,6 +119,8 @@ spec:
               value: {{ .Values.retention.wirelessRawPayloadHotDays | quote }}
             - name: SYNC_EVENT_ROW_RETENTION_DAYS
               value: {{ .Values.retention.syncEventRowRetentionDays | quote }}
+            - name: SEARCH_RETENTION_DAYS
+              value: {{ .Values.retention.searchRetentionDays | quote }}
             - name: SYNC_EVENT_TOMBSTONE_RETENTION_DAYS
               value: {{ .Values.retention.syncEventTombstoneRetentionDays | quote }}
             - name: WIRELESS_RAW_ARCHIVE_BUCKET
@@ -128,6 +131,8 @@ spec:
               value: {{ .Values.retention.wirelessRawArchiveIntervalMs | quote }}
             - name: RETENTION_MAINTENANCE_INTERVAL_MS
               value: {{ .Values.retention.maintenanceIntervalMs | quote }}
+            - name: OCTOPUS_ARCHIVE_ENABLED
+              value: {{ .Values.retention.archiveEnabled | quote }}
             - name: MINIO_ENDPOINT
               value: {{ .Values.global.shared.minio.endpoint | quote }}
             - name: MINIO_ACCESS_KEY_ID
@@ -146,136 +151,136 @@ spec:
             - name: SYNC_STREAM_NAMES
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_STREAM_NAMES
-            - name: SYNC_ORACLE_STREAM_NAMES
+            - name: COORDINATOR_LOAD_STREAM_NAMES
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
-                  key: SYNC_ORACLE_STREAM_NAMES
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
+                  key: COORDINATOR_LOAD_STREAM_NAMES
             - name: AUDIT_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: AUDIT_STREAM_NAME
             - name: SYNC_RESULT_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: SYNC_RESULT_STREAM_NAME
             # Wireless stream names
             - name: WIRELESS_BACKLOG_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_STREAM_NAME
             - name: WIRELESS_MAC_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_MAC_STREAM_NAME
             - name: WIRELESS_NETWORKS_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_NETWORKS_STREAM_NAME
             - name: WIRELESS_PROBE_STREAM_NAME
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_PROBE_STREAM_NAME
             # Wireless operation topics
             - name: WIRELESS_BACKLOG_SAVE_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_SAVE_TOPIC
             - name: WIRELESS_BACKLOG_LIST_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_LIST_TOPIC
             - name: WIRELESS_BACKLOG_SYNCED_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_SYNCED_TOPIC
             - name: WIRELESS_BACKLOG_PRUNE_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_PRUNE_TOPIC
             - name: WIRELESS_MAC_LOOKUP_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_MAC_LOOKUP_TOPIC
             - name: WIRELESS_NETWORKS_AUTHORIZED_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_NETWORKS_AUTHORIZED_TOPIC
             - name: WIRELESS_PROBE_FLUSH_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_PROBE_FLUSH_TOPIC
             # Wireless consumer groups
             - name: WIRELESS_BACKLOG_SAVE_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_SAVE_CONSUMER
             - name: WIRELESS_BACKLOG_LIST_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_LIST_CONSUMER
             - name: WIRELESS_BACKLOG_SYNCED_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_SYNCED_CONSUMER
             - name: WIRELESS_BACKLOG_PRUNE_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_PRUNE_CONSUMER
             - name: WIRELESS_MAC_LOOKUP_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_MAC_LOOKUP_CONSUMER
             - name: WIRELESS_NETWORKS_AUTHORIZED_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_NETWORKS_AUTHORIZED_CONSUMER
             - name: WIRELESS_PROBE_FLUSH_CONSUMER
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_PROBE_FLUSH_CONSUMER
             # Wireless reply topics
             - name: WIRELESS_BACKLOG_LIST_REPLY_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_LIST_REPLY_TOPIC
             - name: WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC
             - name: WIRELESS_MAC_LOOKUP_REPLY_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_MAC_LOOKUP_REPLY_TOPIC
             - name: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
               valueFrom:
                 configMapKeyRef:
-                  name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-config
+                  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-config
                   key: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
@@ -287,28 +292,72 @@ spec:
               value: {{ .Values.metrics.redpandaLagMetricsTimeoutMs | quote }}
             - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
               value: {{ .Values.metrics.heartbeatLogIntervalMs | quote }}
-            - name: ORACLE_SINK_ENABLED
-              value: {{ .Values.oracle.enabled | quote }}
-            - name: ORACLE_SINK_WIRELESS_ENABLED
-              value: {{ .Values.oracle.wirelessEnabled | quote }}
-            - name: ORACLE_SINK_SCHEMA_VALIDATION_WARN_ONLY
-              value: {{ .Values.oracle.schemaValidationWarnOnly | quote }}
-            - name: ORACLE_LOAD_MAX_RETRIES
-              value: {{ .Values.oracle.loadMaxRetries | quote }}
-            - name: ORACLE_CONN
-              value: {{ .Values.oracle.conn | quote }}
-            - name: ORACLE_USER
-              value: {{ .Values.oracle.user | quote }}
-            - name: ORACLE_PASS_FILE
-              value: "/run/secrets/oracle/{{ .Values.oracle.passwordSecret.key }}"
-            - name: TNS_ADMIN
-              value: "/app/wallet"
+            - name: TIDB_ENABLED
+              value: {{ .Values.tidb.enabled | quote }}
+            - name: TIDB_SCHEMA_MANIFEST_SHA256
+              value: {{ required "javaCoordinator.tidb.schemaManifestSHA256 is required" .Values.tidb.schemaManifestSHA256 | quote }}
+            - name: TIDB_HOST
+              value: {{ .Values.global.shared.tidb.host | quote }}
+            - name: TIDB_PORT
+              value: {{ .Values.global.shared.tidb.port | quote }}
+            - name: TIDB_DATABASE
+              value: {{ .Values.global.shared.tidb.accounts.octopus.database | quote }}
+            - name: TIDB_USER
+              value: {{ .Values.global.shared.tidb.accounts.octopus.user | quote }}
+            - name: TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.tidb.accounts.octopus.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.accounts.octopus.passwordSecret.key }}
+            - name: TIDB_POOL_SIZE
+              value: {{ .Values.tidb.poolSize | quote }}
+            - name: TIDB_HEALTHCHECK_RESERVE
+              value: {{ .Values.tidb.healthcheckReserve | quote }}
+            - name: TIDB_CONNECTION_TIMEOUT_MS
+              value: {{ .Values.tidb.connectionTimeoutMs | quote }}
+            - name: TIDB_STATEMENT_TIMEOUT_SECS
+              value: {{ .Values.tidb.statementTimeoutSecs | quote }}
+            - name: TIDB_WARN_ONLY
+              value: {{ .Values.tidb.warnOnly | quote }}
+            - name: TIDB_SSL_MODE
+              value: {{ .Values.tidb.sslMode | quote }}
+            - name: TIDB_SSL_CA_PATH
+              value: "/etc/tidb-tls/ca.crt"
+            - name: TIDB_SSL_SERVER_NAME
+              value: {{ .Values.global.shared.tidb.tls.serverName | quote }}
+            - name: OCTOPUS_PROCESSORS_ENABLED
+              value: {{ ne .Values.global.migration.mode "stage" | quote }}
+            - name: OCTOPUS_ENABLED_PROCESSORS
+              value: {{ join "," .Values.processors.enabled | quote }}
+            - name: OCTOPUS_PROCESSOR_BATCH_SIZE
+              value: {{ .Values.processors.batchSize | quote }}
+            - name: OCTOPUS_PROCESSOR_INTERVAL_SECONDS
+              value: {{ .Values.processors.intervalSeconds | quote }}
+            - name: OCTOPUS_EMBEDDING_MODEL
+              value: {{ .Values.processors.embeddingModel | quote }}
+            - name: OCTOPUS_EVENT_DUPLICATE_DISTANCE
+              value: {{ .Values.processors.eventDuplicateDistance | quote }}
+            - name: OCTOPUS_BEHAVIOR_SIMILARITY_THRESHOLD
+              value: {{ .Values.processors.behaviorSimilarityThreshold | quote }}
+            - name: OCTOPUS_SEQUENCE_DISTANCE_THRESHOLD
+              value: {{ .Values.processors.sequenceDistanceThreshold | quote }}
+            - name: OCTOPUS_CONSUMERS_ENABLED
+              value: {{ ne .Values.global.migration.mode "stage" | quote }}
+            - name: OCTOPUS_ENVIRONMENT
+              value: {{ .Values.runtime.environment | quote }}
+            - name: OCTOPUS_CUTOVER_DEV_BYPASS
+              value: {{ .Values.cutover.devBypass | quote }}
+
             - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
               value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.tracing.otlpEndpoint | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: "grpc"
+            - name: OTEL_TRACES_SAMPLER
+              value: "traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.tracing.samplingProbability | quote }}
             - name: OTEL_SERVICE_NAME
               value: "java-coordinator"
           ports:
@@ -335,28 +384,20 @@ spec:
               readOnly: true
             - name: sync-outbox
               mountPath: /sync-outbox
-            {{- if .Values.oracle.enabled }}
-            - name: oracle-wallet
-              mountPath: /app/wallet
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
               readOnly: true
-            - name: oracle-password
-              mountPath: /run/secrets/oracle
-              readOnly: true
-            {{- end }}
+
       volumes:
         - name: topics-manifest
           configMap:
-            name: {{ include "ssl-proxy.javaCoordinator.fullname" . }}-topics-manifest
+            name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "java-coordinator") }}-topics-manifest
         - name: sync-outbox
           emptyDir: {}
-        {{- if .Values.oracle.enabled }}
-        - name: oracle-wallet
+        - name: tidb-tls
           secret:
-            secretName: {{ .Values.oracle.walletSecret.name }}
-        - name: oracle-password
-          secret:
-            secretName: {{ .Values.oracle.passwordSecret.name }}
-        {{- end }}
+            secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
+
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -4,7 +4,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -25,10 +25,10 @@ enabled: false
 image:
   repository: atheros-sensor
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 device: ""
 locationId: "default"
-channel: 11
+channel: 6
 channelHopEnabled: true
 channelHopIntervalMs: 1000
 regDomain: "US"

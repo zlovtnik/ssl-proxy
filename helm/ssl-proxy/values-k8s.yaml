@@ -6,19 +6,56 @@ global:
     # Set dynamically by `ops up-ready`.
     registry: ""
   shared:
+    keycloak:
+      # In-cluster Keycloak deployed by the schema-migrator subchart. The
+      # issuer is set dynamically by `ops up-ready` from SERVER_IP because the
+      # backend validates `iss` against Keycloak's browser-facing origin. JWKS
+      # is fetched through the in-cluster Service. The client id matches the
+      # realm's UI client (schemaMigrator.keycloak.clientId=bedrock-ui); the
+      # backend accepts an `azp` match.
+      jwksUri: "http://ssl-proxy-schema-migrator-keycloak:8080/realms/middleware/protocol/openid-connect/certs"
+      schemaMigratorClientId: "bedrock-ui"
     redpanda:
       bootstrapServers: "ssl-proxy-redpanda:9092"
       topicReplicationFactor: 1
-    postgres:
-      host: "ssl-proxy-postgres"
-    redis:
-      url: "redis://ssl-proxy-redis:6379/1"
+    tidb:
+      host: "ssl-proxy-tidb.default.svc.cluster.local"
+      port: 4000
+      minimumVersion: "8.5.0"
+      tls:
+        serverName: "ssl-proxy-tidb.default.svc.cluster.local"
+        caSecret:
+          name: "tidb-client-ca"
+          key: "ca.crt"
+      accounts:
+        octopus:
+          database: "octopus_core"
+          user: "octopus_runtime"
+          passwordSecret:
+            name: "tidb-octopus"
+            key: "password"
+        atherosSearch:
+          database: "atheros_search"
+          user: "atheros_search_runtime"
+          passwordSecret:
+            name: "tidb-atheros-search"
+            key: "dsn"
+        schemaMigrator:
+          database: "schema_migrator"
+          user: "schema_migrator_runtime"
+          passwordSecret:
+            name: "tidb-schema-migrator"
+            key: "password"
+        # Chart-local account for the in-cluster Keycloak (schema-migrator
+        # subchart). Provisioned by the tidb init job hook.
+        keycloak:
+          database: "keycloak"
+          user: "keycloak"
+          passwordSecret:
+            name: "tidb-keycloak"
+            key: "password"
     minio:
       endpoint: "http://ssl-proxy-minio:9000"
-    integrationConsole:
-      web:
-        service:
-          port: 3005
     atherosSensor:
 
 redpanda:
@@ -27,22 +64,6 @@ redpanda:
   topicReplicationFactor: 1
   persistence:
     hostPath: "/var/lib/docker/volumes/ssl-proxy_redpanda-data/_data"
-
-postgres:
-  external: false
-  host: "ssl-proxy-postgres"
-  # Expose password-protected Postgres on the single Kubernetes node's LAN IP.
-  hostPort: 5432
-  image:
-    repository: "ssl-proxy-postgres"
-    tag: latest
-    pullPolicy: Always
-  persistence:
-    hostPath: "/var/lib/docker/volumes/ssl-proxy_postgres-data/_data"
-
-redis:
-  external: false
-  url: "redis://ssl-proxy-redis:6379/1"
 
 minio:
   external: false
@@ -84,6 +105,10 @@ javaCoordinator:
     repository: "java-coordinator"
     tag: latest
     pullPolicy: Always
+  runtime:
+    environment: "development"
+  cutover:
+    devBypass: true
   resources:
     limits:
       cpu: "2"
@@ -91,26 +116,90 @@ javaCoordinator:
     requests:
       cpu: 500m
       memory: 1Gi
+  tidb:
+    host: "ssl-proxy-tidb.default.svc.cluster.local"
+    poolSize: 20
 
+tidb:
+  external: false
+  image:
+    tag: v8.5.7
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 500m
+      memory: 8Gi
+    limits:
+      cpu: "2"
+      memory: 8Gi
+  memoryTuning:
+    statsCacheQuotaBytes: 536870912
+    schemaCacheSizeBytes: 268435456
+    coprocessorCacheCapacityMB: 128
+  persistence:
+    enabled: true
+    size: 10Gi
+  service:
+    hostPort: 4000
+  initJob:
+    image:
+      tag: latest
+      pullPolicy: Always
+  egress:
+    enabled: false
+    cidrs: []
 vecWorker:
   enabled: false
-integrationConsole:
+tidbSchemaExecutor:
   enabled: true
-  web:
+  image:
+    repository: tidb-runtime-schema
+    tag: latest
+    pullPolicy: Always
+schemaMigrator:
+  enabled: true
+  # Set dynamically by `ops up-ready` from SCHEMA_MIGRATOR_PUBLIC_HOSTNAME.
+  publicHostname: ""
+  stateStore:
+    host: "192.168.1.221"
+  backend:
     image:
-      repository: integration-console
+      repository: schema-migrator-backend
+      tag: latest
+      pullPolicy: Always
+    dbTestAllowedHosts:
+      - 192.168.1.221
+  ui:
+    # Set dynamically by `ops up-ready` to the HTTP LAN edge origin.
+    browserOrigin: ""
+    image:
+      repository: schema-migrator-ui
       tag: latest
       pullPolicy: Always
     service:
-      port: 3005
-      targetPort: 3000
-      type: ClusterIP
-      hostPort: 3005
-  dbSetup:
-    image:
-      repository: integration-console
-      tag: latest
-      pullPolicy: Always
+      hostPort: 3008
+  keycloak:
+    # Set dynamically by `ops up-ready` so Keycloak's browser-facing issuer
+    # and admin console use the reachable LAN origin.
+    browserOrigin: ""
+    adminHostname: ""
+    persistence:
+      enabled: true
+    service:
+      hostPort: 8180
+      port: 8080
+  traefik:
+    hostPorts:
+      # Avoid k3s svclb-traefik which already binds 80/443 on the node.
+      http: 8082
+      https: 8444
+      # Unified LAN edge for the UI and backend API.
+      lan: 8081
+    acme:
+      # Set dynamically by `ops up-ready` from ACME_EMAIL.
+      email: ""
+      persistence:
+        hostPath: /var/lib/ssl-proxy/schema-migrator/traefik-acme
 atherosSensor:
   enabled: true
   image:
@@ -118,12 +207,31 @@ atherosSensor:
     tag: latest
     pullPolicy: Always
 atherosSearch:
-  enabled: false
+  enabled: true
+  schemaManifestSHA256: "b10612a60b1a3cd3ca8c8c62d4098aaf9ebc8548b061aaefc952e3c020cf872c"
   image:
     repository: atheros-search
     tag: latest
     pullPolicy: Always
-observability:
+  # Set dynamically by `ops up-ready` from SERVER_IP.
+  embeddingBackend: ""
+  # The browser UI is same-origin through its in-cluster nginx proxy. Do not
+  # expose the digest-protected API directly to the browser.
+  apiTokenEnabled: false
+  worker:
+    enabled: true
+    batchSize: 256
+    requestBatchSize: 64
+    requestBatchMax: 128
+  ui:
+    enabled: true
+    image:
+      repository: atheros-search-ui
+      tag: latest
+      pullPolicy: Always
+    service:
+      hostPort: 3007
+telemetry:
   enabled: true
   keda:
     enabled: false

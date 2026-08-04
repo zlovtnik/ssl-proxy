@@ -3,10 +3,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ssl-proxy.telemetry.fullname" . }}-loki-config
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "telemetry") }}-loki-config
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.telemetry.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "telemetry") | nindent 4 }}
     app.kubernetes.io/component: loki
 data:
   config.yml: |

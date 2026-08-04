@@ -4,7 +4,7 @@ global:
   fullnameOverride: ""
   image:
     registry: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   rolloutRevision: ""
   labels: {}
   annotations: {}
@@ -20,31 +20,19 @@ global:
   shared:
     redpanda:
       adminPort: 9644
-    postgres:
-      host: "postgres-primary.postgres.svc.cluster.local"
-      port: 5432
-      database: "sync"
-      user: "sync"
-      passwordSecret:
-        name: "postgres-credentials"
-        key: "password"
-    redis:
-      url: "redis://redis.redis.svc.cluster.local:6379/1"
-      passwordSecret:
-        name: "redis-credentials"
-        key: "password"
     proxy:
       service:
         adminPort: 3002
     javaCoordinator:
       service:
         port: 8080
-    integrationConsole:
-      web:
-        service:
-          port: 3005
     atherosSensor:
       metricsPort: 9097
+    atherosSearch:
+      metricsPort: 9090
+      workerMetricsPort: 9090
+    tidb:
+      metricsPort: 10080
 
 # KEDA, ServiceMonitor, and dashboard-discovery values remain explicitly tracked as gaps in the umbrella chart.
 enabled: false
@@ -52,7 +40,7 @@ prometheus:
   image:
     repository: prom/prometheus
     tag: v2.54.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 9090
     hostPort: null
@@ -69,7 +57,7 @@ loki:
   image:
     repository: grafana/loki
     tag: 3.1.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 3100
   persistence:
@@ -84,7 +72,7 @@ promtail:
   image:
     repository: grafana/promtail
     tag: 3.1.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   positionsHostPath: "/var/lib/ssl-proxy/promtail"
   resources:
     requests: {cpu: 50m, memory: 64Mi}
@@ -93,7 +81,7 @@ jaeger:
   image:
     repository: jaegertracing/all-in-one
     tag: 1.62.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 16686
     hostPort: null
@@ -106,7 +94,7 @@ otelCollector:
   image:
     repository: otel/opentelemetry-collector-contrib
     tag: 0.107.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
@@ -114,7 +102,7 @@ grafana:
   image:
     repository: grafana/grafana
     tag: 11.1.4
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     port: 3004
     targetPort: 3000
@@ -131,35 +119,17 @@ grafana:
   dashboards:
     dbCalls: ""
     infraSaturation: ""
-    integrationConsoleHealth: ""
     serviceRedMetrics: ""
     stackHealthOverview: ""
     syncPipelineLatency: ""
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: 500m, memory: 1Gi}
-postgresExporter:
-  image:
-    repository: quay.io/prometheuscommunity/postgres-exporter
-    tag: v0.19.1
-    pullPolicy: IfNotPresent
-  queries: ""
-  resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
-redisExporter:
-  image:
-    repository: oliver006/redis_exporter
-    tag: v1.61.0
-    pullPolicy: IfNotPresent
-  resources:
-    requests: {cpu: 25m, memory: 64Mi}
-    limits: {cpu: 250m, memory: 256Mi}
 nodeExporter:
   image:
     repository: prom/node-exporter
     tag: v1.8.2
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}
@@ -167,7 +137,7 @@ cadvisor:
   image:
     repository: gcr.io/cadvisor/cadvisor
     tag: v0.49.1
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   containerdHostPath: "/var/lib/containerd"
   resources:
     requests: {cpu: 50m, memory: 128Mi}
@@ -176,7 +146,7 @@ pushgateway:
   image:
     repository: prom/pushgateway
     tag: v1.8.0
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {cpu: 250m, memory: 256Mi}
@@ -204,7 +174,7 @@ keda:
     scaleDown:
       stabilizationWindowSeconds: 300
 
-  # Vec Worker auto-scaling (based on Postgres pending job count)
+  # Vec Worker auto-scaling
   vecWorker:
     enabled: true
     minReplicas: 1
@@ -235,18 +205,6 @@ monitoring:
     enabled: true
     # Endpoint for Redpanda metrics
     endpoint: "redpanda-0.redpanda.redpanda.svc.cluster.local:9644"
-
-  # Postgres metrics (via postgres_exporter sidecar)
-  postgres:
-    enabled: true
-    # postgres_exporter queries
-    queries:
-      vecPendingJobs: |
-        SELECT status, count(*) as count
-        FROM vec_embedding_jobs
-        WHERE status = 'pending'
-          AND (leased_until IS NULL OR leased_until < NOW())
-        GROUP BY status
 
 # TODO: dashboard discovery is not templated; Grafana's built-in dashboard ConfigMaps are managed above.
 dashboardDiscovery:

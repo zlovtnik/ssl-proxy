@@ -3,22 +3,22 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "ssl-proxy.minio.fullname" . }}-minio
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "minio") }}-minio
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ssl-proxy.minio.labels" . | nindent 4 }}
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "minio") | nindent 4 }}
     app.kubernetes.io/component: minio
 spec:
-  serviceName: {{ include "ssl-proxy.minio.fullname" . }}-minio
+  serviceName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "minio") }}-minio
   replicas: 1
   selector:
     matchLabels:
-      {{- include "ssl-proxy.minio.selectorLabels" . | nindent 6 }}
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "minio") | nindent 6 }}
       app.kubernetes.io/component: minio
   template:
     metadata:
       labels:
-        {{- include "ssl-proxy.minio.selectorLabels" . | nindent 8 }}
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "minio") | nindent 8 }}
         app.kubernetes.io/component: minio
       {{- if or .Values.global.rolloutRevision .Values.global.podAnnotations }}
       annotations:
@@ -30,7 +30,7 @@ spec:
         {{- end }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "ssl-proxy.minio.serviceAccountName" . }}
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "minio") }}
       automountServiceAccountToken: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
@@ -39,7 +39,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: minio
-          image: {{ include "ssl-proxy.minio.image" (dict "root" . "image" .Values.image) }}
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["server", "/data", "--console-address", ":9001"]
           env:
@@ -85,7 +85,7 @@ spec:
             type: Directory
           {{- else if .Values.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "ssl-proxy.minio.fullname" . }}-minio-data
+            claimName: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "minio") }}-minio-data
           {{- else }}
           emptyDir: {}
           {{- end }}

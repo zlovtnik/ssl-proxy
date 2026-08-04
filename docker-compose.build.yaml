@@ -33,32 +33,7 @@ services:
   java-coordinator:
     build:
       context: .
-      dockerfile: services/zig-coordinator/Dockerfile
-
-  integration-console-web:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-worker:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-db-setup:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-heatmap-refresh:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
-
-  integration-console-heartbeat:
-    build:
-      context: .
-      dockerfile: apps/integration-console/Dockerfile
+      dockerfile: services/octopus/Dockerfile
 
   atheros-sensor:
     build:
@@ -70,8 +45,8 @@ services:
     build:
       context: .
       dockerfile: services/atheros-search/Dockerfile
+    environment:
+      # The browser-only local UI has no bearer-token flow. Keep auth enabled
+      # in the default Compose stack, but disable it for developer builds.
+      ATHSEARCH_API_TOKEN_SHA256: ""
 
-  postgres:
-    build:
-      context: .
-      dockerfile: docker/postgres/Dockerfile

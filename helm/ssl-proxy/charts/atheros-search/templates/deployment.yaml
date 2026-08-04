@@ -1,0 +1,148 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ssl-proxy-common.fullname" (dict "root" . "component" "atherosSearch") }}-atheros-search
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ssl-proxy-common.labels" (dict "root" . "component" "atherosSearch") | nindent 4 }}
+    app.kubernetes.io/component: atheros-search
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 6 }}
+      app.kubernetes.io/component: atheros-search
+  template:
+    metadata:
+      labels:
+        {{- include "ssl-proxy-common.selectorLabels" (dict "root" . "component" "atherosSearch") | nindent 8 }}
+        app.kubernetes.io/component: atheros-search
+        ssl-proxy.io/tidb-client: "true"
+      annotations:
+        ssl-proxy.io/rollout-revision: {{ .Values.global.rolloutRevision | quote }}
+        {{- with .Values.global.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ssl-proxy-common.serviceAccountName" (dict "root" . "component" "atherosSearch") }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: atheros-search
+          image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.image) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ATHSEARCH_TIDB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.name }}
+                  key: {{ .Values.global.shared.tidb.accounts.atherosSearch.passwordSecret.key }}
+            - name: ATHSEARCH_TIDB_TLS_CA_FILE
+              value: /etc/tidb-tls/ca.crt
+            - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
+              value: {{ .Values.global.shared.tidb.tls.serverName | quote }}
+            - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
+              value: {{ required "atherosSearch.schemaManifestSHA256 is required" .Values.schemaManifestSHA256 | quote }}
+            - name: ATHSEARCH_EMBEDDING_MODEL
+              value: {{ .Values.embeddingModel | quote }}
+            - name: ATHSEARCH_EMBEDDING_DIMENSIONS
+              value: {{ .Values.embeddingDimensions | quote }}
+            - name: ATHSEARCH_EVENT_EMBEDDING_SCOPE
+              value: {{ .Values.eventEmbeddingScope | quote }}
+            - name: ATHSEARCH_HTTP_PORT
+              value: {{ .Values.service.httpPort | quote }}
+            - name: ATHSEARCH_GRPC_PORT
+              value: {{ .Values.service.grpcPort | quote }}
+            - name: ATHSEARCH_METRICS_PORT
+              value: {{ .Values.service.metricsPort | quote }}
+            - name: ATHSEARCH_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: ATHSEARCH_CORS_ALLOWED_ORIGINS
+              value: {{ .Values.corsAllowedOrigins | quote }}
+            - name: ATHSEARCH_SCHEMA_READY_REQUIRED
+              value: {{ .Values.schemaReadyRequired | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otlpEndpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_SERVICE_NAME
+              value: atheros-search
+            {{- if .Values.apiTokenEnabled }}
+            - name: ATHSEARCH_API_TOKEN_SHA256
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiTokenSecret.name }}
+                  key: {{ .Values.apiTokenSecret.key }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+            - name: grpc
+              containerPort: {{ .Values.service.grpcPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      volumes:
+        - name: tidb-tls
+          secret:
+            secretName: {{ .Values.global.shared.tidb.tls.caSecret.name }}
+            items:
+              - key: {{ .Values.global.shared.tidb.tls.caSecret.key }}
+                path: ca.crt
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
