@@ -57,7 +57,11 @@ spec:
               value: "/app/docker/redpanda/topics.manifest"
             - name: SYNC_REDPANDA_TOPIC_PARTITIONS
               value: {{ .Values.global.shared.javaCoordinator.topicPartitions | quote }}
+            - name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR
+              value: {{ .Values.global.shared.redpanda.topicReplicationFactor | quote }}
             - name: COORDINATOR_SCAN_FETCH_COUNT
+              value: {{ .Values.consumerBatch.maxPollRecords | quote }}
+            - name: COORDINATOR_MAX_POLL_RECORDS
               value: {{ .Values.consumerBatch.maxPollRecords | quote }}
             - name: COORDINATOR_POLL_TIMEOUT_MS
               value: {{ .Values.consumerBatch.pollTimeoutMs | quote }}
