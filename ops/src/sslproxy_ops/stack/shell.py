@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
+
+from sslproxy_ops.paths import repo_root
 
 
 class ShellError(RuntimeError):
@@ -114,3 +117,124 @@ def helm(
         cmd.extend(["--kube-context", context])
     cmd.extend(args)
     return _run(cmd, check=check, capture=capture, stream=stream, input_text=input_text)
+
+
+def _resolve_kustomize_path(path: str) -> str:
+    """Resolve a relative kustomize path against the repo root."""
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    return str(repo_root() / p)
+
+
+def kustomize_build(
+    path: str,
+    *,
+    namespace: str | None = None,
+    context: str | None = None,
+    kubeconfig: str | None = None,
+    check: bool = True,
+    capture: bool = True,
+    stream: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``kubectl kustomize <path>`` to render manifests."""
+    cmd = ["kubectl"]
+    if kubeconfig:
+        cmd.extend(["--kubeconfig", kubeconfig])
+    elif context:
+        cmd.extend(["--context", context])
+    cmd.extend(["kustomize", _resolve_kustomize_path(path)])
+    return _run(cmd, check=check, capture=capture, stream=stream)
+
+
+def kustomize_apply(
+    path: str,
+    *,
+    namespace: str | None = None,
+    dry_run: bool = False,
+    wait_for_completion: bool = False,
+    label_selector: str | None = None,
+    context: str | None = None,
+    kubeconfig: str | None = None,
+    check: bool = True,
+    capture: bool = True,
+    stream: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``kubectl apply -k <path>`` to apply manifests."""
+    cmd = ["kubectl"]
+    if kubeconfig:
+        cmd.extend(["--kubeconfig", kubeconfig])
+    elif context:
+        cmd.extend(["--context", context])
+    cmd.extend(["apply", "-k", _resolve_kustomize_path(path)])
+    if namespace:
+        cmd.extend(["-n", namespace])
+    if dry_run:
+        cmd.append("--dry-run=server")
+    result = _run(cmd, check=check, capture=capture, stream=stream)
+    if wait_for_completion and not dry_run and namespace:
+        wait_cmd = ["kubectl"]
+        if kubeconfig:
+            wait_cmd.extend(["--kubeconfig", kubeconfig])
+        elif context:
+            wait_cmd.extend(["--context", context])
+        wait_cmd.extend([
+            "wait",
+            "--for=condition=Complete",
+        ])
+        if label_selector:
+            wait_cmd.extend(["-l", label_selector])
+        else:
+            wait_cmd.append("--all")
+        wait_cmd.extend([
+            "jobs",
+            "-n",
+            namespace,
+            "--timeout=300s",
+        ])
+        wait_result = _run(wait_cmd, check=False, capture=capture, stream=stream)
+        if wait_result.returncode != 0:
+            failed_cmd = ["kubectl"]
+            if kubeconfig:
+                failed_cmd.extend(["--kubeconfig", kubeconfig])
+            elif context:
+                failed_cmd.extend(["--context", context])
+            failed_cmd.extend([
+                "wait",
+                "--for=condition=Failed",
+            ])
+            if label_selector:
+                failed_cmd.extend(["-l", label_selector])
+            else:
+                failed_cmd.append("--all")
+            failed_cmd.extend([
+                "jobs",
+                "-n",
+                namespace,
+                "--timeout=5s",
+            ])
+            failed_check = _run(failed_cmd, check=False, capture=capture, stream=stream)
+            if failed_check.returncode == 0:
+                result.returncode = 1
+                result.stdout = (result.stdout or "") + "\n" + (failed_check.stdout or "")
+            else:
+                result.returncode = 1
+    return result
+
+
+def kustomize_validate(
+    path: str,
+    *,
+    context: str | None = None,
+    kubeconfig: str | None = None,
+    check: bool = True,
+    capture: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``kubectl kustomize <path>`` and check for errors."""
+    cmd = ["kubectl"]
+    if kubeconfig:
+        cmd.extend(["--kubeconfig", kubeconfig])
+    elif context:
+        cmd.extend(["--context", context])
+    cmd.extend(["kustomize", _resolve_kustomize_path(path)])
+    return _run(cmd, check=check, capture=capture)

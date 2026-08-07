@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ssl-proxy
+  namespace: argocd
+spec:
+  description: ssl-proxy stack (data-plane + application workloads)
+  sourceRepos:
+    - https://github.com/zlovtnik/ssl-proxy.git
+  destinations:
+    - namespace: prod-ssl-proxy
+      server: https://kubernetes.default.svc
+    - namespace: ssl-proxy
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  roles:
+    - name: prod-deployer
+      policies:
+        - p, proj:ssl-proxy:prod-deployer, applications, sync, ssl-proxy/*, allow
+        - p, proj:ssl-proxy:prod-deployer, applications, get, ssl-proxy/*, allow

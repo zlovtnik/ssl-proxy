@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: ssl-proxy-schema-migrator-backend
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: schema-migrator-backend

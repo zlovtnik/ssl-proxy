@@ -1,4 +1,4 @@
-"""Offline Helm rendering, structural validation, and umbrella parity."""
+"""Offline kustomize rendering, structural validation, and umbrella parity."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from typing import Any
 
 import yaml
 
-from .core import StackConfig, deep_merge, generate_effective_values
-from .shell import helm
+from .core import StackConfig, generate_effective_values
+from .shell import kustomize_build
 
 
 @dataclass(frozen=True)
@@ -57,20 +57,6 @@ def resource_identity(resource: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
-def _copy_chart_for_build(chart_path: Path, temp_root: Path) -> Path:
-    destination = temp_root / chart_path.name
-    shutil.copytree(chart_path, destination, symlinks=False)
-    common = chart_path.parent / "_common"
-    if common.is_dir() and common.resolve() != chart_path.resolve():
-        shutil.copytree(common, temp_root / "_common", symlinks=False)
-    return destination
-
-
-def _write_private_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(yaml.safe_dump(data, sort_keys=True))
-    os.chmod(path, 0o600)
-
-
 def render_component(
     name: str,
     config: StackConfig,
@@ -82,72 +68,66 @@ def render_component(
     component = config.components[name]
     if component.type not in ("helm", "helm-job"):
         raise ValueError(f"Offline rendering for {component.type!r} is not implemented")
-    chart_path = (root_dir / component.chart).resolve()
-    effective = generate_effective_values(
-        config,
-        name,
-        umbrella_values,
-        runtime_overrides=runtime_overrides,
-        root_dir=root_dir,
-    )
-    with tempfile.TemporaryDirectory(prefix=f"stackctl-{name}-") as temp:
-        temp_root = Path(temp)
-        chart_copy = _copy_chart_for_build(chart_path, temp_root)
-        values_path = temp_root / "effective-values.yaml"
-        _write_private_yaml(values_path, effective)
-        helm("dependency", "build", str(chart_copy))
-        helm(
-            "lint",
-            str(chart_copy),
-            "-f",
-            str(values_path),
-            "--namespace",
-            namespace or config.defaults.namespace,
+    overlay_path = f"cyber-stack/base/{name}"
+    with tempfile.TemporaryDirectory(prefix=f"stackctl-render-{name}-") as temp_dir:
+        temp = Path(temp_dir)
+        overlay_src = Path(root_dir) / overlay_path
+        if not overlay_src.is_dir():
+            raise FileNotFoundError(f"Component overlay not found: {overlay_src}")
+        overlay_dest = temp / "overlay"
+        shutil.copytree(overlay_src, overlay_dest)
+        effective = generate_effective_values(
+            config,
+            name,
+            umbrella_values,
+            runtime_overrides=runtime_overrides,
+            root_dir=root_dir,
         )
-        result = helm(
-            "template",
-            component.release,
-            str(chart_copy),
-            "-f",
-            str(values_path),
-            "--namespace",
-            namespace or config.defaults.namespace,
-            "--include-crds",
-        )
+        values_yaml = yaml.safe_dump(effective, default_flow_style=False)
+        (temp / "values.yaml").write_text(values_yaml)
+        os.chmod(temp / "values.yaml", 0o600)
+        kustomization = {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "resources": ["overlay"],
+            "configMapGenerator": [
+                {
+                    "name": f"{name}-effective-values",
+                    "files": ["values.yaml"],
+                }
+            ],
+        }
+        (temp / "kustomization.yaml").write_text(yaml.safe_dump(kustomization))
+        result = kustomize_build(str(temp))
     resources = parse_manifest(result.stdout, name)
     return RenderedComponent(name, result.stdout, resources, effective)
 
 
+OVERLAY_MAP = {
+    "prod-ssl-proxy": "cyber-stack/matrix/prod",
+    "dev-ssl-proxy": "cyber-stack/matrix/dev",
+}
+
+
 def render_umbrella(
-    chart_path: Path,
     umbrella_values: list[dict[str, Any]],
     runtime_overrides: dict[str, Any] | None,
     namespace: str,
 ) -> list[dict[str, Any]]:
-    """Render the normalized umbrella baseline in an isolated chart copy."""
+    """Render the normalized umbrella baseline via kustomize."""
 
-    effective: dict[str, Any] = {}
-    for values in umbrella_values:
-        effective = deep_merge(effective, values)
     if runtime_overrides:
-        effective = deep_merge(effective, runtime_overrides)
-    with tempfile.TemporaryDirectory(prefix="stackctl-umbrella-") as temp:
-        temp_root = Path(temp)
-        chart_copy = temp_root / chart_path.name
-        shutil.copytree(chart_path, chart_copy, symlinks=False)
-        values_path = temp_root / "umbrella-values.yaml"
-        _write_private_yaml(values_path, effective)
-        helm("dependency", "build", str(chart_copy))
-        result = helm(
-            "template",
-            "ssl-proxy",
-            str(chart_copy),
-            "-f",
-            str(values_path),
-            "--namespace",
-            namespace,
-            "--include-crds",
+        raise ValueError("runtime_overrides are not supported for umbrella rendering")
+    for values in umbrella_values:
+        if values:
+            raise ValueError("umbrella_values are not supported for umbrella rendering")
+    overlay = OVERLAY_MAP.get(namespace)
+    if overlay is None:
+        raise ValueError(
+            f"namespace {namespace!r} has no configured kustomize overlay; "
+            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
         )
+    result = kustomize_build(overlay)
     return parse_manifest(result.stdout, "umbrella")
 
 
@@ -300,10 +280,15 @@ def parity_diff(
 
     def approved(resource: dict[str, Any]) -> bool:
         labels = resource.get("metadata", {}).get("labels", {})
-        return (
+        name = resource.get("metadata", {}).get("name", "")
+        if (
             resource.get("kind") == "Job"
             and labels.get("app.kubernetes.io/name") == "tidb-schema-executor"
-        )
+        ):
+            return True
+        if resource.get("kind") == "ConfigMap" and name.endswith("-effective-values"):
+            return True
+        return False
 
     umbrella = {
         resource_identity(resource): normalize_resource(resource)

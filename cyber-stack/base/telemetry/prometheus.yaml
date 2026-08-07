@@ -78,8 +78,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: ssl-proxy-telemetry-prometheus-data
+  name: ssl-proxy-telemetry-prometheus
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-prometheus

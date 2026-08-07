@@ -8,5 +8,5 @@ USE octopus_core;
 -- was missing it, causing SQLSyntaxErrorException at runtime.
 
 ALTER TABLE wireless_shadow_alerts
-  ADD COLUMN projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT ''
+  ADD COLUMN projection_run_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin
   AFTER updated_at;

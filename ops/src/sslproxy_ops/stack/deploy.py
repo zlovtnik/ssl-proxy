@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ from .core import (
     staged_waves,
 )
 from .gates import parse_timeout_seconds, wait_for_gates
-from .shell import ShellError, helm, kubectl
+from .shell import ShellError, helm, kubectl, kustomize_apply
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -64,6 +65,7 @@ class ComponentResult:
     error: str | None = None
     duration: float = 0.0
     skipped: bool = False
+    rollback_status: str | None = None
 
 
 @dataclass
@@ -183,21 +185,11 @@ def prepare_chart(chart_path: Path) -> None:
 
 @contextlib.contextmanager
 def prepared_chart_copy(chart_path: Path):
-    """Yield a chart whose dependency build cannot rewrite the worktree."""
-
-    with tempfile.TemporaryDirectory(prefix=f"stackctl-{chart_path.name}-") as temp:
-        if not chart_path.is_dir():
-            yield chart_path
-            return
-        temp_root = Path(temp)
-        destination = temp_root / chart_path.name
-        shutil.copytree(chart_path, destination, symlinks=False)
-        common = chart_path.parent / "_common"
-        if common.is_dir() and common.resolve() != chart_path.resolve():
-            shutil.copytree(common, temp_root / "_common", symlinks=False)
-        if _chart_has_dependencies(destination):
-            helm("dependency", "build", str(destination))
-        yield destination
+    """Yield the kustomize overlay path (no chart copying needed)."""
+    if not chart_path.is_dir():
+        yield chart_path
+        return
+    yield chart_path
 
 
 def reset_prepared_charts() -> None:
@@ -361,31 +353,31 @@ def _capture_job_logs(
         pass
 
 
-def _helm_release_status(
+def _kustomize_resource_status(
     release: str, namespace: str, context: str | None, kubeconfig: str | None
 ) -> str | None:
-    """Get the current Helm release status, or None if not found."""
-    result = helm(
-        "status",
+    """Get the deployment status for a kustomize-managed release, or None if not found."""
+    result = kubectl(
+        "get",
+        "deploy",
         release,
         "-n",
         namespace,
-        "--output",
-        "json",
+        "-o",
+        'jsonpath={.status.conditions[?(@.type=="Available")].status}',
         context=context,
         kubeconfig=kubeconfig,
         check=False,
     )
     if result.returncode != 0:
         return None
-    try:
-        payload = json.loads(result.stdout or "{}")
-        return payload.get("info", {}).get("status")
-    except (json.JSONDecodeError, AttributeError, TypeError):
+    status = (result.stdout or "").strip()
+    if not status:
         return None
+    return "True" if status == "True" else "False"
 
 
-def _helm_upgrade(
+def _kustomize_deploy(
     component: Component,
     effective_values: dict[str, Any],
     values_file: Path,
@@ -393,50 +385,125 @@ def _helm_upgrade(
     context: str | None,
     kubeconfig: str | None,
     dry_run: bool = False,
-    wait_for_jobs: bool = True,
-) -> None:
-    """Run helm upgrade --install for a component."""
+    wait_for_completion: bool = True,
+    root_dir: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Apply a kustomize overlay for a component."""
     release = component.release
     chart = component.chart
     if not chart:
-        raise ValueError(f"Helm release {release!r} has no chart")
+        raise ValueError(f"Component {release!r} has no chart path (kustomize overlay)")
 
-    args: list[str] = ["upgrade", "--install", release, chart]
-    args.extend(["-n", namespace, "--create-namespace"])
-    args.extend(["-f", str(values_file)])
-    args.extend(["--server-side=true", "--wait=watcher"])
-    if wait_for_jobs:
-        args.append("--wait-for-jobs")
+    overlay_src = Path(chart)
+    if not overlay_src.is_absolute() and root_dir is not None:
+        overlay_src = (root_dir / chart).resolve()
+    else:
+        overlay_src = overlay_src.resolve()
 
-    timeout = component.timeout or "10m"
-    args.extend(["--timeout", timeout])
+    if not overlay_src.is_dir():
+        raise FileNotFoundError(f"Component overlay not found: {overlay_src}")
 
-    if dry_run:
-        args.append("--dry-run=server")
+    # Render into a temporary overlay that references the tracked overlay via
+    # resources, so the source overlay and its kustomization.yaml are never
+    # rewritten. A fresh temporary directory keeps repeated deploys clean.
+    with tempfile.TemporaryDirectory(prefix=f"stackctl-overlay-{release}-") as temp:
+        temp_overlay = Path(temp)
+        overlay_dest = temp_overlay / "overlay"
+        shutil.copytree(overlay_src, overlay_dest)
 
-    if component.rollback_on_failure:
-        args.extend(["--rollback-on-failure", "--history-max", "5"])
+        values_yaml = temp_overlay / "values.yaml"
+        if values_file.is_file():
+            shutil.copy(values_file, values_yaml)
+        else:
+            with open(values_yaml, "w") as f:
+                yaml.safe_dump(effective_values, f, default_flow_style=False)
+        os.chmod(values_yaml, 0o600)
 
-    return helm(*args, context=context, kubeconfig=kubeconfig)
+        kustomization_yaml = temp_overlay / "kustomization.yaml"
+        kustomization_data = {
+            "apiVersion": "kustomize.config.k8s.io/v1beta1",
+            "kind": "Kustomization",
+            "resources": ["overlay"],
+            "configMapGenerator": [
+                {
+                    "name": f"{release}-effective-values",
+                    "files": ["values.yaml"],
+                }
+            ],
+        }
+        with open(kustomization_yaml, "w") as f:
+            yaml.safe_dump(kustomization_data, f, default_flow_style=False)
+
+        if dry_run:
+            # Server-side validation: kubectl apply -k --dry-run=server
+            return kustomize_apply(
+                str(temp_overlay),
+                namespace=namespace,
+                dry_run=True,
+                context=context,
+                kubeconfig=kubeconfig,
+            )
+        return kustomize_apply(
+            str(temp_overlay),
+            namespace=namespace,
+            wait_for_completion=wait_for_completion,
+            context=context,
+            kubeconfig=kubeconfig,
+        )
 
 
-def _helm_rollback(
+def _kustomize_rollback(
     release: str,
     namespace: str,
     context: str | None,
     kubeconfig: str | None,
-) -> None:
-    """Rollback a Helm release to revision 0 (last successful)."""
-    helm(
-        "rollback",
-        release,
-        "0",
+) -> bool:
+    """Rollback kustomize-managed workloads to their previous revision.
+
+    Returns True if at least one supported workload was rolled back.
+    """
+    result = kubectl(
+        "get",
+        "deploy,sts,ds",
         "-n",
         namespace,
-        "--wait",
+        "-l",
+        f"app.kubernetes.io/instance={release}",
+        "-o",
+        "name",
         context=context,
         kubeconfig=kubeconfig,
+        check=False,
     )
+    if result.returncode != 0 or not (result.stdout or "").strip():
+        return False
+    rolled_back = False
+    failures: list[str] = []
+    for line in result.stdout.strip().splitlines():
+        resource = line.strip()
+        if not resource:
+            continue
+        try:
+            kubectl(
+                "rollout",
+                "undo",
+                resource,
+                "-n",
+                namespace,
+                context=context,
+                kubeconfig=kubeconfig,
+            )
+            rolled_back = True
+        except (ShellError, RuntimeError, OSError) as exc:
+            failures.append(f"{resource}: {exc}")
+    if failures:
+        raise ShellError(
+            command=("kubectl", "rollout", "undo"),
+            returncode=1,
+            stdout="",
+            stderr="\n".join(failures),
+        )
+    return rolled_back
 
 
 def _capture_failure_diagnostics(
@@ -501,13 +568,24 @@ def _capture_failure_diagnostics(
     for name in failed_names:
         component = config.components[name]
         release = getattr(component, "release", None)
+        selector = f"app.kubernetes.io/instance={release or name}"
         if component.type in ("helm", "helm-job") and release:
+            # Capture kustomize/kubectl diagnostics instead of helm manifest/values
             for command, suffix in (
-                (("status", release, "-n", options.namespace, "-o", "json"), "status.json"),
-                (("get", "manifest", release, "-n", options.namespace), "manifest.yaml"),
-                (("get", "values", release, "-n", options.namespace, "-o", "yaml"), "values.yaml"),
+                (
+                    ("get", "deploy", release, "-n", options.namespace, "-o", "json"),
+                    "deployment.json",
+                ),
+                (
+                    ("get", "job", release, "-n", options.namespace, "-o", "json"),
+                    "job.json",
+                ),
+                (
+                    ("get", "events", "-n", options.namespace, "-l", selector, "-o", "json"),
+                    "events.json",
+                ),
             ):
-                result = helm(
+                result = kubectl(
                     *command,
                     context=options.context,
                     kubeconfig=options.kubeconfig,
@@ -516,21 +594,30 @@ def _capture_failure_diagnostics(
                 if result.returncode != 0:
                     continue
                 content = result.stdout or ""
-                if suffix == "manifest.yaml":
-                    content = _redact_manifest(content)
-                elif suffix == "values.yaml":
-                    parsed = yaml.safe_load(content)
-                    content = yaml.safe_dump(
-                        _redact_dict(parsed if isinstance(parsed, dict) else {}),
-                        sort_keys=False,
-                    )
+                if suffix == "events.json":
+                    # Filter to recent events
+                    try:
+                        payload = json.loads(content)
+                        payload["items"] = [
+                            item
+                            for item in payload.get("items", [])
+                            if datetime.fromisoformat(
+                                item.get("eventTime")
+                                or item.get("lastTimestamp")
+                                or item.get("metadata", {}).get("creationTimestamp")
+                                or "1970-01-01T00:00:00+00:00"
+                            )
+                            >= run_started
+                        ]
+                        content = json.dumps(_redact_dict(payload), indent=2) + "\n"
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        content = _redact_text(content)
                 else:
                     content = _redact_text(content)
                 path = diagnostics_dir / f"{name}.{suffix}"
                 path.write_text(content)
                 os.chmod(path, 0o600)
 
-        selector = f"app.kubernetes.io/instance={release or name}"
         described = kubectl(
             "describe",
             "all",
@@ -567,42 +654,27 @@ def _capture_failure_diagnostics(
 
 
 def _cluster_mutation_snapshot(options: DeployOptions) -> dict[str, Any]:
-    """Capture release names and resource UIDs for dry-run mutation proof."""
+    """Capture kustomize-managed resources and their UIDs for dry-run mutation proof."""
 
-    releases = helm(
-        "list",
-        "-A",
-        "--all",
-        "-o",
-        "json",
-        context=options.context,
-        kubeconfig=options.kubeconfig,
-        check=False,
-    )
-    inventory = kubectl(
+    managed = kubectl(
         "get",
         "all,configmap,serviceaccount,pvc,ingress,networkpolicy",
-        "-A",
+        "-n",
+        options.namespace,
         "-o",
         "json",
         context=options.context,
         kubeconfig=options.kubeconfig,
         check=False,
     )
-    if releases.returncode != 0 or inventory.returncode != 0:
+    if managed.returncode != 0:
         raise RuntimeError("unable to capture server dry-run mutation baseline")
-    release_payload = json.loads(releases.stdout or "[]")
-    resource_payload = json.loads(inventory.stdout or "{}")
+    try:
+        resource_payload = json.loads(managed.stdout or "{}")
+    except (json.JSONDecodeError, TypeError):
+        raise RuntimeError("unable to capture server dry-run mutation baseline: invalid JSON")
+    items = resource_payload.get("items", [])
     return {
-        "releases": sorted(
-            (
-                item.get("namespace", ""),
-                item.get("name", ""),
-                item.get("revision", ""),
-                item.get("status", ""),
-            )
-            for item in release_payload
-        ),
         "resources": sorted(
             (
                 item.get("apiVersion", ""),
@@ -611,7 +683,7 @@ def _cluster_mutation_snapshot(options: DeployOptions) -> dict[str, Any]:
                 item.get("metadata", {}).get("name", ""),
                 item.get("metadata", {}).get("uid", ""),
             )
-            for item in resource_payload.get("items", [])
+            for item in items
         ),
     }
 
@@ -792,7 +864,7 @@ def deploy_component(
                 else:
                     deployable = copy.copy(component)
                     deployable.chart = str(built_chart)
-                helm_result = _helm_upgrade(
+                helm_result = _kustomize_deploy(
                     deployable,
                     effective,
                     values_file,
@@ -800,9 +872,10 @@ def deploy_component(
                     options.context,
                     options.kubeconfig,
                     dry_run=options.dry_run,
-                    wait_for_jobs=not is_helm_job,
+                    wait_for_completion=not is_helm_job,
+                    root_dir=options.root_dir,
                 )
-            log_path = run_dir / "logs" / f"{component_name}.helm.log"
+            log_path = run_dir / "logs" / f"{component_name}.kustomize.log"
             log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""
             stderr = helm_result.stderr if isinstance(helm_result.stderr, str) else ""
@@ -860,24 +933,29 @@ def deploy_component(
         duration = time.monotonic() - start
 
         # Rollback if configured
+        rollback_status = None
         if (
             component.type in ("helm", "helm-job")
             and component.rollback_on_failure
             and not options.dry_run
         ):
-            with contextlib.suppress(ShellError):
-                _helm_rollback(
+            try:
+                _kustomize_rollback(
                     component.release,
                     options.namespace,
                     options.context,
                     options.kubeconfig,
                 )
+                rollback_status = "succeeded"
+            except (ShellError, RuntimeError, OSError):
+                rollback_status = "failed"
 
         return ComponentResult(
             component=component_name,
             success=False,
             error=str(exc),
             duration=duration,
+            rollback_status=rollback_status,
         )
 
 
@@ -1062,9 +1140,9 @@ async def deploy_stack(
                 overall_success = False
                 all_results.append(
                     ComponentResult(
-                        component="dry-run-mutation-proof",
-                        success=False,
-                        error=("server dry-run changed Helm releases or Kubernetes resource UIDs"),
+                    component="dry-run-mutation-proof",
+                    success=False,
+                    error=("server dry-run changed Kubernetes resource UIDs"),
                     )
                 )
         return DeployResult(
@@ -1085,6 +1163,7 @@ async def deploy_stack(
                     "success": result.success,
                     "error": result.error,
                     "duration": result.duration,
+                    "rollback_status": result.rollback_status,
                 }
                 for result in all_results
             ],

@@ -80,8 +80,10 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: ssl-proxy-telemetry-jaeger-data
+  name: ssl-proxy-telemetry-jaeger
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-jaeger

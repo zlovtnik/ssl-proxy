@@ -131,6 +131,8 @@ kind: Service
 metadata:
   name: ssl-proxy-tidb-headless
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: tidb
@@ -176,6 +178,8 @@ kind: Job
 metadata:
   name: ssl-proxy-tidb-init
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: tidb-init

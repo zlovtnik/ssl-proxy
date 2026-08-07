@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: ssl-proxy-telemetry-grafana
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: telemetry-grafana

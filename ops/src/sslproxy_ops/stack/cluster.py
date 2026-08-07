@@ -18,7 +18,8 @@ import yaml
 
 from .core import StackConfig
 from .gates import _resolve_gate_resource
-from .shell import helm, kubectl
+from .shell import kubectl, kustomize_validate
+from sslproxy_ops.paths import repo_root
 
 
 @dataclass(frozen=True)
@@ -74,19 +75,20 @@ def preflight(
     """Validate tools, context, nodes, prerequisites, and exact ownership conflicts."""
 
     results: list[CheckResult] = []
-    for tool in ("helm", "kubectl"):
-        if shutil.which(tool) is None:
-            raise RuntimeError(f"required tool not found: {tool}")
-        results.append(CheckResult(f"tool/{tool}", True, "found"))
-    helm_version = helm(
-        "version",
-        "--template",
-        "{{.Version}}",
+    if shutil.which("kubectl") is None:
+        raise RuntimeError("required tool not found: kubectl")
+    results.append(CheckResult("tool/kubectl", True, "found"))
+    kustomize_result = kustomize_validate(
+        str(root_dir / "cyber-stack" / "base"),
+        context=context,
+        kubeconfig=kubeconfig,
         check=False,
     )
-    if helm_version.returncode != 0 or _version_tuple(helm_version.stdout) < (3, 17, 0):
-        raise RuntimeError("Helm 3.17.0 or newer is required")
-    results.append(CheckResult("tool/helm-version", True, helm_version.stdout.strip()))
+    if kustomize_result.returncode != 0:
+        raise RuntimeError(
+            f"kustomize validation failed: {(kustomize_result.stderr or '').strip()}"
+        )
+    results.append(CheckResult("tool/kustomize", True, "validated"))
     kubectl_version = kubectl(
         "version",
         "--client",
@@ -293,8 +295,9 @@ def status(
     results: list[CheckResult] = []
     for name, component in config.components.items():
         if component.type in ("helm", "helm-job"):
-            release = helm(
-                "status",
+            resource = kubectl(
+                "get",
+                "deploy,sts,ds,job",
                 component.release,
                 "-n",
                 namespace,
@@ -304,16 +307,25 @@ def status(
                 kubeconfig=kubeconfig,
                 check=False,
             )
-            if release.returncode != 0:
+            if resource.returncode != 0:
                 results.append(CheckResult(f"release/{name}", False, "not found"))
                 continue
-            payload = _json_result(release, f"release/{name}")
-            release_status = payload.get("info", {}).get("status", "unknown")
+            payload = _json_result(resource, f"release/{name}")
+            items = payload.get("items", [])
+            if not items:
+                results.append(CheckResult(f"release/{name}", False, "no resources"))
+                continue
+            all_ready = all(
+                item.get("status", {}).get("readyReplicas", 0)
+                >= item.get("spec", {}).get("replicas", 1)
+                for item in items
+                if item.get("kind") in ("Deployment", "StatefulSet")
+            )
             results.append(
                 CheckResult(
                     f"release/{name}",
-                    release_status == "deployed",
-                    release_status,
+                    all_ready,
+                    f"{len(items)} resource(s)",
                 )
             )
         for gate in component.gates:

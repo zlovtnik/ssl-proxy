@@ -116,9 +116,11 @@ kind: Job
 metadata:
   name: ssl-proxy-redpanda-init
   namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
   labels:
     app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: redpanda-init
+    app.kubernetes.io/component: redpanda
     app.kubernetes.io/managed-by: kustomize
 spec:
   activeDeadlineSeconds: 600

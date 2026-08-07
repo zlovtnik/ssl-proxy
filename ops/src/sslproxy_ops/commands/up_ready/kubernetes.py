@@ -1047,36 +1047,76 @@ def dashboard_set_file_args() -> list[str]:
 
 
 def helm_release_status(ctx: UpReadyContext) -> str | None:
-    completed = shell.helm(
-        "status",
-        ctx.settings.helm_release,
+    """Return 'deployed' if managed resources exist, else None."""
+    completed = shell.kubectl(
+        "get",
+        "deploy,sts,ds",
         "--namespace",
         ctx.settings.kube_namespace,
+        "--selector",
+        f"app.kubernetes.io/instance={ctx.settings.helm_release}",
+        "--no-headers",
         "--output",
-        "json",
+        "name",
         context=ctx.settings.kube_context,
         check=False,
         capture=True,
     )
     if completed.returncode != 0:
         return None
+    resources = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+    if not resources:
+        return None
+    failed = shell.kubectl(
+        "get",
+        "deploy,sts,ds",
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--selector",
+        f"app.kubernetes.io/instance={ctx.settings.helm_release}",
+        "-o",
+        "json",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if failed.returncode != 0:
+        return None
     try:
-        payload = json.loads(completed.stdout or "{}")
-        status = payload.get("info", {}).get("status")
-    except (AttributeError, TypeError, json.JSONDecodeError) as exc:
-        raise UpReadyError("Unable to parse Helm release status") from exc
-    if not isinstance(status, str) or not status:
-        raise UpReadyError("Helm release status response did not include info.status")
-    return status
+        payload = json.loads(failed.stdout or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    items = payload.get("items", [])
+    if not items:
+        return None
+    for item in items:
+        status = item.get("status", {})
+        metadata = item.get("metadata", {})
+        generation = metadata.get("generation")
+        observed_generation = status.get("observedGeneration")
+        conditions = status.get("conditions", [])
+        for cond in conditions:
+            if (
+                cond.get("type") == "Progressing"
+                and cond.get("status") == "False"
+                and cond.get("reason") == "ProgressDeadlineExceeded"
+                and generation is not None
+                and observed_generation == generation
+            ):
+                return "failed"
+    return "deployed"
 
 
 def helm_release_history(ctx: UpReadyContext) -> list[dict[str, object]]:
-    completed = shell.helm(
-        "history",
-        ctx.settings.helm_release,
+    """Return annotation-based version history from managed deployments."""
+    completed = shell.kubectl(
+        "get",
+        "deploy,sts,ds",
         "--namespace",
         ctx.settings.kube_namespace,
-        "--output",
+        "--selector",
+        f"app.kubernetes.io/instance={ctx.settings.helm_release}",
+        "-o",
         "json",
         context=ctx.settings.kube_context,
         check=False,
@@ -1085,86 +1125,112 @@ def helm_release_history(ctx: UpReadyContext) -> list[dict[str, object]]:
     if completed.returncode != 0:
         return []
     try:
-        payload = json.loads(completed.stdout or "[]")
+        payload = json.loads(completed.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise UpReadyError("Unable to parse Helm release history") from exc
-    if not isinstance(payload, list):
-        raise UpReadyError("Helm release history response was not a list")
-    return [item for item in payload if isinstance(item, dict)]
+        raise UpReadyError("Unable to parse resource history") from exc
+    revisions: list[dict[str, object]] = []
+    for item in payload.get("items", []):
+        annotations = (item.get("metadata") or {}).get("annotations") or {}
+        revision = annotations.get("ssl-proxy.io/rollout-revision")
+        if revision:
+            name = (item.get("metadata") or {}).get("name", "unknown")
+            revisions.append({"revision": revision, "name": name, "status": "deployed"})
+    return revisions
 
 
 def helm_pending_recovery_command(ctx: UpReadyContext) -> str:
-    history = helm_release_history(ctx)
-    candidates = [
-        item
-        for item in history
-        if item.get("status") in {"deployed", "superseded"}
-        and isinstance(item.get("revision"), int)
-    ]
-    context = f" --kube-context {ctx.settings.kube_context}" if ctx.settings.kube_context else ""
-    if not candidates:
-        return (
-            f"helm{context} history {ctx.settings.helm_release} "
-            f"--namespace {ctx.settings.kube_namespace}"
-        )
-    revision = max(candidates, key=lambda item: int(item["revision"]))["revision"]
+    """Return the kustomize recovery command for a pending release."""
+    context = ctx.settings.kube_context
+    ns = ctx.settings.kube_namespace
+    root = repo_root()
+    overlay = root / "cyber-stack" / "base"
+    context_flag = "" if not context else f" --context {context}"
     return (
-        f"helm{context} rollback {ctx.settings.helm_release} {revision} "
-        f"--namespace {ctx.settings.kube_namespace} --no-hooks --wait=watcher "
-        f"--timeout {ctx.settings.helm_timeout}"
+        f"kubectl{context_flag} apply -k {overlay}"
+        f" --namespace {ns}"
     )
+
+
+def _find_failed_workloads(ctx: UpReadyContext) -> list[str]:
+    """Return fully-qualified resource names of workloads with ProgressDeadlineExceeded."""
+    completed = shell.kubectl(
+        "get",
+        "deploy,sts,ds",
+        "--namespace",
+        ctx.settings.kube_namespace,
+        "--selector",
+        f"app.kubernetes.io/instance={ctx.settings.helm_release}",
+        "-o",
+        "json",
+        context=ctx.settings.kube_context,
+        check=False,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        return []
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    failed: list[str] = []
+    for item in payload.get("items", []):
+        status = item.get("status", {})
+        metadata = item.get("metadata", {})
+        generation = metadata.get("generation")
+        observed_generation = status.get("observedGeneration")
+        conditions = status.get("conditions", [])
+        for cond in conditions:
+            if (
+                cond.get("type") == "Progressing"
+                and cond.get("status") == "False"
+                and cond.get("reason") == "ProgressDeadlineExceeded"
+                and generation is not None
+                and observed_generation == generation
+            ):
+                kind = item.get("kind", "").lower()
+                name = metadata.get("name", "")
+                if kind == "deployment":
+                    kind = "deploy"
+                elif kind == "statefulset":
+                    kind = "sts"
+                elif kind == "daemonset":
+                    kind = "ds"
+                failed.append(f"{kind}/{name}")
+                break
+    return failed
 
 
 def prepare_helm_release(ctx: UpReadyContext) -> bool:
     """Return true for an upgrade, false for a clean first install."""
     status = helm_release_status(ctx)
-    if status and status.startswith("pending-"):
-        step(
-            "S03",
-            f"helm_pending: waiting for release={ctx.settings.helm_release} status={status}",
-        )
-        for attempt in range(HELM_PENDING_SETTLE_ATTEMPTS):
-            if attempt:
-                time.sleep(1)
-            status = helm_release_status(ctx)
-            if status is None or not status.startswith("pending-"):
-                break
-        if status and status.startswith("pending-"):
-            recovery = helm_pending_recovery_command(ctx)
-            raise UpReadyError(
-                f"Helm release {ctx.settings.helm_release!r} remains {status}; "
-                f"inspect the operation and recover explicitly with: {recovery}"
-            )
     if status is None:
         return False
     if status == "deployed":
         return True
-    if status in {"failed", "uninstalled", "uninstalling"}:
-        step("S03", f"helm_recover: removing {status} release={ctx.settings.helm_release}")
-        shell.helm(
-            "uninstall",
-            ctx.settings.helm_release,
-            "--namespace",
-            ctx.settings.kube_namespace,
-            "--ignore-not-found",
-            "--no-hooks",
-            "--cascade",
-            "foreground",
-            "--wait=watcher",
-            "--timeout",
-            ctx.settings.helm_timeout,
-            context=ctx.settings.kube_context,
-            capture=True,
-        )
-        for attempt in range(60):
+    if status in {"failed"}:
+        step("S03", f"resource_cleanup: removing failed resources for release={ctx.settings.helm_release}")
+        failed_names = _find_failed_workloads(ctx)
+        for name in failed_names:
+            shell.kubectl(
+                "delete",
+                name,
+                "--namespace",
+                ctx.settings.kube_namespace,
+                "--ignore-not-found",
+                "--cascade",
+                "foreground",
+                context=ctx.settings.kube_context,
+                capture=True,
+            )
+        for attempt in range(30):
             if helm_release_status(ctx) is None:
                 return False
-            if attempt < 59:
+            if attempt < 29:
                 time.sleep(1)
-        raise UpReadyError(f"Helm release {ctx.settings.helm_release!r} still exists after cleanup")
+        raise UpReadyError(f"Resources for release {ctx.settings.helm_release!r} still exist after cleanup")
     raise UpReadyError(
-        f"Helm release {ctx.settings.helm_release!r} is {status}; "
-        "another Helm operation may still be active"
+        f"Release {ctx.settings.helm_release!r} is {status}; "
+        "another operation may still be active"
     )
 
 
