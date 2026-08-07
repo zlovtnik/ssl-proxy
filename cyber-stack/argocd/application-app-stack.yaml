@@ -9,7 +9,7 @@ spec:
   project: ssl-proxy
   source:
     repoURL: https://github.com/zlovtnik/ssl-proxy.git
-    targetRevision: main
+    targetRevision: dev
     path: cyber-stack/matrix/dev
     directory:
       recurse: false
