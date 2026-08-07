@@ -21,7 +21,6 @@ spec:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: schema-migrator-bootstrap
     spec:
-      serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       restartPolicy: Never
       securityContext:

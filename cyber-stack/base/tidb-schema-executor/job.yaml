@@ -25,7 +25,6 @@ spec:
         ssl-proxy.io/content-hash: "schema-image-stable-env-7"
     spec:
       restartPolicy: Never
-      serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       securityContext:
         seccompProfile:
