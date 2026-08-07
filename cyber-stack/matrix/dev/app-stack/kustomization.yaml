@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-ssl-proxy
+resources:
+  - ../namespace.yaml
+  - ../../../base/platform-config/serviceaccount.yaml
+  - ../../../base/platform-config/configmap.yaml
+  - ../../../base/proxy/deployment.yaml
+  - ../../../base/proxy/service.yaml
+  - ../../../base/java-coordinator/deployment.yaml
+  - ../../../base/schema-migrator/backend.yaml
+  - ../../../base/schema-migrator/ui.yaml
+  - ../../../base/schema-migrator/keycloak.yaml
+  - ../../../base/schema-migrator/traefik.yaml
+  - ../../../base/schema-migrator/configmaps.yaml
+  - ../../../base/schema-migrator/bootstrap-job.yaml
+  - ../../../base/schema-migrator/validate-job.yaml
+  - ../../../base/atheros-sensor/daemonset.yaml
+  - ../../../base/atheros-search/deployment.yaml
+images:
+  - name: ssl-proxy
+    newTag: neon-alpha-v2
+  - name: java-coordinator
+    newTag: neon-alpha-v2
+  - name: atheros-sensor
+    newTag: neon-alpha-v2
+  - name: atheros-search
+    newTag: neon-alpha-v2
+  - name: atheros-search-ui
+    newTag: neon-alpha-v2
+  - name: schema-migrator-backend
+    newTag: neon-alpha-v2
+  - name: schema-migrator-ui
+    newTag: neon-alpha-v2
+patches:
+  - path: ../patches/proxy-replicas.yaml
+  - path: ../patches/octopus-environment.yaml
