@@ -1,0 +1,215 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-proxy
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: proxy
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: copy-wireguard-config
+          image: ssl-proxy:latest
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/ && chmod -R g+rX /config"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: config-source
+              mountPath: /config-source
+              readOnly: true
+            - name: config
+              mountPath: /config
+      containers:
+        - name: ssl-proxy
+          image: ssl-proxy:latest
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/start-proxy-wg"]
+          env:
+            - name: WG_INTERFACE_NAME
+              value: "wg0"
+            - name: WG_TEMPLATE_PATH
+              value: "/config/templates/server.conf"
+            - name: WG_CONFIG_PATH
+              value: "/run/wireguard/wg0.conf"
+            - name: WG_UAPI_SOCKET_DIR
+              value: "/var/run/wireguard"
+            - name: WG_SERVER_ADDRESS
+              value: "10.13.13.1/24"
+            - name: WG_PORT
+              value: "443"
+            - name: WG_INTERNAL_PORT
+              value: "51820"
+            - name: WG_MTU
+              value: "1420"
+            - name: WG_UDP_SOCKET_BUFFER_BYTES
+              value: "16777216"
+            - name: WG_OBFUSCATION_ENABLED
+              value: "false"
+            - name: WG_OBFUSCATION_KEY
+              value: ""
+            - name: WG_OBFUSCATION_KEY_FILE
+              value: "/run/local-secrets/wg_obfuscation_key"
+            - name: WG_OBFUSCATION_MAGIC_BYTE
+              value: "0xAA"
+            - name: WG_OBFUSCATION_SESSION_IDLE_SECS
+              value: "300"
+            - name: WG_SUDO
+              value: "1"
+            - name: WG_RUNTIME_SYSCTLS
+              value: "0"
+            - name: WG_WAN_INTERFACE
+              value: "auto"
+            - name: WG_PEERS
+              value: "peer1,peer2"
+            - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+            - name: SYNC_CONTENT_TOPICS
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_STREAM_NAMES
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: proxy-admin-key
+                  key: api-key
+            - name: ADMIN_BIND_ADDR
+              value: "0.0.0.0"
+            - name: RUST_LOG
+              value: "ssl_proxy=info"
+            - name: EXPLICIT_PROXY_ENABLED
+              value: "false"
+            - name: SYNC_OUTBOX_DIR
+              value: "/sync-outbox"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://ssl-proxy-otel-collector:4317"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_SERVICE_NAME
+              value: "ssl-proxy"
+          ports:
+            - containerPort: 443
+              protocol: UDP
+              name: wireguard
+            - containerPort: 51820
+              protocol: UDP
+              name: wg-internal
+            - containerPort: 3002
+              protocol: TCP
+              name: admin
+            - containerPort: 3001
+              protocol: TCP
+              name: policy
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: admin
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: sync-outbox
+              mountPath: /sync-outbox
+            - name: runtime-secrets
+              mountPath: /run/local-secrets
+              readOnly: true
+            - name: tun-device
+              mountPath: /dev/net/tun
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_ADMIN
+      volumes:
+        - name: config-source
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: wireguard-config
+                  items:
+                    - {key: server.conf, path: templates/server.conf}
+                    - {key: Corefile, path: coredns/Corefile}
+                    - {key: privatekey-server, path: server/privatekey-server}
+                    - {key: publickey-server, path: server/publickey-server}
+                    - {key: peer1.conf, path: peer1/peer1.conf}
+                    - {key: peer1-obfuscated.conf, path: peer1/peer1-obfuscated.conf}
+                    - {key: presharedkey-peer1, path: peer1/presharedkey-peer1}
+                    - {key: publickey-peer1, path: peer1/publickey-peer1}
+                    - {key: peer2.conf, path: peer2/peer2.conf}
+                    - {key: peer2-obfuscated.conf, path: peer2/peer2-obfuscated.conf}
+                    - {key: presharedkey-peer2, path: peer2/presharedkey-peer2}
+                    - {key: publickey-peer2, path: peer2/publickey-peer2}
+              - configMap:
+                  name: ssl-proxy-topics-manifest
+                  items:
+                    - key: topics.manifest
+                      path: topics/topics.manifest
+        - name: config
+          emptyDir: {}
+        - name: sync-outbox
+          emptyDir: {}
+        - name: runtime-secrets
+          secret:
+            secretName: proxy-runtime-secrets
+            defaultMode: 0440
+            items:
+              - key: wg-obfuscation-key
+                path: wg_obfuscation_key
+        - name: tun-device
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice

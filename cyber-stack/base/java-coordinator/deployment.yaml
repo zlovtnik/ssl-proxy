@@ -1,0 +1,414 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: java-coordinator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: java-coordinator
+        app.kubernetes.io/name-alias: octopus
+        ssl-proxy.io/tidb-client: "true"
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: java-coordinator
+          image: java-coordinator:latest
+          imagePullPolicy: Always
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseZGC -XX:+ZGenerational -XX:InitialRAMPercentage=50 -XX:MaxRAMPercentage=75"
+            - name: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_REDPANDA_BOOTSTRAP_SERVERS
+            - name: SYNC_REDPANDA_TOPIC_MANIFEST
+              value: "/app/docker/redpanda/topics.manifest"
+            - name: SYNC_REDPANDA_TOPIC_PARTITIONS
+              value: "24"
+            - name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: COORDINATOR_SCAN_FETCH_COUNT
+              value: "500"
+            - name: COORDINATOR_MAX_POLL_RECORDS
+              value: "500"
+            - name: COORDINATOR_POLL_TIMEOUT_MS
+              value: "3000"
+            - name: COORDINATOR_LOCKED_BATCH_SIZE
+              value: "500"
+            - name: COORDINATOR_LOCKED_BATCH_WINDOW_MS
+              value: "250"
+            - name: SYNC_SCAN_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_SCAN_TOPIC
+            - name: SYNC_LOAD_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_LOAD_TOPIC
+            - name: SYNC_RESULT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_RESULT_TOPIC
+            - name: SYNC_PAYLOAD_AUDIT_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_PAYLOAD_AUDIT_TOPIC
+            - name: SYNC_SCAN_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_SCAN_CONSUMER
+            - name: SYNC_LOAD_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_LOAD_CONSUMER
+            - name: SYNC_RESULT_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_RESULT_CONSUMER
+            - name: SYNC_PAYLOAD_AUDIT_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_PAYLOAD_AUDIT_CONSUMER
+            - name: SYNC_SCAN_CONSUMERS_COUNT
+              value: "1"
+            - name: SYNC_RESULT_CONSUMERS_COUNT
+              value: "1"
+            - name: WIRELESS_CONSUMERS_COUNT
+              value: "1"
+            - name: WIRELESS_MAX_POLL_RECORDS
+              value: "500"
+            - name: WIRELESS_RAW_PAYLOAD_HOT_DAYS
+              value: "7"
+            - name: SYNC_EVENT_ROW_RETENTION_DAYS
+              value: "30"
+            - name: SEARCH_RETENTION_DAYS
+              value: "30"
+            - name: SYNC_EVENT_TOMBSTONE_RETENTION_DAYS
+              value: "45"
+            - name: WIRELESS_RAW_ARCHIVE_BUCKET
+              value: "ssl-proxy-wireless-raw-archive"
+            - name: WIRELESS_RAW_ARCHIVE_BATCH_SIZE
+              value: "100"
+            - name: WIRELESS_RAW_ARCHIVE_INTERVAL_MS
+              value: "300000"
+            - name: RETENTION_MAINTENANCE_INTERVAL_MS
+              value: "3600000"
+            - name: OCTOPUS_ARCHIVE_ENABLED
+              value: "false"
+            - name: MINIO_ENDPOINT
+              value: "http://ssl-proxy-minio.ssl-proxy.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: access-key
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: secret-key
+            - name: SYNC_STREAM_NAME
+              value: "proxy.events"
+            - name: SYNC_STREAM_NAMES
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_STREAM_NAMES
+            - name: COORDINATOR_LOAD_STREAM_NAMES
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: COORDINATOR_LOAD_STREAM_NAMES
+            - name: AUDIT_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: AUDIT_STREAM_NAME
+            - name: SYNC_RESULT_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SYNC_RESULT_STREAM_NAME
+            - name: WIRELESS_BACKLOG_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_STREAM_NAME
+            - name: WIRELESS_MAC_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_MAC_STREAM_NAME
+            - name: WIRELESS_NETWORKS_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_NETWORKS_STREAM_NAME
+            - name: WIRELESS_PROBE_STREAM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_PROBE_STREAM_NAME
+            - name: WIRELESS_BACKLOG_SAVE_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_SAVE_TOPIC
+            - name: WIRELESS_BACKLOG_LIST_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_LIST_TOPIC
+            - name: WIRELESS_BACKLOG_SYNCED_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_SYNCED_TOPIC
+            - name: WIRELESS_BACKLOG_PRUNE_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_PRUNE_TOPIC
+            - name: WIRELESS_MAC_LOOKUP_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_MAC_LOOKUP_TOPIC
+            - name: WIRELESS_NETWORKS_AUTHORIZED_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_NETWORKS_AUTHORIZED_TOPIC
+            - name: WIRELESS_PROBE_FLUSH_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_PROBE_FLUSH_TOPIC
+            - name: WIRELESS_BACKLOG_SAVE_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_SAVE_CONSUMER
+            - name: WIRELESS_BACKLOG_LIST_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_LIST_CONSUMER
+            - name: WIRELESS_BACKLOG_SYNCED_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_SYNCED_CONSUMER
+            - name: WIRELESS_BACKLOG_PRUNE_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_PRUNE_CONSUMER
+            - name: WIRELESS_MAC_LOOKUP_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_MAC_LOOKUP_CONSUMER
+            - name: WIRELESS_NETWORKS_AUTHORIZED_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_NETWORKS_AUTHORIZED_CONSUMER
+            - name: WIRELESS_PROBE_FLUSH_CONSUMER
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_PROBE_FLUSH_CONSUMER
+            - name: WIRELESS_BACKLOG_LIST_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_LIST_REPLY_TOPIC
+            - name: WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC
+            - name: WIRELESS_MAC_LOOKUP_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_MAC_LOOKUP_REPLY_TOPIC
+            - name: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC
+            - name: SYNC_OUTBOX_DIR
+              value: "/sync-outbox"
+            - name: SYNC_REDPANDA_LAG_METRICS_ENABLED
+              value: "true"
+            - name: SYNC_REDPANDA_LAG_METRICS_POLL_INTERVAL_MS
+              value: "10000"
+            - name: SYNC_REDPANDA_LAG_METRICS_TIMEOUT_MS
+              value: "5000"
+            - name: SYNC_HEARTBEAT_LOG_INTERVAL_MS
+              value: "15000"
+            - name: TIDB_ENABLED
+              value: "true"
+            - name: TIDB_SCHEMA_MANIFEST_SHA256
+              value: "9b3a4105fe026991a5f66f0a6748bd565e67a0c2c76b52cd5d6b05bd279d4f41"
+            - name: TIDB_HOST
+              value: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+            - name: TIDB_PORT
+              value: "4000"
+            - name: TIDB_DATABASE
+              value: "octopus_core"
+            - name: TIDB_USER
+              value: "octopus_runtime"
+            - name: TIDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-octopus
+                  key: password
+            - name: TIDB_POOL_SIZE
+              value: "20"
+            - name: TIDB_HEALTHCHECK_RESERVE
+              value: "2"
+            - name: TIDB_CONNECTION_TIMEOUT_MS
+              value: "5000"
+            - name: TIDB_STATEMENT_TIMEOUT_SECS
+              value: "30"
+            - name: TIDB_WARN_ONLY
+              value: "false"
+            - name: TIDB_SSL_MODE
+              value: "VERIFY_IDENTITY"
+            - name: TIDB_SSL_CA_PATH
+              value: "/etc/tidb-tls/ca.crt"
+            - name: TIDB_SSL_SERVER_NAME
+              value: "ssl-proxy-tidb.ssl-proxy.svc.cluster.local"
+            - name: OCTOPUS_PROCESSORS_ENABLED
+              value: "true"
+            - name: OCTOPUS_ENABLED_PROCESSORS
+              value: ""
+            - name: OCTOPUS_PROCESSOR_BATCH_SIZE
+              value: "250"
+            - name: OCTOPUS_PROCESSOR_INTERVAL_SECONDS
+              value: "10"
+            - name: OCTOPUS_EMBEDDING_MODEL
+              value: "sentence-transformers/all-MiniLM-L6-v2"
+            - name: OCTOPUS_EVENT_DUPLICATE_DISTANCE
+              value: "0.05"
+            - name: OCTOPUS_BEHAVIOR_SIMILARITY_THRESHOLD
+              value: "0.88"
+            - name: OCTOPUS_SEQUENCE_DISTANCE_THRESHOLD
+              value: "0.10"
+            - name: OCTOPUS_CONSUMERS_ENABLED
+              value: "true"
+            - name: OCTOPUS_ENVIRONMENT
+              value: "production"
+            - name: OCTOPUS_CUTOVER_DEV_BYPASS
+              value: "false"
+            - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+              value: "0.05"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://ssl-proxy-otel-collector:4317"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "grpc"
+            - name: OTEL_TRACES_SAMPLER
+              value: "traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: "0.05"
+            - name: OTEL_SERVICE_NAME
+              value: "java-coordinator"
+          ports:
+            - containerPort: 8081
+              protocol: TCP
+              name: http
+          startupProbe:
+            httpGet:
+              path: /live
+              port: 8081
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: topics-manifest
+              mountPath: /app/docker/redpanda
+              readOnly: true
+            - name: sync-outbox
+              mountPath: /sync-outbox
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+      volumes:
+        - name: topics-manifest
+          configMap:
+            name: ssl-proxy-topics-manifest
+        - name: sync-outbox
+          emptyDir: {}
+        - name: tidb-tls
+          secret:
+            secretName: tidb-client-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: java-coordinator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: java-coordinator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8081
+      protocol: TCP

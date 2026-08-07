@@ -1,0 +1,129 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-schema-migrator-bootstrap
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: schema-migrator-bootstrap
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: schema-migrator-bootstrap
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: quay.io/keycloak/keycloak:26.2.5
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              KCADM=/opt/keycloak/bin/kcadm.sh
+              CONFIG=/tmp/kcadm.config
+              authenticated=false
+              for attempt in $(seq 1 90); do
+                if "$KCADM" config credentials \
+                  --config "$CONFIG" \
+                  --server "$KEYCLOAK_URL" \
+                  --realm master \
+                  --user "$KEYCLOAK_ADMIN" \
+                  --password - <<< "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  authenticated=true
+                  break
+                fi
+                sleep 2
+              done
+              if [ "$authenticated" != true ]; then
+                echo "Keycloak did not accept bootstrap administrator credentials" >&2
+                exit 1
+              fi
+
+              user_id="$($KCADM get users --config "$CONFIG" -r "$REALM" \
+                -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
+                | grep -v '^id$' | head -n 1)"
+              if [ -z "$user_id" ]; then
+                "$KCADM" create users --config "$CONFIG" -r "$REALM" \
+                  -s "username=$APP_USERNAME" -s enabled=true -s emailVerified=true >/dev/null
+                "$KCADM" set-password --config "$CONFIG" -r "$REALM" \
+                  --username "$APP_USERNAME" --new-password "$APP_PASSWORD" >/dev/null
+              fi
+
+              client_uuid=""
+              for attempt in $(seq 1 45); do
+                client_uuid="$($KCADM get clients --config "$CONFIG" -r "$REALM" \
+                  -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+                if [ -n "$client_uuid" ]; then
+                  break
+                fi
+                sleep 2
+              done
+              if [ -z "$client_uuid" ]; then
+                echo "Keycloak client $CLIENT_ID was not found" >&2
+                exit 1
+              fi
+              "$KCADM" update "clients/$client_uuid" --config "$CONFIG" -r "$REALM" \
+                -s "redirectUris=[\"$PUBLIC_ORIGIN/*\"]" -s "webOrigins=[\"$PUBLIC_ORIGIN\"]" >/dev/null
+
+              "$KCADM" add-roles --config "$CONFIG" -r "$REALM" \
+                --uusername "$APP_USERNAME" --cclientid "$CLIENT_ID" --rolename "$ADMIN_ROLE"
+          env:
+            - name: KEYCLOAK_URL
+              value: "http://ssl-proxy-schema-migrator-keycloak:8080"
+            - name: KEYCLOAK_ADMIN
+              value: "keycloak-admin"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: schema-migrator-keycloak
+                  key: bootstrap-admin-password
+            - name: REALM
+              value: "middleware"
+            - name: CLIENT_ID
+              value: "bedrock-ui"
+            - name: PUBLIC_ORIGIN
+              value: "https://identity.example.internal"
+            - name: UI_ORIGIN
+              value: "https://identity.example.internal"
+            - name: ADMIN_ROLE
+              value: "admin"
+            - name: APP_USERNAME
+              value: "schema-admin"
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: schema-migrator-bootstrap
+                  key: application-admin-password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

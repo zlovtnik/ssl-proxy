@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  # Platform config
+  - platform-config/serviceaccount.yaml
+  - platform-config/configmap.yaml
+  # Proxy
+  - proxy/deployment.yaml
+  - proxy/service.yaml
+  # Java coordinator
+  - java-coordinator/deployment.yaml
+  # Schema migrator
+  - schema-migrator/backend.yaml
+  - schema-migrator/ui.yaml
+  - schema-migrator/keycloak.yaml
+  - schema-migrator/traefik.yaml
+  - schema-migrator/configmaps.yaml
+  - schema-migrator/bootstrap-job.yaml
+  - schema-migrator/validate-job.yaml
+  # Atheros sensor
+  - atheros-sensor/daemonset.yaml
+  # Atheros search
+  - atheros-search/deployment.yaml
+  # Redis
+  - redis-runtime/deployment.yaml
+  # TiDB
+  - tidb/statefulset.yaml
+  # Redpanda
+  - redpanda/statefulset.yaml
+  # MinIO
+  - minio/statefulset.yaml
+  # TiDB schema executor
+  - tidb-schema-executor/job.yaml
+  # Telemetry
+  - telemetry/prometheus.yaml
+  - telemetry/prometheus-configmap.yaml
+  - telemetry/grafana.yaml
+  - telemetry/grafana-configmaps.yaml
+  - telemetry/loki.yaml
+  - telemetry/loki-configmap.yaml
+  - telemetry/promtail.yaml
+  - telemetry/promtail-configmap.yaml
+  - telemetry/jaeger.yaml
+  - telemetry/otel-collector.yaml
+  - telemetry/otel-collector-configmap.yaml
+  - telemetry/node-exporter.yaml
+  - telemetry/cadvisor.yaml
+  - telemetry/pushgateway.yaml

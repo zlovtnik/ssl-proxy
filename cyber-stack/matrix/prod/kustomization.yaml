@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: prod-ssl-proxy
+resources:
+  - namespace.yaml
+  - ../../base
+images:
+  - name: ssl-proxy
+    newName: ssl-proxy
+    newTag: v1.0.0
+  - name: java-coordinator
+    newName: java-coordinator
+    newTag: v1.0.0
+  - name: atheros-sensor
+    newName: atheros-sensor
+    newTag: v1.0.0
+  - name: atheros-search
+    newName: atheros-search
+    newTag: v1.0.0
+  - name: atheros-search-ui
+    newName: atheros-search-ui
+    newTag: v1.0.0
+  - name: schema-migrator-backend
+    newName: schema-migrator-backend
+    newTag: v1.0.0
+  - name: schema-migrator-ui
+    newName: schema-migrator-ui
+    newTag: v1.0.0
+patches:
+  - path: patches/proxy-replicas.yaml
+  - path: patches/tidb-replicas.yaml
+  - path: patches/resources.yaml
+  - path: patches/replication-factor.yaml
+  - path: patches/topic-replication.yaml

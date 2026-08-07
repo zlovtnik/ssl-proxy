@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-platform-config
+  namespace: ssl-proxy
+data:
+  topics.manifest: |
+    # topic|partitions|replicas|retention.ms|retention.bytes
+    sync.scan.request|24|1|2592000000|-1
+    sync.scan.request.dlq|24|1|2592000000|-1
+    sync.oracle.load|24|1|2592000000|-1
+    sync.oracle.load.dlq|24|1|2592000000|-1
+    sync.oracle.result|24|1|2592000000|-1
+    sync.oracle.result.dlq|24|1|2592000000|-1
+    proxy.events|24|3|2592000000|-1
+    proxy.events.dlq|24|3|2592000000|-1
+    proxy.payload_audit|3|1|2592000000|-1
+    proxy.payload_audit.dlq|3|1|2592000000|-1
+    wireless.audit|3|1|2592000000|-1
+    wireless.mac.seen|3|1|2592000000|-1
+    wireless.audit.enriched|3|1|2592000000|-1
+    wireless.audit.config|1|1|2592000000|-1
+    wireless.config.authorized_networks|1|1|2592000000|-1
+    wireless.config.sensor|1|1|2592000000|-1

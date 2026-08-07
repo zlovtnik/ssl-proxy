@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-ssl-proxy
+resources:
+  - namespace.yaml
+  - ../../base
+images:
+  - name: ssl-proxy
+    newTag: neon-alpha-v2
+  - name: java-coordinator
+    newTag: neon-alpha-v2
+  - name: atheros-sensor
+    newTag: neon-alpha-v2
+  - name: atheros-search
+    newTag: neon-alpha-v2
+  - name: atheros-search-ui
+    newTag: neon-alpha-v2
+  - name: schema-migrator-backend
+    newTag: neon-alpha-v2
+  - name: schema-migrator-ui
+    newTag: neon-alpha-v2
+patches:
+  - path: patches/proxy-replicas.yaml
+  - path: patches/tidb-replicas.yaml
+  - path: patches/octopus-environment.yaml

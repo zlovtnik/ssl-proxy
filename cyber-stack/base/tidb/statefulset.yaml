@@ -1,0 +1,399 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ssl-proxy-tidb
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  serviceName: ssl-proxy-tidb-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: tidb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: tidb
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tidb
+          image: pingcap/tidb:v8.5.7
+          imagePullPolicy: Always
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          command:
+            - /bin/sh
+            - -c
+            - |
+              exec tidb-server \
+                --store=unistore \
+                --path=/tidb-data \
+                --log-file= \
+                --advertise-address="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local" \
+                --status=10080 \
+                --config=/etc/tidb/config/tidb.toml
+          ports:
+            - containerPort: 4000
+              name: mysql
+            - containerPort: 10080
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 8Gi
+            limits:
+              cpu: "2"
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tidb-data
+              mountPath: /tidb-data
+            - name: tidb-server-tls
+              mountPath: /etc/tidb-tls-server
+              readOnly: true
+            - name: tidb-config
+              mountPath: /etc/tidb/config
+      volumes:
+        - name: tidb-server-tls
+          secret:
+            secretName: ssl-proxy-tidb-server-tls
+        - name: tidb-config
+          configMap:
+            name: ssl-proxy-tidb-config
+  volumeClaimTemplates:
+    - metadata:
+        name: tidb-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-tidb
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: mysql
+    - port: 10080
+      targetPort: 10080
+      name: metrics
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-tidb-headless
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: mysql
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-tidb-config
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb
+    app.kubernetes.io/managed-by: kustomize
+data:
+  tidb.toml: |
+    [log]
+    level = "info"
+
+    [performance]
+    max-procs = 0
+
+    [tikv-client.copr-cache]
+    capacity-mb = 128
+
+    [security]
+    ssl-cert = "/etc/tidb-tls-server/tls.crt"
+    ssl-key = "/etc/tidb-tls-server/tls.key"
+    require-secure-transport = true
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-tidb-init
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb-init
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: tidb-init
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tidb-init
+          image: tidb-runtime-schema:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              TIDB_HOST="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local"
+              MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
+
+              echo "Waiting for TiDB to be ready..."
+              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" 2>/dev/null; do
+                sleep 3
+              done
+              echo "TiDB is ready."
+
+              # Probe root auth: try password first, fall back to passwordless for initial bootstrap
+              export MYSQL_PWD="${ROOT_PASSWORD}"
+              root_auth_works=false
+              if mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" >/dev/null 2>&1; then
+                root_auth_works=true
+              else
+                unset MYSQL_PWD
+                if mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" >/dev/null 2>&1; then
+                  root_auth_works=false
+                fi
+                export MYSQL_PWD="${ROOT_PASSWORD}"
+              fi
+
+              echo "Setting root password..."
+              if [ "$root_auth_works" = true ]; then
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                  "CREATE USER IF NOT EXISTS 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                  "ALTER USER 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
+              else
+                unset MYSQL_PWD
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                  "CREATE USER IF NOT EXISTS 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                  "ALTER USER 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
+                export MYSQL_PWD="${ROOT_PASSWORD}"
+              fi
+              echo "Root password set."
+
+              export MYSQL_PWD="${ROOT_PASSWORD}"
+              STATS_CACHE_QUOTA_BYTES=536870912
+              SCHEMA_CACHE_SIZE_BYTES=268435456
+              echo "Applying TiDB cache quotas..."
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "SET GLOBAL tidb_stats_cache_mem_quota = ${STATS_CACHE_QUOTA_BYTES}; SET GLOBAL tidb_schema_cache_size = ${SCHEMA_CACHE_SIZE_BYTES};"
+              echo "Creating databases..."
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS octopus_core CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS atheros_search CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS schema_migrator CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS keycloak CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "CREATE DATABASE IF NOT EXISTS integration_console CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+              echo "Creating accounts..."
+              for pair in \
+                "octopus_runtime:${OCTOPUS_PASSWORD}" \
+                "atheros_search_runtime:${ATHEROS_SEARCH_PASSWORD}" \
+                "schema_migrator_runtime:${SCHEMA_MIGRATOR_PASSWORD}" \
+                "keycloak:${KEYCLOAK_PASSWORD}"; do
+                acct="${pair%%:*}"
+                pass="${pair#*:}"
+                tmp_sql=$(mktemp /tmp/create_user_XXXXXX.sql)
+                cat > "${tmp_sql}" <<SQLEOF
+                CREATE USER IF NOT EXISTS '${acct}' IDENTIFIED BY '${pass}';
+                ALTER USER '${acct}' IDENTIFIED BY '${pass}';
+                SQLEOF
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} < "${tmp_sql}"
+                rm -f "${tmp_sql}"
+              done
+
+              echo "Waiting for schema tables to be created..."
+              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1 FROM octopus_core.schema_readiness LIMIT 1" 2>/dev/null; do
+                sleep 5
+              done
+              echo "Schema tables are ready."
+
+              echo "Granting permissions..."
+              mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON octopus_core.* TO 'octopus_runtime';"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e \
+                "GRANT SELECT ON atheros_search.* TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_documents TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tokens TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_document_tags TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.search_filter_values TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.embedding_jobs TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_event TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_device TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_behaviour TO 'octopus_runtime';
+                 GRANT DELETE ON atheros_search.search_vectors_sequence TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.behaviour_snapshots TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.baseline_profiles TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.frame_sequences TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_transitions TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_transition_contributions TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.sequence_previous_totals TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.timing_profiles TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.similarity_pairs TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.threat_signals TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.ap_risk_scores TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.graph_nodes TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.graph_edges TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.inventory_devices TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.identity_clusters TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.identity_cluster_members TO 'octopus_runtime';
+                 GRANT INSERT, UPDATE, DELETE ON atheros_search.merge_candidates TO 'octopus_runtime';"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e \
+                "GRANT SELECT ON atheros_search.* TO 'atheros_search_runtime';
+                 GRANT UPDATE ON atheros_search.embedding_jobs TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_event TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_device TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_behaviour TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_vectors_sequence TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.worker_heartbeat TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_queries TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_query_results TO 'atheros_search_runtime';
+                 GRANT INSERT, UPDATE ON atheros_search.search_feedback TO 'atheros_search_runtime';
+                 GRANT INSERT ON atheros_search.merge_decisions TO 'atheros_search_runtime';"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e \
+                "GRANT SELECT ON octopus_core.schema_readiness TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.sync_events TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.devices TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_authorized_networks TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_clients TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frames TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_radio TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_qos TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_network TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_app_signals TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_identity TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_frame_security TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.wireless_shadow_alerts TO 'atheros_search_runtime';
+                 GRANT SELECT ON octopus_core.v_wireless_device_inventory TO 'atheros_search_runtime';"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e \
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON schema_migrator.* TO 'schema_migrator_runtime';"
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e \
+                "GRANT ALL PRIVILEGES ON keycloak.* TO 'keycloak';"
+              echo "Flushing privileges..."
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e "FLUSH PRIVILEGES;"
+              echo "Verifying accounts..."
+              mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                ${MYSQL_OPTS} -e \
+                "SELECT User, Host FROM mysql.user WHERE User IN ('octopus_runtime','atheros_search_runtime','schema_migrator_runtime','keycloak');"
+              echo "TiDB initialization complete."
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-root
+                  key: password
+            - name: OCTOPUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-octopus
+                  key: password
+            - name: ATHEROS_SEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-atheros-search
+                  key: password
+            - name: SCHEMA_MIGRATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-schema-migrator
+                  key: password
+            - name: KEYCLOAK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-keycloak
+                  key: password
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+      volumes:
+        - name: tidb-tls
+          secret:
+            secretName: tidb-client-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

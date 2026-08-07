@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-telemetry-prometheus-config
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-prometheus
+    app.kubernetes.io/managed-by: kustomize
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: "ssl-proxy-proxy"
+        static_configs:
+          - targets: ["ssl-proxy-proxy-admin:3002"]
+            labels:
+              service: proxy
+
+      - job_name: "ssl-proxy-java-coordinator"
+        static_configs:
+          - targets: ["ssl-proxy-java-coordinator:8080"]
+            labels:
+              service: java-coordinator
+
+      - job_name: "ssl-proxy-redpanda"
+        static_configs:
+          - targets: ["ssl-proxy-redpanda:9644"]
+            labels:
+              service: redpanda
+
+      - job_name: "ssl-proxy-atheros-search"
+        static_configs:
+          - targets: ["ssl-proxy-atheros-search:9090"]
+            labels:
+              service: atheros-search
+
+      - job_name: "ssl-proxy-atheros-sensor"
+        static_configs:
+          - targets: ["ssl-proxy-atheros-sensor:9097"]
+            labels:
+              service: atheros-sensor
+
+      - job_name: "prometheus"
+        static_configs:
+          - targets: ["localhost:9090"]
+            labels:
+              service: prometheus
+
+      - job_name: "node-exporter"
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - ssl-proxy
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: ssl-proxy-telemetry-node-exporter
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics
+            action: keep
+        static_configs:
+          - targets: []
+            labels:
+              service: node-exporter
+
+      - job_name: "cadvisor"
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - ssl-proxy
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: ssl-proxy-telemetry-cadvisor
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: http
+            action: keep
+        static_configs:
+          - targets: []
+            labels:
+              service: cadvisor
+
+      - job_name: "otel-collector"
+        static_configs:
+          - targets: ["ssl-proxy-telemetry-otel-collector:8889"]
+            labels:
+              service: otel-collector
+
+      - job_name: "pushgateway"
+        honor_labels: true
+        static_configs:
+          - targets: ["ssl-proxy-telemetry-pushgateway:9091"]
+            labels:
+              service: pushgateway
