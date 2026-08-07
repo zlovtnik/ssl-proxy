@@ -13,8 +13,6 @@ spec:
     path: cyber-stack/matrix/dev/app-stack
     directory:
       recurse: false
-    kustomizeOptions:
-      buildOptions: --load-restrictor LoadRestrictionsNone
   destination:
     server: https://kubernetes.default.svc
     namespace: dev-ssl-proxy
