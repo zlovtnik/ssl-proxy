@@ -68,8 +68,11 @@ spec:
           image: nginxinc/nginx-unprivileged@sha256:62a904036bfc0e4a4f2b556e34cbf17bc136b47fde8cdb4628762725f48c5782
           imagePullPolicy: Always
           args:
+            - nginx
             - -c
             - /etc/loki-proxy/nginx.conf
+            - -g
+            - daemon off;
           ports:
             - containerPort: 8080
               name: proxy-http
