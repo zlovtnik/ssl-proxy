@@ -2,6 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: dev-ssl-proxy
 resources:
+  # Keep the namespace in this already-registered Application until the
+  # platform has registered the dedicated bootstrap Application. The
+  # Namespace manifest disables pruning, so ownership can move safely later.
+  - ../namespace.yaml
   - ../../../base/platform-config/configmap.yaml
   - ../../../base/proxy/deployment.yaml
   - ../../../base/proxy/service.yaml
