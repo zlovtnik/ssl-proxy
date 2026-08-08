@@ -28,6 +28,23 @@ class TestKustomizeApply:
         assert "--all" not in wait_command
         assert "app.kubernetes.io/instance=test-release" in wait_command
 
+    def test_wait_uses_configured_timeout(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        no_jobs = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="No matching resources found"
+        )
+        with patch("shell._run", side_effect=[completed, no_jobs]) as mock_run:
+            kustomize_apply(
+                "/tmp/overlay",
+                namespace="default",
+                wait_for_completion=True,
+                release="test-release",
+                timeout="15m",
+            )
+
+        wait_command = mock_run.call_args_list[1].args[0]
+        assert "--timeout=15m" in wait_command
+
     def test_wait_detects_any_failed_job_in_mixed_terminal_states(self):
         applied = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         wait_timeout = subprocess.CompletedProcess(

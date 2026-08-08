@@ -748,7 +748,7 @@ def _cluster_mutation_snapshot(options: DeployOptions) -> dict[str, Any]:
 
     managed = kubectl(
         "get",
-        "all,configmap,serviceaccount,pvc,ingress,networkpolicy",
+        "deployment,statefulset,daemonset,job,cronjob,service,configmap,serviceaccount,pvc,ingress,networkpolicy",
         "-n",
         options.namespace,
         "-o",
@@ -918,7 +918,7 @@ def deploy_component(
         if not chart_path:
             raise ValueError(f"Component {component_name!r} has no chart path")
 
-        # 1. Generate effective values.
+        # 1. Generate and save the redacted diagnostic values artifact.
         effective = generate_effective_values(
             config,
             component_name,
@@ -927,60 +927,52 @@ def deploy_component(
             root_dir=options.root_dir,
         )
         _save_effective_values(run_dir, component_name, effective)
+        effective_timeout = component.timeout or config.defaults.timeout
 
-        with tempfile.TemporaryDirectory(prefix=f"stackctl-values-{component_name}-") as temp:
-            values_file = Path(temp) / "values.yaml"
-            with open(values_file, "w") as f:
-                yaml.safe_dump(_filter_sensitive(effective), f, default_flow_style=False)
-            os.chmod(values_file, 0o600)
-
-            # 3. Replace a managed Job only after checking its Helm owner.
-            old_job_uid: str | None = None
-            job_name = component.release
-            if component.type == "helm-job":
-                assert component.job is not None
-                job_name = getattr(component.job, "name", None) or component.release
-                if component.job.rerun == "replace" and not options.dry_run:
-                    old_job_uid = _replace_job(
-                        job_name,
-                        options.namespace,
-                        options.context,
-                        options.kubeconfig,
-                        expected_release=component.release,
-                    )
-
-            # 4. Build and invoke Helm in an isolated chart copy.
-            is_helm_job = component.type == "helm-job"
-            with prepared_chart_copy(chart_path) as built_chart:
-                if hasattr(component, "model_copy"):
-                    deployable = component.model_copy(update={"chart": str(built_chart)})
-                else:
-                    deployable = copy.copy(component)
-                    deployable.chart = str(built_chart)
-                helm_result = _kustomize_deploy(
-                    deployable,
-                    effective,
-                    values_file,
+        # 2. Replace a managed Job only after checking its Helm owner.
+        old_job_uid: str | None = None
+        job_name = component.release
+        if component.type == "helm-job":
+            assert component.job is not None
+            job_name = getattr(component.job, "name", None) or component.release
+            if component.job.rerun == "replace" and not options.dry_run:
+                old_job_uid = _replace_job(
+                    job_name,
                     options.namespace,
                     options.context,
                     options.kubeconfig,
-                    dry_run=options.dry_run,
-                    wait_for_completion=not is_helm_job,
-                    root_dir=options.root_dir,
-                    rollback_state=(
-                        rollback_state if component.rollback_on_failure else None
-                    ),
+                    expected_release=component.release,
                 )
-            log_path = run_dir / "logs" / f"{component_name}.kustomize.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""
-            stderr = helm_result.stderr if isinstance(helm_result.stderr, str) else ""
-            log_path.write_text(stdout + stderr)
-            os.chmod(log_path, 0o600)
 
-        # 6. For helm-job: wait for new UID, then wait for Complete/Fail
+        # 3. Build and apply the kustomize overlay in an isolated copy.
+        is_helm_job = component.type == "helm-job"
+        with prepared_chart_copy(chart_path) as built_chart:
+            if hasattr(component, "model_copy"):
+                deployable = component.model_copy(update={"chart": str(built_chart)})
+            else:
+                deployable = copy.copy(component)
+                deployable.chart = str(built_chart)
+            helm_result = _kustomize_deploy(
+                deployable,
+                options.namespace,
+                options.context,
+                options.kubeconfig,
+                effective_timeout,
+                dry_run=options.dry_run,
+                wait_for_completion=not is_helm_job,
+                root_dir=options.root_dir,
+                rollback_state=(rollback_state if component.rollback_on_failure else None),
+            )
+        log_path = run_dir / "logs" / f"{component_name}.kustomize.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""
+        stderr = helm_result.stderr if isinstance(helm_result.stderr, str) else ""
+        log_path.write_text(stdout + stderr)
+        os.chmod(log_path, 0o600)
+
+        # 4. For helm-job: wait for new UID, then wait for Complete/Fail
         if is_helm_job and not options.dry_run:
-            timeout_seconds = int(parse_timeout_seconds(component.timeout or "10m").rstrip("s"))
+            timeout_seconds = int(parse_timeout_seconds(effective_timeout).rstrip("s"))
             _wait_for_job_with_new_uid(
                 job_name,
                 options.namespace,
@@ -1007,7 +999,7 @@ def deploy_component(
                 )
                 raise
 
-        # 7. Wait for gates (skip in dry-run)
+        # 5. Wait for gates (skip in dry-run)
         if not options.dry_run:
             wait_for_gates(
                 component.gates,

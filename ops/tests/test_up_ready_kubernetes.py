@@ -730,6 +730,31 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertIn("--cascade=foreground", mock_kubectl.call_args_list[0].args)
         mock_helm.assert_not_called()
 
+    def test_degraded_release_fails_when_stalled_workload_does_not_disappear(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        removed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        present = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="deployment.apps/api\n", stderr=""
+        )
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.helm_release_status",
+                return_value="degraded",
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._find_failed_workloads",
+                return_value=["deploy/api"],
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=[removed, *([present] * 30)],
+            ),
+            patch("sslproxy_ops.commands.up_ready.kubernetes.time.sleep"),
+            self.assertRaisesRegex(UpReadyError, "deploy/api.*deleted"),
+        ):
+            prepare_helm_release(ctx)
+
     def test_pending_rollback_reports_latest_stable_revision(self):
         settings = Settings()
         settings.kube_context = "server-k8s"

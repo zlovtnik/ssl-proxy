@@ -110,23 +110,10 @@ def render_component(
             runtime_overrides=runtime_overrides,
             root_dir=root_dir,
         )
-        safe_effective = _filter_sensitive(effective)
-        values_yaml = yaml.safe_dump(safe_effective, default_flow_style=False)
-        (temp / "values.yaml").write_text(values_yaml)
-        os.chmod(temp / "values.yaml", 0o600)
         kustomization = {
             "apiVersion": "kustomize.config.k8s.io/v1beta1",
             "kind": "Kustomization",
             "resources": ["overlay"],
-            "configMapGenerator": [
-                {
-                    "name": f"{name}-effective-values",
-                    "files": ["values.yaml"],
-                    "options": {
-                        "disableNameSuffixHash": True,
-                    },
-                }
-            ],
         }
         (temp / "kustomization.yaml").write_text(yaml.safe_dump(kustomization))
         result = kustomize_build(str(temp))
@@ -305,13 +292,12 @@ def parity_diff(
 
     def approved(resource: dict[str, Any]) -> bool:
         labels = resource.get("metadata", {}).get("labels", {})
-        name = resource.get("metadata", {}).get("name", "")
         if (
             resource.get("kind") == "Job"
             and labels.get("app.kubernetes.io/name") == "tidb-schema-executor"
         ):
             return True
-        return resource.get("kind") == "ConfigMap" and name.endswith("-effective-values")
+        return False
 
     umbrella = {
         resource_identity(resource): normalize_resource(resource)
