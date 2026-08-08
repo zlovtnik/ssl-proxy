@@ -71,7 +71,7 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: redpanda-data
-              mountPath: /data
+              mountPath: /var/lib/redpanda/data
       volumes:
         - name: redpanda-data
           {{- if .Values.persistence.hostPath }}

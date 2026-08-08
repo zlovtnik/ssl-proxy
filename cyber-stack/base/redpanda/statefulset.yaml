@@ -48,20 +48,22 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-          command:
-            - /bin/sh
-            - -c
-            - |
-              ORDINAL="${POD_NAME##*-}"
-              exec redpanda start \
-                --overprovisioned \
-                --smp 1 \
-                --memory 1G \
-                --reserve-memory 0M \
-                --node-id "$ORDINAL" \
-                --data-directory /data \
-                --kafka-addr INTERNAL://0.0.0.0:9092 \
-                --advertise-kafka-addr "INTERNAL://$(POD_NAME).ssl-proxy-redpanda.$(POD_NAMESPACE).svc.cluster.local:9092"
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp
+            - "1"
+            - --memory
+            - 1G
+            - --reserve-memory
+            - 0M
+            - --node-id
+            - "0"
+            - --kafka-addr
+            - INTERNAL://0.0.0.0:9092
+            - --advertise-kafka-addr
+            - INTERNAL://$(POD_NAME).ssl-proxy-redpanda.$(POD_NAMESPACE).svc.cluster.local:9092
           ports:
             - name: kafka
               containerPort: 9092
@@ -91,7 +93,7 @@ spec:
               memory: 1Gi
           volumeMounts:
             - name: redpanda-data
-              mountPath: /data
+              mountPath: /var/lib/redpanda/data
   volumeClaimTemplates:
     - metadata:
         name: redpanda-data

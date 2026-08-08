@@ -47,6 +47,7 @@ spec:
                 --store=unistore \
                 --path=/tidb-data \
                 --log-file= \
+                --log-slow-query=/tmp/tidb-slow.log \
                 --advertise-address="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local" \
                 --status=10080 \
                 --config=/etc/tidb/config/tidb.toml
@@ -175,7 +176,6 @@ data:
     [security]
     ssl-cert = "/etc/tidb-tls-server/tls.crt"
     ssl-key = "/etc/tidb-tls-server/tls.key"
-    require-secure-transport = true
 ---
 apiVersion: batch/v1
 kind: Job
