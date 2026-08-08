@@ -129,6 +129,7 @@ spec:
               value: "ssl-proxy"
           ports:
             - containerPort: 443
+              hostPort: 443
               protocol: UDP
               name: wireguard
             - containerPort: 51820

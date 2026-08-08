@@ -15,8 +15,7 @@ spec:
     repoURL: https://github.com/zlovtnik/ssl-proxy.git
     targetRevision: main
     path: cyber-stack/matrix/prod/bootstrap
-    directory:
-      recurse: false
+    kustomize: {}
   destination:
     server: https://kubernetes.default.svc
     namespace: prod-ssl-proxy

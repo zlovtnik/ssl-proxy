@@ -127,8 +127,8 @@ spec:
             - name: KC_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: schema-migrator-keycloak
-                  key: database-password
+                  name: tidb-keycloak
+                  key: password
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               value: "keycloak-admin"
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD

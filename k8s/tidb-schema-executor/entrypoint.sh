@@ -104,6 +104,24 @@ apply_grant_fixture() {
     "${fixture}" | mysql_run
 }
 
+revoke_schema_privileges() {
+  database="$1"
+  account="$2"
+  privileges="$(mysql_run --batch --skip-column-names -e "
+    SELECT COALESCE(
+      GROUP_CONCAT(privilege_type ORDER BY privilege_type SEPARATOR ', '),
+      ''
+    )
+    FROM information_schema.schema_privileges
+    WHERE table_schema = '${database}'
+      AND REPLACE(SUBSTRING_INDEX(grantee, '@', 1), CHAR(39), '') = '${account}';
+  ")"
+
+  if [ -n "${privileges}" ]; then
+    mysql_run -e "REVOKE ${privileges} ON ${database}.* FROM '${account}';"
+  fi
+}
+
 for domain in octopus_core atheros_search integration_console schema_migrator; do
   apply_domain "${domain}"
 done
@@ -111,8 +129,9 @@ done
 # The TiDB bootstrap job grants database-wide privileges so it can create
 # accounts before tables exist. Once canonical DDL is present, replace those
 # bootstrap grants with the checked-in table ownership matrix.
-mysql_run -e "REVOKE SELECT, INSERT, UPDATE, DELETE ON atheros_search.* FROM '${octopus_account}', '${atheros_search_account}';"
-mysql_run -e "REVOKE SELECT ON octopus_core.* FROM '${atheros_search_account}';"
+revoke_schema_privileges atheros_search "${octopus_account}"
+revoke_schema_privileges atheros_search "${atheros_search_account}"
+revoke_schema_privileges octopus_core "${atheros_search_account}"
 apply_grant_fixture "${schema_root}/octopus_core/grants/least_privilege.sql.tmpl"
 apply_grant_fixture "${schema_root}/atheros_search/grants/least_privilege.sql.tmpl"
 apply_grant_fixture "${schema_root}/schema_migrator/grants/least_privilege.sql.tmpl"

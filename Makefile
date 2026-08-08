@@ -19,7 +19,7 @@ SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rota
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 
-.PHONY: build build-all publish publish-all buildx-ready require-registry docs-check gitops-check $(BUILD_TARGETS) $(PUBLISH_TARGETS)
+.PHONY: build build-all publish publish-all buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS)
 
 build: build-all
 publish: publish-all
@@ -33,6 +33,27 @@ docs-check:
 
 gitops-check:
 	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE)"
+
+test:
+	cargo test -p sync-plane
+	cargo test -p ssl-proxy
+	cargo test -p atheros-sensor
+	cd apps/schema-migrator && sbt test
+	cd services/octopus && sbt test
+	$(MAKE) atheros-search-test
+	$(MAKE) dependency-boundaries
+
+lint:
+	cargo clippy -- -D warnings
+
+dependency-boundaries:
+	@command -v rg >/dev/null
+	@! rg -n 'use ssl_proxy|ssl_proxy::|ssl-proxy = \{ path = "\.\./\.\."' services/atheros-sensor services/atheros-sensor/Cargo.toml
+	@cargo tree -p atheros-sensor --depth 1 --prefix none | awk '$$1 == "ssl-proxy" { found=1; print; } END { exit found ? 1 : 0 }'
+	@cargo tree -p ssl-proxy --depth 1 --prefix none | awk '$$1 == "atheros-sensor" { found=1; print; } END { exit found ? 1 : 0 }'
+
+atheros-search-test:
+	cd services/atheros-search && go test ./...
 
 require-registry:
 	@test -n "$(REGISTRY)" || { echo "REGISTRY is required" >&2; exit 2; }

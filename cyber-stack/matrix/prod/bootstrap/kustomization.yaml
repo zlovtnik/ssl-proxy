@@ -6,7 +6,7 @@ resources:
   - ../../../base/platform-config/serviceaccount.yaml
   - ../../../base/platform-config/configmap.yaml
 patches:
-  - path: ../patches/topic-replication.yaml
+  - path: ../patches/identity-hostname.yaml
 configurations:
   - ../../../base/schema-migrator/kustomizeconfig.yaml
 vars:

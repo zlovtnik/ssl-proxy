@@ -22,10 +22,9 @@ from .core import (
     StackConfig,
     generate_effective_values,
     resolve_dependencies,
-    staged_waves,
 )
 from .gates import parse_timeout_seconds, wait_for_gates
-from .shell import ShellError, helm, kubectl, kustomize_apply, kustomize_build
+from .shell import ShellError, helm, kubectl, kustomize_build
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -34,6 +33,11 @@ from .shell import ShellError, helm, kubectl, kustomize_apply, kustomize_build
 REDACTED_KEY_PATTERNS = re.compile(
     r"password|secret|token|privatekey|apikey|credentials",
     re.IGNORECASE,
+)
+
+GITOPS_DEPLOYMENT_MESSAGE = (
+    "live stackctl deployment is disabled; change cyber-stack desired state, "
+    "merge it to main, and let Argo CD reconcile it"
 )
 
 
@@ -387,7 +391,7 @@ def _kustomize_deploy(
     root_dir: Path | None = None,
     rollback_state: list[dict[str, Any]] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Apply a kustomize overlay for a component."""
+    """Render a component overlay without mutating a cluster."""
     release = component.release
     chart = component.chart
     if not chart:
@@ -406,37 +410,12 @@ def _kustomize_deploy(
     if not overlay_src.is_dir():
         raise FileNotFoundError(f"Component overlay not found: {overlay_src}")
 
-    if dry_run:
-        return kustomize_apply(
-            str(overlay_src),
-            namespace=namespace,
-            dry_run=True,
-            context=context,
-            kubeconfig=kubeconfig,
-            timeout=timeout,
-        )
-    if rollback_state is not None:
-        rendered = kustomize_build(
-            str(overlay_src),
-            context=context,
-            kubeconfig=kubeconfig,
-        )
-        rollback_state.extend(
-            _capture_kustomize_rollback_state(
-                rendered.stdout,
-                namespace,
-                context,
-                kubeconfig,
-            )
-        )
-    return kustomize_apply(
+    if not dry_run:
+        raise RuntimeError(GITOPS_DEPLOYMENT_MESSAGE)
+    return kustomize_build(
         str(overlay_src),
-        namespace=namespace,
-        wait_for_completion=wait_for_completion,
-        release=release,
         context=context,
         kubeconfig=kubeconfig,
-        timeout=timeout,
     )
 
 
@@ -893,6 +872,8 @@ def deploy_component(
     rollback_state: list[dict[str, Any]] = []
 
     try:
+        if not options.dry_run and component.type != "external-check":
+            raise RuntimeError(GITOPS_DEPLOYMENT_MESSAGE)
         if component.type == "manifest":
             _deploy_manifest(component_name, component, options, run_dir)
             if not options.dry_run:
@@ -1089,74 +1070,23 @@ async def deploy_stack(
     config: StackConfig,
     options: DeployOptions,
 ) -> DeployResult:
-    """Deploy all components in wave order.
+    """Render all component Kustomizations in dependency order.
 
     - Each wave runs concurrently (asyncio.gather)
     - If one sibling fails: finish collecting, mark wave failed, stop
     - No next wave starts after a failure
-    - Successful sibling upgrades are retained
-    - No stateful data is deleted on failure
+    - Live deployment is rejected so Argo CD remains the sole reconciler
     """
+    if not options.dry_run:
+        raise RuntimeError(GITOPS_DEPLOYMENT_MESSAGE)
+
     run_started = datetime.now(UTC)
-    dry_run_baseline = (
-        await asyncio.to_thread(_cluster_mutation_snapshot, options) if options.dry_run else None
-    )
     waves = resolve_dependencies(
         config,
         target_component=options.target_component,
         from_wave=options.from_wave,
         include_descendants=options.include_descendants,
     )
-    if hasattr(config, "model_copy") and (options.target_component or options.from_wave):
-        from .cluster import component_health
-
-        if options.from_wave:
-            bootstrap, numbered = staged_waves(config)
-            earlier = set(bootstrap)
-            for wave in numbered[: options.from_wave - 1]:
-                earlier.update(wave)
-            health = component_health(
-                config,
-                earlier,
-                options.namespace,
-                options.context,
-                options.kubeconfig,
-            )
-            degraded = sorted(name for name, healthy in health.items() if not healthy)
-            if degraded:
-                raise RuntimeError(
-                    "--from-wave requires every earlier wave to be healthy; degraded: "
-                    + ", ".join(degraded)
-                )
-
-        if options.target_component:
-            dependencies: set[str] = set()
-            pending = list(config.components[options.target_component].depends_on)
-            while pending:
-                name = pending.pop()
-                if name in dependencies:
-                    continue
-                dependencies.add(name)
-                pending.extend(config.components[name].depends_on)
-            health = component_health(
-                config,
-                dependencies,
-                options.namespace,
-                options.context,
-                options.kubeconfig,
-            )
-            selected = {
-                name
-                for wave in waves
-                for name in wave
-                if (
-                    name not in dependencies
-                    or config.components[name].type == "helm-job"
-                    or not health.get(name, False)
-                )
-            }
-            waves = [[name for name in wave if name in selected] for wave in waves]
-            waves = [wave for wave in waves if wave]
 
     # Determine run directory
     if options.work_dir:
@@ -1223,17 +1153,6 @@ async def deploy_stack(
             print(f"Wave {wave_num} OK")
 
         overall_success = waves_completed == len(waves)
-        if overall_success and dry_run_baseline is not None:
-            after = await asyncio.to_thread(_cluster_mutation_snapshot, options)
-            if after != dry_run_baseline:
-                overall_success = False
-                all_results.append(
-                    ComponentResult(
-                    component="dry-run-mutation-proof",
-                    success=False,
-                    error=("server dry-run changed Kubernetes resource UIDs"),
-                    )
-                )
         return DeployResult(
             success=overall_success,
             waves_completed=waves_completed,
