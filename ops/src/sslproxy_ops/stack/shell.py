@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -154,6 +155,7 @@ def kustomize_apply(
     dry_run: bool = False,
     wait_for_completion: bool = False,
     label_selector: str | None = None,
+    release: str | None = None,
     context: str | None = None,
     kubeconfig: str | None = None,
     check: bool = True,
@@ -173,6 +175,11 @@ def kustomize_apply(
         cmd.append("--dry-run=server")
     result = _run(cmd, check=check, capture=capture, stream=stream)
     if wait_for_completion and not dry_run and namespace:
+        effective_selector = label_selector
+        if effective_selector is None and release:
+            effective_selector = f"app.kubernetes.io/instance={release}"
+        if effective_selector is None:
+            raise ValueError("wait_for_completion requires label_selector or release")
         wait_cmd = ["kubectl"]
         if kubeconfig:
             wait_cmd.extend(["--kubeconfig", kubeconfig])
@@ -182,10 +189,7 @@ def kustomize_apply(
             "wait",
             "--for=condition=Complete",
         ])
-        if label_selector:
-            wait_cmd.extend(["-l", label_selector])
-        else:
-            wait_cmd.extend(["--all"])
+        wait_cmd.extend(["-l", effective_selector])
         wait_cmd.extend([
             "jobs",
             "-n",
@@ -204,30 +208,42 @@ def kustomize_apply(
                 elif context:
                     failed_cmd.extend(["--context", context])
                 failed_cmd.extend([
-                    "wait",
-                    "--for=condition=Failed",
-                ])
-                if label_selector:
-                    failed_cmd.extend(["-l", label_selector])
-                else:
-                    failed_cmd.extend(["--all"])
-                failed_cmd.extend([
+                    "get",
                     "jobs",
                     "-n",
                     namespace,
-                    "--timeout=5s",
+                    "-l",
+                    effective_selector,
+                    "-o",
+                    "json",
                 ])
                 failed_check = _run(failed_cmd, check=False, capture=capture, stream=stream)
+                failed_jobs: list[str] = []
                 if failed_check.returncode == 0:
+                    try:
+                        payload = json.loads(failed_check.stdout or "{}")
+                    except (json.JSONDecodeError, TypeError):
+                        payload = {}
+                    for item in payload.get("items", []):
+                        conditions = (item.get("status") or {}).get("conditions") or []
+                        if any(
+                            condition.get("type") == "Failed"
+                            and condition.get("status") == "True"
+                            for condition in conditions
+                        ):
+                            name = (item.get("metadata") or {}).get("name", "unknown")
+                            failed_jobs.append(str(name))
+                if failed_jobs:
+                    failure_detail = "failed jobs: " + ", ".join(failed_jobs)
                     if check:
                         raise ShellError(
-                            command=("kubectl", "wait"),
+                            command=("kubectl", "get", "jobs"),
                             returncode=1,
                             stdout="",
-                            stderr=(failed_check.stdout or "job failed"),
+                            stderr=failure_detail,
                         )
                     result.returncode = 1
-                    result.stdout = (result.stdout or "") + "\n" + (failed_check.stdout or "")
+                    result.stdout = (result.stdout or "") + "\n" + failure_detail
                 else:
                     if check:
                         raise ShellError(

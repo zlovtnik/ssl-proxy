@@ -33,6 +33,17 @@ spec:
             - "--server.http.listen-addr=0.0.0.0:12345"
             - "--storage.path=/run/alloy"
             - "/etc/alloy/config.alloy"
+          env:
+            - name: LOKI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: observability-credentials
+                  key: loki-username
+            - name: LOKI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: observability-credentials
+                  key: loki-password
           ports:
             - containerPort: 12345
               name: http

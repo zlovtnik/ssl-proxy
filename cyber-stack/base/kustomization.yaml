@@ -35,7 +35,7 @@ resources:
   # MinIO
   - minio/statefulset.yaml
   # TiDB schema executor
-  - tidb-schema-executor/job.yaml
+  - tidb-schema-executor
   # Telemetry
   - telemetry/prometheus.yaml
   - telemetry/prometheus-configmap.yaml
@@ -51,3 +51,33 @@ resources:
   - telemetry/node-exporter.yaml
   - telemetry/cadvisor.yaml
   - telemetry/pushgateway.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ssl-proxy-platform-config
+      fieldPath: data.IDENTITY_HOSTNAME
+    targets:
+      - select:
+          kind: ConfigMap
+          name: ssl-proxy-schema-migrator-traefik
+        fieldPaths:
+          - data.dynamic\.yaml
+        options:
+          delimiter: "`"
+          index: 1
+      - select:
+          kind: ConfigMap
+          name: ssl-proxy-schema-migrator-traefik
+        fieldPaths:
+          - data.dynamic\.yaml
+        options:
+          delimiter: "`"
+          index: 7
+      - select:
+          kind: ConfigMap
+          name: ssl-proxy-schema-migrator-traefik
+        fieldPaths:
+          - data.dynamic\.yaml
+        options:
+          delimiter: "`"
+          index: 11

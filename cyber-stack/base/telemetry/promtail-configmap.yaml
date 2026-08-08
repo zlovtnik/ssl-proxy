@@ -14,6 +14,20 @@ data:
     loki.write "default" {
       endpoint {
         url = "http://ssl-proxy-telemetry-loki:3100/loki/api/v1/push"
+        tenant_id = "ssl-proxy"
+        basic_auth {
+          username = sys.env("LOKI_USERNAME")
+          password = sys.env("LOKI_PASSWORD")
+        }
+      }
+    }
+
+    loki.relabel "journal" {
+      forward_to = []
+
+      rule {
+        source_labels = ["__journal__systemd_unit"]
+        target_label  = "unit"
       }
     }
 
@@ -22,12 +36,7 @@ data:
       labels = {
         job = "systemd-journal",
       }
-      relabel_rules {
-        rule {
-          source_labels = ["__systemd_unit"]
-          target_label = "unit"
-        }
-      }
+      relabel_rules = loki.relabel.journal.rules
       forward_to = [loki.write.default.receiver]
     }
 

@@ -79,6 +79,9 @@ def preflight(
     if shutil.which("kubectl") is None:
         raise RuntimeError("required tool not found: kubectl")
     results.append(CheckResult("tool/kubectl", True, "found"))
+    if shutil.which("helm") is None:
+        raise RuntimeError("required tool not found: helm")
+    results.append(CheckResult("tool/helm", True, "found"))
     kustomize_result = kustomize_validate(
         str(root_dir / "cyber-stack" / "base"),
         context=context,
@@ -89,7 +92,7 @@ def preflight(
         raise RuntimeError(
             f"kustomize validation failed: {(kustomize_result.stderr or '').strip()}"
         )
-    results.append(CheckResult("tool/kustomize", True, "validated"))
+    results.append(CheckResult("kustomize/base", True, "validated"))
     overlay = OVERLAY_MAP.get(namespace)
     if overlay:
         overlay_result = kustomize_validate(

@@ -2,13 +2,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: dev-ssl-proxy
 resources:
-  - ../../../base/platform-config/serviceaccount.yaml
-  - ../../../base/platform-config/configmap.yaml
   - ../../../base/tidb/statefulset.yaml
   - ../../../base/redpanda/statefulset.yaml
   - ../../../base/minio/statefulset.yaml
   - ../../../base/redis-runtime/deployment.yaml
-  - ../../../base/tidb-schema-executor/job.yaml
+  - ../../../base/tidb-schema-executor
   - ../../../base/telemetry/prometheus.yaml
   - ../../../base/telemetry/prometheus-configmap.yaml
   - ../../../base/telemetry/grafana.yaml
@@ -26,6 +24,6 @@ resources:
 images:
   - name: tidb-runtime-schema
     newName: 192.168.1.221:5000/tidb-runtime-schema
-    newTag: d7f190b
+    digest: sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432
 patches:
   - path: ../patches/tidb-replicas.yaml

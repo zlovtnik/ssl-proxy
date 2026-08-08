@@ -23,6 +23,13 @@ data:
         type: loki
         access: proxy
         url: http://ssl-proxy-telemetry-loki:3100
+        basicAuth: true
+        basicAuthUser: $LOKI_USERNAME
+        jsonData:
+          httpHeaderName1: X-Scope-OrgID
+        secureJsonData:
+          basicAuthPassword: $LOKI_PASSWORD
+          httpHeaderValue1: ssl-proxy
         editable: false
 ---
 apiVersion: v1

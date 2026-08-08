@@ -11,7 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
 data:
   loki.yaml: |
-    auth_enabled: false
+    auth_enabled: true
     server:
       http_listen_port: 3100
     common:
@@ -46,3 +46,51 @@ data:
       delete_request_store: filesystem
     analytics:
       reporting_enabled: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-telemetry-loki-proxy-config
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-loki
+    app.kubernetes.io/managed-by: kustomize
+data:
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr notice;
+
+    events {}
+
+    http {
+      access_log /dev/stdout;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+
+      upstream loki {
+        server 127.0.0.1:3100;
+        keepalive 15;
+      }
+
+      server {
+        listen 8080;
+        auth_basic "Loki";
+        auth_basic_user_file /etc/loki-proxy-auth/.htpasswd;
+
+        location = /ready {
+          auth_basic off;
+          proxy_pass http://loki;
+        }
+
+        location / {
+          proxy_http_version 1.1;
+          proxy_read_timeout 1800s;
+          proxy_set_header Connection "";
+          proxy_set_header X-Scope-OrgID $http_x_scope_orgid;
+          proxy_pass http://loki;
+        }
+      }
+    }

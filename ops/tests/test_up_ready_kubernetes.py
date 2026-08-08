@@ -525,7 +525,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertNotIn("--history-max", args)
         self.assertNotIn("--rollback-on-failure", args)
 
-    def test_helm_stale_first_install_is_removed_before_retry(self):
+    def test_helm_fresh_install_uses_install(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
         settings.registry = "192.168.1.221:5000"
@@ -661,6 +661,68 @@ class UpReadyKubernetesTest(unittest.TestCase):
             result = helm_release_status(ctx)
             self.assertIsNone(result)
 
+    def test_progress_deadline_exceeded_is_degraded_not_release_failed(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        resource_list = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout="deployment.apps/api\n", stderr=""
+        )
+        degraded = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "kind": "Deployment",
+                            "metadata": {"name": "api", "generation": 2},
+                            "status": {
+                                "observedGeneration": 2,
+                                "conditions": [
+                                    {
+                                        "type": "Progressing",
+                                        "status": "False",
+                                        "reason": "ProgressDeadlineExceeded",
+                                    }
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            side_effect=[resource_list, degraded],
+        ):
+            self.assertEqual(helm_release_status(ctx), "degraded")
+
+    def test_degraded_release_replaces_only_stalled_workloads_without_helm_uninstall(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        removed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.helm_release_status",
+                return_value="degraded",
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._find_failed_workloads",
+                return_value=["deploy/api"],
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=[removed, removed],
+            ) as mock_kubectl,
+            patch("sslproxy_ops.commands.up_ready.kubernetes.shell.helm") as mock_helm,
+        ):
+            self.assertTrue(prepare_helm_release(ctx))
+
+        self.assertIn("--cascade=foreground", mock_kubectl.call_args_list[0].args)
+        mock_helm.assert_not_called()
+
     def test_pending_rollback_reports_latest_stable_revision(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
@@ -775,23 +837,21 @@ class UpReadyKubernetesTest(unittest.TestCase):
             stdout='{"items":[{"kind":"Deployment","metadata":{"name":"proxy","generation":1},"status":{"observedGeneration":1,"conditions":[]}}]}',
             stderr="",
         )
-        resource_list = subprocess.CompletedProcess(
-            args=["kubectl"],
-            returncode=0,
-            stdout="deployment.apps/ssl-proxy-proxy",
-            stderr="",
-        )
-
         def kubectl_side_effect(*args, **_kwargs):
             if "events" in args:
                 return empty_events
             if "pods" in args:
                 print("BULK POD OUTPUT")
                 return completed
-            if "deploy,sts,ds" in args or ("get" in args and "deploy" in args and "json" in args):
-                return deployed_resources
-            if "get" in args and "name" in args and "deploy,sts,ds" in args:
-                return resource_list
+            if "deploy,sts,ds" in args:
+                if "json" in args:
+                    return deployed_resources
+                return subprocess.CompletedProcess(
+                    args=["kubectl"],
+                    returncode=0,
+                    stdout="deployment.apps/ssl-proxy-proxy",
+                    stderr="",
+                )
             return missing
 
         output = StringIO()

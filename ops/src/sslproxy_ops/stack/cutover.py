@@ -81,10 +81,7 @@ def _live_uid(
         else:
             owner_value = labels.get("app.kubernetes.io/managed-by")
             if owner_value is not None:
-                if owner_value.lower() == "kustomize":
-                    owner_source = "kustomize"
-                else:
-                    owner_source = "unowned"
+                owner_source = "app.kubernetes.io/managed-by"
             else:
                 owner_source = "unowned"
     return (
@@ -279,6 +276,23 @@ def _verify_uids(plan: dict[str, Any], context: str, kubeconfig: str | None) -> 
             raise RuntimeError(f"resource changed since plan: {identity}")
 
 
+def _validated_overlay_path(
+    plan: dict[str, Any],
+    root_dir: Path,
+) -> Path:
+    kustomize_overlay = OVERLAY_MAP.get(plan["namespace"])
+    if kustomize_overlay is None:
+        raise ValueError(
+            f"namespace {plan['namespace']!r} has no configured kustomize overlay; "
+            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
+        )
+    overlay_path = (root_dir / kustomize_overlay).resolve()
+    root_resolved = root_dir.resolve()
+    if overlay_path != root_resolved and root_resolved not in overlay_path.parents:
+        raise RuntimeError("overlay path escapes root directory")
+    return overlay_path
+
+
 def apply_plan(
     config: StackConfig,
     root_dir: Path,
@@ -307,14 +321,9 @@ def apply_plan(
         raise RuntimeError("cutover backups are incomplete: " + ", ".join(missing_backups))
     _verify_uids(plan, context, kubeconfig)
     values = load_umbrella_values(config, root_dir)
-    kustomize_overlay = OVERLAY_MAP.get(plan["namespace"])
-    if kustomize_overlay is None:
-        raise ValueError(
-            f"namespace {plan['namespace']!r} has no configured kustomize overlay; "
-            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
-        )
+    overlay_path = _validated_overlay_path(plan, root_dir)
     kustomize_apply(
-        str(root_dir / kustomize_overlay),
+        str(overlay_path),
         context=context,
         kubeconfig=kubeconfig,
         namespace=plan["namespace"],
@@ -441,18 +450,7 @@ def rollback_plan(
 
     plan = load_verified_plan(plan_path, digest)
     _verify_confirmations(plan, context, release, True, kubeconfig)
-    kustomize_overlay = OVERLAY_MAP.get(plan["namespace"])
-    if kustomize_overlay is None:
-        raise ValueError(
-            f"namespace {plan['namespace']!r} has no configured kustomize overlay; "
-            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
-        )
-    overlay_path = (root_dir / kustomize_overlay).resolve()
-    root_resolved = root_dir.resolve()
-    if overlay_path != root_resolved and not any(
-        parent == root_resolved for parent in overlay_path.parents
-    ):
-        raise RuntimeError("overlay path escapes root directory")
+    overlay_path = _validated_overlay_path(plan, root_dir)
     kustomize_apply(
         str(overlay_path),
         context=context,

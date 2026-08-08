@@ -13,6 +13,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step, warn
@@ -1048,8 +1049,8 @@ def dashboard_set_file_args() -> list[str]:
     return args
 
 
-def helm_release_status(ctx: UpReadyContext) -> str | None:
-    """Return 'deployed' if managed resources exist, else None."""
+def helm_release_status(ctx: UpReadyContext) -> Literal["deployed", "degraded"] | None:
+    """Return the explicit status of managed resources, or None when absent."""
     completed = shell.kubectl(
         "get",
         "deploy,sts,ds",
@@ -1105,7 +1106,7 @@ def helm_release_status(ctx: UpReadyContext) -> str | None:
                 and generation is not None
                 and observed_generation == generation
             ):
-                return "failed"
+                return "degraded"
     return "deployed"
 
 
@@ -1217,55 +1218,41 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
         return False
     if status == "deployed":
         return True
-    if status in {"failed"}:
-        step("S03", f"resource_cleanup: removing failed resources for release={ctx.settings.helm_release}")
-        failed_names = _find_failed_workloads(ctx)
-        for name in failed_names:
-            shell.kubectl(
-                "delete",
+    step(
+        "S03",
+        f"resource_cleanup: replacing stalled workloads for release={ctx.settings.helm_release}",
+    )
+    failed_names = _find_failed_workloads(ctx)
+    for name in failed_names:
+        shell.kubectl(
+            "delete",
+            name,
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "--ignore-not-found",
+            "--cascade=foreground",
+            context=ctx.settings.kube_context,
+            capture=True,
+        )
+    for name in failed_names:
+        for attempt in range(30):
+            result = shell.kubectl(
+                "get",
                 name,
                 "--namespace",
                 ctx.settings.kube_namespace,
                 "--ignore-not-found",
-                "--cascade",
-                "foreground",
+                "-o",
+                "name",
                 context=ctx.settings.kube_context,
+                check=False,
                 capture=True,
             )
-        for name in failed_names:
-            for attempt in range(30):
-                result = shell.kubectl(
-                    "get",
-                    name,
-                    "--namespace",
-                    ctx.settings.kube_namespace,
-                    "--ignore-not-found",
-                    "-o",
-                    "name",
-                    context=ctx.settings.kube_context,
-                    check=False,
-                    capture=True,
-                )
-                if not (result.stdout or "").strip():
-                    break
-                if attempt < 29:
-                    time.sleep(1)
-        shell.helm(
-            "uninstall",
-            ctx.settings.helm_release,
-            "--namespace",
-            ctx.settings.kube_namespace,
-            "--no-hooks",
-            "--wait",
-            context=ctx.settings.kube_context,
-            check=False,
-            capture=True,
-        )
-        return False
-    raise UpReadyError(
-        f"Release {ctx.settings.helm_release!r} is {status}; "
-        "another operation may still be active"
-    )
+            if not (result.stdout or "").strip():
+                break
+            if attempt < 29:
+                time.sleep(1)
+    return True
 
 
 PREFLIGHT_REQUIRED_SECRETS: dict[str, str] = {

@@ -43,6 +43,16 @@ spec:
                 secretKeyRef:
                   name: observability-credentials
                   key: grafana-admin-password
+            - name: LOKI_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: observability-credentials
+                  key: loki-username
+            - name: LOKI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: observability-credentials
+                  key: loki-password
           ports:
             - containerPort: 3000
               name: http

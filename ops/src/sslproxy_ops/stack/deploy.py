@@ -27,7 +27,8 @@ from .core import (
     staged_waves,
 )
 from .gates import parse_timeout_seconds, wait_for_gates
-from .shell import ShellError, helm, kubectl, kustomize_apply
+from .rendering import _filter_sensitive
+from .shell import ShellError, helm, kubectl, kustomize_apply, kustomize_build
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -397,6 +398,7 @@ def _kustomize_deploy(
     dry_run: bool = False,
     wait_for_completion: bool = True,
     root_dir: Path | None = None,
+    rollback_state: list[dict[str, Any]] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Apply a kustomize overlay for a component."""
     release = component.release
@@ -427,10 +429,16 @@ def _kustomize_deploy(
 
         values_yaml = temp_overlay / "values.yaml"
         if values_file.is_file():
-            shutil.copy(values_file, values_yaml)
+            loaded_values = yaml.safe_load(values_file.read_text()) or {}
+            if not isinstance(loaded_values, dict):
+                raise ValueError(f"Effective values file is not a mapping: {values_file}")
+            values_yaml.write_text(
+                yaml.safe_dump(_filter_sensitive(loaded_values), default_flow_style=False)
+            )
         else:
-            with open(values_yaml, "w") as f:
-                yaml.safe_dump(effective_values, f, default_flow_style=False)
+            values_yaml.write_text(
+                yaml.safe_dump(_filter_sensitive(effective_values), default_flow_style=False)
+            )
         os.chmod(values_yaml, 0o600)
 
         kustomization_yaml = temp_overlay / "kustomization.yaml"
@@ -460,89 +468,155 @@ def _kustomize_deploy(
                 context=context,
                 kubeconfig=kubeconfig,
             )
+        if rollback_state is not None:
+            rendered = kustomize_build(
+                str(temp_overlay),
+                context=context,
+                kubeconfig=kubeconfig,
+            )
+            rollback_state.extend(
+                _capture_kustomize_rollback_state(
+                    rendered.stdout,
+                    namespace,
+                    context,
+                    kubeconfig,
+                )
+            )
         return kustomize_apply(
             str(temp_overlay),
             namespace=namespace,
             wait_for_completion=wait_for_completion,
+            release=release,
             context=context,
             kubeconfig=kubeconfig,
         )
 
 
-def _kustomize_rollback(
-    release: str,
+def _capture_kustomize_rollback_state(
+    manifest: str,
     namespace: str,
     context: str | None,
     kubeconfig: str | None,
-) -> bool:
-    """Reapply the live state of kustomize-managed workloads as a rollback.
+) -> list[dict[str, Any]]:
+    """Capture each non-Job resource's live state before a kustomize apply."""
 
-    Fetches all resources labeled with the release and re-applies their current
-    live manifests, covering every object managed by the release rather than only
-    controller workloads.  Returns True if resources were reapplied.
-    """
-    result = kubectl(
-        "get",
-        "deploy,sts,ds,job,service,configmap,secret,serviceaccount,networkpolicy,persistentvolumeclaim",
-        "-n",
-        namespace,
-        "-l",
-        f"app.kubernetes.io/instance={release}",
-        "-o",
-        "json",
-        context=context,
-        kubeconfig=kubeconfig,
-        check=False,
-    )
-    if result.returncode != 0 or not (result.stdout or "").strip():
-        return False
-    try:
-        payload = json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    items = payload.get("items", [])
-    if not items:
-        return False
-    reapplied = False
-    failures: list[str] = []
-    for item in items:
-        kind = item.get("kind", "")
-        name = (item.get("metadata") or {}).get("name", "")
+    captured: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for desired in yaml.safe_load_all(manifest):
+        if not isinstance(desired, dict) or desired.get("kind") == "Job":
+            continue
+        metadata = desired.get("metadata") or {}
+        kind = str(desired.get("kind") or "")
+        name = str(metadata.get("name") or "")
+        resource_namespace = str(metadata.get("namespace") or namespace)
         if not kind or not name:
             continue
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False
-            ) as tmp:
-                yaml.safe_dump(item, tmp, default_flow_style=False)
-                tmp_path = tmp.name
-            kubectl(
-                "apply",
-                "-f",
-                tmp_path,
-                "-n",
-                namespace,
-                context=context,
-                kubeconfig=kubeconfig,
-            )
-            reapplied = True
-        except (ShellError, RuntimeError, OSError) as exc:
-            failures.append(f"{kind}/{name}: {exc}")
-        finally:
-            if tmp_path is not None:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-    if failures:
-        raise ShellError(
-            command=("kubectl", "apply"),
-            returncode=1,
-            stdout="",
-            stderr="\n".join(failures),
+        identity = (kind, resource_namespace, name)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        args = ["get", kind, name]
+        if resource_namespace:
+            args.extend(["-n", resource_namespace])
+        args.extend(["-o", "json"])
+        result = kubectl(
+            *args,
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
         )
-    return reapplied
+        previous: dict[str, Any] | None = None
+        if result.returncode == 0:
+            try:
+                parsed = json.loads(result.stdout or "{}")
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise RuntimeError(f"invalid live manifest for {kind}/{name}") from exc
+            if not isinstance(parsed, dict):
+                raise RuntimeError(f"invalid live manifest for {kind}/{name}")
+            previous = parsed
+        else:
+            output = (result.stderr or "") + (result.stdout or "")
+            if "not found" not in output.lower() and "NotFound" not in output:
+                raise ShellError(
+                    command=("kubectl", *args),
+                    returncode=result.returncode,
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                )
+        captured.append(
+            {
+                "kind": kind,
+                "namespace": resource_namespace,
+                "name": name,
+                "previous": previous,
+            }
+        )
+    return captured
+
+
+def _rollback_manifest(resource: dict[str, Any]) -> dict[str, Any]:
+    restored = copy.deepcopy(resource)
+    restored.pop("status", None)
+    metadata = restored.get("metadata") or {}
+    for field_name in (
+        "creationTimestamp",
+        "deletionGracePeriodSeconds",
+        "deletionTimestamp",
+        "generation",
+        "managedFields",
+        "resourceVersion",
+        "selfLink",
+        "uid",
+    ):
+        metadata.pop(field_name, None)
+    annotations = metadata.get("annotations")
+    if isinstance(annotations, dict):
+        annotations.pop("kubectl.kubernetes.io/last-applied-configuration", None)
+    if restored.get("kind") == "ServiceAccount":
+        restored.pop("secrets", None)
+    return restored
+
+
+def _kustomize_rollback(
+    rollback_state: list[dict[str, Any]],
+    context: str | None,
+    kubeconfig: str | None,
+) -> bool:
+    """Restore the pre-apply manifests and remove resources that were newly created."""
+
+    previous = [
+        _rollback_manifest(item["previous"])
+        for item in rollback_state
+        if isinstance(item.get("previous"), dict)
+    ]
+    if previous:
+        manifest = "---\n".join(
+            yaml.safe_dump(item, default_flow_style=False, sort_keys=False) for item in previous
+        )
+        kubectl(
+            "apply",
+            "-f",
+            "-",
+            context=context,
+            kubeconfig=kubeconfig,
+            input_text=manifest,
+        )
+
+    for item in rollback_state:
+        if item.get("previous") is not None:
+            continue
+        args = ["delete", str(item["kind"]), str(item["name"])]
+        resource_namespace = str(item.get("namespace") or "")
+        if resource_namespace:
+            args.extend(["-n", resource_namespace])
+        args.append("--ignore-not-found")
+        kubectl(
+            *args,
+            context=context,
+            kubeconfig=kubeconfig,
+        )
+
+    return bool(rollback_state)
 
 
 def _capture_failure_diagnostics(
@@ -834,6 +908,7 @@ def deploy_component(
     """
     start = time.monotonic()
     component = config.components[component_name]
+    rollback_state: list[dict[str, Any]] = []
 
     try:
         if component.type == "manifest":
@@ -877,7 +952,7 @@ def deploy_component(
         with tempfile.TemporaryDirectory(prefix=f"stackctl-values-{component_name}-") as temp:
             values_file = Path(temp) / "values.yaml"
             with open(values_file, "w") as f:
-                yaml.safe_dump(effective, f, default_flow_style=False)
+                yaml.safe_dump(_filter_sensitive(effective), f, default_flow_style=False)
             os.chmod(values_file, 0o600)
 
             # 3. Replace a managed Job only after checking its Helm owner.
@@ -913,6 +988,9 @@ def deploy_component(
                     dry_run=options.dry_run,
                     wait_for_completion=not is_helm_job,
                     root_dir=options.root_dir,
+                    rollback_state=(
+                        rollback_state if component.rollback_on_failure else None
+                    ),
                 )
             log_path = run_dir / "logs" / f"{component_name}.kustomize.log"
             log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -980,8 +1058,7 @@ def deploy_component(
         ):
             try:
                 rollback_applied = _kustomize_rollback(
-                    component.release,
-                    options.namespace,
+                    rollback_state,
                     options.context,
                     options.kubeconfig,
                 )

@@ -1,4 +1,4 @@
-  # Argo CD + Kustomize Workmap — ssl-proxy
+# Argo CD + Kustomize Workmap — ssl-proxy
 
 ## Architecture
 
@@ -10,7 +10,7 @@ Split into three Argo CD Applications for blast-radius control:
 | `data-plane` | `cyber-stack/matrix/dev/data-plane` | TiDB, Redpanda, MinIO, Redis, telemetry, tidb-schema-executor |
 | `app-stack` | `cyber-stack/matrix/dev/app-stack` | Schema-migrator, proxy, java-coordinator, atheros-sensor, atheros-search |
 
-All Applications deploy the development overlay (`cyber-stack/matrix/dev`) with `targetRevision: dev` and `directory.recurse: false`. The `bootstrap` Application must sync and become healthy before `data-plane` and `app-stack`. Sync waves handle ordering within each Application.
+The Applications deploy `cyber-stack/matrix/dev/bootstrap`, `cyber-stack/matrix/dev/data-plane`, and `cyber-stack/matrix/dev/app-stack`, respectively, with `targetRevision: dev` and `directory.recurse: false`. The `bootstrap` Application must sync and become healthy before `data-plane` and `app-stack`. Sync waves handle ordering within each Application.
 
 ## Sync Waves
 
@@ -52,7 +52,7 @@ All Applications deploy the development overlay (`cyber-stack/matrix/dev`) with 
 | proxy-admin-key | api-key | proxy deployment |
 | proxy-runtime-secrets | wg-obfuscation-key | proxy deployment (volume) |
 | ssl-proxy-identity-tls | tls.crt, tls.key | traefik (volume) |
-| observability-credentials | grafana-admin-password | grafana |
+| observability-credentials | grafana-admin-password, loki-username, loki-password, loki-htpasswd | grafana, Alloy, Loki auth proxy |
 | atheros-credentials | api-token-sha256 | atheros-search |
 | wireguard-config | server.conf, keys, peer configs | proxy deployment (projected volume) |
 
@@ -75,6 +75,7 @@ All Applications deploy the development overlay (`cyber-stack/matrix/dev`) with 
 cyber-stack/argocd/
   README.md                           # this file
   appproject-ssl-proxy.yaml           # AppProject
+  application-bootstrap.yaml          # bootstrap Application
   application-data-plane.yaml         # data-plane Application
   application-app-stack.yaml          # app-stack Application
 ```
