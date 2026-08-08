@@ -27,3 +27,11 @@ images:
     digest: sha256:ae8835807252987c276204f1b1a58b350ab128080d209babc790096e0376a680
 patches:
   - path: ../patches/tidb-replicas.yaml
+  - target:
+      kind: ConfigMap
+      name: ssl-proxy-tidb-config
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          ssl-proxy.io/recovery-generation: "2026-08-08-1"

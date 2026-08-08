@@ -37,13 +37,6 @@ images:
     newName: 192.168.1.221:5000/schema-migrator-ui
     digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
 patches:
-  - target:
-      kind: ConfigMap
-      labelSelector: app.kubernetes.io/component=platform-config
-    patch: |-
-      - op: add
-        path: /metadata/annotations/config.kubernetes.io~1local-config
-        value: "true"
   - path: ../patches/proxy-replicas.yaml
   - path: ../patches/octopus-environment.yaml
 configurations:
