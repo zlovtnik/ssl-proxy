@@ -24,6 +24,28 @@ spec:
       automountServiceAccountToken: false
       tolerations:
         - operator: Exists
+      initContainers:
+        - name: prepare-alloy-storage
+          image: busybox@sha256:3b3e3327c33950c386e85312393d20b40e2d40f72e53b40e65b7f68b4c0f5a5f
+          command: ["/bin/sh", "-ec", "mkdir -p /host-var-lib/alloy && chown 473:473 /host-var-lib/alloy"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: positions
+              mountPath: /host-var-lib
       containers:
         - name: alloy
           image: grafana/alloy:v1.9.2
@@ -72,6 +94,9 @@ spec:
             privileged: false
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 473
+            runAsGroup: 473
             capabilities:
               drop:
                 - ALL
@@ -87,6 +112,7 @@ spec:
               readOnly: true
             - name: positions
               mountPath: /run/alloy
+              subPath: alloy
       terminationGracePeriodSeconds: 30
       volumes:
         - name: config
@@ -100,5 +126,5 @@ spec:
             path: /var/lib/docker/containers
         - name: positions
           hostPath:
-            path: /var/lib/alloy
-            type: DirectoryOrCreate
+            path: /var/lib
+            type: Directory

@@ -40,10 +40,14 @@ data:
       forward_to = [loki.write.default.receiver]
     }
 
-    loki.source.file "default" {
-      targets = [
+    local.file_match "default" {
+      path_targets = [
         {__path__ = "/var/log/containers/*.log", job = "container-logs"},
       ]
+    }
+
+    loki.source.file "default" {
+      targets = local.file_match.default.targets
       forward_to = [loki.process.default.receiver]
     }
 

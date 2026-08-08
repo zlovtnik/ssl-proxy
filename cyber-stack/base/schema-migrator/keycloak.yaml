@@ -104,7 +104,7 @@ spec:
           args:
             - start
             - --import-realm
-            - --hostname=$(IDENTITY_HOSTNAME)
+            - --hostname=https://$(IDENTITY_HOSTNAME)
             - --hostname-strict=false
             - --http-enabled=true
           env:

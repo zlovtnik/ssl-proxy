@@ -27,7 +27,6 @@ from .core import (
     staged_waves,
 )
 from .gates import parse_timeout_seconds, wait_for_gates
-from .rendering import _filter_sensitive
 from .shell import ShellError, helm, kubectl, kustomize_apply, kustomize_build
 
 # ---------------------------------------------------------------------------
@@ -390,11 +389,10 @@ def _kustomize_resource_status(
 
 def _kustomize_deploy(
     component: Component,
-    effective_values: dict[str, Any],
-    values_file: Path,
     namespace: str,
     context: str | None,
     kubeconfig: str | None,
+    timeout: str,
     dry_run: bool = False,
     wait_for_completion: bool = True,
     root_dir: Path | None = None,
@@ -427,34 +425,11 @@ def _kustomize_deploy(
         overlay_dest = temp_overlay / "overlay"
         shutil.copytree(overlay_src, overlay_dest)
 
-        values_yaml = temp_overlay / "values.yaml"
-        if values_file.is_file():
-            loaded_values = yaml.safe_load(values_file.read_text()) or {}
-            if not isinstance(loaded_values, dict):
-                raise ValueError(f"Effective values file is not a mapping: {values_file}")
-            values_yaml.write_text(
-                yaml.safe_dump(_filter_sensitive(loaded_values), default_flow_style=False)
-            )
-        else:
-            values_yaml.write_text(
-                yaml.safe_dump(_filter_sensitive(effective_values), default_flow_style=False)
-            )
-        os.chmod(values_yaml, 0o600)
-
         kustomization_yaml = temp_overlay / "kustomization.yaml"
         kustomization_data = {
             "apiVersion": "kustomize.config.k8s.io/v1beta1",
             "kind": "Kustomization",
             "resources": ["overlay"],
-            "configMapGenerator": [
-                {
-                    "name": f"{release}-effective-values",
-                    "files": ["values.yaml"],
-                    "options": {
-                        "disableNameSuffixHash": True,
-                    },
-                }
-            ],
         }
         with open(kustomization_yaml, "w") as f:
             yaml.safe_dump(kustomization_data, f, default_flow_style=False)
@@ -467,6 +442,7 @@ def _kustomize_deploy(
                 dry_run=True,
                 context=context,
                 kubeconfig=kubeconfig,
+                timeout=timeout,
             )
         if rollback_state is not None:
             rendered = kustomize_build(
@@ -489,6 +465,7 @@ def _kustomize_deploy(
             release=release,
             context=context,
             kubeconfig=kubeconfig,
+            timeout=timeout,
         )
 
 

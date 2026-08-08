@@ -154,6 +154,7 @@ def kustomize_apply(
     namespace: str | None = None,
     dry_run: bool = False,
     wait_for_completion: bool = False,
+    timeout: str = "300s",
     label_selector: str | None = None,
     release: str | None = None,
     context: str | None = None,
@@ -194,7 +195,7 @@ def kustomize_apply(
             "jobs",
             "-n",
             namespace,
-            "--timeout=300s",
+            f"--timeout={timeout}",
         ])
         wait_result = _run(wait_cmd, check=False, capture=capture, stream=stream)
         if wait_result.returncode != 0:

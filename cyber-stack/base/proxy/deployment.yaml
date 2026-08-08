@@ -31,7 +31,7 @@ spec:
         - name: copy-wireguard-config
           image: ssl-proxy:latest
           imagePullPolicy: Always
-          command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/ && chmod -R g+rX /config"]
+          command: ["/bin/sh", "-ec", "cp -a /config-source/. /config/"]
           securityContext:
             runAsUser: 0
             runAsGroup: 0

@@ -1252,6 +1252,10 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
                 break
             if attempt < 29:
                 time.sleep(1)
+        else:
+            raise UpReadyError(
+                f"Timed out waiting for failed workload {name!r} to be deleted"
+            )
     return True
 
 

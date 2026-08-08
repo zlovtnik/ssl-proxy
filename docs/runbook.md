@@ -63,9 +63,9 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 ## Read-only diagnostics
 
 ```bash
-kubectl get applications.argoproj.io -n argocd -o wide
-kubectl get pods -A -o wide
-kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
+kubectl --context "$KUBE_CONTEXT" get applications.argoproj.io -n argocd -o wide
+kubectl --context "$KUBE_CONTEXT" get pods -A -o wide
+kubectl --context "$KUBE_CONTEXT" get events -A --field-selector type=Warning --sort-by=.lastTimestamp
 ```
 
 Use `KUBE_CONTEXT`, `KUBE_NAMESPACE` and `KUBE_RELEASE` when the defaults do

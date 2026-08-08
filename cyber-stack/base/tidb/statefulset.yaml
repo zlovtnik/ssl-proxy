@@ -97,7 +97,7 @@ spec:
         - name: tidb-server-tls
           secret:
             secretName: ssl-proxy-tidb-server-tls
-            defaultMode: 0400
+            defaultMode: 0440
         - name: tidb-config
           configMap:
             name: ssl-proxy-tidb-config
