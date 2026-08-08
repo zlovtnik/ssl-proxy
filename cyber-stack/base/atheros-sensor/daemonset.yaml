@@ -128,7 +128,10 @@ spec:
             - name: RUST_LOG
               value: "warn,atheros_sensor=info"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://ssl-proxy-otel-collector:4317"
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: "grpc"
             - name: OTEL_SERVICE_NAME

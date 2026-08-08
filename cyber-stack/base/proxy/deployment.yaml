@@ -117,7 +117,10 @@ spec:
             - name: SYNC_OUTBOX_DIR
               value: "/sync-outbox"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: "http://ssl-proxy-otel-collector:4317"
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: "grpc"
             - name: OTEL_SERVICE_NAME
@@ -136,17 +139,15 @@ spec:
               protocol: TCP
               name: policy
           livenessProbe:
-            httpGet:
-              path: /health
-              port: admin
+            exec:
+              command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]
             initialDelaySeconds: 40
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /ready
-              port: admin
+            exec:
+              command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 5

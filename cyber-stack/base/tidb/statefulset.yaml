@@ -30,6 +30,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+
       containers:
         - name: tidb
           image: pingcap/tidb:v8.5.7

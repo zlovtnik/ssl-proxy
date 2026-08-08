@@ -47,7 +47,6 @@ spec:
             - --entrypoints.web.address=:8000
             - --entrypoints.web.http.redirections.entrypoint.to=websecure
             - --entrypoints.web.http.redirections.entrypoint.scheme=https
-            - --entrypoints.web.http.redirections.entrypoint.port=:443
             - --entrypoints.websecure.address=:8443
             - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
             - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0s
