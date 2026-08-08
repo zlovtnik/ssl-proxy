@@ -18,6 +18,7 @@ import yaml
 from .core import StackConfig, generate_effective_values
 from .shell import kustomize_build
 
+
 @dataclass(frozen=True)
 class RenderedComponent:
     name: str
@@ -266,12 +267,10 @@ def parity_diff(
 
     def approved(resource: dict[str, Any]) -> bool:
         labels = resource.get("metadata", {}).get("labels", {})
-        if (
+        return (
             resource.get("kind") == "Job"
             and labels.get("app.kubernetes.io/name") == "tidb-schema-executor"
-        ):
-            return True
-        return False
+        )
 
     umbrella = {
         resource_identity(resource): normalize_resource(resource)

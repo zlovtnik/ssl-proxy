@@ -209,7 +209,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tidb-init
-          image: 192.168.1.221:5000/tidb-runtime-schema@sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432
+          image: tidb-runtime-schema
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
@@ -385,7 +385,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tidb-init-grants
-          image: 192.168.1.221:5000/tidb-runtime-schema@sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432
+          image: tidb-runtime-schema
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false

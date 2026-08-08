@@ -3,13 +3,17 @@ kind: Application
 metadata:
   name: ssl-proxy-app-stack
   namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: ssl-proxy
+    app.kubernetes.io/component: app-stack
+    environment: dev
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: ssl-proxy
   source:
     repoURL: https://github.com/zlovtnik/ssl-proxy.git
-    targetRevision: dev
+    targetRevision: main
     path: cyber-stack/matrix/dev/app-stack
     directory:
       recurse: false
@@ -17,8 +21,11 @@ spec:
     server: https://kubernetes.default.svc
     namespace: dev-ssl-proxy
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
     syncOptions:
-      - CreateNamespace=true
       - PrunePropagationPolicy=foreground
       - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
