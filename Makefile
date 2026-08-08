@@ -76,9 +76,16 @@ $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerf
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
 
-define wait_for_argocd_app
-	@deadline=$$((SECONDS + $(ARGOCD_TIMEOUT_SECONDS))); \
+define sync_and_wait_for_argocd_app
+	@previous_started="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.startedAt}')"; \
+	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(1)" --type merge -p '{"operation":{"sync":{"revision":"$(GIT_REVISION)","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' >/dev/null; \
+	deadline=$$((SECONDS + $(ARGOCD_TIMEOUT_SECONDS))); \
 	while (( SECONDS < deadline )); do \
+		started="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.startedAt}')"; \
+		if [[ -z "$$started" || "$$started" = "$$previous_started" ]]; then \
+			sleep 2; \
+			continue; \
+		fi; \
 		phase="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.phase}')"; \
 		sync="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.sync.status}')"; \
 		health="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.health.status}')"; \
@@ -105,8 +112,6 @@ argocd-update-all: require-registry
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"spec":{"source":{"kustomize":{"images":["tidb-runtime-schema=$(REGISTRY)/tidb-runtime-schema:$(TAG)"]}}}}' >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"spec":{"source":{"kustomize":{"images":["ssl-proxy=$(REGISTRY)/ssl-proxy:$(TAG)","java-coordinator=$(REGISTRY)/java-coordinator:$(TAG)","atheros-sensor=$(REGISTRY)/atheros-sensor:$(TAG)","atheros-search=$(REGISTRY)/atheros-search:$(TAG)","atheros-search-ui=$(REGISTRY)/atheros-search-ui:$(TAG)","schema-migrator-backend=$(REGISTRY)/schema-migrator-backend:$(TAG)","schema-migrator-ui=$(REGISTRY)/schema-migrator-ui:$(TAG)"]}}}}' >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_DATA_PLANE_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
-	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"operation":{"sync":{"revision":"$(GIT_REVISION)","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' >/dev/null
-	$(call wait_for_argocd_app,$(ARGOCD_DATA_PLANE_APP))
+	$(call sync_and_wait_for_argocd_app,$(ARGOCD_DATA_PLANE_APP))
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_APP_STACK_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
-	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"operation":{"sync":{"revision":"$(GIT_REVISION)","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' >/dev/null
-	$(call wait_for_argocd_app,$(ARGOCD_APP_STACK_APP))
+	$(call sync_and_wait_for_argocd_app,$(ARGOCD_APP_STACK_APP))
