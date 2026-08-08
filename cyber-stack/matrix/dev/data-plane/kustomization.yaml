@@ -27,6 +27,7 @@ images:
     digest: sha256:ae8835807252987c276204f1b1a58b350ab128080d209babc790096e0376a680
 patches:
   - path: ../patches/tidb-replicas.yaml
+  - path: ../patches/alloy-positions.yaml
   - target:
       kind: ConfigMap
       name: ssl-proxy-tidb-config
