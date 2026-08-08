@@ -35,28 +35,26 @@ spec:
               until rpk cluster info --brokers "$brokers" >/dev/null 2>&1; do sleep 2; done
               while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
                 case "$topic" in ''|'#'*) continue ;; esac
-                if description="$(rpk topic describe "$topic" --brokers "$brokers" --print-summary 2>/dev/null)"; then
-                  current="$(printf '%s\n' "$description" | awk '
-                    $1 == "PARTITIONS" { print $2; exit }
-                    $1 == "NAME" && $2 == "PARTITIONS" { getline; print $2; exit }
-                  ')"
-                  case "$current" in ''|*[!0-9]*) echo "unable to read partition count for $topic" >&2; exit 1 ;; esac
-                  if [ "$current" -lt "$partitions" ]; then
-                    rpk topic add-partitions "$topic" --brokers "$brokers" --num "$((partitions - current))"
-                  elif [ "$current" -gt "$partitions" ]; then
-                    echo "topic $topic has $current partitions, above desired $partitions" >&2
+                attempts=0
+                until description="$(rpk topic describe "$topic" --brokers "$brokers" --print-summary 2>/dev/null)"; do
+                  rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas" || true
+                  attempts="$((attempts + 1))"
+                  if [ "$attempts" -ge 30 ]; then
+                    echo "timed out creating topic $topic" >&2
                     exit 1
                   fi
-                else
-                  attempts=0
-                  until rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas"; do
-                    attempts="$((attempts + 1))"
-                    if [ "$attempts" -ge 30 ]; then
-                      echo "timed out creating topic $topic" >&2
-                      exit 1
-                    fi
-                    sleep 2
-                  done
+                  sleep 2
+                done
+                current="$(printf '%s\n' "$description" | awk '
+                  $1 == "PARTITIONS" { print $2; exit }
+                  $1 == "NAME" && $2 == "PARTITIONS" { getline; print $2; exit }
+                ')"
+                case "$current" in ''|*[!0-9]*) echo "unable to read partition count for $topic" >&2; exit 1 ;; esac
+                if [ "$current" -lt "$partitions" ]; then
+                  rpk topic add-partitions "$topic" --brokers "$brokers" --num "$((partitions - current))"
+                elif [ "$current" -gt "$partitions" ]; then
+                  echo "topic $topic has $current partitions, above desired $partitions" >&2
+                  exit 1
                 fi
                 rpk topic alter-config "$topic" --brokers "$brokers" --set "retention.ms=$retention_ms" --set "retention.bytes=$retention_bytes" >/dev/null
               done < /config/topics.manifest
