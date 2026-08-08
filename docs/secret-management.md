@@ -1,8 +1,8 @@
 # Secret Management
 
-Secrets are deployment inputs, never repository content. This policy applies
-to Compose, Helm, stackctl, the operations CLI and nested repositories. Read it
-with the [threat model](threat-model.md) and
+Secrets are runtime inputs, never repository content. This policy applies to
+Kustomize resources, Argo CD reconciliation, local development and nested
+repositories. Read it with the [threat model](threat-model.md) and
 [TiDB runtime contract](tidb-runtime-cutover.md).
 
 ## Secret classes
@@ -14,7 +14,7 @@ with the [threat model](threat-model.md) and
 | TiDB account passwords and DSNs | Octopus, Search, Schema Migrator, Keycloak | Separate Kubernetes Secrets per account |
 | TiDB CA and optional client keypair | Direct TiDB clients | Read-only Secret volume |
 | Search API token digest | Atheros Search | Kubernetes Secret; store the digest, not a plaintext token |
-| MinIO credentials | Octopus/export workflows | Kubernetes Secret or Compose required environment |
+| MinIO credentials | Octopus/export workflows | Kubernetes Secret |
 | Grafana credentials | Grafana | Secret/environment injected at deployment |
 | Keycloak bootstrap/admin credentials | Keycloak | Kubernetes Secret |
 | Registry credentials | Build hosts and nodes | Runtime-specific credential store |
@@ -23,10 +23,10 @@ with the [threat model](threat-model.md) and
 Oracle wallets and passwords are deprecated compatibility material. Do not
 create new wallet-based runtime guidance.
 
-## Local generation
+## Local development
 
-The repository helper can generate local secret files and a Compose
-environment:
+The repository helper can generate local-only secret files and a Docker
+Compose environment for the development harness:
 
 ```bash
 scripts/gen-secrets generate
@@ -50,6 +50,8 @@ must remain untracked.
 
 ## Kubernetes rules
 
+- The platform secret control plane materializes required Secrets before Argo
+  CD reconciles their consumers. This repository stores only names and keys.
 - Create one Secret per trust boundary rather than a platform-wide credential
   bundle.
 - Keep the TiDB accounts for `octopus_core`, `atheros_search`,
@@ -60,8 +62,8 @@ must remain untracked.
   Kubernetes API.
 - Render manifests and inspect `secretKeyRef`/volume wiring without printing
   Secret values.
-- Treat `values.yaml` and `values-k8s.yaml` as non-secret configuration. Never
-  commit credentials into them.
+- Keep credentials out of Kustomize bases, overlays, patches and generators.
+- Do not create, edit or patch live Secrets as part of an application release.
 
 ## Rotation
 

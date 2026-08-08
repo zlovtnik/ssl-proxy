@@ -1,15 +1,15 @@
 # Observability Architecture
 
-This document describes the observability topology declared by
-[`docker-compose.yaml`](../docker-compose.yaml) and the telemetry Helm
-subchart. It supplements the canonical [system architecture](architecture.md).
+This document describes the Kubernetes telemetry resources under
+[`cyber-stack/base/telemetry`](../cyber-stack/base/telemetry/). It supplements
+the canonical [system architecture](architecture.md).
 
 ## Signal topology
 
 ```mermaid
 flowchart LR
-    containers[Container stdout and stderr] --> promtail[Promtail]
-    promtail --> loki[Loki]
+    pods[Pod stdout and stderr] --> alloy[Alloy log collector]
+    alloy --> loki[Loki]
 
     apps[Application and infrastructure metrics] --> prometheus[Prometheus]
     exporters[Node Exporter, cAdvisor and service exporters] --> prometheus
@@ -23,112 +23,70 @@ flowchart LR
     jaeger --> grafana
 ```
 
-All edges above are configured platform paths. Whether a service emits a
-particular signal depends on its instrumentation; see
-[Instrumentation status](#instrumentation-status).
+All edges above are declared Kubernetes paths. Whether a service emits a signal
+depends on its instrumentation.
 
-## Logs: Promtail to Loki
+## Logs
 
-Promtail discovers Docker containers through the Docker socket and forwards
-their logs to Loki. Loki is the durable query target for logs, and Grafana is
-provisioned with a Loki data source.
+The node log collector reads Kubernetes container logs and forwards them to
+Loki. Treat host log mounts as privileged infrastructure access and keep the
+collector on trusted nodes. Applications must not log API tokens, database
+credentials, raw search queries, session IDs, full MAC addresses or captured
+payloads outside an explicitly audited path.
 
-Treat the Docker socket mount as privileged infrastructure access. Promtail
-must stay on a trusted node. Applications should emit structured logs and must
-not include API tokens, database credentials, raw search queries, session IDs,
-full MAC addresses or captured payloads outside an explicitly audited path.
+## Metrics
 
-Compose endpoints:
+Prometheus configuration and alert rules are stored in the telemetry
+ConfigMaps. Declared scrape targets include:
 
-- Loki: host-local `127.0.0.1:3100`
-- Promtail status: container port `9080`, scraped inside the Compose network
+- Prometheus, Loki, the log collector, Jaeger and the OTel Collector;
+- proxy and Atheros Sensor metrics;
+- Redpanda, MinIO, Node Exporter and cAdvisor;
+- the Pushgateway and span-metrics exporter;
+- Octopus under its `java-coordinator` Kubernetes identity.
 
-## Metrics: Prometheus
+Octopus exposes Micrometer measurements on `/metrics` and the compatibility
+route `/actuator/prometheus`.
 
-Prometheus loads [`docker/observability/prometheus.yml`](../docker/observability/prometheus.yml)
-and the alert rules in
-[`docker/observability/alerts.yml`](../docker/observability/alerts.yml).
-Declared scrape targets include:
+## Traces
 
-- Prometheus, Loki, Promtail, Jaeger and the OTel Collector
-- the proxy `/metrics` endpoint
-- Atheros Sensor metrics through the host gateway
-- Redpanda, MinIO, Node Exporter and cAdvisor
-- the Pushgateway
-- span metrics exported by the OTel Collector
-
-The configuration also scrapes Octopus under its legacy
-`java-coordinator` service identity. Both `/metrics` and the compatibility
-route `/actuator/prometheus` expose its Micrometer measurements.
-
-Compose endpoints:
-
-- Prometheus: host-local `127.0.0.1:9090`
-- Pushgateway: host-local `127.0.0.1:9091`
-- Node Exporter: container port `9100`
-- cAdvisor: host-local `127.0.0.1:8082`
-
-## Traces: OTel Collector to Jaeger
-
-The collector accepts OTLP on container ports `4317` (gRPC) and `4318` (HTTP).
-Compose maps those to host-local `127.0.0.1:4317` and
-`127.0.0.1:4320`. It batches traces, exports them to Jaeger over OTLP and sends
-the same trace stream through a span-metrics connector. Prometheus scrapes the
-span-metrics exporter on `9464`.
-
-Jaeger is the trace store and query UI. Compose exposes its UI on host port
-`16686`. Grafana is provisioned with Jaeger as a trace data source.
-
-## Grafana
-
-Grafana unifies the three query surfaces:
-
-| Signal | Source |
-|---|---|
-| Metrics and alerts | Prometheus |
-| Logs | Loki |
-| Traces | Jaeger |
-
-Compose exposes Grafana on host port `3004`. Anonymous access is disabled by
-default; `GRAFANA_ADMIN_PASSWORD` is required.
+The collector accepts OTLP on `4317` (gRPC) and `4318` (HTTP), batches traces,
+exports them to Jaeger and emits span metrics for Prometheus. Grafana is
+provisioned with Prometheus, Loki and Jaeger data sources.
 
 ## Instrumentation status
 
 | Component | Logs | Metrics | Traces |
 |---|---|---|---|
-| Rust proxy/frontdoor | Container logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
-| Atheros Sensor | Container logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
-| Octopus | Structured logs | Micrometer exposition on `/metrics` and `/actuator/prometheus` | OTLP SDK spans around Kafka and TiDB durable boundaries |
+| Rust proxy/frontdoor | Structured pod logs | Proxy/frontdoor Prometheus routes | OTLP configuration is wired |
+| Atheros Sensor | Structured pod logs | Prometheus server on `ATH_SENSOR_METRICS_PORT` | OTLP configuration is wired |
+| Octopus | Structured logs | Micrometer exposition | OTLP SDK spans around Kafka and TiDB durable boundaries |
 | Atheros Search | Structured logs | Dedicated Prometheus server | HTTP/gRPC hooks exist, but no SDK exporter/provider is initialized |
-| Redpanda, MinIO and host | Platform logs | Native endpoints/exporters | Not expected |
+| Redpanda, MinIO and nodes | Platform logs | Native endpoints/exporters | Not expected |
 
 For Atheros Search, setting `OTEL_EXPORTER_OTLP_ENDPOINT` does not currently
-create an exporter. The gRPC stats handler and HTTP trace-context logging use
-the default no-op provider until server initialization installs an OTel SDK.
+create an exporter. The handlers use the default no-op provider until server
+initialization installs an OTel SDK.
 
 ## Operating checks
 
-```bash
-curl -fsS http://127.0.0.1:9090/-/ready
-curl -fsS http://127.0.0.1:3100/ready
-curl -fsS http://127.0.0.1:3004/api/health
-curl -fsS http://127.0.0.1:16686/
-curl -fsS http://127.0.0.1:8888/metrics
-```
+Use Argo CD health, pod status, service endpoints and Prometheus target status.
+If traces are absent, check service instrumentation, collector receiver health,
+collector logs and Jaeger reachability. If metrics are absent, inspect
+Prometheus targets and verify the path exists. If logs are absent, inspect the
+node collector and Loki readiness.
 
-If traces are absent, check the service instrumentation first, then collector
-receiver health, collector logs and Jaeger reachability. If metrics are absent,
-inspect Prometheus **Status -> Targets** and verify the path actually exists on
-the service. If logs are absent, check Promtail discovery and Loki readiness.
+All configuration corrections belong in the telemetry base or environment
+patches and must be merged through Git. Use read-only cluster commands to
+collect evidence; do not edit telemetry resources interactively.
 
 ## Security and retention
 
 - Keep Grafana, Prometheus, Loki, collector diagnostics and service metrics
-  bound to loopback or cluster-internal networks.
-- Protect Grafana with a non-default password and the deployment identity
-  provider where available.
-- Treat labels as potentially sensitive; do not use raw user, query, session or
-  full device identifiers as unbounded metric labels.
-- Define Loki, Prometheus and Jaeger retention from the deployment's evidence
-  and privacy requirements. Compose defaults are development settings, not a
-  compliance retention policy.
+  cluster-internal unless an approved ingress policy says otherwise.
+- Protect Grafana with the platform identity provider and a non-default admin
+  credential supplied by the platform secret control plane.
+- Do not use raw user, query, session or device identifiers as unbounded metric
+  labels.
+- Define Loki, Prometheus and Jaeger retention from evidence and privacy
+  requirements in the environment overlays.

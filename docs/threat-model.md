@@ -77,8 +77,8 @@ credentials.
 The architecture [Known gaps](architecture.md#known-gaps) affect security
 assurance:
 
-- Helm worker values are not passed to Atheros Search, and the standalone TiDB
-  init job lacks worker write grants.
+- The dev app-stack worker settings require explicit render validation, and the
+  standalone TiDB init job lacks worker write grants.
 - Search tracing hooks do not initialize an exporter, reducing request-flow
   visibility.
 - No current runtime owns `integration_console` tables.

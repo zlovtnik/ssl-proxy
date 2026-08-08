@@ -152,6 +152,36 @@ class DocsCheckTest(unittest.TestCase):
         root = self.make_repo("Use `Semaphore[IO](poolSize)` for bounds.\n")
         self.assertEqual([], self.errors(root))
 
+    def test_all_tracked_markdown_is_checked_for_deployment_policy(self) -> None:
+        root = self.make_repo()
+        (root / "notes.md").write_text(
+            "# Operations\n\nUse Helm for Kubernetes.\n", encoding="utf-8"
+        )
+        self.git(root, "add", "notes.md")
+        errors = self.errors(root)
+        self.assertTrue(any("notes.md" in error for error in errors))
+
+    def test_mutating_kubectl_is_rejected_but_read_only_is_allowed(self) -> None:
+        root = self.make_repo(
+            "# Operations\n\n"
+            "`kubectl get pods` is diagnostic.\n\n"
+            "Do not run `kubectl patch deployment example`.\n"
+        )
+        errors = self.errors(root)
+        self.assertEqual(1, sum("mutating kubectl" in error for error in errors))
+
+    def test_compose_is_limited_to_local_development_sections(self) -> None:
+        allowed = self.make_repo(
+            "# Project\n\n## Local development\n\nRun `docker compose up`.\n"
+        )
+        self.assertEqual([], self.errors(allowed))
+
+        rejected = self.make_repo(
+            "# Project\n\n## Operations\n\nRun `docker compose up`.\n"
+        )
+        errors = self.errors(rejected)
+        self.assertTrue(any("local-development headings" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

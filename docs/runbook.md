@@ -1,46 +1,36 @@
 # Operations Runbook
 
-Use this runbook with the canonical [system architecture](architecture.md).
-Deployment-specific commands live in the [Helm](../helm/ssl-proxy/README.md),
-[stackctl](../stackctl/README.md) and
-[local registry](local-registry-workflow.md) guides.
+Use this runbook with the canonical [system architecture](architecture.md) and
+[Kubernetes GitOps guide](../cyber-stack/README.md). Git is the source of truth;
+Argo CD is the only Kubernetes reconciler for this repository.
 
-## Before deployment
+## Before a change
 
 1. Initialize nested repositories with `git submodule update --init --recursive`.
-2. Run `python3 scripts/check-docs.py` and targeted component tests.
-3. Confirm the image registry is reachable from the build host and every
-   Kubernetes node.
-4. Materialize secrets outside Git and verify file permissions.
-5. Render the exact Kustomize overlays with load restrictions disabled.
-6. Record the TiDB schema manifest hashes, runtime grants and signed Redpanda
-   cutover offsets.
-7. Confirm the selected WireGuard profile:
-   - `iphone` uses the direct frontdoor path;
-   - `linux-shim` uses the local obfuscation shim;
-   - Compose declares public UDP `443` and `51820` concurrently.
+2. Run `make docs-check`, `make gitops-check` and targeted component tests.
+3. Confirm the registry is reachable from the build host, Image Updater and
+   every Kubernetes node.
+4. Confirm the platform control plane has materialized the required workload
+   Secrets and production endpoint ConfigMap without exposing their values.
+5. Review the rendered diff for the exact environment slice being changed.
+6. Record TiDB schema manifest hashes, runtime grants and signed Redpanda
+   cutover offsets when those contracts change.
 
-## Deploy
+## Release and promotion
 
-Publish and promote the current immutable commit tag:
+Publish first-party images without changing cluster state:
 
 ```bash
-make release-all \
-  REGISTRY=192.0.2.10:5000 \
-  KUBE_CONTEXT=wiretrap-k3s
+make publish-all REGISTRY=192.168.1.221:5000
 ```
 
-To promote images that are already present in the registry:
+Image Updater opens dev pull requests containing immutable digests. Merge only
+after CI and review pass. Wait for the dev `bootstrap`, `data-plane` and
+`app-stack` Applications to become `Synced` and `Healthy`.
 
-```bash
-make argocd-update-all \
-  REGISTRY=192.0.2.10:5000 \
-  TAG=<commit> \
-  KUBE_CONTEXT=wiretrap-k3s
-```
-
-Replace documentation addresses with real deployment values. Review generated
-artifacts before applying them to a production cluster.
+Production promotion is a separate pull request that copies the accepted dev
+digests into the matching prod Kustomizations. Image Updater does not target
+prod. After merge, Argo CD reconciles the change automatically.
 
 ## Health and readiness
 
@@ -50,8 +40,8 @@ artifacts before applying them to a production cluster.
 | Proxy | `GET /ready` on admin port `3002` | Required runtime dependencies are ready |
 | UDP frontdoor | `GET /health` on host-local `3003` | Frontdoor process and backend status |
 | Octopus | `GET /live` on `8081` | HTTP process liveness |
-| Octopus | `GET /ready`, `/health`, or `/actuator/health` on `8081` | TiDB readiness plus persisted state for every enabled processor after startup manifest verification |
-| Octopus | `GET /metrics` or `/actuator/prometheus` on `8081` | Micrometer measurements in Prometheus text format |
+| Octopus | `GET /ready` on `8081` | TiDB and enabled processor readiness |
+| Octopus | `GET /metrics` on `8081` | Prometheus text metrics |
 | Atheros Search | `GET /healthz` on `8080` | Process liveness |
 | Atheros Search | `GET /readyz` on `8080` | TiDB, schema, vector and embedding readiness |
 | Atheros Search | `GET /v1/etl/health` | Worker/job ETL snapshot |
@@ -63,14 +53,15 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 ## Read-only diagnostics
 
 ```bash
-kubectl --context "$KUBE_CONTEXT" get applications.argoproj.io -n argocd -o wide
-kubectl --context "$KUBE_CONTEXT" get pods -A -o wide
-kubectl --context "$KUBE_CONTEXT" get events -A --field-selector type=Warning --sort-by=.lastTimestamp
+kubectl get applications.argoproj.io -n argocd -o wide
+kubectl get imageupdaters.argocd-image-updater.argoproj.io -n argocd
+kubectl get pods -A -o wide
+kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
 ```
 
-Use `KUBE_CONTEXT`, `KUBE_NAMESPACE` and `KUBE_RELEASE` when the defaults do
-not select the intended cluster. Capture the output with incident timestamps;
-do not paste secret values into tickets.
+Capture output with incident timestamps and do not paste Secret values into
+tickets. Do not use interactive edits, patches, scaling or restarts to repair
+drift. Correct Git or the platform prerequisite and let Argo CD reconcile it.
 
 ## Data-plane checks
 
@@ -81,16 +72,10 @@ do not paste secret values into tickets.
    `octopus_core`.
 5. Confirm `sync.oracle.load` and `sync.oracle.result` progress as TiDB work and
    results; the names do not indicate Oracle.
-6. For wireless audit, confirm the sensor publishes `wireless.audit` and the
-   matching `sync.scan.request`. The sensor should not have database
-   credentials.
-7. For embeddings, confirm `search_documents` and `embedding_jobs` exist before
-   enabling workers, then check leases, failures, DLQ state and vector counts.
-
-Search-document and embedding-job preparation are Octopus processors. If a
-Search worker is idle, verify `embedding-text-builder` and
-`embedding-preparer` are enabled and ready, then inspect terminal failed jobs
-and expired leases before treating the worker as unhealthy.
+6. Confirm the sensor publishes `wireless.audit` and the matching
+   `sync.scan.request` without database credentials.
+7. Confirm `search_documents` and `embedding_jobs` exist before enabling Search
+   workers, then check leases, terminal failures and vector counts.
 
 ## Common incidents
 
@@ -99,12 +84,11 @@ and expired leases before treating the worker as unhealthy.
 - Verify the client profile matches the direct or shim endpoint.
 - Check public UDP `443`/`51820`, frontdoor health and backend configuration.
 - Confirm server, peer and preshared keys match the staged generation.
-- Check MTU: direct defaults to `1420`; obfuscated framing requires room for
-  its overhead.
+- Check MTU; obfuscated framing requires room for its overhead.
 
 ### Proxy healthy but no audit data
 
-- Check `SYNC_REDPANDA_BOOTSTRAP_SERVERS`.
+- Check `SYNC_REDPANDA_BOOTSTRAP_SERVERS` in the rendered Kustomize output.
 - Inspect proxy outbox growth and publisher health.
 - Verify Redpanda topic bootstrap and ACLs.
 - Inspect Octopus consumer group offsets and signed cutover gate.
@@ -118,33 +102,35 @@ and expired leases before treating the worker as unhealthy.
 
 ### Octopus health fails
 
-- Verify `TIDB_HOST`, `TIDB_PORT`, `TIDB_DATABASE=octopus_core`, credentials,
-  SSL mode, CA path and server name.
+- Verify the rendered TiDB host, port, database, account, SSL mode, CA path and
+  server name.
 - Confirm the canonical manifest and signed cutover artifact.
 - Do not fall back to PostgreSQL.
 
 ### Search readiness fails
 
-- Validate the native MySQL DSN format, TLS files/server name and manifest hash.
-- Confirm the Search account grants.
+- Validate the native MySQL DSN, TLS files/server name and manifest hash.
+- Confirm the Search account grants and platform-provided Secret keys.
 - Check whether the embedding backend is required for the selected mode.
-- In Helm, inspect the rendered Deployment: worker values currently are not
-  passed as worker environment variables.
+- Inspect the rendered app-stack Kustomization for worker configuration.
 
 ### Missing traces
 
-- Verify that the service actually initializes an exporter, not only that
+- Verify that the service initializes an exporter, not only that
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - Check collector receiver/exporter health and Jaeger availability.
 - Atheros Search currently has hooks but no exporter initialization.
 
 ## Rollback and recovery
 
+Revert the Git commit that introduced the bad desired state and let Argo CD
+reconcile the previous digests/configuration. Do not perform a controller-local
+rollback that leaves Git stale.
+
 Do not delete TiDB schemas, consumer evidence, outboxes or sensor backlogs
-during diagnosis. Stop or scale down producers/consumers at a documented
-boundary, capture offsets and leases, then roll back only the affected
-deployment. Any consumer offset change requires a new signed cutover artifact
-and duplicate-delivery review.
+during diagnosis. Stop producers or consumers only through an reviewed Git
+change at a documented boundary. Any consumer offset change requires a new
+signed cutover artifact and duplicate-delivery review.
 
 For key rotation, use the staged rotator flow in the
 [WireGuard key rotator README](../apps/wg-key-rotator/README.md); do not replace
@@ -153,19 +139,16 @@ active keys without a candidate health and handshake window.
 ### Locked-topic partition expansion
 
 The locked sync topics are configured for 24 partitions. An upgrade may add
-partitions to an existing topic, but it must not activate consumers against an
-artifact that covers only the old partition set.
+partitions, but it must not activate consumers against evidence covering only
+the old partition set.
 
-1. Stage Octopus with its consumer lane disabled.
-2. Apply the topic manifest and verify all of `sync.scan.request`,
-   `sync.oracle.load`, and `sync.oracle.result` have 24 partitions.
-3. Capture and sign a new cutover artifact that covers every partition for all
-   configured consumer groups. New partitions normally begin at offset zero.
-4. Activate the two coordinator replicas and confirm each signed partition is
-   assigned and advancing.
-5. Watch lag per partition with `rpk group describe`; uneven new traffic should
-   be investigated at the producer key/distribution boundary.
+1. Stage Octopus with its consumer lane disabled through the app-stack overlay.
+2. Merge the topic manifest change and verify all locked topics have 24
+   partitions after Argo CD reports healthy.
+3. Capture and sign a new cutover artifact covering every partition and group.
+4. Enable the coordinator replicas through Git and confirm each signed
+   partition is assigned and advancing.
+5. Watch lag per partition with `rpk group describe`.
 
-Partition expansion does not redistribute records that were already stored.
-Do not decrease a manifest partition count: the bootstrap reconciliation fails
-closed because Kafka topic partitions cannot be removed in place.
+Do not decrease a manifest partition count; Kafka partitions cannot be removed
+in place.

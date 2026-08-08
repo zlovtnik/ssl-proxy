@@ -101,9 +101,9 @@ Use this legend in your tracker:
 - [ ] Check Bun version — must be 1.3.11 (frontend lead)
 - [ ] Check sbt version — document it (backend lead)
 - [ ] Check Node is NOT being used — confirm Bun is the only package manager (frontend lead)
-- [ ] Verify Docker Compose can spin up full stack locally (DevOps lead)
+- [ ] Verify the local container test harness can start all required services (DevOps lead)
 
-**DoD:** Every developer can run `java -version`, `bun --version`, and `docker compose up` successfully.
+**DoD:** Every developer can run `java -version`, `bun --version`, and the documented local test harness successfully.
 
 ---
 
@@ -156,7 +156,7 @@ Use this legend in your tracker:
   1. Backend compile + test
   2. Frontend lint + typecheck + test
   3. SQL fixture validation (if applicable)
-  4. Deployment config validation (e.g., `docker compose config`)
+  4. Kustomize render and GitOps policy validation
 - [ ] If any step fails, the entire command exits with non-zero status
 - [ ] Document the command in README: "Run `./check.sh` before every push"
 - [ ] Commit with message: `build: add unified repository check command`
@@ -191,7 +191,7 @@ Use this legend in your tracker:
 - [ ] Verify every developer reinstalls dependencies with `bun install` (not `npm install`)
 - [ ] Commit with message: `build: standardize on Java 21 and Bun 1.3.11`
 
-**DoD:** `docker compose build` uses Java 21; `bun --version` returns 1.3.11 on every dev machine.
+**DoD:** The coordinator image build uses Java 21; `bun --version` returns 1.3.11 on every dev machine.
 
 ### Task 1.8: Align Dependency Versions
 - [ ] Open `build.sbt` — update Cats Effect to 3.7.0, FS2 to 3.13.0, log4cats to 2.8.0, PostgreSQL JDBC to 42.7.7
@@ -223,7 +223,7 @@ Use this legend in your tracker:
   - Run `git rm --cached <file>` to stop tracking it without deleting local copy
 - [ ] Create a `deployment-state/` directory
 - [ ] Add `deployment-state/` to `.gitignore`
-- [ ] Update Docker Compose to mount `deployment-state/` as read-only where needed
+- [ ] Update local container fixtures to mount `deployment-state/` as read-only where needed
 - [ ] Update Kubernetes manifests to use `Secret` or `ConfigMap` instead of mounted files for credentials
 - [ ] Document in README: "Credential rotation is an operator action required during rollout. See OPERATIONS.md."
 - [ ] Commit template files with message: `security: add config templates, stop tracking rendered credentials`
@@ -752,7 +752,7 @@ Use this legend in your tracker:
 - [ ] Search all configs, env files, Docker files for `VITE_KEYCLOAK_DIRECT_ACCESS_GRANTS` or `directAccessGrantsEnabled`
 - [ ] Remove the environment variable from all `.env` files
 - [ ] Update Keycloak realm configuration: set `directAccessGrantsEnabled: false`
-- [ ] Remove Docker Compose environment variables for direct access
+- [ ] Remove local test-harness environment variables for direct access
 - [ ] Remove runtime configuration for direct access
 - [ ] Delete any frontend code that uses password grant flow
 - [ ] Keep redirect-based PKCE flow intact
@@ -945,9 +945,9 @@ Use this legend in your tracker:
 - [ ] Run coordinator tests — verify no regressions
 - [ ] Run Atheros Search tests — verify no regressions
 - [ ] Verify root aggregate consistency (Postgres reference files match coordinator/search expectations)
-- [ ] Run `docker compose config` — validates Compose configuration
-- [ ] Run image builds — `docker compose build` succeeds for all services
-- [ ] Run Kubernetes client-side validation — `kubectl apply --dry-run=client -f k8s/` succeeds
+- [ ] Run `make gitops-check` — validates all canonical Kustomize sources
+- [ ] Run image builds — root image build targets succeed for all services
+- [ ] Confirm all Argo CD Applications target `main` and use automated reconciliation
 - [ ] Commit with message: `test: cross-service and deployment validation`
 
 **DoD:** All cross-service tests pass; Docker builds clean; K8s configs valid.

@@ -1,8 +1,8 @@
 # Local Registry Image Workflow
 
-This workflow publishes Linux images from a development host to a registry
-reachable by the target server or Kubernetes nodes. The deployment paths are
-summarized in the [root README](../README.md).
+This workflow publishes Linux images from a development host to the registry
+used by Kubernetes nodes and Argo CD Image Updater. Kubernetes management is
+documented in the [GitOps guide](../cyber-stack/README.md).
 
 ## Run a LAN registry
 
@@ -66,27 +66,19 @@ make publish-atheros-search-ui \
 The Kubernetes UI uses same-origin nginx proxying for `/v1`; the default API
 base is therefore empty.
 
-## Deploy
+## Local development
 
-Compose pull-only deployment:
-
-```bash
-REGISTRY=10.0.0.10:5000 IMAGE_TAG=latest docker compose pull
-REGISTRY=10.0.0.10:5000 IMAGE_TAG=latest docker compose up -d
-```
-
-Local Compose builds are explicit:
+Docker Compose may consume locally built images only as a development test
+harness:
 
 ```bash
 REGISTRY=local IMAGE_TAG=dev \
   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 ```
 
-Kubernetes promotion is handled by Argo CD:
-
-```bash
-make argocd-update-all REGISTRY=10.0.0.10:5000 TAG="$TAG"
-```
+Publishing updates the registry's immutable commit tag and `latest` channel.
+Image Updater resolves `latest` to an immutable digest and opens the dev pull
+request. Production receives only reviewed digests copied from dev.
 
 ## Verify
 
@@ -94,6 +86,7 @@ make argocd-update-all REGISTRY=10.0.0.10:5000 TAG="$TAG"
 curl -fsS http://10.0.0.10:5000/v2/
 docker buildx inspect
 kubectl get applications.argoproj.io -n argocd
+kubectl get imageupdaters.argocd-image-updater.argoproj.io -n argocd
 kubectl get pods -A
 ```
 

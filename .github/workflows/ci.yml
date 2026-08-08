@@ -27,6 +27,24 @@ jobs:
       - name: Validate README inventory and local links
         run: make docs-check
 
+  gitops:
+    name: Kustomize and Argo CD policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository and nested repositories
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up kubectl with embedded Kustomize
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.3
+
+      - name: Render canonical GitOps sources
+        run: make gitops-check KUSTOMIZE=kubectl
+
   runtime-datastore-policy:
     name: Runtime datastore policy
     runs-on: ubuntu-latest

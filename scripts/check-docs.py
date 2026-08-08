@@ -28,6 +28,21 @@ HTML_ANCHOR = re.compile(
 HEADING = re.compile(r"^\s{0,3}(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
 HTML_TAG = re.compile(r"<[^>]+>")
 INLINE_MARKUP = re.compile(r"[*_~`]")
+DOCUMENT_SUFFIXES = {".md", ".mdx", ".adoc", ".rst", ".txt"}
+FORBIDDEN_DEPLOYMENT_TERMS = (
+    re.compile(r"\bhelm\b", re.IGNORECASE),
+    re.compile(r"\bstackctl\b", re.IGNORECASE),
+)
+MUTATING_KUBECTL = re.compile(
+    r"\bkubectl\s+(?:--[^\s]+(?:\s+[^\s]+)?\s+)*(?:apply|create|delete|edit|patch|replace|rollout|scale|set)\b",
+    re.IGNORECASE,
+)
+COMPOSE_REFERENCE = re.compile(
+    r"\b(?:docker[ -]compose|compose\.ya?ml)\b", re.IGNORECASE
+)
+LOCAL_DEVELOPMENT_HEADING = re.compile(
+    r"\b(?:local development|local test|development environment)\b", re.IGNORECASE
+)
 
 
 class GitError(RuntimeError):
@@ -334,9 +349,37 @@ def tracked_parent_documents(root: Path) -> set[str]:
     return {
         path
         for path in files
-        if Path(path).name == README_NAME
-        or (path.startswith("docs/") and path.endswith(".md"))
+        if Path(path).suffix.lower() in DOCUMENT_SUFFIXES
     }
+
+
+def validate_deployment_policy(path: Path, text: str) -> list[str]:
+    errors: list[str] = []
+    headings: dict[int, str] = {}
+
+    for number, line in enumerate(text.splitlines(), 1):
+        heading = HEADING.match(line)
+        if heading:
+            level = len(heading.group("marks"))
+            headings = {key: value for key, value in headings.items() if key < level}
+            headings[level] = heading.group("title")
+
+        for pattern in FORBIDDEN_DEPLOYMENT_TERMS:
+            if pattern.search(line):
+                errors.append(
+                    f"{path}:{number}: unsupported Kubernetes deployment technology is documented"
+                )
+        if MUTATING_KUBECTL.search(line):
+            errors.append(
+                f"{path}:{number}: mutating kubectl guidance is prohibited; change Git desired state"
+            )
+        if COMPOSE_REFERENCE.search(line):
+            context = " / ".join(headings.values())
+            if not LOCAL_DEVELOPMENT_HEADING.search(context):
+                errors.append(
+                    f"{path}:{number}: Docker Compose may be documented only under local-development headings"
+                )
+    return errors
 
 
 def check_repository(root: Path, inventory_path: Path | None = None) -> list[str]:
@@ -371,6 +414,7 @@ def check_repository(root: Path, inventory_path: Path | None = None) -> list[str
             errors.append(f"{path}: cannot read tracked Markdown: {error}")
             continue
         errors.extend(validate_document(path, text, view))
+        errors.extend(validate_deployment_policy(path, text))
     return errors
 
 

@@ -36,10 +36,10 @@ overrides a rule for its subtree.
   `integration_console`) and the shared `contracts/` layer. PostgreSQL SQL
   belongs only to the historical archive or schema-migrator external-target
   fixtures.
-- `helm/ssl-proxy/` is the umbrella chart; deployable units live under
-  `helm/ssl-proxy/charts/`, while only shared ConfigMaps and the shared service
-  account remain in the umbrella templates. All subcharts depend on the
-  `_common` library chart at `helm/ssl-proxy/charts/_common/`.
+- `cyber-stack/base/` contains environment-neutral Kubernetes resources.
+  `cyber-stack/matrix/dev/` and `cyber-stack/matrix/prod/` contain the
+  Kustomize environment slices reconciled by the Applications under
+  `cyber-stack/argocd/`.
 - `docker/`, `scripts/`, and `docs/` hold deployment, operational, and design
   material.
 
@@ -55,12 +55,11 @@ overrides a rule for its subtree.
   `docs/tidb-runtime-cutover.md`. Do not add direct database wiring to `src/`,
   `crates/sync-plane/`, or `services/atheros-sensor/`.
 - Keep TiDB connection configuration consistent between application config
-  (`AppConfig.scala` TiDbConfig fields) and the Helm chart values. Every TiDB
-  env var consumed by a service must have a corresponding Helm value source in
-  the chart's deployment template. When changing TiDB connection parameters
-  (host, port, sslMode, sslCaPath, sslServerName), update both the application
-  config defaults and the chart's `global.shared.tidb` values and per-chart env
-  vars in parallel.
+  (`AppConfig.scala` TiDbConfig fields), the Kustomize base manifests and both
+  environment slices. Every TiDB env var consumed by a service must have a
+  corresponding ConfigMap, Secret or overlay source. When changing TiDB
+  connection parameters (host, port, sslMode, sslCaPath, sslServerName), update
+  the application defaults and both environment render paths in parallel.
 - Preserve the locked sync topic meanings:
   - `sync.scan.request` for producer-to-coordinator work discovery
   - `sync.oracle.load` for coordinator-owned TiDB load dispatch (legacy name)
@@ -79,6 +78,26 @@ overrides a rule for its subtree.
   - `auth`
   - `unknown`
 
+## Kubernetes Management
+- Kubernetes desired state lives only under `cyber-stack/` and is rendered by
+  Kustomize and reconciled by Argo CD from `main`.
+- Change workload configuration, images, scaling, routing, policy and rollout
+  order through reviewed Git changes. Do not add direct cluster mutation to
+  scripts, Make targets, CI jobs or operator documentation.
+- Keep reusable resources in `cyber-stack/base/`; keep environment differences
+  in the corresponding dev and prod slice. Add every new workload to both
+  environments and to exactly one of `bootstrap`, `data-plane` or `app-stack`.
+- Keep first-party environment images pinned by digest. Dev Image Updater may
+  open Git pull requests; production promotion is a reviewed copy of tested dev
+  digests and is never automatic.
+- Treat platform-provided Secrets, registry access and the production TiDB
+  endpoint as prerequisite contracts. Store only names and key references in
+  this repository.
+- Use Argo CD sync waves/hooks for dependency order. Namespace pruning requires
+  explicit confirmation. Roll back by reverting Git.
+- Read-only cluster inspection is allowed for diagnosis. Do not repair drift by
+  editing, patching, scaling or restarting managed resources interactively.
+
 ## Change Rules
 - Keep Rust changes localized and deliberate; preserve the sensor/proxy
   dependency boundary enforced by `make dependency-boundaries`.
@@ -90,9 +109,8 @@ overrides a rule for its subtree.
   may apply DDL; application runtimes verify the recorded manifest checksums
   and fail closed.
 - Keep PostgreSQL libraries/configuration limited to schema-migrator's explicit
-  external-target implementation and tests. Runtime Helm, Compose, monitoring,
-  secrets, and application fallbacks must remain PostgreSQL/MongoDB-free outside
-  the one-release `helm/ssl-proxy/cutover-compat/` stage/activate assets.
+  external-target implementation and tests. Kubernetes runtime, monitoring,
+  secrets and application fallbacks must remain PostgreSQL/MongoDB-free.
 - Preserve API contracts, Redpanda payload shapes, schema-versioned wireless
   events, and UI data contracts unless the user asks for a contract change.
 - Avoid introducing new dependencies unless they clearly earn their keep.
@@ -100,6 +118,10 @@ overrides a rule for its subtree.
   `target/`, `.gradle/`, `.omx/`, `node_modules/`, `dist/`, `secrets/`, or
   `wallet/` unless the task explicitly requires it.
 - If you do touch generated or environment-specific files, say so plainly.
+
+## Local Development
+- Docker Compose is allowed only as a local development and test harness. Do
+  not present it as Kubernetes management, promotion or production guidance.
 
 ## Verification
 - Run the smallest meaningful checks for the files you changed.
