@@ -12,10 +12,9 @@ BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
 
 KUBECTL ?= kubectl
-ARGOCD ?= argocd
 KUBE_CONTEXT ?= wiretrap-k3s
 ARGOCD_NAMESPACE ?= argocd
-ARGOCD_TIMEOUT ?= 900
+ARGOCD_TIMEOUT ?= 20m
 ARGOCD_DATA_PLANE_APP ?= ssl-proxy-data-plane
 ARGOCD_APP_STACK_APP ?= ssl-proxy-app-stack
 
@@ -79,7 +78,11 @@ $(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerf
 argocd-update-all: require-registry
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"spec":{"source":{"kustomize":{"images":["tidb-runtime-schema=$(REGISTRY)/tidb-runtime-schema:$(TAG)"]}}}}' >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"spec":{"source":{"kustomize":{"images":["ssl-proxy=$(REGISTRY)/ssl-proxy:$(TAG)","java-coordinator=$(REGISTRY)/java-coordinator:$(TAG)","atheros-sensor=$(REGISTRY)/atheros-sensor:$(TAG)","atheros-search=$(REGISTRY)/atheros-search:$(TAG)","atheros-search-ui=$(REGISTRY)/atheros-search-ui:$(TAG)","schema-migrator-backend=$(REGISTRY)/schema-migrator-backend:$(TAG)","schema-migrator-ui=$(REGISTRY)/schema-migrator-ui:$(TAG)"]}}}}' >/dev/null
-	$(ARGOCD) --core --kube-context "$(KUBE_CONTEXT)" app sync "$(ARGOCD_DATA_PLANE_APP)" --prune --timeout "$(ARGOCD_TIMEOUT)"
-	$(ARGOCD) --core --kube-context "$(KUBE_CONTEXT)" app wait "$(ARGOCD_DATA_PLANE_APP)" --health --sync --timeout "$(ARGOCD_TIMEOUT)"
-	$(ARGOCD) --core --kube-context "$(KUBE_CONTEXT)" app sync "$(ARGOCD_APP_STACK_APP)" --prune --timeout "$(ARGOCD_TIMEOUT)"
-	$(ARGOCD) --core --kube-context "$(KUBE_CONTEXT)" app wait "$(ARGOCD_APP_STACK_APP)" --health --sync --timeout "$(ARGOCD_TIMEOUT)"
+	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_DATA_PLANE_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
+	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"operation":{"sync":{"prune":true,"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground","ApplyOutOfSyncOnly=true","ServerSideApply=true"]}}}' >/dev/null
+	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_DATA_PLANE_APP)" --for=jsonpath='{.status.operationState.phase}'=Succeeded --timeout="$(ARGOCD_TIMEOUT)"
+	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_DATA_PLANE_APP)" --for=jsonpath='{.status.health.status}'=Healthy --timeout="$(ARGOCD_TIMEOUT)"
+	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_APP_STACK_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
+	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"operation":{"sync":{"prune":true,"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground","ApplyOutOfSyncOnly=true","ServerSideApply=true"]}}}' >/dev/null
+	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_APP_STACK_APP)" --for=jsonpath='{.status.operationState.phase}'=Succeeded --timeout="$(ARGOCD_TIMEOUT)"
+	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_APP_STACK_APP)" --for=jsonpath='{.status.health.status}'=Healthy --timeout="$(ARGOCD_TIMEOUT)"
