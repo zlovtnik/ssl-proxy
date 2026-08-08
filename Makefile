@@ -8,16 +8,9 @@ REGISTRY_PLAIN_HTTP ?= 1
 BUILDER ?= ssl-proxy-publisher
 PLATFORM ?= linux/amd64
 TAG ?= $(shell git rev-parse --short HEAD)
-GIT_REVISION ?= $(shell git rev-parse HEAD)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
-
-KUBECTL ?= kubectl
-KUBE_CONTEXT ?= wiretrap-k3s
-ARGOCD_NAMESPACE ?= argocd
-ARGOCD_TIMEOUT_SECONDS ?= 1200
-ARGOCD_DATA_PLANE_APP ?= ssl-proxy-data-plane
-ARGOCD_APP_STACK_APP ?= ssl-proxy-app-stack
+KUSTOMIZE ?= kustomize
 
 ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
@@ -26,19 +19,20 @@ SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rota
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 
-.PHONY: build build-all publish publish-all release-all buildx-ready require-registry argocd-update argocd-update-all $(BUILD_TARGETS) $(PUBLISH_TARGETS)
+.PHONY: build build-all publish publish-all buildx-ready require-registry docs-check gitops-check $(BUILD_TARGETS) $(PUBLISH_TARGETS)
 
 build: build-all
 publish: publish-all
-argocd-update: argocd-update-all
 
 build-all: $(BUILD_TARGETS)
 
 publish-all: $(PUBLISH_TARGETS)
 
-release-all:
-	$(MAKE) publish-all REGISTRY="$(REGISTRY)" TAG="$(TAG)" PLATFORM="$(PLATFORM)"
-	$(MAKE) argocd-update-all REGISTRY="$(REGISTRY)" TAG="$(TAG)" KUBE_CONTEXT="$(KUBE_CONTEXT)"
+docs-check:
+	python3 scripts/check-docs.py
+
+gitops-check:
+	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE)"
 
 require-registry:
 	@test -n "$(REGISTRY)" || { echo "REGISTRY is required" >&2; exit 2; }
@@ -75,43 +69,3 @@ $(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-s
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
-
-define sync_and_wait_for_argocd_app
-	@previous_started="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.startedAt}')"; \
-	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(1)" --type merge -p '{"operation":{"sync":{"revision":"$(GIT_REVISION)","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' >/dev/null; \
-	deadline=$$((SECONDS + $(ARGOCD_TIMEOUT_SECONDS))); \
-	while (( SECONDS < deadline )); do \
-		started="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.startedAt}')"; \
-		if [[ -z "$$started" || "$$started" = "$$previous_started" ]]; then \
-			sleep 2; \
-			continue; \
-		fi; \
-		phase="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.phase}')"; \
-		sync="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.sync.status}')"; \
-		health="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.health.status}')"; \
-		case "$$phase" in \
-			Failed|Error) \
-				message="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.message}')"; \
-				echo "Argo CD application $(1) failed: $$message" >&2; \
-				exit 1 \
-				;; \
-			Succeeded) \
-				if [[ "$$sync" = Synced && "$$health" = Healthy ]]; then \
-					echo "Argo CD application $(1) is Synced and Healthy"; \
-					exit 0; \
-				fi \
-				;; \
-		esac; \
-		sleep 5; \
-	done; \
-	echo "timed out waiting for Argo CD application $(1)" >&2; \
-	exit 1
-endef
-
-argocd-update-all: require-registry
-	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"spec":{"source":{"targetRevision":"$(GIT_REVISION)","kustomize":{"images":["tidb-runtime-schema=$(REGISTRY)/tidb-runtime-schema:$(TAG)"]}}}}' >/dev/null
-	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"spec":{"source":{"targetRevision":"$(GIT_REVISION)","kustomize":{"images":["ssl-proxy=$(REGISTRY)/ssl-proxy:$(TAG)","java-coordinator=$(REGISTRY)/java-coordinator:$(TAG)","atheros-sensor=$(REGISTRY)/atheros-sensor:$(TAG)","atheros-search=$(REGISTRY)/atheros-search:$(TAG)","atheros-search-ui=$(REGISTRY)/atheros-search-ui:$(TAG)","schema-migrator-backend=$(REGISTRY)/schema-migrator-backend:$(TAG)","schema-migrator-ui=$(REGISTRY)/schema-migrator-ui:$(TAG)"]}}}}' >/dev/null
-	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_DATA_PLANE_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
-	$(call sync_and_wait_for_argocd_app,$(ARGOCD_DATA_PLANE_APP))
-	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_APP_STACK_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
-	$(call sync_and_wait_for_argocd_app,$(ARGOCD_APP_STACK_APP))

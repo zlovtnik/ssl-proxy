@@ -24,6 +24,6 @@ resources:
 images:
   - name: tidb-runtime-schema
     newName: 192.168.1.221:5000/tidb-runtime-schema
-    digest: sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432
+    digest: sha256:ae8835807252987c276204f1b1a58b350ab128080d209babc790096e0376a680
 patches:
   - path: ../patches/tidb-replicas.yaml
