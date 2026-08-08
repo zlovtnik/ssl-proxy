@@ -1350,6 +1350,7 @@ def _helm_release_args(ctx: UpReadyContext, *, is_upgrade: bool) -> list[str]:
 
 def helm_upgrade(ctx: UpReadyContext) -> bool:
     preflight_required_secrets(ctx)
+    args = _helm_release_args(ctx, is_upgrade=False)
     chart = repo_root() / "helm" / "ssl-proxy"
     step("S03", f"helm_dependencies: refreshing chart={chart}")
     shell.helm(
@@ -1360,7 +1361,9 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
         capture=True,
     )
     is_upgrade = prepare_helm_release(ctx)
-    args = _helm_release_args(ctx, is_upgrade=is_upgrade)
+    if is_upgrade:
+        args[0] = "upgrade"
+        args.extend(["--history-max", "5", "--rollback-on-failure"])
     release = ctx.settings.helm_release
     target = ctx.settings.kube_context or "current-context"
     operation = "upgrade" if is_upgrade else "install"
