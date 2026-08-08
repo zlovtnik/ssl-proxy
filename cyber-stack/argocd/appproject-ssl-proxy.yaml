@@ -18,8 +18,28 @@ spec:
     - group: ''
       kind: Namespace
   namespaceResourceWhitelist:
-    - group: '*'
-      kind: '*'
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: PersistentVolumeClaim
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: DaemonSet
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
   roles:
     - name: prod-deployer
       description: Manual production promotion

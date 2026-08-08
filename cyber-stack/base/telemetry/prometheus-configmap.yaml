@@ -56,8 +56,7 @@ data:
         kubernetes_sd_configs:
           - role: endpoints
             namespaces:
-              names:
-                - ssl-proxy
+              own_namespace: true
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
             regex: ssl-proxy-telemetry-node-exporter
@@ -74,8 +73,7 @@ data:
         kubernetes_sd_configs:
           - role: endpoints
             namespaces:
-              names:
-                - ssl-proxy
+              own_namespace: true
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
             regex: ssl-proxy-telemetry-cadvisor

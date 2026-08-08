@@ -82,17 +82,31 @@ def _check_proxy_probes(rendered: str, relative: str) -> list[str]:
     if "name: ssl-proxy-proxy" not in rendered:
         return []
     errors = []
-    for probe in ("livenessProbe", "readinessProbe"):
-        pattern = re.compile(
-            rf"({probe}:.*?)httpGet:",
-            re.DOTALL,
-        )
-        match = pattern.search(rendered)
-        if match:
-            errors.append(
-                f"{relative}: proxy {probe} must use exec probe "
-                "on loopback, not httpGet"
-            )
+    for resource in rendered.split("---"):
+        if "kind: Deployment" not in resource:
+            continue
+        if "name: ssl-proxy-proxy" not in resource:
+            continue
+        for probe in ("livenessProbe", "readinessProbe"):
+            if probe in resource and "httpGet:" in resource:
+                # Check if httpGet appears near the probe definition
+                probe_idx = resource.index(probe)
+                remaining = resource[probe_idx:]
+                next_probe = len(remaining)
+                for other in ("livenessProbe", "readinessProbe"):
+                    if other != probe:
+                        try:
+                            idx = remaining.index(other)
+                            if idx < next_probe:
+                                next_probe = idx
+                        except ValueError:
+                            pass
+                section = remaining[:next_probe]
+                if "httpGet:" in section:
+                    errors.append(
+                        f"{relative}: proxy {probe} must use exec probe "
+                        "on loopback, not httpGet"
+                    )
     return errors
 
 
@@ -173,10 +187,39 @@ def render(root: Path, executable: str, relative: str) -> tuple[str, str | None]
     return result.stdout, None
 
 
+def _read_required(
+    root: Path,
+    relative: Path | str,
+    errors: list[str],
+    description: str,
+) -> str | None:
+    relative_path = Path(relative)
+    path = root / relative_path
+    if not path.is_file():
+        errors.append(f"{relative_path}: required {description} is missing")
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _image_pin_counts(text: str) -> tuple[int, int]:
+    section = re.search(r"(?m)^images:\s*\n(?P<body>(?:^[ \t].*(?:\n|$))*)", text)
+    if section is None:
+        return 0, 0
+    body = section.group("body")
+    return (
+        len(re.findall(r"(?m)^\s{2}- name:\s*", body)),
+        len(re.findall(r"(?m)^\s{4}digest:\s*sha256:", body)),
+    )
+
+
 def check_repository(root: Path, executable: str) -> list[str]:
     errors: list[str] = []
 
     for relative in CANONICAL_KUSTOMIZATIONS:
+        path = root / relative
+        if not path.exists():
+            errors.append(f"{relative}: required kustomization not found")
+            continue
         rendered, error = render(root, executable, relative)
         if error:
             errors.append(error)
@@ -194,10 +237,11 @@ def check_repository(root: Path, executable: str) -> list[str]:
         errors.extend(_check_traefik_redirect(rendered, relative))
         errors.extend(_check_tidb_waves(rendered, relative))
 
-    argocd_root = root / "cyber-stack/argocd"
     for filename, source_path in APPLICATIONS.items():
-        path = argocd_root / filename
-        text = path.read_text(encoding="utf-8")
+        relative = Path("cyber-stack/argocd") / filename
+        text = _read_required(root, relative, errors, "Application manifest")
+        if text is None:
+            continue
         required = (
             "targetRevision: main",
             f"path: {source_path}",
@@ -208,36 +252,39 @@ def check_repository(root: Path, executable: str) -> list[str]:
         )
         for value in required:
             if value not in text:
-                errors.append(f"{path.relative_to(root)}: missing {value!r}")
+                errors.append(f"{relative}: missing {value!r}")
         if "CreateNamespace=true" in text:
             errors.append(
-                f"{path.relative_to(root)}: namespace creation must come from Git"
+                f"{relative}: namespace creation must come from Git"
             )
 
-    updater = (argocd_root / "image-updater-dev.yaml").read_text(encoding="utf-8")
-    updater_requirements = (
-        "method: git:secret:argocd/ssl-proxy-image-updater-git",
-        "branch: main",
-        "writeBackTarget: kustomization",
-        "pullRequest:",
-        "namePattern: ssl-proxy-data-plane",
-        "namePattern: ssl-proxy-app-stack",
-        "updateStrategy: digest",
-    )
-    for value in updater_requirements:
-        if value not in updater:
-            errors.append(f"cyber-stack/argocd/image-updater-dev.yaml: missing {value!r}")
-    if "ssl-proxy-prod-" in updater:
-        errors.append("Image Updater must not automate production promotion")
+    updater_relative = Path("cyber-stack/argocd/image-updater-dev.yaml")
+    updater = _read_required(root, updater_relative, errors, "Image Updater manifest")
+    if updater is not None:
+        updater_requirements = (
+            "method: git:secret:argocd/ssl-proxy-image-updater-git",
+            "branch: main",
+            "writeBackTarget: kustomization",
+            "pullRequest:",
+            "namePattern: ssl-proxy-data-plane",
+            "namePattern: ssl-proxy-app-stack",
+            "updateStrategy: digest",
+        )
+        for value in updater_requirements:
+            if value not in updater:
+                errors.append(f"{updater_relative}: missing {value!r}")
+        if "ssl-proxy-prod-" in updater:
+            errors.append("Image Updater must not automate production promotion")
 
     for environment in ("dev", "prod"):
         for component in ("data-plane", "app-stack"):
             relative = Path("cyber-stack/matrix") / environment / component / "kustomization.yaml"
-            text = (root / relative).read_text(encoding="utf-8")
+            text = _read_required(root, relative, errors, "component kustomization")
+            if text is None:
+                continue
             if "newTag:" in text:
                 errors.append(f"{relative}: first-party images must be digest pinned")
-            image_entries = text.count("  - name:")
-            digest_entries = text.count("    digest: sha256:")
+            image_entries, digest_entries = _image_pin_counts(text)
             if image_entries != digest_entries:
                 errors.append(
                     f"{relative}: expected one digest for each of {image_entries} image entries, found {digest_entries}"
@@ -245,9 +292,11 @@ def check_repository(root: Path, executable: str) -> list[str]:
 
     for environment in ("dev", "prod"):
         relative = Path("cyber-stack/matrix") / environment / "namespace.yaml"
-        text = (root / relative).read_text(encoding="utf-8")
-        if "argocd.argoproj.io/sync-options: Prune=confirm" not in text:
-            errors.append(f"{relative}: namespace prune confirmation is required")
+        text = _read_required(root, relative, errors, "Namespace manifest")
+        if text is None:
+            continue
+        if "argocd.argoproj.io/sync-options: Prune=false" not in text:
+            errors.append(f"{relative}: namespace prune must be disabled")
 
     makefile = (root / "Makefile").read_text(encoding="utf-8")
     for forbidden in ("argocd-update", "release-all", "kubectl patch application"):

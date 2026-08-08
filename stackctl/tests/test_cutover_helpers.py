@@ -18,7 +18,11 @@ def test_live_uid_reports_managed_by_label_as_its_owner_source():
             {
                 "metadata": {
                     "uid": "uid-1",
-                    "labels": {"app.kubernetes.io/managed-by": "kustomize"},
+                    "annotations": {"meta.helm.sh/release-name": "stale-release"},
+                    "labels": {
+                        "app.kubernetes.io/instance": "stale-release",
+                        "app.kubernetes.io/managed-by": "kustomize",
+                    },
                 }
             }
         ),
@@ -40,11 +44,31 @@ def test_live_uid_reports_managed_by_label_as_its_owner_source():
 def test_validated_overlay_path_rejects_escape(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()
-    with (
-        patch(
-            "sslproxy_ops.stack.cutover.OVERLAY_MAP",
-            {"default": "../outside"},
-        ),
-        pytest.raises(RuntimeError, match="escapes root directory"),
-    ):
-        _validated_overlay_path({"namespace": "default"}, root)
+    plan_path = tmp_path / "plan.json"
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    (backups / "overlay.yaml").write_text("kustomize_overlay: ../outside\n")
+
+    with pytest.raises(RuntimeError, match="escapes root directory"):
+        _validated_overlay_path(
+            {"namespace": "default", "kustomize_overlay": "../outside"},
+            root,
+            plan_path,
+        )
+
+
+def test_validated_overlay_path_rejects_backup_mismatch(tmp_path: Path):
+    root = tmp_path / "root"
+    overlay = root / "cyber-stack" / "base"
+    overlay.mkdir(parents=True)
+    plan_path = tmp_path / "plan.json"
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    (backups / "overlay.yaml").write_text("kustomize_overlay: cyber-stack/matrix/dev\n")
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        _validated_overlay_path(
+            {"namespace": "default", "kustomize_overlay": "cyber-stack/base"},
+            root,
+            plan_path,
+        )

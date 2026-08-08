@@ -39,7 +39,7 @@ def test_kustomize_deploy_omits_effective_values_configmap_and_passes_timeout(
     assert captured["kustomization"] == {
         "apiVersion": "kustomize.config.k8s.io/v1beta1",
         "kind": "Kustomization",
-        "resources": ["overlay"],
+        "resources": [],
     }
     assert captured["kwargs"]["timeout"] == "15m"
 

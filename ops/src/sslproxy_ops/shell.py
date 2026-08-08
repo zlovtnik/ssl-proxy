@@ -198,5 +198,13 @@ def kustomize_apply(
     command = ["kubectl"]
     if context:
         command.extend(["--context", context])
-    command.extend(["apply", "-k", path])
+    command.extend(
+        [
+            "apply",
+            "--server-side",
+            "--field-manager=sslproxy-ops",
+            "-k",
+            path,
+        ]
+    )
     return run(command, check=check, capture=capture and not stream, stream=stream)

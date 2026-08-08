@@ -21,7 +21,7 @@ Argo CD is the only Kubernetes reconciler for this repository.
 Publish first-party images without changing cluster state:
 
 ```bash
-make publish-all REGISTRY=192.168.1.221:5000
+make publish-all REGISTRY=192.168.1.221:5000 REGISTRY_PLAIN_HTTP=1
 ```
 
 Image Updater opens dev pull requests containing immutable digests. Merge only
@@ -42,6 +42,9 @@ prod. After merge, Argo CD reconciles the change automatically.
 | Octopus | `GET /live` on `8081` | HTTP process liveness |
 | Octopus | `GET /ready` on `8081` | TiDB and enabled processor readiness |
 | Octopus | `GET /metrics` on `8081` | Prometheus text metrics |
+| Octopus Service | `GET /live` on `ssl-proxy-java-coordinator:8080` | Service port `8080` routes to pod target port `8081` |
+| Octopus Service | `GET /ready` on `ssl-proxy-java-coordinator:8080` | Service-routed dependency readiness |
+| Octopus Service | `GET /metrics` on `ssl-proxy-java-coordinator:8080` | Service-routed Prometheus metrics |
 | Atheros Search | `GET /healthz` on `8080` | Process liveness |
 | Atheros Search | `GET /readyz` on `8080` | TiDB, schema, vector and embedding readiness |
 | Atheros Search | `GET /v1/etl/health` | Worker/job ETL snapshot |
@@ -152,3 +155,28 @@ the old partition set.
 
 Do not decrease a manifest partition count; Kafka partitions cannot be removed
 in place.
+
+### Redpanda retained chart data-path migration
+
+New installations using
+`helm/ssl-proxy/charts/redpanda/templates/statefulset.yaml` mount the data volume
+at Redpanda's default `/var/lib/redpanda/data` path. An older installation may
+instead have mounted its volume at `/data`, leaving live broker data in the
+container filesystem. Applying the new mount to such a pod without migration
+can make the replacement broker initialize from an empty volume.
+
+Before promoting this change to an existing cluster, choose and record one of
+these paths:
+
+1. For a disposable cluster, approve a recreate through the reviewed desired
+   state and explicitly accept loss of the old broker data.
+2. For retained data, quiesce producers and consumers through Git, take a
+   verified broker backup, and have the storage operator copy the old broker
+   contents into the persistent volume so that they appear at
+   `/var/lib/redpanda/data`, preserving ownership and permissions. Apply the
+   reviewed path change only after the copy and backup are verified.
+
+After reconciliation, confirm the broker recognizes the existing cluster and
+topics before re-enabling producers or consumers. If the old data cannot be
+copied or restored, stop the rollout; do not accept an apparently healthy but
+empty broker as a successful migration.

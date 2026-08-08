@@ -97,6 +97,8 @@ spec:
             - name: tidb-tls
               mountPath: /etc/tidb-tls
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           startupProbe:
             httpGet:
               path: /healthz
@@ -140,6 +142,8 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

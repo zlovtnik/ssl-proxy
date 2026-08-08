@@ -59,6 +59,13 @@ spec:
               if [ -z "$user_id" ]; then
                 "$KCADM" create users --config "$CONFIG" -r "$REALM" \
                   -s "username=$APP_USERNAME" -s enabled=true -s emailVerified=true >/dev/null
+                user_id="$($KCADM get users --config "$CONFIG" -r "$REALM" \
+                  -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+              fi
+              if [ -z "$user_id" ]; then
+                echo "Keycloak user $APP_USERNAME was not found after creation" >&2
+                exit 1
               fi
               "$KCADM" set-password --config "$CONFIG" -r "$REALM" \
                 --username "$APP_USERNAME" --new-password - >/dev/null \
@@ -79,10 +86,14 @@ spec:
                 exit 1
               fi
               "$KCADM" update "clients/$client_uuid" --config "$CONFIG" -r "$REALM" \
-                -s "redirectUris=[\"$PUBLIC_ORIGIN/*\"]" -s "webOrigins=[\"$PUBLIC_ORIGIN\"]" >/dev/null
+                -s "redirectUris=[\"$PUBLIC_ORIGIN/*\"]" -s "webOrigins=[\"$UI_ORIGIN\"]" >/dev/null
 
-              "$KCADM" add-roles --config "$CONFIG" -r "$REALM" \
-                --uusername "$APP_USERNAME" --cclientid "$CLIENT_ID" --rolename "$ADMIN_ROLE"
+              existing_roles="$($KCADM get "users/$user_id/role-mappings/clients/$client_uuid" \
+                --config "$CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
+              if ! printf '%s\n' "$existing_roles" | grep -Fxq "$ADMIN_ROLE"; then
+                "$KCADM" add-roles --config "$CONFIG" -r "$REALM" \
+                  --uusername "$APP_USERNAME" --cclientid "$CLIENT_ID" --rolename "$ADMIN_ROLE"
+              fi
           env:
             - name: KEYCLOAK_URL
               value: "http://ssl-proxy-schema-migrator-keycloak:8080"
@@ -97,15 +108,16 @@ spec:
               value: "middleware"
             - name: CLIENT_ID
               value: "bedrock-ui"
-            - name: IDENTITY_HOSTNAME
+            - name: PUBLIC_ORIGIN
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
-                  key: IDENTITY_HOSTNAME
-            - name: PUBLIC_ORIGIN
-              value: "https://$(IDENTITY_HOSTNAME)"
+                  key: IDENTITY_PUBLIC_ORIGIN
             - name: UI_ORIGIN
-              value: "https://$(IDENTITY_HOSTNAME)"
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: IDENTITY_PUBLIC_ORIGIN
             - name: ADMIN_ROLE
               value: "admin"
             - name: APP_USERNAME

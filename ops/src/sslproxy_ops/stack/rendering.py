@@ -6,8 +6,6 @@ import copy
 import hashlib
 import json
 import os
-import shutil
-import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,27 +69,15 @@ def render_component(
     overlay_path = component.chart
     if not overlay_path:
         raise ValueError(f"Component {name!r} has no chart path (kustomize overlay)")
-    with tempfile.TemporaryDirectory(prefix=f"stackctl-render-{name}-") as temp_dir:
-        temp = Path(temp_dir)
-        overlay_src = Path(root_dir) / overlay_path
-        if not overlay_src.is_dir():
-            raise FileNotFoundError(f"Component overlay not found: {overlay_src}")
-        overlay_dest = temp / "overlay"
-        shutil.copytree(overlay_src, overlay_dest)
-        effective = generate_effective_values(
-            config,
-            name,
-            umbrella_values,
-            runtime_overrides=runtime_overrides,
-            root_dir=root_dir,
-        )
-        kustomization = {
-            "apiVersion": "kustomize.config.k8s.io/v1beta1",
-            "kind": "Kustomization",
-            "resources": ["overlay"],
-        }
-        (temp / "kustomization.yaml").write_text(yaml.safe_dump(kustomization))
-        result = kustomize_build(str(temp))
+    overlay_src = _resolved_overlay_path(root_dir, overlay_path)
+    effective = generate_effective_values(
+        config,
+        name,
+        umbrella_values,
+        runtime_overrides=runtime_overrides,
+        root_dir=root_dir,
+    )
+    result = kustomize_build(str(overlay_src))
     resources = parse_manifest(result.stdout, name)
     return RenderedComponent(name, result.stdout, resources, effective)
 
@@ -103,8 +89,20 @@ OVERLAY_MAP = {
 }
 
 
+def _resolved_overlay_path(root_dir: Path, configured: str | Path) -> Path:
+    root = root_dir.resolve()
+    candidate = Path(configured)
+    overlay = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    if root not in (overlay, *overlay.parents):
+        raise ValueError(f"Kustomize overlay leaves repository root: {configured}")
+    if not overlay.is_dir():
+        raise FileNotFoundError(f"Kustomize overlay not found: {overlay}")
+    return overlay
+
+
 def render_umbrella(
     namespace: str,
+    root_dir: Path,
 ) -> list[dict[str, Any]]:
     """Render the normalized umbrella baseline via kustomize."""
 
@@ -114,7 +112,8 @@ def render_umbrella(
             f"namespace {namespace!r} has no configured kustomize overlay; "
             f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
         )
-    result = kustomize_build(overlay)
+    overlay_path = _resolved_overlay_path(root_dir, overlay)
+    result = kustomize_build(str(overlay_path))
     return parse_manifest(result.stdout, "umbrella")
 
 

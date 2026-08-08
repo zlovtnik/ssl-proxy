@@ -13,7 +13,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
 spec:
   backoffLimit: 3
-  activeDeadlineSeconds: 900
+  activeDeadlineSeconds: 2700
   ttlSecondsAfterFinished: 3600
   template:
     metadata:

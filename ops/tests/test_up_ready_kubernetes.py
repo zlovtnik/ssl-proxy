@@ -43,7 +43,6 @@ from sslproxy_ops.commands.up_ready.kubernetes import (
 )
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError
 from sslproxy_ops.config import Settings
-from sslproxy_ops.paths import repo_root
 
 
 class UpReadyKubernetesTest(unittest.TestCase):
@@ -411,14 +410,22 @@ class UpReadyKubernetesTest(unittest.TestCase):
             "WG_INTERNAL_PORT": "443",
             "WG_OBFUSCATION_ENABLED": "true",
         }
-        resource_list = subprocess.CompletedProcess(
+        deployed = subprocess.CompletedProcess(
             args=["kubectl"],
             returncode=0,
-            stdout="deployment.apps/ssl-proxy-proxy",
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "kind": "Deployment",
+                            "metadata": {"generation": 1},
+                            "spec": {"replicas": 1},
+                            "status": {"observedGeneration": 1, "readyReplicas": 1},
+                        }
+                    ]
+                }
+            ),
             stderr="",
-        )
-        deployed = subprocess.CompletedProcess(
-            args=["kubectl"], returncode=0, stdout='{"items":[{}]}', stderr=""
         )
         upgraded = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
@@ -433,7 +440,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             ) as mocked_helm,
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
-                side_effect=[resource_list, deployed],
+                return_value=deployed,
             ),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
@@ -671,9 +678,6 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_progress_deadline_exceeded_is_degraded_not_release_failed(self):
         settings = Settings()
         ctx = UpReadyContext(settings=settings)
-        resource_list = subprocess.CompletedProcess(
-            args=["kubectl"], returncode=0, stdout="deployment.apps/api\n", stderr=""
-        )
         degraded = subprocess.CompletedProcess(
             args=["kubectl"],
             returncode=0,
@@ -702,7 +706,43 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
         with patch(
             "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
-            side_effect=[resource_list, degraded],
+            return_value=degraded,
+        ):
+            self.assertEqual(helm_release_status(ctx), "degraded")
+
+    def test_helm_release_status_checks_statefulsets_and_daemonsets(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        resources = subprocess.CompletedProcess(
+            args=["kubectl"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "kind": "StatefulSet",
+                            "metadata": {"generation": 3},
+                            "spec": {"replicas": 2},
+                            "status": {"observedGeneration": 3, "readyReplicas": 2},
+                        },
+                        {
+                            "kind": "DaemonSet",
+                            "metadata": {"generation": 4},
+                            "status": {
+                                "observedGeneration": 4,
+                                "desiredNumberScheduled": 2,
+                                "numberReady": 1,
+                            },
+                        },
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+            return_value=resources,
         ):
             self.assertEqual(helm_release_status(ctx), "degraded")
 
@@ -755,6 +795,22 @@ class UpReadyKubernetesTest(unittest.TestCase):
         ):
             prepare_helm_release(ctx)
 
+    def test_degraded_release_fails_when_no_stalled_workload_is_resolved(self):
+        settings = Settings()
+        ctx = UpReadyContext(settings=settings)
+        with (
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.helm_release_status",
+                return_value="degraded",
+            ),
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes._find_failed_workloads",
+                return_value=[],
+            ),
+            self.assertRaisesRegex(UpReadyError, "no failed workloads"),
+        ):
+            prepare_helm_release(ctx)
+
     def test_pending_rollback_reports_latest_stable_revision(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
@@ -762,56 +818,41 @@ class UpReadyKubernetesTest(unittest.TestCase):
         deployed_resources = subprocess.CompletedProcess(
             args=["kubectl"],
             returncode=0,
-            stdout='{"items":[{"kind":"Deployment","metadata":{"name":"proxy","generation":1},"status":{"observedGeneration":1,"conditions":[]}}]}',
-            stderr="",
-        )
-        resource_list = subprocess.CompletedProcess(
-            args=["kubectl"],
-            returncode=0,
-            stdout="deployment.apps/ssl-proxy-proxy",
+            stdout=json.dumps({
+                "items": [{
+                    "kind": "Deployment",
+                    "metadata": {"name": "proxy", "generation": 1},
+                    "spec": {"replicas": 1},
+                    "status": {"observedGeneration": 1, "readyReplicas": 1, "conditions": []},
+                }]
+            }),
             stderr="",
         )
 
         with patch(
             "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
-            side_effect=[resource_list, deployed_resources],
+            return_value=deployed_resources,
         ):
             self.assertTrue(prepare_helm_release(ctx))
 
-    def test_pending_recovery_history_guidance_includes_context_without_candidate(self):
+    def test_pending_recovery_uses_canonical_helm_upgrade_configuration(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
-        settings.kube_namespace = "ssl-proxy"
+        settings.registry = "registry.example.test"
+        settings.image_tag = "reviewed"
+        settings.schema_migrator_public_hostname = "schema.example.test"
+        settings.acme_email = "ops@example.test"
         ctx = UpReadyContext(settings=settings)
-        histories = (
-            subprocess.CompletedProcess(
-                args=["helm"],
-                returncode=1,
-                stdout="",
-                stderr="history unavailable",
-            ),
-            subprocess.CompletedProcess(
-                args=["helm"],
-                returncode=0,
-                stdout=json.dumps([{"revision": 24, "status": "failed"}]),
-                stderr="",
-            ),
-        )
+        with patch(
+            "sslproxy_ops.commands.up_ready.kubernetes.dashboard_set_file_args",
+            return_value=[],
+        ):
+            command = helm_pending_recovery_command(ctx)
 
-        for history in histories:
-            with (
-                self.subTest(returncode=history.returncode),
-                patch(
-                    "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
-                    return_value=history,
-                ),
-            ):
-                self.assertEqual(
-                    helm_pending_recovery_command(ctx),
-                    "kubectl --context server-k8s apply -k "
-                    f"{repo_root() / 'cyber-stack' / 'base'}"
-                    " --namespace ssl-proxy",
-                )
+        self.assertTrue(command.startswith("helm --kube-context server-k8s upgrade ssl-proxy "))
+        self.assertIn("--namespace default", command)
+        self.assertIn("--server-side=true", command)
+        self.assertIn("--rollback-on-failure", command)
 
     def test_recent_kubernetes_warnings_ignore_events_before_run(self):
         settings = Settings()
@@ -866,7 +907,14 @@ class UpReadyKubernetesTest(unittest.TestCase):
         deployed_resources = subprocess.CompletedProcess(
             args=["kubectl"],
             returncode=0,
-            stdout='{"items":[{"kind":"Deployment","metadata":{"name":"proxy","generation":1},"status":{"observedGeneration":1,"conditions":[]}}]}',
+            stdout=json.dumps({
+                "items": [{
+                    "kind": "Deployment",
+                    "metadata": {"name": "proxy", "generation": 1},
+                    "spec": {"replicas": 1},
+                    "status": {"observedGeneration": 1, "readyReplicas": 1, "conditions": []},
+                }]
+            }),
             stderr="",
         )
         def kubectl_side_effect(*args, **_kwargs):
@@ -876,14 +924,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
                 print("BULK POD OUTPUT")
                 return completed
             if "deploy,sts,ds" in args:
-                if "json" in args:
-                    return deployed_resources
-                return subprocess.CompletedProcess(
-                    args=["kubectl"],
-                    returncode=0,
-                    stdout="deployment.apps/ssl-proxy-proxy",
-                    stderr="",
-                )
+                return deployed_resources
             return missing
 
         output = StringIO()

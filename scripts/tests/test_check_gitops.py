@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,6 +13,36 @@ assert SPEC and SPEC.loader
 check_gitops = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = check_gitops
 SPEC.loader.exec_module(check_gitops)
+
+
+class RequiredFileReadTest(unittest.TestCase):
+    def test_missing_file_is_reported_without_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            errors: list[str] = []
+            result = check_gitops._read_required(
+                Path(directory),
+                Path("cyber-stack/argocd/application-app-stack.yaml"),
+                errors,
+                "Application manifest",
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(1, len(errors))
+        self.assertIn("required Application manifest is missing", errors[0])
+
+
+class ImagePinCountTest(unittest.TestCase):
+    def test_counts_only_entries_in_images_block(self) -> None:
+        text = (
+            "images:\n"
+            "  - name: app\n"
+            "    newName: registry/app\n"
+            "    digest: sha256:abc\n"
+            "vars:\n"
+            "  - name: IDENTITY_HOSTNAME\n"
+        )
+
+        self.assertEqual((1, 1), check_gitops._image_pin_counts(text))
 
 
 class OtelEndpointCheckTest(unittest.TestCase):
@@ -72,35 +103,56 @@ class RedpandaMemoryCheckTest(unittest.TestCase):
 class ProxyProbeCheckTest(unittest.TestCase):
     def test_rejects_httpget_liveness(self) -> None:
         rendered = (
-            "ssl-proxy-proxy\n"
-            "livenessProbe:\n"
-            "  httpGet:\n"
-            "    path: /health\n"
-            "    port: admin\n"
+            "---\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: ssl-proxy-proxy\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "      - livenessProbe:\n"
+            "          httpGet:\n"
+            "            path: /health\n"
+            "            port: admin\n"
         )
         errors = check_gitops._check_proxy_probes(rendered, "test")
         self.assertTrue(any("livenessProbe" in e for e in errors))
 
     def test_rejects_httpget_readiness(self) -> None:
         rendered = (
-            "ssl-proxy-proxy\n"
-            "readinessProbe:\n"
-            "  httpGet:\n"
-            "    path: /ready\n"
-            "    port: admin\n"
+            "---\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: ssl-proxy-proxy\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "      - readinessProbe:\n"
+            "          httpGet:\n"
+            "            path: /ready\n"
+            "            port: admin\n"
         )
         errors = check_gitops._check_proxy_probes(rendered, "test")
         self.assertTrue(any("readinessProbe" in e for e in errors))
 
     def test_accepts_exec_probes(self) -> None:
         rendered = (
-            "ssl-proxy-proxy\n"
-            "livenessProbe:\n"
-            "  exec:\n"
-            '    command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]\n'
-            "readinessProbe:\n"
-            "  exec:\n"
-            '    command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]\n'
+            "---\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: ssl-proxy-proxy\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "      - livenessProbe:\n"
+            "          exec:\n"
+            '            command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]\n'
+            "        readinessProbe:\n"
+            "          exec:\n"
+            '            command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]\n'
         )
         self.assertEqual([], check_gitops._check_proxy_probes(rendered, "test"))
 

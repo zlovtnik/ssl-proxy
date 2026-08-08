@@ -7,3 +7,13 @@ resources:
   - ../../../base/platform-config/configmap.yaml
 patches:
   - path: ../patches/topic-replication.yaml
+configurations:
+  - ../../../base/schema-migrator/kustomizeconfig.yaml
+vars:
+  - name: IDENTITY_HOSTNAME
+    objref:
+      apiVersion: v1
+      kind: ConfigMap
+      name: ssl-proxy-platform-config
+    fieldref:
+      fieldpath: data.IDENTITY_HOSTNAME

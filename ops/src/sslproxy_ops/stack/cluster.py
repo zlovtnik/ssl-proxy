@@ -78,9 +78,9 @@ def preflight(
     if shutil.which("kubectl") is None:
         raise RuntimeError("required tool not found: kubectl")
     results.append(CheckResult("tool/kubectl", True, "found"))
-    if shutil.which("helm") is None:
-        raise RuntimeError("required tool not found: helm")
-    results.append(CheckResult("tool/helm", True, "found"))
+    if shutil.which("kustomize") is None:
+        raise RuntimeError("required tool not found: kustomize")
+    results.append(CheckResult("tool/kustomize", True, "found"))
     kustomize_result = kustomize_validate(
         str(root_dir / "cyber-stack" / "base"),
         context=context,
@@ -280,16 +280,29 @@ def preflight(
 
 def _resource_ready(resource: dict[str, Any]) -> tuple[bool, str]:
     kind = resource.get("kind")
+    metadata = resource.get("metadata", {})
     spec = resource.get("spec", {})
     status = resource.get("status", {})
+    if kind in {"Deployment", "StatefulSet", "DaemonSet"}:
+        generation = metadata.get("generation")
+        observed_generation = status.get("observedGeneration")
+        if generation is not None and observed_generation != generation:
+            return False, f"generation {observed_generation}/{generation} observed"
     if kind == "Deployment":
+        for condition in status.get("conditions", []):
+            if (
+                condition.get("type") == "Progressing"
+                and condition.get("status") == "False"
+                and condition.get("reason") == "ProgressDeadlineExceeded"
+            ):
+                return False, "ProgressDeadlineExceeded"
         desired = spec.get("replicas", 1)
         ready = status.get("readyReplicas", 0)
-        return ready >= desired, f"{ready}/{desired} ready"
+        return desired > 0 and ready >= desired, f"{ready}/{desired} ready"
     if kind == "StatefulSet":
         desired = spec.get("replicas", 1)
         ready = status.get("readyReplicas", 0)
-        return ready >= desired, f"{ready}/{desired} ready"
+        return desired > 0 and ready >= desired, f"{ready}/{desired} ready"
     if kind == "DaemonSet":
         desired = status.get("desiredNumberScheduled", 0)
         ready = status.get("numberReady", 0)
@@ -297,7 +310,7 @@ def _resource_ready(resource: dict[str, Any]) -> tuple[bool, str]:
     if kind == "Job":
         conditions = {item.get("type"): item.get("status") for item in status.get("conditions", [])}
         return conditions.get("Complete") == "True", str(conditions)
-    return True, "exists"
+    return False, f"unsupported readiness kind {kind!r}"
 
 
 def status(
@@ -331,17 +344,19 @@ def status(
             if not items:
                 results.append(CheckResult(f"release/{name}", False, "no resources"))
                 continue
-            all_ready = all(
-                item.get("status", {}).get("readyReplicas", 0)
-                >= item.get("spec", {}).get("replicas", 1)
+            relevant = [
+                item
                 for item in items
-                if item.get("kind") in ("Deployment", "StatefulSet")
-            )
+                if item.get("kind") in ("Deployment", "StatefulSet", "DaemonSet", "Job")
+            ]
+            readiness = [_resource_ready(item) for item in relevant]
+            all_ready = bool(relevant) and all(ready for ready, _ in readiness)
+            details = "; ".join(detail for _, detail in readiness)
             results.append(
                 CheckResult(
                     f"release/{name}",
                     all_ready,
-                    f"{len(items)} resource(s)",
+                    f"{len(relevant)} resource(s)" + (f": {details}" if details else ""),
                 )
             )
         for gate in component.gates:

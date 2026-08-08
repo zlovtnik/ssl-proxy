@@ -25,7 +25,7 @@ spec:
               MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
 
               echo "Waiting for TiDB to be ready..."
-              until mysql -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" 2>/dev/null; do
+              until mysqladmin -h ssl-proxy-tidb -P 4000 -u root ${MYSQL_OPTS} ping --silent 2>/dev/null; do
                 sleep 3
               done
               echo "TiDB is ready."

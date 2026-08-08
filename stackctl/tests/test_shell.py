@@ -11,6 +11,14 @@ from shell import ShellError, _run, helm, kubectl, kustomize_apply
 
 
 class TestKustomizeApply:
+    def test_wait_requires_namespace(self):
+        with pytest.raises(ValueError, match="requires namespace"):
+            kustomize_apply(
+                "/tmp/overlay",
+                wait_for_completion=True,
+                release="test-release",
+            )
+
     def test_wait_scopes_jobs_to_release(self):
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         no_jobs = subprocess.CompletedProcess(

@@ -28,12 +28,13 @@ firewall. Use TLS and authentication when the network is shared or untrusted.
 ```bash
 export REGISTRY=10.0.0.10:5000
 export TAG="$(git rev-parse --short HEAD)"
-make publish-all
+make publish-all REGISTRY_PLAIN_HTTP=1
 ```
 
-`REGISTRY_PLAIN_HTTP=1` is the development default. Set it to `0` when the
-registry uses HTTPS. `PLATFORM` defaults to `linux/amd64`; override it only when
-the target architecture differs.
+Registry publishing uses HTTPS by default. Set `REGISTRY_PLAIN_HTTP=1`
+explicitly only for an isolated local HTTP registry whose host and port are
+trusted by every builder and Kubernetes node runtime. `PLATFORM` defaults to
+`linux/amd64`; override it only when the target architecture differs.
 
 First-party publish targets are:
 

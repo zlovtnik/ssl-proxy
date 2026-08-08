@@ -115,5 +115,9 @@ kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
 ```
 
 When an Application is unhealthy, inspect its conditions, the rendered Git
-revision, workload events and container logs. Correct the source manifest or
-platform prerequisite in Git and allow reconciliation to repair the cluster.
+revision, workload events and container logs. Correct workload manifests in
+the appropriate `cyber-stack/base` or environment-overlay Git source and allow
+Argo CD to reconcile them. Changes to platform-owned Secrets and the production
+TiDB endpoint ConfigMap must instead go through the platform's declarative
+control plane; they are prerequisite contracts and are not owned by an
+unspecified workload repository.

@@ -84,14 +84,13 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: -Djava.io.tmpdir=/tmp
-            - name: POD_NAMESPACE
+            - name: BEDROCK_STATE_DB_URL
               valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: SCHEMA_MIGRATOR_TIDB_JDBC_URL
             - name: SCHEMA_MIGRATOR_DB_KIND
               value: "tidb"
-            - name: BEDROCK_STATE_DB_URL
-              value: "jdbc:mysql://ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local:4000/schema_migrator?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///run/tidb-tls/truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit&fallbackToSystemTrustStore=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true"
             - name: BEDROCK_STATE_DB_USER
               value: "schema_migrator_runtime"
             - name: BEDROCK_STATE_DB_PASSWORD
@@ -105,13 +104,11 @@ spec:
               value: "0.0.0.0"
             - name: BEDROCK_HTTP_PORT
               value: "8080"
-            - name: IDENTITY_HOSTNAME
+            - name: BEDROCK_CORS_ORIGINS
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-platform-config
-                  key: IDENTITY_HOSTNAME
-            - name: BEDROCK_CORS_ORIGINS
-              value: "https://$(IDENTITY_HOSTNAME)"
+                  key: IDENTITY_PUBLIC_ORIGIN
             - name: BEDROCK_ENCRYPT_KEY
               valueFrom:
                 secretKeyRef:
@@ -132,7 +129,10 @@ spec:
             - name: BEDROCK_KEYCLOAK_ENABLED
               value: "true"
             - name: BEDROCK_KEYCLOAK_ISSUER
-              value: "https://$(IDENTITY_HOSTNAME)/realms/middleware"
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: IDENTITY_KEYCLOAK_ISSUER
             - name: BEDROCK_KEYCLOAK_JWKS_URI
               value: "http://ssl-proxy-schema-migrator-keycloak:8080/realms/middleware/protocol/openid-connect/certs"
             - name: BEDROCK_KEYCLOAK_CLIENT_ID

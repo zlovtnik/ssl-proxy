@@ -127,9 +127,10 @@ A cutover is accepted only when operators can show:
   dependencies;
 - no application connection to an internal PostgreSQL store.
 
-Single-node TiDB/UniStore in Compose and `values-k8s.yaml` is suitable for
-development and compatibility testing. It does not prove TiFlash placement,
-distributed failover or production vector-index readiness.
+The single-node TiDB/UniStore topology in the
+`cyber-stack/matrix/dev` Kustomize overlay is suitable for development and
+compatibility testing. It does not prove TiFlash placement, distributed
+failover or production vector-index readiness.
 
 ## Rollback
 

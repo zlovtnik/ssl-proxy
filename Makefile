@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 REGISTRY ?= 192.168.1.221:5000
-REGISTRY_PLAIN_HTTP ?= 1
+REGISTRY_PLAIN_HTTP ?= 0
 BUILDER ?= ssl-proxy-publisher
 PLATFORM ?= linux/amd64
 TAG ?= $(shell git rev-parse --short HEAD)

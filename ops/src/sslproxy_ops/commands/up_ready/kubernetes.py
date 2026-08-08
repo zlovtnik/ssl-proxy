@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import secrets
+import shlex
 import shutil
 import string
 import subprocess
@@ -18,6 +19,7 @@ from typing import Literal
 from sslproxy_ops import shell
 from sslproxy_ops.commands.up_ready.model import UpReadyContext, UpReadyError, step, warn
 from sslproxy_ops.paths import repo_root
+from sslproxy_ops.stack.cluster import _resource_ready
 from sslproxy_ops.util.ini import peer_names, trim_key_value
 
 HELM_PENDING_SETTLE_ATTEMPTS = 5
@@ -1051,26 +1053,7 @@ def dashboard_set_file_args() -> list[str]:
 
 def helm_release_status(ctx: UpReadyContext) -> Literal["deployed", "degraded"] | None:
     """Return the explicit status of managed resources, or None when absent."""
-    completed = shell.kubectl(
-        "get",
-        "deploy,sts,ds",
-        "--namespace",
-        ctx.settings.kube_namespace,
-        "--selector",
-        f"app.kubernetes.io/instance={ctx.settings.helm_release}",
-        "--no-headers",
-        "--output",
-        "name",
-        context=ctx.settings.kube_context,
-        check=False,
-        capture=True,
-    )
-    if completed.returncode != 0:
-        return None
-    resources = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
-    if not resources:
-        return None
-    failed = shell.kubectl(
+    result = shell.kubectl(
         "get",
         "deploy,sts,ds",
         "--namespace",
@@ -1083,30 +1066,19 @@ def helm_release_status(ctx: UpReadyContext) -> Literal["deployed", "degraded"] 
         check=False,
         capture=True,
     )
-    if failed.returncode != 0:
+    if result.returncode != 0:
         return None
     try:
-        payload = json.loads(failed.stdout or "{}")
+        payload = json.loads(result.stdout or "{}")
     except (json.JSONDecodeError, TypeError):
         return None
     items = payload.get("items", [])
     if not items:
         return None
     for item in items:
-        status = item.get("status", {})
-        metadata = item.get("metadata", {})
-        generation = metadata.get("generation")
-        observed_generation = status.get("observedGeneration")
-        conditions = status.get("conditions", [])
-        for cond in conditions:
-            if (
-                cond.get("type") == "Progressing"
-                and cond.get("status") == "False"
-                and cond.get("reason") == "ProgressDeadlineExceeded"
-                and generation is not None
-                and observed_generation == generation
-            ):
-                return "degraded"
+        ready, _detail = _resource_ready(item)
+        if not ready:
+            return "degraded"
     return "deployed"
 
 
@@ -1142,24 +1114,12 @@ def helm_release_history(ctx: UpReadyContext) -> list[dict[str, object]]:
 
 
 def helm_pending_recovery_command(ctx: UpReadyContext) -> str:
-    """Return the kustomize recovery command for a pending release."""
-    from sslproxy_ops.stack.rendering import OVERLAY_MAP
-
-    context = ctx.settings.kube_context
-    ns = ctx.settings.kube_namespace
-    root = repo_root()
-    overlay = OVERLAY_MAP.get(ns)
-    if overlay is None:
-        raise UpReadyError(
-            f"namespace {ns!r} has no configured kustomize overlay; "
-            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
-        )
-    overlay_path = root / overlay
-    context_flag = "" if not context else f" --context {context}"
-    return (
-        f"kubectl{context_flag} apply -k {overlay_path}"
-        f" --namespace {ns}"
-    )
+    """Return the Helm upgrade command for recovering a pending release."""
+    command = ["helm"]
+    if ctx.settings.kube_context:
+        command.extend(["--kube-context", ctx.settings.kube_context])
+    command.extend(_helm_release_args(ctx, is_upgrade=True))
+    return shlex.join(command)
 
 
 def _find_failed_workloads(ctx: UpReadyContext) -> list[str]:
@@ -1223,6 +1183,10 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
         f"resource_cleanup: replacing stalled workloads for release={ctx.settings.helm_release}",
     )
     failed_names = _find_failed_workloads(ctx)
+    resolved = ",".join(failed_names) if failed_names else "none"
+    step("S03", f"resource_cleanup: resolved_failed_names={resolved}")
+    if not failed_names:
+        raise UpReadyError("Helm release is degraded but no failed workloads were found")
     for name in failed_names:
         shell.kubectl(
             "delete",
@@ -1303,8 +1267,8 @@ def preflight_required_secrets(ctx: UpReadyContext) -> None:
         )
 
 
-def helm_upgrade(ctx: UpReadyContext) -> bool:
-    preflight_required_secrets(ctx)
+def _helm_release_args(ctx: UpReadyContext, *, is_upgrade: bool) -> list[str]:
+    """Build the canonical install/upgrade arguments for the umbrella release."""
     root = repo_root()
     registry = (ctx.settings.registry or "").strip().rstrip("/")
     image_tag = (ctx.settings.image_tag or "").strip()
@@ -1326,15 +1290,6 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     peers = os.environ.get("WG_PEERS", ctx.settings.wg_peers)
     values = root / "helm" / "ssl-proxy" / "values-k8s.yaml"
     chart = root / "helm" / "ssl-proxy"
-    step("S03", f"helm_dependencies: refreshing chart={chart}")
-    shell.helm(
-        "dependency",
-        "update",
-        str(chart),
-        context=ctx.settings.kube_context,
-        capture=True,
-    )
-    is_upgrade = prepare_helm_release(ctx)
     literal_values = {
         "global.image.registry": registry,
         "global.rolloutRevision": ctx.run_ts,
@@ -1390,6 +1345,23 @@ def helm_upgrade(ctx: UpReadyContext) -> bool:
     )
     if is_upgrade:
         args.extend(["--history-max", "5", "--rollback-on-failure"])
+    return args
+
+
+def helm_upgrade(ctx: UpReadyContext) -> bool:
+    preflight_required_secrets(ctx)
+    chart = repo_root() / "helm" / "ssl-proxy"
+    step("S03", f"helm_dependencies: refreshing chart={chart}")
+    shell.helm(
+        "dependency",
+        "update",
+        str(chart),
+        context=ctx.settings.kube_context,
+        capture=True,
+    )
+    is_upgrade = prepare_helm_release(ctx)
+    args = _helm_release_args(ctx, is_upgrade=is_upgrade)
+    release = ctx.settings.helm_release
     target = ctx.settings.kube_context or "current-context"
     operation = "upgrade" if is_upgrade else "install"
     step("S03", f"helm_{operation}: release={release} context={target}")

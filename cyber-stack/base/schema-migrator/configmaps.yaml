@@ -1,27 +1,6 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ssl-proxy-schema-migrator-ui-config
-  namespace: ssl-proxy
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
-  labels:
-    app.kubernetes.io/name: ssl-proxy
-    app.kubernetes.io/component: schema-migrator-ui
-    app.kubernetes.io/managed-by: kustomize
-data:
-  runtime-config.js: |
-    window.__SCHEMA_MIGRATOR_CONFIG__ = {
-      apiBaseUrl: "",
-      keycloak: {
-        realm: "middleware",
-        clientId: "bedrock-ui"
-      }
-    };
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
   name: ssl-proxy-schema-migrator-keycloak-realm
   namespace: ssl-proxy
   annotations:
@@ -64,8 +43,8 @@ data:
           "directAccessGrantsEnabled": false,
           "implicitFlowEnabled": false,
           "serviceAccountsEnabled": false,
-          "redirectUris": ["https://identity.example.internal/*"],
-          "webOrigins": ["https://identity.example.internal"],
+          "redirectUris": ["https://$(IDENTITY_HOSTNAME)/*"],
+          "webOrigins": ["https://$(IDENTITY_HOSTNAME)"],
           "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
           "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"],
           "attributes": {
@@ -91,7 +70,7 @@ data:
     http:
       routers:
         keycloak:
-          rule: "Host(`identity.example.internal`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`))"
+          rule: "Host(`$(IDENTITY_HOSTNAME)`) && (PathPrefix(`/realms`) || PathPrefix(`/resources`))"
           entryPoints: [websecure]
           priority: 30
           service: keycloak
@@ -99,7 +78,7 @@ data:
             store:
               name: default
         backend:
-          rule: "Host(`identity.example.internal`) && PathPrefix(`/api`)"
+          rule: "Host(`$(IDENTITY_HOSTNAME)`) && PathPrefix(`/api`)"
           entryPoints: [websecure]
           priority: 20
           service: backend
@@ -107,7 +86,7 @@ data:
             store:
               name: default
         ui:
-          rule: "Host(`identity.example.internal`) && PathPrefix(`/`)"
+          rule: "Host(`$(IDENTITY_HOSTNAME)`) && PathPrefix(`/`)"
           entryPoints: [websecure]
           priority: 10
           service: ui

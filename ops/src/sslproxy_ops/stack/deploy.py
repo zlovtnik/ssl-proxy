@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import copy
 import json
 import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -171,7 +169,7 @@ _prepared_charts: set[Path] = set()
 def prepare_chart(chart_path: Path) -> None:
     """Build dependencies once for explicit compatibility callers.
 
-    Production render/deploy paths use :func:`prepared_chart_copy` instead.
+    Production Kustomize paths build their validated source overlay directly.
     """
     resolved = chart_path.resolve()
     if resolved in _prepared_charts:
@@ -181,15 +179,6 @@ def prepare_chart(chart_path: Path) -> None:
     if _chart_has_dependencies(resolved):
         helm("dependency", "build", str(resolved))
     _prepared_charts.add(resolved)
-
-
-@contextlib.contextmanager
-def prepared_chart_copy(chart_path: Path):
-    """Yield the kustomize overlay path (no chart copying needed)."""
-    if not chart_path.is_dir():
-        yield chart_path
-        return
-    yield chart_path
 
 
 def reset_prepared_charts() -> None:
@@ -405,68 +394,50 @@ def _kustomize_deploy(
         raise ValueError(f"Component {release!r} has no chart path (kustomize overlay)")
 
     overlay_src = Path(chart)
-    if overlay_src.is_absolute():
-        overlay_src = overlay_src.resolve()
-    elif root_dir is not None:
-        # chart is already resolved by deploy_component; avoid double-joining
-        # when root_dir was already applied to the caller's chart_path.
-        overlay_src = overlay_src.resolve()
-    else:
-        overlay_src = overlay_src.resolve()
+    if not overlay_src.is_absolute() and root_dir is not None:
+        overlay_src = Path(root_dir) / overlay_src
+    overlay_src = overlay_src.resolve()
+
+    if root_dir is not None:
+        root_resolved = Path(root_dir).resolve()
+        if root_resolved not in (overlay_src, *overlay_src.parents):
+            raise ValueError(f"Component overlay leaves repository root: {overlay_src}")
 
     if not overlay_src.is_dir():
         raise FileNotFoundError(f"Component overlay not found: {overlay_src}")
 
-    # Render into a temporary overlay that references the tracked overlay via
-    # resources, so the source overlay and its kustomization.yaml are never
-    # rewritten. A fresh temporary directory keeps repeated deploys clean.
-    with tempfile.TemporaryDirectory(prefix=f"stackctl-overlay-{release}-") as temp:
-        temp_overlay = Path(temp)
-        overlay_dest = temp_overlay / "overlay"
-        shutil.copytree(overlay_src, overlay_dest)
-
-        kustomization_yaml = temp_overlay / "kustomization.yaml"
-        kustomization_data = {
-            "apiVersion": "kustomize.config.k8s.io/v1beta1",
-            "kind": "Kustomization",
-            "resources": ["overlay"],
-        }
-        with open(kustomization_yaml, "w") as f:
-            yaml.safe_dump(kustomization_data, f, default_flow_style=False)
-
-        if dry_run:
-            # Server-side validation: kubectl apply -k --dry-run=server
-            return kustomize_apply(
-                str(temp_overlay),
-                namespace=namespace,
-                dry_run=True,
-                context=context,
-                kubeconfig=kubeconfig,
-                timeout=timeout,
-            )
-        if rollback_state is not None:
-            rendered = kustomize_build(
-                str(temp_overlay),
-                context=context,
-                kubeconfig=kubeconfig,
-            )
-            rollback_state.extend(
-                _capture_kustomize_rollback_state(
-                    rendered.stdout,
-                    namespace,
-                    context,
-                    kubeconfig,
-                )
-            )
+    if dry_run:
         return kustomize_apply(
-            str(temp_overlay),
+            str(overlay_src),
             namespace=namespace,
-            wait_for_completion=wait_for_completion,
-            release=release,
+            dry_run=True,
             context=context,
             kubeconfig=kubeconfig,
             timeout=timeout,
         )
+    if rollback_state is not None:
+        rendered = kustomize_build(
+            str(overlay_src),
+            context=context,
+            kubeconfig=kubeconfig,
+        )
+        rollback_state.extend(
+            _capture_kustomize_rollback_state(
+                rendered.stdout,
+                namespace,
+                context,
+                kubeconfig,
+            )
+        )
+    return kustomize_apply(
+        str(overlay_src),
+        namespace=namespace,
+        wait_for_completion=wait_for_completion,
+        release=release,
+        context=context,
+        kubeconfig=kubeconfig,
+        timeout=timeout,
+    )
 
 
 def _capture_kustomize_rollback_state(
@@ -546,6 +517,7 @@ def _rollback_manifest(resource: dict[str, Any]) -> dict[str, Any]:
         "uid",
     ):
         metadata.pop(field_name, None)
+    metadata.pop("ownerReferences", None)
     annotations = metadata.get("annotations")
     if isinstance(annotations, dict):
         annotations.pop("kubectl.kubernetes.io/last-applied-configuration", None)
@@ -561,23 +533,47 @@ def _kustomize_rollback(
 ) -> bool:
     """Restore the pre-apply manifests and remove resources that were newly created."""
 
-    previous = [
-        _rollback_manifest(item["previous"])
-        for item in rollback_state
-        if isinstance(item.get("previous"), dict)
-    ]
-    if previous:
-        manifest = "---\n".join(
-            yaml.safe_dump(item, default_flow_style=False, sort_keys=False) for item in previous
+    failures: list[str] = []
+    for item in rollback_state:
+        if not isinstance(item.get("previous"), dict):
+            continue
+        kind = str(item["kind"])
+        name = str(item["name"])
+        resource_namespace = str(item.get("namespace") or "")
+        get_args = ["get", kind, name]
+        if resource_namespace:
+            get_args.extend(["-n", resource_namespace])
+        get_args.extend(["-o", "json"])
+        current = kubectl(
+            *get_args,
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
         )
-        kubectl(
-            "apply",
+        if current.returncode != 0:
+            detail = (current.stderr or current.stdout or "lookup failed").strip()
+            failures.append(f"restore {kind}/{name}: {detail}")
+            continue
+        try:
+            resource_version = json.loads(current.stdout or "{}")["metadata"]["resourceVersion"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            failures.append(f"restore {kind}/{name}: live resourceVersion is unavailable")
+            continue
+        restored = _rollback_manifest(item["previous"])
+        restored.setdefault("metadata", {})["resourceVersion"] = resource_version
+        manifest = yaml.safe_dump(restored, default_flow_style=False, sort_keys=False)
+        result = kubectl(
+            "replace",
             "-f",
             "-",
             context=context,
             kubeconfig=kubeconfig,
+            check=False,
             input_text=manifest,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "replace failed").strip()
+            failures.append(f"restore {kind}/{name}: {detail}")
 
     for item in rollback_state:
         if item.get("previous") is not None:
@@ -587,11 +583,18 @@ def _kustomize_rollback(
         if resource_namespace:
             args.extend(["-n", resource_namespace])
         args.append("--ignore-not-found")
-        kubectl(
+        result = kubectl(
             *args,
             context=context,
             kubeconfig=kubeconfig,
+            check=False,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "delete failed").strip()
+            failures.append(f"delete {item['kind']}/{item['name']}: {detail}")
+
+    if failures:
+        raise RuntimeError("kustomize rollback failed: " + "; ".join(failures))
 
     return bool(rollback_state)
 
@@ -944,25 +947,24 @@ def deploy_component(
                     expected_release=component.release,
                 )
 
-        # 3. Build and apply the kustomize overlay in an isolated copy.
+        # 3. Build and apply the validated source overlay directly.
         is_helm_job = component.type == "helm-job"
-        with prepared_chart_copy(chart_path) as built_chart:
-            if hasattr(component, "model_copy"):
-                deployable = component.model_copy(update={"chart": str(built_chart)})
-            else:
-                deployable = copy.copy(component)
-                deployable.chart = str(built_chart)
-            helm_result = _kustomize_deploy(
-                deployable,
-                options.namespace,
-                options.context,
-                options.kubeconfig,
-                effective_timeout,
-                dry_run=options.dry_run,
-                wait_for_completion=not is_helm_job,
-                root_dir=options.root_dir,
-                rollback_state=(rollback_state if component.rollback_on_failure else None),
-            )
+        if hasattr(component, "model_copy"):
+            deployable = component.model_copy(update={"chart": str(chart_path.resolve())})
+        else:
+            deployable = copy.copy(component)
+            deployable.chart = str(chart_path.resolve())
+        helm_result = _kustomize_deploy(
+            deployable,
+            options.namespace,
+            options.context,
+            options.kubeconfig,
+            effective_timeout,
+            dry_run=options.dry_run,
+            wait_for_completion=not is_helm_job,
+            root_dir=options.root_dir,
+            rollback_state=(rollback_state if component.rollback_on_failure else None),
+        )
         log_path = run_dir / "logs" / f"{component_name}.kustomize.log"
         log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""

@@ -77,6 +77,13 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: datasource-config
               mountPath: /etc/grafana/provisioning/datasources
@@ -89,6 +96,8 @@ spec:
               readOnly: true
             - name: data
               mountPath: /var/lib/grafana
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: datasource-config
           configMap:
@@ -100,6 +109,8 @@ spec:
           configMap:
             name: ssl-proxy-telemetry-grafana-dashboards
         - name: data
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
 ---
 apiVersion: v1

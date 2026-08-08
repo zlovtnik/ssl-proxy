@@ -164,6 +164,8 @@ def kustomize_apply(
     stream: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``kubectl apply -k <path>`` to apply manifests."""
+    if wait_for_completion and not namespace:
+        raise ValueError("wait_for_completion requires namespace")
     cmd = ["kubectl"]
     if kubeconfig:
         cmd.extend(["--kubeconfig", kubeconfig])
@@ -175,7 +177,7 @@ def kustomize_apply(
     if dry_run:
         cmd.append("--dry-run=server")
     result = _run(cmd, check=check, capture=capture, stream=stream)
-    if wait_for_completion and not dry_run and namespace:
+    if wait_for_completion and not dry_run:
         effective_selector = label_selector
         if effective_selector is None and release:
             effective_selector = f"app.kubernetes.io/instance={release}"

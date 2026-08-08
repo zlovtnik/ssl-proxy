@@ -2,7 +2,3 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - job.yaml
-images:
-  - name: tidb-runtime-schema
-    newName: 192.168.1.221:5000/tidb-runtime-schema
-    digest: sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432

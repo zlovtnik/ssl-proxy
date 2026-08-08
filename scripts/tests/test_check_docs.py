@@ -170,6 +170,30 @@ class DocsCheckTest(unittest.TestCase):
         errors = self.errors(root)
         self.assertEqual(1, sum("mutating kubectl" in error for error in errors))
 
+    def test_mutating_kubectl_with_short_namespace_flag_is_rejected(self) -> None:
+        root = self.make_repo(
+            "# Operations\n\nDo not run `kubectl -n ssl-proxy apply -k overlay`.\n"
+        )
+        errors = self.errors(root)
+        self.assertEqual(1, sum("mutating kubectl" in error for error in errors))
+
+    def test_retained_chart_path_is_allowed_but_prose_helm_is_rejected(self) -> None:
+        allowed = self.make_repo(
+            "# Compatibility\n\nSee `helm/ssl-proxy/charts/redpanda/templates/statefulset.yaml`.\n"
+        )
+        self.assertEqual([], self.errors(allowed))
+
+        rejected = self.make_repo("# Operations\n\nDeploy the stack with Helm.\n")
+        errors = self.errors(rejected)
+        self.assertTrue(any("deployment technology" in error for error in errors))
+
+    def test_txt_documents_remain_in_policy_scope(self) -> None:
+        root = self.make_repo()
+        (root / "notes.txt").write_text("Deploy the stack with Helm.\n", encoding="utf-8")
+        self.git(root, "add", "notes.txt")
+        errors = self.errors(root)
+        self.assertTrue(any("notes.txt" in error for error in errors))
+
     def test_compose_is_limited_to_local_development_sections(self) -> None:
         allowed = self.make_repo(
             "# Project\n\n## Local development\n\nRun `docker compose up`.\n"

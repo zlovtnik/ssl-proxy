@@ -22,30 +22,11 @@ spec:
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 473
+        supplementalGroups: [999]
       tolerations:
         - operator: Exists
-      initContainers:
-        - name: prepare-alloy-storage
-          image: busybox@sha256:3b3e3327c33950c386e85312393d20b40e2d40f72e53b40e65b7f68b4c0f5a5f
-          command: ["/bin/sh", "-ec", "mkdir -p /host-var-lib/alloy && chown 473:473 /host-var-lib/alloy"]
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-              add: ["CHOWN"]
-          resources:
-            requests:
-              cpu: 5m
-              memory: 8Mi
-            limits:
-              cpu: 50m
-              memory: 32Mi
-          volumeMounts:
-            - name: positions
-              mountPath: /host-var-lib
       containers:
         - name: alloy
           image: grafana/alloy:v1.9.2
@@ -110,9 +91,11 @@ spec:
             - name: containers
               mountPath: /var/lib/docker/containers
               readOnly: true
+            - name: journal
+              mountPath: /run/log/journal
+              readOnly: true
             - name: positions
               mountPath: /run/alloy
-              subPath: alloy
       terminationGracePeriodSeconds: 30
       volumes:
         - name: config
@@ -124,7 +107,11 @@ spec:
         - name: containers
           hostPath:
             path: /var/lib/docker/containers
+        - name: journal
+          hostPath:
+            path: /run/log/journal
+            type: Directory
         - name: positions
           hostPath:
-            path: /var/lib
-            type: Directory
+            path: /var/lib/alloy
+            type: DirectoryOrCreate

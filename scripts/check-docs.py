@@ -36,8 +36,14 @@ FORBIDDEN_DEPLOYMENT_TERMS = (
     re.compile(r"\b(?:pulumi|terraform|skaffold|kapp|kpt|tanka)\b", re.IGNORECASE),
     re.compile(r"\bdeployment\s*stack\b", re.IGNORECASE),
 )
+RETAINED_HELM_PATH = re.compile(r"(?<![\w.-])helm/ssl-proxy/charts/[^\s`'\")>]+")
+MUTATING_KUBECTL_VERBS = (
+    r"apply|create|delete|edit|patch|replace|rollout|scale|set"
+)
 MUTATING_KUBECTL = re.compile(
-    r"\bkubectl\s+(?:--[^\s]+(?:\s+[^\s]+)?\s+)*(?:apply|create|delete|edit|patch|replace|rollout|scale|set)\b",
+    rf"\bkubectl\b"
+    rf"(?:\s+-{{1,2}}[^\s=]+(?:=[^\s]+|\s+(?!(?:{MUTATING_KUBECTL_VERBS})\b)[^\s]+)?)*"
+    rf"\s+(?:{MUTATING_KUBECTL_VERBS})\b",
     re.IGNORECASE,
 )
 COMPOSE_REFERENCE = re.compile(
@@ -388,8 +394,9 @@ def validate_deployment_policy(path: Path, text: str) -> list[str]:
                 }
                 headings[level] = heading.group("title")
 
+        deployment_policy_line = RETAINED_HELM_PATH.sub("", line)
         for pattern in FORBIDDEN_DEPLOYMENT_TERMS:
-            if pattern.search(line):
+            if pattern.search(deployment_policy_line):
                 errors.append(
                     f"{path}:{number}: unsupported Kubernetes deployment technology is documented"
                 )

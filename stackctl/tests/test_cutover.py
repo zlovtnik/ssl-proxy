@@ -24,6 +24,7 @@ def _private_plan(tmp_path: Path) -> tuple[Path, dict]:
         "context": "test",
         "namespace": "default",
         "umbrella_release": "ssl-proxy",
+        "kustomize_overlay": "cyber-stack/base",
         "matrix": [],
         "finalized": False,
     }
@@ -51,12 +52,17 @@ def test_plan_rejects_symlink(tmp_path: Path):
         load_verified_plan(link, payload["digest"])
 
 
-def test_apply_uses_take_ownership_and_never_uninstall(tmp_path: Path):
+def test_apply_uses_plan_captured_overlay(tmp_path: Path):
     path, payload = _private_plan(tmp_path)
     backups = tmp_path / "backups"
     backups.mkdir()
-    for name in ("history.json", "values.yaml", "manifest.redacted.yaml", "pvcs.json"):
+    for name in ("live-state.json", "manifest.redacted.yaml", "pvcs.json"):
         (backups / name).write_text("{}")
+    (backups / "overlay.yaml").write_text(
+        "kustomize_overlay: cyber-stack/base\n"
+    )
+    overlay = tmp_path / "cyber-stack" / "base"
+    overlay.mkdir(parents=True)
     config = StackConfig(
         version=1,
         components={
@@ -75,12 +81,10 @@ def test_apply_uses_take_ownership_and_never_uninstall(tmp_path: Path):
         patch("sslproxy_ops.stack.cutover._verify_uids"),
         patch("sslproxy_ops.stack.cutover.load_umbrella_values", return_value=[{}]),
         patch("sslproxy_ops.stack.cutover.render_component", return_value=rendered),
-        patch("sslproxy_ops.stack.cutover.prepared_chart_copy") as prepared,
-        patch("sslproxy_ops.stack.cutover.helm") as mock_helm,
+        patch("sslproxy_ops.stack.cutover.kustomize_apply") as mock_apply,
         patch("sslproxy_ops.stack.cutover.status", return_value=[]),
         patch("sslproxy_ops.stack.cutover.smoke", return_value=[]),
     ):
-        prepared.return_value.__enter__.return_value = tmp_path / "chart"
         apply_plan(
             config,
             tmp_path,
@@ -93,9 +97,4 @@ def test_apply_uses_take_ownership_and_never_uninstall(tmp_path: Path):
             {},
         )
 
-    assert any(
-        "--take-ownership" in call.args for call in mock_helm.call_args_list
-    )
-    assert all(
-        "uninstall" not in call.args for call in mock_helm.call_args_list
-    )
+    assert mock_apply.call_args.args == (str(overlay),)

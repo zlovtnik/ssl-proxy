@@ -16,9 +16,10 @@ from .core import StackConfig, load_umbrella_values, staged_waves
 from .deploy import _redact_manifest
 from .rendering import (
     OVERLAY_MAP,
+    _resolved_overlay_path,
     parity_diff,
+    parse_manifest,
     render_component,
-    render_umbrella,
     resource_identity,
     safe_artifact_dir,
 )
@@ -71,6 +72,13 @@ def _live_uid(
     metadata = payload.get("metadata", {})
     annotations = metadata.get("annotations", {})
     labels = metadata.get("labels", {})
+    managed_by = labels.get("app.kubernetes.io/managed-by")
+    if managed_by == "kustomize":
+        return (
+            str(metadata.get("uid", "")),
+            "app.kubernetes.io/managed-by",
+            managed_by,
+        )
     owner_source = "meta.helm.sh/release-name"
     owner_value = annotations.get("meta.helm.sh/release-name")
     if owner_value is None:
@@ -78,7 +86,7 @@ def _live_uid(
         if owner_value is not None:
             owner_source = "app.kubernetes.io/instance"
         else:
-            owner_value = labels.get("app.kubernetes.io/managed-by")
+            owner_value = managed_by
             owner_source = (
                 "app.kubernetes.io/managed-by" if owner_value is not None else "unowned"
             )
@@ -113,6 +121,19 @@ def create_plan(
     run_dir.mkdir(mode=0o700)
 
     values = load_umbrella_values(config, root_dir)
+    configured_overlay = OVERLAY_MAP.get(namespace)
+    if configured_overlay is None:
+        raise ValueError(
+            f"namespace {namespace!r} has no configured kustomize overlay; "
+            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
+        )
+    overlay_path = _resolved_overlay_path(root_dir, configured_overlay)
+    kustomize_overlay = overlay_path.relative_to(root_dir.resolve()).as_posix()
+    umbrella_manifest = kustomize_build(
+        str(overlay_path),
+        context=context,
+        kubeconfig=kubeconfig,
+    )
     rendered = [
         render_component(
             name,
@@ -126,9 +147,7 @@ def create_plan(
         if component.type in ("helm", "helm-job")
     ]
     split_resources = [resource for item in rendered for resource in item.resources]
-    umbrella_resources = render_umbrella(
-        namespace,
-    )
+    umbrella_resources = parse_manifest(umbrella_manifest.stdout, "umbrella")
     differences = parity_diff(umbrella_resources, split_resources)
     if differences:
         raise RuntimeError("manifest parity failed: " + "; ".join(differences))
@@ -183,23 +202,15 @@ def create_plan(
         context=context,
         kubeconfig=kubeconfig,
     )
-    kustomize_overlay = OVERLAY_MAP.get(namespace)
-    if kustomize_overlay is None:
-        raise ValueError(
-            f"namespace {namespace!r} has no configured kustomize overlay; "
-            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
-        )
-    manifest = kustomize_build(
-        kustomize_overlay,
-        context=context,
-        kubeconfig=kubeconfig,
-    )
     _write_private(backups / "live-state.json", live_state.stdout)
     _write_private(
         backups / "overlay.yaml",
         yaml.safe_dump({"kustomize_overlay": kustomize_overlay}, sort_keys=True),
     )
-    _write_private(backups / "manifest.redacted.yaml", _redact_manifest(manifest.stdout))
+    _write_private(
+        backups / "manifest.redacted.yaml",
+        _redact_manifest(umbrella_manifest.stdout),
+    )
     pvcs = kubectl(
         "get",
         "pvc",
@@ -279,18 +290,21 @@ def _verify_uids(plan: dict[str, Any], context: str, kubeconfig: str | None) -> 
 def _validated_overlay_path(
     plan: dict[str, Any],
     root_dir: Path,
+    plan_path: Path,
 ) -> Path:
-    kustomize_overlay = OVERLAY_MAP.get(plan["namespace"])
-    if kustomize_overlay is None:
-        raise ValueError(
-            f"namespace {plan['namespace']!r} has no configured kustomize overlay; "
-            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
-        )
-    overlay_path = (root_dir / kustomize_overlay).resolve()
-    root_resolved = root_dir.resolve()
-    if overlay_path != root_resolved and root_resolved not in overlay_path.parents:
-        raise RuntimeError("overlay path escapes root directory")
-    return overlay_path
+    kustomize_overlay = plan.get("kustomize_overlay")
+    if not isinstance(kustomize_overlay, str) or not kustomize_overlay:
+        raise RuntimeError("cutover plan has no captured kustomize overlay")
+    backup_path = plan_path.parent / "backups" / "overlay.yaml"
+    if not backup_path.is_file():
+        raise RuntimeError("cutover overlay backup is missing")
+    backup = yaml.safe_load(backup_path.read_text())
+    if not isinstance(backup, dict) or backup.get("kustomize_overlay") != kustomize_overlay:
+        raise RuntimeError("cutover overlay backup does not match the plan")
+    try:
+        return _resolved_overlay_path(root_dir, kustomize_overlay)
+    except ValueError as error:
+        raise RuntimeError("overlay path escapes root directory") from error
 
 
 def apply_plan(
@@ -321,7 +335,7 @@ def apply_plan(
         raise RuntimeError("cutover backups are incomplete: " + ", ".join(missing_backups))
     _verify_uids(plan, context, kubeconfig)
     values = load_umbrella_values(config, root_dir)
-    overlay_path = _validated_overlay_path(plan, root_dir)
+    overlay_path = _validated_overlay_path(plan, root_dir, plan_path)
     kustomize_apply(
         str(overlay_path),
         context=context,
@@ -453,7 +467,7 @@ def rollback_plan(
 
     plan = load_verified_plan(plan_path, digest)
     _verify_confirmations(plan, context, release, True, kubeconfig)
-    overlay_path = _validated_overlay_path(plan, root_dir)
+    overlay_path = _validated_overlay_path(plan, root_dir, plan_path)
     kustomize_apply(
         str(overlay_path),
         context=context,

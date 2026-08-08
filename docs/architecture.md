@@ -144,8 +144,9 @@ flowchart LR
 Dev image digests are proposed by Argo CD Image Updater through Git pull
 requests. Production promotion copies tested dev digests in a separately
 reviewed pull request. Automated sync, pruning and self-healing keep the live
-cluster aligned with Git; rollback is a Git revert. The complete management
-and workload-onboarding contract is in the
+cluster aligned with Git, but Namespace resources are excluded from automated
+pruning and require explicit operator confirmation. Rollback is a Git revert.
+The complete management and workload-onboarding contract is in the
 [Kubernetes GitOps guide](../cyber-stack/README.md).
 
 ## Local development
@@ -156,7 +157,7 @@ replace Kustomize render validation or Argo CD application health.
 
 ## Observability
 
-Container logs flow through Promtail to Loki. Prometheus scrapes application
+Container logs flow through Alloy to Loki. Prometheus scrapes application
 and infrastructure metrics. OTLP traces flow through the OpenTelemetry
 Collector to Jaeger; the collector also exposes span-derived Prometheus
 metrics. Grafana provisions Prometheus, Loki and Jaeger data sources. The

@@ -15,13 +15,7 @@ resources:
   # Java coordinator
   - java-coordinator/deployment.yaml
   # Schema migrator
-  - schema-migrator/backend.yaml
-  - schema-migrator/ui.yaml
-  - schema-migrator/keycloak.yaml
-  - schema-migrator/traefik.yaml
-  - schema-migrator/configmaps.yaml
-  - schema-migrator/bootstrap-job.yaml
-  - schema-migrator/validate-job.yaml
+  - schema-migrator
   # Atheros sensor
   - atheros-sensor/daemonset.yaml
   # Atheros search
@@ -51,33 +45,13 @@ resources:
   - telemetry/node-exporter.yaml
   - telemetry/cadvisor.yaml
   - telemetry/pushgateway.yaml
-replacements:
-  - source:
+configurations:
+  - schema-migrator/kustomizeconfig.yaml
+vars:
+  - name: IDENTITY_HOSTNAME
+    objref:
+      apiVersion: v1
       kind: ConfigMap
       name: ssl-proxy-platform-config
-      fieldPath: data.IDENTITY_HOSTNAME
-    targets:
-      - select:
-          kind: ConfigMap
-          name: ssl-proxy-schema-migrator-traefik
-        fieldPaths:
-          - data.dynamic\.yaml
-        options:
-          delimiter: "`"
-          index: 1
-      - select:
-          kind: ConfigMap
-          name: ssl-proxy-schema-migrator-traefik
-        fieldPaths:
-          - data.dynamic\.yaml
-        options:
-          delimiter: "`"
-          index: 7
-      - select:
-          kind: ConfigMap
-          name: ssl-proxy-schema-migrator-traefik
-        fieldPaths:
-          - data.dynamic\.yaml
-        options:
-          delimiter: "`"
-          index: 11
+    fieldref:
+      fieldpath: data.IDENTITY_HOSTNAME
