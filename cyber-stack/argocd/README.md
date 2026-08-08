@@ -14,11 +14,17 @@ The Applications deploy `cyber-stack/matrix/dev/bootstrap`, `cyber-stack/matrix/
 
 ## Sync Waves
 
+### bootstrap
+
+| Wave | Resources |
+|---|---|
+| `-2` | Namespace |
+| `-1` | ServiceAccount, ConfigMap (platform-config) |
+
 ### data-plane
 
 | Wave | Resources |
 |---|---|
-| `-1` | ServiceAccount, ConfigMap (platform-config) |
 | `0` | TiDB, Redpanda, MinIO, Redis, telemetry |
 | `1` | tidb-schema-executor Job |
 
@@ -62,12 +68,13 @@ The Applications deploy `cyber-stack/matrix/dev/bootstrap`, `cyber-stack/matrix/
 2. Create `argocd` namespace + apply AppProject
 3. Provision all 19 secrets via Sealed Secrets
 4. Add sync-wave/hook annotations to base manifests (this workmap)
-5. Apply data-plane Application (manual sync first)
-6. Confirm TiDB/Redpanda/MinIO healthy + tidb-schema-executor completed
-7. Apply app-stack Application (manual sync first)
-8. Confirm bootstrap-job + validate-job completed, backend healthy
-9. Enable automated sync on both Applications
-10. Set up notifications
+5. Apply bootstrap Application and confirm it is healthy
+6. Apply data-plane Application (manual sync first)
+7. Confirm TiDB/Redpanda/MinIO healthy + tidb-schema-executor completed
+8. Apply app-stack Application (manual sync first)
+9. Confirm bootstrap-job + validate-job completed, backend healthy
+10. Enable automated sync on all three Applications
+11. Set up notifications
 
 ## Files
 

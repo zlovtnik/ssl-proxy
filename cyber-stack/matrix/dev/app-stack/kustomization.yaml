@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: dev-ssl-proxy
 resources:
+  - ../../../base/platform-config/configmap.yaml
   - ../../../base/proxy/deployment.yaml
   - ../../../base/proxy/service.yaml
   - ../../../base/java-coordinator/deployment.yaml
@@ -37,5 +38,42 @@ images:
     newName: 192.168.1.221:5000/schema-migrator-ui
     newTag: d7f190b
 patches:
+  - target:
+      kind: ConfigMap
+      labelSelector: app.kubernetes.io/component=platform-config
+    patch: |-
+      - op: add
+        path: /metadata/annotations/config.kubernetes.io~1local-config
+        value: "true"
   - path: ../patches/proxy-replicas.yaml
   - path: ../patches/octopus-environment.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ssl-proxy-platform-config
+      fieldPath: data.IDENTITY_HOSTNAME
+    targets:
+      - select:
+          kind: ConfigMap
+          name: ssl-proxy-schema-migrator-traefik
+        fieldPaths:
+          - data.dynamic\.yaml
+        options:
+          delimiter: "`"
+          index: 1
+      - select:
+          kind: ConfigMap
+          name: ssl-proxy-schema-migrator-traefik
+        fieldPaths:
+          - data.dynamic\.yaml
+        options:
+          delimiter: "`"
+          index: 7
+      - select:
+          kind: ConfigMap
+          name: ssl-proxy-schema-migrator-traefik
+        fieldPaths:
+          - data.dynamic\.yaml
+        options:
+          delimiter: "`"
+          index: 11

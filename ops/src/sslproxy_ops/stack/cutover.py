@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -80,10 +79,9 @@ def _live_uid(
             owner_source = "app.kubernetes.io/instance"
         else:
             owner_value = labels.get("app.kubernetes.io/managed-by")
-            if owner_value is not None:
-                owner_source = "app.kubernetes.io/managed-by"
-            else:
-                owner_source = "unowned"
+            owner_source = (
+                "app.kubernetes.io/managed-by" if owner_value is not None else "unowned"
+            )
     return (
         str(metadata.get("uid", "")),
         owner_source,
@@ -148,9 +146,10 @@ def create_plan(
         if identity not in split_owner:
             continue
         uid, owner_source, owner_value = _live_uid(identity, namespace, context, kubeconfig)
-        if owner_source == "meta.helm.sh/release-name" and owner_value == umbrella_release:
-            pass
-        elif owner_source == "app.kubernetes.io/instance" and owner_value == umbrella_release:
+        if owner_value == umbrella_release and owner_source in {
+            "meta.helm.sh/release-name",
+            "app.kubernetes.io/instance",
+        }:
             pass
         elif owner_source == "app.kubernetes.io/managed-by":
             raise RuntimeError(
@@ -226,7 +225,8 @@ def create_plan(
         "rollback": {
             "before_finalize": "run cutover rollback with this plan",
             "after_finalize": (
-                "run cutover rollback; overlay is reapplied from the plan-captured kustomize_overlay"
+                "run cutover rollback; overlay is reapplied from the plan-captured "
+                "kustomize_overlay"
             ),
         },
     }
@@ -334,7 +334,7 @@ def apply_plan(
             component = config.components[name]
             if component.type not in ("helm", "helm-job"):
                 continue
-            rendered = render_component(
+            render_component(
                 name,
                 config,
                 root_dir,
@@ -398,16 +398,19 @@ def finalize_plan(
         if owner_source == "meta.helm.sh/release-name":
             if owner_value not in planned_releases:
                 raise RuntimeError(
-                    f"split ownership proof failed: {identity} release-name {owner_value!r} not in planned releases"
+                    f"split ownership proof failed: {identity} release-name "
+                    f"{owner_value!r} not in planned releases"
                 )
         elif owner_source == "app.kubernetes.io/instance":
             if owner_value not in planned_releases:
                 raise RuntimeError(
-                    f"split ownership proof failed: {identity} instance {owner_value!r} not in planned releases"
+                    f"split ownership proof failed: {identity} instance "
+                    f"{owner_value!r} not in planned releases"
                 )
         elif owner_source == "app.kubernetes.io/managed-by":
             raise RuntimeError(
-                f"split ownership proof failed: {identity} is managed by {owner_value!r}, not a Helm release"
+                f"split ownership proof failed: {identity} is managed by "
+                f"{owner_value!r}, not a Helm release"
             )
         else:
             raise RuntimeError(

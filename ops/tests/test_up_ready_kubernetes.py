@@ -411,11 +411,14 @@ class UpReadyKubernetesTest(unittest.TestCase):
             "WG_INTERNAL_PORT": "443",
             "WG_OBFUSCATION_ENABLED": "true",
         }
-        deployed = subprocess.CompletedProcess(
-            args=["helm"],
+        resource_list = subprocess.CompletedProcess(
+            args=["kubectl"],
             returncode=0,
-            stdout='{"info":{"status":"deployed"}}',
+            stdout="deployment.apps/ssl-proxy-proxy",
             stderr="",
+        )
+        deployed = subprocess.CompletedProcess(
+            args=["kubectl"], returncode=0, stdout='{"items":[{}]}', stderr=""
         )
         upgraded = subprocess.CompletedProcess(args=["helm"], returncode=0, stdout="", stderr="")
         dependencies_updated = subprocess.CompletedProcess(
@@ -426,8 +429,12 @@ class UpReadyKubernetesTest(unittest.TestCase):
             patch.dict(os.environ, environment, clear=False),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.shell.helm",
-                side_effect=[dependencies_updated, deployed, upgraded],
+                side_effect=[dependencies_updated, upgraded],
             ) as mocked_helm,
+            patch(
+                "sslproxy_ops.commands.up_ready.kubernetes.shell.kubectl",
+                side_effect=[resource_list, deployed],
+            ),
             patch(
                 "sslproxy_ops.commands.up_ready.kubernetes.preflight_required_secrets",
             ),

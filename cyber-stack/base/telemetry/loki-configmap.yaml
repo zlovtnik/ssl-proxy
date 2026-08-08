@@ -89,7 +89,7 @@ data:
           proxy_http_version 1.1;
           proxy_read_timeout 1800s;
           proxy_set_header Connection "";
-          proxy_set_header X-Scope-OrgID $http_x_scope_orgid;
+          proxy_set_header X-Scope-OrgID ssl-proxy;
           proxy_pass http://loki;
         }
       }

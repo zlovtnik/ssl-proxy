@@ -4,6 +4,7 @@ metadata:
   name: ssl-proxy-tidb
   namespace: ssl-proxy
   annotations:
+    ssl-proxy.io/environment-scope: development-only
     ssl-proxy.io/storage-profile: development-single-node-unistore
   labels:
     app.kubernetes.io/name: ssl-proxy

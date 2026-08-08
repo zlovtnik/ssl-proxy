@@ -784,8 +784,10 @@ def _cluster_mutation_snapshot(options: DeployOptions) -> dict[str, Any]:
         raise RuntimeError("unable to capture server dry-run mutation baseline")
     try:
         resource_payload = json.loads(managed.stdout or "{}")
-    except (json.JSONDecodeError, TypeError):
-        raise RuntimeError("unable to capture server dry-run mutation baseline: invalid JSON")
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise RuntimeError(
+            "unable to capture server dry-run mutation baseline: invalid JSON"
+        ) from exc
     items = resource_payload.get("items", [])
     return {
         "resources": sorted(

@@ -311,9 +311,7 @@ def parity_diff(
             and labels.get("app.kubernetes.io/name") == "tidb-schema-executor"
         ):
             return True
-        if resource.get("kind") == "ConfigMap" and name.endswith("-effective-values"):
-            return True
-        return False
+        return resource.get("kind") == "ConfigMap" and name.endswith("-effective-values")
 
     umbrella = {
         resource_identity(resource): normalize_resource(resource)

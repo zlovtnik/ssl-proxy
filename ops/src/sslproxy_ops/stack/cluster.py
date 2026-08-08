@@ -18,9 +18,8 @@ import yaml
 
 from .core import StackConfig
 from .gates import _resolve_gate_resource
-from .shell import kubectl, kustomize_validate
 from .rendering import OVERLAY_MAP
-from sslproxy_ops.paths import repo_root
+from .shell import kubectl, kustomize_validate
 
 
 @dataclass(frozen=True)
