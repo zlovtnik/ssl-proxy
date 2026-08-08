@@ -489,6 +489,62 @@ spec:
               mysql -h "${TIDB_HOST}" -P 4000 -u root \
                 ${MYSQL_OPTS} -e \
                 "GRANT ALL PRIVILEGES ON keycloak.* TO 'keycloak';"
+
+              # Keycloak 20 replaces CLIENT_ATTRIBUTES.VALUE with an NCLOB.
+              # TiDB requires the older VALUE-based composite index to be
+              # removed first. Clean up only while that exact Liquibase
+              # changeset is incomplete; Keycloak 24 recreates the final
+              # index after the column migration succeeds.
+              echo "Checking Keycloak TiDB migration compatibility..."
+              keycloak_compat_wait=0
+              while [ "${keycloak_compat_wait}" -lt 120 ]; do
+                changelog_exists="$(mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                  ${MYSQL_OPTS} --batch --skip-column-names -e \
+                  "SELECT COUNT(*) FROM information_schema.tables
+                   WHERE table_schema = 'keycloak'
+                     AND UPPER(table_name) = 'DATABASECHANGELOG';")"
+
+                if [ "${changelog_exists}" -gt 0 ]; then
+                  changeset_applied="$(mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                    ${MYSQL_OPTS} --batch --skip-column-names -e \
+                    "SELECT COUNT(*) FROM keycloak.DATABASECHANGELOG
+                     WHERE ID = 'client-attributes-string-accomodation-fixed'
+                       AND AUTHOR = 'keycloak';")"
+                  if [ "${changeset_applied}" -gt 0 ]; then
+                    echo "Keycloak TiDB compatibility migration is already complete."
+                    break
+                  fi
+
+                  legacy_index_exists="$(mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                    ${MYSQL_OPTS} --batch --skip-column-names -e \
+                    "SELECT COUNT(*) FROM information_schema.statistics
+                     WHERE table_schema = 'keycloak'
+                       AND UPPER(table_name) = 'CLIENT_ATTRIBUTES'
+                       AND UPPER(index_name) = 'IDX_CLIENT_ATT_BY_NAME_VALUE';")"
+                  partial_column_exists="$(mysql -h "${TIDB_HOST}" -P 4000 -u root \
+                    ${MYSQL_OPTS} --batch --skip-column-names -e \
+                    "SELECT COUNT(*) FROM information_schema.columns
+                     WHERE table_schema = 'keycloak'
+                       AND UPPER(table_name) = 'CLIENT_ATTRIBUTES'
+                       AND UPPER(column_name) = 'VALUE_NEW';")"
+
+                  if [ "${legacy_index_exists}" -gt 0 ] || [ "${partial_column_exists}" -gt 0 ]; then
+                    if [ "${legacy_index_exists}" -gt 0 ]; then
+                      mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                        "ALTER TABLE keycloak.CLIENT_ATTRIBUTES DROP INDEX IDX_CLIENT_ATT_BY_NAME_VALUE;"
+                    fi
+                    if [ "${partial_column_exists}" -gt 0 ]; then
+                      mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                        "ALTER TABLE keycloak.CLIENT_ATTRIBUTES DROP COLUMN VALUE_NEW;"
+                    fi
+                    echo "Prepared the incomplete Keycloak migration for a clean retry."
+                    break
+                  fi
+                fi
+
+                sleep 2
+                keycloak_compat_wait=$((keycloak_compat_wait + 2))
+              done
               echo "Flushing privileges..."
               mysql -h "${TIDB_HOST}" -P 4000 -u root \
                 ${MYSQL_OPTS} -e "FLUSH PRIVILEGES;"
