@@ -24,7 +24,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Validate README inventory and local links
+      - name: Validate documentation and Kubernetes delivery policy
         run: make docs-check
 
   gitops:

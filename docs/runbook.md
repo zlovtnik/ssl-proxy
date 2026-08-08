@@ -128,7 +128,7 @@ reconcile the previous digests/configuration. Do not perform a controller-local
 rollback that leaves Git stale.
 
 Do not delete TiDB schemas, consumer evidence, outboxes or sensor backlogs
-during diagnosis. Stop producers or consumers only through an reviewed Git
+during diagnosis. Stop producers or consumers only through a reviewed Git
 change at a documented boundary. Any consumer offset change requires a new
 signed cutover artifact and duplicate-delivery review.
 

@@ -75,18 +75,18 @@ class DocsCheckTest(unittest.TestCase):
         errors = self.errors(root)
         self.assertTrue(any("no .gitmodules mapping" in error for error in errors))
 
-    def test_broken_link_in_non_readme_submodule_markdown_is_reported(self) -> None:
+    def test_broken_link_in_non_markdown_submodule_document_is_reported(self) -> None:
         root = self.make_repo()
         child = root / "child"
         child.mkdir()
         self.git(child, "init", "-q")
         self.git(child, "config", "user.name", "Docs Test")
         self.git(child, "config", "user.email", "docs@example.invalid")
-        (child / "guide.md").write_text("[missing](nope.md)\n", encoding="utf-8")
-        self.git(child, "add", "guide.md")
+        (child / "guide.rst").write_text("[missing](nope.md)\n", encoding="utf-8")
+        self.git(child, "add", "guide.rst")
         self.git(child, "commit", "-qm", "child")
         oid = self.git(child, "rev-parse", "HEAD")
-        (child / "guide.md").write_text("# Fixed after pin\n", encoding="utf-8")
+        (child / "guide.rst").write_text("Fixed after pin\n", encoding="utf-8")
         (root / ".gitmodules").write_text(
             '[submodule "child"]\n'
             "\tpath = child\n"
@@ -100,7 +100,7 @@ class DocsCheckTest(unittest.TestCase):
 
         self.assertTrue(
             any(
-                "child/guide.md" in error and "broken local link" in error
+                "child/guide.rst" in error and "broken local link" in error
                 for error in errors
             )
         )
@@ -155,7 +155,7 @@ class DocsCheckTest(unittest.TestCase):
     def test_all_tracked_markdown_is_checked_for_deployment_policy(self) -> None:
         root = self.make_repo()
         (root / "notes.md").write_text(
-            "# Operations\n\nUse Helm for Kubernetes.\n", encoding="utf-8"
+            "# Operations\n\nUse Flux CD for Kubernetes.\n", encoding="utf-8"
         )
         self.git(root, "add", "notes.md")
         errors = self.errors(root)
