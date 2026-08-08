@@ -10,4 +10,6 @@ spec:
         - name: java-coordinator
           env:
             - name: OCTOPUS_ENVIRONMENT
-              value: "dev"
+              value: "development"
+            - name: OCTOPUS_CUTOVER_DEV_BYPASS
+              value: "true"
