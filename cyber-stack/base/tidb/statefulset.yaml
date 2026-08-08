@@ -3,6 +3,8 @@ kind: StatefulSet
 metadata:
   name: ssl-proxy-tidb
   namespace: ssl-proxy
+  annotations:
+    ssl-proxy.io/storage-profile: development-single-node-unistore
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: tidb
@@ -40,7 +42,8 @@ spec:
             - /bin/sh
             - -c
             - |
-              exec tidb-server \
+              # UniStore is intentionally limited to this single-node development manifest.
+              exec /tidb-server \
                 --store=unistore \
                 --path=/tidb-data \
                 --log-file= \
@@ -92,6 +95,7 @@ spec:
         - name: tidb-server-tls
           secret:
             secretName: ssl-proxy-tidb-server-tls
+            defaultMode: 0400
         - name: tidb-config
           configMap:
             name: ssl-proxy-tidb-config
@@ -204,12 +208,15 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tidb-init
-          image: tidb-runtime-schema:latest
-          imagePullPolicy: IfNotPresent
+          image: 192.168.1.221:5000/tidb-runtime-schema@sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -377,12 +384,15 @@ spec:
           type: RuntimeDefault
       containers:
         - name: tidb-init-grants
-          image: tidb-runtime-schema:latest
-          imagePullPolicy: IfNotPresent
+          image: 192.168.1.221:5000/tidb-runtime-schema@sha256:0de41db50f0408eea45c0c6c3dfadf62a23669d09a43075f7eac157493545432
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -397,6 +407,17 @@ spec:
               echo "TiDB is ready."
 
               export MYSQL_PWD="${ROOT_PASSWORD}"
+
+              echo "Waiting for schema tables to be created..."
+              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "SELECT 1 FROM octopus_core.schema_readiness LIMIT 1" >/dev/null 2>&1; do
+                sleep 5
+              done
+              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
+                "SELECT 1 FROM atheros_search.search_documents LIMIT 1" >/dev/null 2>&1; do
+                sleep 5
+              done
+              echo "Schema tables are ready; applying table-level grants."
 
               echo "Granting permissions..."
               mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \

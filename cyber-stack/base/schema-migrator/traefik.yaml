@@ -10,10 +10,9 @@ metadata:
     app.kubernetes.io/component: schema-migrator-traefik
     app.kubernetes.io/managed-by: kustomize
 spec:
-  # NOTE: replicas is 1 because traefik uses hostPort (80/443) which prevents
-  # multiple pods from binding the same port on a single node.  The Recreate
-  # strategy means brief unavailability during updates; accept this trade-off
-  # or switch to a DaemonSet/NodePort pattern for zero-downtime upgrades.
+  # The development stack keeps one internal edge replica. External ingress is
+  # owned by the cluster ingress controller, so this pod does not claim host
+  # ports 80/443.
   replicas: 1
   revisionHistoryLimit: 3
   strategy:
@@ -59,11 +58,9 @@ spec:
           ports:
             - name: web
               containerPort: 8000
-              hostPort: 80
               protocol: TCP
             - name: websecure
               containerPort: 8443
-              hostPort: 443
               protocol: TCP
             - name: ping
               containerPort: 8082
