@@ -8,11 +8,11 @@ Deployment-specific commands live in the [Helm](../helm/ssl-proxy/README.md),
 ## Before deployment
 
 1. Initialize nested repositories with `git submodule update --init --recursive`.
-2. Run `make docs-check` and the targeted tests for the images being deployed.
+2. Run `python3 scripts/check-docs.py` and targeted component tests.
 3. Confirm the image registry is reachable from the build host and every
    Kubernetes node.
 4. Materialize secrets outside Git and verify file permissions.
-5. Render the exact Helm values or run `make stackctl-render`.
+5. Render the exact Kustomize overlays with load restrictions disabled.
 6. Record the TiDB schema manifest hashes, runtime grants and signed Redpanda
    cutover offsets.
 7. Confirm the selected WireGuard profile:
@@ -22,22 +22,21 @@ Deployment-specific commands live in the [Helm](../helm/ssl-proxy/README.md),
 
 ## Deploy
 
-The umbrella release remains the default:
+Publish and promote the current immutable commit tag:
 
 ```bash
-make up-ready \
-  PROFILE_MODE=iphone \
-  SERVER_IP=192.0.2.10 \
-  REGISTRY=192.0.2.10:5000
+make release-all \
+  REGISTRY=192.0.2.10:5000 \
+  KUBE_CONTEXT=wiretrap-k3s
 ```
 
-The split-release path is opt in:
+To promote images that are already present in the registry:
 
 ```bash
-make up-ready-stackctl \
-  PROFILE_MODE=iphone \
-  SERVER_IP=192.0.2.10 \
-  REGISTRY=192.0.2.10:5000
+make argocd-update-all \
+  REGISTRY=192.0.2.10:5000 \
+  TAG=<commit> \
+  KUBE_CONTEXT=wiretrap-k3s
 ```
 
 Replace documentation addresses with real deployment values. Review generated
@@ -64,11 +63,9 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 ## Read-only diagnostics
 
 ```bash
-make diagnose
-make db-check-connections
-make pipeline-health
-make k8s-status
-make stackctl-status
+kubectl get applications.argoproj.io -n argocd -o wide
+kubectl get pods -A -o wide
+kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
 ```
 
 Use `KUBE_CONTEXT`, `KUBE_NAMESPACE` and `KUBE_RELEASE` when the defaults do

@@ -37,7 +37,7 @@ spec:
             - containerPort: 8888
               name: metrics
             - containerPort: 8889
-              name: prometheus-exporter
+              name: prom-exporter
             - containerPort: 13133
               name: health
           livenessProbe:
@@ -97,7 +97,7 @@ spec:
       port: 8888
       targetPort: metrics
       protocol: TCP
-    - name: prometheus-exporter
+    - name: prom-exporter
       port: 8889
-      targetPort: prometheus-exporter
+      targetPort: prom-exporter
       protocol: TCP

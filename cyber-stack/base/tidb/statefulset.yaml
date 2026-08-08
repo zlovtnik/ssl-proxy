@@ -292,14 +292,7 @@ spec:
                 rm -f "${tmp_sql}"
               done
 
-              echo "Waiting for schema tables to be created..."
-              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1 FROM octopus_core.schema_readiness LIMIT 1" 2>/dev/null; do
-                sleep 5
-              done
-              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1 FROM atheros_search.search_documents LIMIT 1" 2>/dev/null; do
-                sleep 5
-              done
-              echo "Schema tables are ready."
+              echo "TiDB databases and runtime accounts are ready."
           env:
             - name: POD_NAMESPACE
               valueFrom:

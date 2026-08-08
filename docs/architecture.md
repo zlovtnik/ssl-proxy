@@ -186,8 +186,8 @@ values used for a deployment.
 ### Opt-in stackctl split releases
 
 [`stackctl/stack.yaml`](../stackctl/stack.yaml) deploys the same subcharts as
-separate releases with dependency gates. It is opt in through
-`make up-ready-stackctl` or the `make stackctl-*` targets.
+separate releases with dependency gates. It remains an opt-in direct CLI; the
+root Makefile is reserved for image and Argo CD workflows.
 
 ```mermaid
 flowchart LR

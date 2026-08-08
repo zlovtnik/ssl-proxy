@@ -950,7 +950,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             "busybox:1.37.0",
         }
         for image in pinned_images:
-            self.assertIn(image, makefile)
+            self.assertNotIn(image, makefile)
 
         self.assertNotIn("bootstrapImage", chart_values["stateStore"])
         self.assertEqual(
@@ -964,10 +964,11 @@ class UpReadyKubernetesTest(unittest.TestCase):
             "traefik:v3.6.2",
         )
 
-    def test_registry_publish_builds_and_mirrors(self):
+    def test_registry_publish_builds_first_party_images(self):
         settings = Settings()
         settings.registry = "192.168.1.221:32000/"
         settings.image_tag = "latest"
+        settings.mirror_registry_images = False
         ctx = UpReadyContext(settings=settings)
 
         with patch("sslproxy_ops.commands.up_ready.kubernetes.shell.run") as mocked_run:
@@ -975,10 +976,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0][1] for call in mocked_run.call_args_list],
-            ["registry-build-all", "registry-mirror-all"],
+            ["publish-all"],
         )
         self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[0].args[0])
-        self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[1].args[0])
         self.assertIn("ATHEROS_SEARCH_UI_API_BASE=", mocked_run.call_args_list[0].args[0])
 
     def test_registry_publish_requires_validated_settings(self):

@@ -24,19 +24,8 @@ resources:
   - ../../../base/telemetry/cadvisor.yaml
   - ../../../base/telemetry/pushgateway.yaml
 images:
-  - name: ssl-proxy
-    newTag: neon-alpha-v2
-  - name: java-coordinator
-    newTag: neon-alpha-v2
-  - name: atheros-sensor
-    newTag: neon-alpha-v2
-  - name: atheros-search
-    newTag: neon-alpha-v2
-  - name: atheros-search-ui
-    newTag: neon-alpha-v2
-  - name: schema-migrator-backend
-    newTag: neon-alpha-v2
-  - name: schema-migrator-ui
-    newTag: neon-alpha-v2
+  - name: tidb-runtime-schema
+    newName: 192.168.1.221:5000/tidb-runtime-schema
+    newTag: d7f190b
 patches:
   - path: ../patches/tidb-replicas.yaml

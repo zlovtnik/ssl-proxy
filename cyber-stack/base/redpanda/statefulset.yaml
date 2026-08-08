@@ -54,7 +54,6 @@ spec:
                 --memory 1G \
                 --reserve-memory 0M \
                 --node-id "$ORDINAL" \
-                --check=false \
                 --data-directory /data \
                 --kafka-addr INTERNAL://0.0.0.0:9092 \
                 --advertise-kafka-addr "INTERNAL://$(POD_NAME).ssl-proxy-redpanda.$(POD_NAMESPACE).svc.cluster.local:9092"

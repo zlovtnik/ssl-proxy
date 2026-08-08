@@ -6,19 +6,29 @@ resources:
   - ../../base
 images:
   - name: ssl-proxy
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/ssl-proxy
+    newTag: d7f190b
   - name: java-coordinator
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/java-coordinator
+    newTag: d7f190b
   - name: atheros-sensor
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/atheros-sensor
+    newTag: d7f190b
   - name: atheros-search
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/atheros-search
+    newTag: d7f190b
   - name: atheros-search-ui
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/atheros-search-ui
+    newTag: d7f190b
   - name: schema-migrator-backend
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/schema-migrator-backend
+    newTag: d7f190b
   - name: schema-migrator-ui
-    newTag: neon-alpha-v2
+    newName: 192.168.1.221:5000/schema-migrator-ui
+    newTag: d7f190b
+  - name: tidb-runtime-schema
+    newName: 192.168.1.221:5000/tidb-runtime-schema
+    newTag: d7f190b
 patches:
   - path: patches/proxy-replicas.yaml
   - path: patches/tidb-replicas.yaml

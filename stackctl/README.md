@@ -24,31 +24,22 @@ explicit in the stack file. A gate proves only its declared condition; current
 runtime gaps remain documented in
 [Architecture known gaps](../docs/architecture.md#known-gaps).
 
-## Make targets
+## CLI commands
 
 ```bash
-make stackctl-plan
-make stackctl-validate
-make stackctl-render
-make stackctl-compare
-make stackctl-preflight
-make stackctl-dry-run
-make stackctl-deploy
-make stackctl-status
-make stackctl-smoke
+python3 stackctl/stackctl.py plan
+python3 stackctl/stackctl.py validate
+python3 stackctl/stackctl.py render
+python3 stackctl/stackctl.py compare
+python3 stackctl/stackctl.py preflight
+python3 stackctl/stackctl.py dry-run
+python3 stackctl/stackctl.py deploy
+python3 stackctl/stackctl.py status
+python3 stackctl/stackctl.py smoke
 ```
 
-Override the manifest with `STACKCTL_FILE` and pass additional CLI options
-through `STACKCTL_ARGS`.
-
-The full opt-in operations workflow is:
-
-```bash
-make up-ready-stackctl \
-  PROFILE_MODE=iphone \
-  SERVER_IP=192.0.2.10 \
-  REGISTRY=192.0.2.10:5000
-```
+Pass `--file` to override the manifest and use the command-specific flags for
+additional options. The root Makefile no longer wraps stackctl.
 
 ## Direct CLI
 
@@ -66,5 +57,5 @@ python3 -m pip install -r stackctl/requirements.txt
 python3 -m pytest stackctl/tests
 ```
 
-Prefer the Make/ops wrappers in normal repository workflows because they share
-artifact paths, environment validation and deployment diagnostics.
+The root Makefile is reserved for first-party image build/publication and Argo
+CD promotion.

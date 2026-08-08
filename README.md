@@ -17,8 +17,9 @@ The canonical runtime model, data ownership and known deployment gaps are in
 | Path | Use it for | Entry point | Status |
 |---|---|---|---|
 | Compose compatibility | Local development, compatibility testing and service inspection | [`docker-compose.yaml`](docker-compose.yaml) | Bundles single-process TiDB/UniStore; not a production TiFlash topology |
-| Umbrella Helm | Current single-release Kubernetes workflow | [`helm/ssl-proxy/`](helm/ssl-proxy/) and `make up-ready` | Default operational path; exact values determine enabled services |
-| stackctl split releases | Dependency-ordered, opt-in Kubernetes rollout | [`stackctl/`](stackctl/) and `make up-ready-stackctl` | Opt in until split-release acceptance is complete |
+| Argo CD + Kustomize | Current Kubernetes workflow | [`cyber-stack/`](cyber-stack/) and `make release-all` | Publishes immutable first-party images, updates both Argo CD applications and waits for health |
+| Umbrella Helm | Compatibility single-release workflow | [`helm/ssl-proxy/`](helm/ssl-proxy/) | Retained for chart rendering and compatibility validation |
+| stackctl split releases | Dependency-ordered compatibility workflow | [`stackctl/`](stackctl/) | Retained outside the root Makefile |
 
 WireGuard ports are profile dependent. The Compose frontdoor declares UDP
 `443` for the obfuscated/direct frontdoor path and UDP `51820` for concurrent
@@ -65,20 +66,24 @@ Initialize every nested repository first:
 git submodule update --init --recursive
 ```
 
-Validate the documentation and repository checkout without starting services:
+Run tests directly for the components you change. The root Makefile is reserved
+for image build/publication and Argo CD promotion.
+
+Publish every first-party image and promote the resulting immutable tag through
+both Argo CD applications:
 
 ```bash
-make docs-check
+make release-all \
+  REGISTRY=192.0.2.10:5000 \
+  KUBE_CONTEXT=wiretrap-k3s
 ```
 
-For the current Kubernetes workflow, prepare the local registry and required
-secrets, then run:
+The default tag is the current short Git commit. Build without publishing with
+`make build-all`, publish without promotion with `make publish-all`, or promote
+an already-published tag with:
 
 ```bash
-make up-ready \
-  PROFILE_MODE=iphone \
-  SERVER_IP=192.0.2.10 \
-  REGISTRY=192.0.2.10:5000
+make argocd-update-all REGISTRY=192.0.2.10:5000 TAG=<commit>
 ```
 
 Use real addresses and review the [local registry workflow](docs/local-registry-workflow.md),
@@ -117,12 +122,11 @@ Run the smallest relevant check for a change:
 cargo test -p ssl-proxy
 cargo test -p sync-plane
 cargo test -p atheros-sensor
-make atheros-search-test
+(cd services/atheros-search && go test ./...)
 (cd services/octopus && sbt test)
 (cd apps/schema-migrator && sbt test)
-make dependency-boundaries
 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
-make docs-check
+python3 scripts/check-docs.py
 ```
 
 ## Operational references

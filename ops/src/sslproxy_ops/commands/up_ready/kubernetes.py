@@ -911,7 +911,7 @@ def publish_registry_images(ctx: UpReadyContext) -> None:
         shell.run(
             [
                 "make",
-                "registry-build-all",
+                "publish-all",
                 f"REGISTRY={registry}",
                 f"TAG={image_tag}",
                 # The Kubernetes UI proxies /v1 to the in-cluster API. Keeping
@@ -920,8 +920,10 @@ def publish_registry_images(ctx: UpReadyContext) -> None:
             ]
         )
     if ctx.settings.mirror_registry_images:
-        step("S03", f"registry_mirror: pinned third-party images -> {registry}")
-        shell.run(["make", "registry-mirror-all", f"REGISTRY={registry}"])
+        raise UpReadyError(
+            "third-party registry mirroring is not part of the root Makefile; "
+            "preload required third-party images separately"
+        )
 
 
 def verify_kubernetes_registry_pull(ctx: UpReadyContext) -> None:

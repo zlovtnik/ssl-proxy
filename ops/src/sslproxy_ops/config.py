@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         default=True, validation_alias="UP_READY_BUILD_REGISTRY_IMAGES"
     )
     mirror_registry_images: bool = Field(
-        default=True, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
+        default=False, validation_alias="UP_READY_MIRROR_REGISTRY_IMAGES"
     )
     kube_context: str = Field(default="", validation_alias="UP_READY_KUBE_CONTEXT")
     kube_namespace: str = Field(default="default", validation_alias="UP_READY_KUBE_NAMESPACE")
