@@ -37,6 +37,7 @@ images:
     newName: 192.168.1.221:5000/schema-migrator-ui
     digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
 patches:
+  - path: ../patches/identity-hostname.yaml
   - path: ../patches/proxy-replicas.yaml
   - path: ../patches/octopus-environment.yaml
 configurations:

@@ -161,6 +161,92 @@ class ProxyProbeCheckTest(unittest.TestCase):
         self.assertEqual([], check_gitops._check_proxy_probes(rendered, "test"))
 
 
+class GitOpsRegressionCheckTest(unittest.TestCase):
+    def test_proxy_wireguard_requires_host_route(self) -> None:
+        rendered = (
+            "name: ssl-proxy-proxy\nports:\n  - containerPort: 443\n    protocol: UDP\n"
+        )
+        self.assertEqual(
+            1, len(check_gitops._check_proxy_wireguard_route(rendered, "test"))
+        )
+
+    def test_proxy_wireguard_accepts_host_port(self) -> None:
+        rendered = (
+            "name: ssl-proxy-proxy\n"
+            "ports:\n"
+            "  - containerPort: 443\n"
+            "    hostPort: 443\n"
+            "    protocol: UDP\n"
+        )
+        self.assertEqual(
+            [], check_gitops._check_proxy_wireguard_route(rendered, "test")
+        )
+
+    def test_atheros_search_rejects_unusable_bearer_auth(self) -> None:
+        rendered = (
+            "name: ssl-proxy-atheros-search\n"
+            "env:\n"
+            "  - name: ATHSEARCH_API_TOKEN_SHA256\n"
+        )
+        self.assertEqual(
+            1, len(check_gitops._check_atheros_search_auth(rendered, "test"))
+        )
+
+    def test_keycloak_requires_provisioned_database_secret(self) -> None:
+        rendered = (
+            "name: ssl-proxy-schema-migrator-keycloak\n"
+            "- name: KC_DB_PASSWORD\n"
+            "  valueFrom:\n"
+            "    secretKeyRef:\n"
+            "      key: password\n"
+            "      name: tidb-keycloak\n"
+        )
+        self.assertEqual(
+            [], check_gitops._check_keycloak_database_credential(rendered, "test")
+        )
+
+    def test_topic_replication_cannot_exceed_brokers(self) -> None:
+        rendered = (
+            "kind: StatefulSet\n"
+            "metadata:\n"
+            "  name: ssl-proxy-redpanda\n"
+            "spec:\n"
+            "  replicas: 1\n"
+            "topics.manifest: |\n"
+            "  sync.scan.request|24|3|1000|-1\n"
+        )
+        self.assertEqual(
+            1,
+            len(check_gitops._check_redpanda_topic_replication(rendered, "test")),
+        )
+
+    def test_identity_hostnames_are_environment_specific(self) -> None:
+        rendered = {
+            "cyber-stack/matrix/dev/bootstrap": (
+                "data:\n  IDENTITY_HOSTNAME: identity.dev.ssl-proxy.internal\n"
+            ),
+            "cyber-stack/matrix/prod/bootstrap": (
+                "data:\n  IDENTITY_HOSTNAME: identity.prod.ssl-proxy.internal\n"
+            ),
+        }
+        self.assertEqual(
+            [], check_gitops._check_environment_identity_hostnames(rendered)
+        )
+
+    def test_identity_hostnames_reject_example_and_shared_values(self) -> None:
+        rendered = {
+            "cyber-stack/matrix/dev/bootstrap": (
+                "data:\n  IDENTITY_HOSTNAME: identity.example.internal\n"
+            ),
+            "cyber-stack/matrix/prod/bootstrap": (
+                "data:\n  IDENTITY_HOSTNAME: identity.example.internal\n"
+            ),
+        }
+        self.assertEqual(
+            3, len(check_gitops._check_environment_identity_hostnames(rendered))
+        )
+
+
 class TraefikRedirectCheckTest(unittest.TestCase):
     def test_rejects_unsupported_port_field(self) -> None:
         rendered = "entrypoints.web.http.redirections.entrypoint.port=:443"
@@ -179,11 +265,11 @@ class TraefikRedirectCheckTest(unittest.TestCase):
 class TiDBWaveCheckTest(unittest.TestCase):
     def test_rejects_init_wave_not_less_than_schema(self) -> None:
         rendered = (
-            'name: ssl-proxy-tidb-init\n  annotations:\n'
+            "name: ssl-proxy-tidb-init\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "1"\n'
-            'name: ssl-proxy-tidb-schema-executor\n  annotations:\n'
+            "name: ssl-proxy-tidb-schema-executor\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "1"\n'
-            'name: ssl-proxy-tidb-init-grants\n  annotations:\n'
+            "name: ssl-proxy-tidb-init-grants\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "2"'
         )
         errors = check_gitops._check_tidb_waves(rendered, "test")
@@ -191,11 +277,11 @@ class TiDBWaveCheckTest(unittest.TestCase):
 
     def test_rejects_schema_wave_not_less_than_grants(self) -> None:
         rendered = (
-            'name: ssl-proxy-tidb-init\n  annotations:\n'
+            "name: ssl-proxy-tidb-init\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "0"\n'
-            'name: ssl-proxy-tidb-schema-executor\n  annotations:\n'
+            "name: ssl-proxy-tidb-schema-executor\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "2"\n'
-            'name: ssl-proxy-tidb-init-grants\n  annotations:\n'
+            "name: ssl-proxy-tidb-init-grants\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "2"'
         )
         errors = check_gitops._check_tidb_waves(rendered, "test")
@@ -203,11 +289,11 @@ class TiDBWaveCheckTest(unittest.TestCase):
 
     def test_accepts_correct_wave_ordering(self) -> None:
         rendered = (
-            'name: ssl-proxy-tidb-init\n  annotations:\n'
+            "name: ssl-proxy-tidb-init\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "0"\n'
-            'name: ssl-proxy-tidb-schema-executor\n  annotations:\n'
+            "name: ssl-proxy-tidb-schema-executor\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "1"\n'
-            'name: ssl-proxy-tidb-init-grants\n  annotations:\n'
+            "name: ssl-proxy-tidb-init-grants\n  annotations:\n"
             '    argocd.argoproj.io/sync-wave: "2"'
         )
         self.assertEqual([], check_gitops._check_tidb_waves(rendered, "test"))

@@ -81,11 +81,6 @@ spec:
               value: grpc
             - name: OTEL_SERVICE_NAME
               value: atheros-search
-            - name: ATHSEARCH_API_TOKEN_SHA256
-              valueFrom:
-                secretKeyRef:
-                  name: atheros-credentials
-                  key: api-token-sha256
           ports:
             - name: http
               containerPort: 8080

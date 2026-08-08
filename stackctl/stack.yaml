@@ -17,7 +17,7 @@ components:
     type: helm
     stage: bootstrap
     release: ssl-proxy-platform-config
-    chart: ./helm/ssl-proxy/charts/platform-config
+    chart: ./cyber-stack/base/platform-config
     values_key: platformConfig
     include_global: true
     gates:
@@ -27,7 +27,7 @@ components:
     type: helm
     stage: infrastructure
     release: ssl-proxy-tidb
-    chart: ./helm/ssl-proxy/charts/tidb
+    chart: ./cyber-stack/base/tidb
     values_key: tidb
     include_global: true
     set:
@@ -41,7 +41,7 @@ components:
     type: helm
     stage: infrastructure
     release: ssl-proxy-redpanda
-    chart: ./helm/ssl-proxy/charts/redpanda
+    chart: ./cyber-stack/base/redpanda
     values_key: redpanda
     include_global: true
     set:
@@ -55,7 +55,7 @@ components:
     type: helm
     stage: infrastructure
     release: ssl-proxy-minio
-    chart: ./helm/ssl-proxy/charts/minio
+    chart: ./cyber-stack/base/minio
     values_key: minio
     include_global: true
     set:
@@ -69,7 +69,7 @@ components:
     type: helm
     stage: infrastructure
     release: ssl-proxy-redis-runtime
-    chart: ./helm/ssl-proxy/charts/redis-runtime
+    chart: ./cyber-stack/base/redis-runtime
     values_key: redisRuntime
     include_global: true
     depends_on: [platform-config]
@@ -80,7 +80,7 @@ components:
     type: helm
     stage: infrastructure
     release: ssl-proxy-telemetry
-    chart: ./helm/ssl-proxy/charts/telemetry
+    chart: ./cyber-stack/base/telemetry
     values_key: telemetry
     include_global: true
     depends_on: [platform-config]
@@ -104,7 +104,7 @@ components:
     type: helm-job
     stage: schema-executor
     release: ssl-proxy-tidb-schema-executor
-    chart: ./helm/ssl-proxy/charts/tidb-schema-executor
+    chart: ./cyber-stack/base/tidb-schema-executor
     values_key: tidbSchemaExecutor
     include_global: true
     depends_on:
@@ -124,7 +124,7 @@ components:
     type: helm
     stage: schema-migrator
     release: ssl-proxy-schema-migrator
-    chart: ./helm/ssl-proxy/charts/schema-migrator
+    chart: ./cyber-stack/base/schema-migrator
     values_key: schemaMigrator
     include_global: true
     depends_on:
@@ -141,7 +141,7 @@ components:
     type: helm
     stage: applications
     release: ssl-proxy-coordinator
-    chart: ./helm/ssl-proxy/charts/java-coordinator
+    chart: ./cyber-stack/base/java-coordinator
     values_key: javaCoordinator
     include_global: true
     depends_on:
@@ -160,7 +160,7 @@ components:
     type: helm
     stage: applications
     release: ssl-proxy-atheros-search
-    chart: ./helm/ssl-proxy/charts/atheros-search
+    chart: ./cyber-stack/base/atheros-search
     values_key: atherosSearch
     include_global: true
     depends_on:
@@ -180,7 +180,7 @@ components:
     type: helm
     stage: applications
     release: ssl-proxy-atheros-sensor
-    chart: ./helm/ssl-proxy/charts/atheros-sensor
+    chart: ./cyber-stack/base/atheros-sensor
     values_key: atherosSensor
     include_global: true
     gates:
@@ -190,7 +190,7 @@ components:
     type: helm
     stage: proxy
     release: ssl-proxy-proxy
-    chart: ./helm/ssl-proxy/charts/proxy
+    chart: ./cyber-stack/base/proxy
     values_key: proxy
     include_global: true
     depends_on:

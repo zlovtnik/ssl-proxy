@@ -110,11 +110,102 @@ def _check_proxy_probes(rendered: str, relative: str) -> list[str]:
     return errors
 
 
+def _check_proxy_wireguard_route(rendered: str, relative: str) -> list[str]:
+    if "name: ssl-proxy-proxy" not in rendered:
+        return []
+    route = re.search(r"containerPort:\s*443(?P<body>.{0,160})", rendered, re.DOTALL)
+    body = route.group("body") if route is not None else ""
+    if "hostPort: 443" not in body or "protocol: UDP" not in body:
+        return [f"{relative}: proxy WireGuard UDP/443 has no external hostPort route"]
+    return []
+
+
+def _check_atheros_search_auth(rendered: str, relative: str) -> list[str]:
+    if "name: ssl-proxy-atheros-search" not in rendered:
+        return []
+    if "ATHSEARCH_API_TOKEN_SHA256" in rendered:
+        return [
+            f"{relative}: browser-facing Atheros Search enables bearer auth "
+            "without a browser or trusted-proxy credential flow"
+        ]
+    return []
+
+
+def _check_keycloak_database_credential(rendered: str, relative: str) -> list[str]:
+    if "name: ssl-proxy-schema-migrator-keycloak" not in rendered:
+        return []
+    password = re.search(
+        r"name:\s+KC_DB_PASSWORD(?P<body>.{0,300})",
+        rendered,
+        re.DOTALL,
+    )
+    body = password.group("body") if password is not None else ""
+    if "name: tidb-keycloak" not in body or "key: password" not in body:
+        return [
+            f"{relative}: Keycloak database password must come from "
+            "tidb-keycloak/password"
+        ]
+    return []
+
+
+def _check_redpanda_topic_replication(rendered: str, relative: str) -> list[str]:
+    broker_match = re.search(
+        r"kind:\s+StatefulSet.*?name:\s+ssl-proxy-redpanda.*?"
+        r"spec:\s+replicas:\s+(\d+)",
+        rendered,
+        re.DOTALL,
+    )
+    if broker_match is None or "topics.manifest" not in rendered:
+        return []
+    broker_count = int(broker_match.group(1))
+    topic_replication = [
+        int(value)
+        for value in re.findall(
+            r"(?m)^\s+[a-z0-9._-]+\|\d+\|(\d+)\|",
+            rendered,
+        )
+    ]
+    producer_replication = [
+        int(value)
+        for value in re.findall(
+            r"name:\s+SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR\s+value:\s+\"?(\d+)\"?",
+            rendered,
+        )
+    ]
+    requested_replication = topic_replication + producer_replication
+    if requested_replication and max(requested_replication) > broker_count:
+        return [
+            f"{relative}: topic replication factor {max(requested_replication)} "
+            f"exceeds Redpanda broker count {broker_count}"
+        ]
+    return []
+
+
+def _check_environment_identity_hostnames(rendered: dict[str, str]) -> list[str]:
+    hostnames: dict[str, str] = {}
+    errors: list[str] = []
+    for environment in ("dev", "prod"):
+        relative = f"cyber-stack/matrix/{environment}/bootstrap"
+        match = re.search(
+            r"(?m)^\s*IDENTITY_HOSTNAME:\s*([^\s]+)\s*$",
+            rendered.get(relative, ""),
+        )
+        if match is None:
+            errors.append(f"{relative}: environment identity hostname is missing")
+            continue
+        hostname = match.group(1).strip("\"'")
+        hostnames[environment] = hostname
+        if ".example." in hostname or hostname.endswith(".example"):
+            errors.append(f"{relative}: example identity hostname is not deployable")
+    if len(hostnames) == 2 and hostnames["dev"] == hostnames["prod"]:
+        errors.append("dev and prod must not share an identity hostname")
+    return errors
+
+
 def _check_traefik_redirect(rendered: str, relative: str) -> list[str]:
     if "entrypoints.web.http.redirections.entrypoint.port" in rendered:
         return [
-            f"{relative}: Traefik entrypoint.port is not a supported "
-            "redirection field"
+            f"{relative}: Traefik entrypoint.port is not a supported redirection field"
         ]
     return []
 
@@ -214,6 +305,7 @@ def _image_pin_counts(text: str) -> tuple[int, int]:
 
 def check_repository(root: Path, executable: str) -> list[str]:
     errors: list[str] = []
+    rendered_kustomizations: dict[str, str] = {}
 
     for relative in CANONICAL_KUSTOMIZATIONS:
         path = root / relative
@@ -224,18 +316,34 @@ def check_repository(root: Path, executable: str) -> list[str]:
         if error:
             errors.append(error)
             continue
+        rendered_kustomizations[relative] = rendered
         if re.search(r"(?m)^\s*image:\s+\S+:latest\s*$", rendered):
             errors.append(f"{relative}: rendered workload uses a mutable latest tag")
         for image in FIRST_PARTY_IMAGES:
-            if re.search(rf"(?m)^\s*image:\s+{re.escape(image)}(?::\S+)?\s*$", rendered):
+            if re.search(
+                rf"(?m)^\s*image:\s+{re.escape(image)}(?::\S+)?\s*$", rendered
+            ):
                 errors.append(
                     f"{relative}: rendered workload retains logical image name {image}"
                 )
         errors.extend(_check_otel_endpoint(rendered, relative))
         errors.extend(_check_redpanda_memory(rendered, relative))
         errors.extend(_check_proxy_probes(rendered, relative))
+        errors.extend(_check_proxy_wireguard_route(rendered, relative))
+        errors.extend(_check_atheros_search_auth(rendered, relative))
+        errors.extend(_check_keycloak_database_credential(rendered, relative))
+        errors.extend(_check_redpanda_topic_replication(rendered, relative))
         errors.extend(_check_traefik_redirect(rendered, relative))
         errors.extend(_check_tidb_waves(rendered, relative))
+
+    errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
+    prod_rendered = "\n".join(
+        rendered_kustomizations.get(f"cyber-stack/matrix/prod/{component}", "")
+        for component in ("bootstrap", "data-plane", "app-stack")
+    )
+    errors.extend(
+        _check_redpanda_topic_replication(prod_rendered, "cyber-stack/matrix/prod")
+    )
 
     for filename, source_path in APPLICATIONS.items():
         relative = Path("cyber-stack/argocd") / filename
@@ -253,10 +361,12 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for value in required:
             if value not in text:
                 errors.append(f"{relative}: missing {value!r}")
+        if "kustomize:" not in text:
+            errors.append(f"{relative}: source must select the Kustomize renderer")
+        if "directory:" in text:
+            errors.append(f"{relative}: plain-directory renderer is not allowed")
         if "CreateNamespace=true" in text:
-            errors.append(
-                f"{relative}: namespace creation must come from Git"
-            )
+            errors.append(f"{relative}: namespace creation must come from Git")
 
     updater_relative = Path("cyber-stack/argocd/image-updater-dev.yaml")
     updater = _read_required(root, updater_relative, errors, "Image Updater manifest")
@@ -278,7 +388,12 @@ def check_repository(root: Path, executable: str) -> list[str]:
 
     for environment in ("dev", "prod"):
         for component in ("data-plane", "app-stack"):
-            relative = Path("cyber-stack/matrix") / environment / component / "kustomization.yaml"
+            relative = (
+                Path("cyber-stack/matrix")
+                / environment
+                / component
+                / "kustomization.yaml"
+            )
             text = _read_required(root, relative, errors, "component kustomization")
             if text is None:
                 continue
@@ -301,7 +416,29 @@ def check_repository(root: Path, executable: str) -> list[str]:
     makefile = (root / "Makefile").read_text(encoding="utf-8")
     for forbidden in ("argocd-update", "release-all", "kubectl patch application"):
         if forbidden in makefile:
-            errors.append(f"Makefile: live-cluster promotion surface remains: {forbidden}")
+            errors.append(
+                f"Makefile: live-cluster promotion surface remains: {forbidden}"
+            )
+    for target in ("test", "lint", "dependency-boundaries", "atheros-search-test"):
+        if re.search(rf"(?m)^{re.escape(target)}:\s*$", makefile) is None:
+            errors.append(
+                f"Makefile: documented verification target is missing: {target}"
+            )
+
+    stack_config = (root / "stackctl/stack.yaml").read_text(encoding="utf-8")
+    for configured in re.findall(r"(?m)^\s+chart:\s+(.+?)\s*$", stack_config):
+        overlay = (root / configured.removeprefix("./")).resolve()
+        if not (overlay / "kustomization.yaml").is_file():
+            errors.append(
+                "stackctl/stack.yaml: component overlay is not a Kustomization: "
+                f"{configured}"
+            )
+
+    deploy_source = (root / "ops/src/sslproxy_ops/stack/deploy.py").read_text(
+        encoding="utf-8"
+    )
+    if "kustomize_apply" in deploy_source:
+        errors.append("stackctl: direct Kustomize cluster apply path remains")
 
     return errors
 

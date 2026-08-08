@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -1473,29 +1472,11 @@ def stackctl_preflight(ctx: UpReadyContext) -> None:
 
 
 def stackctl_deploy(ctx: UpReadyContext) -> bool:
-    """Deploy the canonical split stack with the up-ready runtime values."""
+    """Reject the retired direct-deploy path for the split stack."""
 
-    from sslproxy_ops.stack.core import load_config, load_umbrella_values
-    from sslproxy_ops.stack.deploy import DeployOptions, deploy_stack
+    from sslproxy_ops.stack.deploy import GITOPS_DEPLOYMENT_MESSAGE
 
-    preflight_required_secrets(ctx)
-    root = repo_root()
-    config = load_config(root / "stackctl" / "stack.yaml")
-    options = DeployOptions(
-        namespace=ctx.settings.kube_namespace,
-        context=ctx.settings.kube_context or None,
-        root_dir=root,
-        umbrella_values=load_umbrella_values(config, root),
-        max_parallel=config.defaults.max_parallel,
-        runtime_overrides=_stack_runtime_overrides(ctx),
-        artifact_dir=root / config.defaults.artifact_dir,
-    )
-    step("S03", "stackctl_deploy: bootstrap plus five split-release waves")
-    result = asyncio.run(deploy_stack(config, options))
-    if not result.success:
-        failed = [item.component for item in result.component_results if not item.success]
-        raise UpReadyError("stackctl deployment failed: " + ", ".join(failed))
-    return True
+    raise UpReadyError(GITOPS_DEPLOYMENT_MESSAGE)
 
 
 def deploy_kubernetes_release(ctx: UpReadyContext) -> bool:

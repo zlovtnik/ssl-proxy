@@ -501,10 +501,14 @@ def generate_effective_values(
     if root_dir:
         chart_path = Path(root_dir) / component.chart
         values_file = chart_path / "values.yaml"
+        kustomization_file = chart_path / "kustomization.yaml"
         if not chart_path.is_dir():
             raise FileNotFoundError(f"Chart directory not found: {chart_path}")
-        if not values_file.is_file():
-            raise FileNotFoundError(f"Chart values file not found: {values_file}")
+        if not values_file.is_file() and not kustomization_file.is_file():
+            raise FileNotFoundError(
+                f"Component source has neither values.yaml nor kustomization.yaml: "
+                f"{chart_path}"
+            )
 
     merged: dict[str, Any] = {}
     for values_file in umbrella_values:
@@ -840,13 +844,16 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_dry_run(args: argparse.Namespace) -> int:
-    """Run Helm server-side dry-runs without retaining raw values."""
+    """Render component Kustomizations without mutating a cluster."""
     return _run_deploy(args, dry_run=True)
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
-    """Deploy components wave-by-wave with concurrent execution."""
-    return _run_deploy(args, dry_run=False)
+    """Reject live deployment in favor of the repository GitOps surface."""
+    from .deploy import GITOPS_DEPLOYMENT_MESSAGE
+
+    print(f"ERROR: {GITOPS_DEPLOYMENT_MESSAGE}", file=sys.stderr)
+    return 2
 
 
 def _run_deploy(args: argparse.Namespace, dry_run: bool) -> int:
@@ -1174,7 +1181,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("preflight", parents=[common], help="Check cluster prerequisites")
     subparsers.add_parser("dry-run", parents=[common], help="Dry-run deployment")
 
-    deploy_parser = subparsers.add_parser("deploy", parents=[common], help="Deploy components")
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        parents=[common],
+        help="Explain the GitOps deployment requirement",
+    )
     deploy_parser.add_argument(
         "--keep-artifacts",
         action="store_true",

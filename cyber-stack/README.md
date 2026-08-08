@@ -15,7 +15,10 @@ The platform team provides and operates:
   or scoped token that can create image-update pull requests;
 - registry access for `192.168.1.221:5000`;
 - workload Secrets and the production TiDB endpoint ConfigMap required by the
-  rendered manifests.
+  rendered manifests;
+- DNS and an `ssl-proxy-identity-tls` certificate for the hostname declared by
+  each environment overlay: `identity.dev.ssl-proxy.internal` for dev and
+  `identity.prod.ssl-proxy.internal` for prod.
 
 Platform inputs must be delivered by the platform's declarative control plane.
 Do not create or patch them by hand. This repository owns the `ssl-proxy`
