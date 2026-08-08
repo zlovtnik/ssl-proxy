@@ -36,19 +36,25 @@ spec:
               while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
                 case "$topic" in ''|'#'*) continue ;; esac
                 attempts=0
-                until description="$(rpk topic describe "$topic" --brokers "$brokers" --print-summary 2>/dev/null)"; do
-                  rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas" || true
-                  attempts="$((attempts + 1))"
-                  if [ "$attempts" -ge 30 ]; then
-                    echo "timed out creating topic $topic" >&2
-                    exit 1
-                  fi
-                  sleep 2
+                while :; do
+                  description="$(rpk topic describe "$topic" --brokers "$brokers" --print-summary 2>/dev/null || true)"
+                  current="$(printf '%s\n' "$description" | awk '
+                    $1 == "PARTITIONS" { print $2; exit }
+                    $1 == "NAME" && $2 == "PARTITIONS" { getline; print $2; exit }
+                  ')"
+                  case "$current" in
+                    ''|*[!0-9]*|0)
+                      rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas" || true
+                      attempts="$((attempts + 1))"
+                      if [ "$attempts" -ge 30 ]; then
+                        echo "timed out creating topic $topic" >&2
+                        exit 1
+                      fi
+                      sleep 2
+                      ;;
+                    *) break ;;
+                  esac
                 done
-                current="$(printf '%s\n' "$description" | awk '
-                  $1 == "PARTITIONS" { print $2; exit }
-                  $1 == "NAME" && $2 == "PARTITIONS" { getline; print $2; exit }
-                ')"
                 case "$current" in ''|*[!0-9]*) echo "unable to read partition count for $topic" >&2; exit 1 ;; esac
                 if [ "$current" -lt "$partitions" ]; then
                   rpk topic add-partitions "$topic" --brokers "$brokers" --num "$((partitions - current))"

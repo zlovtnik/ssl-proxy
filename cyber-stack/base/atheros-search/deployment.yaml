@@ -53,7 +53,7 @@ spec:
             - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
               value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
             - name: ATHSEARCH_SCHEMA_MANIFEST_SHA256
-              value: ""
+              value: "b10612a60b1a3cd3ca8c8c62d4098aaf9ebc8548b061aaefc952e3c020cf872c"
             - name: ATHSEARCH_EMBEDDING_MODEL
               value: "nomic-embed-text-v2-moe"
             - name: ATHSEARCH_EMBEDDING_DIMENSIONS

@@ -29,6 +29,46 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         ssl-proxy.io/wireless-sensor: "true"
+      initContainers:
+        - name: configure-monitor-interface
+          image: atheros-sensor:latest
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              device="${ATH_SENSOR_DEVICE:-}"
+              if [ -z "$device" ]; then
+                for net_path in /sys/class/net/*; do
+                  driver_path="$(readlink -f "$net_path/device/driver" 2>/dev/null || true)"
+                  case "$(basename "$driver_path")" in
+                    ath9k|ath9k_htc) device="$(basename "$net_path")"; break ;;
+                  esac
+                done
+              fi
+              [ -n "$device" ] || { echo "no ath9k wireless interface found" >&2; exit 1; }
+              iw reg set "$ATH_SENSOR_REG_DOMAIN"
+              ip link set "$device" down
+              iw dev "$device" set type monitor
+              ip link set "$device" up
+              iw dev "$device" set channel "$ATH_SENSOR_CHANNEL"
+          env:
+            - name: ATH_SENSOR_DEVICE
+              value: ""
+            - name: ATH_SENSOR_CHANNEL
+              value: "6"
+            - name: ATH_SENSOR_REG_DOMAIN
+              value: "US"
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_ADMIN"]
+          volumeMounts:
+            - name: sys-class-net
+              mountPath: /sys/class/net
+              readOnly: true
       containers:
         - name: atheros-sensor
           image: atheros-sensor:latest
