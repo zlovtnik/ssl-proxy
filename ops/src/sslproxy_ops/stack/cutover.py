@@ -71,15 +71,22 @@ def _live_uid(
     payload = json.loads(result.stdout)
     metadata = payload.get("metadata", {})
     annotations = metadata.get("annotations", {})
+    labels = metadata.get("labels", {})
     owner_source = "meta.helm.sh/release-name"
     owner_value = annotations.get("meta.helm.sh/release-name")
     if owner_value is None:
-        labels = metadata.get("labels", {})
-        owner_value = labels.get("app.kubernetes.io/managed-by")
+        owner_value = labels.get("app.kubernetes.io/instance")
         if owner_value is not None:
-            owner_source = "app.kubernetes.io/managed-by"
+            owner_source = "app.kubernetes.io/instance"
         else:
-            owner_source = "unowned"
+            owner_value = labels.get("app.kubernetes.io/managed-by")
+            if owner_value is not None:
+                if owner_value.lower() == "kustomize":
+                    owner_source = "kustomize"
+                else:
+                    owner_source = "unowned"
+            else:
+                owner_source = "unowned"
     return (
         str(metadata.get("uid", "")),
         owner_source,
@@ -125,8 +132,6 @@ def create_plan(
     ]
     split_resources = [resource for item in rendered for resource in item.resources]
     umbrella_resources = render_umbrella(
-        values,
-        runtime_overrides,
         namespace,
     )
     differences = parity_diff(umbrella_resources, split_resources)
@@ -146,11 +151,15 @@ def create_plan(
         if identity not in split_owner:
             continue
         uid, owner_source, owner_value = _live_uid(identity, namespace, context, kubeconfig)
-        if owner_source != "meta.helm.sh/release-name" or owner_value != umbrella_release:
-            if owner_source == "app.kubernetes.io/managed-by":
-                raise RuntimeError(
-                    f"{identity} is managed by {owner_value!r}, not owned by a Helm release"
-                )
+        if owner_source == "meta.helm.sh/release-name" and owner_value == umbrella_release:
+            pass
+        elif owner_source == "app.kubernetes.io/instance" and owner_value == umbrella_release:
+            pass
+        elif owner_source == "app.kubernetes.io/managed-by":
+            raise RuntimeError(
+                f"{identity} is managed by {owner_value!r}, not owned by a Helm release"
+            )
+        else:
             raise RuntimeError(
                 f"{identity} is owned by {owner_value!r}, expected {umbrella_release!r}"
             )
@@ -191,7 +200,7 @@ def create_plan(
     )
     _write_private(backups / "live-state.json", live_state.stdout)
     _write_private(
-        backups / "values.yaml",
+        backups / "overlay.yaml",
         yaml.safe_dump({"kustomize_overlay": kustomize_overlay}, sort_keys=True),
     )
     _write_private(backups / "manifest.redacted.yaml", _redact_manifest(manifest.stdout))
@@ -287,7 +296,7 @@ def apply_plan(
     _verify_confirmations(plan, context, release, drain_complete, kubeconfig)
     required_backups = (
         "live-state.json",
-        "values.yaml",
+        "overlay.yaml",
         "manifest.redacted.yaml",
         "pvcs.json",
     )
@@ -382,13 +391,15 @@ def finalize_plan(
                 raise RuntimeError(
                     f"split ownership proof failed: {identity} release-name {owner_value!r} not in planned releases"
                 )
-        elif owner_source == "app.kubernetes.io/managed-by":
-            labels = metadata.get("labels", {})
-            instance_value = labels.get("app.kubernetes.io/instance")
-            if instance_value not in planned_releases:
+        elif owner_source == "app.kubernetes.io/instance":
+            if owner_value not in planned_releases:
                 raise RuntimeError(
-                    f"split ownership proof failed: {identity} instance {instance_value!r} not in planned releases"
+                    f"split ownership proof failed: {identity} instance {owner_value!r} not in planned releases"
                 )
+        elif owner_source == "app.kubernetes.io/managed-by":
+            raise RuntimeError(
+                f"split ownership proof failed: {identity} is managed by {owner_value!r}, not a Helm release"
+            )
         else:
             raise RuntimeError(
                 f"split ownership proof failed: {identity} has no helm release-name annotation"
@@ -437,7 +448,10 @@ def rollback_plan(
             f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
         )
     overlay_path = (root_dir / kustomize_overlay).resolve()
-    if not str(overlay_path).startswith(str(root_dir.resolve())):
+    root_resolved = root_dir.resolve()
+    if overlay_path != root_resolved and not any(
+        parent == root_resolved for parent in overlay_path.parents
+    ):
         raise RuntimeError("overlay path escapes root directory")
     kustomize_apply(
         str(overlay_path),

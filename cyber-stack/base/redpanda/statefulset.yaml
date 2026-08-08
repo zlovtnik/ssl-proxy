@@ -23,10 +23,17 @@ spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redpanda
           image: redpandadata/redpanda:v24.2.7
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: POD_NAME
               valueFrom:
@@ -48,6 +55,7 @@ spec:
                 --reserve-memory 0M \
                 --node-id "$ORDINAL" \
                 --check=false \
+                --data-directory /data \
                 --kafka-addr INTERNAL://0.0.0.0:9092 \
                 --advertise-kafka-addr "INTERNAL://$(POD_NAME).ssl-proxy-redpanda.$(POD_NAMESPACE).svc.cluster.local:9092"
           ports:
@@ -118,6 +126,8 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: redpanda
@@ -135,10 +145,17 @@ spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redpanda-init
           image: redpandadata/redpanda:v24.2.7
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["/bin/sh", "-ec"]
           args:
             - |

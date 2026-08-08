@@ -19,6 +19,7 @@ import yaml
 from .core import StackConfig
 from .gates import _resolve_gate_resource
 from .shell import kubectl, kustomize_validate
+from .rendering import OVERLAY_MAP
 from sslproxy_ops.paths import repo_root
 
 
@@ -89,6 +90,19 @@ def preflight(
             f"kustomize validation failed: {(kustomize_result.stderr or '').strip()}"
         )
     results.append(CheckResult("tool/kustomize", True, "validated"))
+    overlay = OVERLAY_MAP.get(namespace)
+    if overlay:
+        overlay_result = kustomize_validate(
+            str(root_dir / overlay),
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if overlay_result.returncode != 0:
+            raise RuntimeError(
+                f"overlay validation failed for {overlay}: {(overlay_result.stderr or '').strip()}"
+            )
+        results.append(CheckResult("tool/kustomize-overlay", True, "validated"))
     kubectl_version = kubectl(
         "version",
         "--client",

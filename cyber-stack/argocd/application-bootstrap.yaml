@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ssl-proxy-data-plane
+  name: ssl-proxy-bootstrap
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/zlovtnik/ssl-proxy.git
     targetRevision: dev
-    path: cyber-stack/matrix/dev/data-plane
+    path: cyber-stack/matrix/dev/bootstrap
     directory:
       recurse: false
   destination:
@@ -22,8 +22,3 @@ spec:
       - PrunePropagationPolicy=foreground
       - ApplyOutOfSyncOnly=true
       - ServerSideApply=true
-  ignoreDifferences:
-    - group: apps
-      kind: StatefulSet
-      jsonPointers:
-        - /spec/volumeClaimTemplates

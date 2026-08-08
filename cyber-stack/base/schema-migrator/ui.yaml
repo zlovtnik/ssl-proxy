@@ -36,7 +36,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: ui
-          image: schema-migrator-ui:neon-alpha-v2
+          image: schema-migrator-ui@sha256:e0b5e2e8db8a94b1a3a2cf58f7a2c48a6762c93d22a79ed58594673540840160
           imagePullPolicy: Always
           ports:
             - name: http

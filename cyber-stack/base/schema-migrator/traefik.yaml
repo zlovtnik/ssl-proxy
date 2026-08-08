@@ -10,6 +10,10 @@ metadata:
     app.kubernetes.io/component: schema-migrator-traefik
     app.kubernetes.io/managed-by: kustomize
 spec:
+  # NOTE: replicas is 1 because traefik uses hostPort (80/443) which prevents
+  # multiple pods from binding the same port on a single node.  The Recreate
+  # strategy means brief unavailability during updates; accept this trade-off
+  # or switch to a DaemonSet/NodePort pattern for zero-downtime upgrades.
   replicas: 1
   revisionHistoryLimit: 3
   strategy:
@@ -26,6 +30,8 @@ spec:
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
+      nodeSelector:
+        ssl-proxy.io/ingress: "true"
       securityContext:
         fsGroup: 65532
         fsGroupChangePolicy: OnRootMismatch
@@ -33,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: traefik
-          image: traefik:v3.6.25
+          image: traefik@sha256:996b026a32b1bb6c85c200e5cf25276c1caa84ddea6b1e3a33e78cdc5cbe8d0c
           imagePullPolicy: Always
           args:
             - --api.dashboard=false
@@ -42,6 +48,7 @@ spec:
             - --entrypoints.web.address=:8000
             - --entrypoints.web.http.redirections.entrypoint.to=websecure
             - --entrypoints.web.http.redirections.entrypoint.scheme=https
+            - --entrypoints.web.http.redirections.entrypoint.port=443
             - --entrypoints.websecure.address=:8443
             - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
             - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0s

@@ -43,7 +43,7 @@ data:
         folder: "ssl-proxy"
         type: file
         disableDeletion: false
-        editable: true
+        editable: false
         options:
           path: /var/lib/grafana/dashboards
           foldersFromFilesStructure: false

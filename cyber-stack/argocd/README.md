@@ -1,15 +1,16 @@
-# Argo CD + Kustomize Workmap — ssl-proxy
+  # Argo CD + Kustomize Workmap — ssl-proxy
 
 ## Architecture
 
-Split into two Argo CD Applications for blast-radius control:
+Split into three Argo CD Applications for blast-radius control:
 
 | Application | Path | Purpose |
 |---|---|---|
-| `data-plane` | `cyber-stack/matrix/prod` | Namespace, platform-config, TiDB, Redpanda, MinIO, Redis, telemetry, tidb-schema-executor |
-| `app-stack` | `cyber-stack/matrix/prod` | Schema-migrator, proxy, java-coordinator, atheros-sensor, atheros-search |
+| `bootstrap` | `cyber-stack/matrix/dev/bootstrap` | Namespace, ServiceAccount, ConfigMap (platform-config) |
+| `data-plane` | `cyber-stack/matrix/dev/data-plane` | TiDB, Redpanda, MinIO, Redis, telemetry, tidb-schema-executor |
+| `app-stack` | `cyber-stack/matrix/dev/app-stack` | Schema-migrator, proxy, java-coordinator, atheros-sensor, atheros-search |
 
-Both Applications point at the same kustomize overlay (`cyber-stack/matrix/prod`) but use `directory.include` to filter which resources they manage. Sync waves handle ordering within each Application.
+All Applications deploy the development overlay (`cyber-stack/matrix/dev`) with `targetRevision: dev` and `directory.recurse: false`. The `bootstrap` Application must sync and become healthy before `data-plane` and `app-stack`. Sync waves handle ordering within each Application.
 
 ## Sync Waves
 
@@ -17,10 +18,9 @@ Both Applications point at the same kustomize overlay (`cyber-stack/matrix/prod`
 
 | Wave | Resources |
 |---|---|
-| `-2` | Namespace |
 | `-1` | ServiceAccount, ConfigMap (platform-config) |
 | `0` | TiDB, Redpanda, MinIO, Redis, telemetry |
-| `1` | tidb-schema-executor Job (PreSync hook) |
+| `1` | tidb-schema-executor Job |
 
 ### app-stack
 
@@ -28,7 +28,7 @@ Both Applications point at the same kustomize overlay (`cyber-stack/matrix/prod`
 |---|---|
 | `0` | proxy, java-coordinator, atheros-sensor, atheros-search |
 | `1` | schema-migrator keycloak, traefik, configmaps |
-| `2` | bootstrap-job (PreSync hook) |
+| `2` | bootstrap-job |
 | `3` | schema-migrator backend, ui |
 | `4` | validate-job (PostSync hook) |
 

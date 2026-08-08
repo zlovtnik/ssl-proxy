@@ -5,7 +5,7 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   labels:
     app.kubernetes.io/name: tidb-schema-executor
@@ -31,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: schema
-          image: tidb-runtime-schema:stable
+          image: tidb-runtime-schema
           imagePullPolicy: Always
           env:
             - name: TIDB_SCHEMA_OWNER_DSN

@@ -21,6 +21,8 @@ spec:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: telemetry-pushgateway
     spec:
+      securityContext:
+        fsGroup: 65534
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       containers:
@@ -60,7 +62,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: ssl-proxy-telemetry-pushgateway-data
+            claimName: ssl-proxy-telemetry-pushgateway
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

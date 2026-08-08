@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Iterable
@@ -17,6 +18,16 @@ import yaml
 
 from .core import StackConfig, generate_effective_values
 from .shell import kustomize_build
+
+_REDACTED_KEY_PATTERN = re.compile(
+    r"password|secret|token|privatekey|apikey|credentials",
+    re.IGNORECASE,
+)
+
+
+def _filter_sensitive(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *data* with sensitive top-level keys excluded."""
+    return {k: v for k, v in data.items() if not _REDACTED_KEY_PATTERN.search(k)}
 
 
 @dataclass(frozen=True)
@@ -68,7 +79,9 @@ def render_component(
     component = config.components[name]
     if component.type not in ("helm", "helm-job"):
         raise ValueError(f"Offline rendering for {component.type!r} is not implemented")
-    overlay_path = f"cyber-stack/base/{name}"
+    overlay_path = component.chart
+    if not overlay_path:
+        raise ValueError(f"Component {name!r} has no chart path (kustomize overlay)")
     with tempfile.TemporaryDirectory(prefix=f"stackctl-render-{name}-") as temp_dir:
         temp = Path(temp_dir)
         overlay_src = Path(root_dir) / overlay_path
@@ -83,7 +96,8 @@ def render_component(
             runtime_overrides=runtime_overrides,
             root_dir=root_dir,
         )
-        values_yaml = yaml.safe_dump(effective, default_flow_style=False)
+        safe_effective = _filter_sensitive(effective)
+        values_yaml = yaml.safe_dump(safe_effective, default_flow_style=False)
         (temp / "values.yaml").write_text(values_yaml)
         os.chmod(temp / "values.yaml", 0o600)
         kustomization = {
@@ -94,6 +108,9 @@ def render_component(
                 {
                     "name": f"{name}-effective-values",
                     "files": ["values.yaml"],
+                    "options": {
+                        "disableNameSuffixHash": True,
+                    },
                 }
             ],
         }
@@ -104,23 +121,17 @@ def render_component(
 
 
 OVERLAY_MAP = {
+    "ssl-proxy": "cyber-stack/base",
     "prod-ssl-proxy": "cyber-stack/matrix/prod",
     "dev-ssl-proxy": "cyber-stack/matrix/dev",
 }
 
 
 def render_umbrella(
-    umbrella_values: list[dict[str, Any]],
-    runtime_overrides: dict[str, Any] | None,
     namespace: str,
 ) -> list[dict[str, Any]]:
     """Render the normalized umbrella baseline via kustomize."""
 
-    if runtime_overrides:
-        raise ValueError("runtime_overrides are not supported for umbrella rendering")
-    for values in umbrella_values:
-        if values:
-            raise ValueError("umbrella_values are not supported for umbrella rendering")
     overlay = OVERLAY_MAP.get(namespace)
     if overlay is None:
         raise ValueError(

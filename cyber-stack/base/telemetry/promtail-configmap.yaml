@@ -31,7 +31,7 @@ data:
       forward_to = [loki.write.default.receiver]
     }
 
-    loki.source.files "default" {
+    loki.source.file "default" {
       targets = [
         {__path__ = "/var/log/containers/*.log", job = "container-logs"},
       ]
@@ -42,7 +42,7 @@ data:
       stage.cri {}
 
       stage.regex {
-        expression = "^(?P<pod_name>[^_]+)_(?P<namespace>[^_]+)_(?P<container>.+)-(?P<container_id>[a-f0-9]+)\\.log$"
+        expression = "^.*/(?P<pod_name>[^_]+)_(?P<namespace>[^_]+)_(?P<container>.+)-(?P<container_id>[a-f0-9]+)\\.log$"
         source = "filename"
       }
 

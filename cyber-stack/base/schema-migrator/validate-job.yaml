@@ -13,7 +13,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
 spec:
   backoffLimit: 3
-  activeDeadlineSeconds: 600
+  activeDeadlineSeconds: 900
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: validate
-          image: busybox:1.37.0
+          image: busybox@sha256:3b3e3327c33950c386e85312393d20b40e2d40f72e53b40e65b7f68b4c0f5a5f
           imagePullPolicy: Always
           command: ["/bin/sh", "-ec"]
           args:

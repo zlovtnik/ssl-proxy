@@ -5,6 +5,8 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: schema-migrator-bootstrap
@@ -57,9 +59,10 @@ spec:
               if [ -z "$user_id" ]; then
                 "$KCADM" create users --config "$CONFIG" -r "$REALM" \
                   -s "username=$APP_USERNAME" -s enabled=true -s emailVerified=true >/dev/null
-                "$KCADM" set-password --config "$CONFIG" -r "$REALM" \
-                  --username "$APP_USERNAME" --new-password "$APP_PASSWORD" >/dev/null
               fi
+              "$KCADM" set-password --config "$CONFIG" -r "$REALM" \
+                --username "$APP_USERNAME" --new-password - >/dev/null \
+                <<< "$APP_PASSWORD"
 
               client_uuid=""
               for attempt in $(seq 1 45); do
@@ -94,10 +97,15 @@ spec:
               value: "middleware"
             - name: CLIENT_ID
               value: "bedrock-ui"
+            - name: IDENTITY_HOSTNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: IDENTITY_HOSTNAME
             - name: PUBLIC_ORIGIN
-              value: "https://identity.example.internal"
+              value: "https://$(IDENTITY_HOSTNAME)"
             - name: UI_ORIGIN
-              value: "https://identity.example.internal"
+              value: "https://$(IDENTITY_HOSTNAME)"
             - name: ADMIN_ROLE
               value: "admin"
             - name: APP_USERNAME

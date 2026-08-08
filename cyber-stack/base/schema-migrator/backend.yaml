@@ -51,6 +51,9 @@ spec:
                 -keystore /run/tidb-tls/truststore.p12 \
                 -storetype PKCS12 \
                 -storepass changeit
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: -Djava.io.tmpdir=/tmp
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -72,6 +75,8 @@ spec:
               readOnly: true
             - name: tidb-truststore
               mountPath: /run/tidb-tls
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: backend
           image: schema-migrator-backend:latest
@@ -100,8 +105,13 @@ spec:
               value: "0.0.0.0"
             - name: BEDROCK_HTTP_PORT
               value: "8080"
+            - name: IDENTITY_HOSTNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: IDENTITY_HOSTNAME
             - name: BEDROCK_CORS_ORIGINS
-              value: "https://identity.example.internal"
+              value: "https://$(IDENTITY_HOSTNAME)"
             - name: BEDROCK_ENCRYPT_KEY
               valueFrom:
                 secretKeyRef:
@@ -122,7 +132,7 @@ spec:
             - name: BEDROCK_KEYCLOAK_ENABLED
               value: "true"
             - name: BEDROCK_KEYCLOAK_ISSUER
-              value: "https://identity.example.internal/realms/middleware"
+              value: "https://$(IDENTITY_HOSTNAME)/realms/middleware"
             - name: BEDROCK_KEYCLOAK_JWKS_URI
               value: "http://ssl-proxy-schema-migrator-keycloak:8080/realms/middleware/protocol/openid-connect/certs"
             - name: BEDROCK_KEYCLOAK_CLIENT_ID

@@ -45,6 +45,7 @@ data:
   WIRELESS_BACKLOG_PRUNE_REPLY_TOPIC: "wireless.backlog.prune.reply"
   WIRELESS_MAC_LOOKUP_REPLY_TOPIC: "wireless.mac.lookup.reply"
   WIRELESS_NETWORKS_AUTHORIZED_REPLY_TOPIC: "wireless.networks.authorized.reply"
+  IDENTITY_HOSTNAME: "identity.example.internal"
 ---
 apiVersion: v1
 kind: ConfigMap

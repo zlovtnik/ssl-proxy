@@ -185,7 +185,7 @@ def kustomize_apply(
         if label_selector:
             wait_cmd.extend(["-l", label_selector])
         else:
-            wait_cmd.append("--all")
+            wait_cmd.extend(["--all"])
         wait_cmd.extend([
             "jobs",
             "-n",
@@ -194,31 +194,50 @@ def kustomize_apply(
         ])
         wait_result = _run(wait_cmd, check=False, capture=capture, stream=stream)
         if wait_result.returncode != 0:
-            failed_cmd = ["kubectl"]
-            if kubeconfig:
-                failed_cmd.extend(["--kubeconfig", kubeconfig])
-            elif context:
-                failed_cmd.extend(["--context", context])
-            failed_cmd.extend([
-                "wait",
-                "--for=condition=Failed",
-            ])
-            if label_selector:
-                failed_cmd.extend(["-l", label_selector])
+            wait_output = (wait_result.stdout or "") + (wait_result.stderr or "")
+            if "No matching resources found" in wait_output:
+                pass
             else:
-                failed_cmd.append("--all")
-            failed_cmd.extend([
-                "jobs",
-                "-n",
-                namespace,
-                "--timeout=5s",
-            ])
-            failed_check = _run(failed_cmd, check=False, capture=capture, stream=stream)
-            if failed_check.returncode == 0:
-                result.returncode = 1
-                result.stdout = (result.stdout or "") + "\n" + (failed_check.stdout or "")
-            else:
-                result.returncode = 1
+                failed_cmd = ["kubectl"]
+                if kubeconfig:
+                    failed_cmd.extend(["--kubeconfig", kubeconfig])
+                elif context:
+                    failed_cmd.extend(["--context", context])
+                failed_cmd.extend([
+                    "wait",
+                    "--for=condition=Failed",
+                ])
+                if label_selector:
+                    failed_cmd.extend(["-l", label_selector])
+                else:
+                    failed_cmd.extend(["--all"])
+                failed_cmd.extend([
+                    "jobs",
+                    "-n",
+                    namespace,
+                    "--timeout=5s",
+                ])
+                failed_check = _run(failed_cmd, check=False, capture=capture, stream=stream)
+                if failed_check.returncode == 0:
+                    if check:
+                        raise ShellError(
+                            command=("kubectl", "wait"),
+                            returncode=1,
+                            stdout="",
+                            stderr=(failed_check.stdout or "job failed"),
+                        )
+                    result.returncode = 1
+                    result.stdout = (result.stdout or "") + "\n" + (failed_check.stdout or "")
+                else:
+                    if check:
+                        raise ShellError(
+                            command=("kubectl", "wait"),
+                            returncode=1,
+                            stdout="",
+                            stderr="timed out waiting for jobs to complete or fail",
+                        )
+                    result.returncode = 1
+                    result.stderr = "timed out waiting for jobs to complete or fail"
     return result
 
 

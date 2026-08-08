@@ -22,6 +22,9 @@ spec:
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
@@ -139,7 +142,9 @@ spec:
             path: /dev/net/tun
             type: CharDevice
         - name: sync-outbox
-          emptyDir: {}
+          hostPath:
+            path: /var/lib/ssl-proxy/sync-outbox
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

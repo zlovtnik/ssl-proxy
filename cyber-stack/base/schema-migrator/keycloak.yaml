@@ -69,6 +69,8 @@ spec:
               readOnly: true
             - name: tidb-truststore
               mountPath: /run/tidb-tls
+            - name: tmp
+              mountPath: /tmp
         - name: prepare-keycloak-home
           image: quay.io/keycloak/keycloak:26.2.5
           imagePullPolicy: Always
@@ -79,9 +81,11 @@ spec:
             requests:
               cpu: 25m
               memory: 64Mi
+              ephemeral-storage: 500Mi
             limits:
               cpu: 250m
               memory: 256Mi
+              ephemeral-storage: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -100,7 +104,7 @@ spec:
           args:
             - start
             - --import-realm
-            - --hostname=identity.example.internal
+            - --hostname=$(IDENTITY_HOSTNAME)
             - --hostname-strict=false
             - --http-enabled=true
           env:
@@ -132,6 +136,11 @@ spec:
                 secretKeyRef:
                   name: schema-migrator-keycloak
                   key: bootstrap-admin-password
+            - name: IDENTITY_HOSTNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-platform-config
+                  key: IDENTITY_HOSTNAME
             - name: KC_PROXY_HEADERS
               value: xforwarded
             - name: KC_HTTP_ENABLED
@@ -166,9 +175,11 @@ spec:
             requests:
               cpu: 250m
               memory: 768Mi
+              ephemeral-storage: 500Mi
             limits:
               cpu: "2"
               memory: 2Gi
+              ephemeral-storage: 4Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -196,9 +207,11 @@ spec:
               readOnly: true
       volumes:
         - name: keycloak-home
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 2Gi
         - name: keycloak-data
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Gi
         - name: realm
           configMap:
             name: ssl-proxy-schema-migrator-keycloak-realm

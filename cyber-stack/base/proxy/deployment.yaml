@@ -25,6 +25,8 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: copy-wireguard-config
           image: ssl-proxy:latest

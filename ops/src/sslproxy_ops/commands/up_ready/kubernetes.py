@@ -1140,13 +1140,21 @@ def helm_release_history(ctx: UpReadyContext) -> list[dict[str, object]]:
 
 def helm_pending_recovery_command(ctx: UpReadyContext) -> str:
     """Return the kustomize recovery command for a pending release."""
+    from sslproxy_ops.stack.rendering import OVERLAY_MAP
+
     context = ctx.settings.kube_context
     ns = ctx.settings.kube_namespace
     root = repo_root()
-    overlay = root / "cyber-stack" / "base"
+    overlay = OVERLAY_MAP.get(ns)
+    if overlay is None:
+        raise UpReadyError(
+            f"namespace {ns!r} has no configured kustomize overlay; "
+            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
+        )
+    overlay_path = root / overlay
     context_flag = "" if not context else f" --context {context}"
     return (
-        f"kubectl{context_flag} apply -k {overlay}"
+        f"kubectl{context_flag} apply -k {overlay_path}"
         f" --namespace {ns}"
     )
 
@@ -1222,12 +1230,36 @@ def prepare_helm_release(ctx: UpReadyContext) -> bool:
                 context=ctx.settings.kube_context,
                 capture=True,
             )
-        for attempt in range(30):
-            if helm_release_status(ctx) is None:
-                return False
-            if attempt < 29:
-                time.sleep(1)
-        raise UpReadyError(f"Resources for release {ctx.settings.helm_release!r} still exist after cleanup")
+        for name in failed_names:
+            for attempt in range(30):
+                result = shell.kubectl(
+                    "get",
+                    name,
+                    "--namespace",
+                    ctx.settings.kube_namespace,
+                    "--ignore-not-found",
+                    "-o",
+                    "name",
+                    context=ctx.settings.kube_context,
+                    check=False,
+                    capture=True,
+                )
+                if not (result.stdout or "").strip():
+                    break
+                if attempt < 29:
+                    time.sleep(1)
+        shell.helm(
+            "uninstall",
+            ctx.settings.helm_release,
+            "--namespace",
+            ctx.settings.kube_namespace,
+            "--no-hooks",
+            "--wait",
+            context=ctx.settings.kube_context,
+            check=False,
+            capture=True,
+        )
+        return False
     raise UpReadyError(
         f"Release {ctx.settings.helm_release!r} is {status}; "
         "another operation may still be active"

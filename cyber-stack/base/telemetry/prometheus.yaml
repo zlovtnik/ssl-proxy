@@ -22,7 +22,7 @@ spec:
         app.kubernetes.io/component: telemetry-prometheus
     spec:
       serviceAccountName: ssl-proxy
-      automountServiceAccountToken: false
+      automountServiceAccountToken: true
       securityContext:
         fsGroup: 65534
         runAsNonRoot: true
@@ -73,7 +73,7 @@ spec:
             name: ssl-proxy-telemetry-prometheus-config
         - name: data
           persistentVolumeClaim:
-            claimName: ssl-proxy-telemetry-prometheus-data
+            claimName: ssl-proxy-telemetry-prometheus
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

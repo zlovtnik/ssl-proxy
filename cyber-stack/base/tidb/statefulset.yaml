@@ -180,6 +180,8 @@ metadata:
   namespace: ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: tidb-init
@@ -204,15 +206,20 @@ spec:
         - name: tidb-init
           image: tidb-runtime-schema:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -eu
               TIDB_HOST="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local"
+              escape_sql() { printf '%s' "$1" | sed "s/'/''/g; s/\\\\/\\\\\\\\/g"; }
               MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
 
               echo "Waiting for TiDB to be ready..."
-              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" 2>/dev/null; do
+              until bash -c "echo > /dev/tcp/${TIDB_HOST}/4000" 2>/dev/null; do
                 sleep 3
               done
               echo "TiDB is ready."
@@ -220,30 +227,35 @@ spec:
               # Probe root auth: try password first, fall back to passwordless for initial bootstrap
               export MYSQL_PWD="${ROOT_PASSWORD}"
               root_auth_works=false
+              root_passwordless_works=false
               if mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" >/dev/null 2>&1; then
                 root_auth_works=true
               else
                 unset MYSQL_PWD
                 if mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1" >/dev/null 2>&1; then
-                  root_auth_works=false
+                  root_passwordless_works=true
                 fi
                 export MYSQL_PWD="${ROOT_PASSWORD}"
               fi
+              if [ "$root_auth_works" != true ] && [ "$root_passwordless_works" != true ]; then
+                echo "cannot authenticate to TiDB as root with or without a password" >&2
+                exit 1
+              fi
 
               echo "Setting root password..."
+              root_sql=$(mktemp /tmp/root_auth_XXXXXX.sql)
+              cat > "${root_sql}" <<SQLEOF
+              CREATE USER IF NOT EXISTS 'root' IDENTIFIED BY '$(escape_sql "${ROOT_PASSWORD}")';
+              ALTER USER 'root' IDENTIFIED BY '$(escape_sql "${ROOT_PASSWORD}")';
+              SQLEOF
               if [ "$root_auth_works" = true ]; then
-                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
-                  "CREATE USER IF NOT EXISTS 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
-                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
-                  "ALTER USER 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} < "${root_sql}"
               else
                 unset MYSQL_PWD
-                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
-                  "CREATE USER IF NOT EXISTS 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
-                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
-                  "ALTER USER 'root' IDENTIFIED BY '${ROOT_PASSWORD}';"
+                mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} < "${root_sql}"
                 export MYSQL_PWD="${ROOT_PASSWORD}"
               fi
+              rm -f "${root_sql}"
               echo "Root password set."
 
               export MYSQL_PWD="${ROOT_PASSWORD}"
@@ -273,9 +285,9 @@ spec:
                 pass="${pair#*:}"
                 tmp_sql=$(mktemp /tmp/create_user_XXXXXX.sql)
                 cat > "${tmp_sql}" <<SQLEOF
-                CREATE USER IF NOT EXISTS '${acct}' IDENTIFIED BY '${pass}';
-                ALTER USER '${acct}' IDENTIFIED BY '${pass}';
-                SQLEOF
+                CREATE USER IF NOT EXISTS '${acct}' IDENTIFIED BY '$(escape_sql "${pass}")';
+                ALTER USER '${acct}' IDENTIFIED BY '$(escape_sql "${pass}")';
+              SQLEOF
                 mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} < "${tmp_sql}"
                 rm -f "${tmp_sql}"
               done
@@ -284,7 +296,114 @@ spec:
               until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1 FROM octopus_core.schema_readiness LIMIT 1" 2>/dev/null; do
                 sleep 5
               done
+              until mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e "SELECT 1 FROM atheros_search.search_documents LIMIT 1" 2>/dev/null; do
+                sleep 5
+              done
               echo "Schema tables are ready."
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-root
+                  key: password
+            - name: OCTOPUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-octopus
+                  key: password
+            - name: ATHEROS_SEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-atheros-search
+                  key: password
+            - name: SCHEMA_MIGRATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-schema-migrator
+                  key: password
+            - name: KEYCLOAK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-keycloak
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: tidb-tls
+          secret:
+            secretName: tidb-client-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-tidb-init-grants
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: tidb-init-grants
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: tidb-init-grants
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tidb-init-grants
+          image: tidb-runtime-schema:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              TIDB_HOST="ssl-proxy-tidb.${POD_NAMESPACE}.svc.cluster.local"
+              MYSQL_OPTS="--ssl-mode=VERIFY_IDENTITY --ssl-ca=/etc/tidb-tls/ca.crt"
+
+              echo "Waiting for TiDB to be ready..."
+              until bash -c "echo > /dev/tcp/${TIDB_HOST}/4000" 2>/dev/null; do
+                sleep 3
+              done
+              echo "TiDB is ready."
+
+              export MYSQL_PWD="${ROOT_PASSWORD}"
 
               echo "Granting permissions..."
               mysql -h "${TIDB_HOST}" -P 4000 -u root ${MYSQL_OPTS} -e \
@@ -359,7 +478,7 @@ spec:
               mysql -h "${TIDB_HOST}" -P 4000 -u root \
                 ${MYSQL_OPTS} -e \
                 "SELECT User, Host FROM mysql.user WHERE User IN ('octopus_runtime','atheros_search_runtime','schema_migrator_runtime','keycloak');"
-              echo "TiDB initialization complete."
+              echo "TiDB grants complete."
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -370,31 +489,22 @@ spec:
                 secretKeyRef:
                   name: tidb-root
                   key: password
-            - name: OCTOPUS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: tidb-octopus
-                  key: password
-            - name: ATHEROS_SEARCH_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: tidb-atheros-search
-                  key: password
-            - name: SCHEMA_MIGRATOR_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: tidb-schema-migrator
-                  key: password
-            - name: KEYCLOAK_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: tidb-keycloak
-                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           volumeMounts:
             - name: tidb-tls
               mountPath: /etc/tidb-tls
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: tidb-tls
           secret:
             secretName: tidb-client-ca

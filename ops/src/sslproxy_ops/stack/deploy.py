@@ -356,25 +356,35 @@ def _capture_job_logs(
 def _kustomize_resource_status(
     release: str, namespace: str, context: str | None, kubeconfig: str | None
 ) -> str | None:
-    """Get the deployment status for a kustomize-managed release, or None if not found."""
+    """Get the workload status for a kustomize-managed release, or None if not found."""
     result = kubectl(
         "get",
-        "deploy",
+        "deploy,sts,ds",
         release,
         "-n",
         namespace,
         "-o",
-        'jsonpath={.status.conditions[?(@.type=="Available")].status}',
+        "json",
         context=context,
         kubeconfig=kubeconfig,
         check=False,
     )
     if result.returncode != 0:
         return None
-    status = (result.stdout or "").strip()
-    if not status:
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except (json.JSONDecodeError, TypeError):
         return None
-    return "True" if status == "True" else "False"
+    items = payload.get("items", [])
+    if not items:
+        return None
+    for item in items:
+        status = item.get("status", {})
+        ready = status.get("readyReplicas", 0) or 0
+        desired = item.get("spec", {}).get("replicas", 1) or 1
+        if ready < desired:
+            return "False"
+    return "True"
 
 
 def _kustomize_deploy(
@@ -395,8 +405,12 @@ def _kustomize_deploy(
         raise ValueError(f"Component {release!r} has no chart path (kustomize overlay)")
 
     overlay_src = Path(chart)
-    if not overlay_src.is_absolute() and root_dir is not None:
-        overlay_src = (root_dir / chart).resolve()
+    if overlay_src.is_absolute():
+        overlay_src = overlay_src.resolve()
+    elif root_dir is not None:
+        # chart is already resolved by deploy_component; avoid double-joining
+        # when root_dir was already applied to the caller's chart_path.
+        overlay_src = overlay_src.resolve()
     else:
         overlay_src = overlay_src.resolve()
 
@@ -428,6 +442,9 @@ def _kustomize_deploy(
                 {
                     "name": f"{release}-effective-values",
                     "files": ["values.yaml"],
+                    "options": {
+                        "disableNameSuffixHash": True,
+                    },
                 }
             ],
         }
@@ -458,52 +475,74 @@ def _kustomize_rollback(
     context: str | None,
     kubeconfig: str | None,
 ) -> bool:
-    """Rollback kustomize-managed workloads to their previous revision.
+    """Reapply the live state of kustomize-managed workloads as a rollback.
 
-    Returns True if at least one supported workload was rolled back.
+    Fetches all resources labeled with the release and re-applies their current
+    live manifests, covering every object managed by the release rather than only
+    controller workloads.  Returns True if resources were reapplied.
     """
     result = kubectl(
         "get",
-        "deploy,sts,ds",
+        "deploy,sts,ds,job,service,configmap,secret,serviceaccount,networkpolicy,persistentvolumeclaim",
         "-n",
         namespace,
         "-l",
         f"app.kubernetes.io/instance={release}",
         "-o",
-        "name",
+        "json",
         context=context,
         kubeconfig=kubeconfig,
         check=False,
     )
     if result.returncode != 0 or not (result.stdout or "").strip():
         return False
-    rolled_back = False
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    items = payload.get("items", [])
+    if not items:
+        return False
+    reapplied = False
     failures: list[str] = []
-    for line in result.stdout.strip().splitlines():
-        resource = line.strip()
-        if not resource:
+    for item in items:
+        kind = item.get("kind", "")
+        name = (item.get("metadata") or {}).get("name", "")
+        if not kind or not name:
             continue
+        tmp_path = None
         try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", delete=False
+            ) as tmp:
+                yaml.safe_dump(item, tmp, default_flow_style=False)
+                tmp_path = tmp.name
             kubectl(
-                "rollout",
-                "undo",
-                resource,
+                "apply",
+                "-f",
+                tmp_path,
                 "-n",
                 namespace,
                 context=context,
                 kubeconfig=kubeconfig,
             )
-            rolled_back = True
+            reapplied = True
         except (ShellError, RuntimeError, OSError) as exc:
-            failures.append(f"{resource}: {exc}")
+            failures.append(f"{kind}/{name}: {exc}")
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
     if failures:
         raise ShellError(
-            command=("kubectl", "rollout", "undo"),
+            command=("kubectl", "apply"),
             returncode=1,
             stdout="",
             stderr="\n".join(failures),
         )
-    return rolled_back
+    return reapplied
 
 
 def _capture_failure_diagnostics(
@@ -940,13 +979,13 @@ def deploy_component(
             and not options.dry_run
         ):
             try:
-                _kustomize_rollback(
+                rollback_applied = _kustomize_rollback(
                     component.release,
                     options.namespace,
                     options.context,
                     options.kubeconfig,
                 )
-                rollback_status = "succeeded"
+                rollback_status = "succeeded" if rollback_applied else "no-op"
             except (ShellError, RuntimeError, OSError):
                 rollback_status = "failed"
 

@@ -35,6 +35,7 @@ data:
     {
       "realm": "middleware",
       "enabled": true,
+      "bruteForceProtected": true,
       "registrationAllowed": false,
       "resetPasswordAllowed": true,
       "loginWithEmailAllowed": true,
