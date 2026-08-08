@@ -15,7 +15,7 @@ LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
 KUBECTL ?= kubectl
 KUBE_CONTEXT ?= wiretrap-k3s
 ARGOCD_NAMESPACE ?= argocd
-ARGOCD_TIMEOUT ?= 20m
+ARGOCD_TIMEOUT_SECONDS ?= 1200
 ARGOCD_DATA_PLANE_APP ?= ssl-proxy-data-plane
 ARGOCD_APP_STACK_APP ?= ssl-proxy-app-stack
 
@@ -76,14 +76,37 @@ $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerf
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
 
+define wait_for_argocd_app
+	@deadline=$$((SECONDS + $(ARGOCD_TIMEOUT_SECONDS))); \
+	while (( SECONDS < deadline )); do \
+		phase="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.phase}')"; \
+		sync="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.sync.status}')"; \
+		health="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.health.status}')"; \
+		case "$$phase" in \
+			Failed|Error) \
+				message="$$($(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" get application "$(1)" -o jsonpath='{.status.operationState.message}')"; \
+				echo "Argo CD application $(1) failed: $$message" >&2; \
+				exit 1 \
+				;; \
+			Succeeded) \
+				if [[ "$$sync" = Synced && "$$health" = Healthy ]]; then \
+					echo "Argo CD application $(1) is Synced and Healthy"; \
+					exit 0; \
+				fi \
+				;; \
+		esac; \
+		sleep 5; \
+	done; \
+	echo "timed out waiting for Argo CD application $(1)" >&2; \
+	exit 1
+endef
+
 argocd-update-all: require-registry
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"spec":{"source":{"kustomize":{"images":["tidb-runtime-schema=$(REGISTRY)/tidb-runtime-schema:$(TAG)"]}}}}' >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"spec":{"source":{"kustomize":{"images":["ssl-proxy=$(REGISTRY)/ssl-proxy:$(TAG)","java-coordinator=$(REGISTRY)/java-coordinator:$(TAG)","atheros-sensor=$(REGISTRY)/atheros-sensor:$(TAG)","atheros-search=$(REGISTRY)/atheros-search:$(TAG)","atheros-search-ui=$(REGISTRY)/atheros-search-ui:$(TAG)","schema-migrator-backend=$(REGISTRY)/schema-migrator-backend:$(TAG)","schema-migrator-ui=$(REGISTRY)/schema-migrator-ui:$(TAG)"]}}}}' >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_DATA_PLANE_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_DATA_PLANE_APP)" --type merge -p '{"operation":{"sync":{"revision":"$(GIT_REVISION)","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' >/dev/null
-	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_DATA_PLANE_APP)" --for=jsonpath='{.status.operationState.phase}'=Succeeded --timeout="$(ARGOCD_TIMEOUT)"
-	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_DATA_PLANE_APP)" --for=jsonpath='{.status.health.status}'=Healthy --timeout="$(ARGOCD_TIMEOUT)"
+	$(call wait_for_argocd_app,$(ARGOCD_DATA_PLANE_APP))
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" annotate application "$(ARGOCD_APP_STACK_APP)" argocd.argoproj.io/refresh=hard --overwrite >/dev/null
 	@$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" patch application "$(ARGOCD_APP_STACK_APP)" --type merge -p '{"operation":{"sync":{"revision":"$(GIT_REVISION)","syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}' >/dev/null
-	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_APP_STACK_APP)" --for=jsonpath='{.status.operationState.phase}'=Succeeded --timeout="$(ARGOCD_TIMEOUT)"
-	$(KUBECTL) --context "$(KUBE_CONTEXT)" -n "$(ARGOCD_NAMESPACE)" wait application/"$(ARGOCD_APP_STACK_APP)" --for=jsonpath='{.status.health.status}'=Healthy --timeout="$(ARGOCD_TIMEOUT)"
+	$(call wait_for_argocd_app,$(ARGOCD_APP_STACK_APP))
