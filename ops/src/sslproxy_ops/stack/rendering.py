@@ -6,7 +6,6 @@ import copy
 import hashlib
 import json
 import os
-import re
 import shutil
 import tempfile
 from collections.abc import Iterable
@@ -18,31 +17,6 @@ import yaml
 
 from .core import StackConfig, generate_effective_values
 from .shell import kustomize_build
-
-_REDACTED_KEY_PATTERN = re.compile(
-    r"password|secret|token|privatekey|apikey|credentials",
-    re.IGNORECASE,
-)
-
-
-def _filter_sensitive_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _filter_sensitive_value(item)
-            for key, item in value.items()
-            if not _REDACTED_KEY_PATTERN.search(str(key))
-        }
-    if isinstance(value, list):
-        return [_filter_sensitive_value(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_filter_sensitive_value(item) for item in value)
-    return copy.deepcopy(value)
-
-
-def _filter_sensitive(data: dict[str, Any]) -> dict[str, Any]:
-    """Return a deep copy of *data* with sensitive keys excluded at every depth."""
-    return _filter_sensitive_value(data)
-
 
 @dataclass(frozen=True)
 class RenderedComponent:

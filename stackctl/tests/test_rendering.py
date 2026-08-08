@@ -10,30 +10,9 @@ from sslproxy_ops.stack.core import StackConfig
 from sslproxy_ops.stack.deploy import _redact_dict
 from sslproxy_ops.stack.rendering import (
     RenderedComponent,
-    _filter_sensitive,
     safe_artifact_dir,
     write_parity_artifacts,
 )
-
-
-def test_filter_sensitive_removes_nested_keys_from_collections():
-    filtered = _filter_sensitive(
-        {
-            "database": {"host": "tidb", "password": "db-password"},
-            "clients": [
-                {"name": "keycloak", "adminPassword": "admin-password"},
-                {"name": "public", "port": 8080},
-            ],
-        }
-    )
-
-    assert filtered == {
-        "database": {"host": "tidb"},
-        "clients": [
-            {"name": "keycloak"},
-            {"name": "public", "port": 8080},
-        ],
-    }
 
 
 def test_artifact_path_cannot_leave_repository(tmp_path: Path):

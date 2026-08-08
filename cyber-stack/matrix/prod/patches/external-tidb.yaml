@@ -10,19 +10,19 @@ spec:
         - name: java-coordinator
           env:
             - name: TIDB_HOST
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
                   key: TIDB_HOST
             - name: TIDB_PORT
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
                   key: TIDB_PORT
             - name: TIDB_SSL_SERVER_NAME
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
@@ -40,7 +40,7 @@ spec:
         - name: backend
           env:
             - name: BEDROCK_STATE_DB_URL
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
@@ -58,13 +58,13 @@ spec:
         - name: keycloak
           env:
             - name: KC_DB_URL_HOST
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
                   key: TIDB_HOST
             - name: KC_DB_URL_PORT
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
@@ -82,7 +82,7 @@ spec:
         - name: atheros-search
           env:
             - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
-              $patch: replace
+              value: null
               valueFrom:
                 configMapKeyRef:
                   name: ssl-proxy-prod-tidb-endpoint
