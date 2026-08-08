@@ -48,7 +48,15 @@ spec:
                     exit 1
                   fi
                 else
-                  rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas"
+                  attempts=0
+                  until rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas"; do
+                    attempts="$((attempts + 1))"
+                    if [ "$attempts" -ge 30 ]; then
+                      echo "timed out creating topic $topic" >&2
+                      exit 1
+                    fi
+                    sleep 2
+                  done
                 fi
                 rpk topic alter-config "$topic" --brokers "$brokers" --set "retention.ms=$retention_ms" --set "retention.bytes=$retention_bytes" >/dev/null
               done < /config/topics.manifest
