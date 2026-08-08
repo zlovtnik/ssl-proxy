@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssl-proxy-topics-manifest
+  namespace: ssl-proxy
+data:
+  topics.manifest: |
+    # topic|partitions|replicas|retention.ms|retention.bytes
+    sync.scan.request|24|3|2592000000|-1
+    sync.scan.request.dlq|24|3|2592000000|-1
+    sync.oracle.load|24|3|2592000000|-1
+    sync.oracle.load.dlq|24|3|2592000000|-1
+    sync.oracle.result|24|3|2592000000|-1
+    sync.oracle.result.dlq|24|3|2592000000|-1
+    proxy.events|24|3|2592000000|-1
+    proxy.events.dlq|24|3|2592000000|-1
+    proxy.payload_audit|3|3|2592000000|-1
+    proxy.payload_audit.dlq|3|3|2592000000|-1
+    wireless.audit|3|3|2592000000|-1
+    wireless.mac.seen|3|3|2592000000|-1
+    wireless.audit.enriched|3|3|2592000000|-1
+    wireless.audit.config|1|3|2592000000|-1
+    wireless.config.authorized_networks|1|3|2592000000|-1
+    wireless.config.sensor|1|3|2592000000|-1
+    wireless.client.inventory|3|3|2592000000|-1
+    audit.threat.shadow_device|3|3|2592000000|-1
+    wireless.mac.registry|1|3|2592000000|-1
+    wireless.backlog.save|3|3|2592000000|-1
+    wireless.backlog.save.dlq|3|3|2592000000|-1
+    wireless.backlog.list|3|3|2592000000|-1
+    wireless.backlog.list.dlq|3|3|2592000000|-1
+    wireless.backlog.synced|3|3|2592000000|-1
+    wireless.backlog.synced.dlq|3|3|2592000000|-1
+    wireless.backlog.prune|3|3|2592000000|-1
+    wireless.backlog.prune.dlq|3|3|2592000000|-1
+    wireless.backlog.list.reply|3|3|300000|-1
+    wireless.backlog.prune.reply|3|3|300000|-1
+    wireless.mac.lookup|3|3|2592000000|-1
+    wireless.mac.lookup.dlq|3|3|2592000000|-1
+    wireless.mac.lookup.reply|3|3|300000|-1
+    wireless.networks.authorized|3|3|2592000000|-1
+    wireless.networks.authorized.dlq|3|3|2592000000|-1
+    wireless.networks.authorized.reply|3|3|300000|-1
+    wireless.probe.flush|3|3|3600000|-1
+    wireless.probe.flush.dlq|3|3|2592000000|-1
+    audit.wireless.bandwidth|3|3|604800000|-1
+    wireless.alert.rogue_ap|3|3|2592000000|-1
+    wireless.alert.deauth_flood|3|3|2592000000|-1
+    wireless.alert.signal_anomaly|3|3|2592000000|-1
+    wireless.alert.pmf_attack|3|3|2592000000|-1
+    wireless.alert.attack_sequence|3|3|2592000000|-1
+    wifi.alert.handshake|3|3|2592000000|-1

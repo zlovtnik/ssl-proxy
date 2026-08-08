@@ -1,0 +1,215 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ssl-proxy-redpanda
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: redpanda
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  serviceName: ssl-proxy-redpanda
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: redpanda
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: redpanda
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redpanda
+          image: redpandadata/redpanda:v24.2.7
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp
+            - "1"
+            - --memory
+            - 2G
+            - --reserve-memory
+            - 0M
+            - --node-id
+            - "0"
+            - --kafka-addr
+            - INTERNAL://0.0.0.0:9092
+            - --advertise-kafka-addr
+            - INTERNAL://$(POD_NAME).ssl-proxy-redpanda.$(POD_NAMESPACE).svc.cluster.local:9092
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: admin
+              containerPort: 9644
+          readinessProbe:
+            exec:
+              command: ["rpk", "cluster", "info", "--brokers", "127.0.0.1:9092"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /v1/status/ready
+              port: admin
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2560Mi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            - name: redpanda-data
+              mountPath: /var/lib/redpanda/data
+  volumeClaimTemplates:
+    - metadata:
+        name: redpanda-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-redpanda
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: redpanda
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+    - name: admin
+      port: 9644
+      targetPort: admin
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-redpanda-init
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: redpanda
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  activeDeadlineSeconds: 600
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: redpanda-init
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redpanda-init
+          image: redpandadata/redpanda:v24.2.7
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              brokers=ssl-proxy-redpanda:9092
+              until rpk cluster info --brokers "$brokers" </dev/null >/dev/null 2>&1; do sleep 2; done
+              while IFS='|' read -r topic partitions replicas retention_ms retention_bytes || [ -n "$topic$partitions$replicas$retention_ms$retention_bytes" ]; do
+                case "$topic" in ''|'#'*) continue ;; esac
+                attempts=0
+                while :; do
+                  description="$(rpk topic describe "$topic" --brokers "$brokers" --print-summary </dev/null 2>/dev/null || true)"
+                  current="$(printf '%s\n' "$description" | awk '
+                    $1 == "PARTITIONS" { print $2; exit }
+                    $1 == "NAME" && $2 == "PARTITIONS" { getline; print $2; exit }
+                  ')"
+                  case "$current" in
+                    ''|*[!0-9]*|0)
+                      rpk topic create "$topic" --brokers "$brokers" --partitions "$partitions" --replicas "$replicas" </dev/null || true
+                      attempts="$((attempts + 1))"
+                      if [ "$attempts" -ge 30 ]; then
+                        echo "timed out creating topic $topic" >&2
+                        exit 1
+                      fi
+                      sleep 2
+                      ;;
+                    *) break ;;
+                  esac
+                done
+                case "$current" in ''|*[!0-9]*) echo "unable to read partition count for $topic" >&2; exit 1 ;; esac
+                if [ "$current" -lt "$partitions" ]; then
+                  rpk topic add-partitions "$topic" --brokers "$brokers" --num "$((partitions - current))" </dev/null
+                elif [ "$current" -gt "$partitions" ]; then
+                  echo "topic $topic has $current partitions, above desired $partitions" >&2
+                  exit 1
+                fi
+                rpk topic alter-config "$topic" --brokers "$brokers" --set "retention.ms=$retention_ms" --set "retention.bytes=$retention_bytes" </dev/null >/dev/null
+              done < /config/topics.manifest
+          volumeMounts:
+            - name: topics-manifest
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: topics-manifest
+          configMap:
+            name: ssl-proxy-topics-manifest

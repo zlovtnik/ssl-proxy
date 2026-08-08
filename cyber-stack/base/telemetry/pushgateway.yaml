@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-telemetry-pushgateway
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-pushgateway
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-pushgateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: telemetry-pushgateway
+    spec:
+      securityContext:
+        fsGroup: 65534
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      containers:
+        - name: pushgateway
+          image: prom/pushgateway:v1.8.0
+          imagePullPolicy: Always
+          args:
+            - "--web.listen-address=:9091"
+            - "--persistence.file=/pushgateway/persistence"
+          ports:
+            - containerPort: 9091
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /pushgateway
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ssl-proxy-telemetry-pushgateway
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ssl-proxy-telemetry-pushgateway
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-pushgateway
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-telemetry-pushgateway
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-pushgateway
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-pushgateway
+  ports:
+    - name: http
+      port: 9091
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-pushgateway
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-pushgateway
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-pushgateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssl-proxy
+              app.kubernetes.io/component: telemetry-prometheus
+      ports:
+        - port: 9091
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              ssl-proxy.io/metrics-producer: "true"
+      ports:
+        - port: 9091
+          protocol: TCP

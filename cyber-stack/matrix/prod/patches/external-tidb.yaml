@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: java-coordinator
+          env:
+            - name: TIDB_HOST
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_HOST
+            - name: TIDB_PORT
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_PORT
+            - name: TIDB_SSL_SERVER_NAME
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_TLS_SERVER_NAME
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-backend
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: BEDROCK_STATE_DB_URL
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: SCHEMA_MIGRATOR_TIDB_JDBC_URL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-keycloak
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: keycloak
+          env:
+            - name: KC_DB_URL_HOST
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_HOST
+            - name: KC_DB_URL_PORT
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_PORT
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-atheros-search
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: atheros-search
+          env:
+            - name: ATHSEARCH_TIDB_TLS_SERVER_NAME
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_TLS_SERVER_NAME

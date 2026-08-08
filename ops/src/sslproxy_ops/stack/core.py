@@ -806,7 +806,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         for name, component in config.components.items()
         if component.type in ("helm", "helm-job")
     ]
-    umbrella = render_umbrella(root_dir / "helm" / "ssl-proxy", values, overrides, namespace)
+    umbrella = render_umbrella(namespace, root_dir)
     differences = parity_diff(umbrella, [resource for item in split for resource in item.resources])
     artifact = safe_artifact_dir(
         root_dir,

@@ -87,10 +87,10 @@ OpenAI-compatible and Ollama response shapes. Enabling workers requires a
 non-empty backend URL and fails startup otherwise. With workers disabled, an
 empty backend selects the zero-vector client for search wiring tests only.
 
-The `vec-worker` Helm deployment passes the worker, embedding, TiDB TLS, and
-manifest settings to the container. Octopus produces search documents and
-embedding jobs only when `embedding-text-builder` and `embedding-preparer` are
-enabled after their dependencies; both remain disabled by default.
+The app-stack Kustomization passes worker, embedding, TiDB TLS and manifest
+settings to the container. Octopus produces search documents and embedding
+jobs only when `embedding-text-builder` and `embedding-preparer` are enabled
+after their dependencies; both remain disabled by default.
 
 ## Network and API
 

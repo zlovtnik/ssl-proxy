@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-schema-migrator-validate
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: schema-migrator-validate
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 2700
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: schema-migrator-validate
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: validate
+          image: busybox@sha256:3b3e3327c33950c386e85312393d20b40e2d40f72e53b40e65b7f68b4c0f5a5f
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              for i in $(seq 1 60); do
+                wget -qO- -T 5 http://ssl-proxy-schema-migrator-backend:8080/api/health && exit 0
+                sleep 5
+              done
+              exit 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532

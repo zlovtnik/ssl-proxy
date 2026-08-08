@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dev-ssl-proxy
+resources:
+  - ../../../base/tidb/statefulset.yaml
+  - ../../../base/redpanda/statefulset.yaml
+  - ../../../base/minio/statefulset.yaml
+  - ../../../base/redis-runtime/deployment.yaml
+  - ../../../base/tidb-schema-executor
+  - ../../../base/telemetry/prometheus.yaml
+  - ../../../base/telemetry/prometheus-configmap.yaml
+  - ../../../base/telemetry/grafana.yaml
+  - ../../../base/telemetry/grafana-configmaps.yaml
+  - ../../../base/telemetry/loki.yaml
+  - ../../../base/telemetry/loki-configmap.yaml
+  - ../../../base/telemetry/promtail.yaml
+  - ../../../base/telemetry/promtail-configmap.yaml
+  - ../../../base/telemetry/jaeger.yaml
+  - ../../../base/telemetry/otel-collector.yaml
+  - ../../../base/telemetry/otel-collector-configmap.yaml
+  - ../../../base/telemetry/node-exporter.yaml
+  - ../../../base/telemetry/cadvisor.yaml
+  - ../../../base/telemetry/pushgateway.yaml
+images:
+  - name: tidb-runtime-schema
+    newName: 192.168.1.221:5000/tidb-runtime-schema
+    digest: sha256:ae8835807252987c276204f1b1a58b350ab128080d209babc790096e0376a680
+patches:
+  - path: ../patches/tidb-replicas.yaml

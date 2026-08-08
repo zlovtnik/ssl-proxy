@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-proxy
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: ssl-proxy
+          resources:
+            limits:
+              cpu: "4"
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+spec:
+  replicas: 4
+  template:
+    spec:
+      containers:
+        - name: java-coordinator
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 512Mi

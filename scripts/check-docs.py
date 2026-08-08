@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the tracked README inventory and local Markdown links."""
+"""Validate documentation inventory, links, and Kubernetes delivery policy."""
 
 from __future__ import annotations
 
@@ -28,6 +28,30 @@ HTML_ANCHOR = re.compile(
 HEADING = re.compile(r"^\s{0,3}(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
 HTML_TAG = re.compile(r"<[^>]+>")
 INLINE_MARKUP = re.compile(r"[*_~`]")
+DOCUMENT_SUFFIXES = {".md", ".mdx", ".adoc", ".rst", ".txt"}
+FORBIDDEN_DEPLOYMENT_TERMS = (
+    re.compile(r"\bhelm\b", re.IGNORECASE),
+    re.compile(r"\bstackctl\b", re.IGNORECASE),
+    re.compile(r"\bflux(?:\s*cd)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:pulumi|terraform|skaffold|kapp|kpt|tanka)\b", re.IGNORECASE),
+    re.compile(r"\bdeployment\s*stack\b", re.IGNORECASE),
+)
+RETAINED_HELM_PATH = re.compile(r"(?<![\w.-])helm/ssl-proxy/charts/[^\s`'\")>]+")
+MUTATING_KUBECTL_VERBS = (
+    r"apply|create|delete|edit|patch|replace|rollout|scale|set"
+)
+MUTATING_KUBECTL = re.compile(
+    rf"\bkubectl\b"
+    rf"(?:\s+-{{1,2}}[^\s=]+(?:=[^\s]+|\s+(?!(?:{MUTATING_KUBECTL_VERBS})\b)[^\s]+)?)*"
+    rf"\s+(?:{MUTATING_KUBECTL_VERBS})\b",
+    re.IGNORECASE,
+)
+COMPOSE_REFERENCE = re.compile(
+    r"\b(?:docker[ -]compose|compose\.ya?ml)\b", re.IGNORECASE
+)
+LOCAL_DEVELOPMENT_HEADING = re.compile(
+    r"\b(?:local development|local test|development environment)\b", re.IGNORECASE
+)
 
 
 class GitError(RuntimeError):
@@ -183,8 +207,13 @@ def discover_readmes(
 
     parent_files = {
         item.decode("utf-8", errors="surrogateescape")
-        for item in run_git_bytes(root, "ls-files", "-z").split(b"\0")
+        for item in run_git_bytes(
+            root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
+        ).split(b"\0")
         if item
+    }
+    parent_files = {
+        path for path in parent_files if path in gitlink_paths or (root / path).is_file()
     }
     readmes = {
         path
@@ -216,14 +245,16 @@ def discover_readmes(
                 f"submodule checkout lacks parent-pinned commit {link.oid}: {link.path}"
             )
             continue
+        head = run_git(checkout, "rev-parse", "HEAD").strip()
+        snapshot_oid = head if head != link.oid else link.oid
         files = {
             item.decode("utf-8", errors="surrogateescape")
             for item in run_git_bytes(
-                checkout, "ls-tree", "-r", "--name-only", "-z", link.oid
+                checkout, "ls-tree", "-r", "--name-only", "-z", snapshot_oid
             ).split(b"\0")
             if item
         }
-        snapshots[link.path] = SubmoduleSnapshot(checkout, link.oid, files)
+        snapshots[link.path] = SubmoduleSnapshot(checkout, snapshot_oid, files)
         readmes.update(
             f"{link.path}/{item}"
             for item in files
@@ -328,15 +359,58 @@ def validate_document(path: Path, text: str, view: RepositoryView) -> list[str]:
 def tracked_parent_documents(root: Path) -> set[str]:
     files = {
         item.decode("utf-8", errors="surrogateescape")
-        for item in run_git_bytes(root, "ls-files", "-z").split(b"\0")
+        for item in run_git_bytes(
+            root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"
+        ).split(b"\0")
         if item
     }
     return {
         path
         for path in files
-        if Path(path).name == README_NAME
-        or (path.startswith("docs/") and path.endswith(".md"))
+        if Path(path).suffix.lower() in DOCUMENT_SUFFIXES and (root / path).is_file()
     }
+
+
+def validate_deployment_policy(path: Path, text: str) -> list[str]:
+    errors: list[str] = []
+    headings: dict[int, str] = {}
+    fence: tuple[str, int] | None = None
+
+    for number, line in enumerate(text.splitlines(), 1):
+        fence_match = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
+        if fence_match:
+            marker = fence_match.group(1)
+            candidate = (marker[0], len(marker))
+            if fence is None:
+                fence = candidate
+            elif candidate[0] == fence[0] and candidate[1] >= fence[1]:
+                fence = None
+        elif fence is None:
+            heading = HEADING.match(line)
+            if heading:
+                level = len(heading.group("marks"))
+                headings = {
+                    key: value for key, value in headings.items() if key < level
+                }
+                headings[level] = heading.group("title")
+
+        deployment_policy_line = RETAINED_HELM_PATH.sub("", line)
+        for pattern in FORBIDDEN_DEPLOYMENT_TERMS:
+            if pattern.search(deployment_policy_line):
+                errors.append(
+                    f"{path}:{number}: unsupported Kubernetes deployment technology is documented"
+                )
+        if MUTATING_KUBECTL.search(line):
+            errors.append(
+                f"{path}:{number}: mutating kubectl guidance is prohibited; change Git desired state"
+            )
+        if COMPOSE_REFERENCE.search(line):
+            context = " / ".join(headings.values())
+            if not LOCAL_DEVELOPMENT_HEADING.search(context):
+                errors.append(
+                    f"{path}:{number}: Docker Compose may be documented only under local-development headings"
+                )
+    return errors
 
 
 def check_repository(root: Path, inventory_path: Path | None = None) -> list[str]:
@@ -361,7 +435,7 @@ def check_repository(root: Path, inventory_path: Path | None = None) -> list[str
         documents.update(
             f"{prefix}/{relative}"
             for relative in snapshot.files
-            if Path(relative).suffix.lower() == ".md"
+            if Path(relative).suffix.lower() in DOCUMENT_SUFFIXES
         )
     for relative in sorted(documents):
         path = root / relative
@@ -371,6 +445,7 @@ def check_repository(root: Path, inventory_path: Path | None = None) -> list[str
             errors.append(f"{path}: cannot read tracked Markdown: {error}")
             continue
         errors.extend(validate_document(path, text, view))
+        errors.extend(validate_deployment_policy(path, text))
     return errors
 
 
@@ -390,7 +465,7 @@ def main() -> int:
         for error in errors:
             print(f"docs-check: {error}", file=sys.stderr)
         return 1
-    print("docs-check: README inventory and local Markdown links are valid")
+    print("docs-check: inventory, links, and Kubernetes delivery policy are valid")
     return 0
 
 

@@ -45,6 +45,26 @@ class ShellTest(unittest.TestCase):
         self.assertEqual(commands[0], ("kubectl", "get", "pods"))
         self.assertEqual(commands[1], ("helm", "list"))
 
+    def test_kustomize_apply_uses_server_side_field_manager(self):
+        completed = subprocess.CompletedProcess(args=["kubectl"], returncode=0)
+        with patch("subprocess.run", return_value=completed) as mocked:
+            shell.kustomize_apply("/tmp/overlay", context="test")
+
+        command = mocked.call_args.args[0]
+        self.assertEqual(
+            command,
+            (
+                "kubectl",
+                "--context",
+                "test",
+                "apply",
+                "--server-side",
+                "--field-manager=sslproxy-ops",
+                "-k",
+                "/tmp/overlay",
+            ),
+        )
+
     def test_stream_outputs_lines_in_real_time(self):
         result = shell.run(
             ["printf", "hello\nworld\n"],

@@ -36,11 +36,14 @@ spec:
     spec:
       automountServiceAccountToken: false
       hostNetwork: true
-      hostPID: true
       containers:
         - name: node-exporter
           image: {{ include "ssl-proxy-common.image" (dict "root" . "image" .Values.nodeExporter.image) }}
           imagePullPolicy: {{ .Values.nodeExporter.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           args:
             - --path.procfs=/host/proc
             - --path.sysfs=/host/sys

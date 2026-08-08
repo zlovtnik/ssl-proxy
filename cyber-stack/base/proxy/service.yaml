@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-proxy
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: proxy
+  ports:
+    - name: wireguard
+      port: 443
+      targetPort: 443
+      protocol: UDP
+    - name: wireguard-internal
+      port: 51820
+      targetPort: 51820
+      protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-proxy-admin
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: proxy
+  ports:
+    - name: admin
+      port: 3002
+      targetPort: 3002
+      protocol: TCP
+    - name: policy
+      port: 3001
+      targetPort: 3001
+      protocol: TCP

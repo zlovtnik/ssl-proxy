@@ -1,0 +1,76 @@
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: ssl-proxy-dev
+  namespace: argocd
+spec:
+  interval: 5m
+  writeBackConfig:
+    method: git:secret:argocd/ssl-proxy-image-updater-git
+    gitConfig:
+      repository: https://github.com/zlovtnik/ssl-proxy.git
+      branch: main
+      writeBackTarget: kustomization
+      pullRequest:
+        github: {}
+  applicationRefs:
+    - namePattern: ssl-proxy-data-plane
+      images:
+        - alias: tidb-runtime-schema
+          imageName: 192.168.1.221:5000/tidb-runtime-schema:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: tidb-runtime-schema
+    - namePattern: ssl-proxy-app-stack
+      images:
+        - alias: ssl-proxy
+          imageName: 192.168.1.221:5000/ssl-proxy:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: ssl-proxy
+        - alias: java-coordinator
+          imageName: 192.168.1.221:5000/java-coordinator:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: java-coordinator
+        - alias: atheros-sensor
+          imageName: 192.168.1.221:5000/atheros-sensor:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: atheros-sensor
+        - alias: atheros-search
+          imageName: 192.168.1.221:5000/atheros-search:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: atheros-search
+        - alias: atheros-search-ui
+          imageName: 192.168.1.221:5000/atheros-search-ui:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: atheros-search-ui
+        - alias: schema-migrator-backend
+          imageName: 192.168.1.221:5000/schema-migrator-backend:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: schema-migrator-backend
+        - alias: schema-migrator-ui
+          imageName: 192.168.1.221:5000/schema-migrator-ui:latest
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            kustomize:
+              name: schema-migrator-ui

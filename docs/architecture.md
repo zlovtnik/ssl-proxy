@@ -54,8 +54,8 @@ explicitly enabled.
 | TiDB schema executor | Shell/container in [`k8s/tidb-schema-executor/`](../k8s/tidb-schema-executor/) | Applying the checksummed canonical manifests | Application data processing |
 | WireGuard key rotator | Elixir in [`apps/wg-key-rotator/`](../apps/wg-key-rotator/) | Staged peer and server key rotation | Proxy traffic handling |
 
-The Helm and Compose service identity `java-coordinator` is a legacy deployment
-name for the Scala Octopus service.
+The Kubernetes resource and image identity `java-coordinator` is a legacy name
+for the Scala Octopus service.
 
 ## Durable state and database boundaries
 
@@ -70,9 +70,8 @@ application domains and a shared contract layer:
 | `schema_migrator` | Schema Migrator | Internal connection, execution and migration-control state |
 
 The shared [`contracts`](../sql/tidb/contracts/) manifest records cross-domain
-schema contracts. Helm also creates a separate `keycloak` database for the
-in-cluster Keycloak deployment. It is not one of the four application
-manifests.
+schema contracts. The in-cluster identity service uses a separate `keycloak`
+database. It is not one of the four application manifests.
 
 Only the provisioning schema executor may apply canonical DDL. Application
 runtimes verify the recorded manifest checksum and fail closed when the schema
@@ -126,86 +125,39 @@ the `ATHSEARCH_WORKER_*`, `ATHSEARCH_EMBEDDING_BATCH_SIZE`,
 `ATHSEARCH_LEASE_SECONDS` and `ATHSEARCH_POLL_INTERVAL_MS` variables documented
 in the [Atheros Search README](../services/atheros-search/README.md).
 
-## Deployment models
+## Kubernetes delivery
 
-Ports below describe the declared configuration, not a promise that every
-profile is production ready. Use the deployment-specific README before
-operating a stack.
-
-### Compose compatibility stack
-
-[`docker-compose.yaml`](../docker-compose.yaml) is a compatibility and local
-development topology. It bundles single-process TiDB/UniStore, Redpanda, MinIO
-and observability services. The `vector` profile adds Atheros Search.
-
-```mermaid
-flowchart TB
-    host443[Host UDP 443 and 51820] --> fd[wg-udp-frontdoor]
-    fd --> proxy[ssl-proxy]
-    proxy --> rp[Redpanda]
-    sensor[Atheros Sensor, host network] --> rp
-    rp --> oct[Octopus as java-coordinator]
-    oct --> tidb[Single-process TiDB/UniStore]
-    search[Atheros Search, vector profile] --> tidb
-    obs[Promtail, Loki, Prometheus, OTel, Jaeger, Grafana] --> view[Host-local observability UIs]
-```
-
-The frontdoor owns UDP `443` and `51820`. Proxy ports `3001` and `3002`,
-frontdoor health `3003`, TiDB `4000`, search `8080`, and most observability
-ports are host-local. Grafana is declared on `3004` and Jaeger on `16686`.
-Profile-dependent ports are documented in the [root README](../README.md) and
-[runbook](runbook.md).
-
-### Umbrella Helm release
-
-[`helm/ssl-proxy/`](../helm/ssl-proxy/) is the compatibility Kubernetes
-deployment. The umbrella chart declares 13 dependencies: `platform-config`,
-`proxy`, `java-coordinator`, `schema-migrator`, `atheros-sensor`, `redpanda`,
-`minio`, `tidb`, `telemetry`, `vec-worker`, `atheros-search`,
-`redis-runtime`, and `tidb-schema-executor`. `vec-worker` is disabled and
-retained only as a compatibility chart; its runtime responsibility moved into
-Atheros Search.
-
-```mermaid
-flowchart TB
-    umbrella[ssl-proxy umbrella release] --> shared[platform-config]
-    umbrella --> infra[TiDB, Redpanda, MinIO, Redis, telemetry]
-    umbrella --> schema[TiDB schema executor]
-    umbrella --> migrator[Schema Migrator and Keycloak]
-    umbrella --> apps[Octopus, Atheros Search/UI, sensor]
-    umbrella --> edge[Proxy]
-    schema --> apps
-    infra --> apps
-```
-
-The single-node `values-k8s.yaml` overlay enables the schema executor, Schema
-Migrator, Search and UI, and exposes selected host ports. Default values and
-the overlay have different operational assumptions; always render the exact
-values used for a deployment.
-
-### Opt-in stackctl split releases
-
-[`stackctl/stack.yaml`](../stackctl/stack.yaml) deploys the same subcharts as
-separate releases with dependency gates. It is opt in through
-`make up-ready-stackctl` or the `make stackctl-*` targets.
+Kubernetes desired state is defined under [`cyber-stack/`](../cyber-stack/).
+Kustomize separates environment-neutral resources from dev and prod patches.
+Argo CD tracks `main` and reconciles three Applications per environment:
+`bootstrap`, `data-plane` and `app-stack`.
 
 ```mermaid
 flowchart LR
-    bootstrap[platform-config] --> infra[TiDB, Redpanda, MinIO, Redis, telemetry]
-    infra --> executor[TiDB schema executor]
-    executor --> migrator[Schema Migrator]
-    migrator --> apps[Octopus and Atheros Search]
-    apps --> proxy[Proxy]
-    sensor[Atheros Sensor] --> apps
+    git[main branch] --> argo[Argo CD]
+    argo --> bootstrap[Namespace and platform config]
+    bootstrap --> data[Redpanda, MinIO, Redis, schema and telemetry]
+    data --> apps[Octopus, Search, sensor and Schema Migrator]
+    apps --> proxy[WireGuard proxy]
 ```
 
-stackctl owns release ordering, gates, checks and failure diagnostics. Image
-builds, secrets, TLS generation and node preparation stay in the surrounding
-operations workflow. See the [stackctl README](../stackctl/README.md).
+Dev image digests are proposed by Argo CD Image Updater through Git pull
+requests. Production promotion copies tested dev digests in a separately
+reviewed pull request. Automated sync, pruning and self-healing keep the live
+cluster aligned with Git, but Namespace resources are excluded from automated
+pruning and require explicit operator confirmation. Rollback is a Git revert.
+The complete management and workload-onboarding contract is in the
+[Kubernetes GitOps guide](../cyber-stack/README.md).
+
+## Local development
+
+Docker Compose may be used as a local test harness for component integration.
+It is not a Kubernetes management or production model. Local health does not
+replace Kustomize render validation or Argo CD application health.
 
 ## Observability
 
-Container logs flow through Promtail to Loki. Prometheus scrapes application
+Container logs flow through Alloy to Loki. Prometheus scrapes application
 and infrastructure metrics. OTLP traces flow through the OpenTelemetry
 Collector to Jaeger; the collector also exposes span-derived Prometheus
 metrics. Grafana provisions Prometheus, Loki and Jaeger data sources. The
@@ -235,10 +187,10 @@ These are documentation of current limitations, not hidden future behavior:
 2. Atheros Search installs HTTP/gRPC tracing hooks, but the server does not
    initialize an OTLP exporter or SDK tracer provider. Setting
    `OTEL_EXPORTER_OTLP_ENDPOINT` alone does not export its spans.
-3. Compose and the default single-node Kubernetes overlay run TiDB with
-   UniStore. That topology does not demonstrate production TiFlash placement,
-   distributed failure tolerance or vector-index readiness. Production claims
-   require a real TiDB/TiFlash cluster and an explicit readiness rehearsal.
+3. The dev Kubernetes overlay runs TiDB with UniStore. That topology does not
+   demonstrate production TiFlash placement, distributed failure tolerance or
+   vector-index readiness. Production claims require a real TiDB/TiFlash
+   cluster and an explicit readiness rehearsal.
 
 Until these gaps are closed, deployment success means the declared health
 gates passed; it does not prove production-grade TiFlash/vector capacity.

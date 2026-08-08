@@ -120,7 +120,7 @@ metrics:
   heartbeatLogIntervalMs: 15000
 tidb:
   enabled: true
-  schemaManifestSHA256: "e877cd43832f3478fc43a0c308897e992287c666ccfa4180ff17dabcb3aa59cf"
+  schemaManifestSHA256: "9b3a4105fe026991a5f66f0a6748bd565e67a0c2c76b52cd5d6b05bd279d4f41"
   poolSize: 20
   healthcheckReserve: 2
   connectionTimeoutMs: 5000

@@ -24,9 +24,9 @@ DDL:
 | `schema_migrator` | `schema_migrator_runtime` | Schema Migrator internal CRUD and execution state |
 | `contracts` | schema executor | Shared manifest and contract recording |
 
-Helm creates a separate `keycloak` database and `keycloak` account for the
-in-cluster identity provider. It is deployment-owned and is not a fifth
-application manifest.
+The in-cluster identity provider uses a separate `keycloak` database and
+`keycloak` account. It is platform-owned and is not a fifth application
+manifest.
 
 ## Provisioning authority
 
@@ -92,8 +92,8 @@ manifest hash. Schema Migrator uses its `BEDROCK_STATE_DB_*` settings for the
 TiDB internal store.
 
 Every connection parameter consumed by an application must have a matching
-Helm value and deployment environment variable. Keep application defaults,
-`global.shared.tidb` and subchart templates aligned.
+Kustomize ConfigMap, Secret or environment patch source. Keep application
+defaults, the base manifests and both environment slices aligned.
 
 ## Cutover procedure
 
@@ -127,9 +127,10 @@ A cutover is accepted only when operators can show:
   dependencies;
 - no application connection to an internal PostgreSQL store.
 
-Single-node TiDB/UniStore in Compose and `values-k8s.yaml` is suitable for
-development and compatibility testing. It does not prove TiFlash placement,
-distributed failover or production vector-index readiness.
+The single-node TiDB/UniStore topology in the
+`cyber-stack/matrix/dev` Kustomize overlay is suitable for development and
+compatibility testing. It does not prove TiFlash placement, distributed
+failover or production vector-index readiness.
 
 ## Rollback
 

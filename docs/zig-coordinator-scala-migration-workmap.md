@@ -41,7 +41,7 @@ These decisions keep the migration bounded and avoid combining a language rewrit
 | Oracle | Keep raw Oracle JDBC behind a narrow adapter and wrap blocking operations in `IO.blocking`. |
 | HTTP | Use http4s and retain compatibility endpoints on port `8081`. |
 | JSON | Use Circe codecs with explicit snake_case contract fields and unknown-field tolerance. |
-| Deployment identity | Initially retain image/service/chart/OTEL identity `java-coordinator` and Helm key `javaCoordinator`. Rename only in a later, separate change. |
+| Deployment identity | Initially retain image, Kubernetes resource and OTEL identity `java-coordinator`. Rename only in a later, separate change. |
 | Topics and groups | Preserve all topic names, consumer groups, reply topics, DLQs, and stream allowlists. |
 | Database schema | Do not redesign coordinator tables or stored functions as part of the language migration. |
 | Delivery | Preserve at-least-once behavior; acknowledge Kafka only at the current durable boundary. |
@@ -161,7 +161,7 @@ Golden fixtures must cover the three core sync messages:
 ### 4.3 Locked Operational Contracts
 
 - Container application port remains `8081`.
-- Helm Service continues to expose `8080` and target `8081`.
+- The Kubernetes Service continues to expose `8080` and target `8081`.
 - `/actuator/health` and `/actuator/prometheus` remain available, either as primary routes or compatibility aliases.
 - Existing metric names and labels remain scrape-compatible.
 - Existing environment variables remain accepted for the first Scala release.
@@ -187,7 +187,7 @@ Golden fixtures must cover the three core sync messages:
 
 ### Task 0.1: Record the production contract inventory
 
-- [ ] Export the effective environment-variable surface from `application.yaml`, Compose, Helm, and operations tooling.
+- [ ] Export the effective environment-variable surface from `application.yaml`, Kustomize and operations tooling.
 - [ ] Record topic, group, stream, reply-topic, and DLQ names.
 - [ ] Record HTTP paths, ports, probes, metrics, labels, and structured-log event names.
 - [ ] Record every PostgreSQL function called by `DatabaseService` and every Oracle object checked or written by the sink.
@@ -282,7 +282,7 @@ For each entry, record owner, decision, rationale, test expectation, and release
 - [ ] Model readiness from initialized resources and worker state, not merely process liveness.
 - [ ] Exclude high-frequency probe paths from access logs.
 
-**DoD:** Existing Compose, Helm, operations checks, and Prometheus configuration can query the Scala skeleton without changes.
+**DoD:** Existing Kustomize renders, Argo CD health checks and Prometheus configuration can query the Scala skeleton without changes.
 
 **Phase gate:** The Scala assembly starts in a container, exposes compatibility health/metrics routes, and shuts down cleanly.
 
@@ -656,7 +656,7 @@ For each entry, record owner, decision, rationale, test expectation, and release
 - [ ] Mark stale lag or failed maintenance as degraded without unnecessary restarts.
 - [ ] Preserve compatibility JSON needed by operations tooling.
 
-**DoD:** Compose, Helm, and operations readiness checks pass for healthy, degraded, dependency-down, and shutdown states.
+**DoD:** Kustomize render and Argo CD readiness checks pass for healthy, degraded, dependency-down and shutdown states.
 
 ### Task 10.4: Validate graceful shutdown
 
@@ -682,7 +682,7 @@ For each entry, record owner, decision, rationale, test expectation, and release
 - [ ] Preserve read-only-root compatibility and bounded writable temporary storage.
 - [ ] Compare image size and startup time with the Java baseline.
 
-**DoD:** `docker compose build java-coordinator` produces a runnable, non-root Scala image with passing health checks.
+**DoD:** `make build-java-coordinator` produces a runnable, non-root Scala image with passing health checks.
 
 ### Task 11.2: Update root build and CI
 
@@ -692,14 +692,14 @@ For each entry, record owner, decision, rationale, test expectation, and release
 - [ ] Keep broad repository checks green.
 **DoD:** Local and CI commands use the same checks and fail on formatting, lint, compile, contract, or test errors.
 
-### Task 11.3: Validate Compose and Helm
+### Task 11.3: Validate Kustomize and Argo CD
 
-- [ ] Keep Compose service/image name `java-coordinator` for initial cutover.
-- [ ] Keep Helm alias/key `javaCoordinator` and stable Kubernetes resource names.
+- [ ] Keep image and Kubernetes resource name `java-coordinator` for initial cutover.
+- [ ] Keep stable Kubernetes resource names.
 - [ ] Preserve environment variables, secret references, mounts, ports, probes, resources, and OTEL identity.
 - [ ] Confirm `atheros-sensor` dependency/readiness behavior is unchanged.
 
-**DoD:** Compose config, Helm lint/template, and local/Kubernetes smoke tests pass without consumer contract changes.
+**DoD:** Kustomize renders, Argo CD reconciliation and local/Kubernetes smoke tests pass without consumer contract changes.
 
 ### Task 11.4: Update operations and documentation
 
@@ -711,7 +711,7 @@ For each entry, record owner, decision, rationale, test expectation, and release
 
 **DoD:** A new operator can build, configure, deploy, diagnose, and roll back the Scala coordinator using repository documentation only.
 
-**Phase gate:** Packaged Scala artifacts pass repository, Compose, Helm, and operations smoke checks.
+**Phase gate:** Packaged Scala artifacts pass repository, Kustomize, Argo CD and operations smoke checks.
 
 ## Phase 12: Shadow Validation, Cutover, and Cleanup
 
@@ -779,7 +779,7 @@ Only after the full observation window and rollback sign-off:
 
 ### Task 12.6: Close the migration
 
-- [ ] Run all coordinator unit, contract, integration, failure-injection, image, Compose, and Helm checks.
+- [ ] Run all coordinator unit, contract, integration, failure-injection, image and GitOps checks.
 - [ ] Run relevant schema-migrator tests and schema validation.
 - [ ] Run repository dependency-boundary and broad test targets.
 - [ ] Archive baseline-versus-final performance and correctness results.
@@ -800,7 +800,7 @@ Only after the full observation window and rollback sign-off:
 | HTTP | http4s health, readiness, metrics, compatibility-path, and shutdown tests |
 | Lifecycle | Resource acquisition failure, reverse finalization, cancellation, no leaked fiber/client/pool tests |
 | End to end | Scan to terminal result, wireless request/reply, archive/retention, restart, and failure-injection suites |
-| Deployment | Assembly execution, non-root image, Compose config/smoke, Helm lint/template/schema, and operations checks |
+| Deployment | Assembly execution, non-root image, Kustomize render, Argo CD health and operations checks |
 
 H2 and mocks may support fast unit tests but cannot be the acceptance evidence for PostgreSQL concurrency or dialect behavior.
 
@@ -811,7 +811,7 @@ H2 and mocks may support fast unit tests but cannot be the acceptance evidence f
 | Scala lead | Build, Cats Effect lifecycle, FS2 workers, package boundaries, code quality |
 | Coordinator domain owner | Runtime state machine, compatibility decisions, Kafka acknowledgement semantics |
 | PostgreSQL owner | Stored-function contracts, dedupe, cursoring, leases, concurrency, retention |
-| Platform owner | Kafka, MinIO, metrics, tracing, container, Compose, Helm, CI |
+| Platform owner | Kafka, MinIO, metrics, tracing, containers, Kustomize, Argo CD and CI |
 | QA owner | Characterization, golden fixtures, integration matrix, failure injection, parity reports |
 | Operations owner | Cutover, observation windows, rollback drills, runbooks, service-level acceptance |
 | Security owner | Secret handling, path traversal, payload limits, log redaction, container hardening |
@@ -841,7 +841,7 @@ The migration is complete only when all of the following are true:
 - [ ] One `Resource` graph owns every long-lived resource and worker.
 - [ ] No Spring Boot, Camel, or Gradle runtime/build dependency remains.
 - [ ] At-least-once delivery and PostgreSQL dedupe are proven under process and dependency failures.
-- [ ] Existing health, metrics, tracing, logs, Compose, Helm, operations, and dashboards work through the compatibility window.
+- [ ] Existing health, metrics, tracing, logs, Argo CD operations and dashboards work through the compatibility window.
 - [ ] Java-versus-Scala shadow comparisons meet agreed correctness and performance thresholds.
 - [ ] Role-by-role cutover and full Java rollback have both been rehearsed.
 - [ ] Java and Gradle files are removed only after the rollback observation window.
@@ -857,7 +857,7 @@ The migration is complete only when all of the following are true:
 | M3: Persisted ingestion | Phases 3-4 | Scan and payload-audit reach PostgreSQL safely |
 | M4: Core dispatch | Phase 5 | Jobs/batches dispatch with leases and backpressure |
 | M6: Full feature parity | Phases 8-10 | Wireless, maintenance, and observability are complete |
-| M7: Deployable replacement | Phase 11 | Image, CI, Compose, Helm, and operations are green |
+| M7: Deployable replacement | Phase 11 | Image, CI, Kustomize, Argo CD and operations are green |
 | M8: Production authority | Phase 12 | Cutover, rollback drill, Java removal, and sign-off complete |
 
 Each milestone should be delivered as reviewable changes that leave the repository green. Avoid one final branch that combines the build replacement, behavior rewrite, deployment changes, and Java deletion.

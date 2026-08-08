@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ssl-proxy-tidb-schema-executor
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  labels:
+    app.kubernetes.io/name: tidb-schema-executor
+    app.kubernetes.io/instance: ssl-proxy
+    ssl-proxy.io/tidb-client: "true"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tidb-schema-executor
+        app.kubernetes.io/instance: ssl-proxy
+        ssl-proxy.io/tidb-client: "true"
+      annotations:
+        ssl-proxy.io/content-hash: "schema-image-stable-env-7"
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: schema
+          image: tidb-runtime-schema
+          imagePullPolicy: Always
+          env:
+            - name: TIDB_SCHEMA_OWNER_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-schema-owner
+                  key: dsn
+            - name: TIDB_TLS_CA_FILE
+              value: /etc/tidb-tls/ca.crt
+            - name: TIDB_SCHEMA_APPLY_POST_TIFLASH
+              value: "false"
+            - name: TIDB_OCTOPUS_ACCOUNT
+              value: "octopus_runtime"
+            - name: TIDB_ATHEROS_SEARCH_ACCOUNT
+              value: "atheros_search_runtime"
+            - name: TIDB_SCHEMA_MIGRATOR_ACCOUNT
+              value: "schema_migrator_runtime"
+          volumeMounts:
+            - name: tidb-tls
+              mountPath: /etc/tidb-tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      volumes:
+        - name: tidb-tls
+          secret:
+            secretName: tidb-client-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp
+          emptyDir: {}

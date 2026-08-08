@@ -9,22 +9,10 @@ durable ingestion and maintained projections; the Go Atheros Search service
 owns query APIs and embedding workers; and the SolidJS Atheros Search UI is the
 Integration Console.
 
-The canonical runtime model, data ownership and known deployment gaps are in
-[System Architecture](docs/architecture.md).
-
-## Choose a deployment path
-
-| Path | Use it for | Entry point | Status |
-|---|---|---|---|
-| Compose compatibility | Local development, compatibility testing and service inspection | [`docker-compose.yaml`](docker-compose.yaml) | Bundles single-process TiDB/UniStore; not a production TiFlash topology |
-| Umbrella Helm | Current single-release Kubernetes workflow | [`helm/ssl-proxy/`](helm/ssl-proxy/) and `make up-ready` | Default operational path; exact values determine enabled services |
-| stackctl split releases | Dependency-ordered, opt-in Kubernetes rollout | [`stackctl/`](stackctl/) and `make up-ready-stackctl` | Opt in until split-release acceptance is complete |
-
-WireGuard ports are profile dependent. The Compose frontdoor declares UDP
-`443` for the obfuscated/direct frontdoor path and UDP `51820` for concurrent
-plain clients. The proxy admin surface is host-local on `3002`. Kubernetes
-host ports depend on the selected values overlay; render the chart rather than
-copying a global port table.
+The canonical runtime model and data ownership are documented in
+[System Architecture](docs/architecture.md). Kubernetes desired state lives
+only in [`cyber-stack/`](cyber-stack/) and is rendered with Kustomize and
+reconciled by Argo CD.
 
 ## Component ownership
 
@@ -39,10 +27,9 @@ copying a global port table.
 | Schema Migrator | Migration authoring/execution and TiDB-backed internal control state | [Schema Migrator README](apps/schema-migrator/README.md) |
 | WireGuard key rotator | Staged WireGuard key rotation and optional notifications | [Rotator README](apps/wg-key-rotator/README.md) |
 
-`java-coordinator` remains in Compose, Helm and image names as a legacy
-deployment identity for Octopus. Likewise, `sync.oracle.load` and
-`sync.oracle.result` are locked legacy topic names; both now carry
-coordinator-owned TiDB work and results.
+`java-coordinator` remains an image and Kubernetes resource identity for the
+Octopus service. Likewise, `sync.oracle.load` and `sync.oracle.result` are
+locked legacy topic names; both carry coordinator-owned TiDB work and results.
 
 ## Data boundaries
 
@@ -53,9 +40,9 @@ Canonical DDL lives in [`sql/tidb/`](sql/tidb/) for four application databases:
 - `integration_console`
 - `schema_migrator`
 
-The Helm deployment also creates a separate Keycloak database. PostgreSQL is
-supported only as an external Schema Migrator target. Oracle is deprecated
-compatibility or historical material, not a current runtime dependency.
+The in-cluster identity service uses a separate `keycloak` database.
+PostgreSQL is supported only as an external Schema Migrator target. Oracle is
+deprecated compatibility or historical material, not a runtime dependency.
 
 ## Get started
 
@@ -65,37 +52,38 @@ Initialize every nested repository first:
 git submodule update --init --recursive
 ```
 
-Validate the documentation and repository checkout without starting services:
+Run the targeted tests for the components you change. Validate all canonical
+GitOps inputs with:
 
 ```bash
 make docs-check
+make gitops-check
 ```
 
-For the current Kubernetes workflow, prepare the local registry and required
-secrets, then run:
+Build and publish first-party images to the configured registry with:
 
 ```bash
-make up-ready \
-  PROFILE_MODE=iphone \
-  SERVER_IP=192.0.2.10 \
-  REGISTRY=192.0.2.10:5000
+make publish-all REGISTRY=192.168.1.221:5000
 ```
 
-Use real addresses and review the [local registry workflow](docs/local-registry-workflow.md),
-[secret management](docs/secret-management.md), and [runbook](docs/runbook.md)
-before deployment. `PROFILE_MODE=iphone` uses the direct WireGuard profile;
-Linux/macOS shim clients use the obfuscated profile and local shim endpoint.
+Publishing does not mutate a cluster. Argo CD Image Updater records new dev
+digests through a pull request. Production promotion is a separate reviewed
+pull request that copies the exact tested dev digests. See the
+[GitOps guide](cyber-stack/README.md) and [operations runbook](docs/runbook.md).
 
-For local image builds with Compose:
+## Local development
+
+Docker Compose is an optional local test harness only. It is not a Kubernetes
+management, promotion or production workflow.
 
 ```bash
 REGISTRY=local IMAGE_TAG=dev \
   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 ```
 
-The Compose file is a compatibility topology and still contains known
-configuration gaps. Read the [architecture known gaps](docs/architecture.md#known-gaps)
-before treating a green container health check as end-to-end readiness.
+Local health only proves the development harness is running. Kubernetes
+readiness is determined from the rendered environment overlays and Argo CD
+application health.
 
 ## Topic contracts
 
@@ -111,31 +99,22 @@ dedupe and topic/partition/offset evidence.
 
 ## Common checks
 
-Run the smallest relevant check for a change:
-
 ```bash
 cargo test -p ssl-proxy
 cargo test -p sync-plane
 cargo test -p atheros-sensor
-make atheros-search-test
+(cd services/atheros-search && go test ./...)
 (cd services/octopus && sbt test)
 (cd apps/schema-migrator && sbt test)
-make dependency-boundaries
 python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
-make docs-check
 ```
 
 ## Operational references
 
+- [GitOps management and onboarding](cyber-stack/README.md)
 - [System architecture](docs/architecture.md)
 - [Operations runbook](docs/runbook.md)
 - [TiDB runtime and cutover](docs/tidb-runtime-cutover.md)
 - [Observability architecture](docs/observability-architecture-jaeger.md)
 - [Secret management](docs/secret-management.md)
 - [Threat model](docs/threat-model.md)
-- [Helm chart](helm/ssl-proxy/README.md)
-- [Operations CLI](ops/README.md)
-- [stackctl](stackctl/README.md)
-
-Historical ADRs and workmaps remain under [`docs/`](docs/) for provenance.
-Their status banners identify superseded guidance.

@@ -18,7 +18,8 @@ import yaml
 
 from .core import StackConfig
 from .gates import _resolve_gate_resource
-from .shell import helm, kubectl
+from .rendering import OVERLAY_MAP
+from .shell import kubectl, kustomize_validate
 
 
 @dataclass(frozen=True)
@@ -74,19 +75,36 @@ def preflight(
     """Validate tools, context, nodes, prerequisites, and exact ownership conflicts."""
 
     results: list[CheckResult] = []
-    for tool in ("helm", "kubectl"):
-        if shutil.which(tool) is None:
-            raise RuntimeError(f"required tool not found: {tool}")
-        results.append(CheckResult(f"tool/{tool}", True, "found"))
-    helm_version = helm(
-        "version",
-        "--template",
-        "{{.Version}}",
+    if shutil.which("kubectl") is None:
+        raise RuntimeError("required tool not found: kubectl")
+    results.append(CheckResult("tool/kubectl", True, "found"))
+    if shutil.which("kustomize") is None:
+        raise RuntimeError("required tool not found: kustomize")
+    results.append(CheckResult("tool/kustomize", True, "found"))
+    kustomize_result = kustomize_validate(
+        str(root_dir / "cyber-stack" / "base"),
+        context=context,
+        kubeconfig=kubeconfig,
         check=False,
     )
-    if helm_version.returncode != 0 or _version_tuple(helm_version.stdout) < (3, 17, 0):
-        raise RuntimeError("Helm 3.17.0 or newer is required")
-    results.append(CheckResult("tool/helm-version", True, helm_version.stdout.strip()))
+    if kustomize_result.returncode != 0:
+        raise RuntimeError(
+            f"kustomize validation failed: {(kustomize_result.stderr or '').strip()}"
+        )
+    results.append(CheckResult("kustomize/base", True, "validated"))
+    overlay = OVERLAY_MAP.get(namespace)
+    if overlay:
+        overlay_result = kustomize_validate(
+            str(root_dir / overlay),
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if overlay_result.returncode != 0:
+            raise RuntimeError(
+                f"overlay validation failed for {overlay}: {(overlay_result.stderr or '').strip()}"
+            )
+        results.append(CheckResult("tool/kustomize-overlay", True, "validated"))
     kubectl_version = kubectl(
         "version",
         "--client",
@@ -262,16 +280,29 @@ def preflight(
 
 def _resource_ready(resource: dict[str, Any]) -> tuple[bool, str]:
     kind = resource.get("kind")
+    metadata = resource.get("metadata", {})
     spec = resource.get("spec", {})
     status = resource.get("status", {})
+    if kind in {"Deployment", "StatefulSet", "DaemonSet"}:
+        generation = metadata.get("generation")
+        observed_generation = status.get("observedGeneration")
+        if generation is not None and observed_generation != generation:
+            return False, f"generation {observed_generation}/{generation} observed"
     if kind == "Deployment":
+        for condition in status.get("conditions", []):
+            if (
+                condition.get("type") == "Progressing"
+                and condition.get("status") == "False"
+                and condition.get("reason") == "ProgressDeadlineExceeded"
+            ):
+                return False, "ProgressDeadlineExceeded"
         desired = spec.get("replicas", 1)
         ready = status.get("readyReplicas", 0)
-        return ready >= desired, f"{ready}/{desired} ready"
+        return desired > 0 and ready >= desired, f"{ready}/{desired} ready"
     if kind == "StatefulSet":
         desired = spec.get("replicas", 1)
         ready = status.get("readyReplicas", 0)
-        return ready >= desired, f"{ready}/{desired} ready"
+        return desired > 0 and ready >= desired, f"{ready}/{desired} ready"
     if kind == "DaemonSet":
         desired = status.get("desiredNumberScheduled", 0)
         ready = status.get("numberReady", 0)
@@ -279,7 +310,7 @@ def _resource_ready(resource: dict[str, Any]) -> tuple[bool, str]:
     if kind == "Job":
         conditions = {item.get("type"): item.get("status") for item in status.get("conditions", [])}
         return conditions.get("Complete") == "True", str(conditions)
-    return True, "exists"
+    return False, f"unsupported readiness kind {kind!r}"
 
 
 def status(
@@ -293,8 +324,9 @@ def status(
     results: list[CheckResult] = []
     for name, component in config.components.items():
         if component.type in ("helm", "helm-job"):
-            release = helm(
-                "status",
+            resource = kubectl(
+                "get",
+                "deploy,sts,ds,job",
                 component.release,
                 "-n",
                 namespace,
@@ -304,16 +336,27 @@ def status(
                 kubeconfig=kubeconfig,
                 check=False,
             )
-            if release.returncode != 0:
+            if resource.returncode != 0:
                 results.append(CheckResult(f"release/{name}", False, "not found"))
                 continue
-            payload = _json_result(release, f"release/{name}")
-            release_status = payload.get("info", {}).get("status", "unknown")
+            payload = _json_result(resource, f"release/{name}")
+            items = payload.get("items", [])
+            if not items:
+                results.append(CheckResult(f"release/{name}", False, "no resources"))
+                continue
+            relevant = [
+                item
+                for item in items
+                if item.get("kind") in ("Deployment", "StatefulSet", "DaemonSet", "Job")
+            ]
+            readiness = [_resource_ready(item) for item in relevant]
+            all_ready = bool(relevant) and all(ready for ready, _ in readiness)
+            details = "; ".join(detail for _, detail in readiness)
             results.append(
                 CheckResult(
                     f"release/{name}",
-                    release_status == "deployed",
-                    release_status,
+                    all_ready,
+                    f"{len(relevant)} resource(s)" + (f": {details}" if details else ""),
                 )
             )
         for gate in component.gates:

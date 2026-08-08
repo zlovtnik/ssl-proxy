@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ssl-proxy-telemetry-node-exporter
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-node-exporter
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-node-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: telemetry-node-exporter
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      hostNetwork: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter:v1.8.2
+          imagePullPolicy: Always
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          args:
+            - "--path.procfs=/host/proc"
+            - "--path.sysfs=/host/sys"
+            - "--path.rootfs=/host/root"
+            - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)"
+            - "--no-collector.infiniband"
+            - "--no-collector.nfs"
+            - "--no-collector.nfsd"
+          ports:
+            - containerPort: 9100
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              readOnly: true
+              mountPropagation: HostToContainer
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-telemetry-node-exporter
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-node-exporter
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-node-exporter
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+      protocol: TCP

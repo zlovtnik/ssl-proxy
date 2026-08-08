@@ -168,3 +168,43 @@ def helm(
         env=env,
         input_text=input_text,
     )
+
+
+def kustomize_build(
+    path: str,
+    *,
+    context: str | None = None,
+    check: bool = True,
+    capture: bool = True,
+    stream: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``kubectl kustomize <path>`` to render manifests."""
+    command = ["kubectl"]
+    if context:
+        command.extend(["--context", context])
+    command.extend(["kustomize", path])
+    return run(command, check=check, capture=capture and not stream, stream=stream)
+
+
+def kustomize_apply(
+    path: str,
+    *,
+    context: str | None = None,
+    check: bool = True,
+    capture: bool = True,
+    stream: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``kubectl apply -k <path>`` to apply kustomize overlays."""
+    command = ["kubectl"]
+    if context:
+        command.extend(["--context", context])
+    command.extend(
+        [
+            "apply",
+            "--server-side",
+            "--field-manager=sslproxy-ops",
+            "-k",
+            path,
+        ]
+    )
+    return run(command, check=check, capture=capture and not stream, stream=stream)

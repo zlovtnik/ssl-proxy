@@ -75,18 +75,18 @@ class DocsCheckTest(unittest.TestCase):
         errors = self.errors(root)
         self.assertTrue(any("no .gitmodules mapping" in error for error in errors))
 
-    def test_broken_link_in_non_readme_submodule_markdown_is_reported(self) -> None:
+    def test_broken_link_in_non_markdown_submodule_document_is_reported(self) -> None:
         root = self.make_repo()
         child = root / "child"
         child.mkdir()
         self.git(child, "init", "-q")
         self.git(child, "config", "user.name", "Docs Test")
         self.git(child, "config", "user.email", "docs@example.invalid")
-        (child / "guide.md").write_text("[missing](nope.md)\n", encoding="utf-8")
-        self.git(child, "add", "guide.md")
+        (child / "guide.rst").write_text("[missing](nope.md)\n", encoding="utf-8")
+        self.git(child, "add", "guide.rst")
         self.git(child, "commit", "-qm", "child")
         oid = self.git(child, "rev-parse", "HEAD")
-        (child / "guide.md").write_text("# Fixed after pin\n", encoding="utf-8")
+        (child / "guide.rst").write_text("Fixed after pin\n", encoding="utf-8")
         (root / ".gitmodules").write_text(
             '[submodule "child"]\n'
             "\tpath = child\n"
@@ -100,7 +100,7 @@ class DocsCheckTest(unittest.TestCase):
 
         self.assertTrue(
             any(
-                "child/guide.md" in error and "broken local link" in error
+                "child/guide.rst" in error and "broken local link" in error
                 for error in errors
             )
         )
@@ -151,6 +151,60 @@ class DocsCheckTest(unittest.TestCase):
     def test_link_shaped_inline_code_is_ignored(self) -> None:
         root = self.make_repo("Use `Semaphore[IO](poolSize)` for bounds.\n")
         self.assertEqual([], self.errors(root))
+
+    def test_all_tracked_markdown_is_checked_for_deployment_policy(self) -> None:
+        root = self.make_repo()
+        (root / "notes.md").write_text(
+            "# Operations\n\nUse Flux CD for Kubernetes.\n", encoding="utf-8"
+        )
+        self.git(root, "add", "notes.md")
+        errors = self.errors(root)
+        self.assertTrue(any("notes.md" in error for error in errors))
+
+    def test_mutating_kubectl_is_rejected_but_read_only_is_allowed(self) -> None:
+        root = self.make_repo(
+            "# Operations\n\n"
+            "`kubectl get pods` is diagnostic.\n\n"
+            "Do not run `kubectl patch deployment example`.\n"
+        )
+        errors = self.errors(root)
+        self.assertEqual(1, sum("mutating kubectl" in error for error in errors))
+
+    def test_mutating_kubectl_with_short_namespace_flag_is_rejected(self) -> None:
+        root = self.make_repo(
+            "# Operations\n\nDo not run `kubectl -n ssl-proxy apply -k overlay`.\n"
+        )
+        errors = self.errors(root)
+        self.assertEqual(1, sum("mutating kubectl" in error for error in errors))
+
+    def test_retained_chart_path_is_allowed_but_prose_helm_is_rejected(self) -> None:
+        allowed = self.make_repo(
+            "# Compatibility\n\nSee `helm/ssl-proxy/charts/redpanda/templates/statefulset.yaml`.\n"
+        )
+        self.assertEqual([], self.errors(allowed))
+
+        rejected = self.make_repo("# Operations\n\nDeploy the stack with Helm.\n")
+        errors = self.errors(rejected)
+        self.assertTrue(any("deployment technology" in error for error in errors))
+
+    def test_txt_documents_remain_in_policy_scope(self) -> None:
+        root = self.make_repo()
+        (root / "notes.txt").write_text("Deploy the stack with Helm.\n", encoding="utf-8")
+        self.git(root, "add", "notes.txt")
+        errors = self.errors(root)
+        self.assertTrue(any("notes.txt" in error for error in errors))
+
+    def test_compose_is_limited_to_local_development_sections(self) -> None:
+        allowed = self.make_repo(
+            "# Project\n\n## Local development\n\nRun `docker compose up`.\n"
+        )
+        self.assertEqual([], self.errors(allowed))
+
+        rejected = self.make_repo(
+            "# Project\n\n## Operations\n\nRun `docker compose up`.\n"
+        )
+        errors = self.errors(rejected)
+        self.assertTrue(any("local-development headings" in error for error in errors))
 
 
 if __name__ == "__main__":

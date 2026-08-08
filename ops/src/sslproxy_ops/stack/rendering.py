@@ -1,4 +1,4 @@
-"""Offline Helm rendering, structural validation, and umbrella parity."""
+"""Offline kustomize rendering, structural validation, and umbrella parity."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import copy
 import hashlib
 import json
 import os
-import shutil
-import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,8 +13,8 @@ from typing import Any
 
 import yaml
 
-from .core import StackConfig, deep_merge, generate_effective_values
-from .shell import helm
+from .core import StackConfig, generate_effective_values
+from .shell import kustomize_build
 
 
 @dataclass(frozen=True)
@@ -57,20 +55,6 @@ def resource_identity(resource: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
-def _copy_chart_for_build(chart_path: Path, temp_root: Path) -> Path:
-    destination = temp_root / chart_path.name
-    shutil.copytree(chart_path, destination, symlinks=False)
-    common = chart_path.parent / "_common"
-    if common.is_dir() and common.resolve() != chart_path.resolve():
-        shutil.copytree(common, temp_root / "_common", symlinks=False)
-    return destination
-
-
-def _write_private_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(yaml.safe_dump(data, sort_keys=True))
-    os.chmod(path, 0o600)
-
-
 def render_component(
     name: str,
     config: StackConfig,
@@ -82,7 +66,10 @@ def render_component(
     component = config.components[name]
     if component.type not in ("helm", "helm-job"):
         raise ValueError(f"Offline rendering for {component.type!r} is not implemented")
-    chart_path = (root_dir / component.chart).resolve()
+    overlay_path = component.chart
+    if not overlay_path:
+        raise ValueError(f"Component {name!r} has no chart path (kustomize overlay)")
+    overlay_src = _resolved_overlay_path(root_dir, overlay_path)
     effective = generate_effective_values(
         config,
         name,
@@ -90,64 +77,43 @@ def render_component(
         runtime_overrides=runtime_overrides,
         root_dir=root_dir,
     )
-    with tempfile.TemporaryDirectory(prefix=f"stackctl-{name}-") as temp:
-        temp_root = Path(temp)
-        chart_copy = _copy_chart_for_build(chart_path, temp_root)
-        values_path = temp_root / "effective-values.yaml"
-        _write_private_yaml(values_path, effective)
-        helm("dependency", "build", str(chart_copy))
-        helm(
-            "lint",
-            str(chart_copy),
-            "-f",
-            str(values_path),
-            "--namespace",
-            namespace or config.defaults.namespace,
-        )
-        result = helm(
-            "template",
-            component.release,
-            str(chart_copy),
-            "-f",
-            str(values_path),
-            "--namespace",
-            namespace or config.defaults.namespace,
-            "--include-crds",
-        )
+    result = kustomize_build(str(overlay_src))
     resources = parse_manifest(result.stdout, name)
     return RenderedComponent(name, result.stdout, resources, effective)
 
 
-def render_umbrella(
-    chart_path: Path,
-    umbrella_values: list[dict[str, Any]],
-    runtime_overrides: dict[str, Any] | None,
-    namespace: str,
-) -> list[dict[str, Any]]:
-    """Render the normalized umbrella baseline in an isolated chart copy."""
+OVERLAY_MAP = {
+    "ssl-proxy": "cyber-stack/base",
+    "prod-ssl-proxy": "cyber-stack/matrix/prod",
+    "dev-ssl-proxy": "cyber-stack/matrix/dev",
+}
 
-    effective: dict[str, Any] = {}
-    for values in umbrella_values:
-        effective = deep_merge(effective, values)
-    if runtime_overrides:
-        effective = deep_merge(effective, runtime_overrides)
-    with tempfile.TemporaryDirectory(prefix="stackctl-umbrella-") as temp:
-        temp_root = Path(temp)
-        chart_copy = temp_root / chart_path.name
-        shutil.copytree(chart_path, chart_copy, symlinks=False)
-        values_path = temp_root / "umbrella-values.yaml"
-        _write_private_yaml(values_path, effective)
-        helm("dependency", "build", str(chart_copy))
-        result = helm(
-            "template",
-            "ssl-proxy",
-            str(chart_copy),
-            "-f",
-            str(values_path),
-            "--namespace",
-            namespace,
-            "--include-crds",
+
+def _resolved_overlay_path(root_dir: Path, configured: str | Path) -> Path:
+    root = root_dir.resolve()
+    candidate = Path(configured)
+    overlay = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    if root not in (overlay, *overlay.parents):
+        raise ValueError(f"Kustomize overlay leaves repository root: {configured}")
+    if not overlay.is_dir():
+        raise FileNotFoundError(f"Kustomize overlay not found: {overlay}")
+    return overlay
+
+
+def render_umbrella(
+    namespace: str,
+    root_dir: Path,
+) -> list[dict[str, Any]]:
+    """Render the normalized umbrella baseline via kustomize."""
+
+    overlay = OVERLAY_MAP.get(namespace)
+    if overlay is None:
+        raise ValueError(
+            f"namespace {namespace!r} has no configured kustomize overlay; "
+            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
         )
+    overlay_path = _resolved_overlay_path(root_dir, overlay)
+    result = kustomize_build(str(overlay_path))
     return parse_manifest(result.stdout, "umbrella")
 
 

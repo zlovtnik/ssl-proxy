@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import copy
 import json
 import os
 import re
 import shutil
-import tempfile
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -26,7 +25,7 @@ from .core import (
     staged_waves,
 )
 from .gates import parse_timeout_seconds, wait_for_gates
-from .shell import ShellError, helm, kubectl
+from .shell import ShellError, helm, kubectl, kustomize_apply, kustomize_build
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -64,6 +63,7 @@ class ComponentResult:
     error: str | None = None
     duration: float = 0.0
     skipped: bool = False
+    rollback_status: str | None = None
 
 
 @dataclass
@@ -169,7 +169,7 @@ _prepared_charts: set[Path] = set()
 def prepare_chart(chart_path: Path) -> None:
     """Build dependencies once for explicit compatibility callers.
 
-    Production render/deploy paths use :func:`prepared_chart_copy` instead.
+    Production Kustomize paths build their validated source overlay directly.
     """
     resolved = chart_path.resolve()
     if resolved in _prepared_charts:
@@ -179,25 +179,6 @@ def prepare_chart(chart_path: Path) -> None:
     if _chart_has_dependencies(resolved):
         helm("dependency", "build", str(resolved))
     _prepared_charts.add(resolved)
-
-
-@contextlib.contextmanager
-def prepared_chart_copy(chart_path: Path):
-    """Yield a chart whose dependency build cannot rewrite the worktree."""
-
-    with tempfile.TemporaryDirectory(prefix=f"stackctl-{chart_path.name}-") as temp:
-        if not chart_path.is_dir():
-            yield chart_path
-            return
-        temp_root = Path(temp)
-        destination = temp_root / chart_path.name
-        shutil.copytree(chart_path, destination, symlinks=False)
-        common = chart_path.parent / "_common"
-        if common.is_dir() and common.resolve() != chart_path.resolve():
-            shutil.copytree(common, temp_root / "_common", symlinks=False)
-        if _chart_has_dependencies(destination):
-            helm("dependency", "build", str(destination))
-        yield destination
 
 
 def reset_prepared_charts() -> None:
@@ -361,16 +342,17 @@ def _capture_job_logs(
         pass
 
 
-def _helm_release_status(
+def _kustomize_resource_status(
     release: str, namespace: str, context: str | None, kubeconfig: str | None
 ) -> str | None:
-    """Get the current Helm release status, or None if not found."""
-    result = helm(
-        "status",
+    """Get the workload status for a kustomize-managed release, or None if not found."""
+    result = kubectl(
+        "get",
+        "deploy,sts,ds",
         release,
         "-n",
         namespace,
-        "--output",
+        "-o",
         "json",
         context=context,
         kubeconfig=kubeconfig,
@@ -380,63 +362,241 @@ def _helm_release_status(
         return None
     try:
         payload = json.loads(result.stdout or "{}")
-        return payload.get("info", {}).get("status")
-    except (json.JSONDecodeError, AttributeError, TypeError):
+    except (json.JSONDecodeError, TypeError):
         return None
+    items = payload.get("items", [])
+    if not items:
+        return None
+    for item in items:
+        status = item.get("status", {})
+        ready = status.get("readyReplicas", 0) or 0
+        desired = item.get("spec", {}).get("replicas", 1) or 1
+        if ready < desired:
+            return "False"
+    return "True"
 
 
-def _helm_upgrade(
+def _kustomize_deploy(
     component: Component,
-    effective_values: dict[str, Any],
-    values_file: Path,
     namespace: str,
     context: str | None,
     kubeconfig: str | None,
+    timeout: str,
     dry_run: bool = False,
-    wait_for_jobs: bool = True,
-) -> None:
-    """Run helm upgrade --install for a component."""
+    wait_for_completion: bool = True,
+    root_dir: Path | None = None,
+    rollback_state: list[dict[str, Any]] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Apply a kustomize overlay for a component."""
     release = component.release
     chart = component.chart
     if not chart:
-        raise ValueError(f"Helm release {release!r} has no chart")
+        raise ValueError(f"Component {release!r} has no chart path (kustomize overlay)")
 
-    args: list[str] = ["upgrade", "--install", release, chart]
-    args.extend(["-n", namespace, "--create-namespace"])
-    args.extend(["-f", str(values_file)])
-    args.extend(["--server-side=true", "--wait=watcher"])
-    if wait_for_jobs:
-        args.append("--wait-for-jobs")
+    overlay_src = Path(chart)
+    if not overlay_src.is_absolute() and root_dir is not None:
+        overlay_src = Path(root_dir) / overlay_src
+    overlay_src = overlay_src.resolve()
 
-    timeout = component.timeout or "10m"
-    args.extend(["--timeout", timeout])
+    if root_dir is not None:
+        root_resolved = Path(root_dir).resolve()
+        if root_resolved not in (overlay_src, *overlay_src.parents):
+            raise ValueError(f"Component overlay leaves repository root: {overlay_src}")
+
+    if not overlay_src.is_dir():
+        raise FileNotFoundError(f"Component overlay not found: {overlay_src}")
 
     if dry_run:
-        args.append("--dry-run=server")
+        return kustomize_apply(
+            str(overlay_src),
+            namespace=namespace,
+            dry_run=True,
+            context=context,
+            kubeconfig=kubeconfig,
+            timeout=timeout,
+        )
+    if rollback_state is not None:
+        rendered = kustomize_build(
+            str(overlay_src),
+            context=context,
+            kubeconfig=kubeconfig,
+        )
+        rollback_state.extend(
+            _capture_kustomize_rollback_state(
+                rendered.stdout,
+                namespace,
+                context,
+                kubeconfig,
+            )
+        )
+    return kustomize_apply(
+        str(overlay_src),
+        namespace=namespace,
+        wait_for_completion=wait_for_completion,
+        release=release,
+        context=context,
+        kubeconfig=kubeconfig,
+        timeout=timeout,
+    )
 
-    if component.rollback_on_failure:
-        args.extend(["--rollback-on-failure", "--history-max", "5"])
 
-    return helm(*args, context=context, kubeconfig=kubeconfig)
-
-
-def _helm_rollback(
-    release: str,
+def _capture_kustomize_rollback_state(
+    manifest: str,
     namespace: str,
     context: str | None,
     kubeconfig: str | None,
-) -> None:
-    """Rollback a Helm release to revision 0 (last successful)."""
-    helm(
-        "rollback",
-        release,
-        "0",
-        "-n",
-        namespace,
-        "--wait",
-        context=context,
-        kubeconfig=kubeconfig,
-    )
+) -> list[dict[str, Any]]:
+    """Capture each non-Job resource's live state before a kustomize apply."""
+
+    captured: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for desired in yaml.safe_load_all(manifest):
+        if not isinstance(desired, dict) or desired.get("kind") == "Job":
+            continue
+        metadata = desired.get("metadata") or {}
+        kind = str(desired.get("kind") or "")
+        name = str(metadata.get("name") or "")
+        resource_namespace = str(metadata.get("namespace") or namespace)
+        if not kind or not name:
+            continue
+        identity = (kind, resource_namespace, name)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        args = ["get", kind, name]
+        if resource_namespace:
+            args.extend(["-n", resource_namespace])
+        args.extend(["-o", "json"])
+        result = kubectl(
+            *args,
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        previous: dict[str, Any] | None = None
+        if result.returncode == 0:
+            try:
+                parsed = json.loads(result.stdout or "{}")
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise RuntimeError(f"invalid live manifest for {kind}/{name}") from exc
+            if not isinstance(parsed, dict):
+                raise RuntimeError(f"invalid live manifest for {kind}/{name}")
+            previous = parsed
+        else:
+            output = (result.stderr or "") + (result.stdout or "")
+            if "not found" not in output.lower() and "NotFound" not in output:
+                raise ShellError(
+                    command=("kubectl", *args),
+                    returncode=result.returncode,
+                    stdout=result.stdout or "",
+                    stderr=result.stderr or "",
+                )
+        captured.append(
+            {
+                "kind": kind,
+                "namespace": resource_namespace,
+                "name": name,
+                "previous": previous,
+            }
+        )
+    return captured
+
+
+def _rollback_manifest(resource: dict[str, Any]) -> dict[str, Any]:
+    restored = copy.deepcopy(resource)
+    restored.pop("status", None)
+    metadata = restored.get("metadata") or {}
+    for field_name in (
+        "creationTimestamp",
+        "deletionGracePeriodSeconds",
+        "deletionTimestamp",
+        "generation",
+        "managedFields",
+        "resourceVersion",
+        "selfLink",
+        "uid",
+    ):
+        metadata.pop(field_name, None)
+    metadata.pop("ownerReferences", None)
+    annotations = metadata.get("annotations")
+    if isinstance(annotations, dict):
+        annotations.pop("kubectl.kubernetes.io/last-applied-configuration", None)
+    if restored.get("kind") == "ServiceAccount":
+        restored.pop("secrets", None)
+    return restored
+
+
+def _kustomize_rollback(
+    rollback_state: list[dict[str, Any]],
+    context: str | None,
+    kubeconfig: str | None,
+) -> bool:
+    """Restore the pre-apply manifests and remove resources that were newly created."""
+
+    failures: list[str] = []
+    for item in rollback_state:
+        if not isinstance(item.get("previous"), dict):
+            continue
+        kind = str(item["kind"])
+        name = str(item["name"])
+        resource_namespace = str(item.get("namespace") or "")
+        get_args = ["get", kind, name]
+        if resource_namespace:
+            get_args.extend(["-n", resource_namespace])
+        get_args.extend(["-o", "json"])
+        current = kubectl(
+            *get_args,
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if current.returncode != 0:
+            detail = (current.stderr or current.stdout or "lookup failed").strip()
+            failures.append(f"restore {kind}/{name}: {detail}")
+            continue
+        try:
+            resource_version = json.loads(current.stdout or "{}")["metadata"]["resourceVersion"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            failures.append(f"restore {kind}/{name}: live resourceVersion is unavailable")
+            continue
+        restored = _rollback_manifest(item["previous"])
+        restored.setdefault("metadata", {})["resourceVersion"] = resource_version
+        manifest = yaml.safe_dump(restored, default_flow_style=False, sort_keys=False)
+        result = kubectl(
+            "replace",
+            "-f",
+            "-",
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+            input_text=manifest,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "replace failed").strip()
+            failures.append(f"restore {kind}/{name}: {detail}")
+
+    for item in rollback_state:
+        if item.get("previous") is not None:
+            continue
+        args = ["delete", str(item["kind"]), str(item["name"])]
+        resource_namespace = str(item.get("namespace") or "")
+        if resource_namespace:
+            args.extend(["-n", resource_namespace])
+        args.append("--ignore-not-found")
+        result = kubectl(
+            *args,
+            context=context,
+            kubeconfig=kubeconfig,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "delete failed").strip()
+            failures.append(f"delete {item['kind']}/{item['name']}: {detail}")
+
+    if failures:
+        raise RuntimeError("kustomize rollback failed: " + "; ".join(failures))
+
+    return bool(rollback_state)
 
 
 def _capture_failure_diagnostics(
@@ -501,13 +661,24 @@ def _capture_failure_diagnostics(
     for name in failed_names:
         component = config.components[name]
         release = getattr(component, "release", None)
+        selector = f"app.kubernetes.io/instance={release or name}"
         if component.type in ("helm", "helm-job") and release:
+            # Capture kustomize/kubectl diagnostics instead of helm manifest/values
             for command, suffix in (
-                (("status", release, "-n", options.namespace, "-o", "json"), "status.json"),
-                (("get", "manifest", release, "-n", options.namespace), "manifest.yaml"),
-                (("get", "values", release, "-n", options.namespace, "-o", "yaml"), "values.yaml"),
+                (
+                    ("get", "deploy", release, "-n", options.namespace, "-o", "json"),
+                    "deployment.json",
+                ),
+                (
+                    ("get", "job", release, "-n", options.namespace, "-o", "json"),
+                    "job.json",
+                ),
+                (
+                    ("get", "events", "-n", options.namespace, "-l", selector, "-o", "json"),
+                    "events.json",
+                ),
             ):
-                result = helm(
+                result = kubectl(
                     *command,
                     context=options.context,
                     kubeconfig=options.kubeconfig,
@@ -516,21 +687,30 @@ def _capture_failure_diagnostics(
                 if result.returncode != 0:
                     continue
                 content = result.stdout or ""
-                if suffix == "manifest.yaml":
-                    content = _redact_manifest(content)
-                elif suffix == "values.yaml":
-                    parsed = yaml.safe_load(content)
-                    content = yaml.safe_dump(
-                        _redact_dict(parsed if isinstance(parsed, dict) else {}),
-                        sort_keys=False,
-                    )
+                if suffix == "events.json":
+                    # Filter to recent events
+                    try:
+                        payload = json.loads(content)
+                        payload["items"] = [
+                            item
+                            for item in payload.get("items", [])
+                            if datetime.fromisoformat(
+                                item.get("eventTime")
+                                or item.get("lastTimestamp")
+                                or item.get("metadata", {}).get("creationTimestamp")
+                                or "1970-01-01T00:00:00+00:00"
+                            )
+                            >= run_started
+                        ]
+                        content = json.dumps(_redact_dict(payload), indent=2) + "\n"
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        content = _redact_text(content)
                 else:
                     content = _redact_text(content)
                 path = diagnostics_dir / f"{name}.{suffix}"
                 path.write_text(content)
                 os.chmod(path, 0o600)
 
-        selector = f"app.kubernetes.io/instance={release or name}"
         described = kubectl(
             "describe",
             "all",
@@ -567,42 +747,29 @@ def _capture_failure_diagnostics(
 
 
 def _cluster_mutation_snapshot(options: DeployOptions) -> dict[str, Any]:
-    """Capture release names and resource UIDs for dry-run mutation proof."""
+    """Capture kustomize-managed resources and their UIDs for dry-run mutation proof."""
 
-    releases = helm(
-        "list",
-        "-A",
-        "--all",
-        "-o",
-        "json",
-        context=options.context,
-        kubeconfig=options.kubeconfig,
-        check=False,
-    )
-    inventory = kubectl(
+    managed = kubectl(
         "get",
-        "all,configmap,serviceaccount,pvc,ingress,networkpolicy",
-        "-A",
+        "deployment,statefulset,daemonset,job,cronjob,service,configmap,serviceaccount,pvc,ingress,networkpolicy",
+        "-n",
+        options.namespace,
         "-o",
         "json",
         context=options.context,
         kubeconfig=options.kubeconfig,
         check=False,
     )
-    if releases.returncode != 0 or inventory.returncode != 0:
+    if managed.returncode != 0:
         raise RuntimeError("unable to capture server dry-run mutation baseline")
-    release_payload = json.loads(releases.stdout or "[]")
-    resource_payload = json.loads(inventory.stdout or "{}")
+    try:
+        resource_payload = json.loads(managed.stdout or "{}")
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise RuntimeError(
+            "unable to capture server dry-run mutation baseline: invalid JSON"
+        ) from exc
+    items = resource_payload.get("items", [])
     return {
-        "releases": sorted(
-            (
-                item.get("namespace", ""),
-                item.get("name", ""),
-                item.get("revision", ""),
-                item.get("status", ""),
-            )
-            for item in release_payload
-        ),
         "resources": sorted(
             (
                 item.get("apiVersion", ""),
@@ -611,7 +778,7 @@ def _cluster_mutation_snapshot(options: DeployOptions) -> dict[str, Any]:
                 item.get("metadata", {}).get("name", ""),
                 item.get("metadata", {}).get("uid", ""),
             )
-            for item in resource_payload.get("items", [])
+            for item in items
         ),
     }
 
@@ -723,6 +890,7 @@ def deploy_component(
     """
     start = time.monotonic()
     component = config.components[component_name]
+    rollback_state: list[dict[str, Any]] = []
 
     try:
         if component.type == "manifest":
@@ -753,7 +921,7 @@ def deploy_component(
         if not chart_path:
             raise ValueError(f"Component {component_name!r} has no chart path")
 
-        # 1. Generate effective values.
+        # 1. Generate and save the redacted diagnostic values artifact.
         effective = generate_effective_values(
             config,
             component_name,
@@ -762,56 +930,51 @@ def deploy_component(
             root_dir=options.root_dir,
         )
         _save_effective_values(run_dir, component_name, effective)
+        effective_timeout = component.timeout or config.defaults.timeout
 
-        with tempfile.TemporaryDirectory(prefix=f"stackctl-values-{component_name}-") as temp:
-            values_file = Path(temp) / "values.yaml"
-            with open(values_file, "w") as f:
-                yaml.safe_dump(effective, f, default_flow_style=False)
-            os.chmod(values_file, 0o600)
-
-            # 3. Replace a managed Job only after checking its Helm owner.
-            old_job_uid: str | None = None
-            job_name = component.release
-            if component.type == "helm-job":
-                assert component.job is not None
-                job_name = getattr(component.job, "name", None) or component.release
-                if component.job.rerun == "replace" and not options.dry_run:
-                    old_job_uid = _replace_job(
-                        job_name,
-                        options.namespace,
-                        options.context,
-                        options.kubeconfig,
-                        expected_release=component.release,
-                    )
-
-            # 4. Build and invoke Helm in an isolated chart copy.
-            is_helm_job = component.type == "helm-job"
-            with prepared_chart_copy(chart_path) as built_chart:
-                if hasattr(component, "model_copy"):
-                    deployable = component.model_copy(update={"chart": str(built_chart)})
-                else:
-                    deployable = copy.copy(component)
-                    deployable.chart = str(built_chart)
-                helm_result = _helm_upgrade(
-                    deployable,
-                    effective,
-                    values_file,
+        # 2. Replace a managed Job only after checking its Helm owner.
+        old_job_uid: str | None = None
+        job_name = component.release
+        if component.type == "helm-job":
+            assert component.job is not None
+            job_name = getattr(component.job, "name", None) or component.release
+            if component.job.rerun == "replace" and not options.dry_run:
+                old_job_uid = _replace_job(
+                    job_name,
                     options.namespace,
                     options.context,
                     options.kubeconfig,
-                    dry_run=options.dry_run,
-                    wait_for_jobs=not is_helm_job,
+                    expected_release=component.release,
                 )
-            log_path = run_dir / "logs" / f"{component_name}.helm.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""
-            stderr = helm_result.stderr if isinstance(helm_result.stderr, str) else ""
-            log_path.write_text(stdout + stderr)
-            os.chmod(log_path, 0o600)
 
-        # 6. For helm-job: wait for new UID, then wait for Complete/Fail
+        # 3. Build and apply the validated source overlay directly.
+        is_helm_job = component.type == "helm-job"
+        if hasattr(component, "model_copy"):
+            deployable = component.model_copy(update={"chart": str(chart_path.resolve())})
+        else:
+            deployable = copy.copy(component)
+            deployable.chart = str(chart_path.resolve())
+        helm_result = _kustomize_deploy(
+            deployable,
+            options.namespace,
+            options.context,
+            options.kubeconfig,
+            effective_timeout,
+            dry_run=options.dry_run,
+            wait_for_completion=not is_helm_job,
+            root_dir=options.root_dir,
+            rollback_state=(rollback_state if component.rollback_on_failure else None),
+        )
+        log_path = run_dir / "logs" / f"{component_name}.kustomize.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        stdout = helm_result.stdout if isinstance(helm_result.stdout, str) else ""
+        stderr = helm_result.stderr if isinstance(helm_result.stderr, str) else ""
+        log_path.write_text(stdout + stderr)
+        os.chmod(log_path, 0o600)
+
+        # 4. For helm-job: wait for new UID, then wait for Complete/Fail
         if is_helm_job and not options.dry_run:
-            timeout_seconds = int(parse_timeout_seconds(component.timeout or "10m").rstrip("s"))
+            timeout_seconds = int(parse_timeout_seconds(effective_timeout).rstrip("s"))
             _wait_for_job_with_new_uid(
                 job_name,
                 options.namespace,
@@ -838,7 +1001,7 @@ def deploy_component(
                 )
                 raise
 
-        # 7. Wait for gates (skip in dry-run)
+        # 5. Wait for gates (skip in dry-run)
         if not options.dry_run:
             wait_for_gates(
                 component.gates,
@@ -860,24 +1023,28 @@ def deploy_component(
         duration = time.monotonic() - start
 
         # Rollback if configured
+        rollback_status = None
         if (
             component.type in ("helm", "helm-job")
             and component.rollback_on_failure
             and not options.dry_run
         ):
-            with contextlib.suppress(ShellError):
-                _helm_rollback(
-                    component.release,
-                    options.namespace,
+            try:
+                rollback_applied = _kustomize_rollback(
+                    rollback_state,
                     options.context,
                     options.kubeconfig,
                 )
+                rollback_status = "succeeded" if rollback_applied else "no-op"
+            except (ShellError, RuntimeError, OSError):
+                rollback_status = "failed"
 
         return ComponentResult(
             component=component_name,
             success=False,
             error=str(exc),
             duration=duration,
+            rollback_status=rollback_status,
         )
 
 
@@ -1062,9 +1229,9 @@ async def deploy_stack(
                 overall_success = False
                 all_results.append(
                     ComponentResult(
-                        component="dry-run-mutation-proof",
-                        success=False,
-                        error=("server dry-run changed Helm releases or Kubernetes resource UIDs"),
+                    component="dry-run-mutation-proof",
+                    success=False,
+                    error=("server dry-run changed Kubernetes resource UIDs"),
                     )
                 )
         return DeployResult(
@@ -1085,6 +1252,7 @@ async def deploy_stack(
                     "success": result.success,
                     "error": result.error,
                     "duration": result.duration,
+                    "rollback_status": result.rollback_status,
                 }
                 for result in all_results
             ],

@@ -1,11 +1,10 @@
-"""Digest-guarded Helm ownership cutover without umbrella uninstall."""
+"""Digest-guarded kustomize ownership cutover without umbrella uninstall."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,15 +13,17 @@ import yaml
 
 from .cluster import smoke, status
 from .core import StackConfig, load_umbrella_values, staged_waves
-from .deploy import _redact_dict, _redact_manifest, prepared_chart_copy
+from .deploy import _redact_manifest
 from .rendering import (
+    OVERLAY_MAP,
+    _resolved_overlay_path,
     parity_diff,
+    parse_manifest,
     render_component,
-    render_umbrella,
     resource_identity,
     safe_artifact_dir,
 )
-from .shell import helm, kubectl
+from .shell import kubectl, kustomize_apply, kustomize_build
 
 
 def _canonical_digest(payload: dict[str, Any]) -> str:
@@ -53,7 +54,7 @@ def _live_uid(
     namespace: str,
     context: str,
     kubeconfig: str | None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str, str | None]:
     _, kind, resource_namespace, name = identity
     args = ["get", kind, name]
     if resource_namespace or namespace:
@@ -69,9 +70,30 @@ def _live_uid(
         raise RuntimeError(f"required live resource missing: {kind}/{name}")
     payload = json.loads(result.stdout)
     metadata = payload.get("metadata", {})
+    annotations = metadata.get("annotations", {})
+    labels = metadata.get("labels", {})
+    managed_by = labels.get("app.kubernetes.io/managed-by")
+    if managed_by == "kustomize":
+        return (
+            str(metadata.get("uid", "")),
+            "app.kubernetes.io/managed-by",
+            managed_by,
+        )
+    owner_source = "meta.helm.sh/release-name"
+    owner_value = annotations.get("meta.helm.sh/release-name")
+    if owner_value is None:
+        owner_value = labels.get("app.kubernetes.io/instance")
+        if owner_value is not None:
+            owner_source = "app.kubernetes.io/instance"
+        else:
+            owner_value = managed_by
+            owner_source = (
+                "app.kubernetes.io/managed-by" if owner_value is not None else "unowned"
+            )
     return (
         str(metadata.get("uid", "")),
-        metadata.get("annotations", {}).get("meta.helm.sh/release-name"),
+        owner_source,
+        owner_value,
     )
 
 
@@ -99,6 +121,19 @@ def create_plan(
     run_dir.mkdir(mode=0o700)
 
     values = load_umbrella_values(config, root_dir)
+    configured_overlay = OVERLAY_MAP.get(namespace)
+    if configured_overlay is None:
+        raise ValueError(
+            f"namespace {namespace!r} has no configured kustomize overlay; "
+            f"known overlays: {', '.join(sorted(OVERLAY_MAP))}"
+        )
+    overlay_path = _resolved_overlay_path(root_dir, configured_overlay)
+    kustomize_overlay = overlay_path.relative_to(root_dir.resolve()).as_posix()
+    umbrella_manifest = kustomize_build(
+        str(overlay_path),
+        context=context,
+        kubeconfig=kubeconfig,
+    )
     rendered = [
         render_component(
             name,
@@ -112,12 +147,7 @@ def create_plan(
         if component.type in ("helm", "helm-job")
     ]
     split_resources = [resource for item in rendered for resource in item.resources]
-    umbrella_resources = render_umbrella(
-        root_dir / "helm" / "ssl-proxy",
-        values,
-        runtime_overrides,
-        namespace,
-    )
+    umbrella_resources = parse_manifest(umbrella_manifest.stdout, "umbrella")
     differences = parity_diff(umbrella_resources, split_resources)
     if differences:
         raise RuntimeError("manifest parity failed: " + "; ".join(differences))
@@ -134,9 +164,20 @@ def create_plan(
         # The lifecycle-managed schema Job intentionally has no stable umbrella identity.
         if identity not in split_owner:
             continue
-        uid, owner = _live_uid(identity, namespace, context, kubeconfig)
-        if owner != umbrella_release:
-            raise RuntimeError(f"{identity} is owned by {owner!r}, expected {umbrella_release!r}")
+        uid, owner_source, owner_value = _live_uid(identity, namespace, context, kubeconfig)
+        if owner_value == umbrella_release and owner_source in {
+            "meta.helm.sh/release-name",
+            "app.kubernetes.io/instance",
+        }:
+            pass
+        elif owner_source == "app.kubernetes.io/managed-by":
+            raise RuntimeError(
+                f"{identity} is managed by {owner_value!r}, not owned by a Helm release"
+            )
+        else:
+            raise RuntimeError(
+                f"{identity} is owned by {owner_value!r}, expected {umbrella_release!r}"
+            )
         matrix.append(
             {
                 "group": identity[0],
@@ -151,9 +192,9 @@ def create_plan(
 
     backups = run_dir / "backups"
     backups.mkdir(mode=0o700)
-    history = helm(
-        "history",
-        umbrella_release,
+    live_state = kubectl(
+        "get",
+        "deploy,sts,ds,job",
         "-n",
         namespace,
         "-o",
@@ -161,35 +202,15 @@ def create_plan(
         context=context,
         kubeconfig=kubeconfig,
     )
-    release_values = helm(
-        "get",
-        "values",
-        umbrella_release,
-        "-n",
-        namespace,
-        "-o",
-        "yaml",
-        context=context,
-        kubeconfig=kubeconfig,
+    _write_private(backups / "live-state.json", live_state.stdout)
+    _write_private(
+        backups / "overlay.yaml",
+        yaml.safe_dump({"kustomize_overlay": kustomize_overlay}, sort_keys=True),
     )
-    manifest = helm(
-        "get",
-        "manifest",
-        umbrella_release,
-        "-n",
-        namespace,
-        context=context,
-        kubeconfig=kubeconfig,
+    _write_private(
+        backups / "manifest.redacted.yaml",
+        _redact_manifest(umbrella_manifest.stdout),
     )
-    _write_private(backups / "history.json", history.stdout)
-    parsed_values = yaml.safe_load(release_values.stdout) or {}
-    redacted = _redact_dict(parsed_values)
-    if "[REDACTED]" in yaml.safe_dump(redacted):
-        raise RuntimeError(
-            "umbrella values contain inline sensitive fields; refusing unsafe backup"
-        )
-    _write_private(backups / "values.yaml", yaml.safe_dump(parsed_values, sort_keys=True))
-    _write_private(backups / "manifest.redacted.yaml", _redact_manifest(manifest.stdout))
     pvcs = kubectl(
         "get",
         "pvc",
@@ -208,12 +229,16 @@ def create_plan(
         "context": context,
         "namespace": namespace,
         "umbrella_release": umbrella_release,
+        "kustomize_overlay": kustomize_overlay,
         "matrix": matrix,
         "parity": {"passed": True, "differences": []},
         "finalized": False,
         "rollback": {
             "before_finalize": "run cutover rollback with this plan",
-            "after_finalize": "run cutover rollback; umbrella is reinstalled with take-ownership",
+            "after_finalize": (
+                "run cutover rollback; overlay is reapplied from the plan-captured "
+                "kustomize_overlay"
+            ),
         },
     }
     payload["digest"] = _canonical_digest(payload)
@@ -253,9 +278,33 @@ def _verify_confirmations(
 def _verify_uids(plan: dict[str, Any], context: str, kubeconfig: str | None) -> None:
     for item in plan["matrix"]:
         identity = (item["group"], item["kind"], item["namespace"], item["name"])
-        uid, owner = _live_uid(identity, item["namespace"], context, kubeconfig)
-        if uid != item["uid"] or owner != item["from_release"]:
+        uid, owner_source, owner_value = _live_uid(identity, item["namespace"], context, kubeconfig)
+        if owner_source == "app.kubernetes.io/managed-by":
+            raise RuntimeError(
+                f"resource {identity} is managed by kustomize, not a Helm release"
+            )
+        if uid != item["uid"] or owner_value != item["from_release"]:
             raise RuntimeError(f"resource changed since plan: {identity}")
+
+
+def _validated_overlay_path(
+    plan: dict[str, Any],
+    root_dir: Path,
+    plan_path: Path,
+) -> Path:
+    kustomize_overlay = plan.get("kustomize_overlay")
+    if not isinstance(kustomize_overlay, str) or not kustomize_overlay:
+        raise RuntimeError("cutover plan has no captured kustomize overlay")
+    backup_path = plan_path.parent / "backups" / "overlay.yaml"
+    if not backup_path.is_file():
+        raise RuntimeError("cutover overlay backup is missing")
+    backup = yaml.safe_load(backup_path.read_text())
+    if not isinstance(backup, dict) or backup.get("kustomize_overlay") != kustomize_overlay:
+        raise RuntimeError("cutover overlay backup does not match the plan")
+    try:
+        return _resolved_overlay_path(root_dir, kustomize_overlay)
+    except ValueError as error:
+        raise RuntimeError("overlay path escapes root directory") from error
 
 
 def apply_plan(
@@ -274,8 +323,8 @@ def apply_plan(
     plan = load_verified_plan(plan_path, digest)
     _verify_confirmations(plan, context, release, drain_complete, kubeconfig)
     required_backups = (
-        "history.json",
-        "values.yaml",
+        "live-state.json",
+        "overlay.yaml",
         "manifest.redacted.yaml",
         "pvcs.json",
     )
@@ -286,13 +335,20 @@ def apply_plan(
         raise RuntimeError("cutover backups are incomplete: " + ", ".join(missing_backups))
     _verify_uids(plan, context, kubeconfig)
     values = load_umbrella_values(config, root_dir)
+    overlay_path = _validated_overlay_path(plan, root_dir, plan_path)
+    kustomize_apply(
+        str(overlay_path),
+        context=context,
+        kubeconfig=kubeconfig,
+        namespace=plan["namespace"],
+    )
     bootstrap, waves = staged_waves(config)
     for wave in ([bootstrap] if bootstrap else []) + waves:
         for name in wave:
             component = config.components[name]
             if component.type not in ("helm", "helm-job"):
                 continue
-            rendered = render_component(
+            render_component(
                 name,
                 config,
                 root_dir,
@@ -300,28 +356,6 @@ def apply_plan(
                 runtime_overrides,
                 plan["namespace"],
             )
-            with tempfile.TemporaryDirectory(prefix=f"stackctl-adopt-{name}-") as temp:
-                values_path = Path(temp) / "values.yaml"
-                values_path.write_text(yaml.safe_dump(rendered.effective_values))
-                os.chmod(values_path, 0o600)
-                with prepared_chart_copy(root_dir / component.chart) as chart:
-                    helm(
-                        "upgrade",
-                        "--install",
-                        component.release,
-                        str(chart),
-                        "-n",
-                        plan["namespace"],
-                        "-f",
-                        str(values_path),
-                        "--take-ownership",
-                        "--server-side=true",
-                        "--wait=watcher",
-                        "--timeout",
-                        component.timeout or config.defaults.timeout,
-                        context=context,
-                        kubeconfig=kubeconfig,
-                    )
     checks = status(config, plan["namespace"], context, kubeconfig)
     checks.extend(smoke(config, plan["namespace"], context, kubeconfig))
     degraded = [item for item in checks if not item.healthy]
@@ -372,9 +406,30 @@ def finalize_plan(
     }
     for item in plan["matrix"]:
         identity = (item["group"], item["kind"], item["namespace"], item["name"])
-        uid, owner = _live_uid(identity, item["namespace"], context, kubeconfig)
-        if uid != item["uid"] or owner not in planned_releases:
-            raise RuntimeError(f"split ownership proof failed: {identity}")
+        uid, owner_source, owner_value = _live_uid(identity, item["namespace"], context, kubeconfig)
+        if uid != item["uid"]:
+            raise RuntimeError(f"split ownership proof failed: {identity} uid changed")
+        if owner_source == "meta.helm.sh/release-name":
+            if owner_value not in planned_releases:
+                raise RuntimeError(
+                    f"split ownership proof failed: {identity} release-name "
+                    f"{owner_value!r} not in planned releases"
+                )
+        elif owner_source == "app.kubernetes.io/instance":
+            if owner_value not in planned_releases:
+                raise RuntimeError(
+                    f"split ownership proof failed: {identity} instance "
+                    f"{owner_value!r} not in planned releases"
+                )
+        elif owner_source == "app.kubernetes.io/managed-by":
+            raise RuntimeError(
+                f"split ownership proof failed: {identity} is managed by "
+                f"{owner_value!r}, not a Helm release"
+            )
+        else:
+            raise RuntimeError(
+                f"split ownership proof failed: {identity} has no helm release-name annotation"
+            )
     degraded = [
         item for item in status(config, plan["namespace"], context, kubeconfig) if not item.healthy
     ]
@@ -412,23 +467,13 @@ def rollback_plan(
 
     plan = load_verified_plan(plan_path, digest)
     _verify_confirmations(plan, context, release, True, kubeconfig)
-    backup_values = plan_path.parent / "backups" / "values.yaml"
-    with prepared_chart_copy(root_dir / "helm" / "ssl-proxy") as chart:
-        helm(
-            "upgrade",
-            "--install",
-            release,
-            str(chart),
-            "-n",
-            plan["namespace"],
-            "-f",
-            str(backup_values),
-            "--take-ownership",
-            "--server-side=true",
-            "--wait=watcher",
-            context=context,
-            kubeconfig=kubeconfig,
-        )
+    overlay_path = _validated_overlay_path(plan, root_dir, plan_path)
+    kustomize_apply(
+        str(overlay_path),
+        context=context,
+        kubeconfig=kubeconfig,
+        namespace=plan["namespace"],
+    )
     split_releases = sorted({item["to_release"] for item in plan["matrix"]})
     for split_release in split_releases:
         for record in _helm_storage_records(split_release, plan["namespace"], context, kubeconfig):

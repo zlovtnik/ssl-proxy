@@ -38,12 +38,11 @@ spec:
             - --smp
             - "1"
             - --memory
-            - 1G
+            - 2G
             - --reserve-memory
             - 0M
             - --node-id
             - "0"
-            - --check=false
             - --kafka-addr
             - INTERNAL://0.0.0.0:9092
             - --advertise-kafka-addr
@@ -72,7 +71,7 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: redpanda-data
-              mountPath: /data
+              mountPath: /var/lib/redpanda/data
       volumes:
         - name: redpanda-data
           {{- if .Values.persistence.hostPath }}

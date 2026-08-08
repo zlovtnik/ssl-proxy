@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-traefik
+  namespace: ssl-proxy
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: schema-migrator-traefik
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # The development stack keeps one internal edge replica. External ingress is
+  # owned by the cluster ingress controller, so this pod does not claim host
+  # ports 80/443.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: schema-migrator-traefik
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: schema-migrator-traefik
+    spec:
+      serviceAccountName: ssl-proxy
+      automountServiceAccountToken: false
+      nodeSelector:
+        ssl-proxy.io/ingress: "true"
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: traefik
+          image: traefik@sha256:996b026a32b1bb6c85c200e5cf25276c1caa84ddea6b1e3a33e78cdc5cbe8d0c
+          imagePullPolicy: Always
+          args:
+            - --api.dashboard=false
+            - --providers.file.filename=/etc/traefik/dynamic.yaml
+            - --providers.file.watch=true
+            - --entrypoints.web.address=:8000
+            - --entrypoints.web.http.redirections.entrypoint.to=websecure
+            - --entrypoints.web.http.redirections.entrypoint.scheme=https
+            - --entrypoints.websecure.address=:8443
+            - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=300s
+            - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0s
+            - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=3600s
+            - --ping=true
+            - --ping.entrypoint=ping
+            - --entrypoints.ping.address=:8082
+          ports:
+            - name: web
+              containerPort: 8000
+              protocol: TCP
+            - name: websecure
+              containerPort: 8443
+              protocol: TCP
+            - name: ping
+              containerPort: 8082
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: ping
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: ping
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: ping
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik
+              readOnly: true
+            - name: tls-cert
+              mountPath: /etc/tls-cert
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: ssl-proxy-schema-migrator-traefik
+        - name: tls-cert
+          secret:
+            secretName: ssl-proxy-identity-tls
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssl-proxy-schema-migrator-traefik
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: schema-migrator-traefik
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: schema-migrator-traefik
+  ports:
+    - name: http
+      port: 80
+      targetPort: web
+    - name: https
+      port: 443
+      targetPort: websecure

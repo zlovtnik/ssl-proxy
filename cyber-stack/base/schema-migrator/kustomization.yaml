@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ssl-proxy
+resources:
+  - backend.yaml
+  - ui.yaml
+  - keycloak.yaml
+  - traefik.yaml
+  - configmaps.yaml
+  - bootstrap-job.yaml
+  - validate-job.yaml
+configMapGenerator:
+  - name: ssl-proxy-schema-migrator-ui-config
+    behavior: create
+    files:
+      - runtime-config.js=configmaps/runtime-config.js
+    options:
+      annotations:
+        argocd.argoproj.io/sync-wave: "1"
+      labels:
+        app.kubernetes.io/name: ssl-proxy
+        app.kubernetes.io/component: schema-migrator-ui
+        app.kubernetes.io/managed-by: kustomize
