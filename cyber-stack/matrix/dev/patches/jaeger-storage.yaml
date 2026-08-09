@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-telemetry-jaeger
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim: null
+          emptyDir: {}
