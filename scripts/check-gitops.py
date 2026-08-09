@@ -383,8 +383,70 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for value in updater_requirements:
             if value not in updater:
                 errors.append(f"{updater_relative}: missing {value!r}")
+        for image in FIRST_PARTY_IMAGES:
+            image_reference = f"192.168.1.221:5000/{image}:latest"
+            if image_reference not in updater:
+                errors.append(
+                    f"{updater_relative}: missing dev image mapping {image_reference!r}"
+                )
         if "ssl-proxy-prod-" in updater:
             errors.append("Image Updater must not automate production promotion")
+
+    controller_relative = Path("cyber-stack/argocd/application-image-updater.yaml")
+    controller = _read_required(
+        root,
+        controller_relative,
+        errors,
+        "Image Updater controller Application",
+    )
+    if controller is not None:
+        controller_requirements = (
+            "project: ssl-proxy-image-updater",
+            "repoURL: https://argoproj.github.io/argo-helm",
+            "chart: argocd-image-updater",
+            "targetRevision: 1.2.4",
+            "createClusterRoles: false",
+            "api_url: http://192.168.1.221:5000",
+            "prefix: 192.168.1.221:5000",
+            "insecure: true",
+            "namespace: argocd",
+            "automated:",
+            "prune: true",
+            "selfHeal: true",
+            "allowEmpty: false",
+        )
+        for value in controller_requirements:
+            if value not in controller:
+                errors.append(f"{controller_relative}: missing {value!r}")
+        if "createClusterRoles: true" in controller:
+            errors.append(
+                f"{controller_relative}: Image Updater must remain namespace scoped"
+            )
+
+    project_relative = Path("cyber-stack/argocd/appproject-image-updater.yaml")
+    project = _read_required(
+        root,
+        project_relative,
+        errors,
+        "Image Updater AppProject",
+    )
+    if project is not None:
+        project_requirements = (
+            "name: ssl-proxy-image-updater",
+            "namespace: argocd",
+            "https://argoproj.github.io/argo-helm",
+            "group: apiextensions.k8s.io",
+            "kind: CustomResourceDefinition",
+        )
+        for value in project_requirements:
+            if value not in project:
+                errors.append(f"{project_relative}: missing {value!r}")
+        for forbidden in ("kind: ClusterRole\n", "kind: ClusterRoleBinding\n"):
+            if forbidden in project:
+                errors.append(
+                    f"{project_relative}: namespace-scoped updater must not allow "
+                    f"{forbidden.removeprefix('kind: ').strip()}"
+                )
 
     for environment in ("dev", "prod"):
         for component in ("data-plane", "app-stack"):

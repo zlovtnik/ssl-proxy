@@ -18,7 +18,9 @@ Argo CD is the only Kubernetes reconciler for this repository.
 
 ## Release and promotion
 
-Publish first-party images without changing cluster state:
+The private Jenkins `ssl-proxy-images` pipeline publishes `main` after its
+delivery checks pass. For an authorized manual rebuild, publish first-party
+images without changing cluster state:
 
 ```bash
 make publish-all REGISTRY=192.168.1.221:5000 REGISTRY_PLAIN_HTTP=1

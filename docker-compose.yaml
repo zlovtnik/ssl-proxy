@@ -2,15 +2,6 @@ x-ath-sensor-env: &ath_sensor_env
   SYNC_REDPANDA_BOOTSTRAP_SERVERS: redpanda://127.0.0.1:19092
 
 services:
-  registry:
-    image: registry:2
-    container_name: lan-registry
-    restart: always
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./data:/var/lib/registry
-
   ssl-proxy:
     depends_on:
       redpanda:

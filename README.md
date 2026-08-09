@@ -112,6 +112,7 @@ python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
 ## Operational references
 
 - [GitOps management and onboarding](cyber-stack/README.md)
+- [Jenkins image CI](docs/jenkins-ci.md)
 - [System architecture](docs/architecture.md)
 - [Operations runbook](docs/runbook.md)
 - [TiDB runtime and cutover](docs/tidb-runtime-cutover.md)

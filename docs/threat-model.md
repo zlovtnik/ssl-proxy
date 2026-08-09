@@ -48,6 +48,7 @@ credentials.
 | P1 | Audit suppression or replay manipulation | Loss of evidence and incorrect projections | Redpanda transport, durable TiDB dedupe, topic/partition/offset evidence, signed cutover boundary | Operator with TiDB and Kafka control can still damage evidence without external immutability |
 | P1 | Exposed admin, TiDB or observability ports | Remote control or data disclosure | Loopback/cluster-internal defaults, API token support, Kubernetes network boundaries | Values and host firewall drift must be verified |
 | P1 | Supply-chain or image-registry compromise | Arbitrary workload execution | Explicit registry workflow, pinned first-party build inputs, image pull checks | Signing/attestation enforcement is not complete |
+| P1 | Compromised Jenkins pipeline or build engine | Registry poisoning and root-equivalent control of the isolated Docker engine | Main-only managed job, no host Docker socket, mutual-TLS Docker API, private bind addresses, external administrator secret | Jenkins executes trusted `main` code on its controller; branch protection, host firewalling and controller access remain platform responsibilities |
 | P2 | WireGuard UDP flood or session exhaustion | Availability loss | Session limits, queue bounds, optional rate limit, resource limits | Public UDP remains a denial-of-service surface |
 | P2 | TLS/SNI or protocol evasion | Policy bypass | WireGuard-first routing, transparent TCP interception, classification taxonomy | Non-SNI, fragmentation and non-TCP paths require explicit policy testing |
 | P2 | Wireless frame poisoning | False alerts or resource consumption | Parser hardening, schema-versioned events, bounded backlog and thresholds | Radio input is inherently unauthenticated |
@@ -71,6 +72,8 @@ credentials.
   placed in normal logs or metric labels.
 - Admin, database, registry and observability surfaces are not public by
   default.
+- Jenkins and its privileged Docker-in-Docker engine stay on a private build
+  network and never receive the host Docker socket.
 
 ## Known control gaps
 
