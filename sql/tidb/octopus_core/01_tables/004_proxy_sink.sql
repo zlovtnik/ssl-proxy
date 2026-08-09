@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS proxy_events (
   UNIQUE KEY proxy_events_batch_row_uq (batch_id, row_sequence),
   KEY proxy_events_event_utc_idx (event_timestamp_utc),
   KEY proxy_events_host_time_idx (host, event_time),
-  KEY proxy_events_blocked_time_idx (blocked, event_time),
+  KEY proxy_events_blocked_time_idx (blocked, event_time, host),
   KEY proxy_events_device_time_idx (device_id, event_time),
   KEY proxy_events_wg_time_idx (wg_pubkey, event_time)
 ) ENGINE=InnoDB;
