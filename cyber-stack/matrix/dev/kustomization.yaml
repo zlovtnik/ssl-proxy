@@ -7,7 +7,7 @@ resources:
 images:
   - name: ssl-proxy
     newName: 192.168.1.221:5000/ssl-proxy
-    digest: sha256:981561e17bef3de5fcffc8d4b7a8658a0524ed6afb81f6a888ab2b0df90387a4
+    digest: sha256:f9150e4a7122dedc45e3a481eafcf937d20252a1fcdaa14ad60c4c399ce2ef02
   - name: java-coordinator
     newName: 192.168.1.221:5000/java-coordinator
     digest: sha256:d353eb65a066ee47a267bab597ddc6fed613bd50db0590c7c4bfa2d547a0732e
