@@ -41,8 +41,8 @@ spec:
                   --config "$CONFIG" \
                   --server "$KEYCLOAK_URL" \
                   --realm master \
-                  --user "$KEYCLOAK_ADMIN" \
-                  --password - <<< "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1; then
+                  --client "$KEYCLOAK_ADMIN_CLIENT_ID" \
+                  --secret "$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null 2>&1; then
                   authenticated=true
                   break
                 fi
@@ -51,6 +51,24 @@ spec:
               if [ "$authenticated" != true ]; then
                 echo "Keycloak did not accept bootstrap administrator credentials" >&2
                 exit 1
+              fi
+
+              cleanup_bootstrap_admin() {
+                set +e
+                recovery_client_uuid="$($KCADM get clients --config "$CONFIG" -r master \
+                  -q "clientId=$KEYCLOAK_ADMIN_CLIENT_ID" --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+                if [ -n "$recovery_client_uuid" ]; then
+                  "$KCADM" delete "clients/$recovery_client_uuid" --config "$CONFIG" -r master
+                fi
+              }
+              trap cleanup_bootstrap_admin EXIT
+
+              stale_admin_id="$($KCADM get users --config "$CONFIG" -r master \
+                -q "username=keycloak-admin" -q exact=true --fields id --format csv --noquotes \
+                | grep -v '^id$' | head -n 1)"
+              if [ -n "$stale_admin_id" ]; then
+                "$KCADM" delete "users/$stale_admin_id" --config "$CONFIG" -r master
               fi
 
               user_id="$($KCADM get users --config "$CONFIG" -r "$REALM" \
@@ -97,9 +115,9 @@ spec:
           env:
             - name: KEYCLOAK_URL
               value: "http://ssl-proxy-schema-migrator-keycloak:8080"
-            - name: KEYCLOAK_ADMIN
-              value: "keycloak-admin"
-            - name: KEYCLOAK_ADMIN_PASSWORD
+            - name: KEYCLOAK_ADMIN_CLIENT_ID
+              value: "ssl-proxy-bootstrap"
+            - name: KEYCLOAK_ADMIN_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: schema-migrator-keycloak

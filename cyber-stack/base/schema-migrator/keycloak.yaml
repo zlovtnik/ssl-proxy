@@ -97,6 +97,72 @@ spec:
           volumeMounts:
             - name: keycloak-home
               mountPath: /keycloak-home
+        - name: bootstrap-admin-service
+          image: quay.io/keycloak/keycloak:26.2.5
+          imagePullPolicy: Always
+          command: ["/opt/keycloak/bin/kc.sh"]
+          args:
+            - bootstrap-admin
+            - service
+            - --client-id
+            - ssl-proxy-bootstrap
+            - --client-secret:env
+            - KC_BOOTSTRAP_RECOVERY_CLIENT_SECRET
+            - --no-prompt
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KC_DB
+              value: mysql
+            - name: KC_DB_URL_HOST
+              value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
+            - name: KC_DB_URL_PORT
+              value: "4000"
+            - name: KC_DB_URL_DATABASE
+              value: "keycloak"
+            - name: KC_DB_URL_PROPERTIES
+              value: "?sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:///run/tidb-tls/truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit&fallbackToSystemTrustStore=false"
+            - name: KC_DB_USERNAME
+              value: "keycloak"
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tidb-keycloak
+                  key: password
+            - name: KC_BOOTSTRAP_RECOVERY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: schema-migrator-keycloak
+                  key: bootstrap-admin-password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+              ephemeral-storage: 250Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+              ephemeral-storage: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: keycloak-home
+              mountPath: /opt/keycloak
+            - name: keycloak-data
+              mountPath: /opt/keycloak/data
+            - name: tmp
+              mountPath: /tmp
+            - name: tidb-truststore
+              mountPath: /run/tidb-tls
+              readOnly: true
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.2.5
@@ -129,13 +195,6 @@ spec:
                 secretKeyRef:
                   name: tidb-keycloak
                   key: password
-            - name: KC_BOOTSTRAP_ADMIN_USERNAME
-              value: "keycloak-admin"
-            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: schema-migrator-keycloak
-                  key: bootstrap-admin-password
             - name: IDENTITY_HOSTNAME
               valueFrom:
                 configMapKeyRef:
