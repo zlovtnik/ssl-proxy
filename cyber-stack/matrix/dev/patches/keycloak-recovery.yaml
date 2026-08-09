@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-schema-migrator-keycloak
+  namespace: ssl-proxy
+spec:
+  template:
+    metadata:
+      annotations:
+        ssl-proxy.io/recovery-generation: "2026-08-08-1"

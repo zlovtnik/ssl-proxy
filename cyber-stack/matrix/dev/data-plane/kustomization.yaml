@@ -28,6 +28,7 @@ images:
 patches:
   - path: ../patches/tidb-replicas.yaml
   - path: ../patches/alloy-positions.yaml
+  - path: ../patches/jaeger-storage.yaml
   - target:
       kind: ConfigMap
       name: ssl-proxy-tidb-config

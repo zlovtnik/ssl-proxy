@@ -40,6 +40,7 @@ patches:
   - path: ../patches/identity-hostname.yaml
   - path: ../patches/proxy-replicas.yaml
   - path: ../patches/octopus-environment.yaml
+  - path: ../patches/keycloak-recovery.yaml
 configurations:
   - ../../../base/schema-migrator/kustomizeconfig.yaml
 vars:
