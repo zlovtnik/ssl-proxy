@@ -11,6 +11,14 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Scala IDE and build-server state
+.metals/
+**/.metals/
+.bloop/
+**/.bloop/
+**/project/project/
+**/project/metals.sbt
+
 # Local environment and secrets
 .env
 .env.*

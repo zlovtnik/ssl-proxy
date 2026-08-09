@@ -1,10 +1,10 @@
 engine: tidb
 layer: octopus_core
 database: octopus_core
-schema_version: 2026080501
+schema_version: 2026080901
 checksum_algorithm: sha256
 manifest_checksum_algorithm: sha256-path-nul-bytes-nul-v1
-manifest_sha256: 747ff8b2b8e3a0dc6ee1a1a51ed906eaca595b9916d5e466b1893b15649bdad1
+manifest_sha256: 10252d0d22394756115f78de2986cf7cb468412f6113bf51c8222307899baed5
 checksums_file: checksums.sha256
 grant_fixture: grants/least_privilege.sql.tmpl
 apply_order:
