@@ -296,7 +296,7 @@ metadata:
     app.kubernetes.io/component: schema-migrator-keycloak
     app.kubernetes.io/managed-by: kustomize
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: schema-migrator-keycloak
