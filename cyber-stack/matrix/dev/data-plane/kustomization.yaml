@@ -30,6 +30,13 @@ patches:
   - path: ../patches/alloy-positions.yaml
   - path: ../patches/jaeger-storage.yaml
   - target:
+      kind: Job
+      name: ssl-proxy-tidb-schema-executor
+    patch: |-
+      - op: replace
+        path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
+        value: schema-manifest-readiness-1
+  - target:
       kind: ConfigMap
       name: ssl-proxy-tidb-config
     patch: |-
