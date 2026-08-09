@@ -7,10 +7,7 @@ use axum::{
     routing::{any, get, post},
     Router,
 };
-use hickory_resolver::{
-    config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
+use hickory_resolver::TokioAsyncResolver;
 use hyper::service::service_fn;
 use hyper_util::{
     client::legacy::{connect::HttpConnector, Client},
@@ -234,30 +231,10 @@ fn init_tracing(config: &config::Config) -> Option<opentelemetry_sdk::trace::Sdk
 }
 
 fn build_resolver() -> TokioAsyncResolver {
-    let mut opts = ResolverOpts::default();
-    opts.cache_size = 1024;
-    // Prefer IPv4 first to avoid "Network unreachable" errors when IPv6 is not configured
-    opts.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-
-    let cloudflare_ips = [
-        "1.1.1.1"
-            .parse()
-            .expect("static Cloudflare resolver address must parse"),
-        "1.0.0.1"
-            .parse()
-            .expect("static Cloudflare resolver address must parse"),
-    ];
-    let resolver_config = ResolverConfig::from_parts(
-        None,
-        Vec::new(),
-        NameServerConfigGroup::from_ips_https(
-            &cloudflare_ips,
-            443,
-            "cloudflare-dns.com".to_string(),
-            true,
-        ),
-    );
-    TokioAsyncResolver::tokio(resolver_config, opts)
+    // Use the system resolver (/etc/resolv.conf) so Kubernetes-internal service names
+    // (e.g. ssl-proxy-redpanda) resolve via kube-dns, and external domains are forwarded
+    // to upstream resolvers by kube-dns.
+    TokioAsyncResolver::tokio_from_system_conf().expect("system DNS resolver must initialize")
 }
 
 fn build_state(config: &config::Config) -> state::SharedState {
