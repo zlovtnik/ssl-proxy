@@ -6,7 +6,7 @@ resources:
 configMapGenerator:
   - name: ssl-proxy-atheros-search-ui-nginx
     files:
-      - default.conf=nginx.conf
+      - default.conf=nginx-default
     options:
       labels:
         app.kubernetes.io/name: ssl-proxy
