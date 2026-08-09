@@ -34,50 +34,113 @@ spec:
           args:
             - |
               KCADM=/opt/keycloak/bin/kcadm.sh
-              CONFIG=/tmp/kcadm.config
-              authenticated=false
-              for attempt in $(seq 1 90); do
-                if "$KCADM" config credentials \
-                  --config "$CONFIG" \
-                  --server "$KEYCLOAK_URL" \
-                  --realm master \
-                  --client "$KEYCLOAK_ADMIN_CLIENT_ID" \
-                  --secret "$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null 2>&1; then
-                  authenticated=true
-                  break
-                fi
-                sleep 2
-              done
-              if [ "$authenticated" != true ]; then
-                echo "Keycloak did not accept bootstrap administrator credentials" >&2
-                exit 1
-              fi
+              REALM_CONFIG=/tmp/kcadm-realm.config
+              MASTER_CONFIG=/tmp/kcadm-master.config
+              ADMIN_CONFIG="$REALM_CONFIG"
+              used_recovery=false
 
-              cleanup_bootstrap_admin() {
-                set +e
-                recovery_client_uuid="$($KCADM get clients --config "$CONFIG" -r master \
+              if ! "$KCADM" config credentials \
+                --config "$REALM_CONFIG" \
+                --server "$KEYCLOAK_URL" \
+                --realm "$REALM" \
+                --client "$KEYCLOAK_ADMIN_CLIENT_ID" \
+                --secret "$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null 2>&1; then
+                authenticated=false
+                for attempt in $(seq 1 90); do
+                  if "$KCADM" config credentials \
+                    --config "$MASTER_CONFIG" \
+                    --server "$KEYCLOAK_URL" \
+                    --realm master \
+                    --client "$KEYCLOAK_ADMIN_CLIENT_ID" \
+                    --secret "$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null 2>&1; then
+                    authenticated=true
+                    break
+                  fi
+                  sleep 2
+                done
+                if [ "$authenticated" != true ]; then
+                  echo "Keycloak did not accept realm automation or recovery credentials" >&2
+                  exit 1
+                fi
+                used_recovery=true
+
+                automation_client_uuid="$($KCADM get clients --config "$MASTER_CONFIG" -r "$REALM" \
                   -q "clientId=$KEYCLOAK_ADMIN_CLIENT_ID" --fields id --format csv --noquotes \
                   | grep -v '^id$' | head -n 1)"
-                if [ -n "$recovery_client_uuid" ]; then
-                  "$KCADM" delete "clients/$recovery_client_uuid" --config "$CONFIG" -r master
+                if [ -z "$automation_client_uuid" ]; then
+                  "$KCADM" create clients --config "$MASTER_CONFIG" -r "$REALM" \
+                    -s "clientId=$KEYCLOAK_ADMIN_CLIENT_ID" \
+                    -s enabled=true \
+                    -s publicClient=false \
+                    -s serviceAccountsEnabled=true \
+                    -s standardFlowEnabled=false \
+                    -s directAccessGrantsEnabled=false \
+                    -s "secret=$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null
+                  automation_client_uuid="$($KCADM get clients --config "$MASTER_CONFIG" -r "$REALM" \
+                    -q "clientId=$KEYCLOAK_ADMIN_CLIENT_ID" --fields id --format csv --noquotes \
+                    | grep -v '^id$' | head -n 1)"
+                else
+                  "$KCADM" update "clients/$automation_client_uuid" \
+                    --config "$MASTER_CONFIG" -r "$REALM" \
+                    -s enabled=true \
+                    -s publicClient=false \
+                    -s serviceAccountsEnabled=true \
+                    -s standardFlowEnabled=false \
+                    -s directAccessGrantsEnabled=false \
+                    -s "secret=$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null
                 fi
-              }
-              trap cleanup_bootstrap_admin EXIT
+                if [ -z "$automation_client_uuid" ]; then
+                  echo "Keycloak realm automation client was not found after creation" >&2
+                  exit 1
+                fi
 
-              stale_admin_id="$($KCADM get users --config "$CONFIG" -r master \
-                -q "username=keycloak-admin" -q exact=true --fields id --format csv --noquotes \
-                | grep -v '^id$' | head -n 1)"
-              if [ -n "$stale_admin_id" ]; then
-                "$KCADM" delete "users/$stale_admin_id" --config "$CONFIG" -r master
+                service_account_user_id="$($KCADM get \
+                  "clients/$automation_client_uuid/service-account-user" \
+                  --config "$MASTER_CONFIG" -r "$REALM" \
+                  --fields id --format csv --noquotes | grep -v '^id$' | head -n 1)"
+                realm_management_uuid="$($KCADM get clients --config "$MASTER_CONFIG" -r "$REALM" \
+                  -q clientId=realm-management --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+                if [ -z "$service_account_user_id" ] || [ -z "$realm_management_uuid" ]; then
+                  echo "Keycloak realm automation service account could not be resolved" >&2
+                  exit 1
+                fi
+                automation_roles="$($KCADM get \
+                  "users/$service_account_user_id/role-mappings/clients/$realm_management_uuid" \
+                  --config "$MASTER_CONFIG" -r "$REALM" \
+                  --fields name --format csv --noquotes)"
+                if ! printf '%s\n' "$automation_roles" | grep -Fxq realm-admin; then
+                  "$KCADM" add-roles --config "$MASTER_CONFIG" -r "$REALM" \
+                    --uid "$service_account_user_id" \
+                    --cclientid realm-management \
+                    --rolename realm-admin
+                fi
+
+                if ! "$KCADM" config credentials \
+                  --config "$REALM_CONFIG" \
+                  --server "$KEYCLOAK_URL" \
+                  --realm "$REALM" \
+                  --client "$KEYCLOAK_ADMIN_CLIENT_ID" \
+                  --secret "$KEYCLOAK_ADMIN_CLIENT_SECRET" >/dev/null 2>&1; then
+                  echo "Keycloak realm automation client could not authenticate" >&2
+                  exit 1
+                fi
+
+                stale_admin_id="$($KCADM get users --config "$MASTER_CONFIG" -r master \
+                  -q "username=keycloak-admin" -q exact=true --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+                if [ -n "$stale_admin_id" ]; then
+                  "$KCADM" delete "users/$stale_admin_id" --config "$MASTER_CONFIG" -r master
+                fi
               fi
 
-              user_id="$($KCADM get users --config "$CONFIG" -r "$REALM" \
+              user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
                 -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
                 | grep -v '^id$' | head -n 1)"
               if [ -z "$user_id" ]; then
-                "$KCADM" create users --config "$CONFIG" -r "$REALM" \
+                "$KCADM" create users --config "$ADMIN_CONFIG" -r "$REALM" \
                   -s "username=$APP_USERNAME" -s enabled=true -s emailVerified=true >/dev/null
-                user_id="$($KCADM get users --config "$CONFIG" -r "$REALM" \
+                user_id="$($KCADM get users --config "$ADMIN_CONFIG" -r "$REALM" \
                   -q "username=$APP_USERNAME" -q exact=true --fields id --format csv --noquotes \
                   | grep -v '^id$' | head -n 1)"
               fi
@@ -85,13 +148,13 @@ spec:
                 echo "Keycloak user $APP_USERNAME was not found after creation" >&2
                 exit 1
               fi
-              "$KCADM" set-password --config "$CONFIG" -r "$REALM" \
+              "$KCADM" set-password --config "$ADMIN_CONFIG" -r "$REALM" \
                 --username "$APP_USERNAME" --new-password - >/dev/null \
                 <<< "$APP_PASSWORD"
 
               client_uuid=""
               for attempt in $(seq 1 45); do
-                client_uuid="$($KCADM get clients --config "$CONFIG" -r "$REALM" \
+                client_uuid="$($KCADM get clients --config "$ADMIN_CONFIG" -r "$REALM" \
                   -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes \
                   | grep -v '^id$' | head -n 1)"
                 if [ -n "$client_uuid" ]; then
@@ -103,14 +166,24 @@ spec:
                 echo "Keycloak client $CLIENT_ID was not found" >&2
                 exit 1
               fi
-              "$KCADM" update "clients/$client_uuid" --config "$CONFIG" -r "$REALM" \
+              "$KCADM" update "clients/$client_uuid" --config "$ADMIN_CONFIG" -r "$REALM" \
                 -s "redirectUris=[\"$PUBLIC_ORIGIN/*\"]" -s "webOrigins=[\"$UI_ORIGIN\"]" >/dev/null
 
               existing_roles="$($KCADM get "users/$user_id/role-mappings/clients/$client_uuid" \
-                --config "$CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
+                --config "$ADMIN_CONFIG" -r "$REALM" --fields name --format csv --noquotes)"
               if ! printf '%s\n' "$existing_roles" | grep -Fxq "$ADMIN_ROLE"; then
-                "$KCADM" add-roles --config "$CONFIG" -r "$REALM" \
+                "$KCADM" add-roles --config "$ADMIN_CONFIG" -r "$REALM" \
                   --uusername "$APP_USERNAME" --cclientid "$CLIENT_ID" --rolename "$ADMIN_ROLE"
+              fi
+
+              if [ "$used_recovery" = true ]; then
+                recovery_client_uuid="$($KCADM get clients --config "$MASTER_CONFIG" -r master \
+                  -q "clientId=$KEYCLOAK_ADMIN_CLIENT_ID" --fields id --format csv --noquotes \
+                  | grep -v '^id$' | head -n 1)"
+                if [ -n "$recovery_client_uuid" ]; then
+                  "$KCADM" delete "clients/$recovery_client_uuid" \
+                    --config "$MASTER_CONFIG" -r master
+                fi
               fi
           env:
             - name: KEYCLOAK_URL

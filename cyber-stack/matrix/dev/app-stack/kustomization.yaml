@@ -32,7 +32,7 @@ images:
     digest: sha256:dc319805ab7ae99a40049a3259ae5b560ede7380cfe51ee4e88ecfbe7854d1a0
   - name: schema-migrator-backend
     newName: 192.168.1.221:5000/schema-migrator-backend
-    digest: sha256:0c323640aaf98ec05e203dd998cb941d15aece7c582570981f3c5cd8799b33e3
+    digest: sha256:845c627d99b8fe2136288d27f9cb5c458f96872d49528e1af9d4a8b4bfdc525e
   - name: schema-migrator-ui
     newName: 192.168.1.221:5000/schema-migrator-ui
     digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
