@@ -144,4 +144,10 @@ octopus_manifest_version="$(awk '/^schema_version:/{ print $2; exit }' "${octopu
 octopus_manifest_sha="$(awk '/^manifest_sha256:/{ print $2; exit }' "${octopus_manifest}")"
 mysql_run -e "UPDATE octopus_core.schema_readiness SET required_version='${octopus_manifest_version}', applied_version='${octopus_manifest_version}', required_checksum='${octopus_manifest_sha}', applied_checksum='${octopus_manifest_sha}', ready=1, checked_at=UTC_TIMESTAMP(6), details=JSON_OBJECT('state', 'ready', 'executor', 'tidb-runtime-schema') WHERE domain='octopus_core';"
 
+schema_migrator_manifest="${schema_root}/schema_migrator/manifest.yaml"
+schema_migrator_manifest_version="$(awk '/^schema_version:/{ print $2; exit }' "${schema_migrator_manifest}")"
+schema_migrator_manifest_sha="$(awk '/^manifest_sha256:/{ print $2; exit }' "${schema_migrator_manifest}")"
+mysql_run -e "INSERT INTO schema_migrator.state_schema_migrations (version, checksum, applied_at, applied_by) VALUES ('${schema_migrator_manifest_version}', '${schema_migrator_manifest_sha}', UTC_TIMESTAMP(6), 'tidb-runtime-schema') ON DUPLICATE KEY UPDATE checksum=VALUES(checksum), applied_at=VALUES(applied_at), applied_by=VALUES(applied_by);"
+mysql_run -e "UPDATE schema_migrator.schema_readiness SET required_version='${schema_migrator_manifest_version}', applied_version='${schema_migrator_manifest_version}', required_checksum='${schema_migrator_manifest_sha}', applied_checksum='${schema_migrator_manifest_sha}', ready=1, checked_at=UTC_TIMESTAMP(6), details=JSON_OBJECT('state', 'ready', 'executor', 'tidb-runtime-schema') WHERE domain='schema_migrator';"
+
 echo "canonical TiDB schemas applied and runtime readiness recorded"
