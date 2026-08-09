@@ -19,7 +19,7 @@ resources:
   # Atheros sensor
   - atheros-sensor/daemonset.yaml
   # Atheros search
-  - atheros-search/deployment.yaml
+  - atheros-search
   # Redis
   - redis-runtime/deployment.yaml
   # TiDB

@@ -13,7 +13,7 @@ resources:
   - ../../../base/java-coordinator/deployment.yaml
   - ../../../base/schema-migrator
   - ../../../base/atheros-sensor/daemonset.yaml
-  - ../../../base/atheros-search/deployment.yaml
+  - ../../../base/atheros-search
 images:
   - name: ssl-proxy
     newName: 192.168.1.221:5000/ssl-proxy
