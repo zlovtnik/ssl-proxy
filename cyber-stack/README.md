@@ -9,7 +9,7 @@ reviewed Git changes. Direct mutation of managed resources is prohibited.
 
 The platform team provides and operates:
 
-- Argo CD and Argo CD Image Updater 1.1 or newer;
+- Argo CD;
 - registration of `cyber-stack/argocd` as this repository's control-plane path;
 - `ssl-proxy-image-updater-git` in the `argocd` namespace, using a GitHub App
   or scoped token that can create image-update pull requests;
@@ -22,8 +22,11 @@ The platform team provides and operates:
 
 Platform inputs must be delivered by the platform's declarative control plane.
 Do not create or patch them by hand. This repository owns the `ssl-proxy`
-AppProject, six workload Applications, the dev ImageUpdater resource, and all
-workload desired state after registration.
+AppProject, six workload Applications, the pinned Image Updater controller
+Application and AppProject, the dev ImageUpdater resource, and all workload
+desired state after registration. The controller chart is
+`argocd-image-updater` 1.2.4 with namespace-scoped RBAC in `argocd`; only its
+CRD is cluster-scoped.
 
 ## Layout and applications
 
@@ -63,8 +66,9 @@ other two Applications during first installation.
 
 ## Image release and promotion
 
-1. Publish all first-party images with `make publish-all`. The build publishes
-   the immutable commit tag and updates the registry's `latest` channel.
+1. Let the private Jenkins `ssl-proxy-images` pipeline publish all first-party
+   images from `main`, or run `make publish-all` manually. Both paths publish
+   the immutable commit tag and update the registry's `latest` channel.
 2. Dev Image Updater observes `latest` with the `digest` strategy and opens a
    GitHub pull request that updates the relevant dev Kustomization.
 3. CI must pass `make gitops-check`, documentation checks and component tests.
@@ -78,6 +82,10 @@ other two Applications during first installation.
 Rollback is a Git revert of the promotion commit. Argo CD reconciles the prior
 digests automatically. Do not use a controller-local rollback that leaves Git
 describing a different state.
+
+The Compose-only `wg-key-rotator` image is published by the same Jenkins
+pipeline but is not an Argo CD workload: it controls the local staged-rotation
+harness through the Docker API. It therefore has no Image Updater target.
 
 ## Add a workload
 

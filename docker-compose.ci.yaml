@@ -1,0 +1,84 @@
+name: ssl-proxy-ci
+
+services:
+  registry:
+    image: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    restart: unless-stopped
+    ports:
+      - "${SERVER_IP:?SERVER_IP is required}:5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+    networks:
+      - ci
+
+  jenkins-docker:
+    image: docker:29-dind@sha256:e8faad5a8dc5279dff929afc5449f2791736912fff9f99351d742db2fad01b4c
+    privileged: true
+    restart: unless-stopped
+    command:
+      - --storage-driver=overlay2
+      - --insecure-registry=registry:5000
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - jenkins-docker-certs:/certs/client
+      - jenkins-docker-data:/var/lib/docker
+    networks:
+      ci:
+        aliases:
+          - docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  jenkins:
+    image: ssl-proxy-ci-jenkins:2.568.1
+    build:
+      context: ./docker/jenkins
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      registry:
+        condition: service_started
+      jenkins-docker:
+        condition: service_healthy
+    ports:
+      - "${JENKINS_BIND_ADDRESS:-127.0.0.1}:${JENKINS_HTTP_PORT:-8083}:8080"
+    environment:
+      CASC_JENKINS_CONFIG: /usr/share/jenkins/ref/casc/jenkins.yaml
+      CI_REGISTRY: registry:5000
+      DOCKER_CERT_PATH: /certs/client
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_URL: ${JENKINS_URL:?JENKINS_URL is required}
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false
+    secrets:
+      - jenkins-admin-password
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      - jenkins-docker-certs:/certs/client:ro
+    networks:
+      - ci
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+networks:
+  ci:
+
+volumes:
+  jenkins-docker-certs:
+  jenkins-docker-data:
+  jenkins-home:
+  registry-data:
+
+secrets:
+  jenkins-admin-password:
+    file: ${JENKINS_ADMIN_PASSWORD_FILE:-./secrets/jenkins-admin-password}

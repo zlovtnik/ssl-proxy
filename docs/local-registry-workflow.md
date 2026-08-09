@@ -4,24 +4,31 @@ This workflow publishes Linux images from a development host to the registry
 used by Kubernetes nodes and Argo CD Image Updater. Kubernetes management is
 documented in the [GitOps guide](../cyber-stack/README.md).
 
-## Run a LAN registry
+## Local development CI and registry
 
-Bind an unauthenticated development registry to a private address, never every
-interface:
+The dedicated private CI stack runs the registry, Jenkins controller and its
+isolated Docker build engine. Create the Jenkins administrator password as a
+local secret, set the concrete server address in `.env`, and start the stack:
 
 ```bash
-docker run -d \
-  --name registry \
-  --restart=always \
-  -p 10.0.0.10:5000:5000 \
-  registry:2
+umask 077
+openssl rand -base64 32 > secrets/jenkins-admin-password
+docker compose -f docker-compose.ci.yaml up -d --build
 ```
 
-Replace `10.0.0.10` with the actual private server address. If the registry
-uses plain HTTP, configure both Docker daemons and every Kubernetes node
-runtime to trust that exact host and port. Configure the node runtime outside
-the root Makefile, then verify a CRI pull. Keep port `5000` behind a host
-firewall. Use TLS and authentication when the network is shared or untrusted.
+`SERVER_IP` binds registry port `5000` to the private server address;
+`JENKINS_BIND_ADDRESS`, `JENKINS_HTTP_PORT` and `JENKINS_URL` control the UI.
+The Jenkins administrator password is consumed through a Docker secret and is
+never committed or placed in container environment variables. The controller
+runs as the image's non-root `jenkins` user and talks over mutual TLS to a
+dedicated privileged Docker-in-Docker engine. Treat that engine as a
+root-equivalent build boundary and never expose its network or Jenkins to the
+public internet.
+
+If the registry uses plain HTTP, configure every Kubernetes node runtime to
+trust the exact `SERVER_IP:5000` authority, then verify a CRI pull. Keep port
+`5000` behind a host firewall. Use TLS and authentication when the network is
+shared or untrusted.
 
 ## Build configuration
 
@@ -80,6 +87,12 @@ REGISTRY=local IMAGE_TAG=dev \
 Publishing updates the registry's immutable commit tag and `latest` channel.
 Image Updater resolves `latest` to an immutable digest and opens the dev pull
 request. Production receives only reviewed digests copied from dev.
+
+The Jenkins `ssl-proxy-images` job polls `main`, initializes the pinned
+submodules, runs documentation and GitOps validation, builds all first-party
+images, then publishes the same target set as `make publish-all`. Jenkins uses
+the registry's internal Compose name while Kubernetes and Image Updater use
+the private server address; both names reach the same registry storage.
 
 ## Verify
 

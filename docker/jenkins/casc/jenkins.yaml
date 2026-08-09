@@ -1,0 +1,45 @@
+jenkins:
+  systemMessage: "ssl-proxy CI is managed by Configuration as Code."
+  numExecutors: 1
+  mode: NORMAL
+  disableRememberMe: true
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID:-admin}"
+          password: "${jenkins-admin-password}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "${JENKINS_URL}"
+
+jobs:
+  - script: |
+      pipelineJob('ssl-proxy-images') {
+        description('Builds and publishes every first-party image from the pinned superproject revision.')
+        logRotator {
+          numToKeep(20)
+          artifactNumToKeep(5)
+        }
+        triggers {
+          scm('H/5 * * * *')
+        }
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url('https://github.com/zlovtnik/ssl-proxy.git')
+                }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile')
+            lightweight(false)
+          }
+        }
+      }
