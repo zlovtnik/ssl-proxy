@@ -10,6 +10,7 @@ pipeline {
 
   environment {
     BUILDER = 'ssl-proxy-jenkins'
+    DOCKER_CONTEXT_NAME = 'ssl-proxy-ci-docker'
     REGISTRY = "${env.CI_REGISTRY ?: 'registry:5000'}"
     REGISTRY_PLAIN_HTTP = '1'
   }
@@ -32,9 +33,17 @@ pipeline {
 
     stage('Registry preflight') {
       steps {
-        sh 'docker version'
-        sh 'docker buildx version'
-        sh 'curl -fsS "http://${REGISTRY}/v2/" >/dev/null'
+        sh '''
+          if ! docker context inspect "$DOCKER_CONTEXT_NAME" >/dev/null 2>&1; then
+            docker context create "$DOCKER_CONTEXT_NAME" \
+              --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem" \
+              >/dev/null
+          fi
+          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version
+          docker buildx version
+          curl -fsS "http://${REGISTRY}/v2/" >/dev/null
+        '''
       }
     }
 
@@ -42,7 +51,8 @@ pipeline {
       steps {
         sh '''
           build_tag="$(git rev-parse --short=12 HEAD)"
-          make build-all \
+          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make build-all \
             BUILDER="$BUILDER" \
             REGISTRY="$REGISTRY" \
             REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
@@ -55,7 +65,8 @@ pipeline {
       steps {
         sh '''
           build_tag="$(git rev-parse --short=12 HEAD)"
-          make publish-all \
+          env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+            DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make publish-all \
             BUILDER="$BUILDER" \
             REGISTRY="$REGISTRY" \
             REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP" \
