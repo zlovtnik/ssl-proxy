@@ -192,6 +192,27 @@ class GitOpsRegressionCheckTest(unittest.TestCase):
             1, len(check_gitops._check_atheros_search_auth(rendered, "test"))
         )
 
+    def test_atheros_search_ui_rejects_dynamic_proxy_upstreams(self) -> None:
+        rendered = (
+            "name: ssl-proxy-atheros-search-ui-nginx\n"
+            "proxy_pass $search_backend;\n"
+            "proxy_pass $readyz_backend/readyz;\n"
+        )
+        errors = check_gitops._check_atheros_search_ui_proxy(rendered, "test")
+        self.assertEqual(4, len(errors))
+        self.assertTrue(any("dynamic upstream" in error for error in errors))
+        self.assertTrue(any("missing static upstream" in error for error in errors))
+
+    def test_atheros_search_ui_accepts_static_proxy_upstreams(self) -> None:
+        rendered = (
+            "name: ssl-proxy-atheros-search-ui-nginx\n"
+            "proxy_pass http://ssl-proxy-atheros-search:8080;\n"
+            "proxy_pass http://ssl-proxy-atheros-search:8080/readyz;\n"
+        )
+        self.assertEqual(
+            [], check_gitops._check_atheros_search_ui_proxy(rendered, "test")
+        )
+
     def test_keycloak_requires_provisioned_database_secret(self) -> None:
         rendered = (
             "name: ssl-proxy-schema-migrator-keycloak\n"

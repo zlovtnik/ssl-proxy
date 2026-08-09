@@ -131,6 +131,33 @@ def _check_atheros_search_auth(rendered: str, relative: str) -> list[str]:
     return []
 
 
+def _check_atheros_search_ui_proxy(rendered: str, relative: str) -> list[str]:
+    if "name: ssl-proxy-atheros-search-ui-nginx" not in rendered:
+        return []
+
+    errors = []
+    for dynamic_proxy in (
+        "proxy_pass $search_backend;",
+        "proxy_pass $readyz_backend/readyz;",
+    ):
+        if dynamic_proxy in rendered:
+            errors.append(
+                f"{relative}: Atheros Search UI proxy must not use "
+                f"dynamic upstream {dynamic_proxy!r}"
+            )
+
+    for static_proxy in (
+        "proxy_pass http://ssl-proxy-atheros-search:8080;",
+        "proxy_pass http://ssl-proxy-atheros-search:8080/readyz;",
+    ):
+        if static_proxy not in rendered:
+            errors.append(
+                f"{relative}: Atheros Search UI proxy is missing "
+                f"static upstream {static_proxy!r}"
+            )
+    return errors
+
+
 def _check_keycloak_database_credential(rendered: str, relative: str) -> list[str]:
     if "name: ssl-proxy-schema-migrator-keycloak" not in rendered:
         return []
@@ -331,6 +358,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         errors.extend(_check_proxy_probes(rendered, relative))
         errors.extend(_check_proxy_wireguard_route(rendered, relative))
         errors.extend(_check_atheros_search_auth(rendered, relative))
+        errors.extend(_check_atheros_search_ui_proxy(rendered, relative))
         errors.extend(_check_keycloak_database_credential(rendered, relative))
         errors.extend(_check_redpanda_topic_replication(rendered, relative))
         errors.extend(_check_traefik_redirect(rendered, relative))
