@@ -9,7 +9,7 @@ pipeline {
   }
 
   environment {
-    BUILDER = 'ssl-proxy-jenkins'
+    BUILDER = 'ssl-proxy-jenkins-http'
     DOCKER_CONTEXT_NAME = 'ssl-proxy-ci-docker'
     REGISTRY = "${env.CI_REGISTRY ?: 'registry:5000'}"
     REGISTRY_PLAIN_HTTP = '1'
