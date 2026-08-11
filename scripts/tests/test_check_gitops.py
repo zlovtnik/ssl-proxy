@@ -121,6 +121,28 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         )
         self.assertEqual([], check_gitops._check_jaeger_probes(good, "test"))
 
+    def test_prod_jaeger_has_badger_recovery_capacity(self) -> None:
+        bad = documents(
+            workload(
+                "ssl-proxy-telemetry-jaeger",
+                containers="[{name: jaeger, resources: {limits: {cpu: 500m}}, "
+                "startupProbe: {failureThreshold: 60, periodSeconds: 10}}]",
+            )
+        )
+        self.assertEqual(
+            2, len(check_gitops._check_prod_jaeger_recovery(bad, "prod"))
+        )
+        good = documents(
+            workload(
+                "ssl-proxy-telemetry-jaeger",
+                containers="[{name: jaeger, resources: {limits: {cpu: '2'}}, "
+                "startupProbe: {failureThreshold: 180, periodSeconds: 10}}]",
+            )
+        )
+        self.assertEqual(
+            [], check_gitops._check_prod_jaeger_recovery(good, "prod")
+        )
+
     def test_atheros_search_auth_and_proxy_policy(self) -> None:
         auth = documents(workload("ssl-proxy-atheros-search", containers="[{env: [{name: ATHSEARCH_API_TOKEN_SHA256}]}]"))
         self.assertEqual(1, len(check_gitops._check_atheros_search_auth(auth, "test")))

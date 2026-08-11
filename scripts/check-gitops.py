@@ -158,6 +158,14 @@ def _quantity_bytes(value: Any) -> int | None:
     return _parse_bytes(match.group(1), match.group(2) or "")
 
 
+def _quantity_millicores(value: Any) -> int | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(m)?", str(value))
+    if match is None:
+        return None
+    quantity = float(match.group(1))
+    return int(quantity if match.group(2) else quantity * 1000)
+
+
 def _check_otel_endpoint(rendered: Documents | str, relative: str) -> list[str]:
     if any("ssl-proxy-otel-collector" in value for value in _strings(_documents(rendered))):
         return [
@@ -260,6 +268,44 @@ def _check_jaeger_probes(rendered: Documents | str, relative: str) -> list[str]:
     if startup_budget < 600:
         errors.append(
             f"{relative}: Jaeger startup probe must allow at least 600 seconds"
+        )
+    return errors
+
+
+def _check_prod_jaeger_recovery(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-telemetry-jaeger"
+    )
+    if not deployments:
+        return [f"{relative}: production Jaeger Deployment is missing"]
+    containers = [
+        container
+        for container in _pod_containers(deployments[0])
+        if container.get("name") == "jaeger"
+    ]
+    if len(containers) != 1:
+        return [f"{relative}: expected one production Jaeger container"]
+    container = containers[0]
+    errors: list[str] = []
+    cpu_limit = _quantity_millicores(
+        _path(container, "resources", "limits", "cpu")
+    )
+    if cpu_limit is None or cpu_limit < 2000:
+        errors.append(
+            f"{relative}: production Jaeger needs at least 2 CPU for Badger recovery"
+        )
+    startup = _mapping(container.get("startupProbe"))
+    try:
+        startup_budget = int(startup.get("failureThreshold", 0)) * int(
+            startup.get("periodSeconds", 0)
+        )
+    except (TypeError, ValueError):
+        startup_budget = 0
+    if startup_budget < 1800:
+        errors.append(
+            f"{relative}: production Jaeger must allow 1800 seconds for Badger recovery"
         )
     return errors
 
@@ -673,6 +719,13 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(check(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
+    prod_data_plane = "cyber-stack/matrix/prod/data-plane"
+    if prod_data_plane in rendered_kustomizations:
+        errors.extend(
+            _check_prod_jaeger_recovery(
+                rendered_kustomizations[prod_data_plane], prod_data_plane
+            )
+        )
     if expected_schema_marker is not None:
         for environment in ("dev", "prod"):
             relative = f"cyber-stack/matrix/{environment}/data-plane"

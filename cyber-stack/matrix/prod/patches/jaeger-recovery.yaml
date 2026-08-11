@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-telemetry-jaeger
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: jaeger
+          resources:
+            requests:
+              cpu: 500m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          startupProbe:
+            failureThreshold: 180

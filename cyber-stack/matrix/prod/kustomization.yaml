@@ -33,6 +33,7 @@ patches:
   - path: patches/identity-hostname.yaml
   - path: patches/proxy-replicas.yaml
   - path: patches/resources.yaml
+  - path: patches/jaeger-recovery.yaml
   - path: patches/remove-bundled-tidb.yaml
   - path: patches/external-tidb.yaml
   - target:
