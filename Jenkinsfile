@@ -115,28 +115,4 @@ pipeline {
     }
   }
 
-  post {
-    failure {
-      script {
-        def failureResult = currentBuild.currentResult ?: 'FAILURE'
-        def failureCommit = sh(script: 'git rev-parse HEAD 2>/dev/null || printf unknown', returnStdout: true).trim()
-        try {
-          withCredentials([string(credentialsId: 'ssl-proxy-ci-failure-webhook', variable: 'FAILURE_WEBHOOK_URL')]) {
-            withEnv(["FAILURE_RESULT=${failureResult}", "FAILURE_COMMIT=${failureCommit}"]) {
-              sh '''
-                payload="$(python3 -c 'import json, os; print(json.dumps({"job": os.environ["JOB_NAME"], "build_url": os.environ["BUILD_URL"], "commit": os.environ["FAILURE_COMMIT"], "result": os.environ["FAILURE_RESULT"]}))')"
-                curl --fail --silent --show-error \
-                  --connect-timeout 5 --max-time 20 \
-                  --retry 2 --retry-all-errors --retry-delay 2 \
-                  --request POST --header 'Content-Type: application/json' \
-                  --data "$payload" "$FAILURE_WEBHOOK_URL"
-              '''
-            }
-          }
-        } catch (notificationError) {
-          echo("Failure notification could not be delivered: ${notificationError}")
-        }
-      }
-    }
-  }
 }

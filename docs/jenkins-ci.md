@@ -14,9 +14,6 @@ permissions:
 ```bash
 umask 077
 openssl rand -base64 32 > secrets/jenkins-admin-password
-# The platform supplies this endpoint through a local environment variable.
-: "\${FAILURE_WEBHOOK_URL:?set the notification endpoint}"
-printf '%s' "$FAILURE_WEBHOOK_URL" > secrets/ssl-proxy-ci-failure-webhook
 docker compose -f docker-compose.ci.yaml config
 docker compose -f docker-compose.ci.yaml up -d --build
 ```
@@ -48,12 +45,9 @@ is explicitly intended and backed up.
 
 ## Pipeline behavior
 
-The managed pipeline polls `main` every five minutes, also accepts GitHub push
-events, and disables concurrent runs. The platform must register the repository
-push webhook at `${JENKINS_URL}/github-webhook/`. Keep that endpoint private
-or protect it at the ingress with GitHub source verification (HMAC validation
-or a current GitHub IP allowlist); the Jenkins GitHub push endpoint itself is
-not a public build-trigger API. Each run:
+The managed pipeline polls `main` every five minutes, supports manual builds,
+and disables concurrent runs. It does not expose or require a GitHub webhook.
+Each run:
 
 1. checks out the superproject and its pinned submodules;
 2. creates and bootstraps its shared Buildx builder after bounded Docker and
@@ -66,10 +60,8 @@ not a public build-trigger API. Each run:
 
 Validation remains visible and fails the overall build, but does not cancel
 unaffected image publication. Likewise, a failed image branch does not cancel
-other branches. A failed build posts one JSON notification containing the job,
-build URL, commit, and result to the Jenkins credential
-`ssl-proxy-ci-failure-webhook`; notification retries are bounded and a delivery
-failure never replaces the original build result.
+other branches. Build results remain available in Jenkins; no outbound failure
+webhook is configured.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
 Search, key rotator, Search UI, both Schema Migrator images and the TiDB runtime

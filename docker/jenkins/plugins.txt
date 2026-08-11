@@ -1,5 +1,4 @@
 configuration-as-code:2116.v98dde145b_dce
-github:1.47.0
 git:5.10.1
 job-dsl:3654.vdf58f53e2d15
 timestamper:1.30

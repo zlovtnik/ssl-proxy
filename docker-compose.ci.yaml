@@ -58,7 +58,6 @@ services:
       JAVA_OPTS: -Djenkins.install.runSetupWizard=false
     secrets:
       - jenkins-admin-password
-      - ssl-proxy-ci-failure-webhook
     volumes:
       - jenkins-home:/var/jenkins_home
       - jenkins-docker-certs:/certs/client:ro
@@ -83,5 +82,3 @@ volumes:
 secrets:
   jenkins-admin-password:
     file: ${JENKINS_ADMIN_PASSWORD_FILE:-./secrets/jenkins-admin-password}
-  ssl-proxy-ci-failure-webhook:
-    file: ${JENKINS_FAILURE_WEBHOOK_FILE:-./secrets/ssl-proxy-ci-failure-webhook}
