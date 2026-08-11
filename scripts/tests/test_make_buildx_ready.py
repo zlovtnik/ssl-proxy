@@ -32,6 +32,10 @@ class MakeBuildxReadyTest(unittest.TestCase):
             "  touch \"$FAKE_BUILDER_STATE\"\n"
             "  exit 0\n"
             "fi\n"
+            "if [ \"$1\" = buildx ] && [ \"$2\" = rm ]; then\n"
+            "  rm -f \"$FAKE_BUILDER_STATE\"\n"
+            "  exit 0\n"
+            "fi\n"
             "exit 1\n",
             encoding="utf-8",
         )
@@ -110,14 +114,25 @@ class MakeBuildxReadyTest(unittest.TestCase):
             ),
         )
 
-    def test_rejects_unverified_existing_builder_for_http(self) -> None:
+    def test_recreates_unverified_existing_builder_for_http(self) -> None:
         self.state.touch()
 
         result = self.run_make("1", "host")
 
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("dedicated configured builder", result.stderr)
-        self.assertNotIn("buildx create", self.log.read_text(encoding="utf-8"))
+        self.assertEqual(0, result.returncode, result.stderr)
+        log = self.log.read_text(encoding="utf-8")
+        self.assertIn("buildx rm", log)
+        self.assertEqual(1, log.count("buildx create"))
+        self.assertIn(
+            "--driver-opt network=host",
+            log,
+        )
+        self.assertEqual(
+            "registry.test:5000\n1\nhost\n",
+            (self.root / "ssl-proxy-buildkitd-test-publisher.mode").read_text(
+                encoding="utf-8"
+            ),
+        )
 
 
 if __name__ == "__main__":

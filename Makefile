@@ -152,6 +152,7 @@ buildx-ready: require-registry
 	registry_host="$${registry_host%%/*}"; \
 	config="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).toml"; \
 	stamp="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).mode"; \
+	recreate=0; \
 	if docker buildx inspect "$(BUILDER)" >/dev/null 2>&1; then \
 		if [ -f "$$stamp" ]; then \
 			configured_registry="$$(sed -n '1p' "$$stamp")"; \
@@ -163,11 +164,14 @@ buildx-ready: require-registry
 				exit 2; \
 			fi; \
 		elif [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] || [ -n "$(BUILDER_NETWORK)" ]; then \
-			echo "Buildx builder $(BUILDER) already exists, so its registry and network configuration for $$registry_host cannot be verified." >&2; \
-			echo "Use an unused dedicated configured builder instead of proceeding with unverified settings." >&2; \
-			exit 2; \
+			echo "Buildx builder $(BUILDER) already exists with unverified configuration; removing and recreating." >&2; \
+			docker buildx rm "$(BUILDER)" >/dev/null 2>&1 || { echo "Failed to remove unverified builder $(BUILDER). Remove it manually and retry." >&2; exit 2; }; \
+			recreate=1; \
 		fi; \
 	else \
+		recreate=1; \
+	fi; \
+	if [ "$$recreate" = "1" ]; then \
 		set -- docker buildx create --name "$(BUILDER)" --driver docker-container; \
 		if [ -n "$(BUILDER_NETWORK)" ]; then \
 			set -- "$$@" --driver-opt "network=$(BUILDER_NETWORK)"; \
