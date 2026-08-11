@@ -30,18 +30,41 @@ trust the exact `SERVER_IP:5000` authority, then verify a CRI pull. Keep port
 `5000` behind a host firewall. Use TLS and authentication when the network is
 shared or untrusted.
 
-## Build configuration
+## Environment-aware Kubernetes publication
 
 ```bash
-export REGISTRY=10.0.0.10:5000
 export TAG="$(git rev-parse --short HEAD)"
-make publish-all REGISTRY_PLAIN_HTTP=1
+make publish ENV=dev REGISTRY_PLAIN_HTTP=1
 ```
 
 Registry publishing uses HTTPS by default. Set `REGISTRY_PLAIN_HTTP=1`
 explicitly only for an isolated local HTTP registry whose host and port are
 trusted by every builder and Kubernetes node runtime. `PLATFORM` defaults to
 `linux/amd64`; override it only when the target architecture differs.
+
+`make publish` defaults to `ENV=prod`. It validates the selected app-stack,
+data-plane and aggregate Kustomizations, then publishes the eight
+Kubernetes-deployed first-party images to the exact repositories configured
+there. It pushes `$TAG` and `latest`, reads the pushed manifest digest from
+Buildx metadata, and reports either `MATCH` or `UNPINNED` against the selected
+Kustomize pin. `UNPINNED` is a successful publication result; the report prints
+the exact `make bump-digest-<service> ENV=<env> DIGEST=<digest>` command for the
+separate reviewed Git change. `REGISTRY` never determines deployment identity
+for this target.
+
+Kubernetes pulls the committed `repository@sha256:...` reference. Registry
+tags such as `$TAG` and `latest` are publication and discovery handles only;
+moving either tag does not deploy or promote an image.
+
+## Jenkins and component publication
+
+The existing `make publish-all REGISTRY=...` interface and all
+`publish-<service>` component targets remain registry-directed for Jenkins and
+local workflows:
+
+```bash
+make publish-all REGISTRY=10.0.0.10:5000 REGISTRY_PLAIN_HTTP=1
+```
 
 First-party publish targets are:
 
@@ -59,7 +82,9 @@ First-party publish targets are:
 
 The deployment identity `java-coordinator` is the Scala Octopus service. The
 former standalone vec-worker is retired. Third-party images are not mirrored by
-the root Makefile.
+the root Makefile. The Compose-only `wg-key-rotator` remains part of
+`publish-all`; it is intentionally excluded from environment-aware
+`make publish` because it has no Kubernetes image contract.
 
 ## UI API base
 
@@ -84,10 +109,10 @@ REGISTRY=local IMAGE_TAG=dev \
   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 ```
 
-Publishing updates the registry's immutable commit tag and `latest` channel.
-Resolve the immutable digest, record it with
-`make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`, and validate the
-local dev render. Production receives only reviewed digests copied from dev.
+Publishing updates the registry's commit tag and `latest` channel without
+changing Kubernetes desired state. Use the digest and bump command printed by
+`make publish ENV=dev`, then validate the local dev render. Production receives
+only reviewed digests copied from accepted dev desired state.
 
 The Jenkins `ssl-proxy-images` job polls `main` and accepts GitHub push events,
 initializes the pinned submodules and shared Buildx builder, then publishes the
@@ -102,11 +127,15 @@ address; both names reach the same registry storage.
 ```bash
 curl -fsS http://10.0.0.10:5000/v2/
 docker buildx inspect
-kubectl get applications.argoproj.io -n argocd
-kubectl get pods -A
+make recover-stack ENV=dev KUBE_CONTEXT=docker-desktop REGISTRY_PLAIN_HTTP=1
+make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s REGISTRY_PLAIN_HTTP=1
 ```
 
-Also confirm the registry is unreachable from the public interface and that
-deployed image IDs match the intended build. Registry reachability proves only
-distribution; application readiness still follows the
-[operations runbook](runbook.md).
+`recover-stack` is read-only. It reports the resolved context and namespace,
+renders the canonical Kustomize sources, compares desired and live image
+references/runtime IDs, lists required Secret names and presence, and includes
+workload health and recent warning events. Production also reports the three
+Argo Applications; dev deliberately skips that controller query. An
+unreachable registry tag endpoint is `UNKNOWN`, not an image-drift result.
+Registry reachability proves only distribution; application readiness still
+follows the [operations runbook](runbook.md).

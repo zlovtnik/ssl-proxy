@@ -20,21 +20,27 @@ local Kustomize context.
 ## Release and promotion
 
 The private Jenkins `ssl-proxy-images` pipeline publishes `main` after its
-delivery checks pass. For an authorized manual rebuild, publish first-party
-images without changing cluster state:
+delivery checks pass through the unchanged registry-directed `publish-all`
+interface. For an authorized manual rebuild of the eight Kubernetes images,
+publish to the repositories selected by the canonical environment without
+changing Git or cluster state:
 
 ```bash
-make publish-all REGISTRY=192.168.1.221:5000 REGISTRY_PLAIN_HTTP=1
+make publish ENV=dev REGISTRY_PLAIN_HTTP=1
 ```
 
-Record immutable dev digests with
-`make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`. Merge only after CI
-and review pass, then apply the dev aggregate to an explicit local context and
-complete its acceptance checks.
+`make publish` defaults to production, derives repositories and pins from the
+selected Kustomize slice and aggregate, and reports each pushed digest as
+`MATCH` or `UNPINNED`. Use its exact bump command to record an immutable dev
+digest. `UNPINNED` does not fail publication. Merge only after CI and review
+pass, then apply the dev aggregate to an explicit local context and complete
+its acceptance checks. Jenkins and the Compose-only key rotator continue to use
+`make publish-all REGISTRY=192.168.1.221:5000 REGISTRY_PLAIN_HTTP=1`.
 
 Production promotion is a separate pull request that copies the accepted dev
 digests into the matching prod Kustomizations. After merge, Argo CD reconciles
-the change automatically.
+the change automatically. Kubernetes uses the committed digest references, not
+the mutable commit or `latest` registry tags.
 
 ## Health and readiness
 
@@ -60,14 +66,27 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 ## Read-only diagnostics
 
 ```bash
-kubectl get applications.argoproj.io -n argocd -o wide
-kubectl get pods -A -o wide
-kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
+make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s REGISTRY_PLAIN_HTTP=1
 ```
 
-Capture output with incident timestamps and do not paste Secret values into
+The target defaults to `ENV=prod` and the current context, and prominently
+prints the resolved context and namespace. It renders all canonical slices,
+reports Git and production Argo revisions, inventories desired and live images
+including init containers and runtime IDs, lists required Secret names and
+presence only, and includes workload health and recent warnings. It prints the
+whole report before returning nonzero for blockers. Registry tag lookup failure
+is reported as `UNKNOWN` and does not by itself fail recovery. Dev reports skip
+Argo because dev Applications are prohibited on the production controller.
+
+Capture the report with incident timestamps and do not paste Secret values into
 tickets. Do not use interactive edits, patches, scaling or restarts to repair
 drift. Correct Git or the platform prerequisite and let Argo CD reconcile it.
+
+The current recovery incident is blocked by missing platform-owned Secrets,
+not by first-party publication. Republishing `$TAG` or `latest` cannot satisfy
+that contract. Have the platform declarative control plane materialize the
+required Secret names, then rerun `make recover-stack`; do not create or patch
+the Secrets interactively.
 
 ## Data-plane checks
 

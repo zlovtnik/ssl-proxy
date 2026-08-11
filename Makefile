@@ -5,6 +5,8 @@ SHELL := /bin/bash
 
 REGISTRY ?= 192.168.1.221:5000
 REGISTRY_PLAIN_HTTP ?= 0
+ENV ?= prod
+KUBE_CONTEXT ?=
 BUILDER ?= ssl-proxy-publisher
 BUILDX_READY ?= 0
 PLATFORM ?= linux/amd64
@@ -12,6 +14,8 @@ TAG ?= $(shell git rev-parse --short HEAD)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
 KUSTOMIZE ?= kustomize
+PUBLISH_REPOSITORY ?=
+PUBLISH_METADATA_FILE ?=
 
 ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
@@ -22,14 +26,32 @@ BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 
-.PHONY: build build-all publish publish-all ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all recover-stack ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
-publish: publish-all
+
+publish:
+	python3 scripts/publish_images.py \
+		--environment "$(ENV)" \
+		--tag "$(TAG)" \
+		--build-date "$(BUILD_DATE)" \
+		--builder "$(BUILDER)" \
+		--platform "$(PLATFORM)" \
+		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)" \
+		--atheros-search-ui-api-base "$(ATHEROS_SEARCH_UI_API_BASE)" \
+		--atheros-search-ui-title "$(ATHEROS_SEARCH_UI_TITLE)" \
+		--make-command "$(MAKE)"
 
 build-all: $(BUILD_TARGETS)
 
 publish-all: $(PUBLISH_TARGETS)
+
+recover-stack:
+	python3 scripts/recover_stack.py \
+		--environment "$(ENV)" \
+		--kube-context "$(KUBE_CONTEXT)" \
+		--kustomize "$(KUSTOMIZE)" \
+		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
 
 # Read-only image inventory for CI fan-out. Keep build-all for local loaded-image workflows.
 ci-publish-services:
@@ -39,6 +61,8 @@ docs-check:
 	python3 scripts/check-docs.py
 
 gitops-check:
+	python3 scripts/image_contract.py contract --environment dev >/dev/null
+	python3 scripts/image_contract.py contract --environment prod >/dev/null
 	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE)"
 
 test:
@@ -85,7 +109,7 @@ build-$(1):
 	docker buildx build --builder "$(BUILDER)" --platform "$(PLATFORM)" --file "$(2)" $(3) --tag "$(LOCAL_IMAGE_PREFIX)/$(4):$(TAG)" --load "$(5)"
 
 publish-$(1):
-	docker buildx build --builder "$(BUILDER)" --platform "$(PLATFORM)" --file "$(2)" $(3) --tag "$(REGISTRY)/$(4):$(TAG)" --tag "$(REGISTRY)/$(4):latest" --push "$(5)"
+	docker buildx build --builder "$(BUILDER)" --platform "$(PLATFORM)" --file "$(2)" $(3) --tag "$(if $(strip $(PUBLISH_REPOSITORY)),$(PUBLISH_REPOSITORY),$(REGISTRY)/$(4)):$(TAG)" --tag "$(if $(strip $(PUBLISH_REPOSITORY)),$(PUBLISH_REPOSITORY),$(REGISTRY)/$(4)):latest" --push $(if $(strip $(PUBLISH_METADATA_FILE)),--metadata-file "$(PUBLISH_METADATA_FILE)",) "$(5)"
 endef
 
 $(eval $(call service_rules,ssl-proxy,Dockerfile,--target ssl-proxy --build-arg VCS_REF=$(TAG) --build-arg BUILD_DATE=$(BUILD_DATE),ssl-proxy,.))

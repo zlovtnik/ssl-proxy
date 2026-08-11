@@ -61,16 +61,22 @@ make docs-check
 make gitops-check
 ```
 
-Build and publish first-party images to the configured registry with:
+Publish the eight Kubernetes images to the repositories selected by the
+canonical environment (`prod` by default), then compare their pushed digests
+with the committed pins:
 
 ```bash
-make publish-all REGISTRY=192.168.1.221:5000
+make publish ENV=dev REGISTRY_PLAIN_HTTP=1
 ```
 
-Publishing does not mutate a cluster. Record new dev digests with the
-`make bump-digest-<service>` targets, validate them on the local cluster, then
-copy the exact tested digests in a separate production promotion pull request. See the
-[GitOps guide](cyber-stack/README.md) and [operations runbook](docs/runbook.md).
+Jenkins, component publishing, and the Compose-only key rotator retain
+`make publish-all REGISTRY=192.168.1.221:5000`. Publishing changes registry
+tags only; it does not mutate Git or a cluster. Diagnose desired and live state
+read-only with `make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s`. Record
+new dev digests with the printed `make bump-digest-<service>` commands, validate
+them on the local cluster, then copy the exact tested digests in a separate
+production promotion pull request. See the [GitOps guide](cyber-stack/README.md)
+and [operations runbook](docs/runbook.md).
 
 ## Local development
 

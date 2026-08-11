@@ -84,11 +84,18 @@ explicit context when its PVC data is no longer needed.
 ## Image release and promotion
 
 1. Let the private Jenkins `ssl-proxy-images` pipeline publish all first-party
-   images from `main`, or run `make publish-all` manually. Both paths publish
-   the immutable commit tag and update the registry's `latest` channel.
-2. Resolve the published digest and update the dev Kustomization with
-   `make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`. The helper keeps
-   the owning dev slice and local aggregate synchronized.
+   images from `main` through the unchanged `make publish-all REGISTRY=...`
+   interface. For an environment-aware manual publication of the eight
+   Kubernetes images, run `make publish ENV=dev` or `make publish ENV=prod`
+   (`prod` is the default). This target derives every repository and current pin
+   from the selected owning slice and aggregate; `REGISTRY` and image tags do
+   not define deployment identity.
+2. Use the pushed manifest digest and exact bump command printed by
+   environment-aware publication. `MATCH` means the selected Kustomization
+   already pins that content; `UNPINNED` still means publication succeeded and
+   requires a reviewed `make bump-digest-<service> ENV=dev
+   DIGEST=sha256:<digest>` Git change. The helper keeps the owning dev slice and
+   local aggregate synchronized.
 3. CI must pass `make gitops-check`, documentation checks and component tests.
 4. Apply the reviewed dev render to the local cluster and complete the required
    soak and acceptance checks.
@@ -102,6 +109,10 @@ explicit context when its PVC data is no longer needed.
 Rollback is a Git revert of the promotion commit. Argo CD reconciles the prior
 digests automatically. Do not use a controller-local rollback that leaves Git
 describing a different state.
+
+Kubernetes always deploys the committed `repository@sha256:...` references.
+The commit tag and `latest` are registry lookup channels; publishing or moving
+them does not deploy, promote or edit Kustomize.
 
 The Compose-only `wg-key-rotator` image is published by the same Jenkins
 pipeline but is not a Kubernetes workload: it controls the local staged-
@@ -137,11 +148,19 @@ make gitops-check
 Read-only cluster checks:
 
 ```bash
-kubectl get applications.argoproj.io -n argocd -o wide
-kubectl get pods -n prod-ssl-proxy -o wide
-kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
+make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s REGISTRY_PLAIN_HTTP=1
+make recover-stack ENV=dev KUBE_CONTEXT=docker-desktop REGISTRY_PLAIN_HTTP=1
 kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev >/dev/null
 ```
+
+`recover-stack` defaults to production and the current Kubernetes context. It
+prints the resolved context and namespace before reporting Git/Kustomize, Argo
+CD (production only), desired and live images, registry tags, runtime image
+IDs, required Secret names/presence, workload and pod health, and recent warning
+events. It prints the complete report before returning nonzero for unhealthy
+Applications, missing required Secrets, verified image drift, or unhealthy
+workloads. It never reads Secret values or changes Git, registry state, Argo CD,
+or Kubernetes.
 
 When an Application is unhealthy, inspect its conditions, the rendered Git
 revision, workload events and container logs. Correct workload manifests in
@@ -150,3 +169,9 @@ Argo CD to reconcile them. Changes to platform-owned Secrets and the production
 TiDB endpoint ConfigMap must instead go through the platform's declarative
 control plane; they are prerequisite contracts and are not owned by an
 unspecified workload repository.
+
+The current stack-recovery incident is blocked by missing platform-owned
+Secrets, not by first-party image publication. Publishing tags again cannot
+materialize those prerequisites. Recovery must proceed through the platform's
+declarative control plane, after which Argo CD can reconcile the unchanged
+digest-pinned workload sources.
