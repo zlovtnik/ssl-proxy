@@ -48,8 +48,6 @@ spec:
         app.kubernetes.io/part-of: ssl-proxy
         app.kubernetes.io/component: '{{ .component }}'
         environment: '{{ .environment }}'
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
     spec:
       project: ssl-proxy
       source:
