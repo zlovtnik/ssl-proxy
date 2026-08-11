@@ -17,6 +17,7 @@ TAG ?= $(shell git rev-parse --short HEAD)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LOCAL_IMAGE_PREFIX ?= ssl-proxy-local
 KUSTOMIZE ?= kubectl
+KUSTOMIZE_EDITOR ?= kustomize
 PUBLISH_REPOSITORY ?=
 PUBLISH_METADATA_FILE ?=
 
@@ -201,7 +202,7 @@ define bump_digest_rule
 bump-digest-$(1):
 	@test -n "$(ENV)" || { echo "ENV is required (dev or prod)" >&2; exit 2; }
 	@test -n "$(DIGEST)" || { echo "DIGEST is required (sha256:...)" >&2; exit 2; }
-	./scripts/bump-image-digest.sh "$(1)" "$(ENV)" "$(DIGEST)"
+	KUSTOMIZE="$(KUSTOMIZE_EDITOR)" ./scripts/bump-image-digest.sh "$(1)" "$(ENV)" "$(DIGEST)"
 endef
 
 $(foreach service,$(DEPLOYABLE_SERVICES),$(eval $(call bump_digest_rule,$(service))))
