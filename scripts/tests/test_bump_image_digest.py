@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPOSITORY_ROOT / "scripts" / "bump-image-digest.sh"
+IMAGE_CONTRACT = REPOSITORY_ROOT / "scripts" / "image_contract.py"
 DIGEST = "sha256:" + "a" * 64
 
 
@@ -20,6 +21,7 @@ class BumpImageDigestTest(unittest.TestCase):
         self.log = self.root / "kustomize.log"
         (self.root / "scripts").mkdir()
         shutil.copy2(SCRIPT, self.root / "scripts" / SCRIPT.name)
+        shutil.copy2(IMAGE_CONTRACT, self.root / "scripts" / IMAGE_CONTRACT.name)
         for environment in ("dev", "prod"):
             for slice_name in ("app-stack", "data-plane"):
                 overlay = self.root / "cyber-stack" / "matrix" / environment / slice_name
@@ -57,12 +59,17 @@ class BumpImageDigestTest(unittest.TestCase):
             "  service=${assignment%%=*}\n"
             "  reference=${assignment#*=}\n"
             "  digest=${reference##*@}\n"
-            "  awk -v service=\"$service\" -v digest=\"$digest\" '\n"
-            "    $1 == \"-\" && $2 == \"name:\" { active = ($3 == service) }\n"
-            "    active && $1 == \"digest:\" { sub(/sha256:[0-9a-f]+/, digest) }\n"
-            "    { print }\n"
-            "  ' kustomization.yaml > kustomization.yaml.tmp\n"
-            "  mv kustomization.yaml.tmp kustomization.yaml\n"
+            "  python3 - \"$service\" \"$digest\" <<'PY'\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "import yaml\n"
+            "path = Path('kustomization.yaml')\n"
+            "document = yaml.safe_load(path.read_text(encoding='utf-8'))\n"
+            "for image in document['images']:\n"
+            "    if image['name'] == sys.argv[1]:\n"
+            "        image['digest'] = sys.argv[2]\n"
+            "path.write_text(yaml.safe_dump(document, sort_keys=False), encoding='utf-8')\n"
+            "PY\n"
             "fi\n",
             encoding="utf-8",
         )
@@ -109,6 +116,36 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertIn(f"digest: {DIGEST}", data_plane.read_text())
         self.assertIn(f"digest: {DIGEST}", aggregate.read_text())
         self.assertIn("digest: sha256:" + "b" * 64, app_stack.read_text())
+
+    def test_accepts_kustomize_reordered_image_mapping_keys(self) -> None:
+        for relative in (
+            "cyber-stack/matrix/prod/app-stack/kustomization.yaml",
+            "cyber-stack/matrix/prod/kustomization.yaml",
+        ):
+            path = self.root / relative
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "  - name: ssl-proxy\n"
+                    "    newName: registry/ssl-proxy\n"
+                    "    digest: sha256:" + "b" * 64 + "\n",
+                    "  - digest: sha256:" + "b" * 64 + "\n"
+                    "    name: ssl-proxy\n"
+                    "    newName: registry/ssl-proxy\n",
+                ),
+                encoding="utf-8",
+            )
+
+        result = self.run_helper("ssl-proxy", "prod", DIGEST)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            f"digest: {DIGEST}",
+            (self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml").read_text(),
+        )
+        self.assertIn(
+            f"digest: {DIGEST}",
+            (self.root / "cyber-stack/matrix/prod/kustomization.yaml").read_text(),
+        )
 
     def test_rejects_invalid_arguments_without_editing(self) -> None:
         for arguments in (

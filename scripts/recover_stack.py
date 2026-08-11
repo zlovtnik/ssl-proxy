@@ -11,6 +11,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import urllib.response
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -27,11 +28,8 @@ from image_contract import (
 
 
 CANONICAL_SLICES = ("bootstrap", "data-plane", "app-stack")
-ARGO_APPLICATIONS = {
-    "ssl-proxy-prod-bootstrap": "cyber-stack/matrix/prod/bootstrap",
-    "ssl-proxy-prod-data-plane": "cyber-stack/matrix/prod/data-plane",
-    "ssl-proxy-prod-app-stack": "cyber-stack/matrix/prod/app-stack",
-}
+MIN_GIT_ABBREVIATION_LENGTH = 7
+REGISTRY_LOOKUP_WORKER_LIMIT = 8
 MANIFEST_ACCEPT = ", ".join(
     (
         "application/vnd.oci.image.index.v1+json",
@@ -40,6 +38,14 @@ MANIFEST_ACCEPT = ", ".join(
         "application/vnd.docker.distribution.manifest.v2+json",
     )
 )
+
+
+def argo_applications_for(environment: str) -> dict[str, str]:
+    return {
+        f"ssl-proxy-{environment}-{component}":
+        f"cyber-stack/matrix/{environment}/{component}"
+        for component in CANONICAL_SLICES
+    }
 
 
 @dataclass(frozen=True)
@@ -435,7 +441,7 @@ class RecoveryReporter:
             return f"{self.environment}-ssl-proxy"
         return namespace
 
-    def _render(self) -> dict[str, list[Mapping[str, Any]]]:
+    def _render(self) -> tuple[dict[str, list[Mapping[str, Any]]], str]:
         rendered: dict[str, list[Mapping[str, Any]]] = {}
         matrix = self.repository_root / "cyber-stack" / "matrix" / self.environment
         self.lines.extend(("", "GIT / KUSTOMIZE"))
@@ -468,8 +474,7 @@ class RecoveryReporter:
                 continue
             rendered[label] = documents
             self.lines.append(f"  Render {label}: OK ({len(documents)} resources)")
-        rendered["_git_head"] = [{"value": head}]
-        return rendered
+        return rendered, head
 
     def _report_argo(self, context: str, git_head: str) -> None:
         self.lines.extend(("", "ARGO CD"))
@@ -499,7 +504,7 @@ class RecoveryReporter:
             for item in _list(document.get("items"))
             if isinstance(item, Mapping)
         }
-        for name, expected_path in ARGO_APPLICATIONS.items():
+        for name, expected_path in argo_applications_for(self.environment).items():
             application = applications.get(name)
             if application is None:
                 self.lines.append(f"  {name}: MISSING (expected path {expected_path})")
@@ -514,8 +519,12 @@ class RecoveryReporter:
             revision = str(sync.get("revision", "UNKNOWN"))
             sync_status = str(sync.get("status", "Unknown"))
             health_status = str(health.get("status", "Unknown"))
-            revision_match = bool(git_head != "UNKNOWN" and revision.startswith(git_head))
-            if git_head != "UNKNOWN" and git_head.startswith(revision):
+            revision_match = git_head != "UNKNOWN" and revision == git_head
+            if (
+                git_head != "UNKNOWN"
+                and len(revision) >= MIN_GIT_ABBREVIATION_LENGTH
+                and git_head.startswith(revision)
+            ):
                 revision_match = True
             self.lines.append(
                 f"  {name}: path={path} revision={revision} "
@@ -535,7 +544,8 @@ class RecoveryReporter:
             self.lines.append("  UNKNOWN: image contract is unavailable")
             return
         results: dict[str, RegistryTags] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(contracts)) as executor:
+        worker_count = min(len(contracts), REGISTRY_LOOKUP_WORKER_LIMIT)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = {
                 contract.service: executor.submit(
                     self.registry_resolver, contract, self.registry_plain_http
@@ -786,9 +796,7 @@ class RecoveryReporter:
                 "Mutation policy:     no Git, registry, Argo CD, or Kubernetes writes",
             )
         )
-        rendered = self._render()
-        git_head_documents = rendered.pop("_git_head", [{"value": "UNKNOWN"}])
-        git_head = str(git_head_documents[0].get("value", "UNKNOWN"))
+        rendered, git_head = self._render()
         desired_images = inventory_images(rendered, namespace)
         required_secrets = inventory_required_secrets(rendered)
 

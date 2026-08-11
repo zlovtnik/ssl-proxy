@@ -65,23 +65,10 @@ update_overlay() {
     exit 1
   fi
 
-  # Kustomize edits only an existing image entry. Verify the service belongs
-  # to this overlay before changing it.
-  new_name="$(awk -v service="$service" '
-    $1 == "-" && $2 == "name:" {
-      active = ($3 == service)
-      if (active) count++
-      next
-    }
-    active && $1 == "newName:" { new_name = $2 }
-    END {
-      if (count != 1 || new_name == "") exit 1
-      print new_name
-    }
-  ' "$kustomization")" || {
-    echo "$kustomization must contain exactly one image mapping for $service" >&2
-    exit 1
-  }
+  # Kustomize may reorder mapping keys. Resolve the existing repository
+  # structurally instead of depending on name/newName line order.
+  new_name="$(python3 "$repository_root/scripts/image_contract.py" repository \
+    --kustomization "$kustomization" --service "$service")"
 
   (
     cd "$overlay"

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Sequence
+from unittest import mock
 
 import sys
 
@@ -12,12 +14,13 @@ import sys
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "scripts"))
 
-from image_contract import FIRST_PARTY_SERVICES  # noqa: E402
+from image_contract import FIRST_PARTY_SERVICES, ImageContract  # noqa: E402
 from recover_stack import (  # noqa: E402
-    ARGO_APPLICATIONS,
     CommandResult,
+    REGISTRY_LOOKUP_WORKER_LIMIT,
     RecoveryReporter,
     RegistryTags,
+    argo_applications_for,
 )
 
 
@@ -126,11 +129,13 @@ class FakeRunner:
         secret_present: bool = True,
         healthy_argo: bool = True,
         drift: bool = False,
+        argo_revision: str = HEAD,
     ) -> None:
         self.environment = environment
         self.secret_present = secret_present
         self.healthy_argo = healthy_argo
         self.drift = drift
+        self.argo_revision = argo_revision
         self.commands: list[tuple[str, ...]] = []
         self.rendered = rendered_documents(environment)
 
@@ -147,7 +152,9 @@ class FakeRunner:
             return CommandResult(0, self.rendered[label], "")
         if "applications.argoproj.io" in command:
             items = []
-            for index, (name, path) in enumerate(ARGO_APPLICATIONS.items()):
+            for index, (name, path) in enumerate(
+                argo_applications_for(self.environment).items()
+            ):
                 healthy = self.healthy_argo or index > 0
                 items.append(
                     {
@@ -157,7 +164,7 @@ class FakeRunner:
                         "spec": {"source": {"path": path}},
                         "status": {
                             "sync": {
-                                "revision": HEAD,
+                                "revision": self.argo_revision,
                                 "status": "Synced" if healthy else "OutOfSync",
                             },
                             "health": {"status": "Healthy" if healthy else "Degraded"},
@@ -286,6 +293,38 @@ class RecoverStackTest(unittest.TestCase):
         render_commands = [command for command in runner.commands if command[0] == "fake-kustomize"]
         self.assertEqual(4, len(render_commands))
 
+    def test_render_returns_documents_and_git_head_separately(self) -> None:
+        reporter = self.reporter("prod", FakeRunner("prod"))
+
+        rendered, git_head = reporter._render()
+
+        self.assertEqual(HEAD, git_head)
+        self.assertEqual(
+            {"bootstrap", "data-plane", "app-stack", "aggregate"}, set(rendered)
+        )
+
+    def test_argo_mapping_is_derived_from_environment(self) -> None:
+        self.assertEqual(
+            "cyber-stack/matrix/dev/app-stack",
+            argo_applications_for("dev")["ssl-proxy-dev-app-stack"],
+        )
+        self.assertEqual(
+            "cyber-stack/matrix/prod/data-plane",
+            argo_applications_for("prod")["ssl-proxy-prod-data-plane"],
+        )
+
+    def test_argo_revision_requires_minimum_abbreviation_length(self) -> None:
+        short_runner = FakeRunner("prod", argo_revision=HEAD[:6])
+        valid_runner = FakeRunner("prod", argo_revision=HEAD[:7])
+
+        short_returncode, short_report = self.reporter("prod", short_runner).run()
+        valid_returncode, valid_report = self.reporter("prod", valid_runner).run()
+
+        self.assertEqual(0, short_returncode, short_report)
+        self.assertEqual(0, valid_returncode, valid_report)
+        self.assertIn(f"revision={HEAD[:6]} local=DIFF", short_report)
+        self.assertIn(f"revision={HEAD[:7]} local=MATCH", valid_report)
+
     def test_full_report_precedes_nonzero_for_all_blocker_classes(self) -> None:
         runner = FakeRunner(
             "prod", secret_present=False, healthy_argo=False, drift=True
@@ -332,6 +371,21 @@ class RecoverStackTest(unittest.TestCase):
 
         self.assertEqual(0, returncode, report)
         self.assertIn("tags=UNKNOWN (connection refused)", report)
+
+    def test_registry_lookup_worker_count_is_capped(self) -> None:
+        reporter = self.reporter("prod", FakeRunner("prod"))
+        contracts = tuple(
+            ImageContract(f"service-{index}", "app-stack", f"registry.test/s{index}", PIN)
+            for index in range(REGISTRY_LOOKUP_WORKER_LIMIT + 3)
+        )
+
+        with mock.patch(
+            "recover_stack.concurrent.futures.ThreadPoolExecutor",
+            wraps=ThreadPoolExecutor,
+        ) as executor:
+            reporter._report_registry(contracts)
+
+        executor.assert_called_once_with(max_workers=REGISTRY_LOOKUP_WORKER_LIMIT)
 
 
 if __name__ == "__main__":

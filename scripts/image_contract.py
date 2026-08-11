@@ -197,6 +197,16 @@ def load_image_contracts(repository_root: Path, environment: str) -> tuple[Image
     return tuple(contracts)
 
 
+def repository_from_kustomization(path: Path, service: str) -> str:
+    entries = _image_entries(path)
+    matches = entries.get(service, [])
+    if len(matches) != 1:
+        raise ImageContractError(
+            f"{path} must contain exactly one image mapping for {service}; found {len(matches)}"
+        )
+    return _validate_repository(matches[0].get("newName"), service=service, path=path)
+
+
 def extract_buildx_digest(metadata: Mapping[str, Any]) -> str:
     """Extract the pushed manifest digest from Docker Buildx metadata."""
 
@@ -276,6 +286,11 @@ def _metadata_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _repository_command(arguments: argparse.Namespace) -> int:
+    print(repository_from_kustomization(arguments.kustomization, arguments.service))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -293,6 +308,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     metadata.add_argument("metadata", type=Path)
     metadata.set_defaults(handler=_metadata_command)
+
+    repository = subparsers.add_parser(
+        "repository", help="read one image repository from a Kustomization"
+    )
+    repository.add_argument("--kustomization", type=Path, required=True)
+    repository.add_argument("--service", required=True)
+    repository.set_defaults(handler=_repository_command)
     return parser
 
 

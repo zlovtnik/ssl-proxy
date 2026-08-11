@@ -91,16 +91,32 @@ require-registry:
 
 buildx-ready: require-registry
 	@docker info >/dev/null
-	@if ! docker buildx inspect "$(BUILDER)" >/dev/null 2>&1; then \
-		registry_host="$(REGISTRY)"; \
-		registry_host="$${registry_host%%/*}"; \
-		config="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).toml"; \
+	@registry_host="$(REGISTRY)"; \
+	registry_host="$${registry_host%%/*}"; \
+	config="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).toml"; \
+	stamp="$${TMPDIR:-/tmp}/ssl-proxy-buildkitd-$(BUILDER).mode"; \
+	if docker buildx inspect "$(BUILDER)" >/dev/null 2>&1; then \
+		if [ -f "$$stamp" ]; then \
+			configured_registry="$$(sed -n '1p' "$$stamp")"; \
+			configured_mode="$$(sed -n '2p' "$$stamp")"; \
+			if [ "$$configured_mode" != "$(REGISTRY_PLAIN_HTTP)" ] || { [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] && [ "$$configured_registry" != "$$registry_host" ]; }; then \
+				echo "Buildx builder $(BUILDER) uses REGISTRY_PLAIN_HTTP=$$configured_mode for $$configured_registry, but REGISTRY_PLAIN_HTTP=$(REGISTRY_PLAIN_HTTP) was requested for $$registry_host." >&2; \
+				echo "Use an unused dedicated builder (for example BUILDER=$(BUILDER)-http) or remove and recreate $(BUILDER) after confirming it is safe." >&2; \
+				exit 2; \
+			fi; \
+		elif [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then \
+			echo "Buildx builder $(BUILDER) already exists, so its HTTP registry configuration for $$registry_host cannot be verified." >&2; \
+			echo "Use an unused dedicated HTTP-configured builder (for example BUILDER=$(BUILDER)-http) instead of proceeding with HTTPS." >&2; \
+			exit 2; \
+		fi; \
+	else \
 		if [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then \
 			printf '[registry."%s"]\n  http = true\n' "$$registry_host" > "$$config"; \
 			docker buildx create --name "$(BUILDER)" --driver docker-container --buildkitd-config "$$config" >/dev/null; \
 		else \
 			docker buildx create --name "$(BUILDER)" --driver docker-container >/dev/null; \
 		fi; \
+		printf '%s\n%s\n' "$$registry_host" "$(REGISTRY_PLAIN_HTTP)" > "$$stamp"; \
 	fi
 	@docker buildx inspect "$(BUILDER)" --bootstrap >/dev/null
 
