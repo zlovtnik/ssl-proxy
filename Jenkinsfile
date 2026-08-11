@@ -91,14 +91,14 @@ pipeline {
                   timeout(time: 30, unit: 'MINUTES') {
                     retry(2) {
                       sh """
-                        build_tag=\"\\$(git rev-parse --short=12 HEAD)\"
+                        build_tag=\"\$(git rev-parse --short=12 HEAD)\"
                         env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \\
                           DOCKER_CONTEXT=\"$DOCKER_CONTEXT_NAME\" make publish-${serviceName} \\
                           BUILDER=\"$BUILDER\" \\
                           BUILDX_READY=1 \\
                           REGISTRY=\"$REGISTRY\" \\
                           REGISTRY_PLAIN_HTTP=\"$REGISTRY_PLAIN_HTTP\" \\
-                          TAG=\"\\$build_tag\"
+                          TAG=\"\$build_tag\"
                       """
                     }
                   }
