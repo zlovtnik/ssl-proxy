@@ -692,6 +692,20 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
         errors.append(f"{relative}: production control plane must not install dev controllers")
 
 
+def _check_namespace_deletion_protection(document: Mapping[str, Any], relative: str) -> list[str]:
+    annotations = _mapping(_metadata(document).get("annotations"))
+    sync_options = {
+        option.strip()
+        for option in str(annotations.get("argocd.argoproj.io/sync-options", "")).split(",")
+    }
+    errors: list[str] = []
+    if "Prune=false" not in sync_options:
+        errors.append(f"{relative}: namespace prune must be disabled")
+    if "Delete=confirm" not in sync_options:
+        errors.append(f"{relative}: namespace deletion must require confirmation")
+    return errors
+
+
 def check_repository(root: Path, executable: str) -> list[str]:
     errors: list[str] = []
     rendered_kustomizations: dict[str, Documents] = {}
@@ -760,9 +774,8 @@ def check_repository(root: Path, executable: str) -> list[str]:
         if documents is None:
             continue
         namespaces = [document for document in documents if document.get("kind") == "Namespace"]
-        annotations = _mapping(_metadata(namespaces[0]).get("annotations")) if namespaces else {}
-        if "Prune=false" not in str(annotations.get("argocd.argoproj.io/sync-options", "")):
-            errors.append(f"{relative}: namespace prune must be disabled")
+        if namespaces:
+            errors.extend(_check_namespace_deletion_protection(namespaces[0], str(relative)))
 
     makefile = (root / "Makefile").read_text(encoding="utf-8")
     for forbidden in ("argocd-update", "release-all", "kubectl patch application"):

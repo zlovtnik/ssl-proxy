@@ -353,5 +353,27 @@ metadata: {name: ssl-proxy-image-updater}
         self.assertTrue(any("dev controllers" in error for error in errors))
 
 
+class NamespaceDeletionProtectionTest(unittest.TestCase):
+    def test_requires_prune_protection_and_delete_confirmation(self) -> None:
+        protected = documents(
+            """kind: Namespace
+metadata:
+  annotations: {argocd.argoproj.io/sync-options: "Delete=confirm,Prune=false"}
+"""
+        )[0]
+        self.assertEqual(
+            [], check_gitops._check_namespace_deletion_protection(protected, "namespace.yaml")
+        )
+
+        unprotected = documents(
+            """kind: Namespace
+metadata:
+  annotations: {argocd.argoproj.io/sync-options: "Prune=false"}
+"""
+        )[0]
+        errors = check_gitops._check_namespace_deletion_protection(unprotected, "namespace.yaml")
+        self.assertEqual(["namespace.yaml: namespace deletion must require confirmation"], errors)
+
+
 if __name__ == "__main__":
     unittest.main()

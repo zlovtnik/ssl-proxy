@@ -4,7 +4,7 @@ metadata:
   name: prod-ssl-proxy
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
-    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/sync-options: Prune=false,Delete=confirm
   labels:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/managed-by: kustomize
