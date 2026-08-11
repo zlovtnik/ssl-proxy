@@ -53,15 +53,21 @@ Each run:
 2. creates and bootstraps its shared Buildx builder after bounded Docker and
    registry checks;
 3. runs `make docs-check` and `make gitops-check` in parallel with image
-   publishing; and
+   publishing;
 4. publishes every Makefile service independently with a 30-minute limit and
    one retry, using a 12-character commit tag plus the mutable `latest`
-   channel.
+   channel; and
+5. when validation and every publication branch succeeded, waits up to 30
+   minutes for all three production Argo CD Applications to report the full
+   triggering checkout SHA with `Synced` sync and `Healthy` health.
 
 Validation remains visible and fails the overall build, but does not cancel
 unaffected image publication. Likewise, a failed image branch does not cancel
-other branches. Build results remain available in Jenkins; no outbound failure
-webhook is configured.
+other branches. The production gate is skipped after either class of failure.
+A missing Application, stale revision, `OutOfSync`, `Progressing`, `Degraded`
+or timeout fails the otherwise-successful run with sanitized Argo operation and
+condition messages. Build results remain available in Jenkins; no outbound
+failure webhook is configured.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
 Search, key rotator, Search UI, both Schema Migrator images and the TiDB runtime
@@ -76,3 +82,26 @@ Git. Record a published digest in the dev slice with
 local Kubernetes context, and review that change normally. Production remains
 a separate reviewed copy of accepted dev digests and is reconciled only by the
 three production Argo CD Applications.
+
+The final gate certifies reconciliation of the reviewed `main` revision that
+triggered Jenkins. It does not copy newly published digests into production or
+make any Git, Argo CD or Kubernetes mutation. Newly published images remain
+unpromoted until their digests are accepted through the normal dev-to-prod
+review.
+
+## Production gate credential
+
+Provision a Jenkins secret-file credential named
+`ssl-proxy-prod-readonly-kubeconfig` from Vault. It must authenticate only the
+`argocd/ssl-proxy-production-gate` ServiceAccount declared under
+`cyber-stack/argocd`. The checked-in Role is name-scoped to `get` the three
+production Applications; it grants no Secret read, workload read or mutation
+verb. The pipeline binds the credential only around `make production-gate` and
+passes the full checkout SHA explicitly.
+
+The gate performs a read-only authorization preflight before polling. It
+requires each named Application read and rejects a credential that can read
+Secrets or perform representative Argo, workload, Secret or RBAC mutations.
+`make gitops-check` separately enforces the exact ServiceAccount, Role and
+RoleBinding rules, preventing repository RBAC drift from broadening that
+identity.

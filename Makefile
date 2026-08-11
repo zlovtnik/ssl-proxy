@@ -10,6 +10,9 @@ KUBE_CONTEXT ?=
 KUBECTL ?= kubectl
 ARGOCD_NAMESPACE ?= argocd
 ARGOCD_TIMEOUT ?= 30m
+PRODUCTION_GATE_REVISION ?= $(shell git rev-parse HEAD)
+PRODUCTION_GATE_TIMEOUT ?= 30m
+PRODUCTION_GATE_POLL_INTERVAL ?= 10s
 BUILDER ?= ssl-proxy-publisher
 BUILDER_NETWORK ?=
 BUILDX_READY ?= 0
@@ -33,7 +36,7 @@ BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all kube-context-check recover-stack stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all kube-context-check recover-stack production-gate stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -83,6 +86,16 @@ recover-stack: kube-context-check
 		--kube-context "$(KUBE_CONTEXT)" \
 		--kustomize "$(KUSTOMIZE)" \
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
+
+production-gate:
+	@test -n "$(PRODUCTION_GATE_REVISION)" || { echo "PRODUCTION_GATE_REVISION is required" >&2; exit 2; }
+	python3 scripts/production_gate.py \
+		--revision "$(PRODUCTION_GATE_REVISION)" \
+		--kubectl "$(KUBECTL)" \
+		--kube-context "$(KUBE_CONTEXT)" \
+		--namespace "$(ARGOCD_NAMESPACE)" \
+		--timeout "$(PRODUCTION_GATE_TIMEOUT)" \
+		--poll-interval "$(PRODUCTION_GATE_POLL_INTERVAL)"
 
 argocd-server-health: kube-context-check
 	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace "$(ARGOCD_NAMESPACE)" wait \

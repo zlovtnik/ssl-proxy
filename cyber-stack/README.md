@@ -15,7 +15,8 @@ The platform team provides and operates:
   control-plane path;
 - registry access for `192.168.1.221:5000`;
 - workload Secrets and the production TiDB endpoint ConfigMap required by the
-  rendered manifests;
+  rendered manifests, sourced through the value-free
+  [`platform-input-contract.yaml`](platform-input-contract.yaml);
 - DNS and an `ssl-proxy-identity-tls` certificate for
   `identity.prod.ssl-proxy.internal`.
 
@@ -43,6 +44,12 @@ self-healing, and refuse empty desired state. The data-plane entry retains the
 StatefulSet PVC-template ignore rule. Namespace deletion requires explicit
 confirmation. Dev Applications and dev controllers are prohibited on the
 production server.
+
+The control-plane Kustomization also declares the
+`ssl-proxy-production-gate` ServiceAccount and its name-scoped Role. That
+identity can only get the three generated Applications. The platform team
+stores its kubeconfig in Vault and provisions it in Jenkins as
+`ssl-proxy-prod-readonly-kubeconfig`; the credential is not a workload Secret.
 
 ## Local Kubernetes development
 
@@ -156,11 +163,17 @@ kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev >/
 `recover-stack` defaults to production and the current Kubernetes context. It
 prints the resolved context and namespace before reporting Git/Kustomize, Argo
 CD (production only), desired and live images, registry tags, runtime image
-IDs, required Secret names/presence, workload and pod health, and recent warning
-events. It prints the complete report before returning nonzero for unhealthy
-Applications, missing required Secrets, verified image drift, or unhealthy
-workloads. It never reads Secret values or changes Git, registry state, Argo CD,
-or Kubernetes.
+IDs, required platform object/key presence, workload and pod health, and recent
+warning events. It prints the complete report before returning nonzero for
+unhealthy Applications, missing required objects or keys, verified image drift,
+or unhealthy workloads. The Secret query emits only type and key names; values
+are suppressed. The report never changes Git, registry state, Argo CD or
+Kubernetes.
+
+`make production-gate PRODUCTION_GATE_REVISION=<full-main-sha>` is the narrower
+CI check. It validates the read-only identity and waits up to 30 minutes for the
+three production Applications to report that exact revision as
+`Synced/Healthy`. It does not publish or promote images.
 
 When an Application is unhealthy, inspect its conditions, the rendered Git
 revision, workload events and container logs. Correct workload manifests in

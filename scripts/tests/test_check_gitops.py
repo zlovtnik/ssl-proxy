@@ -353,6 +353,52 @@ metadata: {name: ssl-proxy-image-updater}
         self.assertTrue(any("dev controllers" in error for error in errors))
 
 
+class ProductionGateRbacTest(unittest.TestCase):
+    def resources(self, verbs: str = "[get]", resources: str = "[applications]") -> list[dict[str, object]]:
+        names = ", ".join(check_gitops.WORKLOAD_APPLICATIONS)
+        return documents(
+            f"""apiVersion: v1
+kind: ServiceAccount
+metadata: {{name: ssl-proxy-production-gate, namespace: argocd}}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {{name: ssl-proxy-production-gate, namespace: argocd}}
+rules:
+  - apiGroups: [argoproj.io]
+    resources: {resources}
+    resourceNames: [{names}]
+    verbs: {verbs}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {{name: ssl-proxy-production-gate, namespace: argocd}}
+roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: Role, name: ssl-proxy-production-gate}}
+subjects:
+  - {{kind: ServiceAccount, name: ssl-proxy-production-gate, namespace: argocd}}
+"""
+        )
+
+    def test_accepts_named_application_get_only(self) -> None:
+        errors: list[str] = []
+
+        check_gitops._check_production_gate_rbac(self.resources(), errors)
+
+        self.assertEqual([], errors)
+
+    def test_rejects_secret_read_or_application_mutation(self) -> None:
+        for verbs, resources in (("[get, patch]", "[applications]"), ("[get]", "[secrets]")):
+            with self.subTest(verbs=verbs, resources=resources):
+                errors: list[str] = []
+
+                check_gitops._check_production_gate_rbac(
+                    self.resources(verbs=verbs, resources=resources), errors
+                )
+
+                self.assertTrue(any("may only get" in error for error in errors))
+
+
 class NamespaceDeletionProtectionTest(unittest.TestCase):
     def test_requires_prune_protection_and_delete_confirmation(self) -> None:
         protected = documents(

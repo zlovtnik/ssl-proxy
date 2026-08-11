@@ -118,9 +118,12 @@ The Jenkins `ssl-proxy-images` job polls `main` and accepts GitHub push events,
 initializes the pinned submodules and shared Buildx builder, then publishes the
 same target set as `make publish-all` in independently retried branches.
 Documentation and GitOps validation run alongside publication and still fail
-the overall build without cancelling successful image pushes. Jenkins uses the
-registry's internal Compose name while Kubernetes uses the private server
-address; both names reach the same registry storage.
+the overall build without cancelling successful image pushes. After all those
+branches succeed, the Vault-provisioned read-only production kubeconfig gates
+the build on all three Argo CD Applications reaching the triggering full Git
+SHA as `Synced/Healthy`. Jenkins uses the registry's internal Compose name while
+Kubernetes uses the private server address; both names reach the same registry
+storage.
 
 ## Verify
 
@@ -133,8 +136,8 @@ make recover-stack ENV=prod REGISTRY_PLAIN_HTTP=1
 
 `recover-stack` is read-only. It reports the resolved context and namespace,
 renders the canonical Kustomize sources, compares desired and live image
-references/runtime IDs, lists required Secret names and presence, and includes
-workload health and recent warning events. Production also reports the three
+references/runtime IDs, lists required platform object and key presence without
+values, and includes workload health and recent warning events. Production also reports the three
 Argo Applications; dev deliberately skips that controller query. An
 unreachable registry tag endpoint is `UNKNOWN`, not an image-drift result.
 Registry reachability proves only distribution; application readiness still

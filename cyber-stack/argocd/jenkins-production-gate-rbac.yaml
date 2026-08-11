@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ssl-proxy-production-gate
+  namespace: argocd
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ssl-proxy-production-gate
+  namespace: argocd
+rules:
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - applications
+    resourceNames:
+      - ssl-proxy-prod-bootstrap
+      - ssl-proxy-prod-data-plane
+      - ssl-proxy-prod-app-stack
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ssl-proxy-production-gate
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ssl-proxy-production-gate
+subjects:
+  - kind: ServiceAccount
+    name: ssl-proxy-production-gate
+    namespace: argocd

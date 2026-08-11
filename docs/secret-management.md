@@ -51,7 +51,10 @@ must remain untracked.
 ## Kubernetes rules
 
 - The platform secret control plane materializes required Secrets before Argo
-  CD reconciles their consumers. This repository stores only names and keys.
+  CD reconciles their consumers. The value-free
+  [`cyber-stack/platform-input-contract.yaml`](../cyber-stack/platform-input-contract.yaml)
+  is the authoritative production inventory of Kubernetes names, keys, types
+  and Vault KV-v2 logical paths; this repository stores no values.
 - Create one Secret per trust boundary rather than a platform-wide credential
   bundle.
 - Keep the TiDB accounts for `octopus_core`, `atheros_search`,
@@ -64,6 +67,28 @@ must remain untracked.
   Secret values.
 - Keep credentials out of Kustomize bases, overlays, patches and generators.
 - Do not create, edit or patch live Secrets as part of an application release.
+
+## Production platform sync
+
+The platform-owned Vault sync workflow must read every logical path under
+`secret/ssl-proxy/prod` declared by the contract. Before writing anything, it
+validates that all 16 Secrets and the TiDB endpoint ConfigMap have every
+declared key. It must not log values, and its Kubernetes writer identity is
+external to application workloads.
+
+The same preflight verifies that the identity certificate covers
+`identity.prod.ssl-proxy.internal`, the TiDB CA and server name agree, each DSN
+uses the isolated account recorded in the contract, and the grant matrix in
+the TiDB cutover document is applied. It also verifies that `loki-htpasswd`
+corresponds to the declared Loki username and password. Only after every check
+passes may the platform workflow materialize all objects idempotently in
+`prod-ssl-proxy`. A partial write is a failed sync.
+
+The Jenkins file credential `ssl-proxy-prod-readonly-kubeconfig` is a separate
+platform input sourced from Vault. It authenticates the
+`argocd/ssl-proxy-production-gate` ServiceAccount and is provisioned through
+the platform's Jenkins credential control plane, never copied into this
+repository or mounted from the ignored local `secrets/` directory.
 
 ## Rotation
 

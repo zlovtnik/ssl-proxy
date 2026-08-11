@@ -12,7 +12,8 @@ local Kustomize context.
 3. Confirm the registry is reachable from the build host and every Kubernetes
    node.
 4. Confirm the platform control plane has materialized the required workload
-   Secrets and production endpoint ConfigMap without exposing their values.
+   Secrets and production endpoint ConfigMap from
+   `cyber-stack/platform-input-contract.yaml` without exposing their values.
 5. Review the rendered diff for the exact environment slice being changed.
 6. Record TiDB schema manifest hashes, runtime grants and signed Redpanda
    cutover offsets when those contracts change.
@@ -75,8 +76,8 @@ the resolved context, API server and namespace. Set `KUBE_CONTEXT` only when an
 explicit override is required; `kube-context-check` rejects missing contexts
 before any health query. The recovery report renders all canonical slices,
 reports Git and production Argo revisions, inventories desired and live images
-including init containers and runtime IDs, lists required Secret names and
-presence only, and includes workload health and recent warnings. It prints the
+including init containers and runtime IDs, lists required platform object and
+key presence without values, and includes workload health and recent warnings. It prints the
 whole report before returning nonzero for blockers. Registry tag lookup failure
 is reported as `UNKNOWN` and does not by itself fail recovery. Dev reports skip
 Argo because dev Applications are prohibited on the production controller.
@@ -87,9 +88,30 @@ drift. Correct Git or the platform prerequisite and let Argo CD reconcile it.
 
 The current recovery incident is blocked by missing platform-owned Secrets,
 not by first-party publication. Republishing `$TAG` or `latest` cannot satisfy
-that contract. Have the platform declarative control plane materialize the
-required Secret names, then rerun `make recover-stack`; do not create or patch
-the Secrets interactively.
+that contract. Have the platform declarative control plane run its atomic Vault
+KV-v2 sync for the contract, including the TLS, TiDB account/grant/CA and Loki
+htpasswd preflight, then rerun `make recover-stack`; do not create or patch the
+Secrets interactively. Existing pending pods recover through kubelet retries
+and Argo CD self-healing. Do not restart, patch or scale workloads to force
+reconciliation.
+
+The production recovery report queries only object type and key names from the
+contract and suppresses every value. It reports a missing object or missing
+key separately. A successful report therefore proves that prerequisites are
+present, but the platform workflow remains responsible for cryptographic,
+identity and grant validation.
+
+For a reviewed `main` revision, Jenkins runs the equivalent read-only gate:
+
+```bash
+make production-gate PRODUCTION_GATE_REVISION="$(git rev-parse HEAD)"
+```
+
+The caller must use the Vault-provisioned read-only kubeconfig. The gate waits
+up to 30 minutes for `ssl-proxy-prod-bootstrap`,
+`ssl-proxy-prod-data-plane` and `ssl-proxy-prod-app-stack` to report that exact
+full SHA as `Synced/Healthy`. It never promotes image digests. A stale revision,
+missing Application, unhealthy status or timeout is a failed release check.
 
 ## Data-plane checks
 

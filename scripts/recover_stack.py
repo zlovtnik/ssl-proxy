@@ -25,6 +25,11 @@ from image_contract import (
     load_image_contracts,
     split_registry_repository,
 )
+from platform_input_contract import (
+    PlatformInputContract,
+    PlatformInputContractError,
+    load_platform_input_contract,
+)
 
 
 CANONICAL_SLICES = ("bootstrap", "data-plane", "app-stack")
@@ -38,6 +43,16 @@ MANIFEST_ACCEPT = ", ".join(
         "application/vnd.docker.distribution.manifest.list.v2+json",
         "application/vnd.docker.distribution.manifest.v2+json",
     )
+)
+PRESENT_MARKER = "__SSL_PROXY_PRESENT__"
+SECRET_KEY_NAMES_TEMPLATE = (
+    '{{printf "__SSL_PROXY_PRESENT__\\t%s\\n" .type}}'
+    '{{range $key, $_ := .data}}{{println $key}}{{end}}'
+)
+CONFIG_MAP_KEY_NAMES_TEMPLATE = (
+    '{{println "__SSL_PROXY_PRESENT__"}}'
+    '{{range $key, $_ := .data}}{{println $key}}{{end}}'
+    '{{range $key, $_ := .binaryData}}{{println $key}}{{end}}'
 )
 
 
@@ -740,6 +755,87 @@ class RecoveryReporter:
                 self.lines.append(f"  {name}: MISSING")
                 self._block(f"required ConfigMap is missing: {namespace}/{name}")
 
+    def _report_platform_contract(
+        self,
+        context: str,
+        contract: PlatformInputContract,
+    ) -> None:
+        self.lines.extend(
+            (
+                "",
+                "REQUIRED PLATFORM INPUTS "
+                "(contract names and key names only; values suppressed)",
+            )
+        )
+        if not self.cluster_available:
+            for entry in contract.inputs:
+                self.lines.append(
+                    f"  {entry.kind}/{entry.name}: UNKNOWN "
+                    f"required-keys={','.join(entry.keys)}"
+                )
+            return
+
+        for entry in contract.inputs:
+            resource = "secret" if entry.kind == "Secret" else "configmap"
+            template = (
+                SECRET_KEY_NAMES_TEMPLATE
+                if entry.kind == "Secret"
+                else CONFIG_MAP_KEY_NAMES_TEMPLATE
+            )
+            result = self._kubectl(
+                context,
+                "--namespace",
+                contract.namespace,
+                "get",
+                resource,
+                entry.name,
+                "--ignore-not-found",
+                "-o",
+                f"go-template={template}",
+            )
+            label = f"{entry.kind}/{entry.name}"
+            if result.returncode != 0:
+                self.lines.append(f"  {label}: UNKNOWN ({_short_error(result)})")
+                self._block(f"cannot verify platform input {label}")
+                continue
+            output = result.stdout.splitlines()
+            if not output or not output[0].startswith(PRESENT_MARKER):
+                self.lines.append(
+                    f"  {label}: MISSING required-keys={','.join(entry.keys)}"
+                )
+                self._block(
+                    f"required platform input is missing: "
+                    f"{contract.namespace}/{entry.kind}/{entry.name}"
+                )
+                continue
+
+            secret_type = None
+            if entry.kind == "Secret":
+                marker_fields = output[0].split("\t", 1)
+                secret_type = marker_fields[1] if len(marker_fields) == 2 else "UNKNOWN"
+            present_keys = set(output[1:])
+            missing_keys = [key for key in entry.keys if key not in present_keys]
+            type_suffix = (
+                f" type={secret_type}" if entry.kind == "Secret" else ""
+            )
+            if missing_keys:
+                self.lines.append(
+                    f"  {label}: PRESENT{type_suffix} "
+                    f"missing-keys={','.join(missing_keys)}"
+                )
+                self._block(
+                    f"required platform input keys are missing: "
+                    f"{contract.namespace}/{entry.kind}/{entry.name} "
+                    f"({', '.join(missing_keys)})"
+                )
+            else:
+                self.lines.append(f"  {label}: PRESENT{type_suffix} keys=OK")
+            if entry.kind == "Secret" and secret_type != entry.secret_type:
+                self._block(
+                    f"platform input type drift: {contract.namespace}/{label} "
+                    f"expected {entry.secret_type}, got {secret_type}"
+                )
+
     def _report_desired_images(self, desired_images: Sequence[DesiredImage]) -> None:
         self.lines.extend(("", "DESIRED IMAGE INVENTORY (regular and init containers)"))
         if not desired_images:
@@ -939,10 +1035,20 @@ class RecoveryReporter:
         required_secrets = inventory_required_secrets(rendered)
         required_config_maps = inventory_required_config_maps(rendered)
 
+        platform_contract: PlatformInputContract | None = None
+        if self.environment == "prod":
+            try:
+                platform_contract = load_platform_input_contract(self.repository_root)
+            except PlatformInputContractError as error:
+                self._block(f"platform input contract is invalid: {error}")
+
         self._report_argo(context, git_head)
         self._report_registry(contracts)
-        self._report_config_maps(context, namespace, required_config_maps)
-        self._report_secrets(context, namespace, required_secrets)
+        if platform_contract is not None:
+            self._report_platform_contract(context, platform_contract)
+        else:
+            self._report_config_maps(context, namespace, required_config_maps)
+            self._report_secrets(context, namespace, required_secrets)
         self._report_desired_images(desired_images)
         self._report_live_state(context, namespace, desired_images, contracts)
         self._report_events(context, namespace)

@@ -1,0 +1,160 @@
+apiVersion: platform.ssl-proxy.io/v1alpha1
+kind: PlatformInputContract
+metadata:
+  name: ssl-proxy-prod
+spec:
+  environment: prod
+  namespace: prod-ssl-proxy
+  source:
+    provider: hashicorp-vault
+    engine: kv-v2
+    mount: secret
+    pathPrefix: secret/ssl-proxy/prod
+  apply:
+    writerIdentity: platform-owned
+    validateAllKeysBeforeWrite: true
+    idempotent: true
+    neverLogValues: true
+  validation:
+    identityCertificate:
+      secretName: ssl-proxy-identity-tls
+      dnsName: identity.prod.ssl-proxy.internal
+    lokiHtpasswd:
+      secretName: observability-credentials
+      usernameKey: loki-username
+      passwordKey: loki-password
+      htpasswdKey: loki-htpasswd
+    tidb:
+      endpointConfigMapName: ssl-proxy-prod-tidb-endpoint
+      caSecretName: tidb-client-ca
+      serverNameKey: TIDB_TLS_SERVER_NAME
+      grantMatrixDocument: docs/tidb-runtime-cutover.md
+      accounts:
+        tidb-atheros-search: atheros_search_runtime
+        tidb-keycloak: keycloak
+        tidb-octopus: octopus_runtime
+        tidb-schema-migrator: schema_migrator_runtime
+        tidb-schema-owner: schema_owner
+  inputs:
+    - kind: Secret
+      name: minio-credentials
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/minio-credentials
+      keys:
+        - access-key
+        - secret-key
+    - kind: Secret
+      name: observability-credentials
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/observability-credentials
+      keys:
+        - grafana-admin-password
+        - loki-username
+        - loki-password
+        - loki-htpasswd
+    - kind: Secret
+      name: proxy-admin-key
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/proxy-admin-key
+      keys:
+        - api-key
+    - kind: Secret
+      name: proxy-runtime-secrets
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/proxy-runtime-secrets
+      keys:
+        - wg-obfuscation-key
+    - kind: Secret
+      name: redis-runtime
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/redis-runtime
+      keys:
+        - password
+    - kind: Secret
+      name: schema-migrator-backend
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/schema-migrator-backend
+      keys:
+        - encrypt-key
+        - jwt-secret
+        - api-bearer-token
+    - kind: Secret
+      name: schema-migrator-bootstrap
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/schema-migrator-bootstrap
+      keys:
+        - application-admin-password
+    - kind: Secret
+      name: schema-migrator-keycloak
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/schema-migrator-keycloak
+      keys:
+        - bootstrap-admin-password
+    - kind: Secret
+      name: ssl-proxy-identity-tls
+      type: kubernetes.io/tls
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-identity-tls
+      keys:
+        - tls.crt
+        - tls.key
+    - kind: Secret
+      name: tidb-atheros-search
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/tidb-atheros-search
+      keys:
+        - dsn
+    - kind: Secret
+      name: tidb-client-ca
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/tidb-client-ca
+      keys:
+        - ca.crt
+    - kind: Secret
+      name: tidb-keycloak
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/tidb-keycloak
+      keys:
+        - password
+    - kind: Secret
+      name: tidb-octopus
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/tidb-octopus
+      keys:
+        - password
+    - kind: Secret
+      name: tidb-schema-migrator
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/tidb-schema-migrator
+      keys:
+        - password
+    - kind: Secret
+      name: tidb-schema-owner
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/tidb-schema-owner
+      keys:
+        - dsn
+    - kind: Secret
+      name: wireguard-config
+      type: Opaque
+      vaultPath: secret/ssl-proxy/prod/wireguard-config
+      keys:
+        - server.conf
+        - Corefile
+        - privatekey-server
+        - publickey-server
+        - peer1.conf
+        - peer1-obfuscated.conf
+        - publickey-peer1
+        - presharedkey-peer1
+        - peer2.conf
+        - peer2-obfuscated.conf
+        - publickey-peer2
+        - presharedkey-peer2
+    - kind: ConfigMap
+      name: ssl-proxy-prod-tidb-endpoint
+      vaultPath: secret/ssl-proxy/prod/ssl-proxy-prod-tidb-endpoint
+      keys:
+        - TIDB_HOST
+        - TIDB_PORT
+        - TIDB_TLS_SERVER_NAME
+        - SCHEMA_MIGRATOR_TIDB_JDBC_URL

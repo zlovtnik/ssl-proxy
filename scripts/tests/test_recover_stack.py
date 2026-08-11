@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -23,11 +24,17 @@ from recover_stack import (  # noqa: E402
     argo_applications_for,
     kustomize_build_command,
 )
+from platform_input_contract import (  # noqa: E402
+    CONTRACT_RELATIVE_PATH,
+    load_platform_input_contract,
+)
 
 
 PIN = "sha256:" + "a" * 64
 STALE = "sha256:" + "b" * 64
 HEAD = "1" * 40
+PLATFORM_CONTRACT = load_platform_input_contract(REPOSITORY_ROOT)
+PLATFORM_INPUTS = PLATFORM_CONTRACT.by_identity()
 
 
 def write_contract(root: Path, environment: str) -> None:
@@ -141,6 +148,7 @@ class FakeRunner:
         contexts: tuple[str, ...] = ("wiretrap-k3s",),
         current_context: str = "wiretrap-k3s",
         cluster_reachable: bool = True,
+        missing_input_key: tuple[str, str, str] | None = None,
     ) -> None:
         self.environment = environment
         self.secret_present = secret_present
@@ -151,6 +159,7 @@ class FakeRunner:
         self.contexts = contexts
         self.current_context = current_context
         self.cluster_reachable = cluster_reachable
+        self.missing_input_key = missing_input_key
         self.commands: list[tuple[str, ...]] = []
         self.rendered = rendered_documents(environment)
 
@@ -204,10 +213,34 @@ class FakeRunner:
                 )
             return CommandResult(0, json.dumps({"items": items}), "")
         if "secret" in command:
-            output = "secret/platform-runtime\n" if self.secret_present else ""
+            if not self.secret_present:
+                return CommandResult(0, "", "")
+            name = command[command.index("secret") + 1]
+            entry = PLATFORM_INPUTS.get(("Secret", name))
+            if entry is None:
+                return CommandResult(0, f"secret/{name}\n", "")
+            keys = [
+                key
+                for key in entry.keys
+                if self.missing_input_key != ("Secret", name, key)
+            ]
+            output = "\n".join(
+                (f"__SSL_PROXY_PRESENT__\t{entry.secret_type}", *keys, "")
+            )
             return CommandResult(0, output, "")
         if "configmap" in command:
-            output = "configmap/platform-endpoint\n" if self.config_map_present else ""
+            if not self.config_map_present:
+                return CommandResult(0, "", "")
+            name = command[command.index("configmap") + 1]
+            entry = PLATFORM_INPUTS.get(("ConfigMap", name))
+            if entry is None:
+                return CommandResult(0, f"configmap/{name}\n", "")
+            keys = [
+                key
+                for key in entry.keys
+                if self.missing_input_key != ("ConfigMap", name, key)
+            ]
+            output = "\n".join(("__SSL_PROXY_PRESENT__", *keys, ""))
             return CommandResult(0, output, "")
         if "deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch" in command:
             live_digest = STALE if self.drift else PIN
@@ -296,6 +329,9 @@ class RecoverStackTest(unittest.TestCase):
         self.root = Path(self.directory.name)
         write_contract(self.root, "prod")
         write_contract(self.root, "dev")
+        target = self.root / CONTRACT_RELATIVE_PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPOSITORY_ROOT / CONTRACT_RELATIVE_PATH, target)
 
     def tearDown(self) -> None:
         self.directory.cleanup()
@@ -319,8 +355,9 @@ class RecoverStackTest(unittest.TestCase):
         self.assertEqual(0, returncode, report)
         self.assertIn("Kubernetes context: wiretrap-k3s", report)
         self.assertIn("ssl-proxy-prod-app-stack", report)
-        self.assertIn("platform-endpoint: PRESENT", report)
-        self.assertIn("platform-runtime: PRESENT", report)
+        self.assertIn("ConfigMap/ssl-proxy-prod-tidb-endpoint: PRESENT", report)
+        self.assertIn("Secret/minio-credentials: PRESENT", report)
+        self.assertIn("values suppressed", report)
         self.assertIn("regular/proxy", report)
         self.assertIn("init/prepare", report)
         self.assertIn("imageID=docker-pullable://", report)
@@ -440,8 +477,8 @@ class RecoverStackTest(unittest.TestCase):
         returncode, report = self.reporter("prod", runner).run()
 
         self.assertEqual(1, returncode)
-        self.assertIn("platform-endpoint: MISSING", report)
-        self.assertIn("platform-runtime: MISSING", report)
+        self.assertIn("ConfigMap/ssl-proxy-prod-tidb-endpoint: MISSING", report)
+        self.assertIn("Secret/minio-credentials: MISSING", report)
         self.assertIn("sync=OutOfSync health=Degraded", report)
         self.assertIn("image Deployment/proxy proxy: DRIFT", report)
         self.assertIn("Pod/proxy-abc: UNHEALTHY", report)
@@ -449,6 +486,20 @@ class RecoverStackTest(unittest.TestCase):
         self.assertIn("image pull failed", report)
         self.assertLess(report.index("RECENT WARNING EVENTS"), report.index("BLOCKER SUMMARY"))
         self.assertTrue(report.rstrip().endswith("blockers)"))
+
+    def test_missing_platform_key_is_reported_without_values(self) -> None:
+        runner = FakeRunner(
+            "prod",
+            missing_input_key=("Secret", "proxy-admin-key", "api-key"),
+        )
+
+        returncode, report = self.reporter("prod", runner).run()
+
+        self.assertEqual(1, returncode)
+        self.assertIn("Secret/proxy-admin-key: PRESENT", report)
+        self.assertIn("missing-keys=api-key", report)
+        self.assertNotIn("stringData", report)
+        self.assertNotIn(".data", report)
 
     def test_dev_skips_argo_queries(self) -> None:
         runner = FakeRunner("dev")

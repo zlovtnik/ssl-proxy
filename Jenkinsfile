@@ -113,6 +113,29 @@ pipeline {
         }
       }
     }
+
+    stage('Production revision gate') {
+      when {
+        expression { currentBuild.currentResult == 'SUCCESS' }
+      }
+      options {
+        timeout(time: 35, unit: 'MINUTES')
+      }
+      steps {
+        withCredentials([
+          file(
+            credentialsId: 'ssl-proxy-prod-readonly-kubeconfig',
+            variable: 'PROD_KUBECONFIG'
+          )
+        ]) {
+          sh '''
+            expected_revision="$(git rev-parse HEAD)"
+            KUBECONFIG="$PROD_KUBECONFIG" make production-gate \
+              PRODUCTION_GATE_REVISION="$expected_revision"
+          '''
+        }
+      }
+    }
   }
 
 }

@@ -14,6 +14,17 @@ from typing import Any
 
 import yaml
 
+SCRIPTS_DIRECTORY = Path(__file__).resolve().parent
+if str(SCRIPTS_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIRECTORY))
+
+from platform_input_contract import (  # noqa: E402
+    PlatformInputContractError,
+    compare_contract_to_rendered,
+    find_committed_secret_values,
+    load_platform_input_contract,
+)
+
 
 Document = dict[str, Any]
 Documents = list[Document]
@@ -692,6 +703,56 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
         errors.append(f"{relative}: production control plane must not install dev controllers")
 
 
+def _check_production_gate_rbac(documents: Documents, errors: list[str]) -> None:
+    relative = "cyber-stack/argocd"
+    name = "ssl-proxy-production-gate"
+    service_accounts = _find(documents, "ServiceAccount", name)
+    roles = _find(documents, "Role", name)
+    role_bindings = _find(documents, "RoleBinding", name)
+    if len(service_accounts) != 1 or len(roles) != 1 or len(role_bindings) != 1:
+        errors.append(
+            f"{relative}: production gate requires exactly one ServiceAccount, Role, and RoleBinding"
+        )
+        return
+    if _metadata(service_accounts[0]).get("namespace") != "argocd":
+        errors.append(f"{relative}: production gate ServiceAccount must be in argocd")
+    if service_accounts[0].get("automountServiceAccountToken") is not False:
+        errors.append(
+            f"{relative}: production gate ServiceAccount must disable automatic token mounts"
+        )
+
+    expected_rule = {
+        "apiGroups": ["argoproj.io"],
+        "resources": ["applications"],
+        "resourceNames": list(WORKLOAD_APPLICATIONS),
+        "verbs": ["get"],
+    }
+    if _metadata(roles[0]).get("namespace") != "argocd" or roles[0].get("rules") != [expected_rule]:
+        errors.append(
+            f"{relative}: production gate Role may only get the three production Applications"
+        )
+
+    role_binding = role_bindings[0]
+    expected_role_ref = {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": name,
+    }
+    expected_subject = {
+        "kind": "ServiceAccount",
+        "name": name,
+        "namespace": "argocd",
+    }
+    if (
+        _metadata(role_binding).get("namespace") != "argocd"
+        or role_binding.get("roleRef") != expected_role_ref
+        or role_binding.get("subjects") != [expected_subject]
+    ):
+        errors.append(
+            f"{relative}: production gate RoleBinding must bind only its dedicated ServiceAccount"
+        )
+
+
 def _check_namespace_deletion_protection(document: Mapping[str, Any], relative: str) -> list[str]:
     annotations = _mapping(_metadata(document).get("annotations"))
     sync_options = {
@@ -747,9 +808,19 @@ def check_repository(root: Path, executable: str) -> list[str]:
                 errors.extend(_check_schema_executor_contract(rendered_kustomizations[relative], relative, expected_schema_marker))
     prod_documents = [document for component in ("bootstrap", "data-plane", "app-stack") for document in rendered_kustomizations.get(f"cyber-stack/matrix/prod/{component}", [])]
     errors.extend(_check_redpanda_topic_replication(prod_documents, "cyber-stack/matrix/prod"))
+    prod_aggregate = rendered_kustomizations.get("cyber-stack/matrix/prod")
+    if prod_aggregate is not None:
+        try:
+            platform_contract = load_platform_input_contract(root)
+        except PlatformInputContractError as error:
+            errors.append(str(error))
+        else:
+            errors.extend(compare_contract_to_rendered(platform_contract, prod_aggregate))
+    errors.extend(find_committed_secret_values(root))
     if "cyber-stack/argocd" in rendered_kustomizations:
         _check_application_set(rendered_kustomizations["cyber-stack/argocd"], errors)
         _check_prod_project(rendered_kustomizations["cyber-stack/argocd"], errors)
+        _check_production_gate_rbac(rendered_kustomizations["cyber-stack/argocd"], errors)
 
     for environment in ("dev", "prod"):
         for component in ("data-plane", "app-stack"):
