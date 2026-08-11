@@ -2,14 +2,15 @@
 
 Use this runbook with the canonical [system architecture](architecture.md) and
 [Kubernetes GitOps guide](../cyber-stack/README.md). Git is the source of truth;
-Argo CD is the only Kubernetes reconciler for this repository.
+Argo CD is the production reconciler and local development uses an explicit
+local Kustomize context.
 
 ## Before a change
 
 1. Initialize nested repositories with `git submodule update --init --recursive`.
 2. Run `make docs-check`, `make gitops-check` and targeted component tests.
-3. Confirm the registry is reachable from the build host, Image Updater and
-   every Kubernetes node.
+3. Confirm the registry is reachable from the build host and every Kubernetes
+   node.
 4. Confirm the platform control plane has materialized the required workload
    Secrets and production endpoint ConfigMap without exposing their values.
 5. Review the rendered diff for the exact environment slice being changed.
@@ -26,13 +27,14 @@ images without changing cluster state:
 make publish-all REGISTRY=192.168.1.221:5000 REGISTRY_PLAIN_HTTP=1
 ```
 
-Image Updater opens dev pull requests containing immutable digests. Merge only
-after CI and review pass. Wait for the dev `bootstrap`, `data-plane` and
-`app-stack` Applications to become `Synced` and `Healthy`.
+Record immutable dev digests with
+`make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`. Merge only after CI
+and review pass, then apply the dev aggregate to an explicit local context and
+complete its acceptance checks.
 
 Production promotion is a separate pull request that copies the accepted dev
-digests into the matching prod Kustomizations. Image Updater does not target
-prod. After merge, Argo CD reconciles the change automatically.
+digests into the matching prod Kustomizations. After merge, Argo CD reconciles
+the change automatically.
 
 ## Health and readiness
 
@@ -59,7 +61,6 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 
 ```bash
 kubectl get applications.argoproj.io -n argocd -o wide
-kubectl get imageupdaters.argocd-image-updater.argoproj.io -n argocd
 kubectl get pods -A -o wide
 kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
 ```

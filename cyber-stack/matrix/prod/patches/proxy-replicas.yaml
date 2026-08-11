@@ -4,4 +4,4 @@ metadata:
   name: ssl-proxy-proxy
   namespace: ssl-proxy
 spec:
-  replicas: 12
+  replicas: 1

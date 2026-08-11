@@ -8,11 +8,7 @@ spec:
   sourceRepos:
     - https://github.com/zlovtnik/ssl-proxy.git
   destinations:
-    - namespace: dev-ssl-proxy
-      server: https://kubernetes.default.svc
     - namespace: prod-ssl-proxy
-      server: https://kubernetes.default.svc
-    - namespace: ssl-proxy
       server: https://kubernetes.default.svc
   clusterResourceWhitelist:
     - group: ''

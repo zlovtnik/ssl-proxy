@@ -252,22 +252,67 @@ spec:
 """.replace("PLACEHOLDER", repr(elements).replace("'", '"'))
         )[0]
 
-    def test_accepts_all_six_semantic_entries(self) -> None:
+    def test_accepts_all_production_entries(self) -> None:
         errors: list[str] = []
         check_gitops._check_application_set([self.application_set()], errors)
         self.assertEqual([], errors)
 
-    def test_rejects_missing_duplicate_and_misrouted_entries(self) -> None:
+    def test_rejects_missing_duplicate_misrouted_and_dev_entries(self) -> None:
         application_set = self.application_set()
         elements = application_set["spec"]["generators"][0]["list"]["elements"]
         elements.pop()
         elements.append(dict(elements[0]))
         elements[1]["path"] = "cyber-stack/matrix/prod/app-stack"
+        elements.append(
+            {
+                "name": "ssl-proxy-app-stack",
+                "path": "cyber-stack/matrix/dev/app-stack",
+                "namespace": "dev-ssl-proxy",
+                "component": "app-stack",
+                "environment": "dev",
+            }
+        )
         errors: list[str] = []
         check_gitops._check_application_set([application_set], errors)
         self.assertTrue(any("ssl-proxy-prod-app-stack exactly once" in error for error in errors))
-        self.assertTrue(any("ssl-proxy-bootstrap exactly once" in error for error in errors))
-        self.assertTrue(any("path: cyber-stack/matrix/dev/data-plane" in error for error in errors))
+        self.assertTrue(any("ssl-proxy-prod-bootstrap exactly once" in error for error in errors))
+        self.assertTrue(any("path: cyber-stack/matrix/prod/data-plane" in error for error in errors))
+        self.assertTrue(any("unexpected Applications: ssl-proxy-app-stack" in error for error in errors))
+
+
+class ProductionProjectTest(unittest.TestCase):
+    def test_accepts_only_the_production_destination(self) -> None:
+        project = documents(
+            """apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: {name: ssl-proxy}
+spec:
+  destinations:
+    - {namespace: prod-ssl-proxy, server: https://kubernetes.default.svc}
+"""
+        )
+        errors: list[str] = []
+        check_gitops._check_prod_project(project, errors)
+        self.assertEqual([], errors)
+
+    def test_rejects_dev_destination_and_controller(self) -> None:
+        project = documents(
+            """apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: {name: ssl-proxy}
+spec:
+  destinations:
+    - {namespace: dev-ssl-proxy, server: https://kubernetes.default.svc}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: {name: ssl-proxy-image-updater}
+"""
+        )
+        errors: list[str] = []
+        check_gitops._check_prod_project(project, errors)
+        self.assertTrue(any("production-only" in error for error in errors))
+        self.assertTrue(any("dev controllers" in error for error in errors))
 
 
 if __name__ == "__main__":

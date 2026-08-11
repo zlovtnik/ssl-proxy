@@ -1,7 +1,7 @@
 # Local Registry Image Workflow
 
 This workflow publishes Linux images from a development host to the registry
-used by Kubernetes nodes and Argo CD Image Updater. Kubernetes management is
+used by local and production Kubernetes nodes. Kubernetes management is
 documented in the [GitOps guide](../cyber-stack/README.md).
 
 ## Local development CI and registry
@@ -85,16 +85,17 @@ REGISTRY=local IMAGE_TAG=dev \
 ```
 
 Publishing updates the registry's immutable commit tag and `latest` channel.
-Image Updater resolves `latest` to an immutable digest and opens the dev pull
-request. Production receives only reviewed digests copied from dev.
+Resolve the immutable digest, record it with
+`make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`, and validate the
+local dev render. Production receives only reviewed digests copied from dev.
 
 The Jenkins `ssl-proxy-images` job polls `main` and accepts GitHub push events,
 initializes the pinned submodules and shared Buildx builder, then publishes the
 same target set as `make publish-all` in independently retried branches.
 Documentation and GitOps validation run alongside publication and still fail
 the overall build without cancelling successful image pushes. Jenkins uses the
-registry's internal Compose name while Kubernetes and Image Updater use the
-private server address; both names reach the same registry storage.
+registry's internal Compose name while Kubernetes uses the private server
+address; both names reach the same registry storage.
 
 ## Verify
 
@@ -102,7 +103,6 @@ private server address; both names reach the same registry storage.
 curl -fsS http://10.0.0.10:5000/v2/
 docker buildx inspect
 kubectl get applications.argoproj.io -n argocd
-kubectl get imageupdaters.argocd-image-updater.argoproj.io -n argocd
 kubectl get pods -A
 ```
 

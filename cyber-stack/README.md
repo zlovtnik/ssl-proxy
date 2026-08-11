@@ -1,71 +1,67 @@
 # Kubernetes GitOps Guide
 
 This directory is the only source of Kubernetes desired state for ssl-proxy.
-Kustomize renders the manifests and Argo CD reconciles them from the `main`
-branch. Configuration, releases, rollbacks and workload onboarding happen by
-reviewed Git changes. Direct mutation of managed resources is prohibited.
+Kustomize renders both environments. Argo CD on `192.168.1.221` reconciles
+production from `main`; development is rendered and applied only to an
+explicit local Kubernetes context. Configuration, releases, rollbacks and
+workload onboarding happen by reviewed Git changes.
 
 ## Ownership boundary
 
 The platform team provides and operates:
 
 - Argo CD;
-- registration of `cyber-stack/argocd` as this repository's control-plane path;
-- `ssl-proxy-image-updater-git` in the `argocd` namespace, using a GitHub App
-  or scoped token that can create image-update pull requests;
+- registration of `cyber-stack/argocd` as this repository's production-only
+  control-plane path;
 - registry access for `192.168.1.221:5000`;
 - workload Secrets and the production TiDB endpoint ConfigMap required by the
   rendered manifests;
-- DNS and an `ssl-proxy-identity-tls` certificate for the hostname declared by
-  each environment overlay: `identity.dev.ssl-proxy.internal` for dev and
-  `identity.prod.ssl-proxy.internal` for prod.
+- DNS and an `ssl-proxy-identity-tls` certificate for
+  `identity.prod.ssl-proxy.internal`.
 
 Platform inputs must be delivered by the platform's declarative control plane.
-Do not create or patch them by hand. This repository owns the `ssl-proxy`
-AppProject, one list-generated workload ApplicationSet, the pinned Image
-Updater controller Application and AppProject, the dev ImageUpdater resource,
-and all workload desired state after registration. The controller chart is
-`argocd-image-updater` 1.2.4 with namespace-scoped RBAC in `argocd`; only its
-CRD is cluster-scoped.
+Do not create or patch them by hand. This repository owns the production-only
+`ssl-proxy` AppProject, one list-generated production workload ApplicationSet,
+and all workload desired state after registration. Local development Secrets
+and DNS are local-cluster inputs and must never be copied into the production
+cluster as a shortcut.
 
 ## Layout and applications
 
 Environment-neutral resources live under `base/`. Environment configuration
-lives under `matrix/dev/` and `matrix/prod/`. Each environment has three Argo
-CD source paths:
+lives under `matrix/dev/` and `matrix/prod/`.
 
-| Slice | Dev application | Prod application | Responsibility |
-|---|---|---|---|
-| `bootstrap` | `ssl-proxy-bootstrap` | `ssl-proxy-prod-bootstrap` | Namespace, service account and shared ConfigMaps |
-| `data-plane` | `ssl-proxy-data-plane` | `ssl-proxy-prod-data-plane` | TiDB integration, Redpanda, MinIO, Redis, schema execution and telemetry |
-| `app-stack` | `ssl-proxy-app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
+| Slice | Production application | Responsibility |
+|---|---|---|
+| `bootstrap` | `ssl-proxy-prod-bootstrap` | Namespace, service account and shared ConfigMaps |
+| `data-plane` | `ssl-proxy-prod-data-plane` | TiDB integration, Redpanda, MinIO, Redis, schema execution and telemetry |
+| `app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
 
-`applicationset-workloads.yaml` uses a list generator to create those six
-Applications with their established names. All generated Applications track
-`main`, use automated sync with pruning and self-healing, and refuse empty
-desired state. The data-plane entries retain the StatefulSet PVC-template
-ignore rule. Namespace deletion requires explicit prune confirmation.
-Sync-wave annotations order resources inside an Application; the platform
-must register and verify `bootstrap` before the other two Applications during
-first installation.
+`applicationset-workloads.yaml` creates only those three production
+Applications. They track `main`, use automated sync with pruning and
+self-healing, and refuse empty desired state. The data-plane entry retains the
+StatefulSet PVC-template ignore rule. Namespace deletion requires explicit
+confirmation. Dev Applications and dev controllers are prohibited on the
+production server.
 
-## ApplicationSet migration
+## Local Kubernetes development
 
-The platform must first confirm that the ApplicationSet controller is running
-and permits `ApplicationSet` resources from the registered control-plane path.
-Migrate the six existing workload Applications in reviewed Git phases:
+The aggregate `matrix/dev` Kustomization is the local deployment target. Use an
+explicit local context on every command so the production context cannot be
+selected accidentally:
 
-1. Remove only `resources-finalizer.argocd.argoproj.io` from the six existing
-   Application manifests. Confirm the existing Applications and their managed
-   workloads remain present and healthy.
-2. In a later reviewed change, replace the six manifest resources with
-   `applicationset-workloads.yaml`. Its generated Applications intentionally
-   retain the existing names, so verify that each child is adopted, has the
-   expected source path and destination namespace, and reports `Synced` and
-   `Healthy` before continuing.
-3. Remove temporary migration annotations or other scaffolding only after that
-   verification. Roll back any phase by reverting its Git commit; do not delete
-   or patch the managed Applications directly.
+```bash
+kubectl config get-contexts
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev \
+  | kubectl --context docker-desktop apply --server-side -f -
+kubectl --context docker-desktop get pods -n dev-ssl-proxy -o wide
+```
+
+Materialize the dev workload Secrets in `dev-ssl-proxy` before applying the
+workloads. The wireless sensor also requires a compatible monitor-mode device
+and the `ssl-proxy.io/wireless-sensor=true` node label; without them its
+DaemonSet intentionally remains unscheduled. Delete local dev with the same
+explicit context when its PVC data is no longer needed.
 
 ## Configuration rules
 
@@ -90,16 +86,17 @@ Migrate the six existing workload Applications in reviewed Git phases:
 1. Let the private Jenkins `ssl-proxy-images` pipeline publish all first-party
    images from `main`, or run `make publish-all` manually. Both paths publish
    the immutable commit tag and update the registry's `latest` channel.
-2. Dev Image Updater observes `latest` with the `digest` strategy and opens a
-   GitHub pull request that updates the relevant dev Kustomization.
+2. Resolve the published digest and update the dev Kustomization with
+   `make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`. The helper keeps
+   the owning dev slice and local aggregate synchronized.
 3. CI must pass `make gitops-check`, documentation checks and component tests.
-4. Merge the dev pull request and wait for all three dev Applications to be
-   `Synced` and `Healthy`.
-5. After the required dev soak and acceptance checks, open a production pull
+4. Apply the reviewed dev render to the local cluster and complete the required
+   soak and acceptance checks.
+5. Open a production pull
    request that copies the exact dev digests into the corresponding prod
    Kustomizations. `scripts/bump-image-digest.sh` and its generated
-   `make bump-digest-<service>` targets support this explicit, reviewable
-   digest update. Image Updater never targets prod Applications.
+   `make bump-digest-<service>` targets keep the slice and aggregate render
+   aligned.
 6. Merge the production pull request and verify all three prod Applications.
 
 Rollback is a Git revert of the promotion commit. Argo CD reconciles the prior
@@ -107,8 +104,8 @@ digests automatically. Do not use a controller-local rollback that leaves Git
 describing a different state.
 
 The Compose-only `wg-key-rotator` image is published by the same Jenkins
-pipeline but is not an Argo CD workload: it controls the local staged-rotation
-harness through the Docker API. It therefore has no Image Updater target.
+pipeline but is not a Kubernetes workload: it controls the local staged-
+rotation harness through the Docker API.
 
 ## Add a workload
 
@@ -122,9 +119,8 @@ harness through the Docker API. It therefore has no Image Updater target.
    gates. Do not put an environment address or credential in the base.
 4. Add required ConfigMap and Secret names/keys to the platform input contract.
    Never commit a usable secret value.
-5. Add the first-party image to both environment Kustomizations with a digest.
-   If it should advance automatically in dev, add it to the dev ImageUpdater
-   resource with an explicit Kustomize target name and `digest` strategy.
+5. Add the first-party image to both environment Kustomizations with a digest
+   and teach `scripts/bump-image-digest.sh` which slice owns it.
 6. Assign the smallest sync wave that satisfies real dependencies. Jobs must
    declare the appropriate Argo CD hook and deletion policy.
 7. Update component documentation and run `make gitops-check` plus the targeted
@@ -142,10 +138,9 @@ Read-only cluster checks:
 
 ```bash
 kubectl get applications.argoproj.io -n argocd -o wide
-kubectl get imageupdaters.argocd-image-updater.argoproj.io -n argocd
-kubectl get pods -n dev-ssl-proxy -o wide
 kubectl get pods -n prod-ssl-proxy -o wide
 kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp
+kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev >/dev/null
 ```
 
 When an Application is unhealthy, inspect its conditions, the rendered Git

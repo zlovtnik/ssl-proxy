@@ -177,6 +177,25 @@ class DocsCheckTest(unittest.TestCase):
         errors = self.errors(root)
         self.assertEqual(1, sum("mutating kubectl" in error for error in errors))
 
+    def test_local_kustomize_apply_requires_explicit_local_context(self) -> None:
+        allowed = self.make_repo(
+            "# Local Kubernetes development\n\n"
+            "`kustomize build overlay | kubectl --context docker-desktop apply -f -`\n"
+        )
+        self.assertEqual([], self.errors(allowed))
+
+        remote = self.make_repo(
+            "# Local Kubernetes development\n\n"
+            "`kustomize build overlay | kubectl --context wiretrap-k3s apply -f -`\n"
+        )
+        self.assertTrue(any("mutating kubectl" in error for error in self.errors(remote)))
+
+        wrong_heading = self.make_repo(
+            "# Production operations\n\n"
+            "`kustomize build overlay | kubectl --context docker-desktop apply -f -`\n"
+        )
+        self.assertTrue(any("mutating kubectl" in error for error in self.errors(wrong_heading)))
+
     def test_retained_chart_path_is_allowed_but_prose_helm_is_rejected(self) -> None:
         allowed = self.make_repo(
             "# Compatibility\n\nSee `helm/ssl-proxy/charts/redpanda/templates/statefulset.yaml`.\n"

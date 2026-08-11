@@ -68,20 +68,14 @@ failure never replaces the original build result.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
 Search, key rotator, Search UI, both Schema Migrator images and the TiDB runtime
-schema. Image Updater observes the Kubernetes-deployed subset. The key rotator
-remains Compose-only because it controls the staged local rotation harness via
-the Docker API.
+schema. The key rotator remains Compose-only because it controls the staged
+local rotation harness via the Docker API.
 
 ## GitOps handoff
 
-The Argo CD control-plane Kustomization installs the pinned Image Updater chart
-through a dedicated least-privilege AppProject. The controller watches only
-the `argocd` namespace, reads the private HTTP registry at
-`192.168.1.221:5000`, and reconciles the `ssl-proxy-dev` ImageUpdater custom
-resource.
-
-The platform must materialize `argocd/ssl-proxy-image-updater-git` outside this
-repository. For GitHub pull-request write-back, provide either a scoped token
-or GitHub App fields accepted by Image Updater; never commit those values.
-Image Updater proposes only dev Kustomize digest changes. Production remains a
-separate reviewed copy of accepted dev digests.
+Jenkins publishes immutable image digests but does not mutate Kubernetes or
+Git. Record a published digest in the dev slice with
+`make bump-digest-<service> ENV=dev DIGEST=sha256:<digest>`, validate it on the
+local Kubernetes context, and review that change normally. Production remains
+a separate reviewed copy of accepted dev digests and is reconciled only by the
+three production Argo CD Applications.

@@ -49,41 +49,50 @@ case "$service" in
 esac
 
 repository_root="${SSL_PROXY_REPOSITORY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-overlay="$repository_root/cyber-stack/matrix/$environment/$slice"
-kustomization="$overlay/kustomization.yaml"
 kustomize="${KUSTOMIZE:-kustomize}"
 
-if [ ! -f "$kustomization" ]; then
-  echo "canonical Kustomization is missing: $kustomization" >&2
-  exit 1
-fi
 if ! command -v "$kustomize" >/dev/null 2>&1; then
   echo "Kustomize executable is unavailable: $kustomize" >&2
   exit 1
 fi
 
-# Kustomize edits only an existing image entry. Verify the service belongs to
-# this slice before changing it, rather than allowing an accidental new entry.
-new_name="$(awk -v service="$service" '
-  $1 == "-" && $2 == "name:" {
-    active = ($3 == service)
-    if (active) count++
-    next
+update_overlay() {
+  local overlay="$1"
+  local kustomization="$overlay/kustomization.yaml"
+  local new_name
+  if [ ! -f "$kustomization" ]; then
+    echo "canonical Kustomization is missing: $kustomization" >&2
+    exit 1
+  fi
+
+  # Kustomize edits only an existing image entry. Verify the service belongs
+  # to this overlay before changing it.
+  new_name="$(awk -v service="$service" '
+    $1 == "-" && $2 == "name:" {
+      active = ($3 == service)
+      if (active) count++
+      next
+    }
+    active && $1 == "newName:" { new_name = $2 }
+    END {
+      if (count != 1 || new_name == "") exit 1
+      print new_name
+    }
+  ' "$kustomization")" || {
+    echo "$kustomization must contain exactly one image mapping for $service" >&2
+    exit 1
   }
-  active && $1 == "newName:" { new_name = $2 }
-  END {
-    if (count != 1 || new_name == "") exit 1
-    print new_name
-  }
-' "$kustomization")" || {
-  echo "$kustomization must contain exactly one image mapping for $service" >&2
-  exit 1
+
+  (
+    cd "$overlay"
+    "$kustomize" edit set image "$service=$new_name@$digest"
+  )
+  "$kustomize" build --load-restrictor LoadRestrictionsNone "$overlay" >/dev/null
 }
 
-(
-  cd "$overlay"
-  "$kustomize" edit set image "$service=$new_name@$digest"
-)
+slice_overlay="$repository_root/cyber-stack/matrix/$environment/$slice"
+aggregate_overlay="$repository_root/cyber-stack/matrix/$environment"
+update_overlay "$slice_overlay"
+update_overlay "$aggregate_overlay"
 
-"$kustomize" build --load-restrictor LoadRestrictionsNone "$overlay" >/dev/null
-echo "Updated $environment/$slice $service to $digest"
+echo "Updated $environment/$slice and $environment aggregate $service to $digest"

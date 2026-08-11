@@ -11,8 +11,9 @@ Integration Console.
 
 The canonical runtime model and data ownership are documented in
 [System Architecture](docs/architecture.md). Kubernetes desired state lives
-only in [`cyber-stack/`](cyber-stack/) and is rendered with Kustomize and
-reconciled by Argo CD.
+only in [`cyber-stack/`](cyber-stack/). Production is reconciled by Argo CD;
+development is rendered and applied to an explicit local Kubernetes context
+with Kustomize.
 
 ## Component ownership
 
@@ -66,9 +67,9 @@ Build and publish first-party images to the configured registry with:
 make publish-all REGISTRY=192.168.1.221:5000
 ```
 
-Publishing does not mutate a cluster. Argo CD Image Updater records new dev
-digests through a pull request. Production promotion is a separate reviewed
-pull request that copies the exact tested dev digests. See the
+Publishing does not mutate a cluster. Record new dev digests with the
+`make bump-digest-<service>` targets, validate them on the local cluster, then
+copy the exact tested digests in a separate production promotion pull request. See the
 [GitOps guide](cyber-stack/README.md) and [operations runbook](docs/runbook.md).
 
 ## Local development
@@ -81,9 +82,10 @@ REGISTRY=local IMAGE_TAG=dev \
   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 ```
 
-Local health only proves the development harness is running. Kubernetes
-readiness is determined from the rendered environment overlays and Argo CD
-application health.
+For local Kubernetes development, render and apply
+`cyber-stack/matrix/dev` only with an explicit local context as documented in
+the [GitOps guide](cyber-stack/README.md). Production readiness is determined
+from the prod Argo CD Applications.
 
 ## Topic contracts
 

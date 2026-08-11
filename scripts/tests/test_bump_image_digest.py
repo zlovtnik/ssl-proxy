@@ -34,6 +34,19 @@ class BumpImageDigestTest(unittest.TestCase):
                     "    digest: sha256:" + "b" * 64 + "\n",
                     encoding="utf-8",
                 )
+            aggregate = self.root / "cyber-stack" / "matrix" / environment
+            (aggregate / "kustomization.yaml").write_text(
+                "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+                "kind: Kustomization\n"
+                "images:\n"
+                "  - name: ssl-proxy\n"
+                "    newName: registry/ssl-proxy\n"
+                "    digest: sha256:" + "b" * 64 + "\n"
+                "  - name: tidb-runtime-schema\n"
+                "    newName: registry/tidb-runtime-schema\n"
+                "    digest: sha256:" + "b" * 64 + "\n",
+                encoding="utf-8",
+            )
         self.kustomize = self.root / "fake-kustomize"
         self.kustomize.write_text(
             "#!/usr/bin/env bash\n"
@@ -78,8 +91,10 @@ class BumpImageDigestTest(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         changed = (self.root / "cyber-stack/matrix/dev/app-stack/kustomization.yaml").read_text()
+        aggregate = (self.root / "cyber-stack/matrix/dev/kustomization.yaml").read_text()
         untouched = (self.root / "cyber-stack/matrix/dev/data-plane/kustomization.yaml").read_text()
         self.assertIn(f"digest: {DIGEST}", changed)
+        self.assertIn(f"digest: {DIGEST}", aggregate)
         self.assertIn("digest: sha256:" + "b" * 64, untouched)
         self.assertIn("edit set image ssl-proxy=registry/ssl-proxy@" + DIGEST, self.log.read_text())
         self.assertIn("build --load-restrictor LoadRestrictionsNone", self.log.read_text())
@@ -90,7 +105,9 @@ class BumpImageDigestTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         data_plane = self.root / "cyber-stack/matrix/prod/data-plane/kustomization.yaml"
         app_stack = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        aggregate = self.root / "cyber-stack/matrix/prod/kustomization.yaml"
         self.assertIn(f"digest: {DIGEST}", data_plane.read_text())
+        self.assertIn(f"digest: {DIGEST}", aggregate.read_text())
         self.assertIn("digest: sha256:" + "b" * 64, app_stack.read_text())
 
     def test_rejects_invalid_arguments_without_editing(self) -> None:

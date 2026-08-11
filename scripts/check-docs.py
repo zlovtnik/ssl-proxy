@@ -50,7 +50,13 @@ COMPOSE_REFERENCE = re.compile(
     r"\b(?:docker[ -]compose|compose\.ya?ml)\b", re.IGNORECASE
 )
 LOCAL_DEVELOPMENT_HEADING = re.compile(
-    r"\b(?:local development|local test|development environment)\b", re.IGNORECASE
+    r"\b(?:local(?: kubernetes)? development|local test|development environment)\b",
+    re.IGNORECASE,
+)
+EXPLICIT_LOCAL_KUBECTL_CONTEXT = re.compile(
+    r"\bkubectl\b[^\n]*\s--context(?:=|\s+)"
+    r"(?:docker-desktop|minikube|kind-[^\s]+|k3d-[^\s]+)\b",
+    re.IGNORECASE,
 )
 
 
@@ -400,12 +406,16 @@ def validate_deployment_policy(path: Path, text: str) -> list[str]:
                 errors.append(
                     f"{path}:{number}: unsupported Kubernetes deployment technology is documented"
                 )
-        if MUTATING_KUBECTL.search(line):
+        context = " / ".join(headings.values())
+        local_kustomize_apply = (
+            LOCAL_DEVELOPMENT_HEADING.search(context) is not None
+            and EXPLICIT_LOCAL_KUBECTL_CONTEXT.search(line) is not None
+        )
+        if MUTATING_KUBECTL.search(line) and not local_kustomize_apply:
             errors.append(
                 f"{path}:{number}: mutating kubectl guidance is prohibited; change Git desired state"
             )
         if COMPOSE_REFERENCE.search(line):
-            context = " / ".join(headings.values())
             if not LOCAL_DEVELOPMENT_HEADING.search(context):
                 errors.append(
                     f"{path}:{number}: Docker Compose may be documented only under local-development headings"

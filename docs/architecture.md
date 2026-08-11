@@ -129,8 +129,9 @@ in the [Atheros Search README](../services/atheros-search/README.md).
 
 Kubernetes desired state is defined under [`cyber-stack/`](../cyber-stack/).
 Kustomize separates environment-neutral resources from dev and prod patches.
-Argo CD tracks `main` and reconciles three Applications per environment:
-`bootstrap`, `data-plane` and `app-stack`.
+Argo CD on `192.168.1.221` tracks `main` and reconciles only the three
+production Applications: `bootstrap`, `data-plane` and `app-stack`. The dev
+aggregate is applied only to an explicit local Kubernetes context.
 
 ```mermaid
 flowchart LR
@@ -141,19 +142,21 @@ flowchart LR
     apps --> proxy[WireGuard proxy]
 ```
 
-Dev image digests are proposed by Argo CD Image Updater through Git pull
-requests. Production promotion copies tested dev digests in a separately
-reviewed pull request. Automated sync, pruning and self-healing keep the live
-cluster aligned with Git, but Namespace resources are excluded from automated
-pruning and require explicit operator confirmation. Rollback is a Git revert.
+Dev image digests are recorded with the repository's digest bump helper and
+validated on the local cluster. Production promotion copies tested dev digests
+in a separately reviewed pull request. Automated sync, pruning and self-healing
+keep the production cluster aligned with Git, but Namespace resources are
+excluded from automated pruning and require explicit operator confirmation.
+Rollback is a Git revert.
 The complete management and workload-onboarding contract is in the
 [Kubernetes GitOps guide](../cyber-stack/README.md).
 
 ## Local development
 
 Docker Compose may be used as a local test harness for component integration.
-It is not a Kubernetes management or production model. Local health does not
-replace Kustomize render validation or Argo CD application health.
+Local Kubernetes development uses the `cyber-stack/matrix/dev` Kustomization
+with an explicit local context. Local health does not replace production Argo
+CD application health.
 
 ## Observability
 

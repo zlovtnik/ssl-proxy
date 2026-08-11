@@ -10,21 +10,6 @@ spec:
   generators:
     - list:
         elements:
-          - name: ssl-proxy-bootstrap
-            component: bootstrap
-            environment: dev
-            path: cyber-stack/matrix/dev/bootstrap
-            namespace: dev-ssl-proxy
-          - name: ssl-proxy-data-plane
-            component: data-plane
-            environment: dev
-            path: cyber-stack/matrix/dev/data-plane
-            namespace: dev-ssl-proxy
-          - name: ssl-proxy-app-stack
-            component: app-stack
-            environment: dev
-            path: cyber-stack/matrix/dev/app-stack
-            namespace: dev-ssl-proxy
           - name: ssl-proxy-prod-bootstrap
             component: bootstrap
             environment: prod
