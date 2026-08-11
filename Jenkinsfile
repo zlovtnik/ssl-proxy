@@ -9,7 +9,8 @@ pipeline {
   }
 
   environment {
-    BUILDER = 'ssl-proxy-jenkins-http'
+    BUILDER = 'ssl-proxy-jenkins-http-host'
+    BUILDER_NETWORK = 'host'
     DOCKER_CONTEXT_NAME = 'ssl-proxy-ci-docker'
     REGISTRY = "${env.CI_REGISTRY ?: 'registry:5000'}"
     REGISTRY_PLAIN_HTTP = '1'
@@ -50,6 +51,7 @@ pipeline {
           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
             DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" make buildx-ready \
             BUILDER="$BUILDER" \
+            BUILDER_NETWORK="$BUILDER_NETWORK" \
             REGISTRY="$REGISTRY" \
             REGISTRY_PLAIN_HTTP="$REGISTRY_PLAIN_HTTP"
         '''

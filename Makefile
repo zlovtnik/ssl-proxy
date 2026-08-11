@@ -11,6 +11,7 @@ KUBECTL ?= kubectl
 ARGOCD_NAMESPACE ?= argocd
 ARGOCD_TIMEOUT ?= 30m
 BUILDER ?= ssl-proxy-publisher
+BUILDER_NETWORK ?=
 BUILDX_READY ?= 0
 PLATFORM ?= linux/amd64
 TAG ?= $(shell git rev-parse --short HEAD)
@@ -155,24 +156,28 @@ buildx-ready: require-registry
 		if [ -f "$$stamp" ]; then \
 			configured_registry="$$(sed -n '1p' "$$stamp")"; \
 			configured_mode="$$(sed -n '2p' "$$stamp")"; \
-			if [ "$$configured_mode" != "$(REGISTRY_PLAIN_HTTP)" ] || { [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] && [ "$$configured_registry" != "$$registry_host" ]; }; then \
-				echo "Buildx builder $(BUILDER) uses REGISTRY_PLAIN_HTTP=$$configured_mode for $$configured_registry, but REGISTRY_PLAIN_HTTP=$(REGISTRY_PLAIN_HTTP) was requested for $$registry_host." >&2; \
+			configured_network="$$(sed -n '3p' "$$stamp")"; \
+			if [ "$$configured_mode" != "$(REGISTRY_PLAIN_HTTP)" ] || { [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] && [ "$$configured_registry" != "$$registry_host" ]; } || [ "$$configured_network" != "$(BUILDER_NETWORK)" ]; then \
+				echo "Buildx builder $(BUILDER) uses REGISTRY_PLAIN_HTTP=$$configured_mode for $$configured_registry with BUILDER_NETWORK=$${configured_network:-default}, but REGISTRY_PLAIN_HTTP=$(REGISTRY_PLAIN_HTTP) and BUILDER_NETWORK=$(if $(strip $(BUILDER_NETWORK)),$(BUILDER_NETWORK),default) were requested for $$registry_host." >&2; \
 				echo "Use an unused dedicated builder (for example BUILDER=$(BUILDER)-http) or remove and recreate $(BUILDER) after confirming it is safe." >&2; \
 				exit 2; \
 			fi; \
-		elif [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then \
-			echo "Buildx builder $(BUILDER) already exists, so its HTTP registry configuration for $$registry_host cannot be verified." >&2; \
-			echo "Use an unused dedicated HTTP-configured builder (for example BUILDER=$(BUILDER)-http) instead of proceeding with HTTPS." >&2; \
+		elif [ "$(REGISTRY_PLAIN_HTTP)" = "1" ] || [ -n "$(BUILDER_NETWORK)" ]; then \
+			echo "Buildx builder $(BUILDER) already exists, so its registry and network configuration for $$registry_host cannot be verified." >&2; \
+			echo "Use an unused dedicated configured builder instead of proceeding with unverified settings." >&2; \
 			exit 2; \
 		fi; \
 	else \
+		set -- docker buildx create --name "$(BUILDER)" --driver docker-container; \
+		if [ -n "$(BUILDER_NETWORK)" ]; then \
+			set -- "$$@" --driver-opt "network=$(BUILDER_NETWORK)"; \
+		fi; \
 		if [ "$(REGISTRY_PLAIN_HTTP)" = "1" ]; then \
 			printf '[registry."%s"]\n  http = true\n' "$$registry_host" > "$$config"; \
-			docker buildx create --name "$(BUILDER)" --driver docker-container --buildkitd-config "$$config" >/dev/null; \
-		else \
-			docker buildx create --name "$(BUILDER)" --driver docker-container >/dev/null; \
+			set -- "$$@" --buildkitd-config "$$config"; \
 		fi; \
-		printf '%s\n%s\n' "$$registry_host" "$(REGISTRY_PLAIN_HTTP)" > "$$stamp"; \
+		"$$@" >/dev/null; \
+		printf '%s\n%s\n%s\n' "$$registry_host" "$(REGISTRY_PLAIN_HTTP)" "$(BUILDER_NETWORK)" > "$$stamp"; \
 	fi
 	@docker buildx inspect "$(BUILDER)" --bootstrap >/dev/null
 

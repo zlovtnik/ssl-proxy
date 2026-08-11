@@ -40,7 +40,9 @@ class MakeBuildxReadyTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def run_make(self, plain_http: str) -> subprocess.CompletedProcess[str]:
+    def run_make(
+        self, plain_http: str, builder_network: str = ""
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ | {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "TMPDIR": str(self.root),
@@ -56,6 +58,7 @@ class MakeBuildxReadyTest(unittest.TestCase):
                 "REGISTRY=registry.test:5000/team",
                 f"REGISTRY_PLAIN_HTTP={plain_http}",
                 "BUILDER=test-publisher",
+                f"BUILDER_NETWORK={builder_network}",
             ],
             cwd=self.root,
             env=environment,
@@ -66,17 +69,42 @@ class MakeBuildxReadyTest(unittest.TestCase):
         )
 
     def test_reuses_verified_http_builder_and_rejects_mode_mismatch(self) -> None:
-        first = self.run_make("1")
-        second = self.run_make("1")
-        mismatch = self.run_make("0")
+        first = self.run_make("1", "host")
+        second = self.run_make("1", "host")
+        mismatch = self.run_make("0", "host")
 
         self.assertEqual(0, first.returncode, first.stderr)
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertNotEqual(0, mismatch.returncode)
         self.assertIn("Use an unused dedicated builder", mismatch.stderr)
         self.assertEqual(1, self.log.read_text(encoding="utf-8").count("buildx create"))
+        self.assertIn(
+            "--driver-opt network=host",
+            self.log.read_text(encoding="utf-8"),
+        )
         self.assertEqual(
-            "registry.test:5000\n1\n",
+            "registry.test:5000\n1\nhost\n",
+            (self.root / "ssl-proxy-buildkitd-test-publisher.mode").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+    def test_rejects_builder_network_mismatch(self) -> None:
+        first = self.run_make("1", "host")
+        mismatch = self.run_make("1", "bridge")
+
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertNotEqual(0, mismatch.returncode)
+        self.assertIn("BUILDER_NETWORK=host", mismatch.stderr)
+        self.assertEqual(1, self.log.read_text(encoding="utf-8").count("buildx create"))
+
+    def test_uses_default_builder_network_when_unset(self) -> None:
+        result = self.run_make("0")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn("--driver-opt", self.log.read_text(encoding="utf-8"))
+        self.assertEqual(
+            "registry.test:5000\n0\n\n",
             (self.root / "ssl-proxy-buildkitd-test-publisher.mode").read_text(
                 encoding="utf-8"
             ),
@@ -85,10 +113,10 @@ class MakeBuildxReadyTest(unittest.TestCase):
     def test_rejects_unverified_existing_builder_for_http(self) -> None:
         self.state.touch()
 
-        result = self.run_make("1")
+        result = self.run_make("1", "host")
 
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("dedicated HTTP-configured builder", result.stderr)
+        self.assertIn("dedicated configured builder", result.stderr)
         self.assertNotIn("buildx create", self.log.read_text(encoding="utf-8"))
 
 

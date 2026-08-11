@@ -27,6 +27,11 @@ self-signup, anonymous read access and the setup wizard. Persistent named
 volumes hold Jenkins state, registry content, Docker layer data and the
 Docker-in-Docker client certificates.
 
+The Jenkins BuildKit container uses host networking inside the isolated
+Docker-in-Docker service. This keeps the Compose registry name resolvable from
+BuildKit without exposing the host Docker socket or hard-coding the registry
+container's address.
+
 The controller does not mount the host Docker socket. It connects over mutual
 TLS to a dedicated privileged Docker-in-Docker service, which is still a
 root-equivalent trust boundary. Bind Jenkins and the registry only to a trusted
