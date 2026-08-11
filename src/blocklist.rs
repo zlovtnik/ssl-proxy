@@ -12,7 +12,7 @@ use crate::state::SharedState;
 
 /// Remote source of the periodically refreshed domain blocklist.
 pub const BLOCKLIST_URL: &str =
-    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/ultimate-onlydomains.txt";
+    "https://hagezi-mirror.dnsbunker.org/domains/pro.plus.txt";
 const REFRESH_INTERVAL_SECS: u64 = 86_400;
 const INITIAL_FETCH_JITTER_MAX_SECS: u64 = 60;
 const MAX_LABEL_WALK_DEPTH: usize = 10;
