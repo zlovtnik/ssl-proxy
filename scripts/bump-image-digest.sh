@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update one deployable image digest in its sole canonical environment slice.
+# Atomically update one deployable image digest in its canonical slice and aggregate.
 set -euo pipefail
 
 usage() {
@@ -55,11 +55,14 @@ if ! command -v "$kustomize" >/dev/null 2>&1; then
   echo "Kustomize executable is unavailable: $kustomize" >&2
   exit 1
 fi
+if [ "${kustomize##*/}" = "kubectl" ]; then
+  echo "Digest updates require the standalone kustomize CLI; kubectl supports rendering only" >&2
+  exit 2
+fi
 
-update_overlay() {
+validate_overlay() {
   local overlay="$1"
   local kustomization="$overlay/kustomization.yaml"
-  local new_name
   if [ ! -f "$kustomization" ]; then
     echo "canonical Kustomization is missing: $kustomization" >&2
     exit 1
@@ -67,8 +70,13 @@ update_overlay() {
 
   # Kustomize may reorder mapping keys. Resolve the existing repository
   # structurally instead of depending on name/newName line order.
-  new_name="$(python3 "$repository_root/scripts/image_contract.py" repository \
-    --kustomization "$kustomization" --service "$service")"
+  python3 "$repository_root/scripts/image_contract.py" repository \
+    --kustomization "$kustomization" --service "$service"
+}
+
+update_overlay() {
+  local overlay="$1"
+  local new_name="$2"
 
   (
     cd "$overlay"
@@ -79,7 +87,39 @@ update_overlay() {
 
 slice_overlay="$repository_root/cyber-stack/matrix/$environment/$slice"
 aggregate_overlay="$repository_root/cyber-stack/matrix/$environment"
-update_overlay "$slice_overlay"
-update_overlay "$aggregate_overlay"
+slice_new_name="$(validate_overlay "$slice_overlay")"
+aggregate_new_name="$(validate_overlay "$aggregate_overlay")"
+if [ "$slice_new_name" != "$aggregate_new_name" ]; then
+  echo "image repository differs between $environment/$slice and aggregate" >&2
+  exit 2
+fi
+
+backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/ssl-proxy-image-bump.XXXXXX")"
+slice_kustomization="$slice_overlay/kustomization.yaml"
+aggregate_kustomization="$aggregate_overlay/kustomization.yaml"
+slice_backup="$backup_dir/slice-kustomization.yaml"
+aggregate_backup="$backup_dir/aggregate-kustomization.yaml"
+cp "$slice_kustomization" "$slice_backup"
+cp "$aggregate_kustomization" "$aggregate_backup"
+committed=0
+
+cleanup() {
+  local status="$?"
+  trap - EXIT
+  if [ "$committed" -ne 1 ]; then
+    cp "$slice_backup" "$slice_kustomization"
+    cp "$aggregate_backup" "$aggregate_kustomization"
+  fi
+  rm -f "$slice_backup" "$aggregate_backup"
+  rmdir "$backup_dir"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+update_overlay "$slice_overlay" "$slice_new_name"
+update_overlay "$aggregate_overlay" "$aggregate_new_name"
+committed=1
 
 echo "Updated $environment/$slice and $environment aggregate $service to $digest"

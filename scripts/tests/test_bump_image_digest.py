@@ -54,6 +54,7 @@ class BumpImageDigestTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "set -eu\n"
             "printf '%s\\n' \"$*\" >> \"$KUSTOMIZE_LOG\"\n"
+            "if [ \"${KUSTOMIZE_FAIL_DIRECTORY:-}\" = \"$PWD\" ]; then exit 9; fi\n"
             "if [ \"$1\" = edit ]; then\n"
             "  assignment=$4\n"
             "  service=${assignment%%=*}\n"
@@ -78,12 +79,15 @@ class BumpImageDigestTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.directory.cleanup()
 
-    def run_helper(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def run_helper(
+        self, *arguments: str, extra_environment: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ | {
             "SSL_PROXY_REPOSITORY_ROOT": str(self.root),
             "KUSTOMIZE": str(self.kustomize),
             "KUSTOMIZE_LOG": str(self.log),
         }
+        environment.update(extra_environment or {})
         return subprocess.run(
             [str(self.root / "scripts" / SCRIPT.name), *arguments],
             text=True,
@@ -168,6 +172,35 @@ class BumpImageDigestTest(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("exactly one image mapping", result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_rolls_back_both_files_when_second_update_fails(self) -> None:
+        owner = self.root / "cyber-stack/matrix/prod/app-stack/kustomization.yaml"
+        aggregate = self.root / "cyber-stack/matrix/prod/kustomization.yaml"
+        owner_before = owner.read_text(encoding="utf-8")
+        aggregate_before = aggregate.read_text(encoding="utf-8")
+
+        result = self.run_helper(
+            "ssl-proxy",
+            "prod",
+            DIGEST,
+            extra_environment={"KUSTOMIZE_FAIL_DIRECTORY": str(aggregate.parent)},
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(owner_before, owner.read_text(encoding="utf-8"))
+        self.assertEqual(aggregate_before, aggregate.read_text(encoding="utf-8"))
+
+    def test_rejects_kubectl_as_an_editor(self) -> None:
+        result = self.run_helper(
+            "ssl-proxy",
+            "prod",
+            DIGEST,
+            extra_environment={"KUSTOMIZE": "kubectl"},
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("standalone kustomize CLI", result.stderr)
         self.assertFalse(self.log.exists())
 
 
