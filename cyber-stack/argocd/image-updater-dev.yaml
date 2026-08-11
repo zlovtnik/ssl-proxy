@@ -7,7 +7,6 @@ metadata:
     argocd.argoproj.io/sync-wave: "10"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  interval: 5m
   writeBackConfig:
     method: git:secret:argocd/ssl-proxy-image-updater-git
     gitConfig:
