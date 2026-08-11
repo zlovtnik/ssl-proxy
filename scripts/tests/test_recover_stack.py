@@ -21,6 +21,7 @@ from recover_stack import (  # noqa: E402
     RecoveryReporter,
     RegistryTags,
     argo_applications_for,
+    kustomize_build_command,
 )
 
 
@@ -95,6 +96,12 @@ spec:
       containers:
         - name: proxy
           image: {prefix}/ssl-proxy@{PIN}
+          env:
+            - name: PLATFORM_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: platform-endpoint
+                  key: endpoint
       volumes:
         - name: credentials
           secret:
@@ -127,12 +134,14 @@ class FakeRunner:
         environment: str,
         *,
         secret_present: bool = True,
+        config_map_present: bool = True,
         healthy_argo: bool = True,
         drift: bool = False,
         argo_revision: str = HEAD,
     ) -> None:
         self.environment = environment
         self.secret_present = secret_present
+        self.config_map_present = config_map_present
         self.healthy_argo = healthy_argo
         self.drift = drift
         self.argo_revision = argo_revision
@@ -174,6 +183,9 @@ class FakeRunner:
             return CommandResult(0, json.dumps({"items": items}), "")
         if "secret" in command:
             output = "secret/platform-runtime\n" if self.secret_present else ""
+            return CommandResult(0, output, "")
+        if "configmap" in command:
+            output = "configmap/platform-endpoint\n" if self.config_map_present else ""
             return CommandResult(0, output, "")
         if "deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch" in command:
             live_digest = STALE if self.drift else PIN
@@ -285,6 +297,7 @@ class RecoverStackTest(unittest.TestCase):
         self.assertEqual(0, returncode, report)
         self.assertIn("Kubernetes context: wiretrap-k3s", report)
         self.assertIn("ssl-proxy-prod-app-stack", report)
+        self.assertIn("platform-endpoint: PRESENT", report)
         self.assertIn("platform-runtime: PRESENT", report)
         self.assertIn("regular/proxy", report)
         self.assertIn("init/prepare", report)
@@ -301,6 +314,20 @@ class RecoverStackTest(unittest.TestCase):
         self.assertEqual(HEAD, git_head)
         self.assertEqual(
             {"bootstrap", "data-plane", "app-stack", "aggregate"}, set(rendered)
+        )
+
+    def test_kubectl_uses_its_kustomize_subcommand(self) -> None:
+        path = self.root / "cyber-stack" / "matrix" / "prod"
+
+        self.assertEqual(
+            (
+                "kubectl",
+                "kustomize",
+                str(path),
+                "--load-restrictor",
+                "LoadRestrictionsNone",
+            ),
+            kustomize_build_command("kubectl", path),
         )
 
     def test_argo_mapping_is_derived_from_environment(self) -> None:
@@ -327,12 +354,17 @@ class RecoverStackTest(unittest.TestCase):
 
     def test_full_report_precedes_nonzero_for_all_blocker_classes(self) -> None:
         runner = FakeRunner(
-            "prod", secret_present=False, healthy_argo=False, drift=True
+            "prod",
+            secret_present=False,
+            config_map_present=False,
+            healthy_argo=False,
+            drift=True,
         )
 
         returncode, report = self.reporter("prod", runner).run()
 
         self.assertEqual(1, returncode)
+        self.assertIn("platform-endpoint: MISSING", report)
         self.assertIn("platform-runtime: MISSING", report)
         self.assertIn("sync=OutOfSync health=Degraded", report)
         self.assertIn("image Deployment/proxy proxy: DRIFT", report)

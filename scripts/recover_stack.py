@@ -235,6 +235,77 @@ def inventory_required_secrets(
     return sorted(names)
 
 
+def _required_config_maps_from_pod_spec(pod_spec: Mapping[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for volume in _list(pod_spec.get("volumes")):
+        if not isinstance(volume, Mapping):
+            continue
+        config_map = _mapping(volume.get("configMap"))
+        if config_map.get("optional") is not True and isinstance(
+            config_map.get("name"), str
+        ):
+            names.add(config_map["name"])
+        projected = _mapping(volume.get("projected"))
+        for source in _list(projected.get("sources")):
+            source_config_map = _mapping(_mapping(source).get("configMap"))
+            if source_config_map.get("optional") is not True and isinstance(
+                source_config_map.get("name"), str
+            ):
+                names.add(source_config_map["name"])
+
+    for field in ("initContainers", "containers"):
+        for container in _list(pod_spec.get(field)):
+            if not isinstance(container, Mapping):
+                continue
+            for env_from in _list(container.get("envFrom")):
+                config_map_ref = _mapping(_mapping(env_from).get("configMapRef"))
+                if config_map_ref.get("optional") is not True and isinstance(
+                    config_map_ref.get("name"), str
+                ):
+                    names.add(config_map_ref["name"])
+            for variable in _list(container.get("env")):
+                config_map_ref = _mapping(
+                    _mapping(_mapping(variable).get("valueFrom")).get(
+                        "configMapKeyRef"
+                    )
+                )
+                if config_map_ref.get("optional") is not True and isinstance(
+                    config_map_ref.get("name"), str
+                ):
+                    names.add(config_map_ref["name"])
+    return names
+
+
+def inventory_required_config_maps(
+    documents_by_slice: Mapping[str, Sequence[Mapping[str, Any]]]
+) -> list[str]:
+    names: set[str] = set()
+    for slice_name in CANONICAL_SLICES:
+        for document in documents_by_slice.get(slice_name, ()):
+            pod_spec = _pod_spec(document)
+            if pod_spec is not None:
+                names.update(_required_config_maps_from_pod_spec(pod_spec))
+    return sorted(names)
+
+
+def kustomize_build_command(executable: str, path: Path) -> tuple[str, ...]:
+    if Path(executable).name == "kubectl":
+        return (
+            executable,
+            "kustomize",
+            str(path),
+            "--load-restrictor",
+            "LoadRestrictionsNone",
+        )
+    return (
+        executable,
+        "build",
+        "--load-restrictor",
+        "LoadRestrictionsNone",
+        str(path),
+    )
+
+
 def _image_repository(reference: str) -> str:
     value = reference.split("//", 1)[-1]
     if "@" in value:
@@ -456,13 +527,7 @@ class RecoveryReporter:
         paths = [(slice_name, matrix / slice_name) for slice_name in CANONICAL_SLICES]
         paths.append(("aggregate", matrix))
         for label, path in paths:
-            result = self._run(
-                self.kustomize,
-                "build",
-                "--load-restrictor",
-                "LoadRestrictionsNone",
-                str(path),
-            )
+            result = self._run(*kustomize_build_command(self.kustomize, path))
             if result.returncode != 0:
                 self.lines.append(f"  Render {label}: ERROR {_short_error(result)}")
                 self._block(f"Kustomize render failed for {label}")
@@ -606,6 +671,38 @@ class RecoveryReporter:
             else:
                 self.lines.append(f"  {name}: MISSING")
                 self._block(f"required Secret is missing: {namespace}/{name}")
+
+    def _report_config_maps(
+        self, context: str, namespace: str, required_config_maps: Sequence[str]
+    ) -> None:
+        self.lines.extend(("", "REQUIRED CONFIGMAPS (names and presence only)"))
+        if not required_config_maps:
+            self.lines.append("  <none discovered>")
+            return
+        if context == "<unresolved>":
+            for name in required_config_maps:
+                self.lines.append(f"  {name}: UNKNOWN")
+            return
+        for name in required_config_maps:
+            result = self._kubectl(
+                context,
+                "--namespace",
+                namespace,
+                "get",
+                "configmap",
+                name,
+                "--ignore-not-found",
+                "-o",
+                "name",
+            )
+            if result.returncode != 0:
+                self.lines.append(f"  {name}: UNKNOWN ({_short_error(result)})")
+                self._block(f"cannot verify required ConfigMap {name}")
+            elif result.stdout.strip():
+                self.lines.append(f"  {name}: PRESENT")
+            else:
+                self.lines.append(f"  {name}: MISSING")
+                self._block(f"required ConfigMap is missing: {namespace}/{name}")
 
     def _report_desired_images(self, desired_images: Sequence[DesiredImage]) -> None:
         self.lines.extend(("", "DESIRED IMAGE INVENTORY (regular and init containers)"))
@@ -804,9 +901,11 @@ class RecoveryReporter:
         rendered, git_head = self._render()
         desired_images = inventory_images(rendered, namespace)
         required_secrets = inventory_required_secrets(rendered)
+        required_config_maps = inventory_required_config_maps(rendered)
 
         self._report_argo(context, git_head)
         self._report_registry(contracts)
+        self._report_config_maps(context, namespace, required_config_maps)
         self._report_secrets(context, namespace, required_secrets)
         self._report_desired_images(desired_images)
         self._report_live_state(context, namespace, desired_images, contracts)
@@ -827,7 +926,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--environment", choices=ENVIRONMENTS, default="prod")
     parser.add_argument("--kube-context", default="")
-    parser.add_argument("--kustomize", default="kustomize")
+    parser.add_argument("--kustomize", default="kubectl")
     parser.add_argument("--registry-plain-http", choices=("0", "1"), default="0")
     parser.add_argument(
         "--repository-root", type=Path, default=Path(__file__).resolve().parents[1]

@@ -222,6 +222,48 @@ def _check_proxy_wireguard_route(rendered: Documents | str, relative: str) -> li
     return [f"{relative}: proxy WireGuard UDP/443 has no external hostPort route"]
 
 
+def _check_jaeger_probes(rendered: Documents | str, relative: str) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-telemetry-jaeger"
+    )
+    if not deployments:
+        return []
+    containers = [
+        container
+        for container in _pod_containers(deployments[0])
+        if container.get("name") == "jaeger"
+    ]
+    if len(containers) != 1:
+        return [f"{relative}: expected one Jaeger container"]
+    container = containers[0]
+    ports = {
+        _mapping(port).get("name"): _mapping(port).get("containerPort")
+        for port in _list(container.get("ports"))
+    }
+    errors: list[str] = []
+    if ports.get("admin") != 14269:
+        errors.append(f"{relative}: Jaeger admin port must be named admin on 14269")
+    for probe_name in ("startupProbe", "livenessProbe", "readinessProbe"):
+        probe = _mapping(container.get(probe_name))
+        http_get = _mapping(probe.get("httpGet"))
+        if http_get.get("path") != "/" or http_get.get("port") != "admin":
+            errors.append(
+                f"{relative}: Jaeger {probe_name} must use the admin health endpoint"
+            )
+    startup = _mapping(container.get("startupProbe"))
+    try:
+        startup_budget = int(startup.get("failureThreshold", 0)) * int(
+            startup.get("periodSeconds", 0)
+        )
+    except (TypeError, ValueError):
+        startup_budget = 0
+    if startup_budget < 600:
+        errors.append(
+            f"{relative}: Jaeger startup probe must allow at least 600 seconds"
+        )
+    return errors
+
+
 def _check_atheros_search_auth(rendered: Documents | str, relative: str) -> list[str]:
     deployments = _find(_documents(rendered), "Deployment", "ssl-proxy-atheros-search")
     if not deployments:
@@ -627,7 +669,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves):
             errors.extend(check(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))

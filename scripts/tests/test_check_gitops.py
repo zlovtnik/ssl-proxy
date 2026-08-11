@@ -105,6 +105,22 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         self.assertEqual([], check_gitops._check_proxy_probes(good, "test"))
         self.assertEqual([], check_gitops._check_proxy_wireguard_route(good, "test"))
 
+    def test_jaeger_probes_use_admin_health_with_startup_budget(self) -> None:
+        bad = documents(
+            workload(
+                "ssl-proxy-telemetry-jaeger",
+                containers="[{name: jaeger, ports: [{name: ui, containerPort: 16686}], livenessProbe: {httpGet: {path: /, port: ui}}}]",
+            )
+        )
+        self.assertGreaterEqual(len(check_gitops._check_jaeger_probes(bad, "test")), 4)
+        good = documents(
+            workload(
+                "ssl-proxy-telemetry-jaeger",
+                containers="[{name: jaeger, ports: [{name: admin, containerPort: 14269}], startupProbe: {httpGet: {path: /, port: admin}, failureThreshold: 60, periodSeconds: 10}, livenessProbe: {httpGet: {path: /, port: admin}}, readinessProbe: {httpGet: {path: /, port: admin}}}]",
+            )
+        )
+        self.assertEqual([], check_gitops._check_jaeger_probes(good, "test"))
+
     def test_atheros_search_auth_and_proxy_policy(self) -> None:
         auth = documents(workload("ssl-proxy-atheros-search", containers="[{env: [{name: ATHSEARCH_API_TOKEN_SHA256}]}]"))
         self.assertEqual(1, len(check_gitops._check_atheros_search_auth(auth, "test")))

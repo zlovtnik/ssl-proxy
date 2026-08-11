@@ -48,18 +48,25 @@ spec:
             - containerPort: 6831
               name: thrift-compact
               protocol: UDP
+            - containerPort: 14269
+              name: admin
+          startupProbe:
+            httpGet:
+              path: /
+              port: admin
+            failureThreshold: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /
-              port: ui
-            initialDelaySeconds: 30
+              port: admin
             periodSeconds: 15
             timeoutSeconds: 10
           readinessProbe:
             httpGet:
               path: /
-              port: ui
-            initialDelaySeconds: 10
+              port: admin
             periodSeconds: 5
             timeoutSeconds: 5
           resources:
