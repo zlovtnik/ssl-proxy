@@ -14,6 +14,9 @@ permissions:
 ```bash
 umask 077
 openssl rand -base64 32 > secrets/jenkins-admin-password
+# The platform supplies this endpoint through a local environment variable.
+: "\${FAILURE_WEBHOOK_URL:?set the notification endpoint}"
+printf '%s' "$FAILURE_WEBHOOK_URL" > secrets/ssl-proxy-ci-failure-webhook
 docker compose -f docker-compose.ci.yaml config
 docker compose -f docker-compose.ci.yaml up -d --build
 ```
@@ -40,14 +43,25 @@ is explicitly intended and backed up.
 
 ## Pipeline behavior
 
-The managed pipeline polls `main` every five minutes and disables concurrent
-runs. Each run:
+The managed pipeline polls `main` every five minutes, also accepts GitHub push
+events, and disables concurrent runs. The platform must register the repository
+push webhook at `${JENKINS_URL}/github-webhook/`. Each run:
 
 1. checks out the superproject and its pinned submodules;
-2. runs `make docs-check` and `make gitops-check`;
-3. verifies Docker Buildx and registry reachability;
-4. builds every target in `Makefile` before publishing anything; and
-5. publishes a 12-character commit tag plus the mutable `latest` channel.
+2. creates and bootstraps its shared Buildx builder after bounded Docker and
+   registry checks;
+3. runs `make docs-check` and `make gitops-check` in parallel with image
+   publishing; and
+4. publishes every Makefile service independently with a 30-minute limit and
+   one retry, using a 12-character commit tag plus the mutable `latest`
+   channel.
+
+Validation remains visible and fails the overall build, but does not cancel
+unaffected image publication. Likewise, a failed image branch does not cancel
+other branches. A failed build posts one JSON notification containing the job,
+build URL, commit, and result to the Jenkins credential
+`ssl-proxy-ci-failure-webhook`; notification retries are bounded and a delivery
+failure never replaces the original build result.
 
 The target set covers the proxy, Octopus coordinator, Atheros Sensor, Atheros
 Search, key rotator, Search UI, both Schema Migrator images and the TiDB runtime

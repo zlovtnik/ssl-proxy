@@ -88,11 +88,13 @@ Publishing updates the registry's immutable commit tag and `latest` channel.
 Image Updater resolves `latest` to an immutable digest and opens the dev pull
 request. Production receives only reviewed digests copied from dev.
 
-The Jenkins `ssl-proxy-images` job polls `main`, initializes the pinned
-submodules, runs documentation and GitOps validation, builds all first-party
-images, then publishes the same target set as `make publish-all`. Jenkins uses
-the registry's internal Compose name while Kubernetes and Image Updater use
-the private server address; both names reach the same registry storage.
+The Jenkins `ssl-proxy-images` job polls `main` and accepts GitHub push events,
+initializes the pinned submodules and shared Buildx builder, then publishes the
+same target set as `make publish-all` in independently retried branches.
+Documentation and GitOps validation run alongside publication and still fail
+the overall build without cancelling successful image pushes. Jenkins uses the
+registry's internal Compose name while Kubernetes and Image Updater use the
+private server address; both names reach the same registry storage.
 
 ## Verify
 

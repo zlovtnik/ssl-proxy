@@ -2,11 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: dev-ssl-proxy
 resources:
-  # Keep bootstrap prerequisites in this already-registered Application until
-  # the platform has registered the dedicated bootstrap Application. The
-  # Namespace manifest disables pruning, so ownership can move safely later.
-  - ../namespace.yaml
-  - ../../../base/platform-config/serviceaccount.yaml
+  # Bootstrap owns this ConfigMap. It remains a local render input because the
+  # IDENTITY_HOSTNAME substitution is resolved while app-stack renders.
   - ../../../base/platform-config/configmap.yaml
   - ../../../base/proxy/deployment.yaml
   - ../../../base/proxy/service.yaml
@@ -38,6 +35,10 @@ images:
     digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
 patches:
   - path: ../patches/identity-hostname.yaml
+  - target:
+      kind: ConfigMap
+      labelSelector: app.kubernetes.io/component=platform-config
+    path: ../patches/local-config-annotation.yaml
   - path: ../patches/proxy-replicas.yaml
   - path: ../patches/octopus-environment.yaml
   - path: ../patches/keycloak-recovery.yaml

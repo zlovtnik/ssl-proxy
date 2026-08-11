@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ssl-proxy-workloads
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - list:
+        elements:
+          - name: ssl-proxy-bootstrap
+            component: bootstrap
+            environment: dev
+            path: cyber-stack/matrix/dev/bootstrap
+            namespace: dev-ssl-proxy
+          - name: ssl-proxy-data-plane
+            component: data-plane
+            environment: dev
+            path: cyber-stack/matrix/dev/data-plane
+            namespace: dev-ssl-proxy
+          - name: ssl-proxy-app-stack
+            component: app-stack
+            environment: dev
+            path: cyber-stack/matrix/dev/app-stack
+            namespace: dev-ssl-proxy
+          - name: ssl-proxy-prod-bootstrap
+            component: bootstrap
+            environment: prod
+            path: cyber-stack/matrix/prod/bootstrap
+            namespace: prod-ssl-proxy
+          - name: ssl-proxy-prod-data-plane
+            component: data-plane
+            environment: prod
+            path: cyber-stack/matrix/prod/data-plane
+            namespace: prod-ssl-proxy
+          - name: ssl-proxy-prod-app-stack
+            component: app-stack
+            environment: prod
+            path: cyber-stack/matrix/prod/app-stack
+            namespace: prod-ssl-proxy
+  template:
+    metadata:
+      name: '{{ .name }}'
+      namespace: argocd
+      labels:
+        app.kubernetes.io/part-of: ssl-proxy
+        app.kubernetes.io/component: '{{ .component }}'
+        environment: '{{ .environment }}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: ssl-proxy
+      source:
+        repoURL: https://github.com/zlovtnik/ssl-proxy.git
+        targetRevision: main
+        path: '{{ .path }}'
+        kustomize: {}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          allowEmpty: false
+        syncOptions:
+          - PrunePropagationPolicy=foreground
+          - ApplyOutOfSyncOnly=true
+          - ServerSideApply=true
+  templatePatch: |
+    {{- if eq .component "data-plane" }}
+    spec:
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jsonPointers:
+            - /spec/volumeClaimTemplates
+    {{- end }}

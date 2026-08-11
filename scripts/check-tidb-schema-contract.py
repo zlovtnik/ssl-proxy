@@ -12,6 +12,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 ROOT = REPO / "sql" / "tidb"
+STATE_SCHEMA_MANIFEST = ROOT / "schema_migrator" / "manifest.yaml"
+STATE_SCHEMA_CONTRACT = (
+    REPO
+    / "apps"
+    / "schema-migrator"
+    / "src"
+    / "main"
+    / "resources"
+    / "state-migrations"
+    / "manifest.properties"
+)
 DOMAINS = frozenset(
     {"octopus_core", "atheros_search", "integration_console", "schema_migrator"}
 )
@@ -63,6 +74,65 @@ def scalar(manifest: Path, key: str) -> str | None:
         if line.startswith(prefix):
             return line[len(prefix) :].strip().strip('"')
     return None
+
+
+def display_path(path: Path) -> str:
+    try:
+        return path.relative_to(REPO).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def properties(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, separator, value = stripped.partition("=")
+        if not separator or not key.strip() or not value.strip():
+            raise ValueError(f"{display_path(path)}: malformed properties entry")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def validate_schema_migrator_state_contract(
+    manifest: Path, contract: Path, failures: list[str]
+) -> None:
+    """Ensure the runtime's bundled guard is pinned to the canonical manifest."""
+    if not manifest.is_file():
+        failures.append(f"{display_path(manifest)}: missing schema migrator manifest")
+        return
+    if not contract.is_file():
+        failures.append(f"{display_path(contract)}: missing state schema contract")
+        return
+
+    try:
+        values = properties(contract)
+    except ValueError as error:
+        failures.append(str(error))
+        return
+
+    manifest_version = scalar(manifest, "schema_version")
+    manifest_checksum = scalar(manifest, "manifest_sha256")
+    contract_version = values.get("version")
+    contract_checksum = values.get("checksum")
+
+    if not manifest_version:
+        failures.append(f"{display_path(manifest)}: missing schema_version")
+    elif contract_version != manifest_version:
+        failures.append(
+            f"{display_path(contract)}: version mismatch "
+            f"(runtime={contract_version!r}, manifest={manifest_version!r})"
+        )
+
+    if not manifest_checksum or not re.fullmatch(r"[0-9a-f]{64}", manifest_checksum):
+        failures.append(f"{display_path(manifest)}: invalid manifest_sha256")
+    elif contract_checksum != manifest_checksum:
+        failures.append(
+            f"{display_path(contract)}: checksum mismatch "
+            f"(runtime={contract_checksum!r}, manifest={manifest_checksum!r})"
+        )
 
 
 def executable_sql(text: str) -> str:
@@ -227,6 +297,9 @@ def validate_helm_runtime_grants(failures: list[str]) -> None:
 
 def main() -> int:
     failures: list[str] = []
+    validate_schema_migrator_state_contract(
+        STATE_SCHEMA_MANIFEST, STATE_SCHEMA_CONTRACT, failures
+    )
     validate_helm_runtime_grants(failures)
     actual = {path.name for path in ROOT.iterdir() if path.is_dir()}
     active = actual - {"contracts"}

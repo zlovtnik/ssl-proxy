@@ -36,10 +36,7 @@ patches:
   - target:
       kind: ConfigMap
       labelSelector: app.kubernetes.io/component=platform-config
-    patch: |-
-      - op: add
-        path: /metadata/annotations/config.kubernetes.io~1local-config
-        value: "true"
+    path: ../patches/local-config-annotation.yaml
   - path: ../patches/proxy-replicas.yaml
   - path: ../patches/resources.yaml
   - path: ../patches/external-tidb.yaml

@@ -22,9 +22,9 @@ The platform team provides and operates:
 
 Platform inputs must be delivered by the platform's declarative control plane.
 Do not create or patch them by hand. This repository owns the `ssl-proxy`
-AppProject, six workload Applications, the pinned Image Updater controller
-Application and AppProject, the dev ImageUpdater resource, and all workload
-desired state after registration. The controller chart is
+AppProject, one list-generated workload ApplicationSet, the pinned Image
+Updater controller Application and AppProject, the dev ImageUpdater resource,
+and all workload desired state after registration. The controller chart is
 `argocd-image-updater` 1.2.4 with namespace-scoped RBAC in `argocd`; only its
 CRD is cluster-scoped.
 
@@ -40,11 +40,32 @@ CD source paths:
 | `data-plane` | `ssl-proxy-data-plane` | `ssl-proxy-prod-data-plane` | TiDB integration, Redpanda, MinIO, Redis, schema execution and telemetry |
 | `app-stack` | `ssl-proxy-app-stack` | `ssl-proxy-prod-app-stack` | Proxy, Octopus, Search/UI, sensor and Schema Migrator |
 
-All Applications track `main`, use automated sync with pruning and
-self-healing, and refuse empty desired state. Namespace deletion requires
-explicit prune confirmation. Sync-wave annotations order resources inside an
-Application; the platform must register and verify `bootstrap` before the
-other two Applications during first installation.
+`applicationset-workloads.yaml` uses a list generator to create those six
+Applications with their established names. All generated Applications track
+`main`, use automated sync with pruning and self-healing, and refuse empty
+desired state. The data-plane entries retain the StatefulSet PVC-template
+ignore rule. Namespace deletion requires explicit prune confirmation.
+Sync-wave annotations order resources inside an Application; the platform
+must register and verify `bootstrap` before the other two Applications during
+first installation.
+
+## ApplicationSet migration
+
+The platform must first confirm that the ApplicationSet controller is running
+and permits `ApplicationSet` resources from the registered control-plane path.
+Migrate the six existing workload Applications in reviewed Git phases:
+
+1. Remove only `resources-finalizer.argocd.argoproj.io` from the six existing
+   Application manifests. Confirm the existing Applications and their managed
+   workloads remain present and healthy.
+2. In a later reviewed change, replace the six manifest resources with
+   `applicationset-workloads.yaml`. Its generated Applications intentionally
+   retain the existing names, so verify that each child is adopted, has the
+   expected source path and destination namespace, and reports `Synced` and
+   `Healthy` before continuing.
+3. Remove temporary migration annotations or other scaffolding only after that
+   verification. Roll back any phase by reverting its Git commit; do not delete
+   or patch the managed Applications directly.
 
 ## Configuration rules
 
@@ -76,7 +97,9 @@ other two Applications during first installation.
    `Synced` and `Healthy`.
 5. After the required dev soak and acceptance checks, open a production pull
    request that copies the exact dev digests into the corresponding prod
-   Kustomizations. Image Updater never targets prod Applications.
+   Kustomizations. `scripts/bump-image-digest.sh` and its generated
+   `make bump-digest-<service>` targets support this explicit, reviewable
+   digest update. Image Updater never targets prod Applications.
 6. Merge the production pull request and verify all three prod Applications.
 
 Rollback is a Git revert of the promotion commit. Argo CD reconciles the prior

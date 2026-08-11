@@ -1,0 +1,3 @@
+- op: add
+  path: /metadata/annotations/config.kubernetes.io~1local-config
+  value: "true"

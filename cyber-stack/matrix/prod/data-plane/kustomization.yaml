@@ -24,3 +24,11 @@ images:
   - name: tidb-runtime-schema
     newName: 192.168.1.221:5000/tidb-runtime-schema
     digest: sha256:ae8835807252987c276204f1b1a58b350ab128080d209babc790096e0376a680
+patches:
+  - target:
+      kind: Job
+      name: ssl-proxy-tidb-schema-executor
+    patch: |-
+      - op: replace
+        path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
+        value: schema-migrator-001-10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703

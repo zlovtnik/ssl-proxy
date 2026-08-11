@@ -17,6 +17,15 @@ unclassified:
   location:
     url: "${JENKINS_URL}"
 
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              id: "ssl-proxy-ci-failure-webhook"
+              scope: GLOBAL
+              secret: "${ssl-proxy-ci-failure-webhook}"
+
 jobs:
   - script: |
       pipelineJob('ssl-proxy-images') {
@@ -27,6 +36,7 @@ jobs:
         }
         triggers {
           scm('H/5 * * * *')
+          githubPush()
         }
         definition {
           cpsScm {

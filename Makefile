@@ -6,6 +6,7 @@ SHELL := /bin/bash
 REGISTRY ?= 192.168.1.221:5000
 REGISTRY_PLAIN_HTTP ?= 0
 BUILDER ?= ssl-proxy-publisher
+BUILDX_READY ?= 0
 PLATFORM ?= linux/amd64
 TAG ?= $(shell git rev-parse --short HEAD)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -16,10 +17,12 @@ ATHEROS_SEARCH_UI_API_BASE ?=
 ATHEROS_SEARCH_UI_TITLE ?= atheros search
 
 SERVICES := ssl-proxy java-coordinator atheros-sensor atheros-search wg-key-rotator atheros-search-ui schema-migrator-backend schema-migrator-ui tidb-runtime-schema
+DEPLOYABLE_SERVICES := $(filter-out wg-key-rotator,$(SERVICES))
 BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
+BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 
-.PHONY: build build-all publish publish-all buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS)
+.PHONY: build build-all publish publish-all ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 publish: publish-all
@@ -27,6 +30,10 @@ publish: publish-all
 build-all: $(BUILD_TARGETS)
 
 publish-all: $(PUBLISH_TARGETS)
+
+# Read-only image inventory for CI fan-out. Keep build-all for local loaded-image workflows.
+ci-publish-services:
+	@printf '%s\n' $(SERVICES)
 
 docs-check:
 	python3 scripts/check-docs.py
@@ -74,10 +81,10 @@ buildx-ready: require-registry
 	@docker buildx inspect "$(BUILDER)" --bootstrap >/dev/null
 
 define service_rules
-build-$(1): buildx-ready
+build-$(1):
 	docker buildx build --builder "$(BUILDER)" --platform "$(PLATFORM)" --file "$(2)" $(3) --tag "$(LOCAL_IMAGE_PREFIX)/$(4):$(TAG)" --load "$(5)"
 
-publish-$(1): buildx-ready
+publish-$(1):
 	docker buildx build --builder "$(BUILDER)" --platform "$(PLATFORM)" --file "$(2)" $(3) --tag "$(REGISTRY)/$(4):$(TAG)" --tag "$(REGISTRY)/$(4):latest" --push "$(5)"
 endef
 
@@ -90,3 +97,16 @@ $(eval $(call service_rules,atheros-search-ui,apps/integration-console/atheros-s
 $(eval $(call service_rules,schema-migrator-backend,apps/schema-migrator/Dockerfile.backend,,schema-migrator-backend,apps/schema-migrator))
 $(eval $(call service_rules,schema-migrator-ui,apps/schema-migrator/frontend/Dockerfile,,schema-migrator-ui,apps/schema-migrator))
 $(eval $(call service_rules,tidb-runtime-schema,k8s/tidb-schema-executor/Dockerfile,,tidb-runtime-schema,.))
+
+ifneq ($(BUILDX_READY),1)
+$(BUILD_TARGETS) $(PUBLISH_TARGETS): buildx-ready
+endif
+
+define bump_digest_rule
+bump-digest-$(1):
+	@test -n "$(ENV)" || { echo "ENV is required (dev or prod)" >&2; exit 2; }
+	@test -n "$(DIGEST)" || { echo "DIGEST is required (sha256:...)" >&2; exit 2; }
+	./scripts/bump-image-digest.sh "$(1)" "$(ENV)" "$(DIGEST)"
+endef
+
+$(foreach service,$(DEPLOYABLE_SERVICES),$(eval $(call bump_digest_rule,$(service))))

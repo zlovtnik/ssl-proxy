@@ -4,10 +4,5 @@ resources:
   - appproject-image-updater.yaml
   - appproject-ssl-proxy.yaml
   - application-image-updater.yaml
-  - application-bootstrap.yaml
-  - application-data-plane.yaml
-  - application-app-stack.yaml
-  - application-prod-bootstrap.yaml
-  - application-prod-data-plane.yaml
-  - application-prod-app-stack.yaml
+  - applicationset-workloads.yaml
   - image-updater-dev.yaml

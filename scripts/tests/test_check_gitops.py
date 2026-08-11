@@ -15,313 +15,259 @@ sys.modules[SPEC.name] = check_gitops
 SPEC.loader.exec_module(check_gitops)
 
 
-class RequiredFileReadTest(unittest.TestCase):
+def documents(text: str) -> list[dict[str, object]]:
+    errors: list[str] = []
+    loaded = check_gitops._load_documents(text, "test", errors)
+    assert loaded is not None, errors
+    return loaded
+
+
+def workload(name: str, kind: str = "Deployment", containers: str = "[]") -> str:
+    return f"""apiVersion: apps/v1
+kind: {kind}
+metadata:
+  labels:
+    app: test
+  name: {name}
+spec:
+  template:
+    spec:
+      containers: {containers}
+"""
+
+
+class YamlLoadingTest(unittest.TestCase):
+    def test_malformed_yaml_is_a_check_failure(self) -> None:
+        errors: list[str] = []
+        self.assertIsNone(check_gitops._load_documents("kind: [broken", "fixture.yaml", errors))
+        self.assertEqual(1, len(errors))
+        self.assertIn("fixture.yaml: invalid YAML", errors[0])
+
     def test_missing_file_is_reported_without_reading(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             errors: list[str] = []
             result = check_gitops._read_required(
-                Path(directory),
-                Path("cyber-stack/argocd/application-app-stack.yaml"),
-                errors,
-                "Application manifest",
+                Path(directory), Path("cyber-stack/argocd/application-set.yaml"), errors, "ApplicationSet manifest"
             )
-
         self.assertIsNone(result)
-        self.assertEqual(1, len(errors))
-        self.assertIn("required Application manifest is missing", errors[0])
+        self.assertIn("required ApplicationSet manifest is missing", errors[0])
 
 
-class ImagePinCountTest(unittest.TestCase):
-    def test_counts_only_entries_in_images_block(self) -> None:
-        text = (
-            "images:\n"
-            "  - name: app\n"
-            "    newName: registry/app\n"
-            "    digest: sha256:abc\n"
-            "vars:\n"
-            "  - name: IDENTITY_HOSTNAME\n"
+class SourceKustomizationTest(unittest.TestCase):
+    def test_image_pins_ignore_order_and_scalar_wrapping(self) -> None:
+        source = documents(
+            """kind: Kustomization
+images:
+  - digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    name: app
+    newName: registry/app
+"""
         )
+        self.assertEqual((1, 1), check_gitops._image_pin_counts(source))
 
-        self.assertEqual((1, 1), check_gitops._image_pin_counts(text))
-
-
-class OtelEndpointCheckTest(unittest.TestCase):
-    def test_rejects_broken_service_reference(self) -> None:
-        rendered = 'value: "http://ssl-proxy-otel-collector:4317"'
-        errors = check_gitops._check_otel_endpoint(rendered, "test")
-        self.assertEqual(1, len(errors))
-        self.assertIn("ssl-proxy-otel-collector", errors[0])
-
-    def test_accepts_correct_service_reference(self) -> None:
-        rendered = 'value: "http://ssl-proxy-telemetry-otel-collector:4317"'
-        self.assertEqual([], check_gitops._check_otel_endpoint(rendered, "test"))
-
-    def test_accepts_empty_rendered(self) -> None:
-        self.assertEqual([], check_gitops._check_otel_endpoint("", "test"))
+    def test_image_pin_count_rejects_missing_digest(self) -> None:
+        source = documents("kind: Kustomization\nimages:\n  - name: app\n    newName: registry/app\n")
+        self.assertEqual((1, 0), check_gitops._image_pin_counts(source))
 
 
-class RedpandaMemoryCheckTest(unittest.TestCase):
-    def test_rejects_insufficient_headroom(self) -> None:
-        rendered = (
-            "kind: StatefulSet\n"
-            "  ssl-proxy-redpanda\n"
-            "args:\n"
-            "  - --memory\n"
-            "  - 2G\n"
-            "resources:\n"
-            "  limits:\n"
-            "    memory: 2048Mi"
+class RenderedWorkloadPolicyTest(unittest.TestCase):
+    def test_otel_endpoint_rejects_any_structured_string(self) -> None:
+        rendered = documents("kind: ConfigMap\ndata:\n  endpoint: http://ssl-proxy-otel-collector:4317\n")
+        self.assertEqual(1, len(check_gitops._check_otel_endpoint(rendered, "test")))
+
+    def test_redpanda_memory_is_independent_of_field_order(self) -> None:
+        rendered = documents(
+            workload(
+                "ssl-proxy-redpanda",
+                "StatefulSet",
+                "[{resources: {limits: {memory: 2048Mi}}, args: ['--memory', 2G]}]",
+            )
         )
         errors = check_gitops._check_redpanda_memory(rendered, "test")
         self.assertEqual(1, len(errors))
         self.assertIn("512 MiB headroom", errors[0])
 
-    def test_accepts_sufficient_headroom(self) -> None:
-        rendered = (
-            "kind: StatefulSet\n"
-            "  ssl-proxy-redpanda\n"
-            "args:\n"
-            "  - --memory\n"
-            "  - 2G\n"
-            "resources:\n"
-            "  limits:\n"
-            "    memory: 2560Mi"
+    def test_proxy_probe_and_wireguard_policies(self) -> None:
+        bad_probe = documents(
+            workload(
+                "ssl-proxy-proxy",
+                containers="[{ports: [{protocol: UDP, containerPort: 443}], livenessProbe: {httpGet: {path: /health}}}]",
+            )
         )
-        self.assertEqual([], check_gitops._check_redpanda_memory(rendered, "test"))
-
-    def test_skips_non_redpanda_rendered(self) -> None:
-        rendered = "kind: Deployment\n  ssl-proxy-proxy\n"
-        self.assertEqual([], check_gitops._check_redpanda_memory(rendered, "test"))
-
-    def test_parse_bytes_gigabytes(self) -> None:
-        self.assertEqual(2 * 1024**3, check_gitops._parse_bytes("2", "G"))
-
-    def test_parse_bytes_mebibytes(self) -> None:
-        self.assertEqual(2560 * 1024**2, check_gitops._parse_bytes("2560", "Mi"))
-
-
-class ProxyProbeCheckTest(unittest.TestCase):
-    def test_rejects_httpget_liveness(self) -> None:
-        rendered = (
-            "---\n"
-            "kind: Deployment\n"
-            "metadata:\n"
-            "  name: ssl-proxy-proxy\n"
-            "spec:\n"
-            "  template:\n"
-            "    spec:\n"
-            "      containers:\n"
-            "      - livenessProbe:\n"
-            "          httpGet:\n"
-            "            path: /health\n"
-            "            port: admin\n"
+        self.assertEqual(1, len(check_gitops._check_proxy_probes(bad_probe, "test")))
+        self.assertEqual(1, len(check_gitops._check_proxy_wireguard_route(bad_probe, "test")))
+        good = documents(
+            workload(
+                "ssl-proxy-proxy",
+                containers="[{ports: [{hostPort: 443, protocol: UDP, containerPort: 443}], livenessProbe: {exec: {command: [curl]}}, readinessProbe: {exec: {command: [curl]}}}]",
+            )
         )
-        errors = check_gitops._check_proxy_probes(rendered, "test")
-        self.assertTrue(any("livenessProbe" in e for e in errors))
+        self.assertEqual([], check_gitops._check_proxy_probes(good, "test"))
+        self.assertEqual([], check_gitops._check_proxy_wireguard_route(good, "test"))
 
-    def test_rejects_httpget_readiness(self) -> None:
-        rendered = (
-            "---\n"
-            "kind: Deployment\n"
-            "metadata:\n"
-            "  name: ssl-proxy-proxy\n"
-            "spec:\n"
-            "  template:\n"
-            "    spec:\n"
-            "      containers:\n"
-            "      - readinessProbe:\n"
-            "          httpGet:\n"
-            "            path: /ready\n"
-            "            port: admin\n"
+    def test_atheros_search_auth_and_proxy_policy(self) -> None:
+        auth = documents(workload("ssl-proxy-atheros-search", containers="[{env: [{name: ATHSEARCH_API_TOKEN_SHA256}]}]"))
+        self.assertEqual(1, len(check_gitops._check_atheros_search_auth(auth, "test")))
+        nginx = documents(
+            """kind: ConfigMap
+metadata:
+  name: ssl-proxy-atheros-search-ui-nginx-config
+data:
+  nginx.conf: |-
+    proxy_pass $search_backend;
+    proxy_pass $readyz_backend/readyz;
+"""
         )
-        errors = check_gitops._check_proxy_probes(rendered, "test")
-        self.assertTrue(any("readinessProbe" in e for e in errors))
+        self.assertEqual(4, len(check_gitops._check_atheros_search_ui_proxy(nginx, "test")))
+        static = documents(
+            """kind: ConfigMap
+metadata: {name: ssl-proxy-atheros-search-ui-nginx-config}
+data:
+  nginx.conf: |-
+    proxy_pass http://ssl-proxy-atheros-search:8080;
+    proxy_pass http://ssl-proxy-atheros-search:8080/readyz;
+"""
+        )
+        self.assertEqual([], check_gitops._check_atheros_search_ui_proxy(static, "test"))
 
-    def test_accepts_exec_probes(self) -> None:
-        rendered = (
-            "---\n"
-            "kind: Deployment\n"
-            "metadata:\n"
-            "  name: ssl-proxy-proxy\n"
-            "spec:\n"
-            "  template:\n"
-            "    spec:\n"
-            "      containers:\n"
-            "      - livenessProbe:\n"
-            "          exec:\n"
-            '            command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]\n'
-            "        readinessProbe:\n"
-            "          exec:\n"
-            '            command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]\n'
+    def test_keycloak_credential_is_a_structured_secret_reference(self) -> None:
+        valid = documents(
+            workload(
+                "ssl-proxy-schema-migrator-keycloak",
+                containers="[{env: [{name: KC_DB_PASSWORD, valueFrom: {secretKeyRef: {key: password, name: tidb-keycloak}}}]}]",
+            )
         )
-        self.assertEqual([], check_gitops._check_proxy_probes(rendered, "test"))
+        self.assertEqual([], check_gitops._check_keycloak_database_credential(valid, "test"))
+        invalid = documents(workload("ssl-proxy-schema-migrator-keycloak", containers="[{env: [{name: KC_DB_PASSWORD}]}]"))
+        self.assertEqual(1, len(check_gitops._check_keycloak_database_credential(invalid, "test")))
 
-    def test_skips_non_proxy_rendered(self) -> None:
-        rendered = "ssl-proxy-java-coordinator\nlivenessProbe:\n  httpGet:\n"
-        self.assertEqual([], check_gitops._check_proxy_probes(rendered, "test"))
+    def test_replication_uses_configmap_and_env_values(self) -> None:
+        rendered = documents(
+            """apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: ssl-proxy-redpanda}
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers: []
+---
+kind: ConfigMap
+data:
+  topics.manifest: |-
+    sync.scan.request|24|3|1000|-1
+---
+kind: Deployment
+metadata: {name: producer}
+spec:
+  template:
+    spec:
+      containers:
+        - env:
+            - {name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR, value: "2"}
+"""
+        )
+        self.assertEqual(1, len(check_gitops._check_redpanda_topic_replication(rendered, "test")))
 
-
-class GitOpsRegressionCheckTest(unittest.TestCase):
-    def test_proxy_wireguard_requires_host_route(self) -> None:
-        rendered = (
-            "name: ssl-proxy-proxy\nports:\n  - containerPort: 443\n    protocol: UDP\n"
-        )
-        self.assertEqual(
-            1, len(check_gitops._check_proxy_wireguard_route(rendered, "test"))
-        )
-
-    def test_proxy_wireguard_accepts_host_port(self) -> None:
-        rendered = (
-            "name: ssl-proxy-proxy\n"
-            "ports:\n"
-            "  - containerPort: 443\n"
-            "    hostPort: 443\n"
-            "    protocol: UDP\n"
-        )
-        self.assertEqual(
-            [], check_gitops._check_proxy_wireguard_route(rendered, "test")
-        )
-
-    def test_atheros_search_rejects_unusable_bearer_auth(self) -> None:
-        rendered = (
-            "name: ssl-proxy-atheros-search\n"
-            "env:\n"
-            "  - name: ATHSEARCH_API_TOKEN_SHA256\n"
-        )
-        self.assertEqual(
-            1, len(check_gitops._check_atheros_search_auth(rendered, "test"))
-        )
-
-    def test_atheros_search_ui_rejects_dynamic_proxy_upstreams(self) -> None:
-        rendered = (
-            "name: ssl-proxy-atheros-search-ui-nginx\n"
-            "proxy_pass $search_backend;\n"
-            "proxy_pass $readyz_backend/readyz;\n"
-        )
-        errors = check_gitops._check_atheros_search_ui_proxy(rendered, "test")
-        self.assertEqual(4, len(errors))
-        self.assertTrue(any("dynamic upstream" in error for error in errors))
-        self.assertTrue(any("missing static upstream" in error for error in errors))
-
-    def test_atheros_search_ui_accepts_static_proxy_upstreams(self) -> None:
-        rendered = (
-            "name: ssl-proxy-atheros-search-ui-nginx\n"
-            "proxy_pass http://ssl-proxy-atheros-search:8080;\n"
-            "proxy_pass http://ssl-proxy-atheros-search:8080/readyz;\n"
-        )
-        self.assertEqual(
-            [], check_gitops._check_atheros_search_ui_proxy(rendered, "test")
-        )
-
-    def test_keycloak_requires_provisioned_database_secret(self) -> None:
-        rendered = (
-            "name: ssl-proxy-schema-migrator-keycloak\n"
-            "- name: KC_DB_PASSWORD\n"
-            "  valueFrom:\n"
-            "    secretKeyRef:\n"
-            "      key: password\n"
-            "      name: tidb-keycloak\n"
-        )
-        self.assertEqual(
-            [], check_gitops._check_keycloak_database_credential(rendered, "test")
-        )
-
-    def test_topic_replication_cannot_exceed_brokers(self) -> None:
-        rendered = (
-            "kind: StatefulSet\n"
-            "metadata:\n"
-            "  name: ssl-proxy-redpanda\n"
-            "spec:\n"
-            "  replicas: 1\n"
-            "topics.manifest: |\n"
-            "  sync.scan.request|24|3|1000|-1\n"
-        )
-        self.assertEqual(
-            1,
-            len(check_gitops._check_redpanda_topic_replication(rendered, "test")),
-        )
-
-    def test_identity_hostnames_are_environment_specific(self) -> None:
+    def test_identity_hostname_and_traefik_policies(self) -> None:
         rendered = {
-            "cyber-stack/matrix/dev/bootstrap": (
-                "data:\n  IDENTITY_HOSTNAME: identity.dev.ssl-proxy.internal\n"
-            ),
-            "cyber-stack/matrix/prod/bootstrap": (
-                "data:\n  IDENTITY_HOSTNAME: identity.prod.ssl-proxy.internal\n"
-            ),
+            "cyber-stack/matrix/dev/bootstrap": documents("kind: ConfigMap\ndata: {IDENTITY_HOSTNAME: identity.example.internal}\n"),
+            "cyber-stack/matrix/prod/bootstrap": documents("data: {IDENTITY_HOSTNAME: identity.example.internal}\nkind: ConfigMap\n"),
         }
-        self.assertEqual(
-            [], check_gitops._check_environment_identity_hostnames(rendered)
+        self.assertEqual(3, len(check_gitops._check_environment_identity_hostnames(rendered)))
+        redirect = documents("kind: ConfigMap\ndata: {args: entrypoints.web.http.redirections.entrypoint.port=:443}\n")
+        self.assertEqual(1, len(check_gitops._check_traefik_redirect(redirect, "test")))
+
+    def test_tidb_waves_are_selected_by_job_name(self) -> None:
+        rendered = documents(
+            """kind: Job
+metadata: {name: ssl-proxy-tidb-init, annotations: {argocd.argoproj.io/sync-wave: "1"}}
+---
+metadata:
+  annotations: {argocd.argoproj.io/sync-wave: "1"}
+  name: ssl-proxy-tidb-schema-executor
+kind: Job
+---
+kind: Job
+metadata: {name: ssl-proxy-tidb-init-grants, annotations: {argocd.argoproj.io/sync-wave: "2"}}
+"""
         )
+        self.assertTrue(any("init wave" in error for error in check_gitops._check_tidb_waves(rendered, "test")))
 
-    def test_identity_hostnames_reject_example_and_shared_values(self) -> None:
-        rendered = {
-            "cyber-stack/matrix/dev/bootstrap": (
-                "data:\n  IDENTITY_HOSTNAME: identity.example.internal\n"
-            ),
-            "cyber-stack/matrix/prod/bootstrap": (
-                "data:\n  IDENTITY_HOSTNAME: identity.example.internal\n"
-            ),
-        }
-        self.assertEqual(
-            3, len(check_gitops._check_environment_identity_hostnames(rendered))
+
+class SchemaExecutorContractTest(unittest.TestCase):
+    marker = "schema-migrator-001-" + "a" * 64
+
+    def test_contract_marker_and_digest_are_structural(self) -> None:
+        rendered = documents(
+            f"""kind: Job
+metadata: {{name: ssl-proxy-tidb-schema-executor}}
+spec:
+  template:
+    metadata:
+      annotations: {{ssl-proxy.io/content-hash: {self.marker}}}
+    spec:
+      containers:
+        - image: registry/tidb-runtime-schema@sha256:{'b' * 64}
+"""
         )
+        self.assertEqual([], check_gitops._check_schema_executor_contract(rendered, "test", self.marker))
+        rendered[0]["spec"]["template"]["metadata"]["annotations"]["ssl-proxy.io/content-hash"] = "stale"
+        rendered[0]["spec"]["template"]["spec"]["containers"][0]["image"] = "registry/tidb-runtime-schema:latest"
+        self.assertEqual(2, len(check_gitops._check_schema_executor_contract(rendered, "test", self.marker)))
 
 
-class TraefikRedirectCheckTest(unittest.TestCase):
-    def test_rejects_unsupported_port_field(self) -> None:
-        rendered = "entrypoints.web.http.redirections.entrypoint.port=:443"
-        errors = check_gitops._check_traefik_redirect(rendered, "test")
-        self.assertEqual(1, len(errors))
-        self.assertIn("entrypoint.port", errors[0])
+class ApplicationSetTest(unittest.TestCase):
+    def application_set(self) -> dict[str, object]:
+        elements = []
+        for name, expected in check_gitops.WORKLOAD_APPLICATIONS.items():
+            elements.append({"name": name, **expected})
+        return documents(
+            """apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata: {name: ssl-proxy-workloads}
+spec:
+  generators:
+    - list:
+        elements: PLACEHOLDER
+  template:
+    metadata:
+      name: '{{name}}'
+      labels:
+        app.kubernetes.io/component: '{{component}}'
+        environment: '{{environment}}'
+    spec:
+      project: ssl-proxy
+      source:
+        repoURL: https://github.com/zlovtnik/ssl-proxy.git
+        targetRevision: main
+        path: '{{path}}'
+        kustomize: {}
+      destination: {server: https://kubernetes.default.svc, namespace: '{{namespace}}'}
+      syncPolicy:
+        automated: {prune: true, selfHeal: true, allowEmpty: false}
+        syncOptions: [PrunePropagationPolicy=foreground, ApplyOutOfSyncOnly=true, ServerSideApply=true]
+      ignoreDifferences:
+        - {group: apps, kind: StatefulSet, jsonPointers: [/spec/volumeClaimTemplates]}
+""".replace("PLACEHOLDER", repr(elements).replace("'", '"'))
+        )[0]
 
-    def test_accepts_valid_redirect(self) -> None:
-        rendered = (
-            "entrypoints.web.http.redirections.entrypoint.to=websecure\n"
-            "entrypoints.web.http.redirections.entrypoint.scheme=https"
-        )
-        self.assertEqual([], check_gitops._check_traefik_redirect(rendered, "test"))
+    def test_accepts_all_six_semantic_entries(self) -> None:
+        errors: list[str] = []
+        check_gitops._check_application_set([self.application_set()], errors)
+        self.assertEqual([], errors)
 
-
-class TiDBWaveCheckTest(unittest.TestCase):
-    def test_rejects_init_wave_not_less_than_schema(self) -> None:
-        rendered = (
-            "name: ssl-proxy-tidb-init\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "1"\n'
-            "name: ssl-proxy-tidb-schema-executor\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "1"\n'
-            "name: ssl-proxy-tidb-init-grants\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "2"'
-        )
-        errors = check_gitops._check_tidb_waves(rendered, "test")
-        self.assertTrue(any("init wave" in e for e in errors))
-
-    def test_rejects_schema_wave_not_less_than_grants(self) -> None:
-        rendered = (
-            "name: ssl-proxy-tidb-init\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "0"\n'
-            "name: ssl-proxy-tidb-schema-executor\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "2"\n'
-            "name: ssl-proxy-tidb-init-grants\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "2"'
-        )
-        errors = check_gitops._check_tidb_waves(rendered, "test")
-        self.assertTrue(any("schema executor wave" in e for e in errors))
-
-    def test_accepts_correct_wave_ordering(self) -> None:
-        rendered = (
-            "name: ssl-proxy-tidb-init\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "0"\n'
-            "name: ssl-proxy-tidb-schema-executor\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "1"\n'
-            "name: ssl-proxy-tidb-init-grants\n  annotations:\n"
-            '    argocd.argoproj.io/sync-wave: "2"'
-        )
-        self.assertEqual([], check_gitops._check_tidb_waves(rendered, "test"))
-
-    def test_skips_rendered_without_tidb_jobs(self) -> None:
-        rendered = "kind: Deployment\n  ssl-proxy-proxy\n"
-        self.assertEqual([], check_gitops._check_tidb_waves(rendered, "test"))
+    def test_rejects_missing_duplicate_and_misrouted_entries(self) -> None:
+        application_set = self.application_set()
+        elements = application_set["spec"]["generators"][0]["list"]["elements"]
+        elements.pop()
+        elements.append(dict(elements[0]))
+        elements[1]["path"] = "cyber-stack/matrix/prod/app-stack"
+        errors: list[str] = []
+        check_gitops._check_application_set([application_set], errors)
+        self.assertTrue(any("ssl-proxy-prod-app-stack exactly once" in error for error in errors))
+        self.assertTrue(any("ssl-proxy-bootstrap exactly once" in error for error in errors))
+        self.assertTrue(any("path: cyber-stack/matrix/dev/data-plane" in error for error in errors))
 
 
 if __name__ == "__main__":
