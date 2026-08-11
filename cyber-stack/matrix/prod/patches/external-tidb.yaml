@@ -55,6 +55,8 @@ spec:
   template:
     spec:
       initContainers:
+        - name: pem-to-pkcs12
+        - name: prepare-keycloak-home
         - name: bootstrap-admin-service
           env:
             - name: KC_DB_URL_HOST

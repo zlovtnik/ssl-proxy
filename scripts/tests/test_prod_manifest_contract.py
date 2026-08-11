@@ -44,6 +44,8 @@ spec:
   template:
     spec:
       initContainers:
+        - name: pem-to-pkcs12
+        - name: prepare-keycloak-home
         - name: bootstrap-admin-service
           env:
             - name: KC_DB_URL_HOST
@@ -103,13 +105,30 @@ class ProductionManifestContractTest(unittest.TestCase):
             [], check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
         )
 
-        entry = rendered[0]["spec"]["template"]["spec"]["initContainers"][0][
-            "env"
-        ][0]
+        bootstrap = next(
+            container
+            for container in rendered[0]["spec"]["template"]["spec"][
+                "initContainers"
+            ]
+            if container["name"] == "bootstrap-admin-service"
+        )
+        entry = bootstrap["env"][0]
         entry.pop("valueFrom")
         entry["value"] = "ssl-proxy-tidb"
         errors = check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
         self.assertTrue(any("bootstrap-admin-service" in error for error in errors))
+
+    def test_keycloak_bootstrap_runs_after_home_preparation(self) -> None:
+        rendered = keycloak()
+        init_containers = rendered[0]["spec"]["template"]["spec"][
+            "initContainers"
+        ]
+        init_containers.insert(0, init_containers.pop())
+
+        errors = check_gitops._check_prod_keycloak_external_tidb(rendered, "prod")
+        self.assertTrue(
+            any("prepare TLS and keycloak-home" in error for error in errors)
+        )
 
     def test_octopus_staging_rejects_runtime_or_fake_cutover_inputs(self) -> None:
         rendered = octopus()

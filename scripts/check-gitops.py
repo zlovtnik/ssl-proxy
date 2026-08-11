@@ -413,6 +413,29 @@ def _check_prod_keycloak_external_tidb(
     if len(deployments) != 1:
         return [f"{relative}: expected one production Keycloak Deployment"]
     pod_spec = _mapping(_path(deployments[0], "spec", "template", "spec"))
+    init_container_names = [
+        str(_mapping(container).get("name"))
+        for container in _list(pod_spec.get("initContainers"))
+    ]
+    expected_init_order = [
+        "pem-to-pkcs12",
+        "prepare-keycloak-home",
+        "bootstrap-admin-service",
+    ]
+    errors: list[str] = []
+    required_positions = [
+        init_container_names.index(name)
+        for name in expected_init_order
+        if init_container_names.count(name) == 1
+    ]
+    if (
+        len(required_positions) != len(expected_init_order)
+        or required_positions != sorted(required_positions)
+    ):
+        errors.append(
+            f"{relative}: Keycloak init containers must prepare TLS and "
+            "keycloak-home before bootstrap-admin-service"
+        )
     container_groups = (
         (
             "bootstrap-admin-service init container",
@@ -422,7 +445,6 @@ def _check_prod_keycloak_external_tidb(
         ("keycloak container", _list(pod_spec.get("containers")), "keycloak"),
     )
     expected = {"KC_DB_URL_HOST": "TIDB_HOST", "KC_DB_URL_PORT": "TIDB_PORT"}
-    errors: list[str] = []
     for description, containers, container_name in container_groups:
         matches = [
             _mapping(container)
