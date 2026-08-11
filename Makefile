@@ -8,7 +8,7 @@ REGISTRY_PLAIN_HTTP ?= 0
 ENV ?= prod
 KUBE_CONTEXT ?=
 KUBECTL ?= kubectl
-ARGOCD ?= argocd
+ARGOCD_NAMESPACE ?= argocd
 ARGOCD_TIMEOUT ?= 30m
 BUILDER ?= ssl-proxy-publisher
 BUILDX_READY ?= 0
@@ -30,7 +30,6 @@ PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
 KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
-ARGOCD_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--kube-context "$(KUBE_CONTEXT)",)
 
 .PHONY: build build-all publish publish-all kube-context-check recover-stack stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
@@ -84,22 +83,25 @@ recover-stack: kube-context-check
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
 
 argocd-server-health: kube-context-check
-	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace argocd wait \
+	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace "$(ARGOCD_NAMESPACE)" wait \
 		--for=condition=Available deployment --all --timeout="$(ARGOCD_TIMEOUT)"
-	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace argocd rollout status \
+	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace "$(ARGOCD_NAMESPACE)" rollout status \
 		statefulset/argocd-application-controller --timeout="$(ARGOCD_TIMEOUT)"
 
 argocd-status: argocd-server-health
-	$(ARGOCD) app list --core $(ARGOCD_CONTEXT_ARG) -o wide
+	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace "$(ARGOCD_NAMESPACE)" get \
+		applications.argoproj.io \
+		--selector app.kubernetes.io/part-of=ssl-proxy \
+		-o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision,PATH:.spec.source.path'
 
 argocd-wait: argocd-server-health
 	@for application in $(ARGOCD_APPLICATIONS); do \
-		$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace argocd wait \
+		$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace "$(ARGOCD_NAMESPACE)" wait \
 			--for=jsonpath='{.status.sync.status}'=Synced \
 			application/$$application --timeout="$(ARGOCD_TIMEOUT)"; \
 	done
 	@for application in $(ARGOCD_APPLICATIONS); do \
-		$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace argocd wait \
+		$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace "$(ARGOCD_NAMESPACE)" wait \
 			--for=jsonpath='{.status.health.status}'=Healthy \
 			application/$$application --timeout="$(ARGOCD_TIMEOUT)"; \
 	done
