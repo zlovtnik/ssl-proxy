@@ -30,6 +30,7 @@ Document = dict[str, Any]
 Documents = list[Document]
 
 CANONICAL_KUSTOMIZATIONS = (
+    "cyber-stack/argocd-bootstrap",
     "cyber-stack/argocd",
     "cyber-stack/matrix/dev",
     "cyber-stack/matrix/dev/bootstrap",
@@ -40,6 +41,8 @@ CANONICAL_KUSTOMIZATIONS = (
     "cyber-stack/matrix/prod/data-plane",
     "cyber-stack/matrix/prod/app-stack",
 )
+
+PLATFORM_BOOTSTRAP_APPLICATION = "ssl-proxy-platform-bootstrap"
 
 WORKLOAD_APPLICATIONS = {
     "ssl-proxy-prod-bootstrap": {
@@ -378,6 +381,147 @@ def _check_keycloak_database_credential(rendered: Documents | str, relative: str
     return []
 
 
+def _check_prod_alloy_positions(rendered: Documents | str, relative: str) -> list[str]:
+    daemon_sets = _find(
+        _documents(rendered), "DaemonSet", "ssl-proxy-telemetry-alloy"
+    )
+    if len(daemon_sets) != 1:
+        return [f"{relative}: expected one production Alloy DaemonSet"]
+    volumes = _list(_path(daemon_sets[0], "spec", "template", "spec", "volumes"))
+    positions = [
+        _mapping(volume)
+        for volume in volumes
+        if _mapping(volume).get("name") == "positions"
+    ]
+    if (
+        len(positions) != 1
+        or "emptyDir" not in positions[0]
+        or "hostPath" in positions[0]
+    ):
+        return [
+            f"{relative}: production Alloy positions must use emptyDir without hostPath"
+        ]
+    return []
+
+
+def _check_prod_keycloak_external_tidb(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-schema-migrator-keycloak"
+    )
+    if len(deployments) != 1:
+        return [f"{relative}: expected one production Keycloak Deployment"]
+    pod_spec = _mapping(_path(deployments[0], "spec", "template", "spec"))
+    container_groups = (
+        (
+            "bootstrap-admin-service init container",
+            _list(pod_spec.get("initContainers")),
+            "bootstrap-admin-service",
+        ),
+        ("keycloak container", _list(pod_spec.get("containers")), "keycloak"),
+    )
+    expected = {"KC_DB_URL_HOST": "TIDB_HOST", "KC_DB_URL_PORT": "TIDB_PORT"}
+    errors: list[str] = []
+    for description, containers, container_name in container_groups:
+        matches = [
+            _mapping(container)
+            for container in containers
+            if _mapping(container).get("name") == container_name
+        ]
+        if len(matches) != 1:
+            errors.append(f"{relative}: expected one Keycloak {description}")
+            continue
+        environment = _list(matches[0].get("env"))
+        for variable, key in expected.items():
+            entries = [
+                _mapping(entry)
+                for entry in environment
+                if _mapping(entry).get("name") == variable
+            ]
+            reference = (
+                _mapping(_path(entries[0], "valueFrom", "configMapKeyRef"))
+                if len(entries) == 1
+                else {}
+            )
+            if (
+                len(entries) != 1
+                or "value" in entries[0]
+                or reference.get("name") != "ssl-proxy-prod-tidb-endpoint"
+                or reference.get("key") != key
+            ):
+                errors.append(
+                    f"{relative}: Keycloak {description} {variable} must come from "
+                    f"ssl-proxy-prod-tidb-endpoint/{key}"
+                )
+    return errors
+
+
+def _check_prod_octopus_staging(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-java-coordinator"
+    )
+    if len(deployments) != 1:
+        return [f"{relative}: expected one production Octopus Deployment"]
+    containers = [
+        container
+        for container in _pod_containers(deployments[0])
+        if container.get("name") == "java-coordinator"
+    ]
+    if len(containers) != 1:
+        return [f"{relative}: expected one production Octopus container"]
+    environment = _list(containers[0].get("env"))
+    expected = {
+        "TIDB_ENABLED": "true",
+        "SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR": "1",
+        "OCTOPUS_PROCESSORS_ENABLED": "false",
+        "OCTOPUS_CONSUMERS_ENABLED": "false",
+        "OCTOPUS_ENVIRONMENT": "production",
+        "OCTOPUS_CUTOVER_DEV_BYPASS": "false",
+    }
+    errors: list[str] = []
+    for variable, value in expected.items():
+        entries = [
+            _mapping(entry)
+            for entry in environment
+            if _mapping(entry).get("name") == variable
+        ]
+        if len(entries) != 1 or entries[0].get("value") != value:
+            errors.append(
+                f"{relative}: staged production Octopus requires {variable}={value}"
+            )
+
+    names = {
+        str(_mapping(entry).get("name"))
+        for entry in environment
+        if _mapping(entry).get("name") is not None
+    }
+    if "OCTOPUS_ENABLED_PROCESSORS" in names:
+        errors.append(
+            f"{relative}: staged production Octopus must use the empty processor "
+            "catalog default, not an environment string"
+        )
+    cutover_inputs = {
+        "OCTOPUS_CUTOVER_ARTIFACT_PATH",
+        "OCTOPUS_CUTOVER_SIGNATURE_PATH",
+        "OCTOPUS_CUTOVER_PUBLIC_KEY_PATH",
+        "OCTOPUS_CUTOVER_PUBLIC_KEY_BASE64",
+        "OCTOPUS_CUTOVER_PUBLIC_KEY_SHA256",
+        "OCTOPUS_CUTOVER_SCHEMA_VERSION",
+        "OCTOPUS_CUTOVER_CLUSTER_ID",
+        "OCTOPUS_CUTOVER_REQUIRED_CONSUMER_GROUPS",
+    }
+    unexpected = sorted(names & cutover_inputs)
+    if unexpected:
+        errors.append(
+            f"{relative}: staged production Octopus must not contain unsigned "
+            f"cutover inputs: {', '.join(unexpected)}"
+        )
+    return errors
+
+
 def _topic_replication(documents: Documents) -> list[int]:
     values: list[int] = []
     for document in documents:
@@ -673,6 +817,80 @@ def _check_application_set(documents: Documents, errors: list[str]) -> None:
         errors.append(f"{relative}: workload Applications must be generated by the ApplicationSet")
 
 
+def _check_platform_bootstrap_application(
+    documents: Documents, errors: list[str]
+) -> None:
+    relative = "cyber-stack/argocd-bootstrap"
+    applications = [
+        document for document in documents if document.get("kind") == "Application"
+    ]
+    if (
+        len(documents) != 1
+        or len(applications) != 1
+        or _metadata(applications[0]).get("name")
+        != PLATFORM_BOOTSTRAP_APPLICATION
+    ):
+        errors.append(
+            f"{relative}: expected only one {PLATFORM_BOOTSTRAP_APPLICATION} Application"
+        )
+        return
+
+    application = applications[0]
+    source = _mapping(_path(application, "spec", "source"))
+    destination = _mapping(_path(application, "spec", "destination"))
+    automated = _mapping(_path(application, "spec", "syncPolicy", "automated"))
+    required = {
+        "metadata.namespace: argocd": _metadata(application).get("namespace")
+        == "argocd",
+        "project: default": _path(application, "spec", "project") == "default",
+        "repoURL: https://github.com/zlovtnik/ssl-proxy.git": source.get(
+            "repoURL"
+        )
+        == "https://github.com/zlovtnik/ssl-proxy.git",
+        "targetRevision: main": source.get("targetRevision") == "main",
+        "path: cyber-stack/argocd": source.get("path")
+        == "cyber-stack/argocd",
+        "destination.server: https://kubernetes.default.svc": destination.get(
+            "server"
+        )
+        == "https://kubernetes.default.svc",
+        "destination.namespace: argocd": destination.get("namespace")
+        == "argocd",
+        "automated.enabled must not be false": automated.get("enabled") is not False,
+        "automated.prune: false": automated.get("prune") is False,
+        "automated.selfHeal: true": automated.get("selfHeal") is True,
+        "automated.allowEmpty: false": automated.get("allowEmpty") is False,
+    }
+    for contract, valid in required.items():
+        if not valid:
+            errors.append(f"{relative}: bootstrap Application must set {contract}")
+    if "kustomize" not in source or "directory" in source:
+        errors.append(f"{relative}: bootstrap Application must use Kustomize")
+    sync_options = {
+        str(option)
+        for option in _list(_path(application, "spec", "syncPolicy", "syncOptions"))
+    }
+    required_options = {"ApplyOutOfSyncOnly=true", "ServerSideApply=true"}
+    if not required_options.issubset(sync_options):
+        errors.append(
+            f"{relative}: bootstrap Application sync options are not preserved"
+        )
+    if "CreateNamespace=true" in sync_options:
+        errors.append(
+            f"{relative}: argocd namespace must be provided by the platform"
+        )
+    finalizers = {
+        str(finalizer) for finalizer in _list(_metadata(application).get("finalizers"))
+    }
+    if any(
+        finalizer.startswith("resources-finalizer.argocd.argoproj.io")
+        for finalizer in finalizers
+    ):
+        errors.append(
+            f"{relative}: bootstrap Application must not cascade-delete its control plane"
+        )
+
+
 def _check_prod_project(documents: Documents, errors: list[str]) -> None:
     relative = "cyber-stack/argocd"
     projects = _find(documents, "AppProject", "ssl-proxy")
@@ -794,6 +1012,23 @@ def check_repository(root: Path, executable: str) -> list[str]:
             errors.extend(check(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
+    production_render_checks = {
+        "cyber-stack/matrix/prod/data-plane": (_check_prod_alloy_positions,),
+        "cyber-stack/matrix/prod/app-stack": (
+            _check_prod_keycloak_external_tidb,
+            _check_prod_octopus_staging,
+        ),
+        "cyber-stack/matrix/prod": (
+            _check_prod_alloy_positions,
+            _check_prod_keycloak_external_tidb,
+            _check_prod_octopus_staging,
+        ),
+    }
+    for relative, checks in production_render_checks.items():
+        if relative not in rendered_kustomizations:
+            continue
+        for check in checks:
+            errors.extend(check(rendered_kustomizations[relative], relative))
     prod_data_plane = "cyber-stack/matrix/prod/data-plane"
     if prod_data_plane in rendered_kustomizations:
         errors.extend(
@@ -817,6 +1052,10 @@ def check_repository(root: Path, executable: str) -> list[str]:
         else:
             errors.extend(compare_contract_to_rendered(platform_contract, prod_aggregate))
     errors.extend(find_committed_secret_values(root))
+    if "cyber-stack/argocd-bootstrap" in rendered_kustomizations:
+        _check_platform_bootstrap_application(
+            rendered_kustomizations["cyber-stack/argocd-bootstrap"], errors
+        )
     if "cyber-stack/argocd" in rendered_kustomizations:
         _check_application_set(rendered_kustomizations["cyber-stack/argocd"], errors)
         _check_prod_project(rendered_kustomizations["cyber-stack/argocd"], errors)

@@ -318,6 +318,73 @@ spec:
         self.assertTrue(any("unexpected Applications: ssl-proxy-app-stack" in error for error in errors))
 
 
+class PlatformBootstrapApplicationTest(unittest.TestCase):
+    def application(self) -> list[dict[str, object]]:
+        return documents(
+            """apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ssl-proxy-platform-bootstrap
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/zlovtnik/ssl-proxy.git
+    targetRevision: main
+    path: cyber-stack/argocd
+    kustomize: {}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: {prune: false, selfHeal: true, allowEmpty: false}
+    syncOptions: [ApplyOutOfSyncOnly=true, ServerSideApply=true]
+"""
+        )
+
+    def test_accepts_durable_control_plane_owner(self) -> None:
+        errors: list[str] = []
+
+        check_gitops._check_platform_bootstrap_application(
+            self.application(), errors
+        )
+
+        self.assertEqual([], errors)
+
+    def test_rejects_wrong_source_destination_and_destructive_pruning(self) -> None:
+        application = self.application()
+        application[0]["spec"]["source"]["repoURL"] = "https://example.invalid/repo.git"
+        application[0]["spec"]["destination"]["namespace"] = "default"
+        application[0]["spec"]["syncPolicy"]["automated"]["enabled"] = False
+        application[0]["spec"]["syncPolicy"]["automated"]["prune"] = True
+        application[0]["spec"]["syncPolicy"]["syncOptions"].append(
+            "CreateNamespace=true"
+        )
+        application[0]["metadata"]["finalizers"] = [
+            "resources-finalizer.argocd.argoproj.io"
+        ]
+        errors: list[str] = []
+
+        check_gitops._check_platform_bootstrap_application(application, errors)
+
+        self.assertTrue(any("repoURL" in error for error in errors))
+        self.assertTrue(any("destination.namespace" in error for error in errors))
+        self.assertTrue(any("automated.enabled" in error for error in errors))
+        self.assertTrue(any("automated.prune: false" in error for error in errors))
+        self.assertTrue(any("provided by the platform" in error for error in errors))
+        self.assertTrue(any("cascade-delete" in error for error in errors))
+
+    def test_rejects_additional_bootstrap_resources(self) -> None:
+        rendered = self.application()
+        rendered.extend(documents("kind: ConfigMap\nmetadata: {name: unexpected}\n"))
+        errors: list[str] = []
+
+        check_gitops._check_platform_bootstrap_application(rendered, errors)
+
+        self.assertEqual(1, len(errors))
+        self.assertIn("expected only one", errors[0])
+
+
 class ProductionProjectTest(unittest.TestCase):
     def test_accepts_only_the_production_destination(self) -> None:
         project = documents(

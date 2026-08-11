@@ -60,9 +60,11 @@ class FakeRunner:
         rounds: Sequence[Mapping[str, dict[str, object] | CommandResult]],
         *,
         rbac: bool = False,
+        unexpectedly_allowed: tuple[str, str, str] | None = None,
     ) -> None:
         self.rounds = rounds
         self.rbac = rbac
+        self.unexpectedly_allowed = unexpectedly_allowed
         self.application_calls = 0
         self.commands: list[tuple[str, ...]] = []
 
@@ -74,9 +76,16 @@ class FakeRunner:
                 raise AssertionError("unexpected RBAC check")
             verb = command[command.index("can-i") + 1]
             resource = command[command.index("can-i") + 2]
+            scope = (
+                "*"
+                if "--all-namespaces" in command
+                else command[command.index("--namespace") + 1]
+            )
             allowed = verb == "get" and resource.startswith(
                 "applications.argoproj.io/ssl-proxy-prod-"
             )
+            if self.unexpectedly_allowed == (verb, resource, scope):
+                allowed = True
             return CommandResult(0 if allowed else 1, "yes\n" if allowed else "no\n", "")
         name = command[command.index("applications.argoproj.io") + 1]
         round_index = min(self.application_calls // len(APPLICATIONS), len(self.rounds) - 1)
@@ -96,9 +105,14 @@ def run_gate(
     *,
     timeout: float = 0,
     verify_rbac: bool = False,
+    unexpectedly_allowed: tuple[str, str, str] | None = None,
 ) -> tuple[int, str, FakeRunner]:
     clock = FakeClock()
-    runner = FakeRunner(rounds, rbac=verify_rbac)
+    runner = FakeRunner(
+        rounds,
+        rbac=verify_rbac,
+        unexpectedly_allowed=unexpectedly_allowed,
+    )
     gate = ProductionGate(
         REVISION,
         timeout_seconds=timeout,
@@ -190,7 +204,8 @@ class ProductionGateTest(unittest.TestCase):
             health="Degraded",
             message=(
                 "password=hunter2 token=topsecret "
-                "https://alice:credential@example.test/path"
+                "https://alice:credential@example.test/path "
+                '"authorization":"Bearer gate-token"'
             ),
         )
 
@@ -200,6 +215,7 @@ class ProductionGateTest(unittest.TestCase):
         self.assertNotIn("hunter2", report)
         self.assertNotIn("topsecret", report)
         self.assertNotIn("credential", report)
+        self.assertNotIn("gate-token", report)
         self.assertIn("[REDACTED]", report)
 
     def test_rbac_preflight_allows_only_gate_reads(self) -> None:
@@ -210,7 +226,65 @@ class ProductionGateTest(unittest.TestCase):
         self.assertEqual(0, returncode, report)
         self.assertIn("RBAC preflight", report)
         self.assertIn("Secret reads", report)
-        self.assertTrue(any("--all-namespaces" in command for command in runner.commands))
+        secret_checks = [
+            command
+            for command in runner.commands
+            if "can-i" in command
+            and command[command.index("can-i") + 2] == "secrets"
+            and command[command.index("can-i") + 1] in ("get", "list", "watch")
+        ]
+        self.assertEqual(9, len(secret_checks))
+        for verb in ("get", "list", "watch"):
+            self.assertEqual(
+                3,
+                sum(
+                    command[command.index("can-i") + 1] == verb
+                    for command in secret_checks
+                ),
+            )
+        self.assertTrue(any("--all-namespaces" in command for command in secret_checks))
+        self.assertTrue(
+            any(("--namespace", "argocd") == command[-2:] for command in secret_checks)
+        )
+        self.assertTrue(
+            any(
+                ("--namespace", "prod-ssl-proxy") == command[-2:]
+                for command in secret_checks
+            )
+        )
+        mutation_checks = [
+            command
+            for command in runner.commands
+            if "can-i" in command
+            and command[command.index("can-i") + 1 : command.index("can-i") + 3]
+            == ("patch", "deployments.apps")
+        ]
+        self.assertEqual(3, len(mutation_checks))
+        self.assertTrue(
+            any("--all-namespaces" in command for command in mutation_checks)
+        )
+        self.assertTrue(
+            any(("--namespace", "argocd") == command[-2:] for command in mutation_checks)
+        )
+        self.assertTrue(
+            any(
+                ("--namespace", "prod-ssl-proxy") == command[-2:]
+                for command in mutation_checks
+            )
+        )
+
+    def test_rbac_preflight_rejects_namespace_local_secret_access(self) -> None:
+        returncode, report, _ = run_gate(
+            (healthy_round(),),
+            verify_rbac=True,
+            unexpectedly_allowed=("get", "secrets", "prod-ssl-proxy"),
+        )
+
+        self.assertEqual(1, returncode)
+        self.assertIn(
+            "Secret get isolation failed in namespace prod-ssl-proxy", report
+        )
+        self.assertIn("RESULT: FAILED (RBAC preflight)", report)
 
 
 if __name__ == "__main__":

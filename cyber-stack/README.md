@@ -155,13 +155,21 @@ make gitops-check
 Read-only cluster checks:
 
 ```bash
-make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s REGISTRY_PLAIN_HTTP=1
-make recover-stack ENV=dev KUBE_CONTEXT=docker-desktop REGISTRY_PLAIN_HTTP=1
+export KUBE_CONTEXT="$(kubectl config current-context)"
+make recover-stack ENV=prod REGISTRY_PLAIN_HTTP=1
+make recover-stack ENV=dev REGISTRY_PLAIN_HTTP=1
 kustomize build --load-restrictor LoadRestrictionsNone cyber-stack/matrix/dev >/dev/null
 ```
 
 `recover-stack` defaults to production and the current Kubernetes context. It
-prints the resolved context and namespace before reporting Git/Kustomize, Argo
+is usually simplest to omit `KUBE_CONTEXT`; exporting the current context as
+shown above freezes that selection for a sequence of commands. Context names
+are local to each host, so do not copy a workstation context name onto a
+server. Use `kubectl config get-contexts -o name` before exporting a different
+context. If the host requires a non-default client executable, export
+`KUBECTL` with its absolute path; both the Make preflight and recovery helper
+honor it. The report prints the resolved context and namespace before reporting
+Git/Kustomize, Argo
 CD (production only), desired and live images, registry tags, runtime image
 IDs, required platform object/key presence, workload and pod health, and recent
 warning events. It prints the complete report before returning nonzero for

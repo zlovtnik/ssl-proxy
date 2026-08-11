@@ -1,54 +1,54 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: dev-ssl-proxy
-resources:
   # Bootstrap owns this ConfigMap. It remains a local render input because the
   # IDENTITY_HOSTNAME substitution is resolved while app-stack renders.
-  - ../../../base/platform-config/configmap.yaml
-  - ../../../base/proxy/deployment.yaml
-  - ../../../base/proxy/service.yaml
-  - ../../../base/java-coordinator/deployment.yaml
-  - ../../../base/schema-migrator
-  - ../../../base/atheros-sensor/daemonset.yaml
-  - ../../../base/atheros-search
+resources:
+- ../../../base/platform-config/configmap.yaml
+- ../../../base/proxy/deployment.yaml
+- ../../../base/proxy/service.yaml
+- ../../../base/java-coordinator/deployment.yaml
+- ../../../base/schema-migrator
+- ../../../base/atheros-sensor/daemonset.yaml
+- ../../../base/atheros-search
 images:
-  - name: ssl-proxy
-    newName: 192.168.1.221:5000/ssl-proxy
-    digest: sha256:4d48e5edeba6257007b8169d85bd6148c12847c5c91ffcc2df7da8c802c596a1
-  - name: java-coordinator
-    newName: 192.168.1.221:5000/java-coordinator
-    digest: sha256:34ce5b4072eebd8809be883ba4f7ffda8bc787614a43b9876c1c543382097cd7
-  - name: atheros-sensor
-    newName: 192.168.1.221:5000/atheros-sensor
-    digest: sha256:9458bb85f29b96b87abc3d84fffa791e219f0584321c035a1f6f2fa036c76937
-  - name: atheros-search
-    newName: 192.168.1.221:5000/atheros-search
-    digest: sha256:3d1317eba8b0c4088e15dc0aa64e16bef88b4a365e81fe528ef41340d98975d3
-  - name: atheros-search-ui
-    newName: 192.168.1.221:5000/atheros-search-ui
-    digest: sha256:dc319805ab7ae99a40049a3259ae5b560ede7380cfe51ee4e88ecfbe7854d1a0
-  - name: schema-migrator-backend
-    newName: 192.168.1.221:5000/schema-migrator-backend
-    digest: sha256:845c627d99b8fe2136288d27f9cb5c458f96872d49528e1af9d4a8b4bfdc525e
-  - name: schema-migrator-ui
-    newName: 192.168.1.221:5000/schema-migrator-ui
-    digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
+- digest: sha256:3d1317eba8b0c4088e15dc0aa64e16bef88b4a365e81fe528ef41340d98975d3
+  name: atheros-search
+  newName: 192.168.1.221:5000/atheros-search
+- digest: sha256:dc319805ab7ae99a40049a3259ae5b560ede7380cfe51ee4e88ecfbe7854d1a0
+  name: atheros-search-ui
+  newName: 192.168.1.221:5000/atheros-search-ui
+- digest: sha256:9458bb85f29b96b87abc3d84fffa791e219f0584321c035a1f6f2fa036c76937
+  name: atheros-sensor
+  newName: 192.168.1.221:5000/atheros-sensor
+- digest: sha256:e426f3c508f04a06cc2440e8c0594c877287205371ef73bd87846c937e704724
+  name: java-coordinator
+  newName: 192.168.1.221:5000/java-coordinator
+- digest: sha256:845c627d99b8fe2136288d27f9cb5c458f96872d49528e1af9d4a8b4bfdc525e
+  name: schema-migrator-backend
+  newName: 192.168.1.221:5000/schema-migrator-backend
+- digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
+  name: schema-migrator-ui
+  newName: 192.168.1.221:5000/schema-migrator-ui
+- digest: sha256:4d48e5edeba6257007b8169d85bd6148c12847c5c91ffcc2df7da8c802c596a1
+  name: ssl-proxy
+  newName: 192.168.1.221:5000/ssl-proxy
 patches:
-  - path: ../patches/identity-hostname.yaml
-  - target:
-      kind: ConfigMap
-      labelSelector: app.kubernetes.io/component=platform-config
-    path: ../patches/local-config-annotation.yaml
-  - path: ../patches/proxy-replicas.yaml
-  - path: ../patches/octopus-environment.yaml
-  - path: ../patches/keycloak-recovery.yaml
+- path: ../patches/identity-hostname.yaml
+- path: ../patches/local-config-annotation.yaml
+  target:
+    kind: ConfigMap
+    labelSelector: app.kubernetes.io/component=platform-config
+- path: ../patches/proxy-replicas.yaml
+- path: ../patches/octopus-environment.yaml
+- path: ../patches/keycloak-recovery.yaml
 configurations:
-  - ../../../base/schema-migrator/kustomizeconfig.yaml
+- ../../../base/schema-migrator/kustomizeconfig.yaml
 vars:
-  - name: IDENTITY_HOSTNAME
-    objref:
-      apiVersion: v1
-      kind: ConfigMap
-      name: ssl-proxy-platform-config
-    fieldref:
-      fieldpath: data.IDENTITY_HOSTNAME
+- fieldref:
+    fieldPath: data.IDENTITY_HOSTNAME
+  name: IDENTITY_HOSTNAME
+  objref:
+    apiVersion: v1
+    kind: ConfigMap
+    name: ssl-proxy-platform-config

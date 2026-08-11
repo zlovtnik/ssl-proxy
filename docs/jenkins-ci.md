@@ -7,14 +7,23 @@ remains the authoritative image inventory and build contract.
 
 ## Local development CI server
 
-Copy `.env.example` to the ignored `.env`, replace every placeholder used by
-the CI stack, and create the administrator password with restrictive
-permissions:
+Copy `.env.example` to the ignored `.env` and replace every placeholder used by
+the CI stack. The platform secret workflow must first write the production gate
+kubeconfig to a root-owned file outside this repository. Add its absolute host
+path to `.env`; the variable contains a path, never the kubeconfig itself:
+
+```dotenv
+JENKINS_PROD_READONLY_KUBECONFIG_FILE=/etc/ssl-proxy/jenkins/prod-readonly-kubeconfig
+```
+
+The variable is required: Compose refuses to render the CI stack when it is
+unset. Create the administrator password with restrictive permissions, validate
+the Compose model without printing it, and start the services:
 
 ```bash
 umask 077
 openssl rand -base64 32 > secrets/jenkins-admin-password
-docker compose -f docker-compose.ci.yaml config
+docker compose -f docker-compose.ci.yaml config --quiet
 docker compose -f docker-compose.ci.yaml up -d --build
 ```
 
@@ -42,6 +51,21 @@ docker compose -f docker-compose.ci.yaml down
 
 Do not add `--volumes` unless permanent deletion of Jenkins and registry data
 is explicitly intended and backed up.
+
+### Local development credential reload
+
+After the platform workflow atomically replaces the configured kubeconfig host
+file, recreate only the controller in the local Compose CI harness so Docker
+remounts the file and JCasC reloads it:
+
+```bash
+docker compose -f docker-compose.ci.yaml config --quiet
+docker compose -f docker-compose.ci.yaml up -d --no-deps --force-recreate jenkins
+docker compose -f docker-compose.ci.yaml ps jenkins
+```
+
+These commands manage only the local CI harness. They do not edit, restart or
+otherwise mutate any production Kubernetes resource.
 
 ## Pipeline behavior
 
@@ -91,13 +115,31 @@ review.
 
 ## Production gate credential
 
-Provision a Jenkins secret-file credential named
-`ssl-proxy-prod-readonly-kubeconfig` from Vault. It must authenticate only the
-`argocd/ssl-proxy-production-gate` ServiceAccount declared under
+The platform secret workflow provisions the kubeconfig from Vault as the host
+file named by `JENKINS_PROD_READONLY_KUBECONFIG_FILE`. It must authenticate only
+the `argocd/ssl-proxy-production-gate` ServiceAccount declared under
 `cyber-stack/argocd`. The checked-in Role is name-scoped to `get` the three
 production Applications; it grants no Secret read, workload read or mutation
-verb. The pipeline binds the credential only around `make production-gate` and
-passes the full checkout SHA explicitly.
+verb. Keep the source file outside the checkout, restrict host access to the
+platform operator and Docker daemon, and never print, copy into `.env`, archive
+or attach the file to a build.
+
+Compose mounts that file only into the controller as the
+`ssl-proxy-prod-readonly-kubeconfig` secret at
+`/run/secrets/ssl-proxy-prod-readonly-kubeconfig`. At startup, Configuration as
+Code reads it into a Jenkins secret-file credential with the same ID. The
+pipeline binds the credential only around `make production-gate` and passes the
+full checkout SHA explicitly. Neither the Compose model nor the checked-in
+JCasC file contains credential bytes.
+
+For rotation, have the platform workflow write and validate a candidate file,
+then atomically replace the configured host path while preserving its owner and
+restrictive mode. Then use the local development credential reload procedure
+above to remount the file and reload JCasC.
+
+Confirm the next production gate succeeds before revoking the old credential.
+Record only the rotation time, credential version and verification result; do
+not include kubeconfig content or command output that contains it.
 
 The gate performs a read-only authorization preflight before polling. It
 requires each named Application read and rejects a credential that can read

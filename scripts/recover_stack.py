@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -33,8 +34,6 @@ from platform_input_contract import (
 
 
 CANONICAL_SLICES = ("bootstrap", "data-plane", "app-stack")
-# The Makefile's default `git rev-parse --short` contract is at least 7 chars.
-MIN_GIT_ABBREVIATION_LENGTH = 7
 REGISTRY_LOOKUP_WORKER_LIMIT = 8
 MANIFEST_ACCEPT = ", ".join(
     (
@@ -111,9 +110,58 @@ def _subprocess_runner(command: Sequence[str], repository_root: Path) -> Command
     return CommandResult(result.returncode, result.stdout, result.stderr)
 
 
+def sanitize_diagnostic(value: Any, limit: int = 300) -> str:
+    text = str(value or "")
+    text = re.sub(
+        r"(?is)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*?"
+        r"-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----",
+        "[REDACTED PRIVATE KEY]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+:[^/@\s]+@",
+        r"\1[REDACTED]@",
+        text,
+    )
+    text = re.sub(
+        r'''(?i)(["']?authorization["']?)(\s*[=:]\s*)'''
+        r'''(?:"[^"]*"|'[^']*'|(?:(?:basic|bearer)\s+)?[^\s,;&]+)''',
+        r"\1\2[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b[^\s:@/]+:[^\s@/]+@(?=tcp\(|[a-z0-9.-]+(?::\d+)?)",
+        "[REDACTED]@",
+        text,
+    )
+    sensitive_name = (
+        r"[a-z0-9_.-]*(?:password|passwd|token|secret|api[-_]?key|"
+        r"authorization|"
+        r"access[-_]?key|private[-_]?key|preshared[-_]?key|encrypt[-_]?key|"
+        r"jwt[-_]?secret|htpasswd|dsn)[a-z0-9_.-]*"
+    )
+    text = re.sub(
+        rf'''(?i)(?<![a-z0-9_.-])(["']?{sensitive_name}["']?)(\s*[=:]\s*)'''
+        r'(?:"[^"]*"|\'[^\']*\'|[^\s,;&]+)',
+        r"\1\2[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        rf"(?i)(--?{sensitive_name})(\s+)([^\s,;&]+)",
+        r"\1\2[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
+        "[REDACTED JWT]",
+        text,
+    )
+    return " ".join(text.split())[:limit]
+
+
 def _short_error(result: CommandResult) -> str:
     detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-    return " ".join(detail.split())[:300]
+    return sanitize_diagnostic(detail)
 
 
 def _load_yaml_documents(content: str, label: str) -> list[Mapping[str, Any]]:
@@ -469,6 +517,7 @@ class RecoveryReporter:
         kustomize: str,
         registry_plain_http: bool,
         *,
+        kubectl: str = "kubectl",
         runner: CommandRunner = _subprocess_runner,
         registry_resolver: RegistryResolver = resolve_registry_tags,
     ) -> None:
@@ -476,6 +525,7 @@ class RecoveryReporter:
         self.environment = environment
         self.requested_context = kube_context.strip()
         self.kustomize = kustomize
+        self.kubectl = kubectl
         self.registry_plain_http = registry_plain_http
         self.runner = runner
         self.registry_resolver = registry_resolver
@@ -484,6 +534,7 @@ class RecoveryReporter:
         self.cluster_available = False
 
     def _block(self, detail: str) -> None:
+        detail = sanitize_diagnostic(detail, limit=500)
         if detail not in self.blockers:
             self.blockers.append(detail)
 
@@ -491,7 +542,7 @@ class RecoveryReporter:
         return self.runner(command, self.repository_root)
 
     def _kubectl(self, context: str, *arguments: str) -> CommandResult:
-        return self._run("kubectl", "--context", context, *arguments)
+        return self._run(self.kubectl, "--context", context, *arguments)
 
     def _json_result(self, result: CommandResult, label: str) -> Mapping[str, Any] | None:
         if result.returncode != 0:
@@ -512,7 +563,7 @@ class RecoveryReporter:
             context = self.requested_context
             source = "explicit KUBE_CONTEXT"
         else:
-            result = self._run("kubectl", "config", "current-context")
+            result = self._run(self.kubectl, "config", "current-context")
             if result.returncode != 0 or not result.stdout.strip():
                 self._block(
                     f"cannot resolve current Kubernetes context: {_short_error(result)}"
@@ -522,10 +573,12 @@ class RecoveryReporter:
             source = "kubectl current-context"
 
         configured = self._run(
-            "kubectl", "config", "get-contexts", context, "-o", "name"
+            self.kubectl, "config", "get-contexts", context, "-o", "name"
         )
         if configured.returncode != 0 or configured.stdout.strip() != context:
-            available = self._run("kubectl", "config", "get-contexts", "-o", "name")
+            available = self._run(
+                self.kubectl, "config", "get-contexts", "-o", "name"
+            )
             names = ", ".join(available.stdout.split()) or "<none>"
             self._block(
                 f'Kubernetes context "{context}" is not configured; available: {names}'
@@ -533,7 +586,7 @@ class RecoveryReporter:
             return "<unresolved>", f"{source} is unavailable"
 
         reachable = self._run(
-            "kubectl",
+            self.kubectl,
             "--context",
             context,
             "version",
@@ -586,7 +639,9 @@ class RecoveryReporter:
             try:
                 documents = _load_yaml_documents(result.stdout, f"{label} render")
             except ValueError as error:
-                self.lines.append(f"  Render {label}: ERROR {error}")
+                self.lines.append(
+                    f"  Render {label}: ERROR {sanitize_diagnostic(error)}"
+                )
                 self._block(f"Kustomize render is invalid for {label}")
                 continue
             rendered[label] = documents
@@ -637,16 +692,9 @@ class RecoveryReporter:
             sync_status = str(sync.get("status", "Unknown"))
             health_status = str(health.get("status", "Unknown"))
             revision_match = (
-                git_head != "UNKNOWN"
-                and len(revision) >= MIN_GIT_ABBREVIATION_LENGTH
+                re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision) is not None
                 and revision == git_head
             )
-            if (
-                git_head != "UNKNOWN"
-                and len(revision) >= MIN_GIT_ABBREVIATION_LENGTH
-                and git_head.startswith(revision)
-            ):
-                revision_match = True
             self.lines.append(
                 f"  {name}: path={path} revision={revision} "
                 f"local={'MATCH' if revision_match else 'DIFF'} "
@@ -654,6 +702,11 @@ class RecoveryReporter:
             )
             if path != expected_path:
                 self._block(f"Argo CD Application path drift: {name} uses {path}")
+            if not revision_match:
+                self._block(
+                    f"Argo CD Application revision mismatch: {name} "
+                    f"expected {git_head}, got {revision}"
+                )
             if sync_status != "Synced" or health_status != "Healthy":
                 self._block(
                     f"Argo CD Application unhealthy: {name} sync={sync_status} health={health_status}"
@@ -681,7 +734,7 @@ class RecoveryReporter:
         for contract in contracts:
             result = results[contract.service]
             if result.status == "UNKNOWN":
-                detail = " ".join(result.detail.split())[:160]
+                detail = sanitize_diagnostic(result.detail, limit=160)
                 self.lines.append(
                     f"  {contract.service}: desired={contract.reference} tags=UNKNOWN ({detail})"
                 )
@@ -1007,7 +1060,7 @@ class RecoveryReporter:
                 or metadata.get("creationTimestamp")
                 or "UNKNOWN"
             )
-            message = " ".join(str(event.get("message", "")).split())[:240]
+            message = sanitize_diagnostic(event.get("message"), limit=240)
             self.lines.append(
                 f"  {timestamp} {involved.get('kind', 'Object')}/{involved.get('name', 'UNKNOWN')} "
                 f"{event.get('reason', 'Warning')}: {message}"
@@ -1067,6 +1120,7 @@ class RecoveryReporter:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--environment", choices=ENVIRONMENTS, default="prod")
+    parser.add_argument("--kubectl", default="kubectl")
     parser.add_argument("--kube-context", default="")
     parser.add_argument("--kustomize", default="kubectl")
     parser.add_argument("--registry-plain-http", choices=("0", "1"), default="0")
@@ -1084,6 +1138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments.kube_context,
         arguments.kustomize,
         arguments.registry_plain_http == "1",
+        kubectl=arguments.kubectl,
     )
     returncode, report = reporter.run()
     sys.stdout.write(report)

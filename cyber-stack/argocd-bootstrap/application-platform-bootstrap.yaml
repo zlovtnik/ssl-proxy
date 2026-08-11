@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ssl-proxy-platform-bootstrap
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/zlovtnik/ssl-proxy.git
+    targetRevision: main
+    path: cyber-stack/argocd
+    kustomize: {}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      # Control-plane deletion must be deliberate; a missing file must not
+      # cascade into removal of the generated production Applications.
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true

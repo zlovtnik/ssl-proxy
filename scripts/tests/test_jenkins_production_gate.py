@@ -50,6 +50,57 @@ class JenkinsProductionGateTest(unittest.TestCase):
             re.compile(r"^credentials-binding:728\.v902a_273b_8947$", re.MULTILINE),
         )
 
+    def test_compose_mounts_required_readonly_kubeconfig_secret(self) -> None:
+        compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
+            encoding="utf-8"
+        )
+        environment_example = (REPOSITORY_ROOT / ".env.example").read_text(
+            encoding="utf-8"
+        )
+        jenkins_service = compose[
+            compose.index("  jenkins:\n") : compose.index("\nnetworks:")
+        ]
+
+        self.assertIn(
+            "      - ssl-proxy-prod-readonly-kubeconfig", jenkins_service
+        )
+        self.assertRegex(
+            compose,
+            re.compile(
+                r"^  ssl-proxy-prod-readonly-kubeconfig:\n"
+                r"    file: \$\{JENKINS_PROD_READONLY_KUBECONFIG_FILE:\?"
+                r"JENKINS_PROD_READONLY_KUBECONFIG_FILE is required\}$",
+                re.MULTILINE,
+            ),
+        )
+        self.assertIn(
+            "JENKINS_PROD_READONLY_KUBECONFIG_FILE=",
+            environment_example,
+        )
+
+    def test_jcasc_imports_readonly_kubeconfig_as_file_credential(self) -> None:
+        casc = (REPOSITORY_ROOT / "docker/jenkins/casc/jenkins.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertRegex(
+            casc,
+            re.compile(
+                r'^credentials:\n'
+                r"  system:\n"
+                r"    domainCredentials:\n"
+                r"      - credentials:\n"
+                r"          - file:\n"
+                r"              scope: GLOBAL\n"
+                r'              id: "ssl-proxy-prod-readonly-kubeconfig"\n'
+                r'              description: "[^"]+"\n'
+                r'              fileName: "prod-readonly-kubeconfig"\n'
+                r'              secretBytes: "\$\{readFileBase64:'
+                r'/run/secrets/ssl-proxy-prod-readonly-kubeconfig\}"$',
+                re.MULTILINE,
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

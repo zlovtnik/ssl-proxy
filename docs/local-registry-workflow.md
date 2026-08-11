@@ -8,11 +8,14 @@ documented in the [GitOps guide](../cyber-stack/README.md).
 
 The dedicated private CI stack runs the registry, Jenkins controller and its
 isolated Docker build engine. Create the Jenkins administrator password as a
-local secret, set the concrete server address in `.env`, and start the stack:
+local secret, set the concrete server address in `.env`, and point Compose at
+the platform-provisioned production gate kubeconfig outside the checkout before
+starting the stack:
 
 ```bash
 umask 077
 openssl rand -base64 32 > secrets/jenkins-admin-password
+export JENKINS_PROD_READONLY_KUBECONFIG_FILE=/etc/ssl-proxy/jenkins/prod-readonly-kubeconfig
 docker compose -f docker-compose.ci.yaml up -d --build
 ```
 
@@ -20,7 +23,9 @@ docker compose -f docker-compose.ci.yaml up -d --build
 `JENKINS_BIND_ADDRESS`, `JENKINS_HTTP_PORT` and `JENKINS_URL` control the UI.
 The Jenkins administrator password is consumed through a Docker secret and is
 never committed or placed in container environment variables. The controller
-runs as the image's non-root `jenkins` user and talks over mutual TLS to a
+runs the production gate with the separate read-only kubeconfig file credential;
+only its external host path is passed through the required environment variable.
+It runs as the image's non-root `jenkins` user and talks over mutual TLS to a
 dedicated privileged Docker-in-Docker engine. Treat that engine as a
 root-equivalent build boundary and never expose its network or Jenkins to the
 public internet.

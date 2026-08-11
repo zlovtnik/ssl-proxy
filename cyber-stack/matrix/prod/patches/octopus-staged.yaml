@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssl-proxy-java-coordinator
+  namespace: ssl-proxy
+spec:
+  template:
+    spec:
+      containers:
+        - name: java-coordinator
+          env:
+            - name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: OCTOPUS_PROCESSORS_ENABLED
+              value: "false"
+            - name: OCTOPUS_ENABLED_PROCESSORS
+              $patch: delete
+            - name: OCTOPUS_CONSUMERS_ENABLED
+              value: "false"

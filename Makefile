@@ -83,6 +83,7 @@ kube-context-check:
 recover-stack: kube-context-check
 	python3 scripts/recover_stack.py \
 		--environment "$(ENV)" \
+		--kubectl "$(KUBECTL)" \
 		--kube-context "$(KUBE_CONTEXT)" \
 		--kustomize "$(KUSTOMIZE)" \
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"

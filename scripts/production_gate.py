@@ -20,8 +20,10 @@ APPLICATIONS = (
     "ssl-proxy-prod-app-stack",
 )
 DEFAULT_NAMESPACE = "argocd"
+PRODUCTION_NAMESPACE = "prod-ssl-proxy"
 DEFAULT_TIMEOUT = "30m"
 DEFAULT_POLL_INTERVAL_SECONDS = 10.0
+SECRET_READ_VERBS = ("get", "list", "watch")
 MUTATION_VERBS = ("create", "update", "patch", "delete")
 MUTATION_RESOURCES = (
     "applications.argoproj.io",
@@ -62,15 +64,21 @@ def parse_duration(value: str) -> float:
 
 
 def sanitize_diagnostic(value: Any, limit: int = 300) -> str:
-    text = " ".join(str(value or "").split())
+    text = str(value or "")
+    text = re.sub(
+        r"(?is)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*?"
+        r"-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----",
+        "[REDACTED PRIVATE KEY]",
+        text,
+    )
     text = re.sub(
         r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+:[^/@\s]+@",
         r"\1[REDACTED]@",
         text,
     )
     text = re.sub(
-        r"(?i)\b(password|passwd|token|secret|api[-_]?key|authorization)"
-        r"(\s*[=:]\s*)([^\s,;&]+)",
+        r'''(?i)(["']?authorization["']?)(\s*[=:]\s*)'''
+        r'''(?:"[^"]*"|'[^']*'|(?:(?:basic|bearer)\s+)?[^\s,;&]+)''',
         r"\1\2[REDACTED]",
         text,
     )
@@ -79,7 +87,29 @@ def sanitize_diagnostic(value: Any, limit: int = 300) -> str:
         "[REDACTED]@",
         text,
     )
-    return text[:limit]
+    sensitive_name = (
+        r"[a-z0-9_.-]*(?:password|passwd|token|secret|api[-_]?key|"
+        r"authorization|"
+        r"access[-_]?key|private[-_]?key|preshared[-_]?key|encrypt[-_]?key|"
+        r"jwt[-_]?secret|htpasswd|dsn)[a-z0-9_.-]*"
+    )
+    text = re.sub(
+        rf'''(?i)(?<![a-z0-9_.-])(["']?{sensitive_name}["']?)(\s*[=:]\s*)'''
+        r'(?:"[^"]*"|\'[^\']*\'|[^\s,;&]+)',
+        r"\1\2[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        rf"(?i)(--?{sensitive_name})(\s+)([^\s,;&]+)",
+        r"\1\2[REDACTED]",
+        text,
+    )
+    text = re.sub(
+        r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
+        "[REDACTED JWT]",
+        text,
+    )
+    return " ".join(text.split())[:limit]
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -158,12 +188,14 @@ class ProductionGate:
         command.extend(arguments)
         return self.runner(command)
 
-    def _can_i(self, verb: str, resource: str, *, all_namespaces: bool) -> tuple[bool | None, str]:
+    def _can_i(
+        self, verb: str, resource: str, *, namespace: str | None
+    ) -> tuple[bool | None, str]:
         arguments = ["auth", "can-i", verb, resource]
-        if all_namespaces:
+        if namespace is None:
             arguments.append("--all-namespaces")
         else:
-            arguments.extend(("--namespace", self.namespace))
+            arguments.extend(("--namespace", namespace))
         result = self._kubectl(*arguments)
         answer = result.stdout.strip().lower()
         if answer == "yes":
@@ -178,7 +210,7 @@ class ProductionGate:
         valid = True
         for name in APPLICATIONS:
             allowed, detail = self._can_i(
-                "get", f"applications.argoproj.io/{name}", all_namespaces=False
+                "get", f"applications.argoproj.io/{name}", namespace=self.namespace
             )
             if allowed is True:
                 continue
@@ -186,26 +218,41 @@ class ProductionGate:
             suffix = detail or "denied"
             self.lines.append(f"  cannot get {name}: {suffix}")
 
-        secret_read, detail = self._can_i("get", "secrets", all_namespaces=True)
-        if secret_read is not False:
-            valid = False
-            suffix = detail or "unexpectedly allowed"
-            self.lines.append(f"  Secret read isolation failed: {suffix}")
-
-        for verb in MUTATION_VERBS:
-            for resource in MUTATION_RESOURCES:
-                allowed, detail = self._can_i(verb, resource, all_namespaces=True)
-                if allowed is False:
-                    continue
-                valid = False
-                suffix = detail or "unexpectedly allowed"
-                self.lines.append(
-                    f"  mutation isolation failed for {verb} {resource}: {suffix}"
+        scopes = (
+            ("all namespaces", None),
+            (f"namespace {self.namespace}", self.namespace),
+            (f"namespace {PRODUCTION_NAMESPACE}", PRODUCTION_NAMESPACE),
+        )
+        for scope_label, scope_namespace in scopes:
+            for verb in SECRET_READ_VERBS:
+                secret_read, detail = self._can_i(
+                    verb, "secrets", namespace=scope_namespace
                 )
+                if secret_read is not False:
+                    valid = False
+                    suffix = detail or "unexpectedly allowed"
+                    self.lines.append(
+                        f"  Secret {verb} isolation failed in {scope_label}: {suffix}"
+                    )
+
+            for verb in MUTATION_VERBS:
+                for resource in MUTATION_RESOURCES:
+                    allowed, detail = self._can_i(
+                        verb, resource, namespace=scope_namespace
+                    )
+                    if allowed is False:
+                        continue
+                    valid = False
+                    suffix = detail or "unexpectedly allowed"
+                    self.lines.append(
+                        f"  mutation isolation failed in {scope_label} for "
+                        f"{verb} {resource}: {suffix}"
+                    )
         if valid:
             self.lines.append(
                 "  PASS: three named Application reads allowed; Secret reads and "
-                "representative mutations denied"
+                "representative mutations denied cluster-wide and in the Argo CD "
+                "and production namespaces"
             )
         return valid
 

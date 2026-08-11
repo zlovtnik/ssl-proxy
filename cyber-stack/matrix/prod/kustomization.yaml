@@ -2,44 +2,46 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: prod-ssl-proxy
 resources:
-  - namespace.yaml
-  - ../../base
+- namespace.yaml
+- ../../base
 images:
-  - name: ssl-proxy
-    newName: 192.168.1.221:5000/ssl-proxy
-    digest: sha256:4d48e5edeba6257007b8169d85bd6148c12847c5c91ffcc2df7da8c802c596a1
-  - name: java-coordinator
-    newName: 192.168.1.221:5000/java-coordinator
-    digest: sha256:34ce5b4072eebd8809be883ba4f7ffda8bc787614a43b9876c1c543382097cd7
-  - name: atheros-sensor
-    newName: 192.168.1.221:5000/atheros-sensor
-    digest: sha256:9458bb85f29b96b87abc3d84fffa791e219f0584321c035a1f6f2fa036c76937
-  - name: atheros-search
-    newName: 192.168.1.221:5000/atheros-search
-    digest: sha256:3d1317eba8b0c4088e15dc0aa64e16bef88b4a365e81fe528ef41340d98975d3
-  - name: atheros-search-ui
-    newName: 192.168.1.221:5000/atheros-search-ui
-    digest: sha256:dc319805ab7ae99a40049a3259ae5b560ede7380cfe51ee4e88ecfbe7854d1a0
-  - name: schema-migrator-backend
-    newName: 192.168.1.221:5000/schema-migrator-backend
-    digest: sha256:845c627d99b8fe2136288d27f9cb5c458f96872d49528e1af9d4a8b4bfdc525e
-  - name: schema-migrator-ui
-    newName: 192.168.1.221:5000/schema-migrator-ui
-    digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
-  - name: tidb-runtime-schema
-    newName: 192.168.1.221:5000/tidb-runtime-schema
-    digest: sha256:6d0352c5505a8bfae3da326c4024417c08a5a17f5e16c07ee9e461757aac77a8
+- digest: sha256:3d1317eba8b0c4088e15dc0aa64e16bef88b4a365e81fe528ef41340d98975d3
+  name: atheros-search
+  newName: 192.168.1.221:5000/atheros-search
+- digest: sha256:dc319805ab7ae99a40049a3259ae5b560ede7380cfe51ee4e88ecfbe7854d1a0
+  name: atheros-search-ui
+  newName: 192.168.1.221:5000/atheros-search-ui
+- digest: sha256:9458bb85f29b96b87abc3d84fffa791e219f0584321c035a1f6f2fa036c76937
+  name: atheros-sensor
+  newName: 192.168.1.221:5000/atheros-sensor
+- digest: sha256:e426f3c508f04a06cc2440e8c0594c877287205371ef73bd87846c937e704724
+  name: java-coordinator
+  newName: 192.168.1.221:5000/java-coordinator
+- digest: sha256:845c627d99b8fe2136288d27f9cb5c458f96872d49528e1af9d4a8b4bfdc525e
+  name: schema-migrator-backend
+  newName: 192.168.1.221:5000/schema-migrator-backend
+- digest: sha256:dfeda482650825f803fa84ee70b2a1df32bd807aa3e26b398407a4c9be69f536
+  name: schema-migrator-ui
+  newName: 192.168.1.221:5000/schema-migrator-ui
+- digest: sha256:4d48e5edeba6257007b8169d85bd6148c12847c5c91ffcc2df7da8c802c596a1
+  name: ssl-proxy
+  newName: 192.168.1.221:5000/ssl-proxy
+- digest: sha256:6d0352c5505a8bfae3da326c4024417c08a5a17f5e16c07ee9e461757aac77a8
+  name: tidb-runtime-schema
+  newName: 192.168.1.221:5000/tidb-runtime-schema
 patches:
-  - path: patches/identity-hostname.yaml
-  - path: patches/proxy-replicas.yaml
-  - path: patches/resources.yaml
-  - path: patches/jaeger-recovery.yaml
-  - path: patches/remove-bundled-tidb.yaml
-  - path: patches/external-tidb.yaml
-  - target:
-      kind: Job
-      name: ssl-proxy-tidb-schema-executor
-    patch: |-
-      - op: replace
-        path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
-        value: schema-migrator-001-10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
+- path: patches/identity-hostname.yaml
+- path: patches/proxy-replicas.yaml
+- path: patches/resources.yaml
+- path: patches/jaeger-recovery.yaml
+- path: patches/alloy-positions.yaml
+- path: patches/remove-bundled-tidb.yaml
+- path: patches/external-tidb.yaml
+- path: patches/octopus-staged.yaml
+- patch: |-
+    - op: replace
+      path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash
+      value: schema-migrator-001-10abd5b1ef8462fe4f521e064fc16193e50dec2cf508db34a4b32a9acc59f703
+  target:
+    kind: Job
+    name: ssl-proxy-tidb-schema-executor

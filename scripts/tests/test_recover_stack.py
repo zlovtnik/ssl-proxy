@@ -148,7 +148,9 @@ class FakeRunner:
         contexts: tuple[str, ...] = ("wiretrap-k3s",),
         current_context: str = "wiretrap-k3s",
         cluster_reachable: bool = True,
+        cluster_error: str = "connection refused",
         missing_input_key: tuple[str, str, str] | None = None,
+        event_message: str | None = None,
     ) -> None:
         self.environment = environment
         self.secret_present = secret_present
@@ -159,7 +161,9 @@ class FakeRunner:
         self.contexts = contexts
         self.current_context = current_context
         self.cluster_reachable = cluster_reachable
+        self.cluster_error = cluster_error
         self.missing_input_key = missing_input_key
+        self.event_message = event_message
         self.commands: list[tuple[str, ...]] = []
         self.rendered = rendered_documents(environment)
 
@@ -170,11 +174,11 @@ class FakeRunner:
             return CommandResult(0, HEAD + "\n", "")
         if command[:3] == ("git", "status", "--porcelain"):
             return CommandResult(0, "", "")
-        if command[:3] == ("kubectl", "config", "current-context"):
+        if command[1:4] == ("config", "current-context"):
             if self.current_context:
                 return CommandResult(0, self.current_context + "\n", "")
             return CommandResult(1, "", "current-context is not set")
-        if command[:3] == ("kubectl", "config", "get-contexts"):
+        if command[1:3] == ("config", "get-contexts"):
             if command[3:5] == ("-o", "name"):
                 output = "".join(f"{context}\n" for context in self.contexts)
                 return CommandResult(0, output, "")
@@ -185,7 +189,7 @@ class FakeRunner:
         if "version" in command and "--request-timeout=5s" in command:
             if self.cluster_reachable:
                 return CommandResult(0, '{"serverVersion": {}}\n', "")
-            return CommandResult(1, "", "connection refused")
+            return CommandResult(1, "", self.cluster_error)
         if command[0] == "fake-kustomize":
             path = Path(command[-1])
             label = path.name if path.name in ("bootstrap", "data-plane", "app-stack") else "aggregate"
@@ -306,12 +310,12 @@ class FakeRunner:
             return CommandResult(0, json.dumps({"items": [pod]}), "")
         if "events" in command:
             items = []
-            if self.drift:
+            if self.drift or self.event_message is not None:
                 items.append(
                     {
                         "lastTimestamp": "2026-08-11T12:00:00Z",
                         "reason": "Failed",
-                        "message": "image pull failed",
+                        "message": self.event_message or "image pull failed",
                         "involvedObject": {"kind": "Pod", "name": "proxy-abc"},
                     }
                 )
@@ -384,6 +388,34 @@ class RecoverStackTest(unittest.TestCase):
             "Kubernetes context: active-cluster (kubectl current-context)", report
         )
 
+    def test_configured_kubectl_is_used_for_every_cluster_query(self) -> None:
+        runner = FakeRunner("prod")
+        reporter = RecoveryReporter(
+            self.root,
+            "prod",
+            "wiretrap-k3s",
+            "fake-kustomize",
+            True,
+            kubectl="/opt/platform/kubectl",
+            runner=runner,
+            registry_resolver=registry_ok,
+        )
+
+        returncode, report = reporter.run()
+
+        self.assertEqual(0, returncode, report)
+        cluster_commands = [
+            command
+            for command in runner.commands
+            if command[0] not in ("git", "fake-kustomize")
+        ]
+        self.assertTrue(cluster_commands)
+        self.assertTrue(
+            all(command[0] == "/opt/platform/kubectl" for command in cluster_commands)
+        )
+        makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn('--kubectl "$(KUBECTL)"', makefile)
+
     def test_unknown_explicit_context_fails_once_without_live_queries(self) -> None:
         runner = FakeRunner("prod", contexts=("active-cluster",))
         reporter = RecoveryReporter(
@@ -453,17 +485,57 @@ class RecoverStackTest(unittest.TestCase):
             argo_applications_for("prod")["ssl-proxy-prod-data-plane"],
         )
 
-    def test_argo_revision_requires_minimum_abbreviation_length(self) -> None:
+    def test_argo_revision_must_exactly_match_full_local_head(self) -> None:
         short_runner = FakeRunner("prod", argo_revision=HEAD[:6])
-        valid_runner = FakeRunner("prod", argo_revision=HEAD[:7])
+        abbreviated_runner = FakeRunner("prod", argo_revision=HEAD[:7])
 
         short_returncode, short_report = self.reporter("prod", short_runner).run()
-        valid_returncode, valid_report = self.reporter("prod", valid_runner).run()
+        abbreviated_returncode, abbreviated_report = self.reporter(
+            "prod", abbreviated_runner
+        ).run()
 
-        self.assertEqual(0, short_returncode, short_report)
-        self.assertEqual(0, valid_returncode, valid_report)
+        self.assertEqual(1, short_returncode, short_report)
+        self.assertEqual(1, abbreviated_returncode, abbreviated_report)
         self.assertIn(f"revision={HEAD[:6]} local=DIFF", short_report)
-        self.assertIn(f"revision={HEAD[:7]} local=MATCH", valid_report)
+        self.assertIn(f"revision={HEAD[:7]} local=DIFF", abbreviated_report)
+        self.assertIn("Argo CD Application revision mismatch", short_report)
+        self.assertIn("Argo CD Application revision mismatch", abbreviated_report)
+
+    def test_warning_events_and_command_errors_are_sanitized(self) -> None:
+        event_runner = FakeRunner(
+            "prod",
+            event_message=(
+                "pull https://alice:url-password@example.test/image "
+                "Authorization: Bearer bearer-token DB_PASSWORD='hunter two' "
+                "dsn=service:dsn-password@tcp(tidb:4000)/db "
+                '{"password":"json-password","authorization":"Bearer json-token"}'
+            ),
+        )
+
+        returncode, report = self.reporter("prod", event_runner).run()
+
+        self.assertEqual(0, returncode, report)
+        for value in (
+            "url-password",
+            "bearer-token",
+            "hunter two",
+            "dsn-password",
+            "json-password",
+            "json-token",
+        ):
+            self.assertNotIn(value, report)
+        self.assertIn("[REDACTED]", report)
+
+        error_runner = FakeRunner(
+            "prod",
+            cluster_reachable=False,
+            cluster_error="request failed token=error-token password=error-password",
+        )
+        error_returncode, error_report = self.reporter("prod", error_runner).run()
+
+        self.assertEqual(1, error_returncode)
+        self.assertNotIn("error-token", error_report)
+        self.assertNotIn("error-password", error_report)
 
     def test_full_report_precedes_nonzero_for_all_blocker_classes(self) -> None:
         runner = FakeRunner(

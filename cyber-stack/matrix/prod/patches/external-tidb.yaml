@@ -54,6 +54,21 @@ metadata:
 spec:
   template:
     spec:
+      initContainers:
+        - name: bootstrap-admin-service
+          env:
+            - name: KC_DB_URL_HOST
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_HOST
+            - name: KC_DB_URL_PORT
+              value: null
+              valueFrom:
+                configMapKeyRef:
+                  name: ssl-proxy-prod-tidb-endpoint
+                  key: TIDB_PORT
       containers:
         - name: keycloak
           env:

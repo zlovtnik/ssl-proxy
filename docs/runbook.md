@@ -67,6 +67,7 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 ## Read-only diagnostics
 
 ```bash
+export KUBE_CONTEXT="$(kubectl config current-context)"
 make kube-context-check
 make stack-health ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
@@ -74,7 +75,12 @@ make stack-health ENV=prod REGISTRY_PLAIN_HTTP=1
 The targets default to `ENV=prod` and the active context, and prominently print
 the resolved context, API server and namespace. Set `KUBE_CONTEXT` only when an
 explicit override is required; `kube-context-check` rejects missing contexts
-before any health query. The recovery report renders all canonical slices,
+before any health query. Context names are host-local, so do not copy a
+workstation context name into a server command. Inspect available names with
+`kubectl config get-contexts -o name`, or export the active context as shown
+above to keep one selection across an incident session. Set `KUBECTL` to an
+absolute executable path when the host does not use the default `kubectl`.
+The recovery report renders all canonical slices,
 reports Git and production Argo revisions, inventories desired and live images
 including init containers and runtime IDs, lists required platform object and
 key presence without values, and includes workload health and recent warnings. It prints the
