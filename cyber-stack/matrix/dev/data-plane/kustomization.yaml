@@ -44,3 +44,17 @@ patches:
         path: /metadata/annotations
         value:
           ssl-proxy.io/recovery-generation: "2026-08-08-1"
+  - target:
+      kind: Job
+      name: ssl-proxy-redpanda-init
+    patch: |-
+      - op: add
+        path: /metadata/annotations/ssl-proxy.io~1recovery-generation
+        value: "2026-08-10-1"
+  - target:
+      kind: Job
+      name: ssl-proxy-tidb-init
+    patch: |-
+      - op: add
+        path: /metadata/annotations/ssl-proxy.io~1recovery-generation
+        value: "2026-08-10-1"
