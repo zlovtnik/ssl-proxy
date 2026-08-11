@@ -120,7 +120,7 @@ docs-check:
 gitops-check:
 	python3 scripts/image_contract.py contract --environment dev >/dev/null
 	python3 scripts/image_contract.py contract --environment prod >/dev/null
-	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE)"
+	python3 scripts/check-gitops.py --kustomize "$(KUSTOMIZE_EDITOR)"
 
 test:
 	cargo test -p sync-plane
