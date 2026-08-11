@@ -73,6 +73,7 @@ spec:
         - name: java-coordinator
           env:
             - {name: TIDB_ENABLED, value: "true"}
+            - {name: TIDB_SCHEMA_MANIFEST_SHA256, value: canonical-checksum}
             - {name: SYNC_REDPANDA_TOPIC_REPLICATION_FACTOR, value: "1"}
             - {name: OCTOPUS_PROCESSORS_ENABLED, value: "false"}
             - {name: OCTOPUS_CONSUMERS_ENABLED, value: "false"}
@@ -133,6 +134,28 @@ class ProductionManifestContractTest(unittest.TestCase):
         self.assertTrue(any("OCTOPUS_CONSUMERS_ENABLED=false" in error for error in errors))
         self.assertTrue(any("empty processor catalog" in error for error in errors))
         self.assertTrue(any("unsigned cutover inputs" in error for error in errors))
+
+    def test_octopus_schema_checksum_matches_canonical_manifest(self) -> None:
+        rendered = octopus()
+        self.assertEqual(
+            [],
+            check_gitops._check_octopus_schema_contract(
+                rendered, "prod", "canonical-checksum"
+            ),
+        )
+
+        environment = rendered[0]["spec"]["template"]["spec"]["containers"][0][
+            "env"
+        ]
+        next(
+            entry
+            for entry in environment
+            if entry["name"] == "TIDB_SCHEMA_MANIFEST_SHA256"
+        )["value"] = "stale-checksum"
+        errors = check_gitops._check_octopus_schema_contract(
+            rendered, "prod", "canonical-checksum"
+        )
+        self.assertTrue(any("octopus_core/manifest.yaml" in error for error in errors))
 
 
 if __name__ == "__main__":

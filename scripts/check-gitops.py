@@ -640,6 +640,49 @@ def _schema_migrator_contract_marker(root: Path, errors: list[str]) -> str | Non
     return f"schema-migrator-{version_text}-{checksum}"
 
 
+def _octopus_contract_checksum(root: Path, errors: list[str]) -> str | None:
+    relative = "sql/tidb/octopus_core/manifest.yaml"
+    text = _read_required(root, relative, errors, "manifest")
+    if text is None:
+        return None
+    documents = _load_documents(text, relative, errors)
+    if not documents:
+        return None
+    checksum = documents[0].get("manifest_sha256")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(checksum)):
+        errors.append(f"{relative}: missing canonical manifest checksum")
+        return None
+    return str(checksum)
+
+
+def _check_octopus_schema_contract(
+    rendered: Documents | str, relative: str, expected_checksum: str
+) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-java-coordinator"
+    )
+    if len(deployments) != 1:
+        return [f"{relative}: expected one Octopus Deployment"]
+    containers = [
+        container
+        for container in _pod_containers(deployments[0])
+        if container.get("name") == "java-coordinator"
+    ]
+    if len(containers) != 1:
+        return [f"{relative}: expected one Octopus container"]
+    entries = [
+        _mapping(entry)
+        for entry in _environment(containers)
+        if _mapping(entry).get("name") == "TIDB_SCHEMA_MANIFEST_SHA256"
+    ]
+    if len(entries) != 1 or entries[0].get("value") != expected_checksum:
+        return [
+            f"{relative}: Octopus TIDB_SCHEMA_MANIFEST_SHA256 must equal "
+            "sql/tidb/octopus_core/manifest.yaml"
+        ]
+    return []
+
+
 def _check_schema_executor_contract(rendered: Documents | str, relative: str, expected_marker: str) -> list[str]:
     jobs = _find(_documents(rendered), "Job", "ssl-proxy-tidb-schema-executor")
     if len(jobs) != 1:
@@ -989,6 +1032,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
     errors: list[str] = []
     rendered_kustomizations: dict[str, Documents] = {}
     expected_schema_marker = _schema_migrator_contract_marker(root, errors)
+    expected_octopus_checksum = _octopus_contract_checksum(root, errors)
 
     for relative in CANONICAL_KUSTOMIZATIONS:
         path = root / relative
@@ -1029,6 +1073,21 @@ def check_repository(root: Path, executable: str) -> list[str]:
             continue
         for check in checks:
             errors.extend(check(rendered_kustomizations[relative], relative))
+    if expected_octopus_checksum is not None:
+        for relative in (
+            "cyber-stack/matrix/dev",
+            "cyber-stack/matrix/dev/app-stack",
+            "cyber-stack/matrix/prod",
+            "cyber-stack/matrix/prod/app-stack",
+        ):
+            if relative in rendered_kustomizations:
+                errors.extend(
+                    _check_octopus_schema_contract(
+                        rendered_kustomizations[relative],
+                        relative,
+                        expected_octopus_checksum,
+                    )
+                )
     prod_data_plane = "cyber-stack/matrix/prod/data-plane"
     if prod_data_plane in rendered_kustomizations:
         errors.extend(

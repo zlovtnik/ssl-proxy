@@ -292,7 +292,7 @@ spec:
             - name: TIDB_ENABLED
               value: "true"
             - name: TIDB_SCHEMA_MANIFEST_SHA256
-              value: "747ff8b2b8e3a0dc6ee1a1a51ed906eaca595b9916d5e466b1893b15649bdad1"
+              value: "10252d0d22394756115f78de2986cf7cb468412f6113bf51c8222307899baed5"
             - name: TIDB_HOST
               value: "ssl-proxy-tidb.$(POD_NAMESPACE).svc.cluster.local"
             - name: TIDB_PORT
