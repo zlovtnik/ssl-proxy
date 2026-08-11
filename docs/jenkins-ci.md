@@ -45,7 +45,10 @@ is explicitly intended and backed up.
 
 The managed pipeline polls `main` every five minutes, also accepts GitHub push
 events, and disables concurrent runs. The platform must register the repository
-push webhook at `${JENKINS_URL}/github-webhook/`. Each run:
+push webhook at `${JENKINS_URL}/github-webhook/`. Keep that endpoint private
+or protect it at the ingress with GitHub source verification (HMAC validation
+or a current GitHub IP allowlist); the Jenkins GitHub push endpoint itself is
+not a public build-trigger API. Each run:
 
 1. checks out the superproject and its pinned submodules;
 2. creates and bootstraps its shared Buildx builder after bounded Docker and
