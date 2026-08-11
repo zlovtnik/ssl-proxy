@@ -28,6 +28,7 @@ from image_contract import (
 
 
 CANONICAL_SLICES = ("bootstrap", "data-plane", "app-stack")
+# The Makefile's default `git rev-parse --short` contract is at least 7 chars.
 MIN_GIT_ABBREVIATION_LENGTH = 7
 REGISTRY_LOOKUP_WORKER_LIMIT = 8
 MANIFEST_ACCEPT = ", ".join(
@@ -519,7 +520,11 @@ class RecoveryReporter:
             revision = str(sync.get("revision", "UNKNOWN"))
             sync_status = str(sync.get("status", "Unknown"))
             health_status = str(health.get("status", "Unknown"))
-            revision_match = git_head != "UNKNOWN" and revision == git_head
+            revision_match = (
+                git_head != "UNKNOWN"
+                and len(revision) >= MIN_GIT_ABBREVIATION_LENGTH
+                and revision == git_head
+            )
             if (
                 git_head != "UNKNOWN"
                 and len(revision) >= MIN_GIT_ABBREVIATION_LENGTH
