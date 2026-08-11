@@ -466,6 +466,7 @@ class RecoveryReporter:
         self.registry_resolver = registry_resolver
         self.lines: list[str] = []
         self.blockers: list[str] = []
+        self.cluster_available = False
 
     def _block(self, detail: str) -> None:
         if detail not in self.blockers:
@@ -493,12 +494,47 @@ class RecoveryReporter:
 
     def _resolve_context(self) -> tuple[str, str]:
         if self.requested_context:
-            return self.requested_context, "explicit KUBE_CONTEXT"
-        result = self._run("kubectl", "config", "current-context")
-        if result.returncode != 0 or not result.stdout.strip():
-            self._block(f"cannot resolve current Kubernetes context: {_short_error(result)}")
-            return "<unresolved>", "current context unavailable"
-        return result.stdout.strip(), "kubectl current-context"
+            context = self.requested_context
+            source = "explicit KUBE_CONTEXT"
+        else:
+            result = self._run("kubectl", "config", "current-context")
+            if result.returncode != 0 or not result.stdout.strip():
+                self._block(
+                    f"cannot resolve current Kubernetes context: {_short_error(result)}"
+                )
+                return "<unresolved>", "current context unavailable"
+            context = result.stdout.strip()
+            source = "kubectl current-context"
+
+        configured = self._run(
+            "kubectl", "config", "get-contexts", context, "-o", "name"
+        )
+        if configured.returncode != 0 or configured.stdout.strip() != context:
+            available = self._run("kubectl", "config", "get-contexts", "-o", "name")
+            names = ", ".join(available.stdout.split()) or "<none>"
+            self._block(
+                f'Kubernetes context "{context}" is not configured; available: {names}'
+            )
+            return "<unresolved>", f"{source} is unavailable"
+
+        reachable = self._run(
+            "kubectl",
+            "--context",
+            context,
+            "version",
+            "--request-timeout=5s",
+            "-o",
+            "json",
+        )
+        if reachable.returncode != 0:
+            self._block(
+                f"Kubernetes API is unreachable through context {context}: "
+                f"{_short_error(reachable)}"
+            )
+            return context, f"{source}; API unavailable"
+
+        self.cluster_available = True
+        return context, source
 
     def _namespace(self) -> str:
         path = self.repository_root / "cyber-stack" / "matrix" / self.environment / "kustomization.yaml"
@@ -547,8 +583,8 @@ class RecoveryReporter:
         if self.environment == "dev":
             self.lines.append("  SKIPPED: dev Applications are prohibited on the production controller")
             return
-        if context == "<unresolved>":
-            self.lines.append("  UNKNOWN: Kubernetes context is unresolved")
+        if not self.cluster_available:
+            self.lines.append("  UNKNOWN: Kubernetes context or API is unavailable")
             return
         result = self._kubectl(
             context,
@@ -647,7 +683,7 @@ class RecoveryReporter:
         if not required_secrets:
             self.lines.append("  <none discovered>")
             return
-        if context == "<unresolved>":
+        if not self.cluster_available:
             for name in required_secrets:
                 self.lines.append(f"  {name}: UNKNOWN")
             return
@@ -679,7 +715,7 @@ class RecoveryReporter:
         if not required_config_maps:
             self.lines.append("  <none discovered>")
             return
-        if context == "<unresolved>":
+        if not self.cluster_available:
             for name in required_config_maps:
                 self.lines.append(f"  {name}: UNKNOWN")
             return
@@ -723,8 +759,8 @@ class RecoveryReporter:
         contracts: Sequence[ImageContract],
     ) -> None:
         self.lines.extend(("", "LIVE WORKLOADS AND IMAGE DRIFT"))
-        if context == "<unresolved>":
-            self.lines.append("  UNKNOWN: Kubernetes context is unresolved")
+        if not self.cluster_available:
+            self.lines.append("  UNKNOWN: Kubernetes context or API is unavailable")
             return
         workloads_result = self._kubectl(
             context,
@@ -843,8 +879,8 @@ class RecoveryReporter:
 
     def _report_events(self, context: str, namespace: str) -> None:
         self.lines.extend(("", "RECENT WARNING EVENTS"))
-        if context == "<unresolved>":
-            self.lines.append("  UNKNOWN: Kubernetes context is unresolved")
+        if not self.cluster_available:
+            self.lines.append("  UNKNOWN: Kubernetes context or API is unavailable")
             return
         result = self._kubectl(
             context,

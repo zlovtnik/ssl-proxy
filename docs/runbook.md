@@ -66,11 +66,14 @@ Atheros Search tracing hooks do not currently initialize an exporter.
 ## Read-only diagnostics
 
 ```bash
-make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s REGISTRY_PLAIN_HTTP=1
+make kube-context-check
+make stack-health ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
 
-The target defaults to `ENV=prod` and the current context, and prominently
-prints the resolved context and namespace. It renders all canonical slices,
+The targets default to `ENV=prod` and the active context, and prominently print
+the resolved context, API server and namespace. Set `KUBE_CONTEXT` only when an
+explicit override is required; `kube-context-check` rejects missing contexts
+before any health query. The recovery report renders all canonical slices,
 reports Git and production Argo revisions, inventories desired and live images
 including init containers and runtime IDs, lists required Secret names and
 presence only, and includes workload health and recent warnings. It prints the

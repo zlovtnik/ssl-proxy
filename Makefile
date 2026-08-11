@@ -29,10 +29,10 @@ BUILD_TARGETS := $(addprefix build-,$(SERVICES))
 PUBLISH_TARGETS := $(addprefix publish-,$(SERVICES))
 BUMP_DIGEST_TARGETS := $(addprefix bump-digest-,$(DEPLOYABLE_SERVICES))
 ARGOCD_APPLICATIONS := ssl-proxy-prod-bootstrap ssl-proxy-prod-data-plane ssl-proxy-prod-app-stack
-KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context $(KUBE_CONTEXT),)
-ARGOCD_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--kube-context $(KUBE_CONTEXT),)
+KUBECTL_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--context "$(KUBE_CONTEXT)",)
+ARGOCD_CONTEXT_ARG = $(if $(strip $(KUBE_CONTEXT)),--kube-context "$(KUBE_CONTEXT)",)
 
-.PHONY: build build-all publish publish-all recover-stack stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
+.PHONY: build build-all publish publish-all kube-context-check recover-stack stack-health argocd-server-health argocd-status argocd-wait ci-publish-services buildx-ready require-registry docs-check gitops-check test lint dependency-boundaries atheros-search-test $(BUILD_TARGETS) $(PUBLISH_TARGETS) $(BUMP_DIGEST_TARGETS)
 
 build: build-all
 
@@ -52,14 +52,38 @@ build-all: $(BUILD_TARGETS)
 
 publish-all: $(PUBLISH_TARGETS)
 
-recover-stack:
+kube-context-check:
+	@context="$(strip $(KUBE_CONTEXT))"; \
+	source="KUBE_CONTEXT"; \
+	if [ -z "$$context" ]; then \
+		context="$$( $(KUBECTL) config current-context 2>/dev/null || true )"; \
+		source="kubectl current-context"; \
+	fi; \
+	if [ -z "$$context" ]; then \
+		echo "No Kubernetes context is active. Set KUBE_CONTEXT to one of:" >&2; \
+		$(KUBECTL) config get-contexts -o name >&2 || true; \
+		exit 2; \
+	fi; \
+	if ! $(KUBECTL) config get-contexts "$$context" -o name >/dev/null 2>&1; then \
+		echo "Kubernetes context '$$context' is not present in the effective kubeconfig." >&2; \
+		echo "Available contexts:" >&2; \
+		$(KUBECTL) config get-contexts -o name >&2 || true; \
+		echo "Check KUBECONFIG, or omit KUBE_CONTEXT to use the active context." >&2; \
+		exit 2; \
+	fi; \
+	server="$$( $(KUBECTL) --context "$$context" config view --minify \
+		-o jsonpath='{.clusters[0].cluster.server}' )"; \
+	$(KUBECTL) --context "$$context" version --request-timeout=5s -o json >/dev/null; \
+	printf 'Kubernetes context: %s (%s)\nKubernetes API:     %s\n' "$$context" "$$source" "$$server"
+
+recover-stack: kube-context-check
 	python3 scripts/recover_stack.py \
 		--environment "$(ENV)" \
 		--kube-context "$(KUBE_CONTEXT)" \
 		--kustomize "$(KUSTOMIZE)" \
 		--registry-plain-http "$(REGISTRY_PLAIN_HTTP)"
 
-argocd-server-health:
+argocd-server-health: kube-context-check
 	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace argocd wait \
 		--for=condition=Available deployment --all --timeout="$(ARGOCD_TIMEOUT)"
 	$(KUBECTL) $(KUBECTL_CONTEXT_ARG) --namespace argocd rollout status \
@@ -80,7 +104,7 @@ argocd-wait: argocd-server-health
 			application/$$application --timeout="$(ARGOCD_TIMEOUT)"; \
 	done
 
-stack-health: gitops-check argocd-status argocd-wait recover-stack
+stack-health: gitops-check argocd-status recover-stack argocd-wait
 
 # Read-only image inventory for CI fan-out. Keep build-all for local loaded-image workflows.
 ci-publish-services:

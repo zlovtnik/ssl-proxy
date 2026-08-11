@@ -138,6 +138,9 @@ class FakeRunner:
         healthy_argo: bool = True,
         drift: bool = False,
         argo_revision: str = HEAD,
+        contexts: tuple[str, ...] = ("wiretrap-k3s",),
+        current_context: str = "wiretrap-k3s",
+        cluster_reachable: bool = True,
     ) -> None:
         self.environment = environment
         self.secret_present = secret_present
@@ -145,6 +148,9 @@ class FakeRunner:
         self.healthy_argo = healthy_argo
         self.drift = drift
         self.argo_revision = argo_revision
+        self.contexts = contexts
+        self.current_context = current_context
+        self.cluster_reachable = cluster_reachable
         self.commands: list[tuple[str, ...]] = []
         self.rendered = rendered_documents(environment)
 
@@ -155,6 +161,22 @@ class FakeRunner:
             return CommandResult(0, HEAD + "\n", "")
         if command[:3] == ("git", "status", "--porcelain"):
             return CommandResult(0, "", "")
+        if command[:3] == ("kubectl", "config", "current-context"):
+            if self.current_context:
+                return CommandResult(0, self.current_context + "\n", "")
+            return CommandResult(1, "", "current-context is not set")
+        if command[:3] == ("kubectl", "config", "get-contexts"):
+            if command[3:5] == ("-o", "name"):
+                output = "".join(f"{context}\n" for context in self.contexts)
+                return CommandResult(0, output, "")
+            requested = command[3]
+            if requested in self.contexts:
+                return CommandResult(0, requested + "\n", "")
+            return CommandResult(1, "", f"error: context {requested} not found")
+        if "version" in command and "--request-timeout=5s" in command:
+            if self.cluster_reachable:
+                return CommandResult(0, '{"serverVersion": {}}\n', "")
+            return CommandResult(1, "", "connection refused")
         if command[0] == "fake-kustomize":
             path = Path(command[-1])
             label = path.name if path.name in ("bootstrap", "data-plane", "app-stack") else "aggregate"
@@ -305,6 +327,60 @@ class RecoverStackTest(unittest.TestCase):
         self.assertTrue(report.rstrip().endswith("RESULT: HEALTHY"))
         render_commands = [command for command in runner.commands if command[0] == "fake-kustomize"]
         self.assertEqual(4, len(render_commands))
+
+    def test_empty_context_uses_current_context(self) -> None:
+        runner = FakeRunner("prod", current_context="active-cluster", contexts=("active-cluster",))
+        reporter = RecoveryReporter(
+            self.root,
+            "prod",
+            "",
+            "fake-kustomize",
+            True,
+            runner=runner,
+            registry_resolver=registry_ok,
+        )
+
+        returncode, report = reporter.run()
+
+        self.assertEqual(0, returncode, report)
+        self.assertIn(
+            "Kubernetes context: active-cluster (kubectl current-context)", report
+        )
+
+    def test_unknown_explicit_context_fails_once_without_live_queries(self) -> None:
+        runner = FakeRunner("prod", contexts=("active-cluster",))
+        reporter = RecoveryReporter(
+            self.root,
+            "prod",
+            "missing-cluster",
+            "fake-kustomize",
+            True,
+            runner=runner,
+            registry_resolver=registry_ok,
+        )
+
+        returncode, report = reporter.run()
+
+        self.assertEqual(1, returncode)
+        self.assertIn(
+            'Kubernetes context "missing-cluster" is not configured; '
+            "available: active-cluster",
+            report,
+        )
+        self.assertEqual(1, report.count("not configured"))
+        self.assertFalse(any("applications.argoproj.io" in command for command in runner.commands))
+        self.assertFalse(any("secret" in command for command in runner.commands))
+        self.assertFalse(any("configmap" in command for command in runner.commands))
+
+    def test_unreachable_cluster_fails_once_without_live_queries(self) -> None:
+        runner = FakeRunner("prod", cluster_reachable=False)
+
+        returncode, report = self.reporter("prod", runner).run()
+
+        self.assertEqual(1, returncode)
+        self.assertIn("Kubernetes API is unreachable", report)
+        self.assertEqual(1, report.count("connection refused"))
+        self.assertFalse(any("applications.argoproj.io" in command for command in runner.commands))
 
     def test_render_returns_documents_and_git_head_separately(self) -> None:
         reporter = self.reporter("prod", FakeRunner("prod"))

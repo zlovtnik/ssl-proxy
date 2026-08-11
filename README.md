@@ -72,7 +72,8 @@ make publish ENV=dev REGISTRY_PLAIN_HTTP=1
 Jenkins, component publishing, and the Compose-only key rotator retain
 `make publish-all REGISTRY=192.168.1.221:5000`. Publishing changes registry
 tags only; it does not mutate Git or a cluster. Diagnose desired and live state
-read-only with `make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s`. Record
+read-only with `make recover-stack ENV=prod`; it uses the active Kubernetes
+context unless `KUBE_CONTEXT` is explicitly set. Record
 new dev digests with the printed `make bump-digest-<service>` commands, validate
 them on the local cluster, then copy the exact tested digests in a separate
 production promotion pull request. See the [GitOps guide](cyber-stack/README.md)

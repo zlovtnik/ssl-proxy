@@ -128,7 +128,7 @@ address; both names reach the same registry storage.
 curl -fsS http://10.0.0.10:5000/v2/
 docker buildx inspect
 make recover-stack ENV=dev KUBE_CONTEXT=docker-desktop REGISTRY_PLAIN_HTTP=1
-make recover-stack ENV=prod KUBE_CONTEXT=wiretrap-k3s REGISTRY_PLAIN_HTTP=1
+make recover-stack ENV=prod REGISTRY_PLAIN_HTTP=1
 ```
 
 `recover-stack` is read-only. It reports the resolved context and namespace,
