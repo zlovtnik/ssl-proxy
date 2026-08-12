@@ -25,6 +25,8 @@ spec:
       securityContext:
         fsGroup: 473
         supplementalGroups: [999]
+        seccompProfile:
+          type: RuntimeDefault
       tolerations:
         - operator: Exists
       containers:

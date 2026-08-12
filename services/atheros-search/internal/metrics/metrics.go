@@ -64,6 +64,7 @@ func StartServer(ctx context.Context, port int) (*http.Server, error) {
 		Addr:              fmt.Sprintf(":%d", port),
 		Handler:           promhttp.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
 	}
 	go func() {
 		<-ctx.Done()

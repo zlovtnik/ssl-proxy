@@ -1,6 +1,12 @@
 import unittest
 
-from sslproxy_ops.health.signatures import classify_text, load_signatures
+from sslproxy_ops.health.signatures import (
+    MAX_TEXT_LENGTH,
+    FailureSignature,
+    classify_text,
+    load_signatures,
+)
+from sslproxy_ops.health.signatures import _validate_pattern as validate_pattern
 
 
 class SignaturesTest(unittest.TestCase):
@@ -74,6 +80,87 @@ class SignaturesTest(unittest.TestCase):
 
         self.assertFalse(result.matched)
         self.assertEqual(result.name, "unknown")
+
+
+class PatternValidationTest(unittest.TestCase):
+    def test_rejects_nested_quantifier_plus_inside_plus(self):
+        with self.assertRaises(ValueError):
+            validate_pattern("(a+)+")
+
+    def test_rejects_nested_quantifier_star_inside_star(self):
+        with self.assertRaises(ValueError):
+            validate_pattern("(a*)*")
+
+    def test_rejects_nested_quantifier_plus_inside_star(self):
+        with self.assertRaises(ValueError):
+            validate_pattern("(a+)*")
+
+    def test_rejects_nested_quantifier_star_inside_plus(self):
+        with self.assertRaises(ValueError):
+            validate_pattern("(a*)+")
+
+    def test_rejects_nested_quantifier_charclass(self):
+        with self.assertRaises(ValueError):
+            validate_pattern("([a-zA-Z]+)*")
+
+    def test_rejects_nested_quantifier_in_branch(self):
+        with self.assertRaises(ValueError):
+            validate_pattern("(a|b+)+")
+
+    def test_accepts_adjacent_quantifiers(self):
+        validate_pattern("a+b+c+")
+
+    def test_accepts_group_with_concatenation(self):
+        validate_pattern("(abc)+")
+
+    def test_accepts_alternation_without_repeat(self):
+        validate_pattern("(a|b)c")
+
+    def test_accepts_all_bundled_patterns(self):
+        for sig in self.signatures:
+            validate_pattern(sig.pattern)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.signatures = load_signatures()
+
+
+class InputTruncationTest(unittest.TestCase):
+    def test_long_text_is_truncated(self):
+        sigs = [
+            FailureSignature(
+                name="test",
+                pattern="^matched$",
+                cause="c",
+                fix="f",
+                retry="manual",
+                compiled=__import__("re").compile("^matched$", __import__("re").IGNORECASE),
+            )
+        ]
+        result = classify_text("x" * (MAX_TEXT_LENGTH + 1000), signatures=sigs)
+        self.assertFalse(result.matched)
+
+    def test_short_text_matches_normally(self):
+        sigs = [
+            FailureSignature(
+                name="test",
+                pattern="hello",
+                cause="c",
+                fix="f",
+                retry="manual",
+                compiled=__import__("re").compile("hello", __import__("re").IGNORECASE),
+            )
+        ]
+        result = classify_text("hello world", signatures=sigs)
+        self.assertTrue(result.matched)
+        self.assertEqual(result.name, "test")
+
+
+class PrecompiledPatternTest(unittest.TestCase):
+    def test_loaded_signatures_have_compiled_field(self):
+        for sig in load_signatures():
+            self.assertIsInstance(sig, FailureSignature)
+            self.assertIsNotNone(sig.compiled)
 
 
 if __name__ == "__main__":
