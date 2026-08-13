@@ -40,6 +40,23 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertNotIn("kubectl apply", gate)
         self.assertNotIn("argocd app sync", gate)
 
+    def test_pipeline_refreshes_dind_tls_context_before_preflight(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        preflight_start = pipeline.index("stage('Registry and Buildx preflight')")
+        validation_start = pipeline.index("stage('Validate and publish')")
+        preflight = pipeline[preflight_start:validation_start]
+
+        inspect = 'docker context inspect "$DOCKER_CONTEXT_NAME"'
+        remove = 'docker context rm --force "$DOCKER_CONTEXT_NAME"'
+        create = 'docker context create "$DOCKER_CONTEXT_NAME"'
+
+        self.assertIn(inspect, preflight)
+        self.assertIn(remove, preflight)
+        self.assertIn(create, preflight)
+        self.assertLess(preflight.index(inspect), preflight.index(remove))
+        self.assertLess(preflight.index(remove), preflight.index(create))
+        self.assertNotIn("if ! docker context inspect", preflight)
+
     def test_credentials_binding_plugin_is_explicitly_pinned(self) -> None:
         plugins = (REPOSITORY_ROOT / "docker/jenkins/plugins.txt").read_text(
             encoding="utf-8"

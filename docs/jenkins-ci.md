@@ -52,6 +52,11 @@ docker compose -f docker-compose.ci.yaml up -d --no-deps --force-recreate jenkin
 docker compose -f docker-compose.ci.yaml ps jenkins-docker
 ```
 
+Recreating the build engine also regenerates its server-side TLS material. The
+next pipeline run refreshes the CI-owned Docker context from the client
+certificates in the shared volume before contacting the daemon, so the
+persistent Jenkins home cannot retain a stale DinD CA.
+
 The controller does not mount the host Docker socket. It connects over mutual
 TLS to a dedicated privileged Docker-in-Docker service, which is still a
 root-equivalent trust boundary. Bind Jenkins and the registry only to a trusted

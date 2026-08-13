@@ -35,11 +35,12 @@ pipeline {
       steps {
         sh '''
           set -eu
-          if ! docker context inspect "$DOCKER_CONTEXT_NAME" >/dev/null 2>&1; then
-            docker context create "$DOCKER_CONTEXT_NAME" \
-              --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem" \
-              >/dev/null
+          if docker context inspect "$DOCKER_CONTEXT_NAME" >/dev/null 2>&1; then
+            docker context rm --force "$DOCKER_CONTEXT_NAME" >/dev/null
           fi
+          docker context create "$DOCKER_CONTEXT_NAME" \
+            --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem" \
+            >/dev/null
           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
             DOCKER_CONTEXT="$DOCKER_CONTEXT_NAME" docker version
           env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
