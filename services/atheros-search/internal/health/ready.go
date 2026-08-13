@@ -16,7 +16,7 @@ import (
 type Database interface {
 	Health(ctx context.Context) error
 	SchemaReady(ctx context.Context) (db.SchemaReadyStatus, error)
-	CountEmbeddings(ctx context.Context) (int64, error)
+	CountEmbeddings(ctx context.Context) (db.EmbeddingCounts, error)
 }
 
 type Readiness struct {
@@ -43,12 +43,18 @@ func (r *Readiness) Check(ctx context.Context) error {
 			return fmt.Errorf("schema not ready: %s", schemaStatusSummary(status))
 		}
 	}
-	count, err := r.DB.CountEmbeddings(checkCtx)
+	counts, err := r.DB.CountEmbeddings(checkCtx)
 	if err != nil {
 		return fmt.Errorf("count embeddings: %w", err)
 	}
-	if count < 1 {
-		log.Warn().Msg("search vector tables are empty")
+	if emptyKinds := counts.EmptyKinds(); len(emptyKinds) > 0 {
+		log.Warn().
+			Strs("empty_embedding_kinds", emptyKinds).
+			Int64("event_count", counts.Event).
+			Int64("device_count", counts.Device).
+			Int64("behaviour_count", counts.Behaviour).
+			Int64("sequence_count", counts.Sequence).
+			Msg("one or more search vector tables are empty")
 	}
 	if r.Embedder != nil {
 		if err := r.Embedder.Health(checkCtx); err != nil {

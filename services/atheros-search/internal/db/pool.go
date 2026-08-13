@@ -48,6 +48,30 @@ type SchemaReadyStatus struct {
 	ExpectedSHA256 string
 }
 
+type EmbeddingCounts struct {
+	Event     int64
+	Device    int64
+	Behaviour int64
+	Sequence  int64
+}
+
+func (c EmbeddingCounts) EmptyKinds() []string {
+	empty := make([]string, 0, 4)
+	if c.Event == 0 {
+		empty = append(empty, "event")
+	}
+	if c.Device == 0 {
+		empty = append(empty, "device")
+	}
+	if c.Behaviour == 0 {
+		empty = append(empty, "behaviour_window")
+	}
+	if c.Sequence == 0 {
+		empty = append(empty, "frame_sequence")
+	}
+	return empty
+}
+
 func NewPool(ctx context.Context, opts Options) (*Pool, error) {
 	driverConfig, err := mysql.ParseDSN(opts.DSN)
 	if err != nil {
@@ -217,16 +241,16 @@ LIMIT 1
 	return status, nil
 }
 
-func (p *Pool) CountEmbeddings(ctx context.Context) (int64, error) {
-	var count int64
+func (p *Pool) CountEmbeddings(ctx context.Context) (EmbeddingCounts, error) {
+	var counts EmbeddingCounts
 	err := p.QueryRowContext(ctx, `
 SELECT
-  (SELECT COUNT(*) FROM search_vectors_event) +
-  (SELECT COUNT(*) FROM search_vectors_device) +
-  (SELECT COUNT(*) FROM search_vectors_behaviour) +
+  (SELECT COUNT(*) FROM search_vectors_event),
+  (SELECT COUNT(*) FROM search_vectors_device),
+  (SELECT COUNT(*) FROM search_vectors_behaviour),
   (SELECT COUNT(*) FROM search_vectors_sequence)
-`).Scan(&count)
-	return count, err
+`).Scan(&counts.Event, &counts.Device, &counts.Behaviour, &counts.Sequence)
+	return counts, err
 }
 
 func (p *Pool) PendingJobCount(ctx context.Context) (int64, error) {
