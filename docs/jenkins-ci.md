@@ -52,6 +52,22 @@ docker compose -f docker-compose.ci.yaml up -d --no-deps --force-recreate jenkin
 docker compose -f docker-compose.ci.yaml ps jenkins-docker
 ```
 
+At the start of every registry and Buildx preflight, Jenkins reads the same
+host-kernel value through its own `/proc` mount. An invalid value or a value
+below `1024` stops the pipeline before any Docker context or BuildKit work and
+prints the build-engine recreation command above. Verify the active entrypoint
+and shared limit after recreation:
+
+```bash
+docker inspect "$(docker compose -f docker-compose.ci.yaml ps -q jenkins-docker)" \
+  --format '{{json .Config.Entrypoint}}'
+cat /proc/sys/fs/inotify/max_user_instances
+docker compose -f docker-compose.ci.yaml exec -T jenkins-docker \
+  cat /proc/sys/fs/inotify/max_user_instances
+docker compose -f docker-compose.ci.yaml exec -T jenkins \
+  cat /proc/sys/fs/inotify/max_user_instances
+```
+
 Recreating the build engine also regenerates its server-side TLS material. The
 next pipeline run refreshes the CI-owned Docker context from the client
 certificates in the shared volume before contacting the daemon, so the

@@ -57,6 +57,41 @@ class JenkinsProductionGateTest(unittest.TestCase):
         self.assertLess(preflight.index(remove), preflight.index(create))
         self.assertNotIn("if ! docker context inspect", preflight)
 
+    def test_pipeline_rejects_insufficient_inotify_before_docker_preflight(
+        self,
+    ) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+        preflight_start = pipeline.index("stage('Registry and Buildx preflight')")
+        validation_start = pipeline.index("stage('Validate and publish')")
+        preflight = pipeline[preflight_start:validation_start]
+
+        capacity_path = "/proc/sys/fs/inotify/max_user_instances"
+        threshold = "required_inotify_instances=1024"
+        invalid_value_guard = "''|*[!0-9]*)"
+        insufficient_capacity_guard = (
+            'if [ "$current_inotify_instances" '
+            '-lt "$required_inotify_instances" ]; then'
+        )
+        recovery_command = (
+            "docker compose -f docker-compose.ci.yaml up -d --no-deps "
+            "--force-recreate jenkins-docker"
+        )
+        docker_preflight = 'docker context inspect "$DOCKER_CONTEXT_NAME"'
+
+        self.assertIn(capacity_path, preflight)
+        self.assertIn(threshold, preflight)
+        self.assertIn(invalid_value_guard, preflight)
+        self.assertIn(insufficient_capacity_guard, preflight)
+        self.assertIn(recovery_command, preflight)
+        self.assertLess(
+            preflight.index(capacity_path),
+            preflight.index(docker_preflight),
+        )
+        self.assertLess(
+            preflight.index(insufficient_capacity_guard),
+            preflight.index(docker_preflight),
+        )
+
     def test_credentials_binding_plugin_is_explicitly_pinned(self) -> None:
         plugins = (REPOSITORY_ROOT / "docker/jenkins/plugins.txt").read_text(
             encoding="utf-8"

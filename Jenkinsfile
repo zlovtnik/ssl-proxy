@@ -35,6 +35,22 @@ pipeline {
       steps {
         sh '''
           set -eu
+          inotify_instances_path=/proc/sys/fs/inotify/max_user_instances
+          required_inotify_instances=1024
+          inotify_recovery_command='docker compose -f docker-compose.ci.yaml up -d --no-deps --force-recreate jenkins-docker'
+          current_inotify_instances="$(cat "$inotify_instances_path")"
+          case "$current_inotify_instances" in
+            ''|*[!0-9]*)
+              echo "CI host $inotify_instances_path contains an invalid value: $current_inotify_instances" >&2
+              echo "From the CI deployment checkout, run: $inotify_recovery_command" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$current_inotify_instances" -lt "$required_inotify_instances" ]; then
+            echo "CI host $inotify_instances_path is $current_inotify_instances; at least $required_inotify_instances is required." >&2
+            echo "From the CI deployment checkout, run: $inotify_recovery_command" >&2
+            exit 1
+          fi
           if docker context inspect "$DOCKER_CONTEXT_NAME" >/dev/null 2>&1; then
             docker context rm --force "$DOCKER_CONTEXT_NAME" >/dev/null
           fi
