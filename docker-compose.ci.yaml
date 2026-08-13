@@ -15,12 +15,16 @@ services:
     image: docker:29-dind@sha256:e8faad5a8dc5279dff929afc5449f2791736912fff9f99351d742db2fad01b4c
     privileged: true
     restart: unless-stopped
+    entrypoint:
+      - /usr/local/bin/jenkins-dind-entrypoint.sh
     command:
       - --storage-driver=overlay2
       - --insecure-registry=registry:5000
     environment:
       DOCKER_TLS_CERTDIR: /certs
+      JENKINS_DOCKER_INOTIFY_MAX_USER_INSTANCES: ${JENKINS_DOCKER_INOTIFY_MAX_USER_INSTANCES:-1024}
     volumes:
+      - ./docker/jenkins/dind-entrypoint.sh:/usr/local/bin/jenkins-dind-entrypoint.sh:ro
       - jenkins-docker-certs:/certs/client
       - jenkins-docker-data:/var/lib/docker
     networks:

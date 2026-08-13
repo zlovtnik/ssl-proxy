@@ -101,6 +101,40 @@ class JenkinsProductionGateTest(unittest.TestCase):
             ),
         )
 
+    def test_compose_hardens_dind_inotify_capacity(self) -> None:
+        compose = (REPOSITORY_ROOT / "docker-compose.ci.yaml").read_text(
+            encoding="utf-8"
+        )
+        dind_service = compose[
+            compose.index("  jenkins-docker:\n") : compose.index("\n  jenkins:\n")
+        ]
+        entrypoint = REPOSITORY_ROOT / "docker/jenkins/dind-entrypoint.sh"
+        environment_example = (REPOSITORY_ROOT / ".env.example").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "JENKINS_DOCKER_INOTIFY_MAX_USER_INSTANCES: "
+            "${JENKINS_DOCKER_INOTIFY_MAX_USER_INSTANCES:-1024}",
+            dind_service,
+        )
+        self.assertIn(
+            "./docker/jenkins/dind-entrypoint.sh:"
+            "/usr/local/bin/jenkins-dind-entrypoint.sh:ro",
+            dind_service,
+        )
+        self.assertIn(
+            "- /usr/local/bin/jenkins-dind-entrypoint.sh", dind_service
+        )
+        self.assertIn(
+            "/proc/sys/fs/inotify/max_user_instances",
+            entrypoint.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "JENKINS_DOCKER_INOTIFY_MAX_USER_INSTANCES=1024",
+            environment_example,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

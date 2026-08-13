@@ -38,6 +38,20 @@ Docker-in-Docker service. This keeps the Compose registry name resolvable from
 BuildKit without exposing the host Docker socket or hard-coding the registry
 container's address.
 
+The privileged Docker-in-Docker entrypoint also ensures
+`fs.inotify.max_user_instances` is at least `1024` before starting the daemon.
+Build containers share this host-kernel limit, and sbt creates a native file
+watcher while loading a project even for one-shot batch commands. Override the
+floor with `JENKINS_DOCKER_INOTIFY_MAX_USER_INSTANCES` only when the CI host has
+a reviewed higher requirement; the entrypoint never lowers an existing value.
+After changing this setting or deploying the entrypoint for the first time,
+recreate only the build engine and wait for its health check:
+
+```bash
+docker compose -f docker-compose.ci.yaml up -d --no-deps --force-recreate jenkins-docker
+docker compose -f docker-compose.ci.yaml ps jenkins-docker
+```
+
 The controller does not mount the host Docker socket. It connects over mutual
 TLS to a dedicated privileged Docker-in-Docker service, which is still a
 root-equivalent trust boundary. Bind Jenkins and the registry only to a trusted
