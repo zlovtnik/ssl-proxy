@@ -77,6 +77,11 @@ FIRST_PARTY_IMAGES = (
     "tidb-runtime-schema",
 )
 
+JAEGER_BADGER_PRELOAD_FIXED_IMAGE = (
+    "jaegertracing/all-in-one:1.76.0@"
+    "sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac"
+)
+
 PHASE_ONE_ROUTE_KINDS = {
     "Gateway",
     "GRPCRoute",
@@ -300,6 +305,29 @@ def _check_jaeger_probes(rendered: Documents | str, relative: str) -> list[str]:
             f"{relative}: Jaeger startup probe must allow at least 600 seconds"
         )
     return errors
+
+
+def _check_jaeger_badger_runtime(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    deployments = _find(
+        _documents(rendered), "Deployment", "ssl-proxy-telemetry-jaeger"
+    )
+    if not deployments:
+        return []
+    containers = [
+        container
+        for container in _pod_containers(deployments[0])
+        if container.get("name") == "jaeger"
+    ]
+    if len(containers) != 1:
+        return [f"{relative}: expected one Jaeger container"]
+    if containers[0].get("image") != JAEGER_BADGER_PRELOAD_FIXED_IMAGE:
+        return [
+            f"{relative}: Jaeger must use the pinned 1.76.0 runtime with the "
+            "Badger service-cache preload deduplication fix"
+        ]
+    return []
 
 
 def _check_prod_jaeger_recovery(
@@ -1416,7 +1444,7 @@ def check_repository(root: Path, executable: str) -> list[str]:
         for image in FIRST_PARTY_IMAGES:
             if any(rendered_image == image or rendered_image.startswith(f"{image}:") for rendered_image in _rendered_images(documents)):
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
-        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves):
+        for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_jaeger_badger_runtime, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves):
             errors.extend(check(documents, relative))
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))

@@ -121,6 +121,26 @@ class RenderedWorkloadPolicyTest(unittest.TestCase):
         )
         self.assertEqual([], check_gitops._check_jaeger_probes(good, "test"))
 
+    def test_jaeger_runtime_contains_badger_preload_fix(self) -> None:
+        buggy = documents(
+            workload(
+                "ssl-proxy-telemetry-jaeger",
+                containers="[{name: jaeger, image: jaegertracing/all-in-one:1.68.0}]",
+            )
+        )
+        self.assertEqual(
+            1, len(check_gitops._check_jaeger_badger_runtime(buggy, "test"))
+        )
+        fixed = documents(
+            workload(
+                "ssl-proxy-telemetry-jaeger",
+                containers=f"[{{name: jaeger, image: '{check_gitops.JAEGER_BADGER_PRELOAD_FIXED_IMAGE}'}}]",
+            )
+        )
+        self.assertEqual(
+            [], check_gitops._check_jaeger_badger_runtime(fixed, "test")
+        )
+
     def test_prod_jaeger_has_badger_recovery_capacity(self) -> None:
         bad = documents(
             workload(

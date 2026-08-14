@@ -54,6 +54,11 @@ The collector accepts OTLP on `4317` (gRPC) and `4318` (HTTP), batches traces,
 exports them to Jaeger and emits span metrics for Prometheus. Grafana is
 provisioned with Prometheus, Loki and Jaeger data sources.
 
+The Kubernetes base pins Jaeger 1.76.0 as a compatibility bridge for the
+existing v1 Badger volume. That release contains the service-cache preload
+deduplication fix required for bounded restarts. Jaeger v1 is end-of-life; a
+move to v2 requires an explicit configuration and stored-data migration.
+
 ## Instrumentation status
 
 | Component | Logs | Metrics | Traces |

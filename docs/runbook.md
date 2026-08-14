@@ -289,6 +289,19 @@ missing Application, unhealthy status or timeout is a failed release check.
 - Check collector receiver/exporter health and Jaeger availability.
 - Atheros Search currently has hooks but no exporter initialization.
 
+### Jaeger remains Progressing after a restart
+
+- Check the Jaeger admin health endpoint and current/previous container logs.
+- If startup stops after `Badger storage configuration` while CPU remains busy,
+  inspect `/debug/vars`. A steadily increasing `badger_iterator_num_user`
+  indicates the duplicate service-cache preload defect fixed by Jaeger 1.76.0.
+- Confirm the rendered image matches the repository's pinned 1.76.0 digest. Do
+  not extend the startup probe or production-gate timeout to accommodate the
+  defective preload; it starts over whenever the startup probe kills the pod.
+- Preserve the Badger PVC during recovery. Jaeger v1 is end-of-life, so migrate
+  to Jaeger v2 as a reviewed configuration and data-compatibility change rather
+  than replacing the v1 image tag in place.
+
 ## Rollback and recovery
 
 Revert the Git commit that introduced the bad desired state and let Argo CD
