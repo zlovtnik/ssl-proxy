@@ -22,7 +22,6 @@ spec:
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
-      hostNetwork: true
       hostPID: true
       tolerations:
         - operator: Exists

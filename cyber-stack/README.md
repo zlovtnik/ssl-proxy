@@ -51,6 +51,15 @@ identity can only get the three generated Applications. The platform team
 stores its kubeconfig in Vault and provisions it in Jenkins as
 `ssl-proxy-prod-readonly-kubeconfig`; the credential is not a workload Secret.
 
+The same control-plane Kustomization owns K3s's
+`kube-system/HelmChartConfig/traefik`. During the default-deny Internet-edge
+phase, Traefik exposes only IPv4 TCP 80/443 and has no routing provider,
+dashboard route, redirect or certificate resolver. The workload AppProject
+cannot create route kinds, and application Services remain `ClusterIP` or
+headless. Router and host-firewall state are platform prerequisites documented
+in the [operations runbook](../docs/runbook.md); they are not managed through
+interactive Kubernetes changes.
+
 ## Local Kubernetes development
 
 The aggregate `matrix/dev` Kustomization is the local deployment target. Use an

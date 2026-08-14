@@ -1,0 +1,184 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: public-edge
+    app.kubernetes.io/managed-by: argocd
+spec:
+  valuesContent: |-
+    global:
+      checkNewVersion: false
+      sendAnonymousUsage: false
+
+    api:
+      dashboard: false
+      insecure: false
+      debug: false
+
+    gateway:
+      enabled: false
+    gatewayClass:
+      enabled: false
+    ingressClass:
+      enabled: true
+      isDefaultClass: false
+      name: traefik
+    ingressRoute:
+      dashboard:
+        enabled: false
+      healthcheck:
+        enabled: false
+
+    providers:
+      kubernetesCRD:
+        enabled: false
+        allowCrossNamespace: false
+        allowExternalNameServices: false
+        allowEmptyServices: false
+      kubernetesIngress:
+        enabled: false
+        allowExternalNameServices: false
+        allowEmptyServices: false
+      kubernetesGateway:
+        enabled: false
+        experimentalChannel: false
+      kubernetesIngressNGINX:
+        enabled: false
+      file:
+        enabled: false
+
+    experimental:
+      kubernetesGateway:
+        enabled: false
+      fastProxy:
+        enabled: false
+        debug: false
+      plugins: {}
+      localPlugins: {}
+      otlpLogs: false
+
+    logs:
+      general:
+        format: json
+        level: INFO
+      access:
+        enabled: true
+        format: json
+        bufferingSize: 100
+        addInternals: false
+        fields:
+          general:
+            defaultmode: keep
+            names: {}
+          headers:
+            defaultmode: drop
+            names: {}
+
+    metrics:
+      addInternals: false
+      prometheus:
+        entryPoint: metrics
+        service:
+          enabled: true
+
+    ports:
+      web:
+        expose:
+          default: true
+        exposedPort: 80
+        protocol: TCP
+        allowACMEByPass: false
+        http:
+          redirections:
+            entryPoint: {}
+        forwardedHeaders:
+          trustedIPs: []
+          insecure: false
+          notAppendXForwardedFor: false
+        proxyProtocol:
+          trustedIPs: []
+          insecure: false
+        transport:
+          respondingTimeouts:
+            readTimeout: 15s
+            writeTimeout: 30s
+            idleTimeout: 30s
+      websecure:
+        expose:
+          default: true
+        exposedPort: 443
+        protocol: TCP
+        allowACMEByPass: false
+        http:
+          tls:
+            enabled: true
+            certResolver: ""
+            domains: []
+        http3:
+          enabled: false
+        forwardedHeaders:
+          trustedIPs: []
+          insecure: false
+          notAppendXForwardedFor: false
+        proxyProtocol:
+          trustedIPs: []
+          insecure: false
+        transport:
+          respondingTimeouts:
+            readTimeout: 15s
+            writeTimeout: 30s
+            idleTimeout: 30s
+      metrics:
+        expose:
+          default: false
+        exposedPort: 9100
+        protocol: TCP
+      traefik:
+        expose:
+          default: false
+        exposedPort: 8080
+        protocol: TCP
+
+    service:
+      enabled: true
+      single: true
+      spec:
+        type: LoadBalancer
+        externalTrafficPolicy: Local
+        ipFamilyPolicy: SingleStack
+        ipFamilies:
+          - IPv4
+
+    certificatesResolvers: {}
+    tlsOptions: {}
+    tlsStore: {}
+    persistence:
+      enabled: false
+    hostNetwork: false
+    rbac:
+      enabled: false
+      namespaced: false
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+    podSecurityContext:
+      runAsGroup: 65532
+      runAsNonRoot: true
+      runAsUser: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true

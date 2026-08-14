@@ -4,3 +4,4 @@ resources:
   - appproject-ssl-proxy.yaml
   - applicationset-workloads.yaml
   - jenkins-production-gate-rbac.yaml
+  - traefik-default-deny.yaml

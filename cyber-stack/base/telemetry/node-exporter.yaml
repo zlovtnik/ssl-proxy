@@ -22,7 +22,6 @@ spec:
     spec:
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
-      hostNetwork: true
       tolerations:
         - operator: Exists
       containers:

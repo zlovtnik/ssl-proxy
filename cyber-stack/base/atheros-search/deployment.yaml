@@ -271,7 +271,7 @@ metadata:
     app.kubernetes.io/component: atheros-search-ui
     app.kubernetes.io/managed-by: kustomize
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: atheros-search-ui

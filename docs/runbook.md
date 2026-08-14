@@ -64,6 +64,118 @@ the mutable commit or `latest` registry tags.
 
 Atheros Search tracing hooks do not currently initialize an exporter.
 
+## Phase-one default-deny Internet edge
+
+Phase one makes K3s's bundled Traefik a route-free IPv4 edge on the wired node
+address `192.168.1.221`. It publishes no application or hostname and configures
+no redirect, certificate resolver or trusted forwarding proxy. Arbitrary HTTP
+and HTTPS requests must receive only Traefik's generic `404`; HTTPS may present
+Traefik's default self-signed certificate. `192.168.1.222` is never a router
+NAT target.
+
+Ownership is split deliberately:
+
+- this repository and the platform bootstrap Application own
+  `HelmChartConfig/traefik`, workload listener containment, Prometheus rules and
+  the workload AppProject allowlist;
+- the platform team owns K3s, ServiceLB, the node firewall, reserved wired
+  address, access-log delivery and live reconciliation evidence;
+- the network owner owns router forwarding, DMZ-host behavior, WAN
+  administration, UPnP/NAT-PMP, public DNS and the independent external test.
+
+Router TCP forwarding must remain disabled until every gate below has recorded
+evidence. Repository or Kubernetes readiness cannot substitute for node and
+router evidence.
+
+### Node-firewall gate
+
+Record the exact trusted LAN and WireGuard administration CIDRs, K3s pod and
+Service CIDRs, active CNI interfaces, and router-facing interface before
+reviewing a ruleset. Do not copy example CIDRs from another K3s installation.
+The effective host policy must:
+
+1. allow established and related traffic and the IPv6 control traffic required
+   for correct link operation;
+2. preserve the discovered K3s pod, Service and CNI traffic;
+3. allow public IPv4 TCP 80/443 and preserve the existing WireGuard UDP 443
+   host-port exception;
+4. allow SSH, Kubernetes API 6443, registry 5000, Argo CD NodePorts, metrics,
+   3000 and 8080 only from the recorded trusted LAN/WireGuard sources;
+5. deny every other WAN-initiated flow and every unsolicited IPv6 inbound flow.
+
+The platform owner must retain a recoverable copy of the previous ruleset and
+verify an independent administrative session before activation. Record the
+post-change ruleset, `ss -lntu` listener inventory and successful K3s pod/Service
+connectivity. If this evidence is absent or ambiguous, the rollout is blocked.
+
+### Router gate
+
+Reserve `.221` for the wired node. Confirm that DMZ-host mode, router WAN
+administration, UPnP and NAT-PMP are disabled and that public DNS has no AAAA
+record for the edge. When all repository, reconciliation, firewall, logging and
+LAN reachability gates pass, add only IPv4 TCP 80 and 443 forwards to `.221`.
+Do not forward to `.222` and do not add a UDP forward as part of this change.
+
+### Pre-forward verification
+
+Run the repository gates and inspect live state without changing it:
+
+```bash
+make gitops-check
+python3 -m unittest scripts.tests.test_check_gitops -v
+kubectl --context "$KUBE_CONTEXT" -n prod-ssl-proxy get services -o wide
+kubectl --context "$KUBE_CONTEXT" -n kube-system get daemonsets -l svccontroller.k3s.cattle.io/svcname -o wide
+kubectl --context "$KUBE_CONTEXT" get ingress -A
+kubectl --context "$KUBE_CONTEXT" api-resources --verbs=list -o name
+kubectl --context "$KUBE_CONTEXT" -n kube-system get helmchartconfig traefik -o yaml
+kubectl --context "$KUBE_CONTEXT" -n kube-system get deployment traefik -o yaml
+kubectl --context "$KUBE_CONTEXT" -n kube-system get service traefik traefik-metrics -o yaml
+```
+
+The evidence must show:
+
+- every production application Service is `ClusterIP` or headless and the only
+  ServiceLB listener is the intended Traefik TCP 80/443 edge;
+- no Ingress, Gateway, HTTPRoute, IngressRoute or Middleware exists;
+- Traefik has no routing-provider, dashboard, HTTP/3, redirect or certificate-
+  resolver argument; its Service is IPv4 `SingleStack` with
+  `externalTrafficPolicy: Local`;
+- access logs arrive in Loki, Prometheus scrapes the `traefik-edge` job, and the
+  three `TraefikEdge*` alert rules are loaded and visible;
+- requests from a LAN client to both entrypoints return `404`, the observed
+  client address matches that client rather than a spoofed forwarding header,
+  and each request has a matching JSON access-log record.
+
+Use arbitrary Host values for the LAN response check:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'Host: phase-one.invalid' http://192.168.1.221/
+curl -k -sS -o /dev/null -w '%{http_code}\n' -H 'Host: phase-one.invalid' https://192.168.1.221/
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 203.0.113.9' -H 'Host: phase-one.invalid' http://192.168.1.221/
+```
+
+All three commands must print `404`. Any other HTTP status is a blocker.
+
+### Immediate external verification and rollback
+
+Immediately after the network owner enables forwarding, test from a genuinely
+independent network. Confirm only IPv4 TCP 80/443 is reachable; verify TCP
+3000, 5000, 6443, 8080, 9100, 18080 and every inventoried Argo NodePort are
+closed. Probe every supplied global IPv6 address and confirm unsolicited
+connections fail. Send arbitrary Host headers over HTTP and HTTPS, require
+`404`, then correlate every probe with Loki access logs and Traefik metrics.
+
+Disable the router forwards immediately if any application response,
+dashboard, unexpected open port, unlogged request, public IPv6 listener or
+non-404 edge response is observed. Router-forward removal is the first and
+fastest rollback; afterward, revert the responsible Git commit and let Argo CD
+reconcile. Do not repair the edge with an interactive Kubernetes patch.
+
+Any future application publication is a new security change, not an extension
+of this phase. Its review must approve hostname ownership, a trusted TLS
+certificate, authentication and MFA expectations, middleware ordering and the
+minimum AppProject route authorization before a route kind can be allowed.
+
 ## Read-only diagnostics
 
 ```bash

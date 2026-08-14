@@ -77,6 +77,22 @@ FIRST_PARTY_IMAGES = (
     "tidb-runtime-schema",
 )
 
+PHASE_ONE_ROUTE_KINDS = {
+    "Gateway",
+    "GRPCRoute",
+    "HTTPRoute",
+    "Ingress",
+    "IngressRoute",
+    "Middleware",
+    "TCPRoute",
+    "TLSRoute",
+    "UDPRoute",
+}
+
+PHASE_ONE_HOST_NETWORK_ALLOWLIST = {
+    ("DaemonSet", "ssl-proxy-atheros-sensor"),
+}
+
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
@@ -617,6 +633,319 @@ def _check_traefik_redirect(rendered: Documents | str, relative: str) -> list[st
     return []
 
 
+def _workload_pod_spec(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    if document.get("kind") == "Pod":
+        return _mapping(document.get("spec"))
+    if document.get("kind") == "CronJob":
+        return _mapping(
+            _path(document, "spec", "jobTemplate", "spec", "template", "spec")
+        )
+    return _mapping(_path(document, "spec", "template", "spec"))
+
+
+def _check_phase_one_workload_edge(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    errors: list[str] = []
+    for document in _documents(rendered):
+        kind = str(document.get("kind", ""))
+        name = str(_metadata(document).get("name", "<unnamed>"))
+        if kind == "Service":
+            service_type = _path(document, "spec", "type")
+            if service_type not in (None, "ClusterIP"):
+                errors.append(
+                    f"{relative}: phase one Service {name} must be ClusterIP or "
+                    f"headless, not {service_type}"
+                )
+        if kind in PHASE_ONE_ROUTE_KINDS:
+            errors.append(
+                f"{relative}: phase one must not render HTTP route resource "
+                f"{kind}/{name}"
+            )
+
+        pod_spec = _workload_pod_spec(document)
+        if not pod_spec:
+            continue
+        if pod_spec.get("hostNetwork") is True and (
+            kind,
+            name,
+        ) not in PHASE_ONE_HOST_NETWORK_ALLOWLIST:
+            errors.append(
+                f"{relative}: phase one workload {kind}/{name} uses "
+                "unapproved hostNetwork"
+            )
+        containers = [
+            _mapping(container)
+            for field in ("initContainers", "containers", "ephemeralContainers")
+            for container in _list(pod_spec.get(field))
+        ]
+        for container in containers:
+            for port in _list(container.get("ports")):
+                definition = _mapping(port)
+                if definition.get("hostPort") is None:
+                    continue
+                if str(definition.get("protocol", "TCP")).upper() == "TCP":
+                    errors.append(
+                        f"{relative}: phase one workload {kind}/{name} exposes "
+                        f"TCP hostPort {definition.get('hostPort')}"
+                    )
+    return errors
+
+
+def _traefik_values(
+    rendered: Documents | str, relative: str, errors: list[str]
+) -> Mapping[str, Any] | None:
+    charts = _find(_documents(rendered), "HelmChartConfig", "traefik")
+    if len(charts) != 1:
+        errors.append(
+            f"{relative}: expected exactly one kube-system HelmChartConfig/traefik"
+        )
+        return None
+    if _metadata(charts[0]).get("namespace") != "kube-system":
+        errors.append(
+            f"{relative}: HelmChartConfig/traefik must be in kube-system"
+        )
+    values_content = _path(charts[0], "spec", "valuesContent")
+    if not isinstance(values_content, str):
+        errors.append(
+            f"{relative}: HelmChartConfig/traefik must provide valuesContent"
+        )
+        return None
+    values_documents = _load_documents(
+        values_content, f"{relative}: HelmChartConfig/traefik valuesContent", errors
+    )
+    if not values_documents or len(values_documents) != 1:
+        errors.append(
+            f"{relative}: HelmChartConfig/traefik valuesContent must be one mapping"
+        )
+        return None
+    return values_documents[0]
+
+
+def _check_default_deny_traefik(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    errors: list[str] = []
+    values = _traefik_values(rendered, relative, errors)
+    if values is None:
+        return errors
+
+    false_paths = (
+        ("global", "checkNewVersion"),
+        ("global", "sendAnonymousUsage"),
+        ("api", "dashboard"),
+        ("api", "insecure"),
+        ("api", "debug"),
+        ("gateway", "enabled"),
+        ("gatewayClass", "enabled"),
+        ("ingressClass", "isDefaultClass"),
+        ("ingressRoute", "dashboard", "enabled"),
+        ("ingressRoute", "healthcheck", "enabled"),
+        ("experimental", "kubernetesGateway", "enabled"),
+        ("ports", "websecure", "http3", "enabled"),
+        ("hostNetwork",),
+        ("rbac", "enabled"),
+        ("persistence", "enabled"),
+    )
+    for path in false_paths:
+        if _path(values, *path) is not False:
+            errors.append(
+                f"{relative}: Traefik {'.'.join(path)} must be explicitly false"
+            )
+
+    if _path(values, "ingressClass", "enabled") is not True:
+        errors.append(
+            f"{relative}: Traefik must retain a non-default IngressClass"
+        )
+
+    for provider in (
+        "kubernetesCRD",
+        "kubernetesIngress",
+        "kubernetesGateway",
+        "kubernetesIngressNGINX",
+        "file",
+    ):
+        if _path(values, "providers", provider, "enabled") is not False:
+            errors.append(
+                f"{relative}: Traefik provider {provider} must be disabled"
+            )
+
+    access_log = _mapping(_path(values, "logs", "access"))
+    if _path(values, "logs", "general", "format") != "json":
+        errors.append(f"{relative}: Traefik general logs must use JSON")
+    if access_log.get("enabled") is not True or access_log.get("format") != "json":
+        errors.append(
+            f"{relative}: Traefik JSON access logging to stdout must be enabled"
+        )
+    if access_log.get("filePath") not in (None, ""):
+        errors.append(f"{relative}: Traefik access logs must remain on stdout")
+    if _path(access_log, "fields", "headers", "defaultmode") != "drop":
+        errors.append(
+            f"{relative}: Traefik access logs must drop request and response headers"
+        )
+    if _path(values, "metrics", "prometheus", "service", "enabled") is not True:
+        errors.append(
+            f"{relative}: Traefik must expose an internal Prometheus metrics Service"
+        )
+
+    exposed_ports: set[tuple[str, Any, str]] = set()
+    for name, port in _mapping(values.get("ports")).items():
+        definition = _mapping(port)
+        if _path(definition, "expose", "default") is True:
+            exposed_ports.add(
+                (
+                    str(name),
+                    definition.get("exposedPort"),
+                    str(definition.get("protocol", "TCP")).upper(),
+                )
+            )
+    expected_ports = {("web", 80, "TCP"), ("websecure", 443, "TCP")}
+    if exposed_ports != expected_ports:
+        errors.append(
+            f"{relative}: Traefik public ports must be exactly TCP 80/443"
+        )
+
+    for entrypoint in ("web", "websecure"):
+        port = _mapping(_path(values, "ports", entrypoint))
+        if port.get("allowACMEByPass") is not False:
+            errors.append(
+                f"{relative}: Traefik {entrypoint} ACME bypass must be disabled"
+            )
+        if _path(port, "forwardedHeaders", "insecure") is not False or _list(
+            _path(port, "forwardedHeaders", "trustedIPs")
+        ):
+            errors.append(
+                f"{relative}: Traefik {entrypoint} forwarded headers must be untrusted"
+            )
+        if _path(port, "proxyProtocol", "insecure") is not False or _list(
+            _path(port, "proxyProtocol", "trustedIPs")
+        ):
+            errors.append(
+                f"{relative}: Traefik {entrypoint} proxy protocol must be untrusted"
+            )
+        expected_timeouts = {
+            "readTimeout": "15s",
+            "writeTimeout": "30s",
+            "idleTimeout": "30s",
+        }
+        if _mapping(_path(port, "transport", "respondingTimeouts")) != expected_timeouts:
+            errors.append(
+                f"{relative}: Traefik {entrypoint} responding timeouts must remain finite"
+            )
+
+    if _mapping(_path(values, "ports", "web", "http", "redirections", "entryPoint")):
+        errors.append(f"{relative}: phase one Traefik must not redirect HTTP")
+    if _path(values, "ports", "websecure", "http", "tls", "certResolver") not in (
+        None,
+        "",
+    ):
+        errors.append(f"{relative}: phase one Traefik must not configure ACME")
+    if _path(values, "ports", "websecure", "http", "tls", "enabled") is not True:
+        errors.append(
+            f"{relative}: Traefik websecure must terminate TLS with its default certificate"
+        )
+    for field in ("certificatesResolvers", "tlsOptions", "tlsStore"):
+        if _mapping(values.get(field)):
+            errors.append(f"{relative}: phase one Traefik {field} must be empty")
+
+    service_spec = _mapping(_path(values, "service", "spec"))
+    expected_service = {
+        "type": "LoadBalancer",
+        "externalTrafficPolicy": "Local",
+        "ipFamilyPolicy": "SingleStack",
+        "ipFamilies": ["IPv4"],
+    }
+    if service_spec != expected_service:
+        errors.append(
+            f"{relative}: Traefik Service must be IPv4 SingleStack with "
+            "externalTrafficPolicy Local"
+        )
+    for field in ("additionalArguments", "env", "envFrom"):
+        if values.get(field) not in (None, [], {}):
+            errors.append(
+                f"{relative}: phase one Traefik must not inject {field} overrides"
+            )
+    if _mapping(_path(values, "service", "additionalServices")):
+        errors.append(
+            f"{relative}: phase one Traefik must not expose additional Services"
+        )
+
+    requests = _mapping(_path(values, "resources", "requests"))
+    limits = _mapping(_path(values, "resources", "limits"))
+    if requests != {"cpu": "100m", "memory": "128Mi"} or limits != {
+        "cpu": "500m",
+        "memory": "256Mi",
+    }:
+        errors.append(f"{relative}: Traefik resource bounds must be preserved")
+    return errors
+
+
+def _check_traefik_observability(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    config_maps = _find(
+        _documents(rendered), "ConfigMap", "ssl-proxy-telemetry-prometheus-config"
+    )
+    if not config_maps:
+        return []
+    errors: list[str] = []
+    data = _mapping(config_maps[0].get("data"))
+    prometheus_documents = _load_documents(
+        str(data.get("prometheus.yml", "")),
+        f"{relative}: Prometheus configuration",
+        errors,
+    )
+    rules_documents = _load_documents(
+        str(data.get("edge-rules.yml", "")),
+        f"{relative}: Traefik edge rules",
+        errors,
+    )
+    if not prometheus_documents or not rules_documents:
+        return errors
+    prometheus = prometheus_documents[0]
+    if "/etc/prometheus/edge-rules.yml" not in _list(prometheus.get("rule_files")):
+        errors.append(f"{relative}: Prometheus must load Traefik edge rules")
+    jobs = [
+        _mapping(job)
+        for job in _list(prometheus.get("scrape_configs"))
+        if _mapping(job).get("job_name") == "traefik-edge"
+    ]
+    targets = {
+        str(target)
+        for job in jobs
+        for config in _list(job.get("static_configs"))
+        for target in _list(_mapping(config).get("targets"))
+    }
+    if jobs == [] or targets != {
+        "traefik-metrics.kube-system.svc.cluster.local:9100"
+    }:
+        errors.append(
+            f"{relative}: Prometheus must scrape only the internal Traefik metrics Service"
+        )
+
+    rules = [
+        _mapping(rule)
+        for group in _list(rules_documents[0].get("groups"))
+        for rule in _list(_mapping(group).get("rules"))
+    ]
+    expressions = {str(rule.get("alert")): str(rule.get("expr", "")) for rule in rules}
+    required = {
+        "TraefikEdgeDown": ('up{job="traefik-edge"}',),
+        "TraefikEdgeRequestFlood": ("traefik_entrypoint_requests_total",),
+        "TraefikEdgeUnexpectedResponse": (
+            "traefik_entrypoint_requests_total",
+            'code!="404"',
+        ),
+    }
+    for alert, fragments in required.items():
+        expression = expressions.get(alert, "")
+        if not all(fragment in expression for fragment in fragments):
+            errors.append(
+                f"{relative}: Prometheus alert {alert} is missing or ineffective"
+            )
+    return errors
+
+
 def _wave(document: Mapping[str, Any]) -> int | None:
     value = _mapping(_metadata(document).get("annotations")).get("argocd.argoproj.io/sync-wave")
     try:
@@ -974,6 +1303,19 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
         errors.append(
             f"{relative}: ssl-proxy AppProject destinations must be production-only"
         )
+    allowed_resources = [
+        _mapping(resource)
+        for resource in _list(_path(projects[0], "spec", "namespaceResourceWhitelist"))
+    ]
+    if any(
+        resource.get("group") == "*"
+        or resource.get("kind") == "*"
+        or str(resource.get("kind")) in PHASE_ONE_ROUTE_KINDS
+        for resource in allowed_resources
+    ):
+        errors.append(
+            f"{relative}: ssl-proxy AppProject must not allow phase-one route kinds"
+        )
     forbidden_kinds = {"ImageUpdater"}
     forbidden_applications = {"ssl-proxy-image-updater"}
     if any(document.get("kind") in forbidden_kinds for document in documents):
@@ -1076,6 +1418,9 @@ def check_repository(root: Path, executable: str) -> list[str]:
                 errors.append(f"{relative}: rendered workload retains logical image name {image}")
         for check in (_check_otel_endpoint, _check_redpanda_memory, _check_proxy_probes, _check_proxy_wireguard_route, _check_jaeger_probes, _check_atheros_search_auth, _check_atheros_search_ui_proxy, _check_keycloak_database_credential, _check_redpanda_topic_replication, _check_traefik_redirect, _check_tidb_waves):
             errors.extend(check(documents, relative))
+        if relative.startswith("cyber-stack/matrix/"):
+            errors.extend(_check_phase_one_workload_edge(documents, relative))
+            errors.extend(_check_traefik_observability(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
     production_render_checks = {
@@ -1138,9 +1483,21 @@ def check_repository(root: Path, executable: str) -> list[str]:
             rendered_kustomizations["cyber-stack/argocd-bootstrap"], errors
         )
     if "cyber-stack/argocd" in rendered_kustomizations:
+        errors.extend(
+            _check_phase_one_workload_edge(
+                rendered_kustomizations["cyber-stack/argocd"],
+                "cyber-stack/argocd",
+            )
+        )
         _check_application_set(rendered_kustomizations["cyber-stack/argocd"], errors)
         _check_prod_project(rendered_kustomizations["cyber-stack/argocd"], errors)
         _check_production_gate_rbac(rendered_kustomizations["cyber-stack/argocd"], errors)
+        errors.extend(
+            _check_default_deny_traefik(
+                rendered_kustomizations["cyber-stack/argocd"],
+                "cyber-stack/argocd",
+            )
+        )
 
     for environment in ("dev", "prod"):
         for component in ("data-plane", "app-stack"):

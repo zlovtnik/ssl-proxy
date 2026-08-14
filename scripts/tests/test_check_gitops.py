@@ -232,6 +232,214 @@ metadata: {name: ssl-proxy-tidb-init-grants, annotations: {argocd.argoproj.io/sy
         )
         self.assertTrue(any("init wave" in error for error in check_gitops._check_tidb_waves(rendered, "test")))
 
+    def test_phase_one_rejects_bypass_listeners_and_routes(self) -> None:
+        rendered = documents(
+            """kind: Service
+metadata: {name: public-app}
+spec: {type: LoadBalancer}
+---
+kind: Deployment
+metadata: {name: host-listener}
+spec:
+  template:
+    spec:
+      hostNetwork: true
+      containers:
+        - ports: [{containerPort: 8080, hostPort: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: app-route}
+"""
+        )
+        errors = check_gitops._check_phase_one_workload_edge(rendered, "prod")
+        self.assertEqual(4, len(errors))
+        self.assertTrue(any("ClusterIP or headless" in error for error in errors))
+        self.assertTrue(any("unapproved hostNetwork" in error for error in errors))
+        self.assertTrue(any("TCP hostPort 8080" in error for error in errors))
+        self.assertTrue(any("Ingress/app-route" in error for error in errors))
+
+    def test_phase_one_preserves_wireless_and_wireguard_exceptions(self) -> None:
+        rendered = documents(
+            workload(
+                "ssl-proxy-atheros-sensor",
+                kind="DaemonSet",
+                containers="[{ports: [{containerPort: 443, hostPort: 443, protocol: UDP}]}]",
+            )
+        )
+        rendered[0]["spec"]["template"]["spec"]["hostNetwork"] = True
+        rendered.extend(
+            documents(
+                """kind: Service
+metadata: {name: internal}
+spec: {type: ClusterIP, clusterIP: None}
+"""
+            )
+        )
+        self.assertEqual(
+            [], check_gitops._check_phase_one_workload_edge(rendered, "prod")
+        )
+
+
+class DefaultDenyTraefikTest(unittest.TestCase):
+    def values(self) -> dict[str, object]:
+        return {
+            "global": {"checkNewVersion": False, "sendAnonymousUsage": False},
+            "api": {"dashboard": False, "insecure": False, "debug": False},
+            "gateway": {"enabled": False},
+            "gatewayClass": {"enabled": False},
+            "ingressClass": {"enabled": True, "isDefaultClass": False},
+            "ingressRoute": {
+                "dashboard": {"enabled": False},
+                "healthcheck": {"enabled": False},
+            },
+            "providers": {
+                provider: {"enabled": False}
+                for provider in (
+                    "kubernetesCRD",
+                    "kubernetesIngress",
+                    "kubernetesGateway",
+                    "kubernetesIngressNGINX",
+                    "file",
+                )
+            },
+            "experimental": {"kubernetesGateway": {"enabled": False}},
+            "logs": {
+                "general": {"format": "json"},
+                "access": {
+                    "enabled": True,
+                    "format": "json",
+                    "fields": {"headers": {"defaultmode": "drop"}},
+                },
+            },
+            "metrics": {"prometheus": {"service": {"enabled": True}}},
+            "ports": {
+                "web": {
+                    "expose": {"default": True},
+                    "exposedPort": 80,
+                    "protocol": "TCP",
+                    "allowACMEByPass": False,
+                    "http": {"redirections": {"entryPoint": {}}},
+                    "forwardedHeaders": {"trustedIPs": [], "insecure": False},
+                    "proxyProtocol": {"trustedIPs": [], "insecure": False},
+                    "transport": {
+                        "respondingTimeouts": {
+                            "readTimeout": "15s",
+                            "writeTimeout": "30s",
+                            "idleTimeout": "30s",
+                        }
+                    },
+                },
+                "websecure": {
+                    "expose": {"default": True},
+                    "exposedPort": 443,
+                    "protocol": "TCP",
+                    "allowACMEByPass": False,
+                    "http": {
+                        "tls": {
+                            "enabled": True,
+                            "certResolver": "",
+                            "domains": [],
+                        }
+                    },
+                    "http3": {"enabled": False},
+                    "forwardedHeaders": {"trustedIPs": [], "insecure": False},
+                    "proxyProtocol": {"trustedIPs": [], "insecure": False},
+                    "transport": {
+                        "respondingTimeouts": {
+                            "readTimeout": "15s",
+                            "writeTimeout": "30s",
+                            "idleTimeout": "30s",
+                        }
+                    },
+                },
+            },
+            "service": {
+                "spec": {
+                    "type": "LoadBalancer",
+                    "externalTrafficPolicy": "Local",
+                    "ipFamilyPolicy": "SingleStack",
+                    "ipFamilies": ["IPv4"],
+                }
+            },
+            "certificatesResolvers": {},
+            "tlsOptions": {},
+            "tlsStore": {},
+            "hostNetwork": False,
+            "rbac": {"enabled": False},
+            "persistence": {"enabled": False},
+            "resources": {
+                "requests": {"cpu": "100m", "memory": "128Mi"},
+                "limits": {"cpu": "500m", "memory": "256Mi"},
+            },
+        }
+
+    def chart(self, values: dict[str, object] | None = None) -> list[dict[str, object]]:
+        return [
+            {
+                "apiVersion": "helm.cattle.io/v1",
+                "kind": "HelmChartConfig",
+                "metadata": {"name": "traefik", "namespace": "kube-system"},
+                "spec": {
+                    "valuesContent": check_gitops.yaml.safe_dump(
+                        values if values is not None else self.values()
+                    )
+                },
+            }
+        ]
+
+    def test_accepts_route_free_ipv4_edge(self) -> None:
+        self.assertEqual(
+            [], check_gitops._check_default_deny_traefik(self.chart(), "argocd")
+        )
+
+    def test_rejects_provider_header_dual_stack_and_log_widening(self) -> None:
+        values = self.values()
+        values["providers"]["kubernetesIngress"]["enabled"] = True
+        values["ports"]["web"]["forwardedHeaders"]["insecure"] = True
+        values["logs"]["access"]["enabled"] = False
+        values["service"]["spec"]["ipFamilyPolicy"] = "PreferDualStack"
+        errors = check_gitops._check_default_deny_traefik(
+            self.chart(values), "argocd"
+        )
+        self.assertTrue(any("kubernetesIngress" in error for error in errors))
+        self.assertTrue(any("forwarded headers" in error for error in errors))
+        self.assertTrue(any("access logging" in error for error in errors))
+        self.assertTrue(any("IPv4 SingleStack" in error for error in errors))
+
+
+class TraefikObservabilityTest(unittest.TestCase):
+    def config(self) -> list[dict[str, object]]:
+        return documents(
+            """kind: ConfigMap
+metadata: {name: ssl-proxy-telemetry-prometheus-config}
+data:
+  prometheus.yml: |-
+    rule_files: [/etc/prometheus/edge-rules.yml]
+    scrape_configs:
+      - job_name: traefik-edge
+        static_configs:
+          - targets: [traefik-metrics.kube-system.svc.cluster.local:9100]
+  edge-rules.yml: |-
+    groups:
+      - name: traefik-default-deny-edge
+        rules:
+          - {alert: TraefikEdgeDown, expr: 'up{job="traefik-edge"} == 0'}
+          - {alert: TraefikEdgeRequestFlood, expr: 'rate(traefik_entrypoint_requests_total[5m]) > 10'}
+          - {alert: TraefikEdgeUnexpectedResponse, expr: 'traefik_entrypoint_requests_total{code!="404"} > 0'}
+"""
+        )
+
+    def test_requires_scrape_and_visible_edge_alerts(self) -> None:
+        self.assertEqual(
+            [], check_gitops._check_traefik_observability(self.config(), "prod")
+        )
+        rendered = self.config()
+        rendered[0]["data"]["edge-rules.yml"] = "groups: []\n"
+        self.assertEqual(
+            3, len(check_gitops._check_traefik_observability(rendered, "prod"))
+        )
+
 
 class SchemaExecutorContractTest(unittest.TestCase):
     marker = "schema-migrator-001-" + "a" * 64
@@ -418,6 +626,22 @@ metadata: {name: ssl-proxy-image-updater}
         check_gitops._check_prod_project(project, errors)
         self.assertTrue(any("production-only" in error for error in errors))
         self.assertTrue(any("dev controllers" in error for error in errors))
+
+    def test_rejects_phase_one_route_allowlist_widening(self) -> None:
+        project = documents(
+            """apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: {name: ssl-proxy}
+spec:
+  destinations:
+    - {namespace: prod-ssl-proxy, server: https://kubernetes.default.svc}
+  namespaceResourceWhitelist:
+    - {group: networking.k8s.io, kind: Ingress}
+"""
+        )
+        errors: list[str] = []
+        check_gitops._check_prod_project(project, errors)
+        self.assertTrue(any("route kinds" in error for error in errors))
 
 
 class ProductionGateRbacTest(unittest.TestCase):
