@@ -26,7 +26,7 @@ images:
 - digest: sha256:27a68632cb3948bff8a578162d7bff6e7494125bc8b40ae2ae24bf5d1ccc443c
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
-- digest: sha256:6d0352c5505a8bfae3da326c4024417c08a5a17f5e16c07ee9e461757aac77a8
+- digest: sha256:d6473f4611ae0e29d12b621b8c13e3342241bfeab2522f5facb39d2eafb1cefd
   name: tidb-runtime-schema
   newName: 192.168.1.242:5000/tidb-runtime-schema
 patches:
