@@ -5,7 +5,7 @@ use crate::{
     obfuscation::{Profile, FOX_DOMAINS},
     wg_packet_obfuscation::{
         encoded_packet_len_bounds, EncryptionMode, PacketPadding, WgPacketObfuscation,
-        XorRekeyPolicy,
+        WgPacketObfuscationError, XorRekeyPolicy,
     },
 };
 use sync_plane::SyncConfig;
@@ -255,6 +255,10 @@ impl WireGuardConfig {
                 obfuscation_key.clone().into_bytes(),
                 obfuscation_magic_byte,
             )
+            .map_err(|e| ConfigError::InvalidWireGuardObfuscationSizing {
+                var: "WG_OBFUSCATION_KEY",
+                message: e.to_string(),
+            })?
             .with_encryption_mode(obfuscation_encryption_mode)
             .with_padding(obfuscation_padding.clone())
             .with_magic_position(obfuscation_magic_position)
@@ -321,8 +325,8 @@ impl WireGuardConfig {
         })
     }
 
-    pub fn packet_obfuscation(&self) -> WgPacketObfuscation {
-        WgPacketObfuscation::new(self.obfuscation_key.clone(), self.obfuscation_magic_byte)
+    pub fn packet_obfuscation(&self) -> Result<WgPacketObfuscation, WgPacketObfuscationError> {
+        let result = WgPacketObfuscation::new(self.obfuscation_key.clone(), self.obfuscation_magic_byte)?
             .with_encryption_mode(self.obfuscation_encryption_mode)
             .with_padding(self.obfuscation_padding.clone())
             .with_magic_position(self.obfuscation_magic_position)
@@ -330,7 +334,8 @@ impl WireGuardConfig {
                 self.obfuscation_xor_rekey_packets,
                 self.obfuscation_xor_rekey_secs,
             ))
-            .with_replay_protection(self.obfuscation_replay_protection)
+            .with_replay_protection(self.obfuscation_replay_protection);
+        Ok(result)
     }
 }
 

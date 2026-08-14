@@ -62,6 +62,7 @@ services:
       JAVA_OPTS: -Djenkins.install.runSetupWizard=false
     secrets:
       - jenkins-admin-password
+      - jenkins-prometheus-password
       - ssl-proxy-prod-readonly-kubeconfig
     volumes:
       - jenkins-home:/var/jenkins_home
@@ -87,5 +88,7 @@ volumes:
 secrets:
   jenkins-admin-password:
     file: ${JENKINS_ADMIN_PASSWORD_FILE:-./secrets/jenkins-admin-password}
+  jenkins-prometheus-password:
+    file: ${JENKINS_PROMETHEUS_PASSWORD_FILE:-./secrets/jenkins-prometheus-password}
   ssl-proxy-prod-readonly-kubeconfig:
     file: ${JENKINS_PROD_READONLY_KUBECONFIG_FILE:?JENKINS_PROD_READONLY_KUBECONFIG_FILE is required}

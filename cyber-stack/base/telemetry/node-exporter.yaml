@@ -42,6 +42,7 @@ spec:
             - "--path.procfs=/host/proc"
             - "--path.sysfs=/host/sys"
             - "--path.rootfs=/host/root"
+            - "--collector.textfile.directory=/var/lib/node_exporter/textfile_collector"
             - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)"
             - "--no-collector.infiniband"
             - "--no-collector.nfs"
@@ -81,6 +82,9 @@ spec:
               mountPath: /host/root
               readOnly: true
               mountPropagation: HostToContainer
+            - name: textfile
+              mountPath: /var/lib/node_exporter/textfile_collector
+              readOnly: true
       volumes:
         - name: proc
           hostPath:
@@ -92,6 +96,10 @@ spec:
           hostPath:
             path: /
             type: Directory
+        - name: textfile
+          hostPath:
+            path: /var/lib/node_exporter/textfile_collector
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
@@ -113,3 +121,23 @@ spec:
       port: 9100
       targetPort: metrics
       protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-node-exporter
+  namespace: ssl-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-node-exporter
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+      ports:
+        - {protocol: TCP, port: 9100}

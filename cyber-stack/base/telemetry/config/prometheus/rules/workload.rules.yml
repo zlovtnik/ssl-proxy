@@ -1,0 +1,48 @@
+groups:
+  - name: kubernetes-workloads
+    rules:
+      - alert: WorkloadUnavailable
+        expr: (kube_deployment_spec_replicas - kube_deployment_status_replicas_available > 0) or (kube_statefulset_replicas - kube_statefulset_status_replicas_ready > 0) or (kube_daemonset_status_desired_number_scheduled - kube_daemonset_status_number_ready > 0)
+        for: 5m
+        labels: {severity: critical, service: kubernetes}
+        annotations:
+          summary: "Workload {{ $labels.deployment }}{{ $labels.statefulset }}{{ $labels.daemonset }} has unavailable replicas"
+          diagnostic: "Desired and ready replica counts have differed for five minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#workload-unavailable"
+      - alert: ContainerRestartLoop
+        expr: increase(kube_pod_container_status_restarts_total[10m]) >= 3
+        for: 5m
+        labels: {severity: critical, service: kubernetes}
+        annotations:
+          summary: "Container {{ $labels.container }} is restarting repeatedly"
+          diagnostic: "The container restarted at least three times in ten minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#restart-loop"
+      - alert: ContainerOOMKilled
+        expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+        for: 5m
+        labels: {severity: critical, service: kubernetes}
+        annotations:
+          summary: "Container {{ $labels.container }} was OOM-killed"
+          diagnostic: "The last container termination reason is OOMKilled."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/infrastructure-capacity"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#oom"
+      - alert: KubernetesJobFailed
+        expr: kube_job_status_failed > 0
+        for: 5m
+        labels: {severity: critical, service: kubernetes}
+        annotations:
+          summary: "Job {{ $labels.job_name }} failed"
+          diagnostic: "Kubernetes reports one or more failed Job pods."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/fleet-availability"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#job-failed"
+      - alert: AtherosSensorMetricsStale
+        expr: (time() - atheros_sensor_textfile_timestamp_seconds > 300) or absent(atheros_sensor_textfile_timestamp_seconds)
+        for: 5m
+        labels: {severity: critical, service: atheros-sensor}
+        annotations:
+          summary: "Atheros sensor metrics are stale on {{ $labels.instance }}"
+          diagnostic: "The node-exporter textfile has not been refreshed for more than five minutes."
+          dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/service-red-sync"
+          runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#sensor-metrics-stale"

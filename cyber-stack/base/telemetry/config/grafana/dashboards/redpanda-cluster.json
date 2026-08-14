@@ -1,0 +1,11 @@
+{
+  "annotations":{"list":[]},"editable":false,"schemaVersion":39,"title":"Redpanda Cluster","uid":"redpanda-cluster","time":{"from":"now-6h","to":"now"},"panels":[
+    {"id":1,"type":"stat","title":"Brokers Up","gridPos":{"x":0,"y":0,"w":6,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(up{service=\"redpanda\"})"}]},
+    {"id":2,"type":"stat","title":"Under-replicated Replicas","gridPos":{"x":6,"y":0,"w":6,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(vectorized_cluster_partition_under_replicated_replicas)"}]},
+    {"id":3,"type":"timeseries","title":"Leaders and Partitions","gridPos":{"x":12,"y":0,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(vectorized_cluster_partition_leader)"},{"refId":"B","expr":"sum(vectorized_cluster_partition_replicas)"}]},
+    {"id":4,"type":"timeseries","title":"Kafka Throughput","gridPos":{"x":0,"y":8,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(vectorized_kafka_rpc_received_bytes[5m]))"},{"refId":"B","expr":"sum(rate(vectorized_kafka_rpc_sent_bytes[5m]))"}]},
+    {"id":5,"type":"timeseries","title":"Request Errors and Latency","gridPos":{"x":12,"y":8,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(vectorized_kafka_rpc_dispatch_handler_error_total[5m]))"},{"refId":"B","expr":"histogram_quantile(0.95, sum by (le) (rate(vectorized_kafka_rpc_dispatch_handler_latency_seconds_bucket[5m])))"}]},
+    {"id":6,"type":"timeseries","title":"Disk and Memory","gridPos":{"x":0,"y":16,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(vectorized_storage_disk_free_space_bytes)"},{"refId":"B","expr":"sum(vectorized_memory_allocated_memory)"}]},
+    {"id":7,"type":"timeseries","title":"Reactor Stalls","gridPos":{"x":12,"y":16,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(vectorized_reactor_stalls_total[5m]))"}]}
+  ]
+}

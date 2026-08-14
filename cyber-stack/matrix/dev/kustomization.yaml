@@ -36,7 +36,6 @@ patches:
 - path: patches/octopus-environment.yaml
 - path: patches/keycloak-recovery.yaml
 - path: patches/alloy-positions.yaml
-- path: patches/jaeger-storage.yaml
 - patch: |-
     - op: replace
       path: /spec/template/metadata/annotations/ssl-proxy.io~1content-hash

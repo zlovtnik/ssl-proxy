@@ -139,3 +139,11 @@ spec:
           port: 9000
         - protocol: TCP
           port: 9001
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+      ports:
+        - protocol: TCP
+          port: 9000

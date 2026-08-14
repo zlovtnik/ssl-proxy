@@ -77,9 +77,9 @@ FIRST_PARTY_IMAGES = (
     "tidb-runtime-schema",
 )
 
-JAEGER_BADGER_PRELOAD_FIXED_IMAGE = (
-    "jaegertracing/all-in-one:1.76.0@"
-    "sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac"
+JAEGER_V2_IMAGE = (
+    "jaegertracing/jaeger:2.20.0@"
+    "sha256:46a886260e04002d8f45e213fc39063fa11a50446048fdaa64786fc0840cb9f8"
 )
 
 PHASE_ONE_ROUTE_KINDS = {
@@ -96,6 +96,36 @@ PHASE_ONE_ROUTE_KINDS = {
 
 PHASE_ONE_HOST_NETWORK_ALLOWLIST = {
     ("DaemonSet", "ssl-proxy-atheros-sensor"),
+    ("Deployment", "ssl-proxy-telemetry-tidb-metrics-bridge"),
+}
+
+OBSERVABILITY_CATALOG_SERVICES = {
+    "ssl-proxy",
+    "octopus",
+    "atheros-search",
+    "atheros-search-ui",
+    "schema-migrator-backend",
+    "schema-migrator-ui",
+    "keycloak",
+    "schema-migrator-traefik",
+    "redpanda",
+    "redis",
+    "minio",
+    "prometheus",
+    "alertmanager",
+    "grafana",
+    "loki",
+    "alloy",
+    "otel-collector",
+    "jaeger",
+    "pushgateway",
+    "kube-state-metrics",
+    "blackbox-exporter",
+    "node-exporter",
+    "cadvisor",
+    "jenkins",
+    "registry",
+    "tidb-external",
 }
 
 
@@ -239,16 +269,39 @@ def _check_redpanda_memory(rendered: Documents | str, relative: str) -> list[str
 def _check_proxy_probes(rendered: Documents | str, relative: str) -> list[str]:
     deployments = _find(_documents(rendered), "Deployment", "ssl-proxy-proxy")
     if not deployments:
-        return []
-    errors: list[str] = []
+        proxy_required = relative in {
+            "cyber-stack/base",
+            "cyber-stack/base/proxy",
+            "cyber-stack/matrix/dev",
+            "cyber-stack/matrix/dev/app-stack",
+            "cyber-stack/matrix/prod",
+            "cyber-stack/matrix/prod/app-stack",
+        }
+        return (
+            [f"{relative}: expected one ssl-proxy-proxy Deployment"]
+            if proxy_required
+            else []
+        )
     for container in _pod_containers(deployments[0]):
-        for probe in ("livenessProbe", "readinessProbe"):
-            if "httpGet" in _mapping(container.get(probe)):
+        if container.get("name") != "ssl-proxy":
+            continue
+        errors: list[str] = []
+        expected = {"livenessProbe": "/health", "readinessProbe": "/ready"}
+        for probe, path in expected.items():
+            http_get = _mapping(_path(container, probe, "httpGet"))
+            if http_get.get("path") != path or http_get.get("port") != "observability":
                 errors.append(
-                    f"{relative}: proxy {probe} must use exec probe "
-                    "on loopback, not httpGet"
+                    f"{relative}: proxy {probe} must use {path} on the "
+                    "dedicated observability port"
                 )
-    return errors
+        admin = [
+            entry for entry in _list(container.get("env"))
+            if _mapping(entry).get("name") == "ADMIN_BIND_ADDR"
+        ]
+        if len(admin) != 1 or _mapping(admin[0]).get("value") != "127.0.0.1":
+            errors.append(f"{relative}: proxy admin listener must remain loopback-only")
+        return errors
+    return [f"{relative}: expected one proxy container"]
 
 
 def _check_proxy_wireguard_route(rendered: Documents | str, relative: str) -> list[str]:
@@ -284,14 +337,14 @@ def _check_jaeger_probes(rendered: Documents | str, relative: str) -> list[str]:
         for port in _list(container.get("ports"))
     }
     errors: list[str] = []
-    if ports.get("admin") != 14269:
-        errors.append(f"{relative}: Jaeger admin port must be named admin on 14269")
+    if ports.get("health") != 13133:
+        errors.append(f"{relative}: Jaeger health port must be named health on 13133")
     for probe_name in ("startupProbe", "livenessProbe", "readinessProbe"):
         probe = _mapping(container.get(probe_name))
         http_get = _mapping(probe.get("httpGet"))
-        if http_get.get("path") != "/" or http_get.get("port") != "admin":
+        if http_get.get("path") != "/" or http_get.get("port") != "health":
             errors.append(
-                f"{relative}: Jaeger {probe_name} must use the admin health endpoint"
+                f"{relative}: Jaeger {probe_name} must use the v2 health endpoint"
             )
     startup = _mapping(container.get("startupProbe"))
     try:
@@ -322,10 +375,9 @@ def _check_jaeger_badger_runtime(
     ]
     if len(containers) != 1:
         return [f"{relative}: expected one Jaeger container"]
-    if containers[0].get("image") != JAEGER_BADGER_PRELOAD_FIXED_IMAGE:
+    if containers[0].get("image") != JAEGER_V2_IMAGE:
         return [
-            f"{relative}: Jaeger must use the pinned 1.76.0 runtime with the "
-            "Badger service-cache preload deduplication fix"
+            f"{relative}: Jaeger must use the digest-pinned 2.20.0 runtime"
         ]
     return []
 
@@ -347,13 +399,14 @@ def _check_prod_jaeger_recovery(
         return [f"{relative}: expected one production Jaeger container"]
     container = containers[0]
     errors: list[str] = []
-    cpu_limit = _quantity_millicores(
-        _path(container, "resources", "limits", "cpu")
-    )
-    if cpu_limit is None or cpu_limit < 2000:
+    memory_request = _quantity_bytes(_path(container, "resources", "requests", "memory"))
+    memory_limit = _quantity_bytes(_path(container, "resources", "limits", "memory"))
+    if memory_request is None or memory_request < 512 * 1024**2:
         errors.append(
-            f"{relative}: production Jaeger needs at least 2 CPU for Badger recovery"
+            f"{relative}: production Jaeger needs at least a 512 MiB memory request"
         )
+    if memory_limit is None or memory_limit < 2 * 1024**3:
+        errors.append(f"{relative}: production Jaeger needs at least a 2 GiB memory limit")
     startup = _mapping(container.get("startupProbe"))
     try:
         startup_budget = int(startup.get("failureThreshold", 0)) * int(
@@ -911,9 +964,14 @@ def _check_default_deny_traefik(
 def _check_traefik_observability(
     rendered: Documents | str, relative: str
 ) -> list[str]:
-    config_maps = _find(
-        _documents(rendered), "ConfigMap", "ssl-proxy-telemetry-prometheus-config"
-    )
+    config_maps = [
+        document
+        for document in _documents(rendered)
+        if document.get("kind") == "ConfigMap"
+        and str(_metadata(document).get("name", "")).startswith(
+            "ssl-proxy-telemetry-prometheus-config-"
+        )
+    ]
     if not config_maps:
         return []
     errors: list[str] = []
@@ -923,16 +981,29 @@ def _check_traefik_observability(
         f"{relative}: Prometheus configuration",
         errors,
     )
+    rule_maps = [
+        document
+        for document in _documents(rendered)
+        if document.get("kind") == "ConfigMap"
+        and str(_metadata(document).get("name", "")).startswith(
+            "ssl-proxy-telemetry-prometheus-rules-"
+        )
+    ]
+    rules_content = "\n---\n".join(
+        str(value)
+        for document in rule_maps
+        for value in _mapping(document.get("data")).values()
+    )
     rules_documents = _load_documents(
-        str(data.get("edge-rules.yml", "")),
+        rules_content,
         f"{relative}: Traefik edge rules",
         errors,
     )
     if not prometheus_documents or not rules_documents:
         return errors
     prometheus = prometheus_documents[0]
-    if "/etc/prometheus/edge-rules.yml" not in _list(prometheus.get("rule_files")):
-        errors.append(f"{relative}: Prometheus must load Traefik edge rules")
+    if "/etc/prometheus/rules/*.yml" not in _list(prometheus.get("rule_files")):
+        errors.append(f"{relative}: Prometheus must load generated rule files")
     jobs = [
         _mapping(job)
         for job in _list(prometheus.get("scrape_configs"))
@@ -953,7 +1024,8 @@ def _check_traefik_observability(
 
     rules = [
         _mapping(rule)
-        for group in _list(rules_documents[0].get("groups"))
+        for rules_document in rules_documents
+        for group in _list(rules_document.get("groups"))
         for rule in _list(_mapping(group).get("rules"))
     ]
     expressions = {str(rule.get("alert")): str(rule.get("expr", "")) for rule in rules}
@@ -971,6 +1043,199 @@ def _check_traefik_observability(
             errors.append(
                 f"{relative}: Prometheus alert {alert} is missing or ineffective"
             )
+    return errors
+
+
+def _config_maps_with_prefix(
+    rendered: Documents | str, prefix: str
+) -> list[Document]:
+    return [
+        document
+        for document in _documents(rendered)
+        if document.get("kind") == "ConfigMap"
+        and str(_metadata(document).get("name", "")).startswith(prefix)
+    ]
+
+
+def _workload_pod_specs(documents: Iterable[Document]) -> Iterable[Mapping[str, Any]]:
+    for document in documents:
+        kind = document.get("kind")
+        if kind == "Pod":
+            yield _mapping(document.get("spec"))
+        elif kind == "CronJob":
+            yield _mapping(
+                _path(document, "spec", "jobTemplate", "spec", "template", "spec")
+            )
+        elif kind in {"DaemonSet", "Deployment", "Job", "ReplicaSet", "StatefulSet"}:
+            yield _mapping(_path(document, "spec", "template", "spec"))
+
+
+def _workloads_source_secret_key(
+    documents: Iterable[Document], secret_name: str, secret_key: str
+) -> bool:
+    for pod_spec in _workload_pod_specs(documents):
+        containers = (
+            _list(pod_spec.get("initContainers"))
+            + _list(pod_spec.get("containers"))
+            + _list(pod_spec.get("ephemeralContainers"))
+        )
+        for container in containers:
+            definition = _mapping(container)
+            for entry in _list(definition.get("env")):
+                secret_ref = _mapping(
+                    _path(_mapping(entry), "valueFrom", "secretKeyRef")
+                )
+                if (
+                    secret_ref.get("name") == secret_name
+                    and secret_ref.get("key") == secret_key
+                ):
+                    return True
+            for entry in _list(definition.get("envFrom")):
+                if _path(_mapping(entry), "secretRef", "name") == secret_name:
+                    return True
+        for volume in _list(pod_spec.get("volumes")):
+            volume_definition = _mapping(volume)
+            secret = _mapping(volume_definition.get("secret"))
+            if secret.get("secretName") == secret_name:
+                items = [_mapping(item) for item in _list(secret.get("items"))]
+                if not items or any(item.get("key") == secret_key for item in items):
+                    return True
+            for source in _list(_path(volume_definition, "projected", "sources")):
+                projected_secret = _mapping(_mapping(source).get("secret"))
+                if projected_secret.get("name") != secret_name:
+                    continue
+                items = [
+                    _mapping(item) for item in _list(projected_secret.get("items"))
+                ]
+                if not items or any(item.get("key") == secret_key for item in items):
+                    return True
+    return False
+
+
+def _check_observability_contract(
+    rendered: Documents | str, relative: str
+) -> list[str]:
+    documents = _documents(rendered)
+    errors: list[str] = []
+    catalog_maps = _config_maps_with_prefix(
+        documents, "ssl-proxy-telemetry-prometheus-catalog-"
+    )
+    if len(catalog_maps) != 1:
+        errors.append(f"{relative}: expected one generated observability service catalog")
+    else:
+        data = _mapping(catalog_maps[0].get("data"))
+        try:
+            loaded_catalog = yaml.safe_load(str(data.get("service-catalog.yml", "")))
+        except yaml.YAMLError as exc:
+            errors.append(f"{relative}: invalid observability service catalog: {exc}")
+            loaded_catalog = []
+        catalog = loaded_catalog if isinstance(loaded_catalog, list) else []
+        services = {
+            str(_path(entry, "labels", "service"))
+            for entry in (catalog or [])
+            if _path(entry, "labels", "service") is not None
+        }
+        missing = sorted(OBSERVABILITY_CATALOG_SERVICES - services)
+        if missing:
+            errors.append(
+                f"{relative}: observability catalog is missing: {', '.join(missing)}"
+            )
+
+    generated_prefixes = (
+        "ssl-proxy-telemetry-prometheus-config-",
+        "ssl-proxy-telemetry-prometheus-rules-",
+        "ssl-proxy-telemetry-alertmanager-config-",
+        "ssl-proxy-telemetry-grafana-dashboards-",
+        "ssl-proxy-telemetry-otel-collector-config-",
+        "ssl-proxy-telemetry-jaeger-config-",
+        "ssl-proxy-telemetry-blackbox-config-",
+    )
+    config_map_names = {
+        str(_metadata(document).get("name", ""))
+        for document in documents
+        if document.get("kind") == "ConfigMap"
+    }
+    for prefix in generated_prefixes:
+        names = [name for name in config_map_names if name.startswith(prefix)]
+        if len(names) != 1 or not re.fullmatch(re.escape(prefix) + r"[a-z0-9]{10}", names[0]):
+            errors.append(f"{relative}: {prefix.removesuffix('-')} must have one Kustomize content hash")
+
+    required_policies = {
+        "ssl-proxy-telemetry-prometheus",
+        "ssl-proxy-telemetry-alertmanager",
+        "ssl-proxy-telemetry-blackbox-exporter",
+        "ssl-proxy-telemetry-kube-state-metrics",
+        "ssl-proxy-redis-runtime",
+        "ssl-proxy-minio-ingress",
+    }
+    policies = {
+        str(_metadata(document).get("name"))
+        for document in documents
+        if document.get("kind") == "NetworkPolicy"
+    }
+    missing_policies = sorted(required_policies - policies)
+    if missing_policies:
+        errors.append(
+            f"{relative}: observability NetworkPolicies are missing: "
+            + ", ".join(missing_policies)
+        )
+
+    for key in ("alertmanager-webhook-url", "jenkins-prometheus-password"):
+        if not _workloads_source_secret_key(
+            documents, "observability-credentials", key
+        ):
+            errors.append(f"{relative}: required observability Secret key {key} is not mounted")
+    return errors
+
+
+def _check_tidb_collection_path(
+    rendered: Documents | str, relative: str, environment: str
+) -> list[str]:
+    documents = _documents(rendered)
+    errors: list[str] = []
+    bridges = _find(
+        documents, "Deployment", "ssl-proxy-telemetry-tidb-metrics-bridge"
+    )
+    if len(bridges) != 1:
+        return [f"{relative}: expected one TiDB metrics bridge declaration"]
+    bridge = bridges[0]
+    replicas = _path(bridge, "spec", "replicas")
+    pod_spec = _mapping(_path(bridge, "spec", "template", "spec"))
+    bundled = _find(documents, "StatefulSet", "ssl-proxy-tidb")
+    if environment == "dev":
+        if len(bundled) != 1:
+            errors.append(f"{relative}: dev must render bundled TiDB for direct scraping")
+        if replicas != 0:
+            errors.append(f"{relative}: dev TiDB host metrics bridge must remain disabled")
+    else:
+        if bundled:
+            errors.append(f"{relative}: prod must not render bundled TiDB")
+        if replicas != 1 or pod_spec.get("hostNetwork") is not True:
+            errors.append(f"{relative}: prod TiDB metrics bridge must run once with hostNetwork")
+        if _path(pod_spec, "nodeSelector", "ssl-proxy.io/tidb-host") != "true":
+            errors.append(
+                f"{relative}: prod TiDB bridge requires ssl-proxy.io/tidb-host=true"
+            )
+    bridge_configs = _config_maps_with_prefix(
+        documents, "ssl-proxy-telemetry-tidb-bridge-config-"
+    )
+    bridge_text = "\n".join(
+        str(value)
+        for document in bridge_configs
+        for value in _mapping(document.get("data")).values()
+    )
+    if "127.0.0.1:10080" not in bridge_text or "/api/v1/write" not in bridge_text:
+        errors.append(f"{relative}: TiDB bridge must scrape host-local status and remote-write")
+    prometheus_configs = _config_maps_with_prefix(
+        documents, "ssl-proxy-telemetry-prometheus-config-"
+    )
+    prometheus_text = "\n".join(
+        str(value)
+        for document in prometheus_configs
+        for value in _mapping(document.get("data")).values()
+    )
+    if "job_name: tidb-dev" not in prometheus_text:
+        errors.append(f"{relative}: Prometheus must retain direct dev TiDB discovery")
     return errors
 
 
@@ -1449,6 +1714,13 @@ def check_repository(root: Path, executable: str) -> list[str]:
         if relative.startswith("cyber-stack/matrix/"):
             errors.extend(_check_phase_one_workload_edge(documents, relative))
             errors.extend(_check_traefik_observability(documents, relative))
+        if relative in {
+            "cyber-stack/matrix/dev",
+            "cyber-stack/matrix/dev/data-plane",
+            "cyber-stack/matrix/prod",
+            "cyber-stack/matrix/prod/data-plane",
+        }:
+            errors.extend(_check_observability_contract(documents, relative))
 
     errors.extend(_check_environment_identity_hostnames(rendered_kustomizations))
     production_render_checks = {
@@ -1488,6 +1760,18 @@ def check_repository(root: Path, executable: str) -> list[str]:
         errors.extend(
             _check_prod_jaeger_recovery(
                 rendered_kustomizations[prod_data_plane], prod_data_plane
+            )
+        )
+        errors.extend(
+            _check_tidb_collection_path(
+                rendered_kustomizations[prod_data_plane], prod_data_plane, "prod"
+            )
+        )
+    dev_data_plane = "cyber-stack/matrix/dev/data-plane"
+    if dev_data_plane in rendered_kustomizations:
+        errors.extend(
+            _check_tidb_collection_path(
+                rendered_kustomizations[dev_data_plane], dev_data_plane, "dev"
             )
         )
     if expected_schema_marker is not None:

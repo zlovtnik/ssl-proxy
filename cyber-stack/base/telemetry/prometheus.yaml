@@ -37,6 +37,12 @@ spec:
             - "--storage.tsdb.retention.time=15d"
             - "--web.console.libraries=/etc/prometheus/console_libraries"
             - "--web.console.templates=/etc/prometheus/consoles"
+            - "--web.enable-remote-write-receiver"
+          env:
+            - name: ENVIRONMENT
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - containerPort: 9090
               name: http
@@ -65,12 +71,39 @@ spec:
             - name: config
               mountPath: /etc/prometheus
               readOnly: true
+            - name: catalog
+              mountPath: /etc/prometheus/catalog
+              readOnly: true
+            - name: rules
+              mountPath: /etc/prometheus/rules
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/prometheus/secrets
+              readOnly: true
             - name: data
               mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: ssl-proxy-telemetry-prometheus-config
+        - name: catalog
+          configMap:
+            name: ssl-proxy-telemetry-prometheus-catalog
+        - name: rules
+          configMap:
+            name: ssl-proxy-telemetry-prometheus-rules
+        - name: secrets
+          secret:
+            secretName: observability-credentials
+            items:
+              - key: minio-prometheus-bearer-token
+                path: minio-prometheus-bearer-token
+              - key: jenkins-prometheus-password
+                path: jenkins-prometheus-password
+              - key: loki-username
+                path: loki-username
+              - key: loki-password
+                path: loki-password
         - name: data
           persistentVolumeClaim:
             claimName: ssl-proxy-telemetry-prometheus
@@ -154,3 +187,36 @@ subjects:
   - kind: ServiceAccount
     name: ssl-proxy-telemetry-prometheus
     namespace: ssl-proxy
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-prometheus
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-prometheus
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-prometheus
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-grafana}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-jaeger}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-blackbox-exporter}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-prometheus}
+      ports:
+        - {protocol: TCP, port: 9090}
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: telemetry-tidb-metrics-bridge}
+      ports:
+        - {protocol: TCP, port: 9090}

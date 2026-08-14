@@ -1,0 +1,48 @@
+# Sanitized fixture captured from prometheus:856.vc9e3d6e4b_b_9e on Jenkins 2.568.2.
+# Runtime values were normalized; metric names, labels, and types are verbatim.
+# HELP default_jenkins_up Is Jenkins ready to receive requests
+# TYPE default_jenkins_up gauge
+default_jenkins_up 1.0
+# HELP default_jenkins_uptime Time since Jenkins machine was initialized
+# TYPE default_jenkins_uptime gauge
+default_jenkins_uptime 1.0
+# HELP default_jenkins_executors_available Executors Available
+# TYPE default_jenkins_executors_available gauge
+default_jenkins_executors_available{label="built-in"} 1.0
+# HELP default_jenkins_executors_busy Executors Busy
+# TYPE default_jenkins_executors_busy gauge
+default_jenkins_executors_busy{label="built-in"} 0.0
+# HELP jenkins_queue_size_value Generated from Dropwizard metric import
+# TYPE jenkins_queue_size_value gauge
+jenkins_queue_size_value 0.0
+# HELP jenkins_queue_blocked_value Generated from Dropwizard metric import
+# TYPE jenkins_queue_blocked_value gauge
+jenkins_queue_blocked_value 0.0
+# HELP jenkins_queue_pending_value Generated from Dropwizard metric import
+# TYPE jenkins_queue_pending_value gauge
+jenkins_queue_pending_value 0.0
+# HELP jenkins_queue_buildable_value Generated from Dropwizard metric import
+# TYPE jenkins_queue_buildable_value gauge
+jenkins_queue_buildable_value 0.0
+# HELP jenkins_queue_stuck_value Generated from Dropwizard metric import
+# TYPE jenkins_queue_stuck_value gauge
+jenkins_queue_stuck_value 0.0
+# HELP jenkins_job_scheduled_total Generated from Dropwizard metric import
+# TYPE jenkins_job_scheduled_total counter
+jenkins_job_scheduled_total 0.0
+# HELP jenkins_job_building_duration Generated from Dropwizard metric import
+# TYPE jenkins_job_building_duration summary
+jenkins_job_building_duration{quantile="0.5"} 0.0
+jenkins_job_building_duration{quantile="0.95"} 0.0
+jenkins_job_building_duration_count 0.0
+# HELP jenkins_job_waiting_duration Generated from Dropwizard metric import
+# TYPE jenkins_job_waiting_duration summary
+jenkins_job_waiting_duration{quantile="0.5"} 0.0
+jenkins_job_waiting_duration{quantile="0.95"} 0.0
+jenkins_job_waiting_duration_count 0.0
+# HELP jenkins_executor_in_use_value Generated from Dropwizard metric import
+# TYPE jenkins_executor_in_use_value gauge
+jenkins_executor_in_use_value 0.0
+# HELP jenkins_executor_free_value Generated from Dropwizard metric import
+# TYPE jenkins_executor_free_value gauge
+jenkins_executor_free_value 1.0

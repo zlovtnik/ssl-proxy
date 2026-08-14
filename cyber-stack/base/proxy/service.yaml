@@ -25,7 +25,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ssl-proxy-proxy-admin
+  name: ssl-proxy-proxy-observability
   namespace: ssl-proxy
   labels:
     app.kubernetes.io/name: ssl-proxy
@@ -37,11 +37,7 @@ spec:
     app.kubernetes.io/name: ssl-proxy
     app.kubernetes.io/component: proxy
   ports:
-    - name: admin
-      port: 3002
-      targetPort: 3002
-      protocol: TCP
-    - name: policy
-      port: 3001
-      targetPort: 3001
+    - name: observability
+      port: 9098
+      targetPort: observability
       protocol: TCP

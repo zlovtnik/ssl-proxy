@@ -202,6 +202,10 @@ pub enum ConfigError {
     MissingSyncRedpandaSslKeyLocation,
     #[error("SYNC_REDPANDA_SSL_KEY_LOCATION is set but SYNC_REDPANDA_SSL_CERTIFICATE_LOCATION is missing")]
     MissingSyncRedpandaSslCertificateLocation,
+    #[error("MAX_CONNECTIONS must be greater than zero")]
+    InvalidMaxConnections,
+    #[error("TARPIT_MAX_CONNECTIONS must be greater than zero")]
+    InvalidTarpitMaxConnections,
 }
 
 impl std::fmt::Debug for Config {

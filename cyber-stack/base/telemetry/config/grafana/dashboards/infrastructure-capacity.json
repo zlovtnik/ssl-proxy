@@ -1,0 +1,13 @@
+{
+  "annotations":{"list":[]},"editable":false,"schemaVersion":39,"title":"Infrastructure Capacity","uid":"infrastructure-capacity","time":{"from":"now-6h","to":"now"},
+  "templating":{"list":[{"name":"node","type":"query","datasource":{"type":"prometheus","uid":"prometheus"},"query":{"query":"label_values(node_uname_info, instance)"},"includeAll":true,"multi":true,"current":{"text":"All","value":"$__all"}}]},
+  "panels":[
+    {"id":1,"type":"timeseries","title":"Node CPU Utilization","gridPos":{"x":0,"y":0,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"node:cpu_utilization:ratio_rate5m{instance=~\"$node\"}"}]},
+    {"id":2,"type":"timeseries","title":"Node Memory Utilization","gridPos":{"x":8,"y":0,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"node:memory_utilization:ratio{instance=~\"$node\"}"}]},
+    {"id":3,"type":"timeseries","title":"Filesystem and PVC Utilization","gridPos":{"x":16,"y":0,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"node:filesystem_utilization:ratio{instance=~\"$node\"}"},{"refId":"B","expr":"pvc:utilization:ratio"}]},
+    {"id":4,"type":"timeseries","title":"Container CPU","gridPos":{"x":0,"y":8,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum by (pod) (rate(container_cpu_usage_seconds_total{container!=\"\",image!=\"\"}[5m]))"}]},
+    {"id":5,"type":"timeseries","title":"Container Memory versus Limits","gridPos":{"x":8,"y":8,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"container:memory_limit_utilization:ratio"}]},
+    {"id":6,"type":"timeseries","title":"Node Network","gridPos":{"x":16,"y":8,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum by (instance) (rate(node_network_receive_bytes_total{device!=\"lo\"}[5m]))"},{"refId":"B","expr":"sum by (instance) (rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m]))"}]},
+    {"id":7,"type":"table","title":"Pod Requests and Limits","gridPos":{"x":0,"y":16,"w":24,"h":9},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum by (pod, resource) (kube_pod_container_resource_requests)","format":"table","instant":true},{"refId":"B","expr":"sum by (pod, resource) (kube_pod_container_resource_limits)","format":"table","instant":true}]}
+  ]
+}

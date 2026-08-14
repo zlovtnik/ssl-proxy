@@ -1,0 +1,13 @@
+{
+  "annotations":{"list":[]},"editable":false,"schemaVersion":39,"title":"Logs Explorer","uid":"logs-explorer","time":{"from":"now-1h","to":"now"},
+  "templating":{"list":[
+    {"name":"environment","type":"query","datasource":{"type":"loki","uid":"loki"},"query":"label_values(namespace)","includeAll":true,"multi":true,"current":{"text":"All","value":"$__all"}},
+    {"name":"service","type":"query","datasource":{"type":"loki","uid":"loki"},"query":"label_values({namespace=~\"$environment\"}, container)","includeAll":true,"multi":true,"current":{"text":"All","value":"$__all"}},
+    {"name":"severity","type":"custom","query":"debug,info,warn,error,fatal","includeAll":true,"multi":true,"current":{"text":"All","value":"$__all"}}
+  ]},
+  "panels":[
+    {"id":1,"type":"logs","title":"Correlated Service Logs","gridPos":{"x":0,"y":0,"w":24,"h":18},"datasource":{"type":"loki","uid":"loki"},"targets":[{"refId":"A","expr":"{namespace=~\"$environment\",container=~\"$service\"} |~ `(?i)(level|severity)[=: \\\"']*$severity`"}],"options":{"showTime":true,"showLabels":true,"wrapLogMessage":true,"enableLogDetails":true,"sortOrder":"Descending"}},
+    {"id":2,"type":"timeseries","title":"Log Volume by Container","gridPos":{"x":0,"y":18,"w":12,"h":8},"datasource":{"type":"loki","uid":"loki"},"targets":[{"refId":"A","expr":"sum by (container) (count_over_time({namespace=~\"$environment\",container=~\"$service\"}[$__auto]))"}]},
+    {"id":3,"type":"logs","title":"Logs with Trace IDs (click trace_id)","gridPos":{"x":12,"y":18,"w":12,"h":8},"datasource":{"type":"loki","uid":"loki"},"targets":[{"refId":"A","expr":"{namespace=~\"$environment\",container=~\"$service\"} |~ `(?i)trace[_-]?id`"}]}
+  ]
+}

@@ -23,6 +23,20 @@ use crate::tunnel::{
     tls::parse_tls_info,
 };
 
+#[derive(Debug, thiserror::Error)]
+enum QuicTlsError {
+    #[error("QUIC TLS {0} path not configured")]
+    MissingPath(&'static str),
+    #[error("failed to read TLS {0} file: {1}")]
+    ReadFile(&'static str, std::io::Error),
+    #[error("invalid TLS {0} PEM: {1}")]
+    InvalidPem(&'static str, String),
+    #[error("no private key found in key file")]
+    NoPrivateKey,
+    #[error("invalid TLS config: {0}")]
+    InvalidConfig(String),
+}
+
 /// Create a TLS server configuration for QUIC using the certificate and private key
 /// files specified in `config.tls.cert_path` and `config.tls.key_path`.
 ///
@@ -30,57 +44,44 @@ use crate::tunnel::{
 /// private key, constructs a `rustls::ServerConfig` with no client authentication,
 /// and enables HTTP/3 ALPN protocols (`h3` and `h3-29`).
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if either path is not set on the provided `Config`, if the files cannot
-/// be read, or if the PEM contents are malformed or do not contain a private key.
-///
-/// # Returns
-///
-/// An `Arc<rustls::ServerConfig>` configured for use with QUIC and HTTP/3.
-///
-/// # Examples
-///
-/// ```no_run
-/// // Construct or obtain a `Config` with `tls.cert_path` and `tls.key_path` set,
-/// // then pass a reference to this function to build the TLS config for QUIC.
-/// // let cfg: Config = ...;
-/// // let tls = build_rustls_config(&cfg);
-/// ```
-async fn build_rustls_config(config: &Config) -> Arc<rustls::ServerConfig> {
+/// Returns an error if the TLS paths are not configured, the files cannot be read,
+/// or the PEM contents are malformed or do not contain a private key.
+async fn build_rustls_config(config: &Config) -> Result<Arc<rustls::ServerConfig>, QuicTlsError> {
     let cert_path = config
         .tls
         .cert_path
         .as_ref()
-        .expect("tls_cert_path must be set for QUIC");
+        .ok_or(QuicTlsError::MissingPath("tls_cert_path"))?;
     let key_path = config
         .tls
         .key_path
         .as_ref()
-        .expect("tls_key_path must be set for QUIC");
+        .ok_or(QuicTlsError::MissingPath("tls_key_path"))?;
 
     let cert_pem = tokio::fs::read(cert_path)
         .await
-        .expect("failed to read TLS cert for QUIC");
+        .map_err(|e| QuicTlsError::ReadFile("cert", e))?;
     let key_pem = tokio::fs::read(key_path)
         .await
-        .expect("failed to read TLS key for QUIC");
+        .map_err(|e| QuicTlsError::ReadFile("key", e))?;
     let certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..])
         .collect::<Result<_, _>>()
-        .expect("invalid cert PEM for QUIC");
+        .map_err(|e| QuicTlsError::InvalidPem("cert", e.to_string()))?;
     let key = rustls_pemfile::private_key(&mut &key_pem[..])
-        .expect("failed to parse key PEM for QUIC")
-        .expect("no private key found for QUIC");
+        .map_err(|e| QuicTlsError::InvalidPem("key", e.to_string()))?
+        .ok_or(QuicTlsError::NoPrivateKey)?;
 
     let mut tls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
-        .expect("invalid TLS config for QUIC");
+        .map_err(|e| QuicTlsError::InvalidConfig(e.to_string()))?;
 
     // Enable HTTP/3 ALPN with draft fallback for browser compatibility
     tls_config.alpn_protocols = vec![b"h3".to_vec(), b"h3-29".to_vec()];
 
-    Arc::new(tls_config)
+    Ok(Arc::new(tls_config))
 }
 
 /// Start a QUIC + HTTP/3 listener on UDP 0.0.0.0:443 and spawn a task for each incoming connection.
@@ -109,7 +110,13 @@ pub async fn run_quic_listener(
     shutdown: CancellationToken,
     proxy_creds: Option<Arc<(String, String)>>,
 ) {
-    let rustls_config = build_rustls_config(&config).await;
+    let rustls_config = match build_rustls_config(&config).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!(%e, "failed to build QUIC TLS config");
+            return;
+        }
+    };
 
     let quinn_config = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config);
     let quinn_config = match quinn_config {
@@ -121,9 +128,7 @@ pub async fn run_quic_listener(
     };
     let server_config = quinn::ServerConfig::with_crypto(Arc::new(quinn_config));
 
-    let addr: SocketAddr = "0.0.0.0:443"
-        .parse()
-        .expect("static QUIC listen address must parse");
+    let addr = SocketAddr::from(([0, 0, 0, 0], 443));
     let endpoint = match quinn::Endpoint::server(server_config, addr) {
         Ok(ep) => ep,
         Err(e) => {
@@ -169,7 +174,13 @@ pub async fn run_quic_listener(
                 };
 
                 // Acquire connection permit before spawning (applies backpressure at capacity)
-                let permit = semaphore.clone().acquire_owned().await.expect("semaphore closed");
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        warn!("QUIC semaphore closed, stopping accept loop");
+                        break;
+                    }
+                };
 
                 let state = state.clone();
                 let config = config.clone();

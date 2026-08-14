@@ -22,8 +22,9 @@ impl Config {
     /// # Examples
     ///
     /// ```no_run
-    /// let cfg = crate::config::Config::from_env().expect("failed to load config");
+    /// let cfg = crate::config::Config::from_env()?;
     /// println!("{:?}", cfg);
+    /// # Ok::<(), crate::config::ConfigError>(())
     /// ```
     pub fn from_env() -> Result<Self, ConfigError> {
         let proxy = ProxyConfig::from_env()?;
@@ -86,6 +87,12 @@ impl Config {
                 internal_port: wireguard.internal_port,
             });
         }
+        if proxy.max_connections == 0 {
+            return Err(ConfigError::InvalidMaxConnections);
+        }
+        if proxy.tarpit_max_connections == 0 {
+            return Err(ConfigError::InvalidTarpitMaxConnections);
+        }
 
         Ok(Self {
             proxy,
@@ -97,23 +104,6 @@ impl Config {
             wireguard,
             runtime,
         })
-    }
-
-    /// Load configuration from the environment, panicking if any validation or parsing error occurs.
-    ///
-    /// On failure this function will panic with a message prefixed by `"Configuration error:"`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let cfg = Config::from_env_or_panic();
-    /// assert_eq!(cfg.runtime.log_format, "human"); // example assertion using the default
-    /// ```
-    pub fn from_env_or_panic() -> Self {
-        match Config::from_env() {
-            Ok(cfg) => cfg,
-            Err(e) => panic!("Configuration error: {e}"),
-        }
     }
 
     /// Creates a configuration prefilled for use in tests.
@@ -150,14 +140,14 @@ impl Default for Config {
     /// assert!(!cfg.obfuscation.domain_map.is_empty());
     /// ```
     fn default() -> Self {
-        let default_wireguard_obfuscation =
-            WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), Some(0xAA));
+        let _default_wireguard_obfuscation =
+            WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), Some(0xAA))
+                .expect("default obfuscation key is non-empty");
         let default_obfuscation_max_datagram_bytes =
-            default_obfuscation_max_datagram_bytes_for_mtu(
-                DEFAULT_WIREGUARD_PATH_MTU_BYTES,
-                Some(&default_wireguard_obfuscation),
-            )
-            .expect("default WireGuard obfuscation sizing must be valid");
+            DEFAULT_WIREGUARD_PATH_MTU_BYTES
+                + crate::wg_packet_obfuscation::FRAMED_HEADER_LEN
+                + crate::wg_packet_obfuscation::FRAMED_BODY_LEN_FIELD_LEN
+                + crate::wg_packet_obfuscation::AEAD_TAG_LEN_BYTES;
 
         let mut config = Self {
             proxy: ProxyConfig {

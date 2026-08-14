@@ -16,7 +16,7 @@
     };
 
     fn test_obfuscation(magic_byte: Option<u8>) -> WgPacketObfuscation {
-        WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte)
+        WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), magic_byte).unwrap()
     }
 
     fn test_shim_config() -> Arc<WgObfsShimConfig> {
@@ -414,7 +414,7 @@
             let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
             let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
             assert_eq!(decoded, b"handshake-init");
-            let response = encode_packet(b"handshake-reply", &obfuscation);
+            let response = encode_packet(b"handshake-reply", &obfuscation).unwrap();
             server_socket.send_to(&response, shim_peer).await.unwrap();
         });
 
@@ -463,7 +463,7 @@
                 let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
                 peers.push(shim_peer);
                 let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
-                let response = encode_packet(&decoded, &obfuscation);
+                let response = encode_packet(&decoded, &obfuscation).unwrap();
                 server_socket.send_to(&response, shim_peer).await.unwrap();
             }
             peers
@@ -524,7 +524,7 @@
                 let (len, shim_peer) = server_socket.recv_from(&mut buf).await.unwrap();
                 peers.push(shim_peer);
                 let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
-                let response = encode_packet(&decoded, &obfuscation);
+                let response = encode_packet(&decoded, &obfuscation).unwrap();
                 server_socket.send_to(&response, shim_peer).await.unwrap();
             }
             peers
@@ -581,7 +581,7 @@
                 peers.push(shim_peer);
                 let decoded = decode_obfuscated_packet(&buf[..len], &obfuscation).unwrap();
                 server_socket
-                    .send_to(&encode_packet(&decoded, &obfuscation), shim_peer)
+                    .send_to(&encode_packet(&decoded, &obfuscation).unwrap(), shim_peer)
                     .await
                     .unwrap();
             }

@@ -52,6 +52,9 @@ spec:
         - loki-username
         - loki-password
         - loki-htpasswd
+        - alertmanager-webhook-url
+        - jenkins-prometheus-password
+        - minio-prometheus-bearer-token
     - kind: Secret
       name: proxy-admin-key
       type: Opaque

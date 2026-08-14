@@ -20,6 +20,10 @@ type Metrics struct {
 }
 
 func New() *Metrics {
+	return NewForRegisterer(prometheus.DefaultRegisterer)
+}
+
+func NewForRegisterer(registerer prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		SearchRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "athsearch_search_requests_total",
@@ -43,14 +47,30 @@ func New() *Metrics {
 			Help: "Query embedding cache misses.",
 		}),
 	}
-	prometheus.MustRegister(
+	registerer.MustRegister(
 		m.SearchRequests,
 		m.SearchLatency,
 		m.ResultsReturned,
 		m.EmbeddingCacheHits,
 		m.EmbeddingCacheMiss,
 	)
+	initializeStableLabelSets(m)
 	return m
+}
+
+func initializeStableLabelSets(m *Metrics) {
+	kinds := []string{"event", "behaviour_window", "frame_sequence", "device", "cross"}
+	modes := []string{"dense", "sparse", "hybrid", "unspecified"}
+	statuses := []string{"ok", "error"}
+	for _, kind := range kinds {
+		m.ResultsReturned.WithLabelValues(kind).Add(0)
+		for _, mode := range modes {
+			m.SearchLatency.WithLabelValues(kind, mode)
+			for _, status := range statuses {
+				m.SearchRequests.WithLabelValues(kind, mode, status).Add(0)
+			}
+		}
+	}
 }
 
 func (m *Metrics) ObserveSearch(kind, mode, status string, started time.Time, results int) {

@@ -186,24 +186,16 @@ impl AdminAuthRateLimiter {
     }
 }
 
-fn install_rustls_provider() {
+fn install_rustls_provider() -> Result<(), Box<dyn std::error::Error>> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("Failed to install rustls crypto provider");
+        .map_err(|e| format!("Failed to install rustls crypto provider: {e}"))?;
+    Ok(())
 }
 
 fn init_tracing(config: &config::Config) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
     let filter = tracing_subscriber::EnvFilter::from_default_env()
-        .add_directive(
-            "ssl_proxy=info"
-                .parse()
-                .expect("static directive must parse"),
-        )
-        .add_directive(
-            "tower_http=info"
-                .parse()
-                .expect("static directive must parse"),
-        );
+        .add_directive(tracing::Level::INFO.into());
 
     let otel_provider = observability::init_tracer_provider("ssl-proxy");
     if config.runtime.log_format == "json" {
@@ -230,20 +222,22 @@ fn init_tracing(config: &config::Config) -> Option<opentelemetry_sdk::trace::Sdk
     otel_provider
 }
 
-fn build_resolver() -> TokioAsyncResolver {
+fn build_resolver() -> Result<TokioAsyncResolver, Box<dyn std::error::Error>> {
     // Use the system resolver (/etc/resolv.conf) so Kubernetes-internal service names
     // (e.g. ssl-proxy-redpanda) resolve via kube-dns, and external domains are forwarded
     // to upstream resolvers by kube-dns.
-    TokioAsyncResolver::tokio_from_system_conf().expect("system DNS resolver must initialize")
+    let resolver = TokioAsyncResolver::tokio_from_system_conf()
+        .map_err(|e| format!("system DNS resolver must initialize: {e}"))?;
+    Ok(resolver)
 }
 
-fn build_state(config: &config::Config) -> state::SharedState {
+fn build_state(config: &config::Config) -> Result<state::SharedState, Box<dyn std::error::Error>> {
     let (stats_tx, _) = broadcast::channel(64);
     let (events_tx, _) = broadcast::channel(256);
     let client = build_proxy_http_client();
-    let resolver = build_resolver();
+    let resolver = build_resolver()?;
 
-    state::AppState::new(client, resolver, stats_tx, events_tx, config.clone())
+    Ok(state::AppState::new(client, resolver, stats_tx, events_tx, config.clone()))
 }
 
 fn build_proxy_http_client() -> proxy::ProxyClient {
@@ -365,8 +359,7 @@ fn build_admin_router(
                         .unwrap_or("");
 
                     if !admin_api_key_matches(provided, &key) {
-                        let failures =
-                            auth_rate_limiter.record_failure(source_ip, Instant::now());
+                        let failures = auth_rate_limiter.record_failure(source_ip, Instant::now());
                         if failures >= ADMIN_AUTH_MAX_FAILURES {
                             warn!(
                                 source_ip = %source_ip,
@@ -412,6 +405,39 @@ fn build_admin_router(
         .with_state(state)
 }
 
+fn build_observability_router(state: state::SharedState) -> Router {
+    Router::new()
+        .route("/health", get(dashboard::health))
+        .route("/ready", get(dashboard::ready))
+        .route("/metrics", get(dashboard::metrics))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+const OBSERVABILITY_PORT: u16 = 9098;
+
+async fn spawn_observability_listener(state: state::SharedState, shutdown: CancellationToken) {
+    let addr = SocketAddr::from(([0, 0, 0, 0], OBSERVABILITY_PORT));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .unwrap_or_else(|e| {
+            error!(%addr, %e, "failed to bind observability listener");
+            std::process::exit(1)
+        });
+    info!(%addr, "health/readiness/metrics listener active (plaintext)");
+
+    let server_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, build_observability_router(state))
+            .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
+            .await
+        {
+            error!(%e, "observability listener stopped unexpectedly");
+            shutdown.cancel();
+        }
+    });
+}
+
 async fn spawn_admin_listener(
     config: &config::Config,
     state: state::SharedState,
@@ -452,6 +478,7 @@ fn log_runtime_ports(config: &config::Config) {
         wg_public_port = config.wireguard.port,
         wg_internal_port = config.wireguard.internal_port,
         admin_port = config.admin.port,
+        observability_port = OBSERVABILITY_PORT,
         explicit_proxy_enabled = config.proxy.explicit_enabled,
         wg_interface = ?config.wireguard.interface,
         upstream_proxy = ?config.proxy.upstream_proxy,
@@ -483,7 +510,8 @@ fn wireguard_obfuscation_sizing_bounds(
         .filter(|value| *value > 0)
         .unwrap_or(config::DEFAULT_WIREGUARD_PATH_MTU_BYTES);
     let wg_transport_packet_bytes = config::max_wireguard_transport_packet_bytes(wg_mtu);
-    let settings = config.wireguard.packet_obfuscation();
+    let settings = config.wireguard.packet_obfuscation()
+        .map_err(|e| format!("WireGuard obfuscation config error: {e}"))?;
     wg_packet_obfuscation::encoded_packet_len_bounds(wg_transport_packet_bytes, &settings)
         .map(|bounds| Some((wg_mtu, wg_transport_packet_bytes, bounds)))
         .map_err(|err| {
@@ -553,16 +581,16 @@ async fn spawn_wireguard_relay(
                 shutdown.clone(),
                 state.wg_relay_metrics.clone(),
             )
-                .await
-                .unwrap_or_else(|e| {
-                    error!(
-                        public_port = config.wireguard.port,
-                        internal_port = config.wireguard.internal_port,
-                        error = %e,
-                        "failed to bind WireGuard obfuscation relay"
-                    );
-                        std::process::exit(1)
-                }),
+            .await
+            .unwrap_or_else(|e| {
+                error!(
+                    public_port = config.wireguard.port,
+                    internal_port = config.wireguard.internal_port,
+                    error = %e,
+                    "failed to bind WireGuard obfuscation relay"
+                );
+                std::process::exit(1)
+            }),
         )
     } else {
         warn!(

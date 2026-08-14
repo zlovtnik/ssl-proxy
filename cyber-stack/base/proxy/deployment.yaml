@@ -111,7 +111,7 @@ spec:
                   name: proxy-admin-key
                   key: api-key
             - name: ADMIN_BIND_ADDR
-              value: "0.0.0.0"
+              value: "127.0.0.1"
             - name: RUST_LOG
               value: "ssl_proxy=info"
             - name: EXPLICIT_PROXY_ENABLED
@@ -138,19 +138,24 @@ spec:
             - containerPort: 3002
               protocol: TCP
               name: admin
+            - containerPort: 9098
+              protocol: TCP
+              name: observability
             - containerPort: 3001
               protocol: TCP
               name: policy
           livenessProbe:
-            exec:
-              command: ["curl", "-fsS", "http://127.0.0.1:3002/health"]
+            httpGet:
+              path: /health
+              port: observability
             initialDelaySeconds: 40
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
           readinessProbe:
-            exec:
-              command: ["curl", "-fsS", "http://127.0.0.1:3002/ready"]
+            httpGet:
+              path: /ready
+              port: observability
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 5

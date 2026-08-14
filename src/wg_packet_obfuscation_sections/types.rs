@@ -86,6 +86,13 @@ pub enum MagicPositionMode {
     Randomized,
 }
 
+/// Error returned when constructing invalid packet obfuscation settings.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WgPacketObfuscationError {
+    #[error("obfuscation key must not be empty")]
+    EmptyKey,
+}
+
 /// Optional XOR re-keying schedule for framed XOR packets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct XorRekeyPolicy {
@@ -132,14 +139,15 @@ impl std::fmt::Debug for WgPacketObfuscation {
 
 impl WgPacketObfuscation {
     /// Construct legacy-compatible packet obfuscation settings.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is empty.
-    pub fn new(key: impl Into<Vec<u8>>, magic_byte: Option<u8>) -> Self {
+    pub fn new(
+        key: impl Into<Vec<u8>>,
+        magic_byte: Option<u8>,
+    ) -> Result<Self, WgPacketObfuscationError> {
         let key = key.into();
-        assert!(!key.is_empty(), "obfuscation key must not be empty");
-        Self {
+        if key.is_empty() {
+            return Err(WgPacketObfuscationError::EmptyKey);
+        }
+        Ok(Self {
             key: Zeroizing::new(key),
             magic_byte,
             encryption_mode: EncryptionMode::Xor,
@@ -147,7 +155,7 @@ impl WgPacketObfuscation {
             magic_position: MagicPositionMode::Fixed,
             xor_rekey: None,
             replay_protection: false,
-        }
+        })
     }
 
     pub fn with_encryption_mode(mut self, mode: EncryptionMode) -> Self {
@@ -312,6 +320,8 @@ pub enum PacketEncodeError {
     FixedMtuTooSmall { mtu: usize, required: usize },
     #[error("AEAD encryption failed")]
     AeadEncrypt,
+    #[error("key derivation failed")]
+    KeyDerivation,
 }
 
 pub fn encoded_packet_len_bounds(
@@ -430,6 +440,8 @@ pub enum PacketDecodeError {
     UnsupportedVersion(u8),
     #[error("packet frame mode does not match local obfuscation settings")]
     UnsupportedMode,
+    #[error("key derivation failed")]
+    KeyDerivation,
 }
 
 impl PacketDecodeError {
@@ -445,12 +457,16 @@ impl PacketDecodeError {
             Self::InvalidPadding => "invalid_padding",
             Self::UnsupportedVersion(_) => "unsupported_version",
             Self::UnsupportedMode => "unsupported_mode",
+            Self::KeyDerivation => "key_derivation",
         }
     }
 }
 
 /// Encode a plaintext WireGuard packet using the configured obfuscation mode.
-pub fn encode_packet(packet: &[u8], settings: &WgPacketObfuscation) -> Vec<u8> {
+pub fn encode_packet(
+    packet: &[u8],
+    settings: &WgPacketObfuscation,
+) -> Result<Vec<u8>, PacketEncodeError> {
     let mut encoded = vec![0u8; MAX_UDP_PACKET_SIZE];
     encoded[..packet.len()].copy_from_slice(packet);
     let state = PacketEncodeState::new(0);
@@ -461,10 +477,9 @@ pub fn encode_packet(packet: &[u8], settings: &WgPacketObfuscation) -> Vec<u8> {
         &state,
         PacketDirection::Bidirectional,
         0,
-    )
-    .expect("packet must fit in MAX_UDP_PACKET_SIZE");
+    )?;
     encoded.truncate(len);
-    encoded
+    Ok(encoded)
 }
 
 /// Decode an obfuscated WireGuard packet back to plaintext.

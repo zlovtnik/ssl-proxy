@@ -31,20 +31,7 @@ resources:
   # TiDB schema executor
   - tidb-schema-executor
   # Telemetry
-  - telemetry/prometheus.yaml
-  - telemetry/prometheus-configmap.yaml
-  - telemetry/grafana.yaml
-  - telemetry/grafana-configmaps.yaml
-  - telemetry/loki.yaml
-  - telemetry/loki-configmap.yaml
-  - telemetry/promtail.yaml
-  - telemetry/promtail-configmap.yaml
-  - telemetry/jaeger.yaml
-  - telemetry/otel-collector.yaml
-  - telemetry/otel-collector-configmap.yaml
-  - telemetry/node-exporter.yaml
-  - telemetry/cadvisor.yaml
-  - telemetry/pushgateway.yaml
+  - telemetry
 configurations:
   - schema-migrator/kustomizeconfig.yaml
 vars:

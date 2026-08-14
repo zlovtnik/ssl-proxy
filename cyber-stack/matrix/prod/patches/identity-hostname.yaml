@@ -4,4 +4,5 @@ metadata:
   name: ssl-proxy-platform-config
   namespace: ssl-proxy
 data:
+  ENVIRONMENT: prod
   IDENTITY_HOSTNAME: identity.prod.ssl-proxy.internal

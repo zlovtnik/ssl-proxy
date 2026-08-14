@@ -50,6 +50,7 @@ Core capture settings:
 | `ATH_SENSOR_PIPELINE_WORKERS` | Bounded processing concurrency |
 | `ATH_SENSOR_PIPELINE_QUEUE_CAPACITY` | Pipeline queue bound |
 | `ATH_SENSOR_METRICS_PORT` | OpenMetrics listener |
+| `ATH_SENSOR_METRICS_TEXTFILE_PATH` | Atomic node-exporter textfile output path |
 | `ATH_SENSOR_REQUIRE_HOST_ENDPOINTS` | Reject container-only endpoints in host mode |
 
 Detection and persistence settings include the `ATH_SENSOR_CLIENT_*`,
@@ -88,7 +89,10 @@ Logs are JSON on stdout/stderr. Invalid or missing `RUST_LOG` falls back to
 heartbeat logs; `0` disables them. `ATH_SENSOR_AUDIT_LAYER_STREAM` is `off` by
 default and should be enabled only for an intentional legacy audit mirror.
 
-`ATH_SENSOR_METRICS_PORT` exposes `/metrics`. Do not log secrets, raw
+`ATH_SENSOR_METRICS_PORT` exposes `/metrics` on loopback only. The sensor also
+atomically replaces `ATH_SENSOR_METRICS_TEXTFILE_PATH` (default
+`/var/lib/node_exporter/textfile_collector/atheros_sensor.prom`) every 15
+seconds, including a timestamp used for stale-data alerts. Do not log secrets, raw
 handshakes or full identifiers beyond existing audited behavior.
 
 Current published schema versions include `AuditEntry` version 2 and wireless

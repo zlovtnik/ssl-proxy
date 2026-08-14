@@ -2,16 +2,84 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - prometheus.yaml
-  - prometheus-configmap.yaml
   - grafana.yaml
-  - grafana-configmaps.yaml
   - loki.yaml
-  - loki-configmap.yaml
   - promtail.yaml
-  - promtail-configmap.yaml
   - jaeger.yaml
   - otel-collector.yaml
-  - otel-collector-configmap.yaml
   - node-exporter.yaml
   - cadvisor.yaml
   - pushgateway.yaml
+  - alertmanager.yaml
+  - kube-state-metrics.yaml
+  - blackbox-exporter.yaml
+  - tidb-metrics-bridge.yaml
+
+configMapGenerator:
+  - name: ssl-proxy-telemetry-prometheus-config
+    namespace: ssl-proxy
+    files:
+      - prometheus.yml=config/prometheus/prometheus.yml
+  - name: ssl-proxy-telemetry-prometheus-catalog
+    namespace: ssl-proxy
+    files:
+      - service-catalog.yml=config/prometheus/service-catalog.yml
+  - name: ssl-proxy-telemetry-prometheus-rules
+    namespace: ssl-proxy
+    files:
+      - recording.rules.yml=config/prometheus/rules/recording.rules.yml
+      - availability.rules.yml=config/prometheus/rules/availability.rules.yml
+      - workload.rules.yml=config/prometheus/rules/workload.rules.yml
+      - infrastructure.rules.yml=config/prometheus/rules/infrastructure.rules.yml
+      - data-tracing-jenkins.rules.yml=config/prometheus/rules/data-tracing-jenkins.rules.yml
+  - name: ssl-proxy-telemetry-alertmanager-config
+    namespace: ssl-proxy
+    files:
+      - alertmanager.yml=config/alertmanager/alertmanager.yml
+  - name: ssl-proxy-telemetry-grafana-datasources
+    namespace: ssl-proxy
+    files:
+      - datasources.yaml=config/grafana/provisioning/datasources.yaml
+  - name: ssl-proxy-telemetry-grafana-dashboard-provider
+    namespace: ssl-proxy
+    files:
+      - dashboards.yaml=config/grafana/provisioning/dashboards.yaml
+  - name: ssl-proxy-telemetry-grafana-dashboards
+    namespace: ssl-proxy
+    files:
+      - config/grafana/dashboards/fleet-availability.json
+      - config/grafana/dashboards/service-red-sync.json
+      - config/grafana/dashboards/redpanda-cluster.json
+      - config/grafana/dashboards/tidb-data-services.json
+      - config/grafana/dashboards/tracing-jaeger.json
+      - config/grafana/dashboards/jenkins-builds.json
+      - config/grafana/dashboards/infrastructure-capacity.json
+      - config/grafana/dashboards/logs-explorer.json
+  - name: ssl-proxy-telemetry-loki-config
+    namespace: ssl-proxy
+    files:
+      - loki.yaml=config/loki/loki.yaml
+  - name: ssl-proxy-telemetry-loki-proxy-config
+    namespace: ssl-proxy
+    files:
+      - nginx.conf=config/loki/nginx.conf
+  - name: ssl-proxy-telemetry-alloy-config
+    namespace: ssl-proxy
+    files:
+      - config.alloy=config/alloy/config.alloy
+  - name: ssl-proxy-telemetry-otel-collector-config
+    namespace: ssl-proxy
+    files:
+      - config.yaml=config/otel/config.yaml
+  - name: ssl-proxy-telemetry-jaeger-config
+    namespace: ssl-proxy
+    files:
+      - config.yaml=config/jaeger/config.yaml
+  - name: ssl-proxy-telemetry-blackbox-config
+    namespace: ssl-proxy
+    files:
+      - blackbox.yml=config/blackbox/blackbox.yml
+  - name: ssl-proxy-telemetry-tidb-bridge-config
+    namespace: ssl-proxy
+    files:
+      - prometheus.yml=config/tidb-bridge/prometheus.yml

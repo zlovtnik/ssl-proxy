@@ -1,0 +1,15 @@
+{
+  "annotations":{"list":[]},"editable":false,"schemaVersion":39,"title":"Jenkins Builds","uid":"jenkins-builds","time":{"from":"now-7d","to":"now"},"panels":[
+    {"id":1,"type":"stat","title":"Controller Ready","gridPos":{"x":0,"y":0,"w":4,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"default_jenkins_up"}]},
+    {"id":2,"type":"stat","title":"Controller Uptime","gridPos":{"x":4,"y":0,"w":4,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"default_jenkins_uptime"}]},
+    {"id":3,"type":"stat","title":"Executors Available","gridPos":{"x":8,"y":0,"w":4,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(default_jenkins_executors_available)"}]},
+    {"id":4,"type":"stat","title":"Executors Busy","gridPos":{"x":12,"y":0,"w":4,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(default_jenkins_executors_busy)"}]},
+    {"id":5,"type":"stat","title":"Queue Depth","gridPos":{"x":16,"y":0,"w":4,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"jenkins_queue_size_value"}]},
+    {"id":6,"type":"stat","title":"Blocked Queue Items","gridPos":{"x":20,"y":0,"w":4,"h":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"jenkins_queue_blocked_value"}]},
+    {"id":7,"type":"timeseries","title":"Scheduled Build Activity","gridPos":{"x":0,"y":5,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"increase(jenkins_job_scheduled_total[24h])","legendFormat":"scheduled / 24h"}]},
+    {"id":8,"type":"timeseries","title":"Build Duration Quantiles","gridPos":{"x":12,"y":5,"w":12,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"jenkins_job_building_duration{quantile=\"0.5\"}","legendFormat":"p50"},{"refId":"B","expr":"jenkins_job_building_duration{quantile=\"0.95\"}","legendFormat":"p95"}]},
+    {"id":9,"type":"timeseries","title":"Queue State","gridPos":{"x":0,"y":13,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"jenkins_queue_pending_value","legendFormat":"pending"},{"refId":"B","expr":"jenkins_queue_buildable_value","legendFormat":"buildable"},{"refId":"C","expr":"jenkins_queue_stuck_value","legendFormat":"stuck"}]},
+    {"id":10,"type":"timeseries","title":"Queue Wait Quantiles","gridPos":{"x":8,"y":13,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"jenkins_job_waiting_duration{quantile=\"0.5\"}","legendFormat":"p50"},{"refId":"B","expr":"jenkins_job_waiting_duration{quantile=\"0.95\"}","legendFormat":"p95"}]},
+    {"id":11,"type":"timeseries","title":"Executor Utilization","gridPos":{"x":16,"y":13,"w":8,"h":8},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"jenkins_executor_in_use_value","legendFormat":"in use"},{"refId":"B","expr":"jenkins_executor_free_value","legendFormat":"free"}]}
+  ]
+}
