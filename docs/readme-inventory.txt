@@ -4,6 +4,7 @@ apps/wg-key-rotator/README.md
 cyber-stack/README.md
 cyber-stack/matrix/prod/README.md
 docs/schema-archive/README.md
+ops/README.md
 services/atheros-search/README.md
 services/atheros-search/migrations/README.md
 services/atheros-search/scripts/README.md
