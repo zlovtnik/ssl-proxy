@@ -9,6 +9,12 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class JenkinsProductionGateTest(unittest.TestCase):
+    def test_pipeline_aborts_superseded_builds(self) -> None:
+        pipeline = (REPOSITORY_ROOT / "Jenkinsfile").read_text(encoding="utf-8")
+
+        self.assertIn("disableConcurrentBuilds(abortPrevious: true)", pipeline)
+        self.assertNotIn("disableConcurrentBuilds()", pipeline)
+
     def test_kubectl_is_version_and_checksum_pinned(self) -> None:
         dockerfile = (REPOSITORY_ROOT / "docker/jenkins/Dockerfile").read_text(
             encoding="utf-8"

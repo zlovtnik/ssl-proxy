@@ -104,9 +104,11 @@ otherwise mutate any production Kubernetes resource.
 
 ## Pipeline behavior
 
-The managed pipeline polls `main` every five minutes, supports manual builds,
-and disables concurrent runs. It does not expose or require a GitHub webhook.
-Each run:
+The managed pipeline polls `main` every five minutes and supports manual builds.
+When a new run is scheduled, Jenkins aborts any active run before starting it.
+This prevents an obsolete checkout from waiting on an exact-revision production
+gate after Argo CD has advanced to newer `main`. The pipeline does not expose or
+require a GitHub webhook. Each run:
 
 1. checks out the superproject and its pinned submodules;
 2. creates and bootstraps its shared Buildx builder after bounded Docker and
