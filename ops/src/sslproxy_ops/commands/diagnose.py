@@ -205,7 +205,7 @@ def diagnose(
         typer.echo(
             "[diagnose][ERROR] PROFILE_MODE is required.\n"
             "Allowed values: iphone | linux-shim | linux-direct | mac\n"
-            "Example: make diagnose PROFILE_MODE=mac SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.53",
+            "Example: make diagnose PROFILE_MODE=mac SERVER_IP=192.168.1.242 CLIENT_IP=192.168.1.53",
             err=True,
         )
         raise typer.Exit(1)

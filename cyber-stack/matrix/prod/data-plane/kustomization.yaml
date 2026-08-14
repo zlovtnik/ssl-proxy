@@ -22,7 +22,7 @@ resources:
   - ../../../base/telemetry/pushgateway.yaml
 images:
   - name: tidb-runtime-schema
-    newName: 192.168.1.221:5000/tidb-runtime-schema
+    newName: 192.168.1.242:5000/tidb-runtime-schema
     digest: sha256:6d0352c5505a8bfae3da326c4024417c08a5a17f5e16c07ee9e461757aac77a8
 patches:
   - path: ../patches/alloy-positions.yaml

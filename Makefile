@@ -3,7 +3,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-REGISTRY ?= 192.168.1.221:5000
+REGISTRY ?= 192.168.1.242:5000
 REGISTRY_PLAIN_HTTP ?= 0
 ENV ?= prod
 KUBE_CONTEXT ?=

@@ -36,7 +36,7 @@ selected Kustomize slice and aggregate, and reports each pushed digest as
 digest. `UNPINNED` does not fail publication. Merge only after CI and review
 pass, then apply the dev aggregate to an explicit local context and complete
 its acceptance checks. Jenkins and the Compose-only key rotator continue to use
-`make publish-all REGISTRY=192.168.1.221:5000 REGISTRY_PLAIN_HTTP=1`.
+`make publish-all REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1`.
 
 Production promotion is a separate pull request that copies the accepted dev
 digests into the matching prod Kustomizations. After merge, Argo CD reconciles
@@ -64,14 +64,73 @@ the mutable commit or `latest` registry tags.
 
 Atheros Search tracing hooks do not currently initialize an exporter.
 
+## Wiretrap canonical address and cutover
+
+Wiretrap uses one wired NIC. `192.168.1.242` is the canonical DHCP-reserved
+address for MAC `64:1c:67:ed:d0:1d`; `192.168.1.221` is a transitional manual
+address and must remain active only until every dependency has moved.
+
+| Interface | Canonical value |
+|---|---|
+| Server | `SERVER_IP=192.168.1.242` |
+| Registry | `192.168.1.242:5000` |
+| K3s API | `https://192.168.1.242:6443` |
+| External TiDB SQL | `192.168.1.242:4000` |
+
+Keep the router forward disabled throughout the cutover. Before changing the
+host, confirm that `.242` is reserved to the wired MAC and that DMZ-host mode,
+WAN administration, UPnP/NAT-PMP and public IPv6 exposure are disabled. With
+root evidence, bring the root and image filesystems below 80% by removing only
+approved unused caches or images. Do not remove active images, registry data,
+TiDB data, Jenkins data or named volumes without separate approval.
+
+Retain recoverable copies of the NetworkManager `netplan-enp2s0f0` profile,
+K3s configuration, firewall rules, Compose runtime configuration, TiDB
+container inspection and every kubeconfig. Keep both addresses active while
+staging, and keep an independent administrative session open.
+
+The platform and network owners perform the cutover in this order:
+
+1. Set K3s `node-ip` and `tls-san` to `192.168.1.242` through the platform-owned
+   host workflow, allow its controlled restart, and verify the API certificate,
+   node `InternalIP`, CNI, ServiceLB and Traefik before continuing.
+2. Rebind the untracked CI registry and Jenkins runtime to `.242`, preserving
+   their named volumes. Configure K3s/containerd to trust the exact plain-HTTP
+   authority `192.168.1.242:5000`, then prove the registry API and a CRI pull.
+3. Recreate standalone TiDB with the same image, command, restart policy, data
+   volume, TLS/config mounts and localhost status binding. Change only its SQL
+   bind to `192.168.1.242:4000`, and retain the stopped prior container as
+   rollback evidence until acceptance.
+4. Through the platform prerequisite workflow, update the non-secret
+   `ssl-proxy-prod-tidb-endpoint` values, including `TIDB_HOST` and the JDBC
+   URL, to `.242` while preserving port and TLS settings. Do not patch the
+   ConfigMap interactively.
+5. Merge the reviewed repository address change to `main` and let Argo CD
+   reconcile the digest-identical `.242:5000` image references. Require
+   `ssl-proxy-prod-bootstrap`, `ssl-proxy-prod-data-plane` and
+   `ssl-proxy-prod-app-stack` to report `Synced/Healthy`.
+6. Update local and remote kubeconfigs to the certificate-validated
+   `https://192.168.1.242:6443` endpoint.
+7. Remove only `192.168.1.221/24` and its explicit default route from the
+   active NetworkManager profile. Preserve `ipv4.method=auto`, renew the
+   reserved `.242` lease, and confirm `.221` is absent before ending the
+   recovery session.
+8. Apply the reviewed host policy described below, then enable only router
+   IPv4 TCP `80 -> 192.168.1.242:80` after every gate passes.
+
+Immediately disable the router forward on rollback. Before `.221` is removed,
+restore the prior Git, K3s, registry and TiDB settings. After its removal,
+restore the saved NetworkManager profile through the working `.242` session or
+physical console, then revert dependent endpoints.
+
 ## Phase-one default-deny Internet edge
 
 Phase one makes K3s's bundled Traefik a route-free IPv4 edge on the wired node
-address `192.168.1.221`. It publishes no application or hostname and configures
+address `192.168.1.242`. It publishes no application or hostname and configures
 no redirect, certificate resolver or trusted forwarding proxy. Arbitrary HTTP
 and HTTPS requests must receive only Traefik's generic `404`; HTTPS may present
-Traefik's default self-signed certificate. `192.168.1.222` is never a router
-NAT target.
+Traefik's default self-signed certificate on the LAN. Only HTTP is staged for
+WAN forwarding; WAN HTTPS remains closed.
 
 Ownership is split deliberately:
 
@@ -97,11 +156,12 @@ The effective host policy must:
 1. allow established and related traffic and the IPv6 control traffic required
    for correct link operation;
 2. preserve the discovered K3s pod, Service and CNI traffic;
-3. allow public IPv4 TCP 80/443 and preserve the existing WireGuard UDP 443
+3. allow public IPv4 TCP 80 and preserve the existing WireGuard UDP 443
    host-port exception;
-4. allow SSH, Kubernetes API 6443, registry 5000, Argo CD NodePorts, metrics,
-   3000 and 8080 only from the recorded trusted LAN/WireGuard sources;
-5. deny every other WAN-initiated flow and every unsolicited IPv6 inbound flow.
+4. allow HTTPS 443, SSH, Kubernetes API 6443, registry 5000, Argo CD NodePorts,
+   metrics, 3000 and 8080 only from the recorded trusted LAN/WireGuard sources;
+5. deny WAN TCP 443, every other WAN-initiated flow and every unsolicited IPv6
+   inbound flow.
 
 The platform owner must retain a recoverable copy of the previous ruleset and
 verify an independent administrative session before activation. Record the
@@ -110,11 +170,11 @@ connectivity. If this evidence is absent or ambiguous, the rollout is blocked.
 
 ### Router gate
 
-Reserve `.221` for the wired node. Confirm that DMZ-host mode, router WAN
+Reserve `.242` for the wired node. Confirm that DMZ-host mode, router WAN
 administration, UPnP and NAT-PMP are disabled and that public DNS has no AAAA
 record for the edge. When all repository, reconciliation, firewall, logging and
-LAN reachability gates pass, add only IPv4 TCP 80 and 443 forwards to `.221`.
-Do not forward to `.222` and do not add a UDP forward as part of this change.
+LAN reachability gates pass, add only IPv4 TCP `80 -> 192.168.1.242:80`. Do not
+forward TCP 443 or add a UDP forward as part of this change.
 
 ### Pre-forward verification
 
@@ -134,8 +194,10 @@ kubectl --context "$KUBE_CONTEXT" -n kube-system get service traefik traefik-met
 
 The evidence must show:
 
+- `enp2s0f0` has only `192.168.1.242`, with one DHCP default route; the K3s
+  node `InternalIP`, API certificate SAN and Traefik `External-IP` are `.242`;
 - every production application Service is `ClusterIP` or headless and the only
-  ServiceLB listener is the intended Traefik TCP 80/443 edge;
+  healthy ServiceLB listener is the intended Traefik TCP 80/443 LAN edge;
 - no Ingress, Gateway, HTTPRoute, IngressRoute or Middleware exists;
 - Traefik has no routing-provider, dashboard, HTTP/3, redirect or certificate-
   resolver argument; its Service is IPv4 `SingleStack` with
@@ -144,14 +206,17 @@ The evidence must show:
   three `TraefikEdge*` alert rules are loaded and visible;
 - requests from a LAN client to both entrypoints return `404`, the observed
   client address matches that client rather than a spoofed forwarding header,
-  and each request has a matching JSON access-log record.
+  and each request has a matching JSON access-log record;
+- `192.168.1.242:5000/v2/` responds, a CRI image pull succeeds, TiDB accepts
+  the intended TLS client on `.242:4000`, all workloads are healthy, and the
+  Atheros Sensor image-pull failure is resolved.
 
 Use arbitrary Host values for the LAN response check:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' -H 'Host: phase-one.invalid' http://192.168.1.221/
-curl -k -sS -o /dev/null -w '%{http_code}\n' -H 'Host: phase-one.invalid' https://192.168.1.221/
-curl -sS -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 203.0.113.9' -H 'Host: phase-one.invalid' http://192.168.1.221/
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'Host: phase-one.invalid' http://192.168.1.242/
+curl -k -sS -o /dev/null -w '%{http_code}\n' -H 'Host: phase-one.invalid' https://192.168.1.242/
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'X-Forwarded-For: 203.0.113.9' -H 'Host: phase-one.invalid' http://192.168.1.242/
 ```
 
 All three commands must print `404`. Any other HTTP status is a blocker.
@@ -159,13 +224,14 @@ All three commands must print `404`. Any other HTTP status is a blocker.
 ### Immediate external verification and rollback
 
 Immediately after the network owner enables forwarding, test from a genuinely
-independent network. Confirm only IPv4 TCP 80/443 is reachable; verify TCP
-3000, 5000, 6443, 8080, 9100, 18080 and every inventoried Argo NodePort are
-closed. Probe every supplied global IPv6 address and confirm unsolicited
-connections fail. Send arbitrary Host headers over HTTP and HTTPS, require
-`404`, then correlate every probe with Loki access logs and Traefik metrics.
+independent network. Require IPv4 TCP 80 to return Traefik's generic `404`, and
+verify TCP 443, 3000, 5000, 6443, 8080, 9100, 18080 and every inventoried Argo
+NodePort are closed. Probe every supplied global IPv6 address and confirm
+unsolicited connections fail. Correlate the HTTP probe with Loki access logs
+and Traefik metrics; the `TraefikEdgeUnexpectedResponse` alert must remain
+clear.
 
-Disable the router forwards immediately if any application response,
+Disable the router forward immediately if any application response,
 dashboard, unexpected open port, unlogged request, public IPv6 listener or
 non-404 edge response is observed. Router-forward removal is the first and
 fastest rollback; afterward, revert the responsible Git commit and let Argo CD

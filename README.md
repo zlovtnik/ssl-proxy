@@ -70,7 +70,7 @@ make publish ENV=dev REGISTRY_PLAIN_HTTP=1
 ```
 
 Jenkins, component publishing, and the Compose-only key rotator retain
-`make publish-all REGISTRY=192.168.1.221:5000`. Publishing changes registry
+`make publish-all REGISTRY=192.168.1.242:5000 REGISTRY_PLAIN_HTTP=1`. Publishing changes registry
 tags only; it does not mutate Git or a cluster. Diagnose desired and live state
 read-only with `make recover-stack ENV=prod`; it uses the active Kubernetes
 context unless `KUBE_CONTEXT` is explicitly set. Record

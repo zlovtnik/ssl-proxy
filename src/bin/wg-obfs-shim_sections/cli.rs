@@ -76,7 +76,7 @@ Environment fallbacks:
   WG_OBFUSCATION_XOR_REKEY_SECS
 
 Example:
-  wg-obfs-shim --server 192.168.1.221:443 --listen 127.0.0.1:51821 --magic-byte 0xAA
+  wg-obfs-shim --server 192.168.1.242:443 --listen 127.0.0.1:51821 --magic-byte 0xAA
 ";
 
 #[derive(Debug, Default)]

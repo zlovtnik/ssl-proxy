@@ -51,7 +51,7 @@ app = typer.Typer(help="Build and deploy the stack, verify services, and print p
 
 def require_concrete_endpoint_values(settings: Settings) -> None:
     if not settings.server_ip or "<" in settings.server_ip or ">" in settings.server_ip:
-        raise UpReadyError("SERVER_IP must be concrete, for example SERVER_IP=192.168.1.221")
+        raise UpReadyError("SERVER_IP must be concrete, for example SERVER_IP=192.168.1.242")
     if not settings.client_ip or "<" in settings.client_ip or ">" in settings.client_ip:
         raise UpReadyError("CLIENT_IP must be concrete, for example CLIENT_IP=192.168.1.53")
 
@@ -286,7 +286,7 @@ def preflight(ctx: UpReadyContext) -> None:
         raise UpReadyError(
             "PROFILE_MODE is required.\n"
             "Allowed values: iphone | linux-shim | linux-direct | mac\n"
-            "Example: make up-ready PROFILE_MODE=mac SERVER_IP=192.168.1.221 CLIENT_IP=192.168.1.53"
+            "Example: make up-ready PROFILE_MODE=mac SERVER_IP=192.168.1.242 CLIENT_IP=192.168.1.53"
         )
     require_concrete_endpoint_values(ctx.settings)
     os.environ["WG_PEERS"] = os.getenv("WG_PEERS", ctx.settings.wg_peers)

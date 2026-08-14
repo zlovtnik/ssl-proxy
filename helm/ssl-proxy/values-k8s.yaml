@@ -161,14 +161,14 @@ schemaMigrator:
   # Set dynamically by `ops up-ready` from SCHEMA_MIGRATOR_PUBLIC_HOSTNAME.
   publicHostname: ""
   stateStore:
-    host: "192.168.1.221"
+    host: "192.168.1.242"
   backend:
     image:
       repository: schema-migrator-backend
       tag: latest
       pullPolicy: Always
     dbTestAllowedHosts:
-      - 192.168.1.221
+      - 192.168.1.242
   ui:
     # Set dynamically by `ops up-ready` to the HTTP LAN edge origin.
     browserOrigin: ""

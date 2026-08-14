@@ -13,6 +13,12 @@ non-secret keys:
 - `TIDB_TLS_SERVER_NAME`
 - `SCHEMA_MIGRATOR_TIDB_JDBC_URL`
 
+For the Wiretrap address cutover, the platform-owned values must resolve the
+external TiDB authority to `192.168.1.242:4000`: `TIDB_HOST` is
+`192.168.1.242`, `TIDB_PORT` remains `4000`, and the JDBC URL uses the same
+host and port while preserving its database, TLS and connection parameters.
+The values remain external prerequisites and are not committed here.
+
 The same platform workflow must provide the existing TiDB account Secrets and
 `tidb-client-ca`. Production approval also requires tested TiDB backup,
 restore, failover and recovery procedures with recorded RTO and RPO. No

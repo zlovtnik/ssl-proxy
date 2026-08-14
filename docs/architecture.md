@@ -129,7 +129,7 @@ in the [Atheros Search README](../services/atheros-search/README.md).
 
 Kubernetes desired state is defined under [`cyber-stack/`](../cyber-stack/).
 Kustomize separates environment-neutral resources from dev and prod patches.
-Argo CD on `192.168.1.221` tracks `main` and reconciles only the three
+Argo CD on `192.168.1.242` tracks `main` and reconciles only the three
 production Applications: `bootstrap`, `data-plane` and `app-stack`. The dev
 aggregate is applied only to an explicit local Kubernetes context.
 

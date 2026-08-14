@@ -76,7 +76,7 @@ keycloak:
   database: keycloak
   databaseUser: keycloak
   bootstrapAdminUsername: keycloak-admin
-  # Optional browser-facing OIDC issuer, for example http://192.168.1.221:8180.
+  # Optional browser-facing OIDC issuer, for example http://192.168.1.242:8180.
   browserOrigin: ""
   # Optional separate admin-console origin.
   adminHostname: ""

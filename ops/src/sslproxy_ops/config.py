@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         validation_alias="UP_READY_MEMORY_FILE",
     )
     profile_mode: ProfileMode | None = Field(default=None, validation_alias="PROFILE_MODE")
-    server_ip: str = Field(default="192.168.1.221", validation_alias="SERVER_IP")
+    server_ip: str = Field(default="192.168.1.242", validation_alias="SERVER_IP")
     client_ip: str = Field(default="192.168.1.68", validation_alias="CLIENT_IP")
     wg_peers: str = Field(
         default="peer1,peer2", validation_alias=AliasChoices("WG_PEERS", "ROTATOR_PEERS")

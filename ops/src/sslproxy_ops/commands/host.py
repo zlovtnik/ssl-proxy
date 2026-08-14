@@ -126,7 +126,7 @@ def configure_containerd_registry(
     if os.geteuid() != 0:
         typer.echo(
             "Error: run through `make configure-containerd-registry "
-            "REGISTRY=192.168.1.221:5000`, which requests sudo",
+            "REGISTRY=192.168.1.242:5000`, which requests sudo",
             err=True,
         )
         raise typer.Exit(1)

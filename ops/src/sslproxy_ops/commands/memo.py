@@ -174,7 +174,7 @@ def log(
         typer.echo("[memo-log][ERROR] EVENT and CONTEXT are required.", err=True)
         typer.echo(
             'Example:\n  make memo-log EVENT="iphone tunnel validated" '
-            'CONTEXT="server 192.168.1.221 amd64; client 192.168.1.68 iPhone" '
+            'CONTEXT="server 192.168.1.242 amd64; client 192.168.1.68 iPhone" '
             "RESULT=pass PROFILE_MODE=iphone",
             err=True,
         )

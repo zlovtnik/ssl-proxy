@@ -1,7 +1,7 @@
 # Kubernetes GitOps Guide
 
 This directory is the only source of Kubernetes desired state for ssl-proxy.
-Kustomize renders both environments. Argo CD on `192.168.1.221` reconciles
+Kustomize renders both environments. Argo CD on `192.168.1.242` reconciles
 production from `main`; development is rendered and applied only to an
 explicit local Kubernetes context. Configuration, releases, rollbacks and
 workload onboarding happen by reviewed Git changes.
@@ -13,7 +13,7 @@ The platform team provides and operates:
 - Argo CD;
 - registration of `cyber-stack/argocd` as this repository's production-only
   control-plane path;
-- registry access for `192.168.1.221:5000`;
+- registry access for `192.168.1.242:5000`;
 - workload Secrets and the production TiDB endpoint ConfigMap required by the
   rendered manifests, sourced through the value-free
   [`platform-input-contract.yaml`](platform-input-contract.yaml);
@@ -53,11 +53,13 @@ stores its kubeconfig in Vault and provisions it in Jenkins as
 
 The same control-plane Kustomization owns K3s's
 `kube-system/HelmChartConfig/traefik`. During the default-deny Internet-edge
-phase, Traefik exposes only IPv4 TCP 80/443 and has no routing provider,
-dashboard route, redirect or certificate resolver. The workload AppProject
-cannot create route kinds, and application Services remain `ClusterIP` or
-headless. Router and host-firewall state are platform prerequisites documented
-in the [operations runbook](../docs/runbook.md); they are not managed through
+phase, Traefik listens on IPv4 TCP 80/443 for LAN verification and has no
+routing provider, dashboard route, redirect or certificate resolver. The
+workload AppProject cannot create route kinds, and application Services remain
+`ClusterIP` or headless. The staged WAN policy forwards TCP 80 only; TCP 443
+and every administrative port remain closed. Router and host-firewall state
+are platform prerequisites documented in the
+[operations runbook](../docs/runbook.md); they are not managed through
 interactive Kubernetes changes.
 
 ## Local Kubernetes development

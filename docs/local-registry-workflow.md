@@ -19,7 +19,9 @@ export JENKINS_PROD_READONLY_KUBECONFIG_FILE=/etc/ssl-proxy/jenkins/prod-readonl
 docker compose -f docker-compose.ci.yaml up -d --build
 ```
 
-`SERVER_IP` binds registry port `5000` to the private server address;
+`SERVER_IP` binds registry port `5000` to the private server address. The
+canonical Wiretrap values are `SERVER_IP=192.168.1.242` and
+`REGISTRY=192.168.1.242:5000`;
 `JENKINS_BIND_ADDRESS`, `JENKINS_HTTP_PORT` and `JENKINS_URL` control the UI.
 The Jenkins administrator password is consumed through a Docker secret and is
 never committed or placed in container environment variables. The controller

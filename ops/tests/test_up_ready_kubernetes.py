@@ -46,9 +46,10 @@ from sslproxy_ops.config import Settings
 
 
 class UpReadyKubernetesTest(unittest.TestCase):
-    def test_kubernetes_is_the_default_deployment_target(self):
+    def test_kubernetes_and_canonical_server_are_defaults(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(Settings().deployment_target, "kubernetes")
+            self.assertEqual(Settings().server_ip, "192.168.1.242")
 
     def test_tidb_tls_rotation_is_opt_in(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -392,9 +393,9 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
     def test_helm_upgrade_uses_registry_rollout_revision_and_waits_for_jobs(self):
         settings = Settings()
-        settings.server_ip = "192.168.1.221"
+        settings.server_ip = "192.168.1.242"
         settings.kube_context = "server-k8s"
-        settings.registry = "192.168.1.221:32000/"
+        settings.registry = "192.168.1.242:32000/"
         settings.image_tag = "latest"
         settings.schema_migrator_public_hostname = "schema.example.com"
         settings.acme_email = "ops@example.com"
@@ -403,7 +404,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.wg_obfuscation_enabled = True
         ctx = UpReadyContext(settings=settings, run_ts="2026-07-14T12:00:00-0400")
         environment = {
-            "REGISTRY": "192.168.1.221:32000/",
+            "REGISTRY": "192.168.1.242:32000/",
             "IMAGE_TAG": "latest",
             "WG_PEERS": "peer1,peer2",
             "WG_PORT": "51820",
@@ -453,22 +454,22 @@ class UpReadyKubernetesTest(unittest.TestCase):
         self.assertEqual(dependency_args[:2], ("dependency", "update"))
         self.assertEqual(args[0], "upgrade")
         self.assertNotIn("--install", args)
-        self.assertIn("global.image.registry=192.168.1.221:32000", args)
+        self.assertIn("global.image.registry=192.168.1.242:32000", args)
         self.assertIn("global.rolloutRevision=2026-07-14T12:00:00-0400", args)
         self.assertIn("proxy.wireguard.peerNames=peer1,peer2", args)
         self.assertIn("schemaMigrator.backend.image.tag=latest", args)
         self.assertIn("schemaMigrator.ui.image.tag=latest", args)
-        self.assertIn("schemaMigrator.ui.browserOrigin=http://192.168.1.221:8081", args)
+        self.assertIn("schemaMigrator.ui.browserOrigin=http://192.168.1.242:8081", args)
         self.assertIn("schemaMigrator.publicHostname=schema.example.com", args)
         self.assertIn("schemaMigrator.traefik.acme.email=ops@example.com", args)
-        self.assertIn("schemaMigrator.keycloak.browserOrigin=http://192.168.1.221:8180", args)
-        self.assertIn("schemaMigrator.keycloak.adminHostname=http://192.168.1.221:8180", args)
+        self.assertIn("schemaMigrator.keycloak.browserOrigin=http://192.168.1.242:8180", args)
+        self.assertIn("schemaMigrator.keycloak.adminHostname=http://192.168.1.242:8180", args)
         self.assertIn(
-            "global.shared.keycloak.issuer=http://192.168.1.221:8180/realms/middleware",
+            "global.shared.keycloak.issuer=http://192.168.1.242:8180/realms/middleware",
             args,
         )
         self.assertIn("atherosSearch.ui.image.tag=latest", args)
-        self.assertIn("atherosSearch.embeddingBackend=http://192.168.1.221:8083", args)
+        self.assertIn("atherosSearch.embeddingBackend=http://192.168.1.242:8083", args)
         self.assertEqual(args.count("--set-literal"), 17)
         self.assertEqual(args.count("--set"), 3)
         self.assertIn("proxy.wireguard.obfuscation.enabled=true", args)
@@ -498,7 +499,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_helm_first_install_does_not_request_rollback(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
-        settings.registry = "192.168.1.221:5000"
+        settings.registry = "192.168.1.242:5000"
         settings.image_tag = "latest"
         settings.schema_migrator_public_hostname = "schema.example.com"
         settings.acme_email = "ops@example.com"
@@ -507,7 +508,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.wg_obfuscation_enabled = True
         ctx = UpReadyContext(settings=settings)
         environment = {
-            "REGISTRY": "192.168.1.221:5000",
+            "REGISTRY": "192.168.1.242:5000",
             "IMAGE_TAG": "latest",
             "WG_PORT": "51820",
             "WG_INTERNAL_PORT": "443",
@@ -542,7 +543,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
     def test_helm_fresh_install_uses_install(self):
         settings = Settings()
         settings.kube_context = "server-k8s"
-        settings.registry = "192.168.1.221:5000"
+        settings.registry = "192.168.1.242:5000"
         settings.image_tag = "latest"
         settings.schema_migrator_public_hostname = "schema.example.com"
         settings.acme_email = "ops@example.com"
@@ -551,7 +552,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings.wg_obfuscation_enabled = True
         ctx = UpReadyContext(settings=settings)
         environment = {
-            "REGISTRY": "192.168.1.221:5000",
+            "REGISTRY": "192.168.1.242:5000",
             "IMAGE_TAG": "latest",
             "WG_PORT": "51820",
             "WG_INTERNAL_PORT": "443",
@@ -1010,7 +1011,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         settings = Settings()
         settings.kube_context = "server-k8s"
         ctx = UpReadyContext(settings=settings)
-        environment = {"REGISTRY": "192.168.1.221:5000"}
+        environment = {"REGISTRY": "192.168.1.242:5000"}
         completed = subprocess.CompletedProcess(
             args=["kubectl"], returncode=0, stdout="", stderr=""
         )
@@ -1030,7 +1031,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
         manifest = json.loads(mocked_apply.call_args.args[1])
         self.assertEqual(
             manifest["spec"]["containers"][0]["image"],
-            "192.168.1.221:5000/busybox:1.37.0",
+            "192.168.1.242:5000/busybox:1.37.0",
         )
         self.assertEqual(mocked_kubectl.call_count, 3)
 
@@ -1099,7 +1100,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
 
     def test_registry_publish_builds_first_party_images(self):
         settings = Settings()
-        settings.registry = "192.168.1.221:32000/"
+        settings.registry = "192.168.1.242:32000/"
         settings.image_tag = "latest"
         settings.mirror_registry_images = False
         ctx = UpReadyContext(settings=settings)
@@ -1111,7 +1112,7 @@ class UpReadyKubernetesTest(unittest.TestCase):
             [call.args[0][1] for call in mocked_run.call_args_list],
             ["publish-all"],
         )
-        self.assertIn("REGISTRY=192.168.1.221:32000", mocked_run.call_args_list[0].args[0])
+        self.assertIn("REGISTRY=192.168.1.242:32000", mocked_run.call_args_list[0].args[0])
         self.assertIn("ATHEROS_SEARCH_UI_API_BASE=", mocked_run.call_args_list[0].args[0])
 
     def test_registry_publish_requires_validated_settings(self):
