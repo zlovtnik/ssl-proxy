@@ -82,6 +82,13 @@ enum TlsLoadError {
 }
 
 fn build_tls_acceptor(config: &config::Config) -> Result<Option<TlsAcceptor>, TlsLoadError> {
+    let has_cert = config.tls.cert_path.is_some();
+    let has_key = config.tls.key_path.is_some();
+    if has_cert != has_key {
+        return Err(TlsLoadError::InvalidConfig(
+            "TLS_CERT_PATH and TLS_KEY_PATH must both be set or both unset".into(),
+        ));
+    }
     if let (Some(cert_path), Some(key_path)) = (&config.tls.cert_path, &config.tls.key_path) {
         let cert_pem = std::fs::read(cert_path)?;
         let key_pem = std::fs::read(key_path)?;
@@ -134,6 +141,7 @@ async fn run_explicit_proxy_listener(
     connection_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
     tasks: &mut JoinSet<()>,
     cors: CorsLayer,
+    tls_acceptor: Option<TlsAcceptor>,
 ) {
     warn!(
         "EXPLICIT_PROXY_ENABLED=true — legacy explicit proxy listeners are active; plaintext HTTP CONNECT leaks target hostnames on the client-to-proxy leg"
@@ -151,13 +159,6 @@ async fn run_explicit_proxy_listener(
         });
     info!(%addr, "explicit proxy listener active");
 
-    let tls_acceptor = match build_tls_acceptor(config) {
-        Ok(acceptor) => acceptor,
-        Err(e) => {
-            error!(error = %e, "failed to build TLS config; explicit proxy will be plaintext only");
-            None
-        }
-    };
     spawn_quic_listener_if_enabled(
         config,
         state.clone(),
@@ -368,6 +369,21 @@ async fn main() -> std::process::ExitCode {
         observability::shutdown_tracer_provider(otel_provider);
         std::process::exit(1);
     }
+    let explicit_tls_acceptor = if config.proxy.explicit_enabled {
+        match build_tls_acceptor(&config) {
+            Ok(acceptor) => acceptor,
+            Err(err) => {
+                error!(error = %err, "failed to build configured explicit-proxy TLS material; refusing to start");
+                eprintln!(
+                    "Explicit-proxy TLS configuration is invalid; refusing to start: {err}"
+                );
+                observability::shutdown_tracer_provider(otel_provider);
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     let shutdown = CancellationToken::new();
     let state = match build_state(&config) {
         Ok(s) => s,
@@ -404,6 +420,7 @@ async fn main() -> std::process::ExitCode {
             connection_semaphore,
             &mut tasks,
             cors,
+            explicit_tls_acceptor,
         )
         .await;
     } else {

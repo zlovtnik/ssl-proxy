@@ -6,7 +6,7 @@
   labels: {service: atheros-search, module: http_2xx}
 - targets: ["http://ssl-proxy-atheros-search-ui:8080/healthz"]
   labels: {service: atheros-search-ui, module: http_2xx}
-- targets: ["http://ssl-proxy-schema-migrator-backend:8080/health"]
+- targets: ["http://ssl-proxy-schema-migrator-backend:8080/api/health"]
   labels: {service: schema-migrator-backend, module: http_2xx}
 - targets: ["http://ssl-proxy-schema-migrator-ui/"]
   labels: {service: schema-migrator-ui, module: http_2xx}
@@ -48,5 +48,3 @@
   labels: {service: jenkins, module: tcp_connect, external: "true"}
 - targets: ["192.168.1.242:5000"]
   labels: {service: registry, module: tcp_connect, external: "true"}
-- targets: ["192.168.1.242:4000"]
-  labels: {service: tidb-external, module: tcp_connect, external: "true"}

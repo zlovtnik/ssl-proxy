@@ -188,6 +188,39 @@ subjects:
     name: ssl-proxy-telemetry-prometheus
     namespace: ssl-proxy
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ssl-proxy-telemetry-prometheus-kubelet
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-prometheus
+    app.kubernetes.io/managed-by: kustomize
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ssl-proxy-telemetry-prometheus-kubelet
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-prometheus
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ssl-proxy-telemetry-prometheus-kubelet
+subjects:
+  - kind: ServiceAccount
+    name: ssl-proxy-telemetry-prometheus
+    namespace: ssl-proxy
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

@@ -38,11 +38,30 @@ func NewService(pool *sql.DB, embedder embed.Client, cfg config.Config, m *metri
 	return s
 }
 
-func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*searchv1.SearchResponse, error) {
+func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (response *searchv1.SearchResponse, searchErr error) {
 	started := time.Now()
+	metricsKind := responseKind(searchv1.SearchKind_SEARCH_KIND_UNSPECIFIED)
+	metricsMode := modeName(normalizeMode(searchv1.SearchMode_SEARCH_MODE_UNSPECIFIED))
+	defer func() {
+		if s.Metrics == nil {
+			return
+		}
+		status := "error"
+		results := 0
+		if searchErr == nil {
+			status = "ok"
+			if response != nil {
+				metricsMode = modeName(response.ModeUsed)
+				results = len(response.Results)
+			}
+		}
+		s.Metrics.ObserveSearch(metricsKind, metricsMode, status, started, results)
+	}()
 	if req == nil {
 		return nil, errors.New("request is required")
 	}
+	metricsKind = responseKind(req.Kind)
+	metricsMode = modeName(normalizeMode(req.Mode))
 	wildcardAll := isWildcardAllSearch(req.Query)
 	if !wildcardAll && !hasMeaningfulSearchTerms(req.Query) {
 		return nil, errors.New("search query is required and must contain meaningful terms")
@@ -52,6 +71,7 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*sea
 	mode := normalizeMode(req.Mode)
 	if wildcardAll {
 		mode = searchv1.SearchMode_SEARCH_MODE_SPARSE
+		metricsMode = modeName(mode)
 	}
 	kinds, err := requestKinds(req.Kind)
 	if err != nil {
@@ -148,9 +168,6 @@ func (s *Service) Search(ctx context.Context, req *searchv1.SearchRequest) (*sea
 	}
 	for _, result := range fused {
 		resp.Results = append(resp.Results, toProtoResult(result))
-	}
-	if s.Metrics != nil {
-		s.Metrics.ObserveSearch(responseKind(req.Kind), modeName(modeUsed), "ok", started, len(resp.Results))
 	}
 	return resp, nil
 }

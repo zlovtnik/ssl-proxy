@@ -55,7 +55,7 @@ groups:
           dashboard_url: "http://ssl-proxy-telemetry-grafana:3000/d/redpanda-cluster"
           runbook_url: "https://github.com/zlovtnik/ssl-proxy/blob/main/docs/runbooks/observability.md#redpanda-capacity"
       - alert: TiDBUnavailable
-        expr: up{service="tidb"} == 0
+        expr: up{service="tidb"} == 0 or absent(up{service="tidb"})
         for: 2m
         labels: {severity: critical, service: tidb}
         annotations:

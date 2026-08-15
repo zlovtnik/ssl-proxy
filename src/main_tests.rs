@@ -5,9 +5,9 @@ use axum::{body::Body, http::Request};
 use tower::ServiceExt;
 
 use super::{
-    admin_api_key_matches, build_observability_router, build_state, constant_time_eq,
-    AdminAuthRateLimiter, ADMIN_AUTH_FAILURE_WINDOW, ADMIN_AUTH_MAX_FAILURES,
-    ADMIN_AUTH_MAX_TRACKED_IPS,
+    admin_api_key_matches, build_observability_router, build_state, build_tls_acceptor,
+    constant_time_eq, AdminAuthRateLimiter, TlsLoadError, ADMIN_AUTH_FAILURE_WINDOW,
+    ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_MAX_TRACKED_IPS,
 };
 
 #[test]
@@ -28,6 +28,48 @@ fn admin_api_key_matches_rejects_empty_keys() {
     assert!(!admin_api_key_matches("", ""));
     assert!(!admin_api_key_matches("test-key", ""));
     assert!(admin_api_key_matches("test-key", "test-key"));
+}
+
+#[test]
+fn configured_unreadable_tls_material_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = ssl_proxy::config::Config::default();
+    config.proxy.explicit_enabled = true;
+    config.tls.cert_path = Some(directory.path().join("missing.crt").display().to_string());
+    config.tls.key_path = Some(directory.path().join("missing.key").display().to_string());
+
+    assert!(matches!(
+        build_tls_acceptor(&config),
+        Err(TlsLoadError::ReadCert(_))
+    ));
+}
+
+#[test]
+fn cert_only_tls_config_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = ssl_proxy::config::Config::default();
+    config.proxy.explicit_enabled = true;
+    config.tls.cert_path = Some(directory.path().join("cert.crt").display().to_string());
+    config.tls.key_path = None;
+
+    assert!(matches!(
+        build_tls_acceptor(&config),
+        Err(TlsLoadError::InvalidConfig(msg)) if msg.contains("must both be set")
+    ));
+}
+
+#[test]
+fn key_only_tls_config_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = ssl_proxy::config::Config::default();
+    config.proxy.explicit_enabled = true;
+    config.tls.cert_path = None;
+    config.tls.key_path = Some(directory.path().join("key.key").display().to_string());
+
+    assert!(matches!(
+        build_tls_acceptor(&config),
+        Err(TlsLoadError::InvalidConfig(msg)) if msg.contains("must both be set")
+    ));
 }
 
 #[test]

@@ -138,6 +138,26 @@ scrape_configs:
       - target_label: service
         replacement: cadvisor
 
+  - job_name: kubelet-volume-stats
+    scheme: https
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: instance
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+      - target_label: service
+        replacement: kubelet
+
   - job_name: tidb-dev
     metrics_path: /metrics
     kubernetes_sd_configs:
@@ -176,7 +196,7 @@ scrape_configs:
   - job_name: blackbox-service-catalog
     metrics_path: /probe
     file_sd_configs:
-      - files: ["/etc/prometheus/catalog/service-catalog.yml"]
+      - files: ["/etc/prometheus/catalog/*.yml"]
     relabel_configs:
       - source_labels: [module]
         target_label: __param_module

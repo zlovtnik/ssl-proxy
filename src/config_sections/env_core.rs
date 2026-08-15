@@ -10,8 +10,9 @@ impl Config {
     /// Load and validate the application's configuration from environment variables.
     ///
     /// This constructs each subsystem configuration from the environment, checks for
-    /// port conflicts between proxy, admin, and WireGuard, and returns a fully
-    /// populated `Config` on success.
+    /// port conflicts between proxy, admin, WireGuard, and the fixed
+    /// observability listener, and returns a fully populated `Config` on
+    /// success.
     ///
     /// # Returns
     ///
@@ -36,6 +37,11 @@ impl Config {
         let wireguard = WireGuardConfig::from_env()?;
         let runtime = RuntimeConfig::from_env();
 
+        for port in [proxy.port, proxy.transparent_port, admin.port] {
+            if port == OBSERVABILITY_PORT {
+                return Err(ConfigError::PortConflict(port, OBSERVABILITY_PORT));
+            }
+        }
         if proxy.port == proxy.transparent_port {
             return Err(ConfigError::PortConflict(
                 proxy.port,
