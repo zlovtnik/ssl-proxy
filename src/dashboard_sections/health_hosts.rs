@@ -97,23 +97,24 @@ pub async fn metrics(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 /// GET /ready — readiness probe for the local process surfaces.
+///
+/// Returns `200 OK` whenever the proxy process is alive and can serve
+/// traffic.  Sync publisher degradation is reported in the response body
+/// for observability but no longer drives the HTTP status, so a transient
+/// Redpanda error won't cause Kubernetes to remove the pod from the
+/// Service.
 pub async fn ready(State(state): State<SharedState>) -> impl IntoResponse {
     let publisher = state.publisher.health_snapshot();
-    let status = if publisher.configured && publisher.last_error.is_some() {
+    let sync_status = if publisher.configured && publisher.last_error.is_some() {
         "degraded"
     } else {
         "ok"
     };
-    let status_code = if publisher.configured && publisher.last_error.is_some() {
-        StatusCode::SERVICE_UNAVAILABLE
-    } else {
-        StatusCode::OK
-    };
 
     (
-        status_code,
+        StatusCode::OK,
         Json(ReadyReport {
-            status,
+            status: sync_status,
             local: "ok",
             sync: ReadySyncStatus { publisher },
         }),
