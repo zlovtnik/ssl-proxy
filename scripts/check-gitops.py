@@ -96,6 +96,7 @@ PHASE_ONE_ROUTE_KINDS = {
 
 PHASE_ONE_HOST_NETWORK_ALLOWLIST = {
     ("DaemonSet", "ssl-proxy-atheros-sensor"),
+    ("Deployment", "ssl-proxy-telemetry-grafana"),
     ("Deployment", "ssl-proxy-telemetry-tidb-metrics-bridge"),
 }
 

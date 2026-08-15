@@ -21,6 +21,8 @@ spec:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: telemetry-grafana
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       securityContext:
@@ -56,6 +58,7 @@ spec:
           ports:
             - containerPort: 3000
               name: http
+              hostPort: 80
           livenessProbe:
             httpGet:
               path: /api/health
