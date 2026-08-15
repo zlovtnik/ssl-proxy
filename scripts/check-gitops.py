@@ -125,7 +125,6 @@ OBSERVABILITY_CATALOG_SERVICES = {
     "cadvisor",
     "jenkins",
     "registry",
-    "tidb-external",
 }
 
 
@@ -1124,12 +1123,19 @@ def _check_observability_contract(
         errors.append(f"{relative}: expected one generated observability service catalog")
     else:
         data = _mapping(catalog_maps[0].get("data"))
-        try:
-            loaded_catalog = yaml.safe_load(str(data.get("service-catalog.yml", "")))
-        except yaml.YAMLError as exc:
-            errors.append(f"{relative}: invalid observability service catalog: {exc}")
-            loaded_catalog = []
-        catalog = loaded_catalog if isinstance(loaded_catalog, list) else []
+        catalog: list[object] = []
+        for key, raw_catalog in data.items():
+            if not str(key).endswith("service-catalog.yml"):
+                continue
+            try:
+                loaded_catalog = yaml.safe_load(str(raw_catalog))
+            except yaml.YAMLError as exc:
+                errors.append(
+                    f"{relative}: invalid observability service catalog {key}: {exc}"
+                )
+                continue
+            if isinstance(loaded_catalog, list):
+                catalog.extend(loaded_catalog)
         services = {
             str(_path(entry, "labels", "service"))
             for entry in (catalog or [])
@@ -1139,6 +1145,14 @@ def _check_observability_contract(
         if missing:
             errors.append(
                 f"{relative}: observability catalog is missing: {', '.join(missing)}"
+            )
+        if "/prod" in relative and "tidb-external" not in services:
+            errors.append(
+                f"{relative}: production observability catalog is missing: tidb-external"
+            )
+        if "/dev" in relative and "tidb-external" in services:
+            errors.append(
+                f"{relative}: development observability catalog must not probe tidb-external"
             )
 
     generated_prefixes = (

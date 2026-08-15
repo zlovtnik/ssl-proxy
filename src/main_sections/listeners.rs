@@ -134,6 +134,7 @@ async fn run_explicit_proxy_listener(
     connection_semaphore: std::sync::Arc<tokio::sync::Semaphore>,
     tasks: &mut JoinSet<()>,
     cors: CorsLayer,
+    tls_acceptor: Option<TlsAcceptor>,
 ) {
     warn!(
         "EXPLICIT_PROXY_ENABLED=true — legacy explicit proxy listeners are active; plaintext HTTP CONNECT leaks target hostnames on the client-to-proxy leg"
@@ -151,13 +152,6 @@ async fn run_explicit_proxy_listener(
         });
     info!(%addr, "explicit proxy listener active");
 
-    let tls_acceptor = match build_tls_acceptor(config) {
-        Ok(acceptor) => acceptor,
-        Err(e) => {
-            error!(error = %e, "failed to build TLS config; explicit proxy will be plaintext only");
-            None
-        }
-    };
     spawn_quic_listener_if_enabled(
         config,
         state.clone(),
@@ -368,6 +362,21 @@ async fn main() -> std::process::ExitCode {
         observability::shutdown_tracer_provider(otel_provider);
         std::process::exit(1);
     }
+    let explicit_tls_acceptor = if config.proxy.explicit_enabled {
+        match build_tls_acceptor(&config) {
+            Ok(acceptor) => acceptor,
+            Err(err) => {
+                error!(error = %err, "failed to build configured explicit-proxy TLS material; refusing to start");
+                eprintln!(
+                    "Explicit-proxy TLS configuration is invalid; refusing to start: {err}"
+                );
+                observability::shutdown_tracer_provider(otel_provider);
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     let shutdown = CancellationToken::new();
     let state = match build_state(&config) {
         Ok(s) => s,
@@ -404,6 +413,7 @@ async fn main() -> std::process::ExitCode {
             connection_semaphore,
             &mut tasks,
             cors,
+            explicit_tls_acceptor,
         )
         .await;
     } else {

@@ -414,10 +414,8 @@ fn build_observability_router(state: state::SharedState) -> Router {
         .with_state(state)
 }
 
-const OBSERVABILITY_PORT: u16 = 9098;
-
 async fn spawn_observability_listener(state: state::SharedState, shutdown: CancellationToken) {
-    let addr = SocketAddr::from(([0, 0, 0, 0], OBSERVABILITY_PORT));
+    let addr = SocketAddr::from(([0, 0, 0, 0], config::OBSERVABILITY_PORT));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .unwrap_or_else(|e| {
@@ -478,7 +476,7 @@ fn log_runtime_ports(config: &config::Config) {
         wg_public_port = config.wireguard.port,
         wg_internal_port = config.wireguard.internal_port,
         admin_port = config.admin.port,
-        observability_port = OBSERVABILITY_PORT,
+        observability_port = config::OBSERVABILITY_PORT,
         explicit_proxy_enabled = config.proxy.explicit_enabled,
         wg_interface = ?config.wireguard.interface,
         upstream_proxy = ?config.proxy.upstream_proxy,

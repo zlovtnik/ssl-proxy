@@ -552,6 +552,39 @@ spec:
             any("required observability Secret key" in error for error in errors)
         )
 
+    def test_requires_external_tidb_probe_only_in_production(self) -> None:
+        rendered = self.rendered_contract()
+        errors = check_gitops._check_observability_contract(
+            rendered, "cyber-stack/matrix/prod/data-plane"
+        )
+        self.assertTrue(
+            any("production observability catalog is missing: tidb-external" in error for error in errors)
+        )
+
+        catalog_map = next(
+            document
+            for document in rendered
+            if str(document.get("metadata", {}).get("name", "")).startswith(
+                "ssl-proxy-telemetry-prometheus-catalog-"
+            )
+        )
+        catalog_map["data"]["external-service-catalog.yml"] = (
+            "- labels: {service: tidb-external}\n"
+        )
+        prod_errors = check_gitops._check_observability_contract(
+            rendered, "cyber-stack/matrix/prod/data-plane"
+        )
+        self.assertFalse(
+            any("tidb-external" in error for error in prod_errors)
+        )
+
+        dev_errors = check_gitops._check_observability_contract(
+            rendered, "cyber-stack/matrix/dev/data-plane"
+        )
+        self.assertTrue(
+            any("development observability catalog must not probe tidb-external" in error for error in dev_errors)
+        )
+
     def test_accepts_env_from_and_projected_secret_sources(self) -> None:
         rendered = documents(
             """kind: CronJob

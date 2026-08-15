@@ -46,6 +46,7 @@ services/octopus/.settings/
 *.conf
 !*.conf.example
 !config/templates/*.conf
+!cyber-stack/base/telemetry/config/loki/nginx.conf
 
 # Secrets
 *.key

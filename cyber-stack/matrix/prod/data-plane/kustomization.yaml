@@ -7,6 +7,12 @@ resources:
   - ../../../base/redis-runtime/deployment.yaml
   - ../../../base/tidb-schema-executor
   - ../../../base/telemetry
+configMapGenerator:
+  - name: ssl-proxy-telemetry-prometheus-catalog
+    namespace: ssl-proxy
+    behavior: merge
+    files:
+      - external-service-catalog.yml=../config/prometheus/external-service-catalog.yml
 images:
   - name: tidb-runtime-schema
     newName: 192.168.1.242:5000/tidb-runtime-schema

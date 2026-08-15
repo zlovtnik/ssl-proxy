@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub const MIN_ADMIN_API_KEY_LEN: usize = 32;
+pub const OBSERVABILITY_PORT: u16 = 9098;
 
 /// Runtime configuration grouped by subsystem.
 #[derive(Clone)]

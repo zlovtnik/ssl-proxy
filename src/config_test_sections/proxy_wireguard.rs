@@ -232,6 +232,29 @@
     }
 
     #[test]
+    fn tcp_listener_ports_cannot_conflict_with_observability() {
+        let _guard = env_lock();
+
+        for variable in ["PROXY_PORT", "TPROXY_PORT", "ADMIN_PORT"] {
+            clear_env();
+            set_test_env_defaults();
+            std::env::set_var("ADMIN_API_KEY", "test-admin-api-key-0000000000000");
+            std::env::set_var(variable, OBSERVABILITY_PORT.to_string());
+
+            assert!(
+                matches!(
+                    Config::from_env(),
+                    Err(ConfigError::PortConflict(
+                        OBSERVABILITY_PORT,
+                        OBSERVABILITY_PORT
+                    ))
+                ),
+                "{variable} must reserve the observability port"
+            );
+        }
+    }
+
+    #[test]
     fn explicit_proxy_disabled_by_default() {
         let _guard = env_lock();
         clear_env();

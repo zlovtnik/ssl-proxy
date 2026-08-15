@@ -4,17 +4,39 @@ import (
 	"context"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
+	athmetrics "github.com/zlovtnik/ssl-proxy/services/atheros-search/internal/metrics"
 	searchv1 "github.com/zlovtnik/ssl-proxy/services/atheros-search/proto/atheros/search/v1"
 )
 
 func TestSearchRejectsEmptyQuery(t *testing.T) {
-	svc := &Service{}
+	registry := prometheus.NewRegistry()
+	svc := &Service{Metrics: athmetrics.NewForRegisterer(registry)}
 	_, err := svc.Search(context.Background(), &searchv1.SearchRequest{
 		Query: "", Kind: searchv1.SearchKind_SEARCH_KIND_CROSS, Mode: searchv1.SearchMode_SEARCH_MODE_SPARSE,
 	})
 	require.EqualError(t, err, "search query is required and must contain meaningful terms")
+
+	families, gatherErr := registry.Gather()
+	require.NoError(t, gatherErr)
+	var errorCount float64
+	for _, family := range families {
+		if family.GetName() != "athsearch_search_requests_total" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := make(map[string]string, len(metric.Label))
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["kind"] == "cross" && labels["mode"] == "sparse" && labels["status"] == "error" {
+				errorCount = metric.GetCounter().GetValue()
+			}
+		}
+	}
+	require.Equal(t, float64(1), errorCount)
 }
 
 func TestHasMeaningfulSearchTerms(t *testing.T) {
