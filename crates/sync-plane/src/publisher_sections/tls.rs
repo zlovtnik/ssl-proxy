@@ -81,9 +81,8 @@ async fn run_publish_worker(
     publish_rx: &mut mpsc::Receiver<PublishQueueMessage>,
 ) {
     let mut producer = build_redpanda_producer(&config)
-        .map_err(|error| {
+        .inspect_err(|error| {
             record_worker_error(&health, error.clone());
-            error
         })
         .ok();
 
