@@ -189,7 +189,7 @@ impl AdminAuthRateLimiter {
 fn install_rustls_provider() -> Result<(), Box<dyn std::error::Error>> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .map_err(|e| format!("Failed to install rustls crypto provider: {e}"))?;
+        .map_err(|e| format!("Failed to install rustls crypto provider: {e:?}"))?;
     Ok(())
 }
 

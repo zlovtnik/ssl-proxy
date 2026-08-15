@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::{parsing::*, sync_tls::*, types::*};
 use crate::wg_packet_obfuscation::{
-    EncryptionMode, MagicPositionMode, PacketPadding, WgPacketObfuscation,
+    EncryptionMode, MagicPositionMode, PacketPadding,
 };
 use sync_plane::SyncConfig;
 
@@ -140,9 +140,6 @@ impl Default for Config {
     /// assert!(!cfg.obfuscation.domain_map.is_empty());
     /// ```
     fn default() -> Self {
-        let _default_wireguard_obfuscation =
-            WgPacketObfuscation::new(b"test-obfuscation-key".to_vec(), Some(0xAA))
-                .expect("default obfuscation key is non-empty");
         let default_obfuscation_max_datagram_bytes =
             DEFAULT_WIREGUARD_PATH_MTU_BYTES
                 + crate::wg_packet_obfuscation::FRAMED_HEADER_LEN
