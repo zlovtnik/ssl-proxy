@@ -322,12 +322,11 @@ class DefaultDenyTraefikTest(unittest.TestCase):
                 provider: {"enabled": False}
                 for provider in (
                     "kubernetesCRD",
-                    "kubernetesIngress",
                     "kubernetesGateway",
                     "kubernetesIngressNGINX",
                     "file",
                 )
-            },
+            } | {"kubernetesIngress": {"enabled": True}},
             "experimental": {"kubernetesGateway": {"enabled": False}},
             "logs": {
                 "general": {"format": "json"},
@@ -391,7 +390,7 @@ class DefaultDenyTraefikTest(unittest.TestCase):
             "tlsOptions": {},
             "tlsStore": {},
             "hostNetwork": False,
-            "rbac": {"enabled": False},
+            "rbac": {"enabled": True, "namespaced": False},
             "persistence": {"enabled": False},
             "resources": {
                 "requests": {"cpu": "100m", "memory": "128Mi"},
@@ -427,7 +426,7 @@ class DefaultDenyTraefikTest(unittest.TestCase):
         errors = check_gitops._check_default_deny_traefik(
             self.chart(values), "argocd"
         )
-        self.assertTrue(any("kubernetesIngress" in error for error in errors))
+        self.assertFalse(any("kubernetesIngress" in error for error in errors))
         self.assertTrue(any("forwarded headers" in error for error in errors))
         self.assertTrue(any("access logging" in error for error in errors))
         self.assertTrue(any("IPv4 SingleStack" in error for error in errors))
@@ -808,7 +807,7 @@ spec:
   destinations:
     - {namespace: prod-ssl-proxy, server: https://kubernetes.default.svc}
   namespaceResourceWhitelist:
-    - {group: networking.k8s.io, kind: Ingress}
+    - {group: networking.k8s.io, kind: IngressRoute}
 """
         )
         errors: list[str] = []

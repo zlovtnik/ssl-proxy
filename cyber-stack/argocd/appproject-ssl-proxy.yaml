@@ -35,6 +35,8 @@ spec:
     - group: batch
       kind: Job
     - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
       kind: NetworkPolicy
     - group: rbac.authorization.k8s.io
       kind: Role

@@ -94,9 +94,12 @@ PHASE_ONE_ROUTE_KINDS = {
     "UDPRoute",
 }
 
+PHASE_ONE_ROUTE_ALLOWLIST = {
+    ("Ingress", "ssl-proxy-telemetry-grafana"),
+}
+
 PHASE_ONE_HOST_NETWORK_ALLOWLIST = {
     ("DaemonSet", "ssl-proxy-atheros-sensor"),
-    ("Deployment", "ssl-proxy-telemetry-grafana"),
     ("Deployment", "ssl-proxy-telemetry-tidb-metrics-bridge"),
 }
 
@@ -738,7 +741,7 @@ def _check_phase_one_workload_edge(
                     f"{relative}: phase one Service {name} must be ClusterIP or "
                     f"headless, not {service_type}"
                 )
-        if kind in PHASE_ONE_ROUTE_KINDS:
+        if kind in PHASE_ONE_ROUTE_KINDS and (kind, name) not in PHASE_ONE_ROUTE_ALLOWLIST:
             errors.append(
                 f"{relative}: phase one must not render HTTP route resource "
                 f"{kind}/{name}"
@@ -825,7 +828,6 @@ def _check_default_deny_traefik(
         ("experimental", "kubernetesGateway", "enabled"),
         ("ports", "websecure", "http3", "enabled"),
         ("hostNetwork",),
-        ("rbac", "enabled"),
         ("persistence", "enabled"),
     )
     for path in false_paths:
@@ -841,7 +843,6 @@ def _check_default_deny_traefik(
 
     for provider in (
         "kubernetesCRD",
-        "kubernetesIngress",
         "kubernetesGateway",
         "kubernetesIngressNGINX",
         "file",
@@ -1615,10 +1616,14 @@ def _check_prod_project(documents: Documents, errors: list[str]) -> None:
         _mapping(resource)
         for resource in _list(_path(projects[0], "spec", "namespaceResourceWhitelist"))
     ]
+    allowed_route_kinds = {kind for kind, _ in PHASE_ONE_ROUTE_ALLOWLIST}
     if any(
         resource.get("group") == "*"
         or resource.get("kind") == "*"
-        or str(resource.get("kind")) in PHASE_ONE_ROUTE_KINDS
+        or (
+            str(resource.get("kind")) in PHASE_ONE_ROUTE_KINDS
+            and str(resource.get("kind")) not in allowed_route_kinds
+        )
         for resource in allowed_resources
     ):
         errors.append(

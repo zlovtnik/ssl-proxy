@@ -39,7 +39,7 @@ spec:
         allowExternalNameServices: false
         allowEmptyServices: false
       kubernetesIngress:
-        enabled: false
+        enabled: true
         allowExternalNameServices: false
         allowEmptyServices: false
       kubernetesGateway:
@@ -159,7 +159,7 @@ spec:
       enabled: false
     hostNetwork: false
     rbac:
-      enabled: false
+      enabled: true
       namespaced: false
 
     resources:

@@ -21,8 +21,6 @@ spec:
         app.kubernetes.io/name: ssl-proxy
         app.kubernetes.io/component: telemetry-grafana
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       serviceAccountName: ssl-proxy
       automountServiceAccountToken: false
       securityContext:
@@ -37,7 +35,7 @@ spec:
             - name: GF_PATHS_PROVISIONING
               value: "/etc/grafana/provisioning"
             - name: GF_SERVER_HTTP_PORT
-              value: "80"
+              value: "3000"
             - name: GF_SECURITY_ADMIN_USER
               value: "admin"
             - name: GF_SECURITY_ADMIN_PASSWORD
@@ -56,9 +54,8 @@ spec:
                   name: observability-credentials
                   key: loki-password
           ports:
-            - containerPort: 80
+            - containerPort: 3000
               name: http
-              hostPort: 80
           livenessProbe:
             httpGet:
               path: /api/health
@@ -132,6 +129,56 @@ spec:
     app.kubernetes.io/component: telemetry-grafana
   ports:
     - name: http
-      port: 80
+      port: 3000
       targetPort: http
       protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ssl-proxy-telemetry-grafana
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-grafana
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: ssl-proxy-telemetry-grafana
+                port:
+                  number: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssl-proxy-telemetry-grafana
+  namespace: ssl-proxy
+  labels:
+    app.kubernetes.io/name: ssl-proxy
+    app.kubernetes.io/component: telemetry-grafana
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ssl-proxy
+      app.kubernetes.io/component: telemetry-grafana
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - {protocol: TCP, port: 3000}
