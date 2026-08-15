@@ -40,16 +40,16 @@ spec:
             - {containerPort: 8888, name: metrics}
             - {containerPort: 13133, name: health}
           startupProbe:
-            httpGet: {path: /-/healthy, port: health}
+            tcpSocket: {port: health}
             failureThreshold: 60
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
-            httpGet: {path: /-/healthy, port: health}
+            tcpSocket: {port: health}
             periodSeconds: 15
             timeoutSeconds: 10
           readinessProbe:
-            httpGet: {path: /-/healthy, port: health}
+            tcpSocket: {port: health}
             periodSeconds: 5
             timeoutSeconds: 5
           resources:
