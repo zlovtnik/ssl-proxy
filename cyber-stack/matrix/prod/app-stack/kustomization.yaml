@@ -28,7 +28,7 @@ images:
 - digest: sha256:1dc8ff2dd1868dfc2c98997ca5b538f0ddc39088ac18b6f24f96ed70f3b87443
   name: schema-migrator-ui
   newName: 192.168.1.242:5000/schema-migrator-ui
-- digest: sha256:bb2a8d35fad62894d8fc650cf6884360ca795a66e458e8b55613252a7c69e3b5
+- digest: sha256:ad323800e92a3ecd07ff4e394ed8e6370f60852e1abf0ab53878e13f0d6d5b6b
   name: ssl-proxy
   newName: 192.168.1.242:5000/ssl-proxy
 patches:
