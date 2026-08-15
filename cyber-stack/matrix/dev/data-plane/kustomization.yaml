@@ -12,6 +12,16 @@ images:
   - name: tidb-runtime-schema
     newName: 192.168.1.242:5000/tidb-runtime-schema
     digest: sha256:d6473f4611ae0e29d12b621b8c13e3342241bfeab2522f5facb39d2eafb1cefd
+  - name: prom/prometheus
+    digest: sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69
+  - name: grafana/grafana
+    digest: sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+  - name: grafana/loki
+    digest: sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952
+  - name: grafana/alloy
+    digest: sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33
+  - name: otel/opentelemetry-collector-contrib
+    digest: sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
 patches:
   - path: ../patches/tidb-replicas.yaml
   - path: ../patches/alloy-positions.yaml
